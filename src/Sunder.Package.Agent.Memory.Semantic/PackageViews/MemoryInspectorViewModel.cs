@@ -140,7 +140,7 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
 
     public string PinButtonText => SelectedMemory?.IsPinned == true ? "Unpin" : "Pin";
 
-    public string ContestButtonText => SelectedMemory?.State == MemoryLocalStore.ContestedState ? "Keep Contested" : "Contest";
+    public string ContestButtonText => SelectedMemory?.State == MemoryRecordStates.Contested ? "Keep Contested" : "Contest";
 
     public bool HasSelectedMemorySemanticStatus => SelectedMemory?.HasSemanticIndexStatus == true;
 

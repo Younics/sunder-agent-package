@@ -237,6 +237,7 @@ public sealed class SubagentRuntimeOrchestrationTests
     {
         using var scope = RegressionTestPackageScope.Create();
         var store = new SubagentStore(scope.Context);
+        store.Activate();
         var lockPath = scope.Context.Storage.RoleLocalWorkspace.GetLocalPath("subagents/subagents.json.lock");
         using var externalLease = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
 

@@ -59,11 +59,6 @@
         "resolved": "12.0.3",
         "contentHash": "NHvbiGC461oB3DXt8qgLNN+QfcYARcSxY7diyic9R7u6jQA4bc+ZbjEQKX8y8WyF1vOssedRmuOeTvRXlXbF9Q=="
       },
-      "Markdig": {
-        "type": "Transitive",
-        "resolved": "1.1.2",
-        "contentHash": "mXh6Ah5p/jtryn7o96B2knDDJVgZ775HnFLObcVxuyWcfeHlsI95WUjiJH0m7ZOYGdCLvwRTwMhv023jUZoEAA=="
-      },
       "MicroCom.Runtime": {
         "type": "Transitive",
         "resolved": "0.11.4",
@@ -174,27 +169,6 @@
         "resolved": "13.0.3",
         "contentHash": "HrC5BXdl00IP9zeV+0Z848QWPAoCr9P3bDEZguI+gkLcBKAOxix/tLEAAHC+UvDNPv4a2d18lOReHMOagPa+zQ=="
       },
-      "Onigwrap": {
-        "type": "Transitive",
-        "resolved": "1.0.9",
-        "contentHash": "PmKvWrFfPX6gHSiTB9JF2sDrs+oqoRamoiWehX4LzdY/jyYyodx0svBgAQl//g0rOGeeKYzEkImuAT1D6vrUBg=="
-      },
-      "TextMateSharp": {
-        "type": "Transitive",
-        "resolved": "2.0.0",
-        "contentHash": "PdAeXqXY3NyecZ9xVVqSdA27fHOhModCU68Je4RV+NZLCvzVCH8y8zlp5iW79THyWi11WIbruCEMemFXOTCJGA==",
-        "dependencies": {
-          "Onigwrap": "1.0.9"
-        }
-      },
-      "TextMateSharp.Grammars": {
-        "type": "Transitive",
-        "resolved": "2.0.0",
-        "contentHash": "i41yyDz58ypDoFxhFd/nEoWvXuU3F89FBoS2gugznMg7niT/AiHxWGDcsjDaowyEz8+6ZmPI/hPn7FqPtP/n7A==",
-        "dependencies": {
-          "TextMateSharp": "2.0.0"
-        }
-      },
       "xunit.abstractions": {
         "type": "Transitive",
         "resolved": "2.0.3",
@@ -244,24 +218,61 @@
       "sunder.package.agent.execution.docker": {
         "type": "Project",
         "dependencies": {
+          "Microsoft.Extensions.DependencyInjection": "[10.0.8, )",
+          "Sunder.Agent.Execution.Common": "[2.0.0, )",
+          "Sunder.Package.Agent.Execution.Docker.Protocol": "[2.0.0, )",
+          "Sunder.Package.Agent.Protocol": "[2.0.0, )",
+          "Sunder.Sdk": "[1.1.0, 1.2.0)",
+          "Sunder.Sdk.Stacks": "[1.1.0, 1.2.0)",
+          "Sunder.Sdk.Worker": "[1.1.0, 1.1.0]"
+        }
+      },
+      "Sunder.Package.Agent.Execution.Docker.App": {
+        "type": "Project",
+        "dependencies": {
           "Avalonia": "[12.0.3, )",
           "CommunityToolkit.Mvvm": "[8.4.2, )",
-          "Sunder.Agent.Execution.Common": "[2.0.0, )",
+          "Sunder.Package.Agent.Execution.Docker.Protocol": "[2.0.0, )",
           "Sunder.Package.Agent.Protocol": "[2.0.0, )",
           "Sunder.Sdk": "[1.1.0, 1.2.0)",
           "Sunder.Sdk.Avalonia": "[1.1.0, 1.2.0)",
           "Sunder.Sdk.Stacks": "[1.1.0, 1.2.0)"
         }
       },
+      "Sunder.Package.Agent.Execution.Docker.Protocol": {
+        "type": "Project",
+        "dependencies": {
+          "Sunder.Package.Agent.Protocol": "[2.0.0, )",
+          "Sunder.Sdk": "[1.1.0, 1.2.0)"
+        }
+      },
       "sunder.package.agent.execution.local": {
+        "type": "Project",
+        "dependencies": {
+          "Microsoft.Extensions.DependencyInjection": "[10.0.8, )",
+          "Sunder.Agent.Execution.Common": "[2.0.0, )",
+          "Sunder.Package.Agent.Execution.Local.Protocol": "[2.0.0, )",
+          "Sunder.Package.Agent.Protocol": "[2.0.0, )",
+          "Sunder.Sdk": "[1.1.0, 1.2.0)",
+          "Sunder.Sdk.Worker": "[1.1.0, 1.1.0]"
+        }
+      },
+      "Sunder.Package.Agent.Execution.Local.App": {
         "type": "Project",
         "dependencies": {
           "Avalonia": "[12.0.3, )",
           "CommunityToolkit.Mvvm": "[8.4.2, )",
-          "Sunder.Agent.Execution.Common": "[2.0.0, )",
+          "Sunder.Package.Agent.Execution.Local.Protocol": "[2.0.0, )",
           "Sunder.Package.Agent.Protocol": "[2.0.0, )",
           "Sunder.Sdk": "[1.1.0, 1.2.0)",
           "Sunder.Sdk.Avalonia": "[1.1.0, 1.2.0)"
+        }
+      },
+      "Sunder.Package.Agent.Execution.Local.Protocol": {
+        "type": "Project",
+        "dependencies": {
+          "Sunder.Package.Agent.Protocol": "[2.0.0, )",
+          "Sunder.Sdk": "[1.1.0, 1.2.0)"
         }
       },
       "Sunder.Package.Agent.Protocol": {
@@ -274,22 +285,28 @@
       "sunder.package.agent.subagents": {
         "type": "Project",
         "dependencies": {
-          "Avalonia": "[12.0.3, )",
-          "Avalonia.Controls.ItemsRepeater": "[12.0.0, )",
-          "CommunityToolkit.Mvvm": "[8.4.2, )",
-          "LiveMarkdown.Avalonia": "[2.2.0, )",
+          "Microsoft.Extensions.DependencyInjection": "[10.0.8, )",
           "Sunder.Package.Agent.Protocol": "[2.0.0, )",
           "Sunder.Sdk": "[1.1.0, 1.2.0)",
-          "Sunder.Sdk.Avalonia": "[1.1.0, 1.2.0)",
-          "Sunder.Sdk.Stacks": "[1.1.0, 1.2.0)"
+          "Sunder.Sdk.Stacks": "[1.1.0, 1.2.0)",
+          "Sunder.Sdk.Worker": "[1.1.0, 1.1.0]"
+        }
+      },
+      "Sunder.Package.Agent.Subagents.Protocol": {
+        "type": "Project",
+        "dependencies": {
+          "Sunder.Package.Agent.Protocol": "[2.0.0, )",
+          "Sunder.Sdk": "[1.1.0, 1.2.0)"
         }
       },
       "sunder.package.agent.tools.files": {
         "type": "Project",
         "dependencies": {
+          "Microsoft.Extensions.DependencyInjection": "[10.0.8, )",
           "Sunder.Agent.Execution.Common": "[2.0.0, )",
           "Sunder.Package.Agent.Protocol": "[2.0.0, )",
-          "Sunder.Sdk": "[1.1.0, 1.2.0)"
+          "Sunder.Sdk": "[1.1.0, 1.2.0)",
+          "Sunder.Sdk.Worker": "[1.1.0, 1.1.0]"
         }
       },
       "sunder.package.agent.tools.shell": {
@@ -304,9 +321,11 @@
       "sunder.package.agent.tools.web": {
         "type": "Project",
         "dependencies": {
+          "Microsoft.Extensions.DependencyInjection": "[10.0.8, )",
           "Sunder.Agent.Execution.Common": "[2.0.0, )",
           "Sunder.Package.Agent.Protocol": "[2.0.0, )",
-          "Sunder.Sdk": "[1.1.0, 1.2.0)"
+          "Sunder.Sdk": "[1.1.0, 1.2.0)",
+          "Sunder.Sdk.Worker": "[1.1.0, 1.1.0]"
         }
       },
       "Avalonia": {
@@ -320,32 +339,11 @@
           "MicroCom.Runtime": "0.11.4"
         }
       },
-      "Avalonia.Controls.ItemsRepeater": {
-        "type": "CentralTransitive",
-        "requested": "[12.0.0, )",
-        "resolved": "12.0.0",
-        "contentHash": "Xf54lAaLU29x50Gl6pHK3UUgGrewkH/Jb6YLSkz/bxj+h1pSutNEsw+1qZ7dcsaRipB9sNLTGzSsQCKBmTD9aQ==",
-        "dependencies": {
-          "Avalonia": "12.0.0"
-        }
-      },
       "CommunityToolkit.Mvvm": {
         "type": "CentralTransitive",
         "requested": "[8.4.2, )",
         "resolved": "8.4.2",
         "contentHash": "WadCzGEc2U+3e20avRLng4qNtt4zoOGWrdUISqJWrHe3/FSnrYjuM5Sb4yQb09LhkBXrrI4Zt3dLKgRMbItsrg=="
-      },
-      "LiveMarkdown.Avalonia": {
-        "type": "CentralTransitive",
-        "requested": "[2.2.0, )",
-        "resolved": "2.2.0",
-        "contentHash": "YS8CuVSe/RlEUZZF4j0vH0EvGDazJ0vW6Qud0rSjsfobYRB7oxlHgBAbZduG58MB27w4JDwxOPp87MXYLgCY+A==",
-        "dependencies": {
-          "Avalonia": "12.0.0",
-          "Markdig": "1.1.2",
-          "TextMateSharp": "2.0.0",
-          "TextMateSharp.Grammars": "2.0.0"
-        }
       },
       "Microsoft.Extensions.AI.Abstractions": {
         "type": "CentralTransitive",
@@ -357,7 +355,7 @@
         "type": "CentralTransitive",
         "requested": "[1.1.0, 1.2.0)",
         "resolved": "1.1.0",
-        "contentHash": "qbBDgVS5otbNfuCDyOoG8oRzttwq3PhAa36kkh9Qc4j93m23Z3zjBt3+YOOUqh1elalsZbOTp+gNKSQ0QPginA==",
+        "contentHash": "ExpKC8Dy3YKA4D1VUoGdb20QYGpnCn5JVX9nveREnP7aKTIGO4JgtegoHAUrzQXSFLN8rTNU8XkKDCKTxCt2pQ==",
         "dependencies": {
           "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.8",
           "Microsoft.Extensions.Logging.Abstractions": "10.0.8"
@@ -367,27 +365,27 @@
         "type": "CentralTransitive",
         "requested": "[1.1.0, 1.2.0)",
         "resolved": "1.1.0",
-        "contentHash": "Ajo7d8Yrk2lZkNz66SyWzr5Y0cncLFykHkgdU7Q6Ou9hDMhQPIIVr9asEQ2xljwLOUdxWSqv75cWLbVkS2qqeg==",
+        "contentHash": "3qIle7/tWC6ZWYOs1Px5asg6RgVmg1+qD+QTksXMOG/y+f8uzi4w01yPKAdOoI843MZbyH5MFnJhnTO46jgeHg==",
         "dependencies": {
           "Avalonia": "12.0.3",
-          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.8",
-          "Sunder.Sdk": "1.1.0"
+          "Sunder.Sdk": "[1.1.0, 1.2.0)"
         }
       },
       "Sunder.Sdk.Stacks": {
         "type": "CentralTransitive",
         "requested": "[1.1.0, 1.2.0)",
         "resolved": "1.1.0",
-        "contentHash": "Ym0OnNoasnOrFUV1lyS/zluDiC2ROrxwLTpFx23Mb822uEAHHKRAbrSAWxsPrdJI/I60eiYeOx51rCr+Jz8ixw==",
+        "contentHash": "VtpPzTmsqZkDn23yiuH2VOfujZMlzGzNMY66bYHbaiTwgeNAR0wH34ER8QgFddFhimC9uUgfuSV4Ds10NNHBnw==",
         "dependencies": {
-          "Sunder.Sdk": "1.1.0"
+          "Sunder.Sdk": "[1.1.0, 1.2.0)",
+          "Sunder.Sdk.Worker": "1.1.0"
         }
       },
       "Sunder.Sdk.Worker": {
         "type": "CentralTransitive",
         "requested": "[1.1.0, 1.1.0]",
         "resolved": "1.1.0",
-        "contentHash": "p7YJcxYCcaBSktP/W+nzeav9m3mzqfSLsJJ6V63+4z/ijyIj/niSi3EVuAFj0Pfg4qPRotAzo9c6mzhxKk2XRQ==",
+        "contentHash": "5mIeGLPO8ifBg4bpCCOLS6emm1IAzvTojXwIq1tnUX46TY/Nb0DjhdnvxuDez9BzbeNDyvbi9R4xUvhwnzWvxA==",
         "dependencies": {
           "Sunder.Sdk": "[1.1.0]"
         }

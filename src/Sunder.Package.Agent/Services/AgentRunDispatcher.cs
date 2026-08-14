@@ -5,7 +5,7 @@ using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Services;
 
-internal sealed class AgentRunDispatcher : IPackageBackgroundService, IAsyncDisposable
+internal sealed class AgentRunDispatcher : IAsyncDisposable
 {
     private const int MaximumConcurrency = 4;
     private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(250);

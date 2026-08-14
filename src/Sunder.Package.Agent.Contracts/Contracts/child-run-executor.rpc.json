@@ -1,14 +1,16 @@
 {
-  "descriptorVersion": 1,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "descriptorVersion": 2,
   "contractId": "sunder.agent.child.run.executor",
   "version": "1.0.0",
-  "services": [
-    {
-      "serviceId": "child-run-executor",
-      "methods": [
-        {
-          "methodId": "run-child",
+  "errors": {},
+  "services": {
+    "child-run-executor": {
+      "methods": {
+        "run-child": {
           "kind": "unary",
+          "idempotency": "none",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/AgentChildRunRequest"
           },
@@ -16,9 +18,9 @@
             "$ref": "#/$defs/AgentChildRunResult"
           }
         }
-      ]
+      }
     }
-  ],
+  },
   "$defs": {
     "String": {
       "type": "string",
@@ -27,8 +29,7 @@
     },
     "DateTimeOffset": {
       "type": "string",
-      "minLength": 0,
-      "maxLength": 1000000
+      "logicalType": "utc-date-time"
     },
     "Boolean": {
       "type": "boolean"
@@ -160,8 +161,7 @@
     },
     "Guid": {
       "type": "string",
-      "minLength": 0,
-      "maxLength": 1000000
+      "logicalType": "uuid"
     },
     "Int64": {
       "type": "integer",

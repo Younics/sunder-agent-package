@@ -29,19 +29,6 @@ public sealed partial class SkillSettingsViewModel : ObservableObject,
 
     internal static IReadOnlyCollection<string> OwnedConfigurationKeys { get; } = [];
 
-    public SkillSettingsViewModel(SkillStore store, SkillImportService importService)
-        : this(new SkillLocalManagementGateway(store, importService))
-    {
-    }
-
-    internal SkillSettingsViewModel(
-        SkillStore store,
-        SkillImportService importService,
-        TimeProvider timeProvider)
-        : this(new SkillLocalManagementGateway(store, importService), timeProvider)
-    {
-    }
-
     internal SkillSettingsViewModel(
         ISkillManagementGateway gateway,
         TimeProvider? timeProvider = null)
@@ -349,23 +336,23 @@ public sealed partial class SkillSettingsViewModel : ObservableObject,
 
                 _listDetail.Reconcile(snapshot.Select(static skill =>
                     new InstalledSkillItemViewModel(skill, skill.RelativeRootPath)).ToArray());
-                if (_listDetail.TryShowCreatedDetail(imported[0].SkillId, intentRevision))
+                var createdDetailShown = _listDetail.TryShowCreatedDetail(
+                    imported[0].SkillId,
+                    intentRevision);
+                if (IsCompactLayout)
                 {
-                    if (IsCompactLayout)
-                    {
-                        _listDetail.ShowList();
-                        ClearStatus();
-                    }
-                    else
-                    {
-                        MarkCurrentDetailReady();
-                        SetStatus(
-                            imported.Count == 1
-                                ? successMessage
-                                : $"{successMessage} Imported {imported.Count} skills.",
-                            SkillStatusKind.Success,
-                            autoClear: true);
-                    }
+                    _listDetail.ShowList();
+                    ClearStatus();
+                }
+                else if (createdDetailShown)
+                {
+                    MarkCurrentDetailReady();
+                    SetStatus(
+                        imported.Count == 1
+                            ? successMessage
+                            : $"{successMessage} Imported {imported.Count} skills.",
+                        SkillStatusKind.Success,
+                        autoClear: true);
                 }
             });
         }
@@ -585,7 +572,7 @@ public sealed class InstalledSkillItemViewModel : ObservableObject
 
     private void Apply(InstalledSkillRecord skill, string rootPath)
     {
-        DisplayName = SkillStore.ResolveDisplayName(skill);
+        DisplayName = string.IsNullOrWhiteSpace(skill.Name) ? skill.SkillId : skill.Name.Trim();
         Description = skill.Description ?? string.Empty;
         Version = skill.Version ?? string.Empty;
         Author = skill.Author ?? string.Empty;

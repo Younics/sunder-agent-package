@@ -3,10 +3,11 @@ using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Worker;
 
 namespace Sunder.Package.Agent.Memory.Semantic.Services;
 
-public sealed class SemanticMemoryIndexingBackgroundService : IPackageRuntimeGenerationParticipant, IAsyncDisposable
+public sealed class SemanticMemoryIndexingBackgroundService : ISunderWorkerLifecycleService, IAsyncDisposable
 {
     private const int DefaultQueueCapacity = 256;
     private const int MaxRetryCount = 3;
@@ -30,6 +31,7 @@ public sealed class SemanticMemoryIndexingBackgroundService : IPackageRuntimeGen
     private CancellationTokenSource? _stoppingCts;
     private Task? _processingTask;
     private Task? _monitoringTask;
+    private Task _generationCompletion = Task.CompletedTask;
     private SemanticMemoryIndexWorkerStatus _status = SemanticMemoryIndexWorkerStatus.Stopped();
     private PackageRuntimeGeneration? _generation;
     private bool _prepared;
@@ -65,6 +67,33 @@ public sealed class SemanticMemoryIndexingBackgroundService : IPackageRuntimeGen
     }
 
     public event Action? StatusChanged;
+
+    public Task GenerationCompletion => Volatile.Read(ref _generationCompletion);
+
+    public Task Completion => GenerationCompletion;
+
+    public async ValueTask PrepareCandidateAsync(CancellationToken cancellationToken = default)
+        => await StartAsync(cancellationToken).ConfigureAwait(false);
+
+    public async ValueTask CommitGenerationAsync(
+        SunderWorkerGenerationContext generation,
+        CancellationToken cancellationToken = default)
+        => await CommitGenerationAsync(
+            new PackageRuntimeGeneration(generation.ActivationId, generation.SessionGeneration),
+            cancellationToken).ConfigureAwait(false);
+
+    public ValueTask ActivateAsync(
+        SunderWorkerContext context,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.CompletedTask;
+    }
+
+    public async ValueTask ShutdownAsync(
+        SunderWorkerShutdownContext context,
+        CancellationToken cancellationToken = default)
+        => await StopAsync(cancellationToken).ConfigureAwait(false);
 
     public SemanticMemoryIndexWorkerStatus GetStatus()
     {
@@ -102,6 +131,10 @@ public sealed class SemanticMemoryIndexingBackgroundService : IPackageRuntimeGen
 
             cancellationToken.ThrowIfCancellationRequested();
             _prepared = true;
+            if (_generation is not null && !_workersStarted)
+            {
+                await StartWorkersAsync(cancellationToken).ConfigureAwait(false);
+            }
         }
         finally
         {
@@ -109,7 +142,7 @@ public sealed class SemanticMemoryIndexingBackgroundService : IPackageRuntimeGen
         }
     }
 
-    public async Task CommitGenerationAsync(
+    internal async Task CommitGenerationAsync(
         PackageRuntimeGeneration generation,
         CancellationToken cancellationToken = default)
     {
@@ -125,11 +158,6 @@ public sealed class SemanticMemoryIndexingBackgroundService : IPackageRuntimeGen
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            if (!_prepared)
-            {
-                throw new InvalidOperationException(
-                    "Semantic memory indexing must be prepared before its Runtime generation is committed.");
-            }
             if (_workersStarted)
             {
                 if (_generation != generation)
@@ -146,19 +174,9 @@ public sealed class SemanticMemoryIndexingBackgroundService : IPackageRuntimeGen
             }
 
             _generation = generation;
-            _stoppingCts = new CancellationTokenSource();
-            UpdateStatus(status => status with { IsRunning = true, LastFailureAtUtc = null, LastFailureMessage = null });
-            _processingTask = ProcessQueueAsync(_stoppingCts.Token);
-            _monitoringTask = MonitorAsync(_stoppingCts.Token);
-            try
+            if (_prepared)
             {
-                await QueueSessionsNeedingReconciliationAsync(cancellationToken).ConfigureAwait(false);
-                _workersStarted = true;
-            }
-            catch
-            {
-                await StopWorkersAsync().ConfigureAwait(false);
-                throw;
+                await StartWorkersAsync(cancellationToken).ConfigureAwait(false);
             }
         }
         finally
@@ -230,9 +248,37 @@ public sealed class SemanticMemoryIndexingBackgroundService : IPackageRuntimeGen
         _stoppingCts = null;
         _processingTask = null;
         _monitoringTask = null;
+        Volatile.Write(ref _generationCompletion, Task.CompletedTask);
         _workersStarted = false;
         ResetQueue();
         UpdateStatus(status => status with { IsRunning = false, PendingItemCount = 0 });
+    }
+
+    private Task StartWorkersAsync(CancellationToken cancellationToken)
+    {
+        if (_workersStarted)
+        {
+            return Task.CompletedTask;
+        }
+        cancellationToken.ThrowIfCancellationRequested();
+        if (_generation is null)
+        {
+            throw new InvalidOperationException(
+                "Semantic memory indexing cannot start before its Runtime generation is committed.");
+        }
+
+        _stoppingCts = new CancellationTokenSource();
+        UpdateStatus(status => status with
+        {
+            IsRunning = true,
+            LastFailureAtUtc = null,
+            LastFailureMessage = null,
+        });
+        _processingTask = ProcessQueueAsync(_stoppingCts.Token);
+        _monitoringTask = MonitorAsync(_stoppingCts.Token);
+        Volatile.Write(ref _generationCompletion, Task.WhenAll(_processingTask, _monitoringTask));
+        _workersStarted = true;
+        return Task.CompletedTask;
     }
 
     private bool Queue(SemanticMemoryIndexWorkItem item)
@@ -443,10 +489,11 @@ public sealed class SemanticMemoryIndexingBackgroundService : IPackageRuntimeGen
 
     private async Task MonitorAsync(CancellationToken cancellationToken)
     {
+        await Task.Yield();
         using var timer = new PeriodicTimer(_monitorInterval);
         try
         {
-            while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
+            while (!cancellationToken.IsCancellationRequested)
             {
                 try
                 {
@@ -464,6 +511,10 @@ public sealed class SemanticMemoryIndexingBackgroundService : IPackageRuntimeGen
                         LastFailureAtUtc = DateTimeOffset.UtcNow,
                         LastFailureMessage = ex.Message,
                     });
+                }
+                if (!await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
+                {
+                    return;
                 }
             }
         }

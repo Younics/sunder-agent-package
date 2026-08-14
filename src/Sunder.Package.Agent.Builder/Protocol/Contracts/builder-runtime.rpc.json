@@ -1,0 +1,479 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "descriptorVersion": 2,
+  "contractId": "sunder.package.agent.builder.runtime",
+  "version": "2.0.0",
+  "errors": {
+    "agent.builder.execution-target-unavailable": {
+      "description": "The selected execution-target activation became unavailable."
+    },
+    "agent.builder.invalid-request": {
+      "description": "The Builder request is incomplete or invalid."
+    },
+    "agent.builder.request-too-large": {
+      "description": "The Builder request exceeds its package-owned payload limit."
+    },
+    "agent.builder.response-too-large": {
+      "description": "The Builder response exceeds its package-owned payload limit."
+    },
+    "agent.builder.unsupported-operation": {
+      "description": "The selected execution target does not implement the requested Builder operation."
+    },
+    "agent.builder.workspace-execution-unavailable": {
+      "description": "The Agent workspace execution resolver is unavailable."
+    }
+  },
+  "services": {
+    "builder-runtime": {
+      "methods": {
+        "execute": {
+          "kind": "unary",
+          "idempotency": "none",
+          "errors": [
+            "agent.builder.execution-target-unavailable",
+            "agent.builder.invalid-request",
+            "agent.builder.request-too-large",
+            "agent.builder.response-too-large",
+            "agent.builder.unsupported-operation",
+            "agent.builder.workspace-execution-unavailable"
+          ],
+          "requestSchema": {
+            "$ref": "#/$defs/BuilderExecuteRequest"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/BuilderExecuteResponse"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "Boolean": {
+      "type": "boolean"
+    },
+    "Int32": {
+      "type": "integer",
+      "minimum": -2147483648,
+      "maximum": 2147483647
+    },
+    "String": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 1000000
+    },
+    "UtcDateTime": {
+      "type": "string",
+      "logicalType": "utc-date-time"
+    },
+    "StringList": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/String"
+      },
+      "minItems": 0,
+      "maxItems": 4096
+    },
+    "BuilderOperationKind": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 5,
+      "enum": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ]
+    },
+    "BuilderExecuteRequest": {
+      "type": "object",
+      "properties": {
+        "arguments": {
+          "$ref": "#/$defs/StringList"
+        },
+        "command": {
+          "$ref": "#/$defs/String"
+        },
+        "executionPath": {
+          "$ref": "#/$defs/String"
+        },
+        "fileName": {
+          "$ref": "#/$defs/String"
+        },
+        "kind": {
+          "$ref": "#/$defs/BuilderOperationKind"
+        },
+        "timeoutSeconds": {
+          "$ref": "#/$defs/Int32"
+        },
+        "workingDirectory": {
+          "$ref": "#/$defs/String"
+        },
+        "workspaceId": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "kind",
+        "timeoutSeconds"
+      ],
+      "additionalProperties": false
+    },
+    "BuilderWorkspacePath": {
+      "type": "object",
+      "properties": {
+        "createdAtUtc": {
+          "$ref": "#/$defs/UtcDateTime"
+        },
+        "hostPath": {
+          "$ref": "#/$defs/String"
+        },
+        "isDefault": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "pathId": {
+          "$ref": "#/$defs/String"
+        },
+        "sortOrder": {
+          "$ref": "#/$defs/Int32"
+        },
+        "updatedAtUtc": {
+          "$ref": "#/$defs/UtcDateTime"
+        },
+        "workspaceId": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "createdAtUtc",
+        "hostPath",
+        "isDefault",
+        "pathId",
+        "sortOrder",
+        "updatedAtUtc",
+        "workspaceId"
+      ],
+      "additionalProperties": false
+    },
+    "BuilderWorkspacePathList": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/BuilderWorkspacePath"
+      },
+      "minItems": 0,
+      "maxItems": 64
+    },
+    "BuilderWorkspaceDocument": {
+      "type": "object",
+      "properties": {
+        "createdAtUtc": {
+          "$ref": "#/$defs/UtcDateTime"
+        },
+        "documentId": {
+          "$ref": "#/$defs/String"
+        },
+        "filePath": {
+          "$ref": "#/$defs/String"
+        },
+        "sortOrder": {
+          "$ref": "#/$defs/Int32"
+        },
+        "updatedAtUtc": {
+          "$ref": "#/$defs/UtcDateTime"
+        },
+        "workspaceId": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "createdAtUtc",
+        "documentId",
+        "filePath",
+        "sortOrder",
+        "updatedAtUtc",
+        "workspaceId"
+      ],
+      "additionalProperties": false
+    },
+    "BuilderWorkspaceDocumentList": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/BuilderWorkspaceDocument"
+      },
+      "minItems": 0,
+      "maxItems": 64
+    },
+    "BuilderWorkspace": {
+      "type": "object",
+      "properties": {
+        "createdAtUtc": {
+          "$ref": "#/$defs/UtcDateTime"
+        },
+        "description": {
+          "$ref": "#/$defs/String"
+        },
+        "displayName": {
+          "$ref": "#/$defs/String"
+        },
+        "documents": {
+          "$ref": "#/$defs/BuilderWorkspaceDocumentList"
+        },
+        "paths": {
+          "$ref": "#/$defs/BuilderWorkspacePathList"
+        },
+        "updatedAtUtc": {
+          "$ref": "#/$defs/UtcDateTime"
+        },
+        "workspaceId": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "createdAtUtc",
+        "displayName",
+        "documents",
+        "paths",
+        "updatedAtUtc",
+        "workspaceId"
+      ],
+      "additionalProperties": false
+    },
+    "BuilderWorkspaceList": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/BuilderWorkspace"
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "BuilderWorkspaceBinding": {
+      "type": "object",
+      "properties": {
+        "bindingId": {
+          "$ref": "#/$defs/String"
+        },
+        "contributionId": {
+          "$ref": "#/$defs/String"
+        },
+        "createdAtUtc": {
+          "$ref": "#/$defs/UtcDateTime"
+        },
+        "extensionPointId": {
+          "$ref": "#/$defs/String"
+        },
+        "isEnabled": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "role": {
+          "$ref": "#/$defs/String"
+        },
+        "sortOrder": {
+          "$ref": "#/$defs/Int32"
+        },
+        "updatedAtUtc": {
+          "$ref": "#/$defs/UtcDateTime"
+        },
+        "workspaceId": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "bindingId",
+        "contributionId",
+        "createdAtUtc",
+        "extensionPointId",
+        "isEnabled",
+        "role",
+        "sortOrder",
+        "updatedAtUtc",
+        "workspaceId"
+      ],
+      "additionalProperties": false
+    },
+    "BuilderExecutionTarget": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "$ref": "#/$defs/String"
+        },
+        "displayName": {
+          "$ref": "#/$defs/String"
+        },
+        "facets": {
+          "$ref": "#/$defs/StringList"
+        },
+        "supportsFiles": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "supportsShell": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "targetId": {
+          "$ref": "#/$defs/String"
+        },
+        "targetKind": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "displayName",
+        "facets",
+        "supportsFiles",
+        "supportsShell",
+        "targetId",
+        "targetKind"
+      ],
+      "additionalProperties": false
+    },
+    "BuilderExecutionScope": {
+      "type": "object",
+      "properties": {
+        "defaultWorkingDirectory": {
+          "$ref": "#/$defs/String"
+        },
+        "displayName": {
+          "$ref": "#/$defs/String"
+        },
+        "pathStyleDescription": {
+          "$ref": "#/$defs/String"
+        },
+        "workspacePaths": {
+          "$ref": "#/$defs/StringList"
+        }
+      },
+      "required": [
+        "displayName",
+        "workspacePaths"
+      ],
+      "additionalProperties": false
+    },
+    "BuilderExecutionShell": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "$ref": "#/$defs/String"
+        },
+        "displayName": {
+          "$ref": "#/$defs/String"
+        },
+        "executablePath": {
+          "$ref": "#/$defs/String"
+        },
+        "shellId": {
+          "$ref": "#/$defs/String"
+        },
+        "syntaxKind": {
+          "$ref": "#/$defs/String"
+        }
+      },
+      "required": [
+        "description",
+        "displayName",
+        "executablePath",
+        "shellId",
+        "syntaxKind"
+      ],
+      "additionalProperties": false
+    },
+    "BuilderWorkspaceExecution": {
+      "type": "object",
+      "properties": {
+        "binding": {
+          "$ref": "#/$defs/BuilderWorkspaceBinding"
+        },
+        "scope": {
+          "$ref": "#/$defs/BuilderExecutionScope"
+        },
+        "shell": {
+          "$ref": "#/$defs/BuilderExecutionShell"
+        },
+        "supportsPathEnvironment": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "supportsPathMapping": {
+          "$ref": "#/$defs/Boolean"
+        },
+        "target": {
+          "$ref": "#/$defs/BuilderExecutionTarget"
+        },
+        "workspace": {
+          "$ref": "#/$defs/BuilderWorkspace"
+        }
+      },
+      "required": [
+        "binding",
+        "scope",
+        "shell",
+        "supportsPathEnvironment",
+        "supportsPathMapping",
+        "target",
+        "workspace"
+      ],
+      "additionalProperties": false
+    },
+    "BuilderProcessResult": {
+      "type": "object",
+      "properties": {
+        "exitCode": {
+          "$ref": "#/$defs/Int32"
+        },
+        "standardError": {
+          "$ref": "#/$defs/String"
+        },
+        "standardOutput": {
+          "$ref": "#/$defs/String"
+        },
+        "wasTruncated": {
+          "$ref": "#/$defs/Boolean"
+        }
+      },
+      "required": [
+        "exitCode",
+        "standardError",
+        "standardOutput",
+        "wasTruncated"
+      ],
+      "additionalProperties": false
+    },
+    "BuilderPathMapping": {
+      "type": "object",
+      "properties": {
+        "executionPath": {
+          "$ref": "#/$defs/String"
+        },
+        "hostPath": {
+          "$ref": "#/$defs/String"
+        },
+        "isInsideAllowedRoot": {
+          "$ref": "#/$defs/Boolean"
+        }
+      },
+      "required": [
+        "executionPath",
+        "hostPath",
+        "isInsideAllowedRoot"
+      ],
+      "additionalProperties": false
+    },
+    "BuilderExecuteResponse": {
+      "type": "object",
+      "properties": {
+        "execution": {
+          "$ref": "#/$defs/BuilderWorkspaceExecution"
+        },
+        "pathMapping": {
+          "$ref": "#/$defs/BuilderPathMapping"
+        },
+        "process": {
+          "$ref": "#/$defs/BuilderProcessResult"
+        },
+        "workspaces": {
+          "$ref": "#/$defs/BuilderWorkspaceList"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    }
+  }
+}

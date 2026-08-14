@@ -5,16 +5,45 @@ namespace Sunder.Package.Agent.Tests;
 internal sealed record RuntimePackageProject(
     string Name,
     string ProjectPath,
-    string MetadataPath)
+    string MetadataPath,
+    string AggregateProjectPath,
+    string? AppProjectPath,
+    IReadOnlyList<string> ProtocolProjectPaths)
 {
     public string DirectoryPath => Path.GetDirectoryName(ProjectPath)!;
 
-    public bool IsWorker => XDocument.Load(ProjectPath)
-        .Descendants("SunderPackageTarget")
-        .Any(static target => string.Equals(
-            target.Attribute("Kind")?.Value,
-            "worker",
-            StringComparison.Ordinal));
+    public string PackageDirectoryPath => Path.GetDirectoryName(MetadataPath)!;
+
+    public string? FamilyId => GetProperty("SunderPackageFamilyId");
+
+    public string? Role => GetProperty("SunderPackageRole");
+
+    public bool IsWorker => string.Equals(Role, "worker", StringComparison.Ordinal);
+
+    public string? AppAssemblyName => AppProjectPath is null
+        ? null
+        : GetAssemblyName(AppProjectPath);
+
+    public IReadOnlyList<string> RoleProjectPaths =>
+    [
+        ProjectPath,
+        .. AppProjectPath is null ? [] : new[] { AppProjectPath },
+        .. ProtocolProjectPaths,
+        AggregateProjectPath,
+    ];
+
+    private string? GetProperty(string name)
+        => GetProjectProperty(ProjectPath, name);
+
+    private static string GetAssemblyName(string projectPath)
+        => GetProjectProperty(projectPath, "AssemblyName")
+           ?? Path.GetFileNameWithoutExtension(projectPath);
+
+    private static string? GetProjectProperty(string projectPath, string name)
+        => XDocument.Load(projectPath)
+            .Descendants(name)
+            .Select(static property => property.Value)
+            .SingleOrDefault();
 }
 
 internal static class AgentPackageRepositoryInventory
@@ -54,17 +83,34 @@ internal static class AgentPackageRepositoryInventory
     private static RuntimePackageProject CreateRuntimePackageProject(string metadataPath)
     {
         var packageDirectory = Path.GetDirectoryName(metadataPath)!;
-        var projectPaths = Directory.EnumerateFiles(packageDirectory, "*.csproj", SearchOption.TopDirectoryOnly)
+        var projects = Directory.EnumerateFiles(packageDirectory, "*.csproj", SearchOption.AllDirectories)
+            .Where(IsSourceFile)
+            .Select(static path => new RoleProject(
+                Path.GetFullPath(path),
+                XDocument.Load(path).Descendants("SunderPackageRole")
+                    .Select(static property => property.Value)
+                    .SingleOrDefault()))
             .ToArray();
-
-        if (projectPaths.Length != 1)
-        {
-            throw new InvalidOperationException(
-                $"Expected exactly one project next to runtime package metadata '{metadataPath}', found {projectPaths.Length}.");
-        }
-
-        var projectPath = Path.GetFullPath(projectPaths[0]);
-        return new RuntimePackageProject(Path.GetFileNameWithoutExtension(projectPath), projectPath, metadataPath);
+        var worker = projects.Single(static project => string.Equals(project.Role, "worker", StringComparison.Ordinal));
+        var aggregate = projects.Single(static project => string.Equals(project.Role, "aggregate", StringComparison.Ordinal));
+        var app = projects.SingleOrDefault(static project => string.Equals(project.Role, "app", StringComparison.Ordinal));
+        var protocols = projects
+            .Where(static project => string.Equals(project.Role, "protocol", StringComparison.Ordinal))
+            .Select(static project => project.Path)
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var workerProject = XDocument.Load(worker.Path);
+        var name = workerProject.Descendants("AssemblyName")
+            .Select(static property => property.Value)
+            .SingleOrDefault()
+            ?? Path.GetFileNameWithoutExtension(worker.Path);
+        return new RuntimePackageProject(
+            name,
+            worker.Path,
+            metadataPath,
+            aggregate.Path,
+            app?.Path,
+            protocols);
     }
 
     private static DirectoryInfo FindRepositoryRoot()
@@ -96,4 +142,6 @@ internal static class AgentPackageRepositoryInventory
 
     private static string NormalizePath(string path)
         => path.Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
+
+    private sealed record RoleProject(string Path, string? Role);
 }

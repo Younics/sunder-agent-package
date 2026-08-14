@@ -9,10 +9,10 @@ internal sealed partial class AgentAppRuntimeGateway
     public Task<AgentAttachmentUploadRequest> LoadUploadRequestFromFileAsync(
         string path,
         CancellationToken cancellationToken = default)
-        => AgentAttachmentService.LoadLocalUploadRequestFromFileAsync(path, cancellationToken);
+        => AgentAttachmentUploadRules.LoadFromFileAsync(path, cancellationToken);
 
     public AgentAttachmentInfo InspectUpload(AgentAttachmentUploadRequest upload)
-        => AgentAttachmentService.InspectUploadContent(upload);
+        => AgentAttachmentUploadRules.Inspect(upload);
 
     public async Task<byte[]> ReadAttachmentBytesAsync(
         AgentAttachmentMetadata metadata,
@@ -33,7 +33,7 @@ internal sealed partial class AgentAppRuntimeGateway
             var bytes = chunk.Content ?? [];
             if (bytes.Length > AgentRuntimePayloadLimits.AttachmentDownloadChunkBytes
                 || chunk.NextOffset != offset + bytes.Length
-                || chunk.TotalBytes is < 0 or > (int)AgentAttachmentService.MaxAttachmentBytes
+                || chunk.TotalBytes is < 0 or > (int)AgentAttachmentUploadRules.MaxAttachmentBytes
                 || totalBytes is not null && totalBytes != chunk.TotalBytes)
             {
                 throw new InvalidDataException("Runtime returned an invalid attachment download chunk.");
@@ -67,10 +67,10 @@ internal sealed partial class AgentAppRuntimeGateway
             throw new InvalidOperationException(
                 $"Agent message exceeds the {AgentRuntimePayloadLimits.MaximumRunMessageCharacters} character Runtime transport limit.");
         }
-        if (attachments.Count > AgentAttachmentService.MaxAttachmentsPerMessage)
+        if (attachments.Count > AgentAttachmentUploadRules.MaxAttachmentsPerMessage)
         {
             throw new InvalidOperationException(
-                $"A message can include at most {AgentAttachmentService.MaxAttachmentsPerMessage} attachments.");
+                $"A message can include at most {AgentAttachmentUploadRules.MaxAttachmentsPerMessage} attachments.");
         }
 
         AgentRuntimePayloadLimits.EnsureRunCommandFits(command with
@@ -85,7 +85,7 @@ internal sealed partial class AgentAppRuntimeGateway
         {
             foreach (var attachment in attachments)
             {
-                AgentAttachmentService.InspectUploadContent(attachment);
+                AgentAttachmentUploadRules.Inspect(attachment);
                 var descriptor = new AgentAttachmentUploadDescriptor(
                     attachment.FileName,
                     attachment.MediaType,
@@ -148,7 +148,7 @@ internal sealed partial class AgentAppRuntimeGateway
             {
                 try
                 {
-                    _ = await _transport.InvokeAsync(
+                    _ = await _ownerClient.InvokeAsync(
                         AgentRuntimeOperations.AttachmentTransfers,
                         new AgentAttachmentTransferRequest(
                             AgentAttachmentTransferKind.AbortUpload,

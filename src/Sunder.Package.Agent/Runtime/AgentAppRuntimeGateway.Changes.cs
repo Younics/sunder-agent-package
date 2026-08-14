@@ -66,14 +66,6 @@ internal sealed partial class AgentAppRuntimeGateway
         var nextSubscriptionReason = startReason;
         while (!cancellationToken.IsCancellationRequested && IsCurrentObservation(generation))
         {
-            if (!_transport.IsAvailable)
-            {
-                SetConnectionStateIfCurrent(generation, AgentRuntimeConnectionState.Unavailable);
-                nextSubscriptionReason = ChangeObservationStartReason.Recovery;
-                if (!await DelayForReconnectAsync(reconnectDelay, cancellationToken).ConfigureAwait(false)) return;
-                reconnectDelay = NextReconnectDelay(reconnectDelay);
-                continue;
-            }
             var connectedAt = Stopwatch.GetTimestamp();
             try
             {
@@ -86,7 +78,7 @@ internal sealed partial class AgentAppRuntimeGateway
                     SetConnectionStateIfCurrent(generation, AgentRuntimeConnectionState.Reconnecting);
                 }
                 nextSubscriptionReason = ChangeObservationStartReason.Recovery;
-                await foreach (var change in _transport.SubscribeAsync(
+                await foreach (var change in _ownerClient.SubscribeAsync(
                                    AgentRuntimeOperations.Changes,
                                    new AgentChangeSubscription(
                                        _revision,

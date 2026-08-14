@@ -3,7 +3,7 @@ using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Services;
-using Sunder.Sdk.Runtime;
+using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.PackageViews;
 
@@ -49,16 +49,14 @@ internal sealed record AgentEditorInvocationFailure(
     public static AgentEditorInvocationFailure Runtime(
         string? packageId,
         AgentEditorInvocationOperation operation,
-        PackageRuntimeInvocationException exception)
+        SunderRpcException exception)
         => new(
             packageId,
             AgentEditorInvocationFailureKind.Runtime,
             operation == AgentEditorInvocationOperation.Save
                 ? "Runtime could not save these workspace settings. Retry the affected section."
                 : "Runtime could not load these workspace settings. Retry when Runtime is available.",
-            exception.Code,
-            exception.StatusCode,
-            exception.CorrelationId);
+            exception.Error.Code);
 
     public static AgentEditorInvocationFailure Unavailable(
         string? packageId,
@@ -140,7 +138,10 @@ internal static class AgentWorkspaceEditorInvocation
 
                 return AgentEditorInvocationResult<TResult>.Succeeded(result);
             }
-            catch (PackageRuntimeInvocationException exception)
+            catch (SunderRpcException exception) when (
+                exception.Error.Kind != SunderRpcErrorKind.Validation
+                &&
+                !AgentRpcInvocation.IsUnavailableFailure(exception, cancellationToken))
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 return AgentEditorInvocationResult<TResult>.Failed(

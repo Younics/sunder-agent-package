@@ -1,21 +1,20 @@
 using Microsoft.Extensions.Logging;
 using Sunder.Agent.Execution.Common;
 using Sunder.Sdk.Abstractions;
-using Sunder.Sdk.Runtime;
 
 namespace Sunder.Package.Agent.Execution.Docker;
 
-internal sealed class DockerExecutionRuntimeOperationHandler(
+internal sealed class DockerExecutionPresentationRpcHandler(
     IPackageContext packageContext,
     DockerCliRunner dockerCliRunner,
     DockerImageCatalogService imageCatalog)
-    : IPackageRuntimeOperationHandler<DockerExecutionOperationRequest, DockerExecutionOperationResponse>
+    : IDockerExecutionPresentationClient
 {
     private const int MaximumPathLength = 1024;
     private readonly ILogger _logger = packageContext.Logging.LoggerFactory
-        .CreateLogger<DockerExecutionRuntimeOperationHandler>();
+        .CreateLogger<DockerExecutionPresentationRpcHandler>();
 
-    public async ValueTask<DockerExecutionOperationResponse> HandleAsync(
+    public async ValueTask<DockerExecutionOperationResponse> ExecuteAsync(
         DockerExecutionOperationRequest request,
         CancellationToken cancellationToken = default)
     {

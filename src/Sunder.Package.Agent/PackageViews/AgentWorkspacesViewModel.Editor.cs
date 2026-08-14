@@ -594,7 +594,7 @@ public sealed partial class AgentWorkspacesViewModel
         return new AgentWorkspaceEditorContext(
             SelectedWorkspace,
             SelectedExecutionTarget.TargetId!,
-            AgentWorkspaceService.BuildPrimaryBindingId(SelectedWorkspace.WorkspaceId));
+            AgentWorkspaceDefaults.BuildPrimaryBindingId(SelectedWorkspace.WorkspaceId));
     }
 
     private async Task<AgentEditorSaveResult> SaveEditorSectionsAsync(

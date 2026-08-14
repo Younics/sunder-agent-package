@@ -68,16 +68,6 @@ public partial class AgentWorkspacesView : UserControl, IDisposable, IPackageVie
         DataContext = _viewModel;
     }
 
-    public AgentWorkspacesView(
-        AgentWorkspaceService workspaceService,
-        AgentExecutionTargetService executionTargetService,
-        AgentRpcCatalog rpcCatalog,
-        AgentExecutionTargetWarmupService warmupService,
-        IPackageSettingsNavigationService? settingsNavigationService = null)
-        : this(workspaceService, warmupService, rpcCatalog, settingsNavigationService)
-    {
-    }
-
     public void Dispose()
     {
         if (_disposed)

@@ -1,5 +1,5 @@
 using Microsoft.Data.Sqlite;
-using Sunder.Sdk.Abstractions;
+using Sunder.Package.Agent.Contracts;
 
 namespace Sunder.Package.Agent.Storage;
 
@@ -123,10 +123,14 @@ public sealed partial class AgentLocalStore
         connection.Open();
         using var transaction = connection.BeginTransaction(deferred: false);
         var current = GetCurrentRuntimeGeneration(connection, transaction);
+        var supersedesCurrent = current is { Status: "Committed" }
+            && current.Epoch != generation.ActivationId
+            && generation.SessionGeneration > current.RuntimeSessionGeneration;
         if (current?.Epoch != expectedCurrentEpoch
             || current is { Status: "Committed" }
                && current.Epoch != generation.ActivationId
-               && current.LeaseExpiresAtUtc > now)
+               && current.LeaseExpiresAtUtc > now
+               && !supersedesCurrent)
         {
             transaction.Rollback();
             return false;
@@ -139,13 +143,16 @@ public sealed partial class AgentLocalStore
             expire.CommandText = """
                 UPDATE AgentRuntimeGenerations
                 SET Status = 'Expired',
+                    LeaseExpiresAtUtc = $now,
                     StoppedAtUtc = $now
                 WHERE Epoch = $epoch
                   AND Status = 'Committed'
-                  AND LeaseExpiresAtUtc <= $now;
+                  AND (LeaseExpiresAtUtc <= $now
+                       OR RuntimeSessionGeneration < $runtimeSessionGeneration);
                 """;
             expire.Parameters.AddWithValue("$now", now.ToString("O"));
             expire.Parameters.AddWithValue("$epoch", current.Epoch.ToString());
+            expire.Parameters.AddWithValue("$runtimeSessionGeneration", generation.SessionGeneration);
             if (expire.ExecuteNonQuery() != 1)
             {
                 transaction.Rollback();

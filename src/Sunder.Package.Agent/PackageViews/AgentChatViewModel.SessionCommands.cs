@@ -1,4 +1,5 @@
 using CommunityToolkit.Mvvm.Input;
+using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Services;
 
 namespace Sunder.Package.Agent.PackageViews;
@@ -145,6 +146,6 @@ public sealed partial class AgentChatViewModel
     private static bool IsUnassignedSessionsWorkspace(string workspaceId)
         => string.Equals(
             workspaceId,
-            AgentWorkspaceService.UnassignedSessionsWorkspaceId,
+            AgentWorkspaceDefaults.UnassignedSessionsWorkspaceId,
             StringComparison.OrdinalIgnoreCase);
 }

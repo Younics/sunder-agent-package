@@ -24,12 +24,24 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
         AgentToolService toolService,
         AgentRpcCatalog rpcCatalog,
         AgentRpcProviderService<IAgentBehaviorLoop> behaviorLoops)
+        : this(store, toolService, rpcCatalog, behaviorLoops, refreshProviderSubscriptions: true)
+    {
+    }
+
+    internal AgentProfileService(
+        AgentLocalStore store,
+        AgentToolService toolService,
+        AgentRpcCatalog rpcCatalog,
+        AgentRpcProviderService<IAgentBehaviorLoop> behaviorLoops,
+        bool refreshProviderSubscriptions)
     {
         _store = store;
         _toolService = toolService;
         _rpcCatalog = rpcCatalog;
         _behaviorLoops = behaviorLoops;
-        _capabilityChangeObserver = new AgentProfileSelectableCapabilityChangeObserver(rpcCatalog);
+        _capabilityChangeObserver = new AgentProfileSelectableCapabilityChangeObserver(
+            rpcCatalog,
+            refreshProviderSubscriptions);
         _capabilityChangeObserver.Changed += OnSelectableCapabilitiesChanged;
     }
 

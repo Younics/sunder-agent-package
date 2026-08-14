@@ -80,6 +80,7 @@ public sealed class AgentRpcInvariantReportingTests
             "test.invariant.contract",
             "1.0.0",
             new string('a', 64),
+            new string('b', 64),
             Guid.NewGuid(),
             1,
             1,

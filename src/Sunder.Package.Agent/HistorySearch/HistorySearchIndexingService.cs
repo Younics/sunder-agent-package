@@ -8,7 +8,6 @@ using Sunder.Sdk.Abstractions;
 namespace Sunder.Package.Agent.HistorySearch;
 
 internal sealed partial class HistorySearchIndexingService :
-    IPackageBackgroundService,
     IAgentSessionDataCleaner,
     IAsyncDisposable
 {

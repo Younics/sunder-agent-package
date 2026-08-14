@@ -10,13 +10,13 @@ internal readonly record struct ApiKeyStatus(string Label, string Detail, bool I
 internal sealed partial class ApiKeySettingsState : ObservableObject, IDisposable
 {
     private static readonly TimeSpan SuccessStatusDuration = TimeSpan.FromSeconds(4);
-    private readonly IProviderCredentialSettingsGateway _credentials;
+    private readonly IProviderCredentialOwnerClient _credentials;
     private readonly Func<bool, ApiKeyStatus> _resolveStatus;
     private readonly OperationState _operation = new();
     private readonly TimedStatusController _statusTimer;
 
     internal ApiKeySettingsState(
-        IProviderCredentialSettingsGateway credentials,
+        IProviderCredentialOwnerClient credentials,
         string description,
         string placeholder,
         Func<bool, ApiKeyStatus> resolveStatus,

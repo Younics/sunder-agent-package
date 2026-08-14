@@ -1,18 +1,17 @@
 using Sunder.Agent.Execution.Common;
 using Sunder.Sdk.Abstractions;
-using Sunder.Sdk.Runtime;
 
 namespace Sunder.Package.Agent.Execution.Local;
 
-internal sealed class LocalExecutionRuntimeOperationHandler(
+internal sealed class LocalExecutionPresentationRpcHandler(
     IPackageContext packageContext,
     LocalShellCatalogService shellCatalog)
-    : IPackageRuntimeOperationHandler<LocalExecutionOperationRequest, LocalExecutionOperationResponse>
+    : ILocalExecutionPresentationClient
 {
     private const int MaximumShellCount = 32;
     private const int MaximumPathLength = 1024;
 
-    public async ValueTask<LocalExecutionOperationResponse> HandleAsync(
+    public async ValueTask<LocalExecutionOperationResponse> ExecuteAsync(
         LocalExecutionOperationRequest request,
         CancellationToken cancellationToken = default)
     {

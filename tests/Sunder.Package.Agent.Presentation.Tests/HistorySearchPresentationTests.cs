@@ -16,10 +16,10 @@ using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.PackageViews;
 using Sunder.Package.Agent.Protocol;
+using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Tests;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Notifications;
-using Sunder.Sdk.Runtime;
 using Xunit;
 
 namespace Sunder.Package.Agent.Presentation.Tests;
@@ -194,12 +194,12 @@ public sealed class HistorySearchPresentationTests
 
     private static ServiceProvider CreateServices(
         RegressionTestPackageScope scope,
-        IPackageRuntimeClient runtime)
+        IAgentOwnerClient runtime)
     {
         var services = new ServiceCollection();
         services.AddSingleton<IPackageContext>(scope.Context);
         services.AddSingleton(runtime);
-        services.AddSingleton<IPackageRuntimeClient>(runtime);
+        services.AddSingleton<IAgentOwnerClient>(runtime);
         services.AddSingleton<AgentRpcCatalog>(new RegressionTestExtensionCatalog());
         services.AddSingleton<IPackageShellViewService, PresentationShellViewService>();
         services.AddSingleton<IPackageNotificationService>(NullPackageNotificationService.Instance);
@@ -217,32 +217,36 @@ public sealed class HistorySearchPresentationTests
         Assert.Same(expected, actual);
     }
 
-    private sealed class PresentationHistoryRuntimeClient : IPackageRuntimeClient
+    private sealed class PresentationHistoryRuntimeClient : IAgentOwnerClient
     {
-        public bool IsAvailable => true;
-
         public ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-            PackageRuntimeOperation<TRequest, TResponse> operation,
+            AgentOwnerRpcOperation<TRequest, TResponse> operation,
             TRequest request,
             CancellationToken cancellationToken = default)
             where TRequest : class
             where TResponse : class
         {
             cancellationToken.ThrowIfCancellationRequested();
-            return operation.OperationId switch
+            if (operation.Is(AgentRuntimeOperations.HistorySearch))
             {
-                "agent.history.search.v1" => new ValueTask<TResponse>(CreateSearchResponse<TRequest, TResponse>(request)),
-                "agent.history.state.v1" => new ValueTask<TResponse>(CreateStateResponse<TResponse>()),
-                "agent.history.command.v1" => new ValueTask<TResponse>(CreateResponse<TResponse>(new
+                return new ValueTask<TResponse>(CreateSearchResponse<TRequest, TResponse>(request));
+            }
+            if (operation.Is(AgentRuntimeOperations.HistoryState))
+            {
+                return new ValueTask<TResponse>(CreateStateResponse<TResponse>());
+            }
+            if (operation.Is(AgentRuntimeOperations.HistoryCommands))
+            {
+                return new ValueTask<TResponse>(CreateResponse<TResponse>(new
                 {
                     Status = CreateStatus(),
-                })),
-                _ => throw new NotSupportedException(operation.OperationId),
-            };
+                }));
+            }
+            throw new NotSupportedException(operation.Describe());
         }
 
         public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-            PackageRuntimeStream<TRequest, TEvent> stream,
+            AgentOwnerRpcStream<TRequest, TEvent> stream,
             TRequest request,
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
             where TRequest : class

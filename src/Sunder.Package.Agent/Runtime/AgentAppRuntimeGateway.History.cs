@@ -85,7 +85,7 @@ internal sealed partial class AgentAppRuntimeGateway :
                     afterRevision = _historyStatusRevision;
                     runtimeInstanceId = _historyRuntimeInstanceId;
                 }
-                await foreach (var status in _transport.SubscribeAsync(
+                await foreach (var status in _ownerClient.SubscribeAsync(
                                    AgentRuntimeOperations.HistoryStatus,
                                    new HistorySearchStatusSubscription(afterRevision, runtimeInstanceId),
                                    cancellationToken).ConfigureAwait(false))

@@ -1,3 +1,5 @@
+extern alias AgentCore;
+
 using System.Collections.Specialized;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
@@ -17,6 +19,7 @@ using Sunder.Package.Agent.Contracts.Services;
 using Sunder.Package.Agent.Execution.Local;
 using Sunder.Package.Agent.HistorySearch;
 using Sunder.Package.Agent.Mcp;
+using Sunder.Package.Agent.Mcp.Runtime;
 using Sunder.Package.Agent.Mcp.Services;
 using Sunder.Package.Agent.Memory.Semantic;
 using Sunder.Package.Agent.Memory.Semantic.Services;
@@ -38,9 +41,17 @@ using Sunder.Package.Agent.Tools.Files;
 using Sunder.Package.Agent.Tools.Shell;
 using Sunder.Sdk.Abstractions;
 using Xunit;
+using AgentPresentationDispatcher = AgentCore::Sunder.Package.Agent.Shared.Presentation.IPresentationDispatcher;
 
 namespace Sunder.Package.Agent.Tests;
 
+[CollectionDefinition(Name, DisableParallelization = true)]
+public sealed class AgentRunCoordinatorIsolationCollection
+{
+    public const string Name = "Agent run coordinator integration";
+}
+
+[Collection(AgentRunCoordinatorIsolationCollection.Name)]
 public sealed class AgentRunCoordinatorTests
 {
     [Fact]
@@ -226,7 +237,7 @@ public sealed class AgentRunCoordinatorTests
             new AgentRunCommandStatusRequest(sessionId, userTurnId));
 
         Assert.Equal(AgentRunCommandStatus.Pending, pending.Status);
-        await Assert.ThrowsAsync<InvalidOperationException>(async () => await handler.HandleAsync(command));
+        await Assert.ThrowsAsync<AgentOwnerOperationException>(async () => await handler.HandleAsync(command));
 
         cancellation.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => admission);
@@ -4682,7 +4693,7 @@ public sealed class AgentRunCoordinatorTests
             var subagent = service.CreateSubagent("Researcher");
 
             Assert.False(subagent.HasRequiredDescription);
-            var ex = Assert.Throws<InvalidOperationException>(
+            var ex = Assert.Throws<SubagentOwnerOperationException>(
                 () =>
                     service.SaveSubagent(
                         subagent.SubagentId,
@@ -6369,6 +6380,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.SessionService,
             runtime.PermissionService,
             runtime.RunCoordinator,
+            InlineAgentPresentationDispatcher.Instance,
             attachmentService: runtime.AttachmentService
         );
         await viewModel.InitializeAsync();
@@ -6376,9 +6388,20 @@ public sealed class AgentRunCoordinatorTests
             .Single(message => message.RowId == rollbackTurn.TurnId);
         await viewModel.StartRollbackFromMessageCommand.ExecuteAsync(row);
         viewModel.DraftMessage = "replacement message";
+        var rollbackCleared = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(AgentChatViewModel.IsRollbackPending)
+                && !viewModel.IsRollbackPending)
+            {
+                rollbackCleared.TrySetResult();
+            }
+        };
 
         Assert.True(viewModel.SendMessageCommand.CanExecute(null));
         await viewModel.SendMessageCommand.ExecuteAsync(null);
+        await rollbackCleared.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
         var turns = runtime.SessionService.ListTurns(sessionId);
         Assert.Contains(turns, turn => turn.TurnId == retainedTurn.TurnId);
@@ -7140,7 +7163,8 @@ public sealed class AgentRunCoordinatorTests
             );
             var service = new SubagentService(new SubagentStore(new TestPackageContext(rootPath)));
             var subagent = service.CreateSubagent("Alpha Subagent");
-            using var viewModel = new SubagentsViewModel(service, runtime.ExtensionCatalog)
+            using var gateway = new WorkerBackedSubagentManagementGateway(service, runtime.ExtensionCatalog);
+            using var viewModel = new SubagentsViewModel(gateway)
             {
                 IsCompactLayout = true,
             };
@@ -7191,7 +7215,8 @@ public sealed class AgentRunCoordinatorTests
             );
             var service = new SubagentService(new SubagentStore(new TestPackageContext(rootPath)));
             var subagent = service.CreateSubagent("Alpha Subagent");
-            using var viewModel = new SubagentsViewModel(service, runtime.ExtensionCatalog)
+            using var gateway = new WorkerBackedSubagentManagementGateway(service, runtime.ExtensionCatalog);
+            using var viewModel = new SubagentsViewModel(gateway)
             {
                 IsCompactLayout = true,
             };
@@ -7244,7 +7269,8 @@ public sealed class AgentRunCoordinatorTests
             );
             var service = new SubagentService(new SubagentStore(new TestPackageContext(rootPath)));
             var subagent = service.CreateSubagent("Alpha Subagent");
-            using var viewModel = new SubagentsViewModel(service, runtime.ExtensionCatalog);
+            using var gateway = new WorkerBackedSubagentManagementGateway(service, runtime.ExtensionCatalog);
+            using var viewModel = new SubagentsViewModel(gateway);
             await viewModel.InitializeAsync();
             Assert.Equal(subagent.SubagentId, viewModel.SelectedSubagent?.SubagentId);
             viewModel.Subagents.CollectionChanged += (_, args) =>
@@ -7295,7 +7321,8 @@ public sealed class AgentRunCoordinatorTests
             using var runtime = AgentTestRuntime.CreateWithoutChatProvider();
             var service = new SubagentService(new SubagentStore(new TestPackageContext(rootPath)));
             var subagent = service.CreateSubagent("Alpha Subagent");
-            using var viewModel = new SubagentsViewModel(service, runtime.ExtensionCatalog);
+            using var gateway = new WorkerBackedSubagentManagementGateway(service, runtime.ExtensionCatalog);
+            using var viewModel = new SubagentsViewModel(gateway);
             await viewModel.InitializeAsync();
 
             Assert.Equal(subagent.SubagentId, viewModel.SelectedSubagent?.SubagentId);
@@ -7340,9 +7367,9 @@ public sealed class AgentRunCoordinatorTests
             );
             var service = new SubagentService(new SubagentStore(new TestPackageContext(rootPath)));
             service.CreateSubagent("Alpha Subagent");
+            using var gateway = new WorkerBackedSubagentManagementGateway(service, runtime.ExtensionCatalog);
             using var viewModel = new SubagentsViewModel(
-                service,
-                runtime.ExtensionCatalog,
+                gateway,
                 settingsNavigation
             );
             await viewModel.InitializeAsync();
@@ -7387,7 +7414,13 @@ public sealed class AgentRunCoordinatorTests
             profileId: runtime.CurrentProfileId,
             agentKind: "subagent"
         );
-        using var viewModel = new SubsessionsViewModel(runtime.ExtensionCatalog)
+        using var runtimeAdapter = new SubsessionLocalRuntimeAdapter(
+            runtime.ExtensionCatalog.GetRequiredReference(AgentRpcServices.RuntimeCatalogs));
+        using var viewModel = new SubsessionsViewModel(
+            runtimeAdapter,
+            runtimeAdapter,
+            runtimeAdapter,
+            runtimeAdapter)
         {
             IsCompactLayout = true,
         };
@@ -7461,7 +7494,13 @@ public sealed class AgentRunCoordinatorTests
 
         Assert.Null(runtime.SessionService.GetSession(parentSessionId));
         Assert.Null(runtime.SessionService.GetSession(childSession.SessionId));
-        using (var subsessionsViewModel = new SubsessionsViewModel(runtime.ExtensionCatalog))
+        using var runtimeAdapter = new SubsessionLocalRuntimeAdapter(
+            runtime.ExtensionCatalog.GetRequiredReference(AgentRpcServices.RuntimeCatalogs));
+        using (var subsessionsViewModel = new SubsessionsViewModel(
+                   runtimeAdapter,
+                   runtimeAdapter,
+                   runtimeAdapter,
+                   runtimeAdapter))
         {
             Assert.DoesNotContain(
                 subsessionsViewModel.Subsessions,
@@ -7513,7 +7552,13 @@ public sealed class AgentRunCoordinatorTests
         Assert.Null(runtime.WorkspaceService.GetWorkspace(runtime.CurrentWorkspaceId));
         Assert.Null(runtime.SessionService.GetSession(parentSessionId));
         Assert.Null(runtime.SessionService.GetSession(childSession.SessionId));
-        using (var subsessionsViewModel = new SubsessionsViewModel(runtime.ExtensionCatalog))
+        using var runtimeAdapter = new SubsessionLocalRuntimeAdapter(
+            runtime.ExtensionCatalog.GetRequiredReference(AgentRpcServices.RuntimeCatalogs));
+        using (var subsessionsViewModel = new SubsessionsViewModel(
+                   runtimeAdapter,
+                   runtimeAdapter,
+                   runtimeAdapter,
+                   runtimeAdapter))
         {
             Assert.DoesNotContain(
                 subsessionsViewModel.Subsessions,
@@ -8145,7 +8190,10 @@ public sealed class AgentRunCoordinatorTests
                 AgentRpcServices.SelectableCapabilityProviders,
                 new McpToolSource(serverCatalogService, connectionManager)
             );
-            using var viewModel = new SubagentsViewModel(subagentService, runtime.ExtensionCatalog);
+            using var gateway = new WorkerBackedSubagentManagementGateway(
+                subagentService,
+                runtime.ExtensionCatalog);
+            using var viewModel = new SubagentsViewModel(gateway);
             await viewModel.InitializeAsync();
 
             await WaitUntilAsync(() => viewModel.SelectedSubagent is not null);
@@ -8247,13 +8295,11 @@ public sealed class AgentRunCoordinatorTests
             await using var connectionManager = new McpClientConnectionManager(
                 NullLoggerFactory.Instance
             );
-            using var viewModel = new AgentMcpSettingsViewModel(
+            using var viewModel = CreateMcpSettingsViewModel(
                 serverCatalogService,
                 connectionManager
-            )
-            {
-                IsCompactLayout = true,
-            };
+            );
+            viewModel.IsCompactLayout = true;
 
             await WaitUntilAsync(() => viewModel.Servers.Count == 1);
 
@@ -8309,13 +8355,11 @@ public sealed class AgentRunCoordinatorTests
             await using var connectionManager = new McpClientConnectionManager(
                 NullLoggerFactory.Instance
             );
-            using var viewModel = new AgentMcpSettingsViewModel(
+            using var viewModel = CreateMcpSettingsViewModel(
                 serverCatalogService,
                 connectionManager
-            )
-            {
-                IsCompactLayout = true,
-            };
+            );
+            viewModel.IsCompactLayout = true;
             await WaitUntilAsync(() => viewModel.Servers.Count == 1);
             viewModel.ActivateServer(
                 viewModel.Servers.Single(server => server.ServerId == "local-mcp")
@@ -8359,7 +8403,7 @@ public sealed class AgentRunCoordinatorTests
             await using var connectionManager = new McpClientConnectionManager(
                 NullLoggerFactory.Instance
             );
-            using var viewModel = new AgentMcpSettingsViewModel(
+            using var viewModel = CreateMcpSettingsViewModel(
                 serverCatalogService,
                 connectionManager
             );
@@ -9264,7 +9308,13 @@ public sealed class AgentRunCoordinatorTests
             AgentMessageRole.Assistant,
             "Child transcript content."
         );
-        using var viewModel = new SubsessionsViewModel(runtime.ExtensionCatalog);
+        using var runtimeAdapter = new SubsessionLocalRuntimeAdapter(
+            runtime.ExtensionCatalog.GetRequiredReference(AgentRpcServices.RuntimeCatalogs));
+        using var viewModel = new SubsessionsViewModel(
+            runtimeAdapter,
+            runtimeAdapter,
+            runtimeAdapter,
+            runtimeAdapter);
 
         await viewModel.OnNavigatedToAsync(
             new PackageViewNavigationContext(
@@ -9335,7 +9385,13 @@ public sealed class AgentRunCoordinatorTests
             AgentMessageRole.Assistant,
             "Second transcript content."
         );
-        using var viewModel = new SubsessionsViewModel(runtime.ExtensionCatalog);
+        using var runtimeAdapter = new SubsessionLocalRuntimeAdapter(
+            runtime.ExtensionCatalog.GetRequiredReference(AgentRpcServices.RuntimeCatalogs));
+        using var viewModel = new SubsessionsViewModel(
+            runtimeAdapter,
+            runtimeAdapter,
+            runtimeAdapter,
+            runtimeAdapter);
         var firstNavigation = new PackageViewNavigationContext(
             SubagentConstants.SubsessionsViewId,
             new Dictionary<string, string?>
@@ -9400,7 +9456,13 @@ public sealed class AgentRunCoordinatorTests
             AgentMessageRole.User,
             "Child task request."
         );
-        using var viewModel = new SubsessionsViewModel(runtime.ExtensionCatalog);
+        using var runtimeAdapter = new SubsessionLocalRuntimeAdapter(
+            runtime.ExtensionCatalog.GetRequiredReference(AgentRpcServices.RuntimeCatalogs));
+        using var viewModel = new SubsessionsViewModel(
+            runtimeAdapter,
+            runtimeAdapter,
+            runtimeAdapter,
+            runtimeAdapter);
         await viewModel.OnNavigatedToAsync(
             new PackageViewNavigationContext(
                 SubagentConstants.SubsessionsViewId,
@@ -9537,7 +9599,13 @@ public sealed class AgentRunCoordinatorTests
             AgentMessageRole.Assistant,
             "First transcript content."
         );
-        using var viewModel = new SubsessionsViewModel(runtime.ExtensionCatalog);
+        using var runtimeAdapter = new SubsessionLocalRuntimeAdapter(
+            runtime.ExtensionCatalog.GetRequiredReference(AgentRpcServices.RuntimeCatalogs));
+        using var viewModel = new SubsessionsViewModel(
+            runtimeAdapter,
+            runtimeAdapter,
+            runtimeAdapter,
+            runtimeAdapter);
         await viewModel.OnNavigatedToAsync(
             new PackageViewNavigationContext(
                 SubagentConstants.SubsessionsViewId,
@@ -9590,7 +9658,13 @@ public sealed class AgentRunCoordinatorTests
             AgentMessageRole.Assistant,
             "Initial child transcript."
         );
-        using var viewModel = new SubsessionsViewModel(runtime.ExtensionCatalog);
+        using var runtimeAdapter = new SubsessionLocalRuntimeAdapter(
+            runtime.ExtensionCatalog.GetRequiredReference(AgentRpcServices.RuntimeCatalogs));
+        using var viewModel = new SubsessionsViewModel(
+            runtimeAdapter,
+            runtimeAdapter,
+            runtimeAdapter,
+            runtimeAdapter);
         await viewModel.OnNavigatedToAsync(
             new PackageViewNavigationContext(
                 SubagentConstants.SubsessionsViewId,
@@ -9679,7 +9753,13 @@ public sealed class AgentRunCoordinatorTests
             profileId: runtime.CurrentProfileId,
             agentKind: "subagent"
         );
-        using var viewModel = new SubsessionsViewModel(runtime.ExtensionCatalog);
+        using var runtimeAdapter = new SubsessionLocalRuntimeAdapter(
+            runtime.ExtensionCatalog.GetRequiredReference(AgentRpcServices.RuntimeCatalogs));
+        using var viewModel = new SubsessionsViewModel(
+            runtimeAdapter,
+            runtimeAdapter,
+            runtimeAdapter,
+            runtimeAdapter);
         await viewModel.OnNavigatedToAsync(
             new PackageViewNavigationContext(
                 SubagentConstants.SubsessionsViewId,
@@ -13657,6 +13737,18 @@ public sealed class AgentRunCoordinatorTests
         return statuses;
     }
 
+    private static AgentMcpSettingsViewModel CreateMcpSettingsViewModel(
+        McpServerCatalogService catalog,
+        McpClientConnectionManager connections)
+        => new(
+            new McpLocalManagementGateway(
+                new McpSettingsEditorService(catalog),
+                new McpConfigurationCoordinator(
+                    new McpEcosystemConfigurationImporter(catalog),
+                    syncService: null),
+                new McpServerConnectionService(catalog, connections, oauthService: null),
+                new McpOAuthCoordinator(oauthService: null, connections)));
+
     private static ConfiguredMcpServerRecord CreateMcpServer(
         string serverId,
         string name,
@@ -13695,6 +13787,28 @@ public sealed class AgentRunCoordinatorTests
             exception.Message.StartsWith("Collection was modified", StringComparison.Ordinal))
         {
             return false;
+        }
+    }
+
+    private sealed class InlineAgentPresentationDispatcher : AgentPresentationDispatcher
+    {
+        private readonly SemaphoreSlim _gate = new(1, 1);
+
+        public static InlineAgentPresentationDispatcher Instance { get; } = new();
+
+        public bool CheckAccess() => true;
+
+        public async Task InvokeAsync(Action action)
+        {
+            await _gate.WaitAsync();
+            try
+            {
+                action();
+            }
+            finally
+            {
+                _gate.Release();
+            }
         }
     }
 
@@ -13847,7 +13961,13 @@ public sealed class AgentRunCoordinatorTests
             runtime.RunCoordinator
         );
         await main.InitializeAsync();
-        using var subsessions = new SubsessionsViewModel(runtime.ExtensionCatalog);
+        using var runtimeAdapter = new SubsessionLocalRuntimeAdapter(
+            runtime.ExtensionCatalog.GetRequiredReference(AgentRpcServices.RuntimeCatalogs));
+        using var subsessions = new SubsessionsViewModel(
+            runtimeAdapter,
+            runtimeAdapter,
+            runtimeAdapter,
+            runtimeAdapter);
         await subsessions.OnNavigatedToAsync(
             new PackageViewNavigationContext(
                 SubagentConstants.SubsessionsViewId,
@@ -16687,7 +16807,7 @@ public sealed class AgentRunCoordinatorTests
                     .ToArray()
             );
 
-        private static IReadOnlyList<float> CreateVector(string text)
+        private static IReadOnlyList<double> CreateVector(string text)
         {
             var normalized = text.Trim().ToLowerInvariant();
             if (

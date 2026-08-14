@@ -739,7 +739,10 @@ public sealed class SubagentPresentationDispatcherTests
                 Name = "Subagent presentation test dispatcher",
             };
             _thread.Start();
-            ThreadId = _started.Task.GetAwaiter().GetResult();
+            ThreadId = _started.Task
+                .WaitAsync(TimeSpan.FromSeconds(5))
+                .GetAwaiter()
+                .GetResult();
         }
 
         public int ThreadId { get; }
@@ -756,7 +759,7 @@ public sealed class SubagentPresentationDispatcherTests
 
             var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             _queue.Add(new WorkItem(action, completion));
-            return completion.Task;
+            return completion.Task.WaitAsync(TimeSpan.FromSeconds(5));
         }
 
         private void Run()
@@ -779,7 +782,10 @@ public sealed class SubagentPresentationDispatcherTests
         public void Dispose()
         {
             _queue.CompleteAdding();
-            _thread.Join();
+            if (!_thread.Join(TimeSpan.FromSeconds(5)))
+            {
+                throw new TimeoutException("Timed out stopping the subagent presentation test dispatcher.");
+            }
             _queue.Dispose();
         }
 

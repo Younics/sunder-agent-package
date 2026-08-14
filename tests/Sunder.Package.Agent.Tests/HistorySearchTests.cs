@@ -597,7 +597,7 @@ public sealed class HistorySearchTests
                     Vector(text))).ToArray());
         }
 
-        private static IReadOnlyList<float> Vector(string text)
+        private static IReadOnlyList<double> Vector(string text)
             => text.Contains("child", StringComparison.OrdinalIgnoreCase)
                || text.Contains("conceptual", StringComparison.OrdinalIgnoreCase)
                 ? [1f, 0f]

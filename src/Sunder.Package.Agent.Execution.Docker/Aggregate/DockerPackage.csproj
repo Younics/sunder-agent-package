@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <SunderPackageFamilyId>sunder.package.agent.execution.docker</SunderPackageFamilyId>
+    <SunderPackageRole>aggregate</SunderPackageRole>
+    <SunderPackageAggregateProject>true</SunderPackageAggregateProject>
+    <SunderPackageWorkerProject>..\Sunder.Package.Agent.Execution.Docker.csproj</SunderPackageWorkerProject>
+    <SunderPackageWorkerDirectory>..</SunderPackageWorkerDirectory>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\App\DockerApp.csproj" ReferenceOutputAssembly="false" />
+    <SunderPackageTargetLeaf Include="..\App\bin\$(Configuration)\$(TargetFramework)\sunder-dev"
+                             DiscoveryRoot="..\App\bin\$(Configuration)\$(TargetFramework)" />
+  </ItemGroup>
+
+</Project>

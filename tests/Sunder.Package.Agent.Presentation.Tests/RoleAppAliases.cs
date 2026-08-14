@@ -1,0 +1,23 @@
+extern alias SkillsApp;
+extern alias SubagentsApp;
+extern alias SubagentsWorker;
+
+global using InstalledSkillItemViewModel = SkillsApp::Sunder.Package.Agent.Skills.PackageViews.InstalledSkillItemViewModel;
+global using SkillSettingsView = SkillsApp::Sunder.Package.Agent.Skills.PackageViews.SkillSettingsView;
+global using SkillSettingsViewModel = SkillsApp::Sunder.Package.Agent.Skills.PackageViews.SkillSettingsViewModel;
+global using SkillStatusKind = SkillsApp::Sunder.Package.Agent.Skills.PackageViews.SkillStatusKind;
+global using SkillsAppPackageModule = SkillsApp::Sunder.Package.Agent.Skills.AppPackageModule;
+global using SubagentStatusKind = SubagentsApp::Sunder.Package.Agent.Subagents.PackageViews.SubagentStatusKind;
+global using SubagentConstants = SubagentsApp::Sunder.Package.Agent.Subagents.Services.SubagentConstants;
+global using SubagentsAppPackageModule = SubagentsApp::Sunder.Package.Agent.Subagents.AppPackageModule;
+global using SubagentsView = SubagentsApp::Sunder.Package.Agent.Subagents.PackageViews.SubagentsView;
+global using SubagentsViewModel = SubagentsApp::Sunder.Package.Agent.Subagents.PackageViews.SubagentsViewModel;
+global using SubsessionActivityTranscriptRowViewModel = SubagentsApp::Sunder.Package.Agent.Subagents.PackageViews.SubsessionActivityTranscriptRowViewModel;
+global using SubsessionsView = SubagentsApp::Sunder.Package.Agent.Subagents.PackageViews.SubsessionsView;
+global using SubsessionsViewModel = SubagentsApp::Sunder.Package.Agent.Subagents.PackageViews.SubsessionsViewModel;
+global using SubsessionTextTranscriptRowViewModel = SubagentsApp::Sunder.Package.Agent.Subagents.PackageViews.SubsessionTextTranscriptRowViewModel;
+global using SubsessionToolInvocationRowViewModel = SubagentsApp::Sunder.Package.Agent.Subagents.PackageViews.SubsessionToolInvocationRowViewModel;
+global using SubsessionTranscriptTailSentinelRowViewModel = SubagentsApp::Sunder.Package.Agent.Subagents.PackageViews.SubsessionTranscriptTailSentinelRowViewModel;
+global using SubagentService = SubagentsWorker::Sunder.Package.Agent.Subagents.Services.SubagentService;
+global using SubagentStore = SubagentsWorker::Sunder.Package.Agent.Subagents.Services.SubagentStore;
+global using SubsessionLocalRuntimeAdapter = SubagentsWorker::Sunder.Package.Agent.Subagents.Runtime.SubsessionLocalRuntimeAdapter;

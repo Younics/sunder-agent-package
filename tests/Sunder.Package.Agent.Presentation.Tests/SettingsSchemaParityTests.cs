@@ -1,3 +1,8 @@
+extern alias AnthropicApp;
+extern alias GeminiApp;
+extern alias LMStudioApp;
+extern alias OpenAiApp;
+
 using System.Reflection;
 using Sunder.Package.Agent.Execution.Docker;
 using Sunder.Package.Agent.Execution.Local;
@@ -7,6 +12,10 @@ using Sunder.Package.Agent.Provider.LMStudio;
 using Sunder.Package.Agent.Provider.OpenAI;
 using Sunder.Sdk.Settings;
 using Xunit;
+using AnthropicSettingsViewModel = AnthropicApp::Sunder.Package.Agent.Provider.Anthropic.AnthropicSettingsViewModel;
+using GeminiSettingsViewModel = GeminiApp::Sunder.Package.Agent.Provider.Gemini.GeminiSettingsViewModel;
+using LMStudioSettingsViewModel = LMStudioApp::Sunder.Package.Agent.Provider.LMStudio.LMStudioSettingsViewModel;
+using OpenAiSettingsViewModel = OpenAiApp::Sunder.Package.Agent.Provider.OpenAI.OpenAiSettingsViewModel;
 
 namespace Sunder.Package.Agent.Presentation.Tests;
 

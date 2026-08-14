@@ -1,14 +1,16 @@
 {
-  "descriptorVersion": 1,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "descriptorVersion": 2,
   "contractId": "sunder.agent.session.cleaner",
   "version": "1.0.0",
-  "services": [
-    {
-      "serviceId": "session-cleaner",
-      "methods": [
-        {
-          "methodId": "describe",
+  "errors": {},
+  "services": {
+    "session-cleaner": {
+      "methods": {
+        "describe": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/AgentRpcEmpty"
           },
@@ -16,9 +18,10 @@
             "$ref": "#/$defs/AgentRpcIdentity"
           }
         },
-        {
-          "methodId": "delete-session",
+        "delete-session": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/SessionIdRequest"
           },
@@ -26,9 +29,9 @@
             "$ref": "#/$defs/AgentRpcEmpty"
           }
         }
-      ]
+      }
     }
-  ],
+  },
   "$defs": {
     "AgentRpcEmpty": {
       "type": "object",
@@ -59,8 +62,7 @@
     },
     "Guid": {
       "type": "string",
-      "minLength": 0,
-      "maxLength": 1000000
+      "logicalType": "uuid"
     },
     "SessionIdRequest": {
       "type": "object",

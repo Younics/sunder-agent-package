@@ -1,4 +1,3 @@
-using System.Text;
 using System.Text.Json;
 using Sunder.Sdk.Abstractions;
 
@@ -39,16 +38,7 @@ internal static class McpServerRecordSerializer
             var name = normalizeName(ReadString(root, "Name"));
             var displayName = ReadString(root, "DisplayName");
             var commandParts = ReadStringArray(root, "CommandParts");
-            if (commandParts.Length == 0)
-            {
-                commandParts = ReadLegacyCommandParts(root);
-            }
-
             var headerNames = ReadStringArray(root, "HeaderNames");
-            if (headerNames.Length == 0)
-            {
-                headerNames = await ReadLegacyHeaderNamesAsync(secrets, serverId, root, cancellationToken);
-            }
 
             var server = new ConfiguredMcpServerRecord
             {
@@ -88,38 +78,6 @@ internal static class McpServerRecordSerializer
         {
             return new(null, ex.Message);
         }
-    }
-
-    private static async Task<string[]> ReadLegacyHeaderNamesAsync(
-        IPackageSecrets secrets,
-        string serverId,
-        JsonElement root,
-        CancellationToken cancellationToken)
-    {
-        var names = new List<string>();
-        var apiKeyHeaderName = ReadString(root, "ApiKeyHeaderName");
-        if (!string.IsNullOrWhiteSpace(apiKeyHeaderName)
-            && !string.IsNullOrWhiteSpace(await secrets.GetSecretAsync(
-                McpServerCatalogService.BuildApiKeySecretKey(serverId), cancellationToken)))
-        {
-            names.Add(apiKeyHeaderName.Trim());
-        }
-
-        if (!string.IsNullOrWhiteSpace(await secrets.GetSecretAsync(
-            McpServerCatalogService.BuildAuthorizationSecretKey(serverId), cancellationToken)))
-        {
-            names.Add("Authorization");
-        }
-
-        return [.. names.Distinct(StringComparer.OrdinalIgnoreCase)];
-    }
-
-    private static string[] ReadLegacyCommandParts(JsonElement root)
-    {
-        var command = ReadString(root, "Command");
-        return string.IsNullOrWhiteSpace(command)
-            ? []
-            : [command.Trim(), .. SplitArguments(ReadString(root, "Arguments"))];
     }
 
     private static string? ReadString(JsonElement root, string propertyName)
@@ -193,44 +151,6 @@ internal static class McpServerRecordSerializer
         }
 
         return [.. result];
-    }
-
-    private static string[] SplitArguments(string? args)
-    {
-        if (string.IsNullOrWhiteSpace(args))
-        {
-            return [];
-        }
-
-        var tokens = new List<string>();
-        var current = new StringBuilder();
-        var inQuotes = false;
-        foreach (var ch in args)
-        {
-            if (ch == '"')
-            {
-                inQuotes = !inQuotes;
-            }
-            else if (ch == ' ' && !inQuotes)
-            {
-                if (current.Length > 0)
-                {
-                    tokens.Add(current.ToString());
-                    current.Clear();
-                }
-            }
-            else
-            {
-                current.Append(ch);
-            }
-        }
-
-        if (current.Length > 0)
-        {
-            tokens.Add(current.ToString());
-        }
-
-        return [.. tokens];
     }
 
     private static string? TrimOrNull(string? value)

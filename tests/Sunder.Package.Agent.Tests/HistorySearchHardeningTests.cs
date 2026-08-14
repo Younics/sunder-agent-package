@@ -1,3 +1,5 @@
+extern alias AgentCore;
+
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
@@ -16,6 +18,7 @@ using Sunder.Package.Agent.Storage;
 using Sunder.Package.Agent.Subagents.Runtime;
 using Sunder.Sdk.Abstractions;
 using Xunit;
+using AgentRuntimePayloadLimits = AgentCore::Sunder.Package.Agent.Runtime.AgentRuntimePayloadLimits;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -1887,7 +1890,7 @@ public sealed class HistorySearchHardeningTests
         var childTurn = sessions.AppendTextTurn(child.SessionId, AgentMessageRole.User, "child");
         var handler = services.GetRequiredService<AgentTranscriptAroundTurnHandler>();
 
-        await Assert.ThrowsAsync<InvalidOperationException>(async () => await handler.HandleAsync(
+        await Assert.ThrowsAsync<AgentOwnerOperationException>(async () => await handler.HandleAsync(
             new AgentTranscriptAroundTurnRequest(child.SessionId, childTurn.TurnId)).AsTask());
         var runtime = services.GetRequiredService<AgentRuntimeCatalog>();
         Assert.Throws<InvalidOperationException>(() => SubsessionLocalRuntimeAdapter.BuildAroundTurnPage(
@@ -1901,19 +1904,16 @@ public sealed class HistorySearchHardeningTests
     }
 
     [Fact]
-    public void AgentDatabaseMigrationLedger_IsAppendOnlyThroughVersion21()
+    public void AgentDatabaseMigrationLedger_ContainsCurrentBaseline()
     {
         using var scope = RegressionTestPackageScope.Create();
         var store = new AgentLocalStore(scope.Context);
         using var connection = Open(store.DatabasePath);
-        Assert.Equal(21L, ExecuteInt64(connection, "SELECT COUNT(*) FROM SchemaMigrations;"));
-        Assert.Equal(21L, ExecuteInt64(connection, "SELECT MAX(Version) FROM SchemaMigrations;"));
+        Assert.Equal(1L, ExecuteInt64(connection, "SELECT COUNT(*) FROM SchemaMigrations;"));
+        Assert.Equal(1L, ExecuteInt64(connection, "SELECT MAX(Version) FROM SchemaMigrations;"));
         Assert.Equal(
-            "durable-resource-claims|849bc5010a9c700c8cb683e2992e442dc4471fed275135b39f60ae8d54f46fa0",
-            ExecuteString(connection, "SELECT Name || '|' || Checksum FROM SchemaMigrations WHERE Version = 20;"));
-        Assert.Equal(
-            "legacy-tool-execution-identities|14347bc760494c9e2b7691278989f71e8f6e37ceb02ab0f5e98c7d583dee29ce",
-            ExecuteString(connection, "SELECT Name || '|' || Checksum FROM SchemaMigrations WHERE Version = 21;"));
+            $"{AgentLocalStore.BaselineName}|{AgentLocalStore.BaselineChecksum}",
+            ExecuteString(connection, "SELECT Name || '|' || Checksum FROM SchemaMigrations WHERE Version = 1;"));
     }
 
     private static ServiceProvider CreateRuntime(

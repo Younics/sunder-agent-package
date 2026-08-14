@@ -1,14 +1,16 @@
 {
-  "descriptorVersion": 1,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "descriptorVersion": 2,
   "contractId": "sunder.agent.system.prompt.contributor",
   "version": "1.0.0",
-  "services": [
-    {
-      "serviceId": "system-prompt-contributor",
-      "methods": [
-        {
-          "methodId": "describe",
+  "errors": {},
+  "services": {
+    "system-prompt-contributor": {
+      "methods": {
+        "describe": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/AgentRpcEmpty"
           },
@@ -16,9 +18,10 @@
             "$ref": "#/$defs/AgentRpcIdentity"
           }
         },
-        {
-          "methodId": "contribute",
+        "contribute": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/AgentSystemPromptRequest"
           },
@@ -26,9 +29,9 @@
             "$ref": "#/$defs/ListOfAgentSystemPromptBlock"
           }
         }
-      ]
+      }
     }
-  ],
+  },
   "$defs": {
     "AgentRpcEmpty": {
       "type": "object",
@@ -194,8 +197,7 @@
     },
     "DateTimeOffset": {
       "type": "string",
-      "minLength": 0,
-      "maxLength": 1000000
+      "logicalType": "utc-date-time"
     },
     "Int32": {
       "type": "integer",
@@ -424,8 +426,7 @@
     },
     "Guid": {
       "type": "string",
-      "minLength": 0,
-      "maxLength": 1000000
+      "logicalType": "uuid"
     },
     "Int64": {
       "type": "integer",
@@ -434,8 +435,7 @@
     },
     "Nullable2": {
       "type": "string",
-      "minLength": 0,
-      "maxLength": 1000000
+      "logicalType": "uuid"
     },
     "Nullable3": {
       "type": "integer",

@@ -5,7 +5,6 @@ using Sunder.Package.Agent.Subagents.Models;
 using Sunder.Package.Agent.Subagents.PackageViews;
 using Sunder.Package.Agent.Subagents.Runtime;
 using Sunder.Sdk.Abstractions;
-using Sunder.Sdk.Runtime;
 using Xunit;
 using SubagentProviderCatalogOption = SubagentsPackage::Sunder.Package.Agent.Shared.Presentation.ProviderCatalogOption;
 using SubagentProviderModelCatalogResult = SubagentsPackage::Sunder.Package.Agent.Shared.Presentation.ProviderModelCatalogResult;
@@ -944,54 +943,48 @@ public sealed class ShellViewInitializationTests
                 DateTimeOffset.UnixEpoch);
     }
 
-    private sealed class FailOnceSubsessionRuntimeClient : IPackageRuntimeClient
+    private sealed class FailOnceSubsessionRuntimeClient : ISubagentOwnerClient
     {
         private int _runtimeCatalogQueryCount;
 
-        public bool IsAvailable => true;
-
         public int RuntimeCatalogQueryCount => Volatile.Read(ref _runtimeCatalogQueryCount);
 
-        public ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-            PackageRuntimeOperation<TRequest, TResponse> operation,
-            TRequest request,
+        public ValueTask<SubagentProjection> QueryAsync(
+            SubagentQuery request,
             CancellationToken cancellationToken = default)
-            where TRequest : class
-            where TResponse : class
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var query = Assert.IsType<SubagentQuery>(request);
-            Assert.Equal(SubagentQueryKind.RuntimeCatalog, query.Kind);
+            Assert.Equal(SubagentQueryKind.RuntimeCatalog, request.Kind);
             if (Interlocked.Increment(ref _runtimeCatalogQueryCount) == 1)
             {
-                return ValueTask.FromException<TResponse>(
+                return ValueTask.FromException<SubagentProjection>(
                     new InvalidOperationException("Injected Runtime catalog failure."));
             }
 
-            return ValueTask.FromResult((TResponse)(object)new SubagentProjection(
+            return ValueTask.FromResult(new SubagentProjection(
                 Sessions: [],
                 Profiles: [],
                 Checkpoints: []));
         }
 
-        public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-            PackageRuntimeStream<TRequest, TEvent> stream,
-            TRequest request,
+        public ValueTask<SubagentProjection> CommandAsync(
+            SubagentCommand request,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromException<SubagentProjection>(new NotSupportedException(request.Kind.ToString()));
+
+        public async IAsyncEnumerable<SubagentChanged> SubscribeChangesAsync(
+            SubagentChangeSubscription request,
             [System.Runtime.CompilerServices.EnumeratorCancellation]
             CancellationToken cancellationToken = default)
-            where TRequest : class
-            where TEvent : class
         {
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             yield break;
         }
     }
 
-    private sealed class BlockingSubsessionRuntimeClient : IPackageRuntimeClient
+    private sealed class BlockingSubsessionRuntimeClient : ISubagentOwnerClient
     {
         private int _runtimeCatalogQueryCount;
-
-        public bool IsAvailable => true;
 
         public int RuntimeCatalogQueryCount => Volatile.Read(ref _runtimeCatalogQueryCount);
         public TaskCompletionSource RuntimeCatalogStarted { get; } =
@@ -1002,12 +995,9 @@ public sealed class ShellViewInitializationTests
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         public bool FailRuntimeCatalog { get; set; }
 
-        public async ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-            PackageRuntimeOperation<TRequest, TResponse> operation,
-            TRequest request,
+        public async ValueTask<SubagentProjection> QueryAsync(
+            SubagentQuery request,
             CancellationToken cancellationToken = default)
-            where TRequest : class
-            where TResponse : class
         {
             Interlocked.Increment(ref _runtimeCatalogQueryCount);
             RuntimeCatalogStarted.TrySetResult();
@@ -1018,7 +1008,7 @@ public sealed class ShellViewInitializationTests
                 {
                     throw new InvalidOperationException("Injected Runtime catalog failure.");
                 }
-                return (TResponse)(object)new SubagentProjection(
+                return new SubagentProjection(
                     Sessions: [],
                     Profiles: [],
                     Checkpoints: []);
@@ -1029,13 +1019,15 @@ public sealed class ShellViewInitializationTests
             }
         }
 
-        public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-            PackageRuntimeStream<TRequest, TEvent> stream,
-            TRequest request,
+        public ValueTask<SubagentProjection> CommandAsync(
+            SubagentCommand request,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromException<SubagentProjection>(new NotSupportedException(request.Kind.ToString()));
+
+        public async IAsyncEnumerable<SubagentChanged> SubscribeChangesAsync(
+            SubagentChangeSubscription request,
             [System.Runtime.CompilerServices.EnumeratorCancellation]
             CancellationToken cancellationToken = default)
-            where TRequest : class
-            where TEvent : class
         {
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             yield break;

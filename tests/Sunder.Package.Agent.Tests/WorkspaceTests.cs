@@ -520,136 +520,6 @@ public sealed class WorkspaceTests
     }
 
     [Fact]
-    public void AgentLocalStore_PreservesLegacySessionWorkspaceColumn()
-    {
-        using var scope = TestScope.Create();
-        var databasePath = scope.Context.Storage.RoleLocalWorkspace.GetLocalPath("agent/agent.db");
-        Directory.CreateDirectory(Path.GetDirectoryName(databasePath)!);
-        var sessionId = Guid.NewGuid();
-        var now = DateTimeOffset.UtcNow.ToString("O");
-
-        using (var connection = new SqliteConnection($"Data Source={databasePath}"))
-        {
-            connection.Open();
-            using var command = connection.CreateCommand();
-            command.CommandText = """
-                CREATE TABLE AgentSessions (
-                    SessionId TEXT PRIMARY KEY,
-                    WorkspaceId TEXT NOT NULL,
-                    Title TEXT NOT NULL,
-                    State TEXT NOT NULL,
-                    CreatedAtUtc TEXT NOT NULL,
-                    UpdatedAtUtc TEXT NOT NULL
-                );
-
-                INSERT INTO AgentSessions (SessionId, WorkspaceId, Title, State, CreatedAtUtc, UpdatedAtUtc)
-                VALUES ($sessionId, 'legacy-workspace', 'Legacy Session', 'Active', $created, $updated);
-                """;
-            command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
-            command.Parameters.AddWithValue("$created", now);
-            command.Parameters.AddWithValue("$updated", now);
-            command.ExecuteNonQuery();
-        }
-
-        var store = new AgentLocalStore(scope.Context);
-
-        var session = store.GetSession(sessionId);
-        Assert.NotNull(session);
-        Assert.Equal("Legacy Session", session!.Title);
-        Assert.Equal("legacy-workspace", session.WorkspaceId);
-        Assert.Contains(GetTableColumns(databasePath, "AgentSessions"), column => string.Equals(column, "WorkspaceId", StringComparison.OrdinalIgnoreCase));
-    }
-
-    [Fact]
-    public void AgentLocalStore_AddsMissingSessionWorkspaceColumn()
-    {
-        using var scope = TestScope.Create();
-        var databasePath = scope.Context.Storage.RoleLocalWorkspace.GetLocalPath("agent/agent.db");
-        Directory.CreateDirectory(Path.GetDirectoryName(databasePath)!);
-        var sessionId = Guid.NewGuid();
-        var now = DateTimeOffset.UtcNow.ToString("O");
-
-        using (var connection = new SqliteConnection($"Data Source={databasePath}"))
-        {
-            connection.Open();
-            using var command = connection.CreateCommand();
-            command.CommandText = """
-                CREATE TABLE AgentSessions (
-                    SessionId TEXT PRIMARY KEY,
-                    Title TEXT NOT NULL,
-                    State TEXT NOT NULL,
-                    CreatedAtUtc TEXT NOT NULL,
-                    UpdatedAtUtc TEXT NOT NULL
-                );
-
-                INSERT INTO AgentSessions (SessionId, Title, State, CreatedAtUtc, UpdatedAtUtc)
-                VALUES ($sessionId, 'Legacy Session', 'Active', $created, $updated);
-                """;
-            command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
-            command.Parameters.AddWithValue("$created", now);
-            command.Parameters.AddWithValue("$updated", now);
-            command.ExecuteNonQuery();
-        }
-
-        var store = new AgentLocalStore(scope.Context);
-
-        var session = store.GetSession(sessionId);
-        Assert.NotNull(session);
-        Assert.Equal("Legacy Session", session!.Title);
-        Assert.Equal(AgentWorkspaceService.UnassignedSessionsWorkspaceId, session.WorkspaceId);
-        Assert.Contains(GetTableColumns(databasePath, "AgentSessions"), column => string.Equals(column, "WorkspaceId", StringComparison.OrdinalIgnoreCase));
-
-        var workspace = store.GetWorkspace(AgentWorkspaceService.UnassignedSessionsWorkspaceId);
-        Assert.NotNull(workspace);
-        Assert.Equal(AgentWorkspaceService.UnassignedSessionsWorkspaceDisplayName, workspace!.DisplayName);
-    }
-
-    [Fact]
-    public void AgentLocalStore_MigratesActiveSessionWithFailedLatestCheckpoint()
-    {
-        using var scope = TestScope.Create();
-        var databasePath = scope.Context.Storage.RoleLocalWorkspace.GetLocalPath("agent/agent.db");
-        Directory.CreateDirectory(Path.GetDirectoryName(databasePath)!);
-        var sessionId = Guid.NewGuid();
-        var now = DateTimeOffset.UtcNow.ToString("O");
-
-        using (var connection = new SqliteConnection($"Data Source={databasePath}"))
-        {
-            connection.Open();
-            using var command = connection.CreateCommand();
-            command.CommandText = """
-                CREATE TABLE AgentSessions (
-                    SessionId TEXT PRIMARY KEY,
-                    Title TEXT NOT NULL,
-                    State TEXT NOT NULL,
-                    CreatedAtUtc TEXT NOT NULL,
-                    UpdatedAtUtc TEXT NOT NULL
-                );
-                CREATE TABLE AgentRunCheckpoints (
-                    CheckpointId TEXT PRIMARY KEY,
-                    SessionId TEXT NOT NULL,
-                    RunRevision INTEGER NOT NULL,
-                    Status TEXT NOT NULL,
-                    Summary TEXT NULL,
-                    CreatedAtUtc TEXT NOT NULL
-                );
-                INSERT INTO AgentSessions (SessionId, Title, State, CreatedAtUtc, UpdatedAtUtc)
-                VALUES ($sessionId, 'Failed Legacy Session', 'Active', $createdAtUtc, $createdAtUtc);
-                INSERT INTO AgentRunCheckpoints (CheckpointId, SessionId, RunRevision, Status, Summary, CreatedAtUtc)
-                VALUES ($checkpointId, $sessionId, 1, 'Failed', 'Provider stream failed.', $createdAtUtc);
-                """;
-            command.Parameters.AddWithValue("$checkpointId", Guid.NewGuid().ToString());
-            command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
-            command.Parameters.AddWithValue("$createdAtUtc", now);
-            command.ExecuteNonQuery();
-        }
-
-        var reopenedStore = new AgentLocalStore(scope.Context);
-
-        Assert.Equal(AgentSessionState.Failed, reopenedStore.GetSession(sessionId)?.State);
-    }
-
-    [Fact]
     public void AgentLocalStore_SaveCheckpoint_MarksFailedSessionFailed()
     {
         using var scope = TestScope.Create();
@@ -2315,7 +2185,7 @@ public sealed class WorkspaceTests
         var workspaceService = new AgentWorkspaceService(store);
         var executionTargetService = new AgentExecutionTargetService(catalog);
         var warmupService = new AgentExecutionTargetWarmupService(workspaceService, executionTargetService);
-        using var viewModel = new AgentWorkspacesViewModel(workspaceService, executionTargetService, catalog, warmupService);
+        using var viewModel = new AgentWorkspacesViewModel(workspaceService, warmupService, catalog);
         await viewModel.InitializeAsync();
 
         viewModel.CreateWorkspaceCommand.Execute(null);
@@ -4376,22 +4246,6 @@ public sealed class WorkspaceTests
             catalog.GetRequiredReference(AgentRpcServices.WorkspaceEditors),
             new AgentWorkspaceEditorContext(workspace, "docker", CreateBinding(workspace.WorkspaceId, "docker").BindingId),
             new AgentEditorSection("test-section", "Test Section", null, fields));
-    }
-
-    private static IReadOnlyList<string> GetTableColumns(string databasePath, string tableName)
-    {
-        using var connection = new SqliteConnection($"Data Source={databasePath}");
-        connection.Open();
-        using var command = connection.CreateCommand();
-        command.CommandText = $"PRAGMA table_info({tableName});";
-        using var reader = command.ExecuteReader();
-        var columns = new List<string>();
-        while (reader.Read())
-        {
-            columns.Add(reader.GetString(1));
-        }
-
-        return columns;
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition, TimeSpan? timeout = null)

@@ -6,7 +6,6 @@ using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Subagents.PackageViews;
 using Sunder.Package.Agent.Subagents.Runtime;
 using Sunder.Package.Agent.Subagents.Services;
-using Sunder.Sdk.Runtime;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -201,39 +200,36 @@ public sealed class SubagentRuntimeChangeTests
         throw new InvalidOperationException("The subagent change stream completed before the expected change.");
     }
 
-    private sealed class ReconnectingSubagentRuntimeClient : IPackageRuntimeClient
+    private sealed class ReconnectingSubagentRuntimeClient : ISubagentOwnerClient
     {
         private int _subscriptionCount;
 
-        public bool IsAvailable => true;
         public ConcurrentQueue<long> AfterRevisions { get; } = new();
         public TaskCompletionSource SecondSubscriptionStarted { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-            PackageRuntimeOperation<TRequest, TResponse> operation,
-            TRequest request,
+        public ValueTask<SubagentProjection> QueryAsync(
+            SubagentQuery request,
             CancellationToken cancellationToken = default)
-            where TRequest : class
-            where TResponse : class
-            => ValueTask.FromException<TResponse>(new NotSupportedException(operation.OperationId));
+            => ValueTask.FromException<SubagentProjection>(new NotSupportedException(request.Kind.ToString()));
 
-        public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-            PackageRuntimeStream<TRequest, TEvent> stream,
-            TRequest request,
+        public ValueTask<SubagentProjection> CommandAsync(
+            SubagentCommand request,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromException<SubagentProjection>(new NotSupportedException(request.Kind.ToString()));
+
+        public async IAsyncEnumerable<SubagentChanged> SubscribeChangesAsync(
+            SubagentChangeSubscription request,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
-            where TRequest : class
-            where TEvent : class
         {
-            var subscription = (SubagentChangeSubscription)(object)request;
-            AfterRevisions.Enqueue(subscription.AfterRevision);
+            AfterRevisions.Enqueue(request.AfterRevision);
             if (Interlocked.Increment(ref _subscriptionCount) == 1)
             {
-                yield return (TEvent)(object)new SubagentChanged(
+                yield return new SubagentChanged(
                     5,
                     SubagentChangeKind.Connected,
                     RuntimeInstanceId: "runtime-one");
-                yield return (TEvent)(object)new SubagentChanged(
+                yield return new SubagentChanged(
                     6,
                     SubagentChangeKind.Session,
                     SessionId: Guid.NewGuid(),
@@ -242,7 +238,7 @@ public sealed class SubagentRuntimeChangeTests
             }
 
             SecondSubscriptionStarted.TrySetResult();
-            yield return (TEvent)(object)new SubagentChanged(
+            yield return new SubagentChanged(
                 6,
                 SubagentChangeKind.Connected,
                 RuntimeInstanceId: "runtime-two");
@@ -250,49 +246,46 @@ public sealed class SubagentRuntimeChangeTests
         }
     }
 
-    private sealed class OverflowResnapshotRuntimeClient : IPackageRuntimeClient
+    private sealed class OverflowResnapshotRuntimeClient : ISubagentOwnerClient
     {
         private readonly Guid _sessionId = Guid.NewGuid();
         private int _subscriptionCount;
 
-        public bool IsAvailable => true;
         public ConcurrentQueue<long> AfterRevisions { get; } = new();
 
-        public ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-            PackageRuntimeOperation<TRequest, TResponse> operation,
-            TRequest request,
+        public ValueTask<SubagentProjection> QueryAsync(
+            SubagentQuery request,
             CancellationToken cancellationToken = default)
-            where TRequest : class
-            where TResponse : class
-            => ValueTask.FromException<TResponse>(new NotSupportedException(operation.OperationId));
+            => ValueTask.FromException<SubagentProjection>(new NotSupportedException(request.Kind.ToString()));
 
-        public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-            PackageRuntimeStream<TRequest, TEvent> stream,
-            TRequest request,
+        public ValueTask<SubagentProjection> CommandAsync(
+            SubagentCommand request,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromException<SubagentProjection>(new NotSupportedException(request.Kind.ToString()));
+
+        public async IAsyncEnumerable<SubagentChanged> SubscribeChangesAsync(
+            SubagentChangeSubscription request,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
-            where TRequest : class
-            where TEvent : class
         {
-            var subscription = (SubagentChangeSubscription)(object)request;
-            AfterRevisions.Enqueue(subscription.AfterRevision);
+            AfterRevisions.Enqueue(request.AfterRevision);
             if (Interlocked.Increment(ref _subscriptionCount) == 1)
             {
-                yield return (TEvent)(object)new SubagentChanged(
+                yield return new SubagentChanged(
                     1,
                     SubagentChangeKind.Connected,
                     RuntimeInstanceId: "runtime");
-                yield return (TEvent)(object)new SubagentChanged(
+                yield return new SubagentChanged(
                     65,
                     SubagentChangeKind.ResnapshotRequired,
                     RuntimeInstanceId: "runtime");
                 yield break;
             }
 
-            yield return (TEvent)(object)new SubagentChanged(
+            yield return new SubagentChanged(
                 65,
                 SubagentChangeKind.Connected,
                 RuntimeInstanceId: "runtime");
-            yield return (TEvent)(object)new SubagentChanged(
+            yield return new SubagentChanged(
                 66,
                 SubagentChangeKind.Turn,
                 SessionId: _sessionId,
@@ -523,36 +516,32 @@ public sealed class SubagentRuntimeChangeTests
         public void RaiseSessionChanged(Guid sessionId) => _sessionChanged?.Invoke(sessionId);
     }
 
-    private sealed class MissingPageSubagentRuntimeClient : IPackageRuntimeClient
+    private sealed class MissingPageSubagentRuntimeClient : ISubagentOwnerClient
     {
         private readonly Guid _rootSessionId = Guid.NewGuid();
         private readonly Guid _childSessionId = Guid.NewGuid();
 
-        public bool IsAvailable => true;
-
-        public ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-            PackageRuntimeOperation<TRequest, TResponse> operation,
-            TRequest request,
+        public ValueTask<SubagentProjection> QueryAsync(
+            SubagentQuery request,
             CancellationToken cancellationToken = default)
-            where TRequest : class
-            where TResponse : class
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var query = (SubagentQuery)(object)request;
-            object projection = query.Kind == SubagentQueryKind.RuntimeCatalog
+            var projection = request.Kind == SubagentQueryKind.RuntimeCatalog
                 ? CreateRuntimeCatalog()
-                : query.Kind == SubagentQueryKind.RecentTurns
+                : request.Kind == SubagentQueryKind.RecentTurns
                     ? new SubagentProjection()
-                    : throw new NotSupportedException(query.Kind.ToString());
-            return ValueTask.FromResult((TResponse)projection);
+                    : throw new NotSupportedException(request.Kind.ToString());
+            return ValueTask.FromResult(projection);
         }
 
-        public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-            PackageRuntimeStream<TRequest, TEvent> stream,
-            TRequest request,
+        public ValueTask<SubagentProjection> CommandAsync(
+            SubagentCommand request,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromException<SubagentProjection>(new NotSupportedException(request.Kind.ToString()));
+
+        public async IAsyncEnumerable<SubagentChanged> SubscribeChangesAsync(
+            SubagentChangeSubscription request,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
-            where TRequest : class
-            where TEvent : class
         {
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             yield break;

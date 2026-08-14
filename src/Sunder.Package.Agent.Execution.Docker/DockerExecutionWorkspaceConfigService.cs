@@ -5,8 +5,8 @@ using System.Text;
 using System.Text.Json;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Shared.Storage;
 using Sunder.Sdk.Abstractions;
-using Sunder.Sdk.Storage;
 
 namespace Sunder.Package.Agent.Execution.Docker;
 
@@ -507,7 +507,7 @@ public sealed class DockerExecutionWorkspaceConfigService : IAgentWorkspacePathM
             : StringComparison.Ordinal;
 
     internal static string BuildKey(string bindingId)
-        => PackageStorageKeyFactory.Create("workspace-bindings.config", 2, bindingId);
+        => CurrentPackageStorageKey.Create("workspace-bindings.config", 2, bindingId);
 
     private static string NormalizeConfiguredImageReference(
         string imageReference,

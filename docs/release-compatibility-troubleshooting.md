@@ -96,15 +96,15 @@ Check the generated `sunder-package.json`, not a source manifest:
 - Required capabilities inferred by `Sunder.Package.Build` are supported by the host.
 - No implementation/host assemblies were packaged as private dependencies.
 
-Runtime validates the package graph before assembly load. A dependency-range or SDK-baseline error cannot be fixed inside `PackageModule`.
+Runtime validates the package graph before worker launch. A dependency-range or SDK-baseline error cannot be fixed inside worker code.
 
 ### RPC Provider Is Missing
 
-- Confirm `ConfigureRuntimeServices` registered the service.
+- Confirm the Worker V3 configuration creates the service and handler.
 - Confirm the project declares the provider id and contract with `SunderRpcProvider`.
-- Confirm `RegisterRuntimeContributions` publishes that same provider id with `RegisterRpcProvider`.
-- Confirm the code is in `ISunderRuntimePackageModule`, not only `ISunderAppPackageModule`.
-- For App presentation, confirm the inverse: the App contribution is registered in the App role and calls Runtime through typed operations.
+- Confirm `SunderWorkerOptions` publishes that same provider id with `SunderWorkerProviderRegistration`.
+- Confirm the provider code is in the worker executable, not only an `ISunderAppPackageModule`.
+- For App presentation, confirm the inverse: the App contribution is registered in the App role and calls Runtime through typed owner RPC.
 - Confirm stable semantic ids do not collide with another active contribution.
 - Use RPC discovery in a diagnostic fixture to verify the contract id, owner package, provider id, and active endpoint.
 
@@ -190,7 +190,7 @@ Local shell/process execution has host-user authority and is outside structured 
 
 ### Base Agent Data Migration Refusal
 
-The base Agent database has a forward-only migration ledger with immutable names/checksums. If startup reports an unknown/newer/renamed/checksum-mismatched migration, back up `agent/agent.db` and use an Agent build that recognizes that ledger. Do not edit/delete ledger rows, and do not let an extension open the database directly.
+The Agent and Semantic Memory databases each use one immutable 2.0 baseline ledger entry. Startup accepts only an absent or empty database, or the exact current one-entry ledger. Old, partial, ledgerless nonempty, and checksum-mismatched databases fail before schema or ledger mutation. Do not edit/delete ledger rows, and do not let an extension open either database directly.
 
 ## Diagnostics Policy
 

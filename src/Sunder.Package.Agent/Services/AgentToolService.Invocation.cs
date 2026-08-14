@@ -653,10 +653,6 @@ public sealed partial class AgentToolService
         AgentToolInvocationReference Invocation);
 }
 
-public sealed record AgentToolCatalogEntry(
-    AgentToolDescriptor Descriptor,
-    AgentToolReadiness Readiness);
-
 internal sealed record AgentOwnedRuntimeTool(
     AgentRuntimeTool RuntimeTool,
     string OwnerPackageId,

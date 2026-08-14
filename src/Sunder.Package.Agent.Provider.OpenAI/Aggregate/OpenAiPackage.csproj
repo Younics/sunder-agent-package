@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <SunderPackageFamilyId>sunder.package.agent.provider.openai</SunderPackageFamilyId>
+    <SunderPackageRole>aggregate</SunderPackageRole>
+    <SunderPackageAggregateProject>true</SunderPackageAggregateProject>
+    <SunderPackageWorkerProject>..\Worker\Sunder.Package.Agent.Provider.OpenAI.Worker.csproj</SunderPackageWorkerProject>
+    <SunderPackageWorkerDirectory>..\Worker</SunderPackageWorkerDirectory>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\App\Sunder.Package.Agent.Provider.OpenAI.App.csproj"
+                      ReferenceOutputAssembly="false" />
+    <SunderPackageTargetLeaf Include="$(MSBuildProjectDirectory)\..\App\bin\$(Configuration)\$(TargetFramework)\sunder-dev"
+                             DiscoveryRoot="$(MSBuildProjectDirectory)\..\App\bin\$(Configuration)\$(TargetFramework)" />
+  </ItemGroup>
+
+</Project>

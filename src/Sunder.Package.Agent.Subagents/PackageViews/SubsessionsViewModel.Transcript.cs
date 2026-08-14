@@ -1,6 +1,5 @@
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Shared.PackageViews;
-using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Package.Agent.Subagents.Runtime;
 
 namespace Sunder.Package.Agent.Subagents.PackageViews;
@@ -20,7 +19,7 @@ public sealed partial class SubsessionsViewModel
         Task<bool> loadOperation = Task.FromResult(false);
         await RunOnUiThreadAsync(() =>
         {
-            loadOperation = StartTimelineOperation(() => _timeline.LoadOlderAsync(
+            loadOperation = _timeline.LoadOlderAsync(
                 async (sessionId, beforeCreatedAt, beforeTurnId, limit, pageCancellationToken) =>
                 {
                     using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
@@ -35,7 +34,7 @@ public sealed partial class SubsessionsViewModel
                     return new TranscriptTurnPage(page.Turns, page.HasMore, page.Continuation);
                 },
                 protectedAnchorKey,
-                cancellationToken));
+                cancellationToken);
         }, cancellationToken);
         var loaded = await loadOperation;
         if (loaded)
@@ -59,7 +58,7 @@ public sealed partial class SubsessionsViewModel
         Task<bool> loadOperation = Task.FromResult(false);
         await RunOnUiThreadAsync(() =>
         {
-            loadOperation = StartTimelineOperation(() => _timeline.LoadNewerAsync(
+            loadOperation = _timeline.LoadNewerAsync(
                 async (sessionId, afterCreatedAt, afterTurnId, limit, pageCancellationToken) =>
                 {
                     using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
@@ -74,7 +73,7 @@ public sealed partial class SubsessionsViewModel
                     return new TranscriptTurnPage(page.Turns, page.HasMore, page.Continuation);
                 },
                 protectedAnchorKey,
-                cancellationToken));
+                cancellationToken);
         }, cancellationToken);
         var loaded = await loadOperation;
         if (loaded)
@@ -90,30 +89,6 @@ public sealed partial class SubsessionsViewModel
             }, cancellationToken);
         }
         return loaded;
-    }
-
-    private Task<TResult> StartTimelineOperation<TResult>(Func<Task<TResult>> operation)
-    {
-        var previousContext = SynchronizationContext.Current;
-        try
-        {
-            // The shared timeline captures this context before awaiting its page loader.
-            SynchronizationContext.SetSynchronizationContext(
-                new PresentationDispatcherSynchronizationContext(_uiDispatcher, _tasks));
-            return operation();
-        }
-        finally
-        {
-            SynchronizationContext.SetSynchronizationContext(previousContext);
-        }
-    }
-
-    private sealed class PresentationDispatcherSynchronizationContext(
-        IPresentationDispatcher dispatcher,
-        PresentationTaskScope tasks) : SynchronizationContext
-    {
-        public override void Post(SendOrPostCallback callback, object? state)
-            => tasks.Run(dispatcher.InvokeAsync(() => callback(state)));
     }
 
     private void LoadTranscript(Guid? sessionId, bool forceReplacement = false)

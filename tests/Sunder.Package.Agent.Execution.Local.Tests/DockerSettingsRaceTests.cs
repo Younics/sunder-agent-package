@@ -1,6 +1,6 @@
 using Sunder.Package.Agent.Execution.Docker;
 using Sunder.Sdk.Abstractions;
-using Sunder.Sdk.Runtime;
+using Sunder.Sdk.Rpc;
 using Xunit;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
@@ -286,9 +286,9 @@ public sealed class DockerSettingsRaceTests
 
         Assert.False(viewModel.IsBusy);
         Assert.True(viewModel.IsReady);
-        Assert.Equal("runtime.v1.unavailable", viewModel.RuntimeErrorCode);
-        Assert.Equal("runtime-correlation-42", viewModel.RuntimeCorrelationId);
-        Assert.Contains("runtime.v1.unavailable", viewModel.StatusText, StringComparison.Ordinal);
+        Assert.Equal("docker.presentation.unavailable", viewModel.RuntimeErrorCode);
+        Assert.Null(viewModel.RuntimeCorrelationId);
+        Assert.Contains("docker.presentation.unavailable", viewModel.StatusText, StringComparison.Ordinal);
         Assert.DoesNotContain("host exception", viewModel.StatusText, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -306,7 +306,7 @@ public sealed class DockerSettingsRaceTests
 
         Assert.True(viewModel.IsError);
         Assert.True(viewModel.RetryInitializationCommand.CanExecute(null));
-        Assert.Equal("runtime.v1.unavailable", viewModel.RuntimeErrorCode);
+        Assert.Equal("docker.presentation.unavailable", viewModel.RuntimeErrorCode);
 
         var retry = viewModel.RetryInitializationCommand.ExecuteAsync(null);
         await runtime.Requests[1].Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
@@ -354,47 +354,27 @@ public sealed class DockerSettingsRaceTests
     private static async Task FailRequestAsync(PendingRequest request)
     {
         await request.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        request.Response.TrySetException(new PackageRuntimeInvocationException(
-            "runtime.v1.unavailable",
-            isTransient: true,
-            statusCode: 503,
-            correlationId: "runtime-correlation-42"));
+        request.Response.TrySetException(new SunderRpcException(new SunderRpcError(
+            SunderRpcErrorKind.Unavailable,
+            "docker.presentation.unavailable",
+            "The Docker presentation provider is unavailable.")));
     }
 
-    private sealed class BlockingDockerRuntimeClient : IPackageRuntimeClient
+    private sealed class BlockingDockerRuntimeClient : IDockerExecutionPresentationClient
     {
         private int _requestIndex;
-
-        public bool IsAvailable => true;
 
         public PendingRequest[] Requests { get; } =
             Enumerable.Range(0, 12).Select(_ => new PendingRequest()).ToArray();
 
-        public async ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-            PackageRuntimeOperation<TRequest, TResponse> operation,
-            TRequest request,
+        public async ValueTask<DockerExecutionOperationResponse> ExecuteAsync(
+            DockerExecutionOperationRequest request,
             CancellationToken cancellationToken = default)
-            where TRequest : class
-            where TResponse : class
         {
-            Assert.Equal(DockerExecutionRuntimeOperations.Execute.OperationId, operation.OperationId);
-            var operationRequest = Assert.IsType<DockerExecutionOperationRequest>(request);
             var pending = Requests[Interlocked.Increment(ref _requestIndex) - 1];
-            pending.Request = operationRequest;
+            pending.Request = request;
             pending.Started.TrySetResult();
-            return (TResponse)(object)await pending.Response.Task;
-        }
-
-        public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-            PackageRuntimeStream<TRequest, TEvent> stream,
-            TRequest request,
-            [System.Runtime.CompilerServices.EnumeratorCancellation]
-            CancellationToken cancellationToken = default)
-            where TRequest : class
-            where TEvent : class
-        {
-            await Task.CompletedTask;
-            yield break;
+            return await pending.Response.Task;
         }
     }
 

@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using Microsoft.Data.Sqlite;
+using Sunder.Package.Agent.Memory.Semantic.Runtime;
 using static Sunder.Package.Agent.Memory.Semantic.MemoryRepositorySql;
 
 namespace Sunder.Package.Agent.Memory.Semantic;
@@ -156,7 +157,7 @@ internal sealed class MemoryRepository(string databasePath, EvidenceRepository e
             : Find(connection, request.SessionId, request.Category, request.NormalizedContent, transaction);
         if (existing is not null && existing.SessionId != request.SessionId)
         {
-            throw new InvalidOperationException("A memory cannot be moved to another session.");
+            throw new MemoryInspectorOperationException("A memory cannot be moved to another session.");
         }
         var now = DateTimeOffset.UtcNow;
         var memory = existing is null
@@ -441,7 +442,7 @@ internal sealed class MemoryRepository(string databasePath, EvidenceRepository e
         Guid memoryId,
         SqliteTransaction? transaction = null)
         => Get(connection, memoryId, transaction)
-           ?? throw new InvalidOperationException($"Memory '{memoryId}' was not found.");
+           ?? throw new MemoryInspectorOperationException($"Memory '{memoryId}' was not found.");
 
     private static StoredMemoryRecord? Find(
         SqliteConnection connection,
@@ -480,7 +481,8 @@ internal sealed class MemoryRepository(string databasePath, EvidenceRepository e
         command.Parameters.AddWithValue("$normalized", normalized);
         if (Convert.ToInt32(command.ExecuteScalar()) > 0)
         {
-            throw new InvalidOperationException("Another memory with the same category and normalized content already exists in this session.");
+            throw new MemoryInspectorOperationException(
+                "Another memory with the same category and normalized content already exists in this session.");
         }
     }
 
@@ -488,12 +490,14 @@ internal sealed class MemoryRepository(string databasePath, EvidenceRepository e
     {
         if (string.IsNullOrWhiteSpace(category) || category.Length > MaxCategoryChars)
         {
-            throw new InvalidOperationException($"Memory category must contain between 1 and {MaxCategoryChars} characters.");
+            throw new MemoryInspectorOperationException(
+                $"Memory category must contain between 1 and {MaxCategoryChars} characters.");
         }
 
         if (string.IsNullOrWhiteSpace(content) || content.Length > MaxMemoryContentChars)
         {
-            throw new InvalidOperationException($"Memory content must contain between 1 and {MaxMemoryContentChars} characters.");
+            throw new MemoryInspectorOperationException(
+                $"Memory content must contain between 1 and {MaxMemoryContentChars} characters.");
         }
     }
 

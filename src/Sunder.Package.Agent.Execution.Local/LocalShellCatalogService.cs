@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Runtime.CompilerServices;
+using Sunder.Agent.Execution.Common;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Sdk.Abstractions;
 
@@ -179,7 +180,7 @@ public sealed class LocalShellCatalogService
 
     public async Task<LocalShellDefinition> GetDefaultShellAsync(CancellationToken cancellationToken = default)
         => (await ListShellsAsync(cancellationToken)).FirstOrDefault()
-           ?? new LocalShellDefinition("cmd", "Command Prompt", Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe", AgentShellSyntaxKinds.Cmd, true);
+           ?? new LocalShellDefinition("cmd", "Command Prompt", ChildProcessEnvironment.ResolveWindowsCommandProcessor(), AgentShellSyntaxKinds.Cmd, true);
 
     public async Task<LocalShellDefinition> ResolveShellAsync(string? shellId, CancellationToken cancellationToken = default)
     {
@@ -197,7 +198,7 @@ public sealed class LocalShellCatalogService
         {
             AddIfFound(shells, "pwsh", "PowerShell 7", "pwsh.exe", AgentShellSyntaxKinds.PowerShell);
             AddIfFound(shells, "powershell", "Windows PowerShell", "powershell.exe", AgentShellSyntaxKinds.PowerShell);
-            shells.Add(new LocalShellDefinition("cmd", "Command Prompt", Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe", AgentShellSyntaxKinds.Cmd, true));
+            shells.Add(new LocalShellDefinition("cmd", "Command Prompt", ChildProcessEnvironment.ResolveWindowsCommandProcessor(), AgentShellSyntaxKinds.Cmd, true));
             return shells;
         }
 
@@ -231,8 +232,7 @@ public sealed class LocalShellCatalogService
             return executableName;
         }
 
-        var paths = (Environment.GetEnvironmentVariable("PATH") ?? string.Empty)
-            .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var paths = LocalProcessEnvironment.BuildEffectivePathEntries(configuredPathEntries: null);
         foreach (var path in paths)
         {
             var candidate = Path.Combine(path, executableName);
@@ -282,10 +282,3 @@ internal sealed class LocalExecutionDomainException : InvalidOperationException
 
     internal bool IsTransient { get; }
 }
-
-public sealed record LocalShellDefinition(
-    string ShellId,
-    string DisplayName,
-    string ExecutablePath,
-    string SyntaxKind,
-    bool IsDetected);

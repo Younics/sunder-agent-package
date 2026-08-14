@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <SunderPackageFamilyId>sunder.package.agent.tools.files</SunderPackageFamilyId>
+    <SunderPackageRole>aggregate</SunderPackageRole>
+    <SunderPackageAggregateProject>true</SunderPackageAggregateProject>
+    <SunderPackageWorkerProject>..\Sunder.Package.Agent.Tools.Files.csproj</SunderPackageWorkerProject>
+    <SunderPackageWorkerDirectory>..</SunderPackageWorkerDirectory>
+  </PropertyGroup>
+
+</Project>

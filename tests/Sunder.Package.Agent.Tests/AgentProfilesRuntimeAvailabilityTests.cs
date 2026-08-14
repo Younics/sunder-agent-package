@@ -7,7 +7,6 @@ using Sunder.Package.Agent.PackageViews;
 using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
-using Sunder.Sdk.Runtime;
 using Xunit;
 using AgentPresentationDispatcher = AgentCore::Sunder.Package.Agent.Shared.Presentation.IPresentationDispatcher;
 
@@ -508,7 +507,7 @@ public sealed class AgentProfilesRuntimeAvailabilityTests
             AgentLocalStore store,
             AgentProfileService profiles,
             AgentRuntimeChangeHub changes,
-            ProfileHandlerRuntimeClient client)
+            ProfileHandlerOwnerClient client)
         {
             _scope = scope;
             Store = store;
@@ -517,7 +516,7 @@ public sealed class AgentProfilesRuntimeAvailabilityTests
             Client = client;
         }
 
-        public ProfileHandlerRuntimeClient Client { get; }
+        public ProfileHandlerOwnerClient Client { get; }
         public AgentLocalStore Store { get; }
         public AgentProfileService Profiles => _profiles;
 
@@ -536,7 +535,7 @@ public sealed class AgentProfilesRuntimeAvailabilityTests
                 extensions);
             var profiles = new AgentProfileService(store, tools, extensions, extensions.BehaviorLoops);
             var changes = new AgentRuntimeChangeHub(profiles, workspaces, sessions);
-            var client = new ProfileHandlerRuntimeClient(
+            var client = new ProfileHandlerOwnerClient(
                 new AgentDashboardHandler(profiles, workspaces, changes),
                 new AgentCatalogHandler(profiles, targets, changes),
                 new AgentProfileCommandHandler(profiles, changes),
@@ -553,30 +552,28 @@ public sealed class AgentProfilesRuntimeAvailabilityTests
         }
     }
 
-    private sealed class ProfileHandlerRuntimeClient(
+    private sealed class ProfileHandlerOwnerClient(
         AgentDashboardHandler dashboard,
         AgentCatalogHandler catalog,
         AgentProfileCommandHandler profiles,
         AgentRuntimeChangeHub changes,
-        Exception? profileFailure) : IPackageRuntimeClient
+        Exception? profileFailure) : IAgentOwnerClient
     {
-        public bool IsAvailable => true;
-
         public async ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-            PackageRuntimeOperation<TRequest, TResponse> operation,
+            AgentOwnerRpcOperation<TRequest, TResponse> operation,
             TRequest request,
             CancellationToken cancellationToken = default)
             where TRequest : class
             where TResponse : class
         {
-            if (ReferenceEquals(operation, AgentRuntimeOperations.Dashboard))
+            if (operation.Is(AgentRuntimeOperations.Dashboard))
             {
                 var response = await dashboard.HandleAsync(
                     (AgentDashboardRequest)(object)request,
                     cancellationToken);
                 return (TResponse)(object)response;
             }
-            if (ReferenceEquals(operation, AgentRuntimeOperations.Profiles))
+            if (operation.Is(AgentRuntimeOperations.Profiles))
             {
                 if (profileFailure is not null)
                 {
@@ -587,7 +584,7 @@ public sealed class AgentProfilesRuntimeAvailabilityTests
                     cancellationToken);
                 return (TResponse)(object)response;
             }
-            if (ReferenceEquals(operation, AgentRuntimeOperations.Catalog))
+            if (operation.Is(AgentRuntimeOperations.Catalog))
             {
                 var response = await catalog.HandleAsync(
                     (AgentCatalogRequest)(object)request,
@@ -595,19 +592,19 @@ public sealed class AgentProfilesRuntimeAvailabilityTests
                 return (TResponse)(object)response;
             }
 
-            throw new NotSupportedException(operation.OperationId);
+            throw new NotSupportedException(operation.Describe());
         }
 
         public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-            PackageRuntimeStream<TRequest, TEvent> stream,
+            AgentOwnerRpcStream<TRequest, TEvent> stream,
             TRequest request,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
             where TRequest : class
             where TEvent : class
         {
-            if (!ReferenceEquals(stream, AgentRuntimeOperations.Changes))
+            if (!stream.Is(AgentRuntimeOperations.Changes))
             {
-                throw new NotSupportedException(stream.StreamId);
+                throw new NotSupportedException(stream.Describe());
             }
 
             await foreach (var change in changes.SubscribeAsync(

@@ -8,7 +8,7 @@ using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Services;
 
-public sealed class AgentLifecycleDispatcher : IPackageBackgroundService, IAsyncDisposable
+public sealed class AgentLifecycleDispatcher : IAsyncDisposable
 {
     internal const int MaxLifecycleDispatchesPerPass = 256;
     private static readonly TimeSpan LeaseDuration = TimeSpan.FromSeconds(30);
@@ -56,7 +56,6 @@ public sealed class AgentLifecycleDispatcher : IPackageBackgroundService, IAsync
             {
                 _rpcCatalog.Changed += OnCatalogChanged;
                 _startupRecoveryPending = true;
-                ReconcileSubscriptions();
                 _worker = RunAsync(lifetime.Token);
             }
             catch

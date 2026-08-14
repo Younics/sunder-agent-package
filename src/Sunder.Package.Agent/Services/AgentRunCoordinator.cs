@@ -10,7 +10,11 @@ public sealed class AgentRunCoordinator(
     AgentRunStopCoordinator stopCoordinator,
     AgentChildRunSessionService childRunSessionService,
     AgentPermissionResumeCoordinator permissionResumeCoordinator)
-    : IAgentChildRunExecutor, IAgentRunGateway, IAgentChatRunGateway, IAgentCorrelatedRunGateway
+    : IAgentChildRunExecutor,
+      IAgentRunGateway,
+      IAgentChatRunGateway,
+      IAgentCorrelatedRunGateway,
+      IAgentRunCommandStatusGateway
 {
     private readonly AgentUserMessageRunCoordinator _userMessageRunCoordinator = userMessageRunCoordinator;
     private readonly AgentRunStopCoordinator _stopCoordinator = stopCoordinator;
@@ -221,6 +225,15 @@ public sealed class AgentRunCoordinator(
 
     internal AgentRunCommandStatus GetCommandStatus(Guid sessionId, Guid userTurnId)
         => _userMessageRunCoordinator.GetCommandStatus(sessionId, userTurnId);
+
+    Task<AgentRunCommandStatus> IAgentRunCommandStatusGateway.GetRunCommandStatusAsync(
+        Guid sessionId,
+        Guid userTurnId,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(GetCommandStatus(sessionId, userTurnId));
+    }
 
     internal void SignalDispatcher() => _userMessageRunCoordinator.SignalDispatcher();
 }

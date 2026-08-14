@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <SunderPackageFamilyId>sunder.package.agent.provider.lmstudio</SunderPackageFamilyId>
+    <SunderPackageRole>app</SunderPackageRole>
+    <SunderPackageProject>true</SunderPackageProject>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <SunderPackageAssetsDirectory>$(MSBuildProjectDirectory)\..\Assets</SunderPackageAssetsDirectory>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="CommunityToolkit.Mvvm" />
+    <ProjectReference Include="..\..\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
+    <ProjectReference Include="..\Protocol\Sunder.Package.Agent.Provider.LMStudio.Protocol.csproj" />
+    <Compile Include="..\LMStudioConnectionOptions.cs" Link="LMStudioConnectionOptions.cs" />
+    <Compile Include="..\LMStudioProviderConfiguration.cs" Link="LMStudioProviderConfiguration.cs" />
+    <Compile Include="..\PackageMetadata.cs" Link="PackageMetadata.cs" />
+    <Compile Include="..\Properties\AssemblyInfo.cs" Link="Properties\AssemblyInfo.cs" />
+    <Compile Include="..\..\Sunder.Package.Agent.Provider.Shared\ApiKeySettingsState.cs" Link="Provider.Shared\ApiKeySettingsState.cs" />
+    <Compile Include="..\..\Sunder.Package.Agent.Provider.Shared\ProviderConfigurationSections.cs" Link="Provider.Shared\ProviderConfigurationSections.cs" />
+    <Compile Include="..\..\Sunder.Package.Agent.Provider.Shared\ProviderModelId.cs" Link="Provider.Shared\ProviderModelId.cs" />
+    <Compile Include="..\..\Sunder.Package.Agent.Provider.Shared\ProviderUtilityModelSelection.cs" Link="Provider.Shared\ProviderUtilityModelSelection.cs" />
+    <Compile Include="..\..\Sunder.Package.Agent.Provider.Shared\UtilityModelSettingsState.cs" Link="Provider.Shared\UtilityModelSettingsState.cs" />
+    <AvaloniaResource Include="..\..\Sunder.Package.Agent.Provider.Shared\ProviderSettingsStyles.axaml" Link="Provider.Shared\ProviderSettingsStyles.axaml" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <SunderContractBundle Include="..\Protocol\Contracts\credential-settings.rpc.json"
+                          ContractId="sunder.package.agent.provider.lmstudio.credentials"
+                          Version="2.0.0"
+                          DescriptorPath="contracts/credential-settings.rpc.json"
+                          Exposure="package" />
+    <SunderUsesContract Include="sunder.package.agent.provider.lmstudio.credentials"
+                        Role="app"
+                        ContractVersion="2.0.0"
+                        Required="true"
+                        Actions="discover;invoke" />
+  </ItemGroup>
+
+  <Import Project="..\..\Sunder.Package.Agent.Shared\Sunder.Package.Agent.Shared.props" />
+
+</Project>

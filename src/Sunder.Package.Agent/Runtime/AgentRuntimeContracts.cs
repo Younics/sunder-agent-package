@@ -2,49 +2,66 @@ using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.HistorySearch;
-using Sunder.Package.Agent.Shared.PackageViews;
-using Sunder.Sdk.Runtime;
+using Wire = Sunder.Package.Agent.OwnerProtocol.Generated;
 
 namespace Sunder.Package.Agent.Runtime;
 
 internal static class AgentRuntimeOperations
 {
-    public static readonly PackageRuntimeOperation<AgentChatSnapshotRequest, AgentChatSnapshotProjection> ChatSnapshot =
-        new("agent.chat.snapshot.v1");
-    public static readonly PackageRuntimeOperation<AgentDashboardRequest, AgentDashboardProjection> Dashboard =
-        new("agent.dashboard.v1");
-    public static readonly PackageRuntimeOperation<AgentTranscriptPageRequest, AgentTranscriptPage> Transcript =
-        new("agent.transcript.page.v1");
-    public static readonly PackageRuntimeOperation<AgentCatalogRequest, AgentCatalogProjection> Catalog =
-        new("agent.catalog.v1");
-    public static readonly PackageRuntimeOperation<AgentProfileCommand, AgentProfileCommandResult> Profiles =
-        new("agent.profiles.command.v1");
-    public static readonly PackageRuntimeOperation<AgentWorkspaceCommand, AgentWorkspaceCommandResult> Workspaces =
-        new("agent.workspaces.command.v1");
-    public static readonly PackageRuntimeOperation<AgentSessionCommand, AgentSessionCommandResult> SessionCommands =
-        new("agent.sessions.command.v1");
-    public static readonly PackageRuntimeOperation<AgentRunCommand, AgentRunCommandResult> Runs =
-        new("agent.runs.command.v1");
-    public static readonly PackageRuntimeOperation<AgentRunCommandStatusRequest, AgentRunCommandStatusResult> RunStatus =
-        new("agent.runs.status.v1");
-    public static readonly PackageRuntimeOperation<AgentPermissionCommand, AgentPermissionProjection> Permissions =
-        new("agent.permissions.command.v1");
-    public static readonly PackageRuntimeOperation<AgentAttachmentTransferRequest, AgentAttachmentTransferResult> AttachmentTransfers =
-        new("agent.attachments.transfer.v1");
-    public static readonly PackageRuntimeStream<AgentChangeSubscription, AgentRuntimeChange> Changes =
-        new("agent.changes.v1");
-    public static readonly PackageRuntimeOperation<HistorySearchRequest, HistorySearchResponse> HistorySearch =
-        new("agent.history.search.v1");
-    public static readonly PackageRuntimeOperation<HistorySearchStateRequest, HistorySearchState> HistoryState =
-        new("agent.history.state.v1");
-    public static readonly PackageRuntimeOperation<HistorySearchCommand, HistorySearchCommandResult> HistoryCommands =
-        new("agent.history.command.v1");
-    public static readonly PackageRuntimeOperation<AgentTranscriptAroundTurnRequest, AgentTranscriptAroundTurnPage> TranscriptAround =
-        new("agent.transcript.around.v1");
-    public static readonly PackageRuntimeOperation<AgentTranscriptToolDetailRequest, AgentTranscriptToolDetailResponse> TranscriptToolDetail =
-        new("agent.transcript.tool-detail.v1");
-    public static readonly PackageRuntimeStream<HistorySearchStatusSubscription, HistorySearchStatus> HistoryStatus =
-        new("agent.history.status.v1");
+    public static readonly AgentOwnerRpcOperation<AgentChatSnapshotRequest, AgentChatSnapshotProjection> ChatSnapshot =
+        AgentOwnerRuntimeRpc.CreateOperation<AgentChatSnapshotRequest, AgentChatSnapshotProjection, Wire.AgentChatSnapshotRequest, Wire.AgentChatSnapshotProjection>(
+            static (client, request, token) => client.ChatSnapshotAsync(request, token));
+    public static readonly AgentOwnerRpcOperation<AgentDashboardRequest, AgentDashboardProjection> Dashboard =
+        AgentOwnerRuntimeRpc.CreateOperation<AgentDashboardRequest, AgentDashboardProjection, Wire.AgentDashboardRequest, Wire.AgentDashboardProjection>(
+            static (client, request, token) => client.DashboardAsync(request, token));
+    public static readonly AgentOwnerRpcOperation<AgentTranscriptPageRequest, AgentTranscriptPage> Transcript =
+        AgentOwnerRuntimeRpc.CreateOperation<AgentTranscriptPageRequest, AgentTranscriptPage, Wire.AgentTranscriptPageRequest, Wire.AgentTranscriptPage>(
+            static (client, request, token) => client.TranscriptPageAsync(request, token));
+    public static readonly AgentOwnerRpcOperation<AgentCatalogRequest, AgentCatalogProjection> Catalog =
+        AgentOwnerRuntimeRpc.CreateOperation<AgentCatalogRequest, AgentCatalogProjection, Wire.AgentCatalogRequest, Wire.AgentCatalogProjection>(
+            static (client, request, token) => client.CatalogAsync(request, token));
+    public static readonly AgentOwnerRpcOperation<AgentProfileCommand, AgentProfileCommandResult> Profiles =
+        AgentOwnerRuntimeRpc.CreateOperation<AgentProfileCommand, AgentProfileCommandResult, Wire.AgentProfileCommand, Wire.AgentProfileCommandResult>(
+            static (client, request, token) => client.ProfileCommandAsync(request, token));
+    public static readonly AgentOwnerRpcOperation<AgentWorkspaceCommand, AgentWorkspaceCommandResult> Workspaces =
+        AgentOwnerRuntimeRpc.CreateOperation<AgentWorkspaceCommand, AgentWorkspaceCommandResult, Wire.AgentWorkspaceCommand, Wire.AgentWorkspaceCommandResult>(
+            static (client, request, token) => client.WorkspaceCommandAsync(request, token));
+    public static readonly AgentOwnerRpcOperation<AgentSessionCommand, AgentSessionCommandResult> SessionCommands =
+        AgentOwnerRuntimeRpc.CreateOperation<AgentSessionCommand, AgentSessionCommandResult, Wire.AgentSessionCommand, Wire.AgentSessionCommandResult>(
+            static (client, request, token) => client.SessionCommandAsync(request, token));
+    public static readonly AgentOwnerRpcOperation<AgentRunCommand, AgentRunCommandResult> Runs =
+        AgentOwnerRuntimeRpc.CreateOperation<AgentRunCommand, AgentRunCommandResult, Wire.AgentRunCommand, Wire.AgentRunCommandResult>(
+            static (client, request, token) => client.RunCommandAsync(request, token));
+    public static readonly AgentOwnerRpcOperation<AgentRunCommandStatusRequest, AgentRunCommandStatusResult> RunStatus =
+        AgentOwnerRuntimeRpc.CreateOperation<AgentRunCommandStatusRequest, AgentRunCommandStatusResult, Wire.AgentRunCommandStatusRequest, Wire.AgentRunCommandStatusResult>(
+            static (client, request, token) => client.RunStatusAsync(request, token));
+    public static readonly AgentOwnerRpcOperation<AgentPermissionCommand, AgentPermissionProjection> Permissions =
+        AgentOwnerRuntimeRpc.CreateOperation<AgentPermissionCommand, AgentPermissionProjection, Wire.AgentPermissionCommand, Wire.AgentPermissionProjection>(
+            static (client, request, token) => client.PermissionCommandAsync(request, token));
+    public static readonly AgentOwnerRpcOperation<AgentAttachmentTransferRequest, AgentAttachmentTransferResult> AttachmentTransfers =
+        AgentOwnerRuntimeRpc.CreateOperation<AgentAttachmentTransferRequest, AgentAttachmentTransferResult, Wire.AgentAttachmentTransferRequest, Wire.AgentAttachmentTransferResult>(
+            static (client, request, token) => client.AttachmentTransferAsync(request, token));
+    public static readonly AgentOwnerRpcStream<AgentChangeSubscription, AgentRuntimeChange> Changes =
+        AgentOwnerRuntimeRpc.CreateStream<AgentChangeSubscription, AgentRuntimeChange, Wire.AgentChangeSubscription, Wire.AgentRuntimeChange>(
+            static (client, request, token) => client.ChangesAsync(request, token));
+    public static readonly AgentOwnerRpcOperation<HistorySearchRequest, HistorySearchResponse> HistorySearch =
+        AgentOwnerRuntimeRpc.CreateOperation<HistorySearchRequest, HistorySearchResponse, Wire.HistorySearchRequest, Wire.HistorySearchResponse>(
+            static (client, request, token) => client.HistorySearchAsync(request, token));
+    public static readonly AgentOwnerRpcOperation<HistorySearchStateRequest, HistorySearchState> HistoryState =
+        AgentOwnerRuntimeRpc.CreateOperation<HistorySearchStateRequest, HistorySearchState, Wire.HistorySearchStateRequest, Wire.HistorySearchState>(
+            static (client, request, token) => client.HistoryStateAsync(request, token));
+    public static readonly AgentOwnerRpcOperation<HistorySearchCommand, HistorySearchCommandResult> HistoryCommands =
+        AgentOwnerRuntimeRpc.CreateOperation<HistorySearchCommand, HistorySearchCommandResult, Wire.HistorySearchCommand, Wire.HistorySearchCommandResult>(
+            static (client, request, token) => client.HistoryCommandAsync(request, token));
+    public static readonly AgentOwnerRpcOperation<AgentTranscriptAroundTurnRequest, AgentTranscriptAroundTurnPage> TranscriptAround =
+        AgentOwnerRuntimeRpc.CreateOperation<AgentTranscriptAroundTurnRequest, AgentTranscriptAroundTurnPage, Wire.AgentTranscriptAroundTurnRequest, Wire.AgentTranscriptAroundTurnPage>(
+            static (client, request, token) => client.TranscriptAroundAsync(request, token));
+    public static readonly AgentOwnerRpcOperation<AgentTranscriptToolDetailRequest, AgentTranscriptToolDetailResponse> TranscriptToolDetail =
+        AgentOwnerRuntimeRpc.CreateOperation<AgentTranscriptToolDetailRequest, AgentTranscriptToolDetailResponse, Wire.AgentTranscriptToolDetailRequest, Wire.AgentTranscriptToolDetailResponse>(
+            static (client, request, token) => client.TranscriptToolDetailAsync(request, token));
+    public static readonly AgentOwnerRpcStream<HistorySearchStatusSubscription, HistorySearchStatus> HistoryStatus =
+        AgentOwnerRuntimeRpc.CreateStream<HistorySearchStatusSubscription, HistorySearchStatus, Wire.HistorySearchStatusSubscription, Wire.HistorySearchStatus>(
+            static (client, request, token) => client.HistoryStatusAsync(request, token));
 }
 
 internal sealed record AgentChatSnapshotRequest(

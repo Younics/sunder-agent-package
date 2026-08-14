@@ -46,7 +46,9 @@ public sealed class EditorDirtyStateTests
         var service = new SubagentService(new SubagentStore(scope.Context));
         var first = service.CreateSubagent("Alpha");
         var second = service.CreateSubagent("Beta");
-        using var viewModel = new SubagentsViewModel(service, new RegressionTestExtensionCatalog());
+        using var extensionCatalog = new RegressionTestExtensionCatalog();
+        using var gateway = new WorkerBackedSubagentManagementGateway(service, extensionCatalog);
+        using var viewModel = new SubagentsViewModel(gateway);
         await viewModel.InitializeAsync();
 
         viewModel.SelectedSubagent = viewModel.Subagents.Single(item => item.SubagentId == first.SubagentId);

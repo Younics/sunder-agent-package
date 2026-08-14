@@ -96,7 +96,8 @@ public sealed partial class AgentChatViewModel
             rowProjector,
             InitialTranscriptTurnLimit,
             OlderTranscriptTurnPageSize,
-            TranscriptVisibleRowLimit);
+            TranscriptVisibleRowLimit,
+            uiDispatcher);
         RunActivityRow = new AgentActivityTranscriptRowViewModel(_activityTicker);
         TailSentinelRow = new AgentTranscriptTailSentinelRowViewModel();
         _transcriptItemsProjection = new TranscriptItemsProjection<AgentTranscriptRowViewModel>(

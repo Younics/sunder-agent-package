@@ -5,7 +5,6 @@ using Sunder.Package.Agent.Mcp.Runtime;
 using Sunder.Package.Agent.Mcp.Services;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Callbacks;
-using Sunder.Sdk.Runtime;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -19,9 +18,9 @@ public sealed class McpCallbackFlowTests
         var callbacks = new FakeCallbackClient();
         var context = new CallbackPackageContext(scope.Context, callbacks);
         var services = new ServiceCollection();
-        services.AddSingleton<IPackageRuntimeClient>(new IdleRuntimeClient());
 
         new Sunder.Package.Agent.Mcp.AppPackageModule().ConfigureAppServices(services, context);
+        services.AddSingleton<IMcpOwnerManagementClient>(new IdleManagementClient());
 
         Assert.DoesNotContain(services, descriptor => descriptor.ServiceType == typeof(IPackageCallbackClient));
         await using var provider = services.BuildServiceProvider();
@@ -35,7 +34,7 @@ public sealed class McpCallbackFlowTests
     public async Task AppGateway_AuthorizeUsesSharedCallbackFlowAndPreservesServerParameter()
     {
         var callbacks = new FakeCallbackClient();
-        using var gateway = new McpAppRuntimeGateway(new IdleRuntimeClient(), callbacks);
+        using var gateway = new McpAppRuntimeGateway(new IdleManagementClient(), callbacks);
         var statusChanges = 0;
         gateway.StatusChanged += () => statusChanges++;
         var server = CreateServer();
@@ -135,24 +134,20 @@ public sealed class McpCallbackFlowTests
                 DateTimeOffset.UtcNow.AddMinutes(5));
     }
 
-    private sealed class IdleRuntimeClient : IPackageRuntimeClient
+    private sealed class IdleManagementClient : IMcpOwnerManagementClient
     {
-        public bool IsAvailable => true;
-
-        public ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-            PackageRuntimeOperation<TRequest, TResponse> operation,
-            TRequest request,
+        public ValueTask<McpProjection> QueryAsync(
+            McpQuery query,
             CancellationToken cancellationToken = default)
-            where TRequest : class
-            where TResponse : class
-            => ValueTask.FromException<TResponse>(new NotSupportedException());
+            => ValueTask.FromException<McpProjection>(new NotSupportedException());
 
-        public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-            PackageRuntimeStream<TRequest, TEvent> stream,
-            TRequest request,
+        public ValueTask<McpProjection> CommandAsync(
+            McpCommand command,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromException<McpProjection>(new NotSupportedException());
+
+        public async IAsyncEnumerable<McpChanged> WatchChangesAsync(
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
-            where TRequest : class
-            where TEvent : class
         {
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             yield break;

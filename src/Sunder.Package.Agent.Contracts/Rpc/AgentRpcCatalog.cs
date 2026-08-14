@@ -323,6 +323,7 @@ public partial class AgentRpcCatalog : IDisposable
             catch (SunderRpcException exception)
             {
                 SetAvailability(MapAvailability(exception), exception.Error);
+                if (exception.Error.Kind == SunderRpcErrorKind.StaleEndpoint) return;
             }
             catch
             {
@@ -418,7 +419,7 @@ public partial class AgentRpcCatalog : IDisposable
         => exception.Error.Kind switch
         {
             SunderRpcErrorKind.PermissionDenied => AgentRpcCatalogAvailability.PermissionDenied,
-            SunderRpcErrorKind.Unavailable => AgentRpcCatalogAvailability.Unavailable,
+            SunderRpcErrorKind.Unavailable or SunderRpcErrorKind.StaleEndpoint => AgentRpcCatalogAvailability.Unavailable,
             _ => AgentRpcCatalogAvailability.Faulted,
         };
 
@@ -489,6 +490,7 @@ public sealed partial class AgentRpcProviderReference<TClient> : IRetirableAgent
     private readonly ISunderRpcClient _client;
     private readonly CancellationTokenSource _retirement = new();
     private readonly TClient _binding;
+    private readonly AgentRpcProviderHandle _handle;
     private int _retired;
 
     internal AgentRpcProviderReference(
@@ -498,6 +500,7 @@ public sealed partial class AgentRpcProviderReference<TClient> : IRetirableAgent
     {
         _client = client;
         Provider = provider;
+        _handle = AgentRpcProviderHandle.From(provider);
         _binding = service.CreateClient(client, provider);
     }
 
@@ -507,7 +510,7 @@ public sealed partial class AgentRpcProviderReference<TClient> : IRetirableAgent
 
     internal bool CanReuse(SunderRpcProviderSnapshot provider)
         => !_retirement.IsCancellationRequested
-           && AgentRpcProviderHandle.From(Provider).Matches(provider);
+           && _handle.Matches(provider);
 
     public bool TryAcquire([NotNullWhen(true)] out AgentRpcLease<TClient>? lease)
     {
@@ -535,7 +538,7 @@ public sealed partial class AgentRpcProviderReference<TClient> : IRetirableAgent
         }
         if (current is null
             || current.State != SunderRpcProviderState.Active
-            || !AgentRpcProviderHandle.From(Provider).Matches(current))
+            || !_handle.Matches(current))
         {
             Retire();
             lease = null;
@@ -587,6 +590,7 @@ public sealed partial class AgentRpcReference<TClient> : IRetirableAgentRpcRefer
     private readonly AgentRpcService<TClient> _service;
     private readonly CancellationTokenSource _retirement = new();
     private readonly TClient _clientBinding;
+    private readonly AgentRpcProviderHandle _handle;
     private int _retired;
 
     internal AgentRpcReference(
@@ -597,6 +601,7 @@ public sealed partial class AgentRpcReference<TClient> : IRetirableAgentRpcRefer
         _client = client;
         _service = service;
         Provider = provider;
+        _handle = AgentRpcProviderHandle.From(provider);
         _clientBinding = service.CreateClient(client, provider.Endpoint);
     }
 
@@ -608,7 +613,7 @@ public sealed partial class AgentRpcReference<TClient> : IRetirableAgentRpcRefer
 
     public SunderRpcEndpointReference Endpoint => Provider.Endpoint;
 
-    public AgentRpcProviderHandle ToHandle() => AgentRpcProviderHandle.From(Provider);
+    public AgentRpcProviderHandle ToHandle() => _handle;
 
     internal bool CanReuse(SunderRpcProviderSnapshot provider)
         => !_retirement.IsCancellationRequested && ToHandle().Matches(provider);
@@ -710,7 +715,8 @@ public sealed record AgentRpcProviderHandle(
     string ProviderId,
     string ContractId,
     string ContractVersion,
-    string ContractSha256,
+    string DescriptorSha256,
+    string AbiSha256,
     Guid ActivationId,
     long ActivationEpoch,
     long SessionGeneration,
@@ -723,7 +729,9 @@ public sealed record AgentRpcProviderHandle(
             provider.ProviderId,
             provider.ContractId,
             provider.ContractVersion,
-            provider.ContractSha256,
+            provider.DescriptorSha256,
+            provider.AbiSha256 ?? throw new InvalidOperationException(
+                $"Agent RPC V2 provider '{provider.ProviderId}' does not expose an ABI SHA-256."),
             provider.ActivationId,
             provider.ActivationEpoch,
             provider.SessionGeneration,
@@ -735,7 +743,9 @@ public sealed record AgentRpcProviderHandle(
            && string.Equals(ProviderId, provider.ProviderId, StringComparison.Ordinal)
            && string.Equals(ContractId, provider.ContractId, StringComparison.Ordinal)
            && string.Equals(ContractVersion, provider.ContractVersion, StringComparison.Ordinal)
-           && string.Equals(ContractSha256, provider.ContractSha256, StringComparison.Ordinal)
+           && string.Equals(DescriptorSha256, provider.DescriptorSha256, StringComparison.Ordinal)
+           && provider.AbiSha256 is not null
+           && string.Equals(AbiSha256, provider.AbiSha256, StringComparison.Ordinal)
            && ActivationId == provider.ActivationId
            && ActivationEpoch == provider.ActivationEpoch
            && SessionGeneration == provider.SessionGeneration

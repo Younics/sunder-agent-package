@@ -62,7 +62,7 @@
 
   <UserControl.Styles>
     <StyleInclude Source="avares://LiveMarkdown.Avalonia/Styles.axaml" />
-    <StyleInclude Source="avares://Sunder.Package.Agent.Subagents/PackageViews/TranscriptStyles.axaml" />
+    <StyleInclude Source="avares://Sunder.Package.Agent.Subagents.App/PackageViews/TranscriptStyles.axaml" />
 
     <Style Selector="Border.subsession-shell">
       <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Raised}" />

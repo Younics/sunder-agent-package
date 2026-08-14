@@ -3,7 +3,7 @@ using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Services;
 
-public sealed class AgentBackgroundWorkService : IPackageBackgroundService, IAsyncDisposable
+public sealed class AgentBackgroundWorkService : IAsyncDisposable
 {
     private const int QueueCapacity = 128;
 

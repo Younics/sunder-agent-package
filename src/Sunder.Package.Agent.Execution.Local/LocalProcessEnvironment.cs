@@ -35,12 +35,22 @@ internal static class LocalProcessEnvironment
     ];
 
     public static IReadOnlyList<string> BuildEffectivePathEntries(IReadOnlyList<string>? configuredPathEntries)
-        => BuildEffectivePathEntries(
+    {
+        var entries = BuildEffectivePathEntries(
             configuredPathEntries,
             Environment.GetEnvironmentVariable("PATH"),
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             OperatingSystem.IsWindows(),
             OperatingSystem.IsMacOS());
+        return OperatingSystem.IsWindows()
+            ? PathEnvironment.BuildPathEntries(
+                entries,
+                inheritedPath: null,
+                fallbackPathEntries: ChildProcessEnvironment.GetWindowsExecutableDirectories(),
+                homeDirectory: null,
+                isWindows: true)
+            : entries;
+    }
 
     internal static IReadOnlyList<string> BuildEffectivePathEntries(
         IReadOnlyList<string>? configuredPathEntries,

@@ -1,0 +1,22 @@
+using Sunder.Sdk.Rpc;
+
+namespace Sunder.Package.Agent.Provider.LMStudio.Protocol;
+
+public static class LMStudioCredentialProtocol
+{
+    private const string ResourceName =
+        "Sunder.Package.Agent.Provider.LMStudio.Protocol.credential-settings.rpc.json";
+    private static readonly Lazy<SunderRpcContractDescriptor> DescriptorValue =
+        new(LoadDescriptor, LazyThreadSafetyMode.ExecutionAndPublication);
+
+    public static SunderRpcContractDescriptor Descriptor => DescriptorValue.Value;
+
+    private static SunderRpcContractDescriptor LoadDescriptor()
+    {
+        using var stream = typeof(LMStudioCredentialProtocol).Assembly.GetManifestResourceStream(ResourceName)
+            ?? throw new InvalidOperationException($"Embedded RPC descriptor '{ResourceName}' was not found.");
+        using var memory = new MemoryStream();
+        stream.CopyTo(memory);
+        return SunderRpcContractDescriptor.Parse(memory.ToArray());
+    }
+}

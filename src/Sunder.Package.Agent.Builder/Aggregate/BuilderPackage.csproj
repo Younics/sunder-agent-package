@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <SunderPackageFamilyId>sunder.package.agent.builder</SunderPackageFamilyId>
+    <SunderPackageRole>aggregate</SunderPackageRole>
+    <SunderPackageAggregateProject>true</SunderPackageAggregateProject>
+    <SunderPackageWorkerProject>..\Sunder.Package.Agent.Builder.csproj</SunderPackageWorkerProject>
+    <SunderPackageWorkerDirectory>..</SunderPackageWorkerDirectory>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\App\Sunder.Package.Agent.Builder.App.csproj"
+                      ReferenceOutputAssembly="false" />
+    <SunderPackageTargetLeaf Include="$(MSBuildProjectDirectory)\..\App\bin\$(Configuration)\$(TargetFramework)\sunder-dev"
+                             DiscoveryRoot="$(MSBuildProjectDirectory)\..\App\bin\$(Configuration)\$(TargetFramework)" />
+  </ItemGroup>
+
+</Project>

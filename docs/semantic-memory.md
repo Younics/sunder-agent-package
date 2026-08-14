@@ -13,7 +13,7 @@ The first-party feature implements and registers four public contracts:
 | `DurableLifecycleObservers` | Atomically deduplicates lifecycle envelopes, extracts direct-user candidates, and applies rollback/deletion tombstones. |
 | `SessionDataCleaners` | Removes all package-owned memory/index data for a deleted session. |
 
-It also runs a bounded background indexer and exposes package-specific Runtime operations/App presentation for its inspector. Those implementation types are not contracts for third-party memory packages.
+It also runs a bounded background indexer and exposes package-specific owner RPC plus App presentation for its inspector. Those implementation types are not contracts for third-party memory packages.
 
 ## Promotion Policy
 

@@ -66,12 +66,16 @@ public sealed class HistorySearchViewModelTests
 
         viewModel.QueryText = "older";
         await gateway.WaitForSearchAsync(request => request.Query == "older");
-        var older = calls["older"];
+        ControlledSearchCall? older = null;
+        await HistoryViewModelTestData.WaitUntilAsync(() => calls.TryGetValue("older", out older));
         viewModel.QueryText = "n";
         viewModel.QueryText = "ne";
         viewModel.QueryText = "newer";
         await gateway.WaitForSearchAsync(request => request.Query == "newer");
-        var newer = calls["newer"];
+        ControlledSearchCall? newer = null;
+        await HistoryViewModelTestData.WaitUntilAsync(() => calls.TryGetValue("newer", out newer));
+        Assert.NotNull(older);
+        Assert.NotNull(newer);
         newer.Completion.TrySetResult(HistoryViewModelTestData.Response(
             HistoryViewModelTestData.Hit("new result")));
         await HistoryViewModelTestData.WaitUntilAsync(() => viewModel.Results.Count == 1);

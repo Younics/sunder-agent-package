@@ -358,12 +358,12 @@ internal static class AgentChatWireMapper
             Instructions = options.Instructions,
             ConversationId = options.ConversationId,
             ModelId = options.ModelId,
-            Temperature = options.Temperature,
+            Temperature = ToSingle(options.Temperature, "temperature"),
             MaxOutputTokens = options.MaxOutputTokens,
-            TopP = options.TopP,
+            TopP = ToSingle(options.TopP, "topP"),
             TopK = options.TopK,
-            FrequencyPenalty = options.FrequencyPenalty,
-            PresencePenalty = options.PresencePenalty,
+            FrequencyPenalty = ToSingle(options.FrequencyPenalty, "frequencyPenalty"),
+            PresencePenalty = ToSingle(options.PresencePenalty, "presencePenalty"),
             Seed = options.Seed,
             AllowMultipleToolCalls = options.AllowMultipleToolCalls,
             Tools = options.Tools.Select(static tool => (AITool)AIFunctionFactory.CreateDeclaration(
@@ -388,6 +388,25 @@ internal static class AgentChatWireMapper
             mapped.ContinuationToken = ResponseContinuationToken.FromBytes(Convert.FromBase64String(options.ContinuationHandle));
         }
         return mapped;
+    }
+
+    private static float? ToSingle(double? value, string optionName)
+    {
+        if (value is not { } present)
+        {
+            return null;
+        }
+
+        var narrowed = (float)present;
+        if (!float.IsFinite(narrowed) || (double)narrowed != present)
+        {
+            throw new SunderRpcException(new SunderRpcError(
+                SunderRpcErrorKind.Domain,
+                "agent.chat.option-not-representable",
+                $"Chat option '{optionName}' must be exactly representable as a finite IEEE 754 binary32 value."));
+        }
+
+        return narrowed;
     }
 
     public static AgentChatStreamEvent FromUpdate(ChatResponseUpdate update)
@@ -510,12 +529,12 @@ public sealed record AgentChatOptions(
     string? Instructions,
     string? ConversationId,
     string? ModelId,
-    float? Temperature,
+    double? Temperature,
     int? MaxOutputTokens,
-    float? TopP,
+    double? TopP,
     int? TopK,
-    float? FrequencyPenalty,
-    float? PresencePenalty,
+    double? FrequencyPenalty,
+    double? PresencePenalty,
     long? Seed,
     bool? AllowMultipleToolCalls,
     string? ReasoningEffort,

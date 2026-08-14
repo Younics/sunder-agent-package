@@ -1,20 +1,57 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <SunderSdkAvaloniaReference>true</SunderSdkAvaloniaReference>
+    <SunderPackageFamilyId>sunder.package.agent.execution.docker</SunderPackageFamilyId>
+    <SunderPackageRole>worker</SunderPackageRole>
     <SunderPackageProject>true</SunderPackageProject>
+    <SunderSdkWorkerReference>true</SunderSdkWorkerReference>
     <SunderSdkStacksReference>true</SunderSdkStacksReference>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
-    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <OutputType>Exe</OutputType>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">$(NETCoreSdkRuntimeIdentifier)</RuntimeIdentifier>
+    <RuntimeIdentifiers>win-x64;win-arm64;linux-x64;linux-arm64;osx-x64;osx-arm64</RuntimeIdentifiers>
+    <SelfContained>true</SelfContained>
+    <UseAppHost>true</UseAppHost>
+    <PublishSingleFile>false</PublishSingleFile>
+    <SunderGeneratedPackageManifest>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\obj\$(Configuration)\$(TargetFramework)\$(RuntimeIdentifier)\sunder-package.json'))</SunderGeneratedPackageManifest>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Avalonia" />
-    <PackageReference Include="CommunityToolkit.Mvvm" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
     <ProjectReference Include="..\Sunder.Agent.Execution.Common\Sunder.Agent.Execution.Common.csproj" />
     <ProjectReference Include="..\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
+    <ProjectReference Include="Protocol\DockerProtocol.csproj" />
   </ItemGroup>
 
-  <Import Project="..\Sunder.Package.Agent.Shared\Sunder.Package.Agent.Shared.props" />
+  <ItemGroup>
+    <Compile Remove="Aggregate\**\*" />
+    <Compile Remove="App\**\*" />
+    <Compile Remove="Protocol\**\*" />
+    <Compile Remove="DockerExecutionSettingsView.axaml.cs" />
+    <Compile Remove="DockerExecutionSettingsViewModel.cs" />
+    <Compile Remove="DockerExecutionSettingsViewModel.Commands.cs" />
+    <Compile Remove="DockerExecutionSettingsViewModel.Runtime.cs" />
+    <None Remove="Aggregate\**\*" />
+    <None Remove="App\**\*" />
+    <None Remove="Protocol\**\*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <SunderSdkCapability Include="docker-environment.v1" />
+    <SunderContractBundle Include="Protocol\Contracts\docker-execution-presentation.rpc.json"
+                          ContractId="sunder.package.agent.execution.docker.presentation"
+                          Version="2.0.0"
+                          DescriptorPath="contracts/docker-execution-presentation.rpc.json"
+                          Exposure="package" />
+    <SunderRpcProvider Include="docker.presentation"
+                       Role="runtime"
+                       ContractId="sunder.package.agent.execution.docker.presentation"
+                       ContractVersion="2.0.0"
+                       Audience="owner" />
+    <SunderPackageTarget Include="runtime/$(RuntimeIdentifier)"
+                         Role="runtime"
+                         Rid="$(RuntimeIdentifier)"
+                         Kind="worker" />
+  </ItemGroup>
 
 </Project>

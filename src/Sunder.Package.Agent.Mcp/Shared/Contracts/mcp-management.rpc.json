@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "descriptorVersion": 2,
+  "contractId": "sunder.package.agent.mcp.management",
+  "version": "2.0.0",
+  "errors": {
+    "mcp.management.failed": {
+      "description": "The MCP management request failed."
+    }
+  },
+  "services": {
+    "management": {
+      "methods": {
+        "query": {
+          "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [
+            "mcp.management.failed"
+          ],
+          "requestSchema": {
+            "$ref": "#/$defs/Payload"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/Payload"
+          }
+        },
+        "command": {
+          "kind": "unary",
+          "idempotency": "none",
+          "errors": [
+            "mcp.management.failed"
+          ],
+          "requestSchema": {
+            "$ref": "#/$defs/Payload"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/Payload"
+          }
+        },
+        "changes": {
+          "kind": "server-stream",
+          "idempotency": "idempotent",
+          "errors": [],
+          "requestSchema": {
+            "$ref": "#/$defs/EmptyRequest"
+          },
+          "eventSchema": {
+            "$ref": "#/$defs/Change"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "PayloadChunk": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000000
+    },
+    "Payload": {
+      "type": "object",
+      "properties": {
+        "chunks": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": {
+            "$ref": "#/$defs/PayloadChunk"
+          }
+        }
+      },
+      "required": [
+        "chunks"
+      ],
+      "additionalProperties": false
+    },
+    "EmptyRequest": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "ChangeKind": {
+      "type": "string",
+      "minLength": 6,
+      "maxLength": 7,
+      "enum": [
+        "servers",
+        "status"
+      ]
+    },
+    "Change": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ChangeKind"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

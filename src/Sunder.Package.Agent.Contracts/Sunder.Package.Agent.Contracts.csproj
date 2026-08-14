@@ -1,7 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <SunderPackageFamilyId>sunder.package.agent</SunderPackageFamilyId>
+    <SunderPackageRole>protocol</SunderPackageRole>
     <SunderSdkReference>true</SunderSdkReference>
+    <SunderPackageBuildReference>true</SunderPackageBuildReference>
+    <SunderPackageProject>false</SunderPackageProject>
     <IsPackable>true</IsPackable>
     <AssemblyName>Sunder.Package.Agent.Protocol</AssemblyName>
     <PackageId>Sunder.Package.Agent.Protocol</PackageId>
@@ -16,6 +20,63 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.AI.Abstractions" />
     <PackageReference Include="Microsoft.CodeAnalysis.PublicApiAnalyzers" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <SunderRpcBinding Include="Contracts\behavior-loop.rpc.json"
+                      Namespace="Sunder.Package.Agent.Protocol.Generated.BehaviorLoop"
+                      OutputFile="BehaviorLoop.g.cs" />
+    <SunderRpcBinding Include="Contracts\chat-provider.rpc.json"
+                      Namespace="Sunder.Package.Agent.Protocol.Generated.ChatProvider"
+                      OutputFile="ChatProvider.g.cs" />
+    <SunderRpcBinding Include="Contracts\child-run-executor.rpc.json"
+                      Namespace="Sunder.Package.Agent.Protocol.Generated.ChildRunExecutor"
+                      OutputFile="ChildRunExecutor.g.cs" />
+    <SunderRpcBinding Include="Contracts\durable-lifecycle-observer.rpc.json"
+                      Namespace="Sunder.Package.Agent.Protocol.Generated.DurableLifecycleObserver"
+                      OutputFile="DurableLifecycleObserver.g.cs" />
+    <SunderRpcBinding Include="Contracts\embedding-provider.rpc.json"
+                      Namespace="Sunder.Package.Agent.Protocol.Generated.EmbeddingProvider"
+                      OutputFile="EmbeddingProvider.g.cs" />
+    <SunderRpcBinding Include="Contracts\execution-target.rpc.json"
+                      Namespace="Sunder.Package.Agent.Protocol.Generated.ExecutionTarget"
+                      OutputFile="ExecutionTarget.g.cs" />
+    <SunderRpcBinding Include="Contracts\permission-surface.rpc.json"
+                      Namespace="Sunder.Package.Agent.Protocol.Generated.PermissionSurface"
+                      OutputFile="PermissionSurface.g.cs" />
+    <SunderRpcBinding Include="Contracts\profile-capability-consumer.rpc.json"
+                      Namespace="Sunder.Package.Agent.Protocol.Generated.ProfileCapabilityConsumer"
+                      OutputFile="ProfileCapabilityConsumer.g.cs" />
+    <SunderRpcBinding Include="Contracts\prompt-context-contributor.rpc.json"
+                      Namespace="Sunder.Package.Agent.Protocol.Generated.PromptContextContributor"
+                      OutputFile="PromptContextContributor.g.cs" />
+    <SunderRpcBinding Include="Contracts\run-control.rpc.json"
+                      Namespace="Sunder.Package.Agent.Protocol.Generated.RunControl"
+                      OutputFile="RunControl.g.cs" />
+    <SunderRpcBinding Include="Contracts\runtime-catalog.rpc.json"
+                      Namespace="Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog"
+                      OutputFile="RuntimeCatalog.g.cs" />
+    <SunderRpcBinding Include="Contracts\selectable-capability-provider.rpc.json"
+                      Namespace="Sunder.Package.Agent.Protocol.Generated.SelectableCapabilityProvider"
+                      OutputFile="SelectableCapabilityProvider.g.cs" />
+    <SunderRpcBinding Include="Contracts\session-cleaner.rpc.json"
+                      Namespace="Sunder.Package.Agent.Protocol.Generated.SessionCleaner"
+                      OutputFile="SessionCleaner.g.cs" />
+    <SunderRpcBinding Include="Contracts\system-prompt-contributor.rpc.json"
+                      Namespace="Sunder.Package.Agent.Protocol.Generated.SystemPromptContributor"
+                      OutputFile="SystemPromptContributor.g.cs" />
+    <SunderRpcBinding Include="Contracts\tool-source.rpc.json"
+                      Namespace="Sunder.Package.Agent.Protocol.Generated.ToolSource"
+                      OutputFile="ToolSource.g.cs" />
+    <SunderRpcBinding Include="Contracts\workspace-editor.rpc.json"
+                      Namespace="Sunder.Package.Agent.Protocol.Generated.WorkspaceEditor"
+                      OutputFile="WorkspaceEditor.g.cs" />
+    <SunderRpcBinding Include="Contracts\workspace-execution-resolver.rpc.json"
+                      Namespace="Sunder.Package.Agent.Protocol.Generated.WorkspaceExecutionResolver"
+                      OutputFile="WorkspaceExecutionResolver.g.cs" />
+    <SunderRpcBinding Include="Contracts\workspace-path-migrator.rpc.json"
+                      Namespace="Sunder.Package.Agent.Protocol.Generated.WorkspacePathMigrator"
+                      OutputFile="WorkspacePathMigrator.g.cs" />
   </ItemGroup>
 
   <ItemGroup>

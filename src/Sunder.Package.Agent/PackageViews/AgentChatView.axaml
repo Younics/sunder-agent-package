@@ -56,7 +56,7 @@
               ColumnSpacing="8"
               MinWidth="0">
           <Image Classes="header-select-image"
-                 Source="avares://Sunder.Package.Agent/Assets/profile-icon.png" />
+                 Source="avares://Sunder.Package.Agent.App/Assets/profile-icon.png" />
           <TextBlock Grid.Column="1"
                      Text="{Binding DisplayName}"
                      MinWidth="0"
@@ -72,7 +72,7 @@
               ColumnSpacing="9"
               MinWidth="0">
           <Image Classes="header-select-image"
-                 Source="avares://Sunder.Package.Agent/Assets/profile-icon.png" />
+                 Source="avares://Sunder.Package.Agent.App/Assets/profile-icon.png" />
           <TextBlock Grid.Column="1"
                      Text="{Binding DisplayName}"
                      MinWidth="0"
@@ -91,7 +91,7 @@
                   Background="{Binding StatusBrush}"
                   ToolTip.Tip="{Binding StatusBadgeText}">
             <Border.OpacityMask>
-              <ImageBrush Source="avares://Sunder.Package.Agent/Assets/session-icon.png"
+              <ImageBrush Source="avares://Sunder.Package.Agent.App/Assets/session-icon.png"
                           Stretch="Uniform" />
             </Border.OpacityMask>
           </Border>
@@ -114,7 +114,7 @@
                   Background="{Binding StatusBrush}"
                   ToolTip.Tip="{Binding StatusBadgeText}">
             <Border.OpacityMask>
-              <ImageBrush Source="avares://Sunder.Package.Agent/Assets/session-icon.png"
+              <ImageBrush Source="avares://Sunder.Package.Agent.App/Assets/session-icon.png"
                           Stretch="Uniform" />
             </Border.OpacityMask>
           </Border>
@@ -274,7 +274,7 @@
 
   <UserControl.Styles>
     <StyleInclude Source="avares://LiveMarkdown.Avalonia/Styles.axaml" />
-    <StyleInclude Source="avares://Sunder.Package.Agent/PackageViews/TranscriptStyles.axaml" />
+    <StyleInclude Source="avares://Sunder.Package.Agent.App/PackageViews/TranscriptStyles.axaml" />
 
     <Style Selector="Border.agent-chat-shell">
       <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Workspace}" />

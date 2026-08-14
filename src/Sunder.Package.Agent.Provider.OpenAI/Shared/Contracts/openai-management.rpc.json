@@ -1,0 +1,169 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "descriptorVersion": 2,
+  "contractId": "sunder.package.agent.provider.openai.management",
+  "version": "2.0.0",
+  "errors": {
+    "openai.management.failed": {
+      "description": "The OpenAI management request failed."
+    }
+  },
+  "services": {
+    "management": {
+      "methods": {
+        "get-auth-status": {
+          "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [
+            "openai.management.failed"
+          ],
+          "requestSchema": {
+            "$ref": "#/$defs/EmptyRequest"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AuthStatus"
+          }
+        },
+        "disconnect-auth": {
+          "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [
+            "openai.management.failed"
+          ],
+          "requestSchema": {
+            "$ref": "#/$defs/EmptyRequest"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AuthStatus"
+          }
+        },
+        "get-credential-status": {
+          "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [
+            "openai.management.failed"
+          ],
+          "requestSchema": {
+            "$ref": "#/$defs/EmptyRequest"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/CredentialStatus"
+          }
+        },
+        "set-credential": {
+          "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [
+            "openai.management.failed"
+          ],
+          "requestSchema": {
+            "$ref": "#/$defs/CredentialRequest"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/CredentialStatus"
+          }
+        },
+        "clear-credential": {
+          "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [
+            "openai.management.failed"
+          ],
+          "requestSchema": {
+            "$ref": "#/$defs/EmptyRequest"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/CredentialStatus"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "EmptyRequest": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "NullableText": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      ]
+    },
+    "NullableTimestamp": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/Timestamp"
+        }
+      ]
+    },
+    "Timestamp": {
+      "type": "string",
+      "logicalType": "utc-date-time"
+    },
+    "AuthStatus": {
+      "type": "object",
+      "properties": {
+        "isConnected": {
+          "type": "boolean"
+        },
+        "hasCachedSession": {
+          "type": "boolean"
+        },
+        "expiresAtUtc": {
+          "$ref": "#/$defs/NullableTimestamp"
+        },
+        "errorMessage": {
+          "$ref": "#/$defs/NullableText"
+        }
+      },
+      "required": [
+        "isConnected",
+        "hasCachedSession",
+        "expiresAtUtc",
+        "errorMessage"
+      ],
+      "additionalProperties": false
+    },
+    "Credential": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16384
+    },
+    "CredentialRequest": {
+      "type": "object",
+      "properties": {
+        "credential": {
+          "$ref": "#/$defs/Credential"
+        }
+      },
+      "required": [
+        "credential"
+      ],
+      "additionalProperties": false
+    },
+    "CredentialStatus": {
+      "type": "object",
+      "properties": {
+        "hasStoredCredential": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "hasStoredCredential"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

@@ -14,12 +14,14 @@ internal static class McpTransportSecurity
         if (!Uri.TryCreate(server.EndpointUrl, UriKind.Absolute, out var endpoint)
             || endpoint.Scheme is not ("http" or "https"))
         {
-            throw new InvalidOperationException("Remote MCP endpoints must use an absolute HTTP or HTTPS URL.");
+            throw new McpManagementOperationException(
+                "Remote MCP endpoints must use an absolute HTTP or HTTPS URL.");
         }
 
         if (!string.IsNullOrWhiteSpace(endpoint.UserInfo))
         {
-            throw new InvalidOperationException("Remote MCP endpoint URLs must not contain user-info credentials. Use secret-backed headers or OAuth over HTTPS.");
+            throw new McpManagementOperationException(
+                "Remote MCP endpoint URLs must not contain user-info credentials. Use secret-backed headers or OAuth over HTTPS.");
         }
 
         var hasCredentials = server.OAuthEnabled
@@ -30,7 +32,8 @@ internal static class McpTransportSecurity
             && !endpoint.IsLoopback
             && hasCredentials)
         {
-            throw new InvalidOperationException("Non-loopback MCP endpoints that use credentials must use HTTPS.");
+            throw new McpManagementOperationException(
+                "Non-loopback MCP endpoints that use credentials must use HTTPS.");
         }
     }
 }

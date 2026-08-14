@@ -10,39 +10,81 @@ namespace Sunder.Package.Agent.Memory.Semantic;
 public sealed partial class MemoryLocalStore
 {
     public const int MaxRecallableMemoriesPerSession = 512;
-    public const string ActiveState = "Active";
-    public const string ContestedState = "Contested";
-    public const string ForgottenState = "Forgotten";
-    public const string SupersededState = "Superseded";
+    public const string ActiveState = MemoryRecordStates.Active;
+    public const string ContestedState = MemoryRecordStates.Contested;
+    public const string ForgottenState = MemoryRecordStates.Forgotten;
+    public const string SupersededState = MemoryRecordStates.Superseded;
 
     private static readonly ReferenceCountedKeyedLock<string> MemoryWriteLocks = new(StringComparer.OrdinalIgnoreCase);
 
-    private readonly MemoryRepository _memories;
-    private readonly EvidenceRepository _evidence;
-    private readonly EmbeddingRepository _embeddings;
+    private readonly object _initializationSync = new();
+    private readonly string _contentRootPath;
     private readonly IMemoryPhysicalMaintenance _physicalMaintenance;
+    private MemoryRepository _memories = null!;
+    private EvidenceRepository _evidence = null!;
+    private EmbeddingRepository _embeddings = null!;
+    private bool _initialized;
 
     public MemoryLocalStore(IPackageContext packageContext)
-        : this(packageContext, SqliteMemoryPhysicalMaintenance.Instance)
+        : this(packageContext, SqliteMemoryPhysicalMaintenance.Instance, initialize: true)
     {
     }
 
     internal MemoryLocalStore(
         IPackageContext packageContext,
         IMemoryPhysicalMaintenance physicalMaintenance)
+        : this(packageContext, physicalMaintenance, initialize: true)
     {
+    }
+
+    private MemoryLocalStore(
+        IPackageContext packageContext,
+        IMemoryPhysicalMaintenance physicalMaintenance,
+        bool initialize)
+    {
+        ArgumentNullException.ThrowIfNull(packageContext);
         ArgumentNullException.ThrowIfNull(physicalMaintenance);
-        MemoryDatabase.Initialize(packageContext.ContentRootPath);
-        DatabasePath = packageContext.Storage.RoleLocalWorkspace.GetLocalPath("memory/agent-memory.db");
-        Directory.CreateDirectory(Path.GetDirectoryName(DatabasePath)!);
-        new MemorySchemaMigrator(DatabasePath).Migrate();
-        _evidence = new EvidenceRepository(DatabasePath);
-        _embeddings = new EmbeddingRepository(DatabasePath);
-        _memories = new MemoryRepository(DatabasePath, _evidence);
+        _contentRootPath = packageContext.ContentRootPath;
         _physicalMaintenance = physicalMaintenance;
+        DatabasePath = packageContext.Storage.RoleLocalWorkspace.GetLocalPath("memory/agent-memory.db");
+        if (initialize)
+        {
+            Initialize();
+        }
     }
 
     public string DatabasePath { get; }
+
+    internal static MemoryLocalStore CreateDeferred(IPackageContext packageContext)
+        => new(packageContext, SqliteMemoryPhysicalMaintenance.Instance, initialize: false);
+
+    internal bool IsInitialized
+    {
+        get
+        {
+            lock (_initializationSync) return _initialized;
+        }
+    }
+
+    internal void Initialize()
+    {
+        lock (_initializationSync)
+        {
+            if (_initialized)
+            {
+                return;
+            }
+
+            MemoryDatabase.Initialize(_contentRootPath);
+            Directory.CreateDirectory(Path.GetDirectoryName(DatabasePath)!);
+            new MemorySchemaMigrator(DatabasePath).Migrate();
+            var evidence = new EvidenceRepository(DatabasePath);
+            _embeddings = new EmbeddingRepository(DatabasePath);
+            _memories = new MemoryRepository(DatabasePath, evidence);
+            _evidence = evidence;
+            _initialized = true;
+        }
+    }
 
     public IReadOnlyList<StoredMemoryRecord> ListActiveMemories(Guid sessionId) => _memories.ListActive(sessionId);
 

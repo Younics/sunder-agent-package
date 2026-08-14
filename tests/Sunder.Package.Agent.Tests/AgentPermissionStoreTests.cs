@@ -10,44 +10,6 @@ namespace Sunder.Package.Agent.Tests;
 public sealed class AgentPermissionStoreTests
 {
     [Fact]
-    public void Migration_ExpiresLegacyRequestsWithoutDurableContinuationState()
-    {
-        using var scope = RegressionTestPackageScope.Create();
-        var databasePath = scope.Context.Storage.RoleLocalWorkspace.GetLocalPath("agent/agent.db");
-        Directory.CreateDirectory(Path.GetDirectoryName(databasePath)!);
-        using (var connection = OpenDatabase(databasePath))
-        using (var command = connection.CreateCommand())
-        {
-            AgentLocalStore.ApplySchemaMigrations(connection, 2);
-            command.CommandText = """
-                INSERT INTO AgentPendingPermissionRequests (
-                    RequestId, SessionId, ActionId, Summary, CreatedAtUtc)
-                VALUES ('legacy-request', '11111111-1111-1111-1111-111111111111', 'legacy.action', 'Legacy request', '2026-01-01T00:00:00Z');
-                """;
-            command.ExecuteNonQuery();
-        }
-
-        var store = new AgentLocalStore(scope.Context);
-        store.RecoverRuntimeState();
-
-        using var verificationConnection = OpenDatabase(store.DatabasePath);
-        using var verificationCommand = verificationConnection.CreateCommand();
-        verificationCommand.CommandText = """
-            SELECT Status, ClaimToken, ClaimedAtUtc, DecidedAtUtc, DecisionSummary, ExecutionFingerprint
-            FROM AgentPendingPermissionRequests
-            WHERE RequestId = 'legacy-request';
-            """;
-        using var reader = verificationCommand.ExecuteReader();
-        Assert.True(reader.Read());
-        Assert.Equal("Expired", reader.GetString(0));
-        Assert.True(reader.IsDBNull(1));
-        Assert.True(reader.IsDBNull(2));
-        Assert.False(reader.IsDBNull(3));
-        Assert.Contains("Legacy permission request expired", reader.GetString(4), StringComparison.Ordinal);
-        Assert.Equal(string.Empty, reader.GetString(5));
-    }
-
-    [Fact]
     public async Task TryClaimPendingPermissionRequest_ConcurrentClaimsHaveOneWinner()
     {
         using var scope = RegressionTestPackageScope.Create();

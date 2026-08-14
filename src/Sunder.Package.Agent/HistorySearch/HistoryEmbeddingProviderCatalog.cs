@@ -151,15 +151,17 @@ internal sealed class HistoryEmbeddingProviderCatalog(AgentRpcCatalog rpcCatalog
                     continue;
                 }
 
+                var handle = reference.ToHandle();
                 providers.Add(new OwnedEmbeddingProvider(
                     lease.PackageId,
                     descriptor.ProviderId,
                     descriptor.DisplayName,
                     string.Join('\n',
-                        reference.Provider.PackageVersion,
-                        reference.Provider.ContractVersion,
-                        reference.Provider.ContractSha256,
-                        reference.Provider.ProviderId),
+                        handle.PackageVersion,
+                        handle.ContractVersion,
+                        handle.DescriptorSha256,
+                        handle.AbiSha256,
+                        handle.ProviderId),
                     reference));
             }
         }

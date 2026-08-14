@@ -60,7 +60,6 @@ internal sealed class AgentSessionCleanupDispatcher : IAsyncDisposable
             _lifetime = new CancellationTokenSource();
             _startupRecoveryPending = true;
             _rpcCatalog.Changed += OnCatalogChanged;
-            ReconcileCleaners(DateTimeOffset.UtcNow);
             _worker = RunAsync(_lifetime.Token);
         }
         Wake();

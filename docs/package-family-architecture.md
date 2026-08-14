@@ -51,18 +51,18 @@ It declares a runtime dependency on `sunder.package.agent`. It must not referenc
 
 `packages.json` is the first-party release/capability inventory. Samples are intentionally excluded.
 
-`Sunder.Package.Agent.Tools.Shell` is a self-contained six-RID Worker V2 package. Its universal archive aggregates one exact executable target for each supported RID. Runtime starts the selected target as a supervised child process; it does not load an `ISunderRuntimePackageModule` for Shell.
+Every runtime family ships as a self-contained six-RID Worker V3 package. Each universal archive aggregates one exact executable target for every supported RID. Runtime starts the selected target as a supervised child process; it does not load an `ISunderRuntimePackageModule`.
 
 ## Runtime And App Roles
 
-Managed Agent packages can activate separate modules in the Runtime and App processes. The Shell package follows the supervised Worker V2 process lifecycle described above instead:
+Agent packages with UI split into Worker and App projects around a role-neutral owner Protocol project, then combine exact targets in an Aggregate project. Files, Shell, and Web are Runtime-only Worker plus Aggregate families:
 
 | Role | Owns | Must not own |
 | --- | --- | --- |
-| Runtime (`ISunderRuntimePackageModule`) | Network clients, secrets, storage authority, providers, tools, execution, memory, callbacks, typed operations/streams | Avalonia controls or direct App state |
-| App (`ISunderAppPackageModule`) | Views, view models, navigation, host browser launch, typed Runtime clients | Runtime stores, provider clients, credentials, execution authority |
+| Runtime (Worker V3) | Network clients, secrets, storage authority, providers, tools, execution, memory, callbacks, owner RPC | Avalonia controls or direct App state |
+| App (`ISunderAppPackageModule`) | Views, view models, navigation, host browser launch, typed owner-RPC clients | Runtime stores, provider clients, credentials, execution authority |
 
-Role-local DI and RPC visibility mean a Runtime service object is never available directly in App. When both roles expose related behavior, they use different activation-owned providers with different responsibilities. The App should call a typed Runtime operation rather than duplicating state.
+Role-local DI and RPC visibility mean a Runtime service object is never available directly in App. When both roles expose related behavior, they use different activation-owned providers with different responsibilities. The App should call typed owner RPC rather than duplicating state.
 
 Runtime snapshots/gateways are explicit. Do not use static singletons, shared files, or assumptions about a common current directory to communicate between roles.
 
@@ -85,7 +85,7 @@ Extensions read base projections through `IAgentRuntimeCatalog` and use service 
 
 ## Extension Ownership
 
-The Host records the activating package id for every managed `RegisterRpcProvider` call and every provider advertised by a Worker V2 activation. Each endpoint names one exact activation and becomes stale when that owner deactivates.
+The Host records the activating package id for every provider advertised by a Worker V3 activation. Each endpoint names one exact activation and becomes stale when that owner deactivates.
 
 Use `SunderRpcProviderSnapshot.PackageId` when package identity matters, especially stack export or dependency inference. A domain descriptor's optional `PackageId` is useful display metadata but is not the ownership authority.
 
@@ -101,7 +101,7 @@ Every first-party Agent extension runtime archive declares:
     VersionRange = ">=2.0.0 <3.0.0")]
 ```
 
-The Agent Protocol NuGet uses `[2.0.0,3.0.0)` while Sunder SDK/build packages retain their independent Core version line. Runtime graph validation occurs before assembly load; a package cannot rely on compatibility shims after an invalid graph is already active.
+The Agent Protocol NuGet uses `[2.0.0,3.0.0)` while Sunder SDK/build packages retain their independent Core version line. Runtime graph validation occurs before worker launch; a package cannot rely on compatibility shims after an invalid graph is already active.
 
 An extension may add dependencies on another extension only when its runtime behavior truly requires that package. Prefer optional RPC discovery when absence can be represented as not ready or unavailable.
 

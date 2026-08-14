@@ -25,7 +25,9 @@ internal sealed class LocalProcessExecutor(IPackageContext packageContext)
             pathEntries,
             File.Exists,
             OperatingSystem.IsWindows(),
-            Environment.GetEnvironmentVariable("PATHEXT"));
+            OperatingSystem.IsWindows()
+                ? ChildProcessEnvironment.WindowsPathExtensions
+                : null);
         var startInfo = new ProcessStartInfo
         {
             FileName = executableResolution.FileName,

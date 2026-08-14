@@ -1,5 +1,5 @@
+using Sunder.Package.Agent.Shared.Storage;
 using Sunder.Sdk.Abstractions;
-using Sunder.Sdk.Storage;
 
 namespace Sunder.Package.Agent.Services;
 
@@ -10,26 +10,16 @@ public sealed class AgentChatSelectionStateService
     private const string SelectedProfileIdKey = "agent.chat.selectedProfileId";
 
     private readonly IPackageKeyValueStore _state;
-    private readonly AgentPackageStorageMigration _storageMigration;
 
     public AgentChatSelectionStateService(IPackageContext packageContext)
-        : this(packageContext, new AgentPackageStorageMigration(packageContext))
-    {
-    }
-
-    internal AgentChatSelectionStateService(
-        IPackageContext packageContext,
-        AgentPackageStorageMigration storageMigration)
     {
         _state = packageContext.Storage.State;
-        _storageMigration = storageMigration;
     }
 
     internal event Action<string?>? SelectedWorkspaceChanged;
 
     public async Task<string?> GetSelectedWorkspaceIdAsync(CancellationToken cancellationToken = default)
     {
-        await _storageMigration.EnsureAsync(cancellationToken).ConfigureAwait(false);
         return Normalize(await _state.GetValueAsync(SelectedWorkspaceIdKey, cancellationToken));
     }
 
@@ -38,7 +28,6 @@ public sealed class AgentChatSelectionStateService
 
     public async Task<Guid?> GetSelectedSessionIdAsync(string? workspaceId, CancellationToken cancellationToken = default)
     {
-        await _storageMigration.EnsureAsync(cancellationToken).ConfigureAwait(false);
         return GetWorkspaceSessionKey(workspaceId) is { } key
                && Guid.TryParse(Normalize(await _state.GetValueAsync(key, cancellationToken)), out var sessionId)
             ? sessionId
@@ -47,7 +36,6 @@ public sealed class AgentChatSelectionStateService
 
     public async Task<string?> GetSelectedProfileIdAsync(CancellationToken cancellationToken = default)
     {
-        await _storageMigration.EnsureAsync(cancellationToken).ConfigureAwait(false);
         return Normalize(await _state.GetValueAsync(SelectedProfileIdKey, cancellationToken));
     }
 
@@ -55,7 +43,6 @@ public sealed class AgentChatSelectionStateService
         string? workspaceId,
         CancellationToken cancellationToken = default)
     {
-        await _storageMigration.EnsureAsync(cancellationToken).ConfigureAwait(false);
         var normalized = Normalize(workspaceId);
         if (!await TrySaveOrClearAsync(SelectedWorkspaceIdKey, normalized, cancellationToken))
         {
@@ -80,7 +67,6 @@ public sealed class AgentChatSelectionStateService
 
     public async Task SaveSelectedSessionIdAsync(Guid? sessionId, CancellationToken cancellationToken = default)
     {
-        await _storageMigration.EnsureAsync(cancellationToken).ConfigureAwait(false);
         await SaveOrClearAsync(SelectedSessionIdKey, sessionId?.ToString("N"), cancellationToken);
     }
 
@@ -89,7 +75,6 @@ public sealed class AgentChatSelectionStateService
         Guid? sessionId,
         CancellationToken cancellationToken = default)
     {
-        await _storageMigration.EnsureAsync(cancellationToken).ConfigureAwait(false);
         var key = GetWorkspaceSessionKey(workspaceId);
         if (key is null)
         {
@@ -102,7 +87,6 @@ public sealed class AgentChatSelectionStateService
 
     public async Task SaveSelectedProfileIdAsync(string? profileId, CancellationToken cancellationToken = default)
     {
-        await _storageMigration.EnsureAsync(cancellationToken).ConfigureAwait(false);
         await SaveOrClearAsync(SelectedProfileIdKey, Normalize(profileId), cancellationToken);
     }
 
@@ -144,6 +128,6 @@ public sealed class AgentChatSelectionStateService
         var normalizedWorkspaceId = Normalize(workspaceId);
         return normalizedWorkspaceId is null
             ? null
-            : PackageStorageKeyFactory.Create("agent.chat.selected-session", 1, normalizedWorkspaceId);
+            : CurrentPackageStorageKey.Create("agent.chat.selected-session", 1, normalizedWorkspaceId);
     }
 }

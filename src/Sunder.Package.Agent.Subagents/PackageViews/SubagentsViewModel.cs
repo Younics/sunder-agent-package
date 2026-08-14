@@ -7,7 +7,6 @@ using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Package.Agent.Subagents.Models;
 using Sunder.Package.Agent.Subagents.Runtime;
-using Sunder.Package.Agent.Subagents.Services;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Subagents.PackageViews;
@@ -37,17 +36,6 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
     private string? _initializationFailureStatus;
     private long _editRevision;
     private Task _currentDetailLoad = Task.CompletedTask;
-
-    public SubagentsViewModel(
-        SubagentService subagentService,
-        AgentRpcCatalog rpcCatalog,
-        IPackageSettingsNavigationService? settingsNavigationService = null)
-        : this(
-            new SubagentLocalManagementGateway(subagentService, rpcCatalog),
-            settingsNavigationService,
-            PresentationDispatcher.Capture())
-    {
-    }
 
     internal SubagentsViewModel(
         ISubagentManagementGateway gateway,

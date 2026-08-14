@@ -35,12 +35,8 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject,
 
     internal static IReadOnlyCollection<string> OwnedConfigurationKeys { get; } = [];
 
-    public AgentMcpSettingsViewModel(
-        McpSettingsEditorService editor,
-        McpConfigurationCoordinator configuration,
-        McpServerConnectionService connections,
-        McpOAuthCoordinator oauth)
-        : this(new McpLocalManagementGateway(editor, configuration, connections, oauth), PresentationDispatcher.Capture())
+    internal AgentMcpSettingsViewModel(IMcpManagementGateway gateway)
+        : this(gateway, PresentationDispatcher.Capture())
     {
     }
 
@@ -66,21 +62,6 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject,
         _gateway.StatusChanged += OnConnectionStatusChanged;
         _operations.PropertyChanged += OnOperationsPropertyChanged;
         _initialization = _operations.InitializeAsync();
-    }
-
-    internal AgentMcpSettingsViewModel(
-        McpServerCatalogService catalog,
-        McpClientConnectionManager connectionManager,
-        McpOAuthService? oauthService = null,
-        McpEcosystemConfigurationImporter? configurationImporter = null,
-        McpSunderConfigurationSyncService? sunderConfigurationSyncService = null)
-        : this(CreateLegacyDependencies(catalog, connectionManager, oauthService, configurationImporter, sunderConfigurationSyncService))
-    {
-    }
-
-    private AgentMcpSettingsViewModel(LegacyDependencies dependencies)
-        : this(dependencies.Editor, dependencies.Configuration, dependencies.Connections, dependencies.OAuth)
-    {
     }
 
     public ObservableCollection<ConfiguredMcpServerRecord> Servers { get; } = [];
@@ -637,26 +618,6 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject,
         _ = _runtimeRefresh.MarkDirty();
     }
 
-    private static LegacyDependencies CreateLegacyDependencies(
-        McpServerCatalogService catalog,
-        McpClientConnectionManager connectionManager,
-        McpOAuthService? oauthService,
-        McpEcosystemConfigurationImporter? configurationImporter,
-        McpSunderConfigurationSyncService? sunderConfigurationSyncService)
-    {
-        var importer = configurationImporter ?? new McpEcosystemConfigurationImporter(catalog);
-        return new LegacyDependencies(
-            new McpSettingsEditorService(catalog),
-            new McpConfigurationCoordinator(importer, sunderConfigurationSyncService),
-            new McpServerConnectionService(catalog, connectionManager, oauthService),
-            new McpOAuthCoordinator(oauthService, connectionManager));
-    }
-
-    private sealed record LegacyDependencies(
-        McpSettingsEditorService Editor,
-        McpConfigurationCoordinator Configuration,
-        McpServerConnectionService Connections,
-        McpOAuthCoordinator OAuth);
 }
 
 public enum McpStatusKind

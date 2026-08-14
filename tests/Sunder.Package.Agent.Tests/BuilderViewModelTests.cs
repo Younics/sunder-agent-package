@@ -331,8 +331,9 @@ public sealed class BuilderViewModelTests
             new AgentWorkspacePathRecord("second", "workspace.local", secondRoot, IsDefault: false, SortOrder: 1, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
         );
         var resolver = new TestWorkspaceExecutionResolver(workspace);
-        var executionService = new BuilderWorkspaceExecutionService(resolver);
-        var viewModel = CreateViewModel(resolver: resolver);
+        using var runtime = new BuilderServiceTests.LoopbackBuilderRpcClient(resolver);
+        var executionService = new BuilderWorkspaceExecutionService(runtime);
+        var viewModel = CreateViewModel();
         viewModel.Workspaces.Add(workspace);
         var project = CreateProject("one", "USB Lootbox");
         project.WorkspacePathId = "second";
@@ -361,15 +362,12 @@ public sealed class BuilderViewModelTests
 
     private static BuilderViewModel CreateViewModel(
         TestBackgroundProcessQueue? queue = null,
-        IAgentWorkspaceExecutionResolver? resolver = null,
         IBuilderProjectStore? store = null)
     {
         var packageContext = new TestPackageContext();
         store ??= new BuilderProjectStore(packageContext);
         var pathService = new BuilderPathService();
-        var executionService = resolver is null
-            ? new BuilderWorkspaceExecutionService()
-            : new BuilderWorkspaceExecutionService(resolver);
+        var executionService = new BuilderWorkspaceExecutionService();
         var backgroundProcesses = queue ?? new TestBackgroundProcessQueue();
         return new BuilderViewModel(
             new BuilderProjectApplicationService(
@@ -433,17 +431,26 @@ public sealed class BuilderViewModelTests
         }
     }
 
-    private sealed class TestWorkspaceExecutionResolver : IAgentWorkspaceExecutionResolver
+    private sealed class TestWorkspaceExecutionResolver :
+        IAgentWorkspaceExecutionResolver,
+        ITestWorkspaceExecutionResolverBinding
     {
         private readonly AgentWorkspaceRecord _workspace;
         private readonly TestExecutionTarget _target = new();
         private readonly RegressionTestExtensionCatalog _targetCatalog = new();
+        private AgentRpcReference<IAgentExecutionTarget> _targetReference;
 
         public TestWorkspaceExecutionResolver(AgentWorkspaceRecord workspace)
         {
             _workspace = workspace;
             _targetCatalog.AddProvider(AgentRpcServices.ExecutionTargets, _target);
+            _targetReference = _targetCatalog.GetRequiredReference(AgentRpcServices.ExecutionTargets);
         }
+
+        IAgentExecutionTarget ITestWorkspaceExecutionResolverBinding.Target => _target;
+
+        public void BindTargetReference(AgentRpcReference<IAgentExecutionTarget> targetReference)
+            => _targetReference = targetReference;
 
         public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces() => [_workspace];
 
@@ -466,7 +473,6 @@ public sealed class BuilderViewModelTests
                 _workspace.Paths.OrderBy(path => path.SortOrder).Select(path => path.HostPath).ToArray(),
                 _workspace.Paths.OrderBy(path => path.SortOrder).FirstOrDefault(path => path.IsDefault)?.HostPath
             );
-            var targetReference = _targetCatalog.GetRequiredReference(AgentRpcServices.ExecutionTargets);
             return ValueTask.FromResult(new AgentWorkspaceExecutionResolution(
                 _workspace,
                 binding,
@@ -475,8 +481,8 @@ public sealed class BuilderViewModelTests
                 _target
             )
             {
-                ExecutionTargetReference = targetReference,
-                ExecutionTargetHandle = targetReference.ToHandle(),
+                ExecutionTargetReference = _targetReference,
+                ExecutionTargetHandle = _targetReference.ToHandle(),
             });
         }
     }

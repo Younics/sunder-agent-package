@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AssemblyName>Sunder.Package.Agent.Skills.Protocol</AssemblyName>
+    <SunderPackageFamilyId>sunder.package.agent.skills</SunderPackageFamilyId>
+    <SunderPackageRole>protocol</SunderPackageRole>
+    <SunderPackageProject>false</SunderPackageProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Contracts\skills-owner.rpc.json"
+                      LogicalName="Sunder.Package.Agent.Skills.Protocol.Contracts.skills-owner.rpc.json" />
+    <SunderRpcBinding Include="Contracts\skills-owner.rpc.json"
+                      Namespace="Sunder.Package.Agent.Skills.Protocol.Generated"
+                      OutputFile="SkillsOwnerRpc.g.cs" />
+  </ItemGroup>
+
+</Project>

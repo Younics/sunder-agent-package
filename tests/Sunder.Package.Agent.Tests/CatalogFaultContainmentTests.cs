@@ -1,5 +1,3 @@
-extern alias SubagentsPackage;
-
 using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
@@ -12,9 +10,8 @@ using Sunder.Package.Agent.Subagents.Models;
 using Sunder.Package.Agent.Subagents.Services;
 using Sunder.Sdk.Rpc;
 using Xunit;
-using SubagentQuery = SubagentsPackage::Sunder.Package.Agent.Subagents.Runtime.SubagentQuery;
-using SubagentQueryKind = SubagentsPackage::Sunder.Package.Agent.Subagents.Runtime.SubagentQueryKind;
-using SubagentRuntimeHandler = SubagentsPackage::Sunder.Package.Agent.Subagents.Runtime.SubagentRuntimeHandler;
+using SubagentQuery = Sunder.Package.Agent.Subagents.Runtime.SubagentQuery;
+using SubagentQueryKind = Sunder.Package.Agent.Subagents.Runtime.SubagentQueryKind;
 
 namespace Sunder.Package.Agent.Tests;
 

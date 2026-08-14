@@ -14,9 +14,9 @@ Advanced session paging pins an `AgentSessions.rowid` insertion high-water mark 
 
 ## Storage Boundary
 
-The authoritative transcript remains in Runtime-owned `agent/agent.db`. Agent schema migration 16, `tool-execution-provenance`, adds nullable execution-time owner and optional schema provenance to the durable tool ledger. Existing null-owner executions are never backfilled from the current package catalog.
+The authoritative transcript remains in Runtime-owned `agent/agent.db`. The 2.0 baseline includes nullable execution-time owner and optional schema provenance on the durable tool ledger.
 
-Runtime maintains the derived projection at `agent/history-search.db`. The App accesses it only through private package Runtime operations and a bounded status stream. App composition neither resolves `AgentLocalStore` nor opens either database.
+Runtime maintains the derived projection at `agent/history-search.db`. The App accesses it only through private owner RPC and a bounded status stream. App composition neither resolves `AgentLocalStore` nor opens either database.
 
 The projection can be deleted at any time. Runtime recreates and reconciles it automatically from authoritative history. Unsupported or corrupt projection files and their WAL/SHM sidecars are deleted and replaced without retaining another plaintext copy or blocking Agent Runtime startup.
 

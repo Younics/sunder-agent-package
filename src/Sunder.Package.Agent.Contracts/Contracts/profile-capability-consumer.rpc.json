@@ -1,14 +1,16 @@
 {
-  "descriptorVersion": 1,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "descriptorVersion": 2,
   "contractId": "sunder.agent.profile.capability.consumer",
   "version": "1.0.0",
-  "services": [
-    {
-      "serviceId": "profile-capability-consumer",
-      "methods": [
-        {
-          "methodId": "describe",
+  "errors": {},
+  "services": {
+    "profile-capability-consumer": {
+      "methods": {
+        "describe": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/AgentRpcEmpty"
           },
@@ -16,9 +18,9 @@
             "$ref": "#/$defs/ProfileCapabilityConsumerSnapshot"
           }
         }
-      ]
+      }
     }
-  ],
+  },
   "$defs": {
     "AgentRpcEmpty": {
       "type": "object",

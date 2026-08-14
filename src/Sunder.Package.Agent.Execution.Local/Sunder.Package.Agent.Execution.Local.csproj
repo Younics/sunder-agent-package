@@ -1,19 +1,54 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <SunderSdkAvaloniaReference>true</SunderSdkAvaloniaReference>
+    <SunderPackageFamilyId>sunder.package.agent.execution.local</SunderPackageFamilyId>
+    <SunderPackageRole>worker</SunderPackageRole>
     <SunderPackageProject>true</SunderPackageProject>
+    <SunderSdkWorkerReference>true</SunderSdkWorkerReference>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
-    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <OutputType>Exe</OutputType>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">$(NETCoreSdkRuntimeIdentifier)</RuntimeIdentifier>
+    <RuntimeIdentifiers>win-x64;win-arm64;linux-x64;linux-arm64;osx-x64;osx-arm64</RuntimeIdentifiers>
+    <SelfContained>true</SelfContained>
+    <UseAppHost>true</UseAppHost>
+    <PublishSingleFile>false</PublishSingleFile>
+    <SunderGeneratedPackageManifest>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\obj\$(Configuration)\$(TargetFramework)\$(RuntimeIdentifier)\sunder-package.json'))</SunderGeneratedPackageManifest>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Avalonia" />
-    <PackageReference Include="CommunityToolkit.Mvvm" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
     <ProjectReference Include="..\Sunder.Agent.Execution.Common\Sunder.Agent.Execution.Common.csproj" />
     <ProjectReference Include="..\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
+    <ProjectReference Include="Protocol\LocalProtocol.csproj" />
   </ItemGroup>
 
-  <Import Project="..\Sunder.Package.Agent.Shared\Sunder.Package.Agent.Shared.props" />
+  <ItemGroup>
+    <Compile Remove="Aggregate\**\*" />
+    <Compile Remove="App\**\*" />
+    <Compile Remove="Protocol\**\*" />
+    <Compile Remove="LocalExecutionSettingsView.axaml.cs" />
+    <Compile Remove="LocalExecutionSettingsViewModel.cs" />
+    <Compile Remove="LocalShellRowViewModel.cs" />
+    <None Remove="Aggregate\**\*" />
+    <None Remove="App\**\*" />
+    <None Remove="Protocol\**\*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <SunderContractBundle Include="Protocol\Contracts\local-execution-presentation.rpc.json"
+                          ContractId="sunder.package.agent.execution.local.presentation"
+                          Version="2.0.0"
+                          DescriptorPath="contracts/local-execution-presentation.rpc.json"
+                          Exposure="package" />
+    <SunderRpcProvider Include="local.presentation"
+                       Role="runtime"
+                       ContractId="sunder.package.agent.execution.local.presentation"
+                       ContractVersion="2.0.0"
+                       Audience="owner" />
+    <SunderPackageTarget Include="runtime/$(RuntimeIdentifier)"
+                         Role="runtime"
+                         Rid="$(RuntimeIdentifier)"
+                         Kind="worker" />
+  </ItemGroup>
 
 </Project>

@@ -9,7 +9,7 @@ The first-party MCP package registers:
 - `IAgentNativeToolSource` through `ToolSources`.
 - `IAgentProfileSelectableCapabilityProvider` for one selectable tool group per server.
 - `IAgentSessionDataCleaner` for session-scoped connections.
-- Package-specific Runtime operations/stream and an App settings client.
+- Package-specific owner unary/stream RPC and an App settings client.
 - A host callback handler for OAuth.
 
 An MCP server is advertised only when it is enabled, selected on the active profile, discoverable, and used from an active session. Connections are scoped to session/workspace where appropriate and cleaned when the session is deleted.

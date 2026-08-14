@@ -35,7 +35,7 @@ public sealed partial class SubsessionsViewModel
         ISubsessionTranscriptPageReader transcriptReader,
         ISubsessionChangeNotifications changeNotifications,
         IPresentationDispatcher uiDispatcher)
-        : this(null, null, uiDispatcher)
+        : this(null, uiDispatcher)
     {
         SetRuntimePorts(sessionReader, checkpointReader, transcriptReader, changeNotifications);
     }

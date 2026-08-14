@@ -1,0 +1,13 @@
+{
+  "version": 2,
+  "dependencies": {
+    "net10.0": {
+      "Sunder.Package.Build": {
+        "type": "Direct",
+        "requested": "[1.1.0, 1.2.0)",
+        "resolved": "1.1.0",
+        "contentHash": "qItAAG1kNK4vjkGnipvjFobLl85mrgSvy1H40mgJssVLdKLrAJeXttaGO/L8baHy7w1VC+OPIOIzmERGsx59+A=="
+      }
+    }
+  }
+}

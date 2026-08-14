@@ -1,11 +1,13 @@
+extern alias AgentCore;
+
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.HistorySearch;
 using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Subagents.Runtime;
-using Sunder.Sdk.Runtime;
 using Xunit;
+using AgentRuntimePayloadLimits = AgentCore::Sunder.Package.Agent.Runtime.AgentRuntimePayloadLimits;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -74,7 +76,7 @@ public sealed class AgentRuntimeTransportLimitTests
     {
         var upload = CreateBytes((5 * 1024 * 1024) + 137);
         var download = CreateBytes((7 * 1024 * 1024) + 251);
-        var client = new BoundedAttachmentRuntimeClient(download);
+        var client = new BoundedAttachmentOwnerClient(download);
         using var gateway = new AgentAppRuntimeGateway(client);
         var sessionId = Guid.NewGuid();
 
@@ -108,7 +110,7 @@ public sealed class AgentRuntimeTransportLimitTests
     [Fact]
     public async Task AttachmentGateway_RejectsEscapedRunMessageAboveSerializedRequestLimit()
     {
-        var client = new BoundedAttachmentRuntimeClient([]);
+        var client = new BoundedAttachmentOwnerClient([]);
         using var gateway = new AgentAppRuntimeGateway(client);
 
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -390,13 +392,12 @@ public sealed class AgentRuntimeTransportLimitTests
         return bytes;
     }
 
-    private sealed class BoundedAttachmentRuntimeClient(byte[] downloadContent)
-        : IPackageRuntimeClient
+    private sealed class BoundedAttachmentOwnerClient(byte[] downloadContent)
+        : IAgentOwnerClient
     {
         private readonly Dictionary<string, MemoryStream> _uploads = new(StringComparer.Ordinal);
         private readonly byte[] _downloadContent = downloadContent;
 
-        public bool IsAvailable => true;
         public int MaximumRequestBytes { get; private set; }
         public int MaximumResponseBytes { get; private set; }
         public int UploadChunkCount { get; private set; }
@@ -405,7 +406,7 @@ public sealed class AgentRuntimeTransportLimitTests
         public AgentRunCommand? RunCommand { get; private set; }
 
         public ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-            PackageRuntimeOperation<TRequest, TResponse> operation,
+            AgentOwnerRpcOperation<TRequest, TResponse> operation,
             TRequest request,
             CancellationToken cancellationToken = default)
             where TRequest : class
@@ -420,11 +421,11 @@ public sealed class AgentRuntimeTransportLimitTests
             }
 
             object response;
-            if (ReferenceEquals(operation, AgentRuntimeOperations.AttachmentTransfers))
+            if (operation.Is(AgentRuntimeOperations.AttachmentTransfers))
             {
                 response = HandleTransfer((AgentAttachmentTransferRequest)(object)request);
             }
-            else if (ReferenceEquals(operation, AgentRuntimeOperations.Runs))
+            else if (operation.Is(AgentRuntimeOperations.Runs))
             {
                 RunCommand = (AgentRunCommand)(object)request;
                 var handle = Assert.Single(RunCommand.AttachmentHandles!);
@@ -441,7 +442,7 @@ public sealed class AgentRuntimeTransportLimitTests
             }
             else
             {
-                throw new NotSupportedException(operation.OperationId);
+                throw new NotSupportedException(operation.Describe());
             }
 
             var responseBytes = JsonSerializer.SerializeToUtf8Bytes(response, JsonOptions).Length;
@@ -454,7 +455,7 @@ public sealed class AgentRuntimeTransportLimitTests
         }
 
         public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-            PackageRuntimeStream<TRequest, TEvent> stream,
+            AgentOwnerRpcStream<TRequest, TEvent> stream,
             TRequest request,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
             where TRequest : class

@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "descriptorVersion": 2,
+  "contractId": "sunder.package.agent.execution.docker.presentation",
+  "version": "2.0.0",
+  "errors": {},
+  "services": {
+    "presentation": {
+      "methods": {
+        "execute": {
+          "kind": "unary",
+          "idempotency": "none",
+          "errors": [],
+          "requestSchema": {
+            "$ref": "#/$defs/DockerExecutionOperationRequest"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/DockerExecutionOperationResponse"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "OperationKind": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 7,
+      "enum": [0, 1, 2, 3, 4, 5, 6, 7]
+    },
+    "ImageStatus": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4,
+      "enum": [0, 1, 2, 3, 4]
+    },
+    "Timeout": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16
+    },
+    "Path": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 1024
+    },
+    "ImageReference": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "Message": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "Token": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "Revision": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "UtcDateTime": {
+      "type": "string",
+      "logicalType": "utc-date-time"
+    },
+    "DockerImageDefinition": {
+      "type": "object",
+      "properties": {
+        "imageReference": { "$ref": "#/$defs/ImageReference" },
+        "status": { "$ref": "#/$defs/ImageStatus" },
+        "lastPulledAtUtc": { "$ref": "#/$defs/UtcDateTime" },
+        "lastMessage": { "$ref": "#/$defs/Message" }
+      },
+      "required": ["imageReference", "status"],
+      "additionalProperties": false
+    },
+    "ImageList": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/DockerImageDefinition" },
+      "minItems": 0,
+      "maxItems": 4096
+    },
+    "DockerExecutionOperationError": {
+      "type": "object",
+      "properties": {
+        "code": { "$ref": "#/$defs/Token" },
+        "message": { "$ref": "#/$defs/Message" },
+        "isTransient": { "type": "boolean" },
+        "correlationId": { "$ref": "#/$defs/Token" }
+      },
+      "required": ["code", "message", "isTransient", "correlationId"],
+      "additionalProperties": false
+    },
+    "DockerExecutionOperationRequest": {
+      "type": "object",
+      "properties": {
+        "kind": { "$ref": "#/$defs/OperationKind" },
+        "timeoutSeconds": { "$ref": "#/$defs/Timeout" },
+        "dockerCliPath": { "$ref": "#/$defs/Path" },
+        "imageReference": { "$ref": "#/$defs/ImageReference" }
+      },
+      "required": ["kind"],
+      "additionalProperties": false
+    },
+    "DockerExecutionOperationResponse": {
+      "type": "object",
+      "properties": {
+        "timeoutSeconds": { "$ref": "#/$defs/Timeout" },
+        "dockerCliPath": { "$ref": "#/$defs/Path" },
+        "images": { "$ref": "#/$defs/ImageList" },
+        "success": { "type": "boolean" },
+        "message": { "$ref": "#/$defs/Message" },
+        "catalogRevision": { "$ref": "#/$defs/Revision" },
+        "error": { "$ref": "#/$defs/DockerExecutionOperationError" }
+      },
+      "required": ["success"],
+      "additionalProperties": false
+    }
+  }
+}

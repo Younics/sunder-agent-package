@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AssemblyName>Sunder.Package.Agent.Mcp.App</AssemblyName>
+    <RootNamespace>Sunder.Package.Agent.Mcp</RootNamespace>
+    <SunderPackageFamilyId>sunder.package.agent.mcp</SunderPackageFamilyId>
+    <SunderPackageRole>app</SunderPackageRole>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <SunderSdkStacksReference>true</SunderSdkStacksReference>
+    <SunderAgentSharedCallbackFlow>true</SunderAgentSharedCallbackFlow>
+    <SunderPackageAssetsDirectory>$(MSBuildProjectDirectory)\..\Assets</SunderPackageAssetsDirectory>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="Avalonia.AvaloniaEdit" />
+    <PackageReference Include="AvaloniaEdit.TextMate" />
+    <PackageReference Include="CommunityToolkit.Mvvm" />
+    <ProjectReference Include="..\Shared\Sunder.Package.Agent.Mcp.Shared.csproj" />
+    <ProjectReference Include="..\..\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
+    <Compile Include="..\AgentMcpSettingsView.axaml.cs" Link="AgentMcpSettingsView.axaml.cs" />
+    <Compile Include="..\AgentMcpSettingsViewModel.cs" Link="AgentMcpSettingsViewModel.cs" />
+    <Compile Include="..\AgentMcpSettingsViewModel.DocumentLoading.cs" Link="AgentMcpSettingsViewModel.DocumentLoading.cs" />
+    <Compile Include="..\McpSettingsOperationsViewModel.cs" Link="McpSettingsOperationsViewModel.cs" />
+    <Compile Include="..\PackageMetadata.cs" Link="PackageMetadata.cs" />
+    <Compile Include="..\Runtime\McpAppRpcGateway.cs" Link="Runtime\McpAppRpcGateway.cs" />
+    <AvaloniaXaml Include="..\AgentMcpSettingsView.axaml" Link="AgentMcpSettingsView.axaml" />
+    <SunderContractBundle Include="..\Shared\Contracts\mcp-management.rpc.json"
+                          ContractId="sunder.package.agent.mcp.management"
+                          Version="2.0.0"
+                          DescriptorPath="contracts/mcp-management.rpc.json"
+                          Exposure="package" />
+    <SunderUsesContract Include="sunder.package.agent.mcp.management"
+                        Role="app"
+                        ContractVersion="2.0.0"
+                        Required="true"
+                        Actions="discover;invoke;subscribe" />
+  </ItemGroup>
+
+  <Import Project="..\..\Sunder.Package.Agent.Shared\Sunder.Package.Agent.Shared.props" />
+
+  <ItemGroup>
+    <Compile Remove="..\..\Sunder.Package.Agent.Shared\Importing\BoundedImportIO.cs" />
+  </ItemGroup>
+
+</Project>

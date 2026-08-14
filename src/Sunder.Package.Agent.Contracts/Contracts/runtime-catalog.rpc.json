@@ -1,14 +1,16 @@
 {
-  "descriptorVersion": 1,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "descriptorVersion": 2,
   "contractId": "sunder.agent.runtime.catalog",
   "version": "1.0.0",
-  "services": [
-    {
-      "serviceId": "runtime-catalog",
-      "methods": [
-        {
-          "methodId": "list-sessions",
+  "errors": {},
+  "services": {
+    "runtime-catalog": {
+      "methods": {
+        "list-sessions": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/AgentRpcEmpty"
           },
@@ -16,9 +18,10 @@
             "$ref": "#/$defs/ListOfAgentSessionRecord"
           }
         },
-        {
-          "methodId": "list-sessions-for-profile",
+        "list-sessions-for-profile": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/StringRequest"
           },
@@ -26,9 +29,10 @@
             "$ref": "#/$defs/ListOfAgentSessionRecord"
           }
         },
-        {
-          "methodId": "list-sessions-for-workspace",
+        "list-sessions-for-workspace": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/StringRequest"
           },
@@ -36,9 +40,10 @@
             "$ref": "#/$defs/ListOfAgentSessionRecord"
           }
         },
-        {
-          "methodId": "get-session",
+        "get-session": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/SessionIdRequest"
           },
@@ -46,9 +51,10 @@
             "$ref": "#/$defs/AgentRpcOptionalOfAgentSessionRecord"
           }
         },
-        {
-          "methodId": "list-workspaces",
+        "list-workspaces": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/AgentRpcEmpty"
           },
@@ -56,9 +62,10 @@
             "$ref": "#/$defs/ListOfAgentWorkspaceRecord"
           }
         },
-        {
-          "methodId": "get-workspace",
+        "get-workspace": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/StringRequest"
           },
@@ -66,9 +73,10 @@
             "$ref": "#/$defs/AgentRpcOptionalOfAgentWorkspaceRecord"
           }
         },
-        {
-          "methodId": "get-session-profile",
+        "get-session-profile": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/SessionIdRequest"
           },
@@ -76,9 +84,10 @@
             "$ref": "#/$defs/AgentRpcOptionalOfAgentProfileRecord"
           }
         },
-        {
-          "methodId": "get-working-summary",
+        "get-working-summary": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/SessionIdRequest"
           },
@@ -86,9 +95,10 @@
             "$ref": "#/$defs/AgentRpcOptionalOfAgentWorkingSummaryRecord"
           }
         },
-        {
-          "methodId": "get-session-context-checkpoint",
+        "get-session-context-checkpoint": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/SessionIdRequest"
           },
@@ -96,9 +106,10 @@
             "$ref": "#/$defs/AgentRpcOptionalOfAgentSessionContextCheckpointRecord"
           }
         },
-        {
-          "methodId": "get-latest-checkpoint",
+        "get-latest-checkpoint": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/SessionIdRequest"
           },
@@ -106,9 +117,10 @@
             "$ref": "#/$defs/AgentRpcOptionalOfAgentRunCheckpointRecord"
           }
         },
-        {
-          "methodId": "list-recent-turns",
+        "list-recent-turns": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/RecentTurnsRequest"
           },
@@ -116,9 +128,10 @@
             "$ref": "#/$defs/ListOfAgentTurnRecord"
           }
         },
-        {
-          "methodId": "list-turns-before",
+        "list-turns-before": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/TurnBoundaryRequest"
           },
@@ -126,9 +139,10 @@
             "$ref": "#/$defs/ListOfAgentTurnRecord"
           }
         },
-        {
-          "methodId": "list-turns-after",
+        "list-turns-after": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/TurnBoundaryRequest"
           },
@@ -136,9 +150,10 @@
             "$ref": "#/$defs/ListOfAgentTurnRecord"
           }
         },
-        {
-          "methodId": "list-recent-transcript-headers",
+        "list-recent-transcript-headers": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/RecentTurnsRequest"
           },
@@ -146,9 +161,10 @@
             "$ref": "#/$defs/ListOfAgentTurnRecord"
           }
         },
-        {
-          "methodId": "list-transcript-headers-before",
+        "list-transcript-headers-before": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/TurnBoundaryRequest"
           },
@@ -156,9 +172,10 @@
             "$ref": "#/$defs/ListOfAgentTurnRecord"
           }
         },
-        {
-          "methodId": "list-transcript-headers-after",
+        "list-transcript-headers-after": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/TurnBoundaryRequest"
           },
@@ -166,9 +183,10 @@
             "$ref": "#/$defs/ListOfAgentTurnRecord"
           }
         },
-        {
-          "methodId": "get-transcript-tool-detail",
+        "get-transcript-tool-detail": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/AgentTranscriptToolDetailRequest"
           },
@@ -176,9 +194,10 @@
             "$ref": "#/$defs/AgentRpcOptionalOfAgentTranscriptToolDetailRecord"
           }
         },
-        {
-          "methodId": "list-profiles",
+        "list-profiles": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/AgentRpcEmpty"
           },
@@ -186,9 +205,10 @@
             "$ref": "#/$defs/ListOfAgentProfileRecord"
           }
         },
-        {
-          "methodId": "get-profile",
+        "get-profile": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/StringRequest"
           },
@@ -196,9 +216,10 @@
             "$ref": "#/$defs/AgentRpcOptionalOfAgentProfileRecord"
           }
         },
-        {
-          "methodId": "get-session-model-binding",
+        "get-session-model-binding": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/SessionCapabilityRequest"
           },
@@ -206,9 +227,10 @@
             "$ref": "#/$defs/AgentRpcOptionalOfAgentProfileModelBindingRecord"
           }
         },
-        {
-          "methodId": "get-model-binding",
+        "get-model-binding": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/ProfileCapabilityRequest"
           },
@@ -216,9 +238,10 @@
             "$ref": "#/$defs/AgentRpcOptionalOfAgentProfileModelBindingRecord"
           }
         },
-        {
-          "methodId": "watch",
+        "watch": {
           "kind": "server-stream",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/AgentRpcEmpty"
           },
@@ -226,9 +249,9 @@
             "$ref": "#/$defs/AgentRuntimeCatalogEvent"
           }
         }
-      ]
+      }
     }
-  ],
+  },
   "$defs": {
     "AgentRpcEmpty": {
       "type": "object",
@@ -243,18 +266,15 @@
     },
     "DateTimeOffset": {
       "type": "string",
-      "minLength": 0,
-      "maxLength": 1000000
+      "logicalType": "utc-date-time"
     },
     "Guid": {
       "type": "string",
-      "minLength": 0,
-      "maxLength": 1000000
+      "logicalType": "uuid"
     },
     "Nullable": {
       "type": "string",
-      "minLength": 0,
-      "maxLength": 1000000
+      "logicalType": "uuid"
     },
     "Int64": {
       "type": "integer",

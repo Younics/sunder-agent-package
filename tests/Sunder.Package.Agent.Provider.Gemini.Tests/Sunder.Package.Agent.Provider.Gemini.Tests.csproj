@@ -5,6 +5,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.Gemini\Sunder.Package.Agent.Provider.Gemini.csproj" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.Gemini\App\Sunder.Package.Agent.Provider.Gemini.App.csproj"
+                      Aliases="GeminiApp" />
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
     <ProjectReference Include="..\Sunder.Package.Agent.Provider.TestSupport\Sunder.Package.Agent.Provider.TestSupport.csproj" />
   </ItemGroup>

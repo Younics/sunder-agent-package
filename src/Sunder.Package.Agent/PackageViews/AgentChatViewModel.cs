@@ -493,7 +493,8 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
 
             shouldEndSubmission = await CompleteOrRestoreComposerSubmissionAsync(
                 selectedSession,
-                submission).ConfigureAwait(false);
+                submission,
+                restoreWhenMissing: false).ConfigureAwait(false);
 
             await InvokeOnUiThreadAsync(() =>
             {

@@ -4,7 +4,7 @@ using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Protocol;
-using Sunder.Sdk.Runtime;
+using Sunder.Sdk.Rpc;
 namespace Sunder.Package.Agent.Runtime;
 
 internal enum AgentRuntimeConnectionState
@@ -60,7 +60,7 @@ internal sealed partial class AgentAppRuntimeGateway :
 {
     private static readonly TimeSpan InitialReconnectDelay = TimeSpan.FromMilliseconds(100);
     private static readonly TimeSpan MaximumReconnectDelay = TimeSpan.FromSeconds(2);
-    private readonly AgentRuntimeTransport _transport;
+    private readonly IAgentOwnerClient _ownerClient;
     private readonly CancellationTokenSource _lifetime = new();
     private readonly object _cacheLock = new();
     private readonly object _observationLock = new();
@@ -84,12 +84,15 @@ internal sealed partial class AgentAppRuntimeGateway :
     private int _chatSnapshotLoadGeneration;
     private bool _disposed;
 
-    public AgentAppRuntimeGateway(IPackageRuntimeClient client)
+    public AgentAppRuntimeGateway(ISunderRpcClient client)
+        : this(new AgentOwnerRpcClient(client))
     {
-        _transport = new AgentRuntimeTransport(client);
-        _connectionState = client.IsAvailable
-            ? AgentRuntimeConnectionState.Connecting
-            : AgentRuntimeConnectionState.Unavailable;
+    }
+
+    internal AgentAppRuntimeGateway(IAgentOwnerClient ownerClient)
+    {
+        _ownerClient = ownerClient;
+        _connectionState = AgentRuntimeConnectionState.Connecting;
     }
 
     public AgentRuntimeConnectionState ConnectionState => _connectionState;
@@ -188,7 +191,7 @@ internal sealed partial class AgentAppRuntimeGateway :
         var workspace = GetWorkspace(workspaceId) ?? throw new InvalidOperationException("Workspace was not found.");
         SaveWorkspaceAggregate(workspaceId, workspace.DisplayName, workspace.Description,
             workspace.Paths, workspace.Documents, contributionId);
-        return new AgentWorkspaceBindingRecord(AgentWorkspaceService.BuildPrimaryBindingId(workspaceId, displayRole),
+        return new AgentWorkspaceBindingRecord(AgentWorkspaceDefaults.BuildPrimaryBindingId(workspaceId, displayRole),
             workspaceId, AgentRpcContractIds.ExecutionTarget, contributionId, displayRole,
             true, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
     }
@@ -616,13 +619,13 @@ internal sealed partial class AgentAppRuntimeGateway :
         => new($"App Runtime operation '{operation}' must be invoked asynchronously.");
 
     private async ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-        PackageRuntimeOperation<TRequest, TResponse> operation, TRequest request, CancellationToken cancellationToken)
+        AgentOwnerRpcOperation<TRequest, TResponse> operation, TRequest request, CancellationToken cancellationToken)
         where TRequest : class where TResponse : class
     {
         ThrowIfUnavailable();
         try
         {
-            var response = await _transport.InvokeAsync(operation, request, cancellationToken).ConfigureAwait(false);
+            var response = await _ownerClient.InvokeAsync(operation, request, cancellationToken).ConfigureAwait(false);
             SetConnectionState(AgentRuntimeConnectionState.Connected);
             return response;
         }

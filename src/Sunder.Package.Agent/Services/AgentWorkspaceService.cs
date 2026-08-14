@@ -495,8 +495,3 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
             ? StringComparer.OrdinalIgnoreCase
             : StringComparer.Ordinal;
 }
-
-public static class AgentWorkspaceBindingRoles
-{
-    public const string PrimaryExecutionTarget = "primary-execution-target";
-}

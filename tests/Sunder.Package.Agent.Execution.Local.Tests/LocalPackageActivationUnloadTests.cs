@@ -15,7 +15,7 @@ namespace Sunder.Package.Agent.Execution.Local.Tests;
 public sealed class LocalPackageActivationUnloadTests
 {
     [Fact]
-    public async Task Update_RetiredActivationWithOutsideCapabilityCollectsAndReplacementOwnsOneUseCapability()
+    public async Task WorkerUpdate_RetiredActivationWithOutsideCapabilityCollectsAndReplacementOwnsOneUseCapability()
     {
         using var scope = RegressionTestPackageScope.Create();
         var workspaceRoot = Path.Combine(scope.RootPath, "workspace");
@@ -140,13 +140,17 @@ public sealed class LocalPackageActivationUnloadTests
         var assemblyPath = typeof(LocalExecutionTarget).Assembly.Location;
         var loadContext = new LocalPackageLoadContext(assemblyPath);
         var assembly = loadContext.LoadFromAssemblyPath(assemblyPath);
-        var moduleType = assembly.GetType(
-            "Sunder.Package.Agent.Execution.Local.PackageModule",
-            throwOnError: true)!;
-        var module = Assert.IsAssignableFrom<ISunderRuntimePackageModule>(Activator.CreateInstance(moduleType));
         var services = new ServiceCollection();
-        module.ConfigureRuntimeServices(services, packageContext);
         services.AddSingleton<IPackageContext>(packageContext);
+        foreach (var serviceTypeName in new[]
+                 {
+                     "Sunder.Package.Agent.Execution.Local.LocalShellCatalogService",
+                     "Sunder.Package.Agent.Execution.Local.LocalExecutionWorkspaceConfigService",
+                     "Sunder.Package.Agent.Execution.Local.LocalExecutionTarget",
+                 })
+        {
+            services.AddSingleton(assembly.GetType(serviceTypeName, throwOnError: true)!);
+        }
         var provider = services.BuildServiceProvider();
         var targetType = Assert.Single(
             services.Select(static descriptor => descriptor.ServiceType),
@@ -223,7 +227,7 @@ public sealed class LocalPackageActivationUnloadTests
     {
         private static readonly HashSet<string> SharedAssemblyNames =
         [
-            typeof(ISunderRuntimePackageModule).Assembly.GetName().Name!,
+            typeof(IPackageContext).Assembly.GetName().Name!,
             typeof(IAgentExecutionTarget).Assembly.GetName().Name!,
             typeof(IServiceCollection).Assembly.GetName().Name!,
             typeof(ILoggerFactory).Assembly.GetName().Name!,

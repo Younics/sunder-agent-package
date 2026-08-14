@@ -4,7 +4,6 @@ using System.Collections.Concurrent;
 using System.ComponentModel;
 using Sunder.Package.Agent.Execution.Docker;
 using Sunder.Sdk.Abstractions;
-using Sunder.Sdk.Runtime;
 using Xunit;
 using DockerPresentationDispatcher = DockerPackage::Sunder.Package.Agent.Shared.Presentation.IPresentationDispatcher;
 
@@ -185,38 +184,21 @@ public sealed class DockerSettingsDispatcherTests
     private static DockerImageDefinition Image(DockerImageStatus status)
         => new("example:latest", status, null, null);
 
-    private sealed class ControlledDockerRuntimeClient : IPackageRuntimeClient
+    private sealed class ControlledDockerRuntimeClient : IDockerExecutionPresentationClient
     {
         private int _requestIndex;
-
-        public bool IsAvailable => true;
 
         public PendingRequest[] Requests { get; } =
             Enumerable.Range(0, 8).Select(_ => new PendingRequest()).ToArray();
 
-        public async ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-            PackageRuntimeOperation<TRequest, TResponse> operation,
-            TRequest request,
+        public async ValueTask<DockerExecutionOperationResponse> ExecuteAsync(
+            DockerExecutionOperationRequest request,
             CancellationToken cancellationToken = default)
-            where TRequest : class
-            where TResponse : class
         {
             var pending = Requests[Interlocked.Increment(ref _requestIndex) - 1];
             pending.Started.TrySetResult();
-            return (TResponse)(object)await pending.Response.Task.WaitAsync(cancellationToken)
+            return await pending.Response.Task.WaitAsync(cancellationToken)
                 .ConfigureAwait(false);
-        }
-
-        public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-            PackageRuntimeStream<TRequest, TEvent> stream,
-            TRequest request,
-            [System.Runtime.CompilerServices.EnumeratorCancellation]
-            CancellationToken cancellationToken = default)
-            where TRequest : class
-            where TEvent : class
-        {
-            await Task.CompletedTask;
-            yield break;
         }
     }
 

@@ -1,5 +1,4 @@
 using Sunder.Sdk.Settings;
-using Sunder.Package.Agent.Provider.Shared;
 
 namespace Sunder.Package.Agent.Provider.OpenAI;
 
@@ -11,11 +10,10 @@ public static class OpenAiProviderConfiguration
 
     public static IReadOnlyList<PackageSettingsOption> UtilityModelOptions => OpenAiModelCatalog.UtilityModelOptions;
 
-    internal static ProviderUtilityModelSelection UtilityModelSelection { get; } = new(
+    internal static OpenAiUtilityModelSelection UtilityModelSelection { get; } = new(
         UtilityModelKey,
         DefaultUtilityModelId,
-        OpenAiModelCatalog.UtilityModelOptions,
-        OpenAiSettingsViewModel.NormalizeLegacyUtilityModelId);
+        OpenAiModelCatalog.UtilityModelOptions);
 
     public static PackageSettingsSchema Schema { get; } = new(
         "Configure how the Agent package authenticates and talks to OpenAI models.",
@@ -47,9 +45,25 @@ public static class OpenAiProviderConfiguration
                     )
                 ]
             ),
-            ProviderConfigurationSections.UtilityModelSelect(
-                UtilityModelSelection,
-                "Choose the cheap model used for background utility work such as session title generation.")
+            new PackageSettingsSection(
+                "utility",
+                "Utility model",
+                "Choose the cheap model used for background utility work such as session title generation.",
+                [
+                    new PackageSettingsField(
+                        UtilityModelSelection.ConfigurationKey,
+                        "Utility model",
+                        PackageSettingsFieldKind.Select,
+                        description: "Used for short background tasks, not regular agent replies.",
+                        isRequired: true,
+                        defaultValue: UtilityModelSelection.DefaultModelId,
+                        options: UtilityModelSelection.Options),
+                ])
         ]
     );
+
+    internal static string? NormalizeLegacyUtilityModelId(string? modelId)
+        => string.Equals(modelId?.Trim(), "openai/gpt-5.5-fast", StringComparison.OrdinalIgnoreCase)
+            ? "openai/gpt-5.5"
+            : modelId;
 }

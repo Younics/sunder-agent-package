@@ -5,12 +5,10 @@ using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Subagents.Services;
 using Sunder.Sdk.Abstractions;
-using Sunder.Sdk.Runtime;
 
 namespace Sunder.Package.Agent.Subagents.Runtime;
 
 internal sealed class SubagentRuntimeChangeStream :
-    IPackageRuntimeStreamHandler<SubagentChangeSubscription, SubagentChanged>,
     IDisposable
 {
     private const int ReplayCapacity = 256;

@@ -1,6 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <SunderPackageFamilyId>sunder.package.agent.tools.shell</SunderPackageFamilyId>
+    <SunderPackageRole>worker</SunderPackageRole>
     <SunderPackageProject>true</SunderPackageProject>
     <SunderSdkWorkerReference>true</SunderSdkWorkerReference>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>

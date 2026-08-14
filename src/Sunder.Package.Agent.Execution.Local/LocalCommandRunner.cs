@@ -53,12 +53,11 @@ internal static class LocalCommandRunner
 
     public static void ApplyPathEnvironment(ProcessStartInfo startInfo, IReadOnlyList<string> pathEntries)
     {
-        if (pathEntries.Count == 0)
+        ChildProcessEnvironment.ApplyBase(startInfo);
+        if (pathEntries.Count > 0)
         {
-            return;
+            startInfo.Environment["PATH"] = string.Join(Path.PathSeparator, pathEntries);
         }
-
-        startInfo.Environment["PATH"] = string.Join(Path.PathSeparator, pathEntries);
     }
 
     private static string BuildStartFailureMessage(

@@ -1,3 +1,4 @@
+using Sunder.Package.Agent.Mcp.Runtime;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Callbacks;
 
@@ -8,8 +9,8 @@ internal sealed class McpOAuthCallbackHandler(
     McpOAuthService oauth,
     IPackageContext packageContext) : IPackageCallbackHandler
 {
-    internal const string HandlerId = "mcp.oauth.v1";
-    internal const string ServerIdParameter = "serverId";
+    internal const string HandlerId = McpManagementProtocol.OAuthCallbackHandlerId;
+    internal const string ServerIdParameter = McpManagementProtocol.OAuthServerIdParameter;
 
     public string CallbackHandlerId => HandlerId;
 

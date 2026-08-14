@@ -3,6 +3,7 @@ using Sunder.Agent.Execution.Common;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Execution.Docker;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Tests;
 using Sunder.Package.Agent.Tools.Shell;
@@ -110,6 +111,51 @@ public sealed class ProcessExecutionHardeningTests : IDisposable
         Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(5), $"Post-start failure cleanup took {stopwatch.Elapsed}.");
         await Task.Delay(TimeSpan.FromSeconds(3));
         Assert.False(File.Exists(marker), "A descendant process survived post-start failure cleanup.");
+    }
+
+    [Fact]
+    public void ExecutionChildren_UseExplicitEnvironmentWithoutWorkerBootstrapValues()
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = OperatingSystem.IsWindows() ? "cmd.exe" : "/bin/sh",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        var bootstrapNames = new[]
+        {
+            "SUNDER_WORKER_PROTOCOL",
+            "SUNDER_PACKAGE_ID",
+            "SUNDER_PACKAGE_VERSION",
+            "SUNDER_ACTIVATION_ID",
+            "SUNDER_SESSION_ID",
+            "SUNDER_PACKAGE_CONTENT_ROOT",
+            "SUNDER_WORKER_TEMP_ROOT",
+            "SUNDER_PACKAGE_WORKSPACE_ROOT",
+        };
+        foreach (var name in bootstrapNames)
+        {
+            startInfo.Environment[name] = "must-not-leak";
+        }
+        startInfo.Environment["PRIVATE_TEST_SECRET"] = "must-not-leak";
+
+        LocalCommandRunner.ApplyPathEnvironment(startInfo, ["/explicit/bin"]);
+
+        Assert.All(bootstrapNames, name => Assert.False(startInfo.Environment.ContainsKey(name)));
+        Assert.False(startInfo.Environment.ContainsKey("PRIVATE_TEST_SECRET"));
+        Assert.Equal("/explicit/bin", startInfo.Environment["PATH"]);
+        Assert.True(startInfo.Environment.ContainsKey(OperatingSystem.IsWindows() ? "USERPROFILE" : "HOME"));
+
+        var dockerStartInfo = DockerCli.CreateStartInfo(
+            Path.Combine(Path.GetTempPath(), OperatingSystem.IsWindows() ? "docker.exe" : "docker"),
+            [],
+            redirectStandardInput: false);
+        Assert.DoesNotContain(
+            dockerStartInfo.Environment.Keys,
+            name => name.StartsWith("SUNDER_", StringComparison.OrdinalIgnoreCase));
+        Assert.False(dockerStartInfo.Environment.ContainsKey("PRIVATE_TEST_SECRET"));
+        Assert.False(string.IsNullOrWhiteSpace(dockerStartInfo.Environment["PATH"]));
     }
 
     public void Dispose()

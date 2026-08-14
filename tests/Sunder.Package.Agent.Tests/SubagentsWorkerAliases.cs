@@ -1,0 +1,24 @@
+extern alias SubagentsWorker;
+
+global using SubagentEditorCapabilityCatalog = SubagentsWorker::Sunder.Package.Agent.Subagents.Services.SubagentEditorCapabilityCatalog;
+global using OrchestratedAgentBehaviorLoop = SubagentsWorker::Sunder.Package.Agent.Subagents.Services.OrchestratedAgentBehaviorLoop;
+global using SubagentBatchResultRenderer = SubagentsWorker::Sunder.Package.Agent.Subagents.Services.SubagentBatchResultRenderer;
+global using SubagentChildRunCoordinator = SubagentsWorker::Sunder.Package.Agent.Subagents.Services.SubagentChildRunCoordinator;
+global using SubagentChildRunEnvironment = SubagentsWorker::Sunder.Package.Agent.Subagents.Services.SubagentChildRunEnvironment;
+global using SubagentDescriptorSchema = SubagentsWorker::Sunder.Package.Agent.Subagents.Services.SubagentDescriptorSchema;
+global using SubagentFeature = SubagentsWorker::Sunder.Package.Agent.Subagents.Services.SubagentFeature;
+global using SubagentLocalManagementGateway = SubagentsWorker::Sunder.Package.Agent.Subagents.Runtime.SubagentLocalManagementGateway;
+global using SubagentOwnerProvider = SubagentsWorker::Sunder.Package.Agent.Subagents.Runtime.SubagentOwnerProvider;
+global using SubagentOwnerOperationException = SubagentsWorker::Sunder.Package.Agent.Subagents.Runtime.SubagentOwnerOperationException;
+global using SubagentPermissionStatusAdapter = SubagentsWorker::Sunder.Package.Agent.Subagents.Services.SubagentPermissionStatusAdapter;
+global using SubagentRequestParser = SubagentsWorker::Sunder.Package.Agent.Subagents.Services.SubagentRequestParser;
+global using SubagentRuntimeChangeStream = SubagentsWorker::Sunder.Package.Agent.Subagents.Runtime.SubagentRuntimeChangeStream;
+global using SubagentRuntimeHandler = SubagentsWorker::Sunder.Package.Agent.Subagents.Runtime.SubagentRuntimeHandler;
+global using SubagentService = SubagentsWorker::Sunder.Package.Agent.Subagents.Services.SubagentService;
+global using SubagentStackContributor = SubagentsWorker::Sunder.Package.Agent.Subagents.Services.SubagentStackContributor;
+global using SubagentStore = SubagentsWorker::Sunder.Package.Agent.Subagents.Services.SubagentStore;
+global using SubagentTaskRequest = SubagentsWorker::Sunder.Package.Agent.Subagents.Services.SubagentTaskRequest;
+global using SubagentTaskResult = SubagentsWorker::Sunder.Package.Agent.Subagents.Models.SubagentTaskResult;
+global using SubagentTaskResultState = SubagentsWorker::Sunder.Package.Agent.Subagents.Models.SubagentTaskResultState;
+global using SubsessionAroundTurnPayload = SubagentsWorker::Sunder.Package.Agent.Subagents.Runtime.SubsessionAroundTurnPayload;
+global using SubsessionLocalRuntimeAdapter = SubagentsWorker::Sunder.Package.Agent.Subagents.Runtime.SubsessionLocalRuntimeAdapter;

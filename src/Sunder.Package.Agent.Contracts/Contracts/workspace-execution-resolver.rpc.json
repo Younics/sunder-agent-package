@@ -1,14 +1,16 @@
 {
-  "descriptorVersion": 1,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "descriptorVersion": 2,
   "contractId": "sunder.agent.workspace.execution.resolver",
   "version": "1.0.0",
-  "services": [
-    {
-      "serviceId": "workspace-execution-resolver",
-      "methods": [
-        {
-          "methodId": "list-workspaces",
+  "errors": {},
+  "services": {
+    "workspace-execution-resolver": {
+      "methods": {
+        "list-workspaces": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/AgentRpcEmpty"
           },
@@ -16,9 +18,10 @@
             "$ref": "#/$defs/ListOfAgentWorkspaceRecord"
           }
         },
-        {
-          "methodId": "resolve",
+        "resolve": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/StringRequest"
           },
@@ -26,9 +29,9 @@
             "$ref": "#/$defs/AgentWorkspaceExecutionResolutionWire"
           }
         }
-      ]
+      }
     }
-  ],
+  },
   "$defs": {
     "AgentRpcEmpty": {
       "type": "object",
@@ -38,8 +41,7 @@
     },
     "DateTimeOffset": {
       "type": "string",
-      "minLength": 0,
-      "maxLength": 1000000
+      "logicalType": "utc-date-time"
     },
     "String": {
       "type": "string",
@@ -244,12 +246,14 @@
     },
     "Guid": {
       "type": "string",
-      "minLength": 0,
-      "maxLength": 1000000
+      "logicalType": "uuid"
     },
     "AgentRpcProviderHandle": {
       "type": "object",
       "properties": {
+        "abiSha256": {
+          "$ref": "#/$defs/String"
+        },
         "activationEpoch": {
           "$ref": "#/$defs/Int64"
         },
@@ -259,10 +263,10 @@
         "contractId": {
           "$ref": "#/$defs/String"
         },
-        "contractSha256": {
+        "contractVersion": {
           "$ref": "#/$defs/String"
         },
-        "contractVersion": {
+        "descriptorSha256": {
           "$ref": "#/$defs/String"
         },
         "endpointReference": {
@@ -282,11 +286,12 @@
         }
       },
       "required": [
+        "abiSha256",
         "activationEpoch",
         "activationId",
         "contractId",
-        "contractSha256",
         "contractVersion",
+        "descriptorSha256",
         "endpointReference",
         "packageId",
         "packageVersion",

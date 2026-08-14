@@ -21,22 +21,22 @@ public sealed partial class ProviderArchitectureTests
     }
 
     [Fact]
-    public void ProviderProjects_ImportTheSingleSharedSourcePropsFile()
+    public void ProviderPackages_LinkTheSharedProviderSources()
     {
         var sourceDirectory = Path.Combine(GetRepositoryRoot(), "src");
-        var providerProjects = Directory.EnumerateDirectories(sourceDirectory, "Sunder.Package.Agent.Provider.*")
+        var providerDirectories = Directory.EnumerateDirectories(sourceDirectory, "Sunder.Package.Agent.Provider.*")
             .Where(path => !path.EndsWith(".Shared", StringComparison.Ordinal))
-            .SelectMany(path => Directory.EnumerateFiles(path, "*.csproj", SearchOption.TopDirectoryOnly))
             .ToArray();
 
-        Assert.NotEmpty(providerProjects);
-        foreach (var projectPath in providerProjects)
+        Assert.NotEmpty(providerDirectories);
+        foreach (var providerDirectory in providerDirectories)
         {
-            var imports = XDocument.Load(projectPath).Descendants("Import")
-                .Select(element => (string?)element.Attribute("Project"));
-            Assert.Contains(imports, import => import?.EndsWith(
-                "Sunder.Package.Agent.Provider.Shared\\Sunder.Package.Agent.Provider.Shared.props",
-                StringComparison.Ordinal) == true);
+            var sharedSources = Directory.EnumerateFiles(providerDirectory, "*.csproj", SearchOption.AllDirectories)
+                .SelectMany(projectPath => XDocument.Load(projectPath).Descendants())
+                .Select(element => (string?)element.Attribute("Include"))
+                .Where(include => include?.Contains("Sunder.Package.Agent.Provider.Shared", StringComparison.Ordinal) == true)
+                .ToArray();
+            Assert.NotEmpty(sharedSources);
         }
     }
 
@@ -46,7 +46,9 @@ public sealed partial class ProviderArchitectureTests
         var sourceDirectory = Path.Combine(GetRepositoryRoot(), "src");
         var settingsViewModels = Directory.EnumerateDirectories(sourceDirectory, "Sunder.Package.Agent.Provider.*")
             .Where(path => !path.EndsWith(".Shared", StringComparison.Ordinal))
-            .SelectMany(path => Directory.EnumerateFiles(path, "*SettingsViewModel.cs", SearchOption.TopDirectoryOnly))
+            .SelectMany(path => Directory.EnumerateFiles(path, "*SettingsViewModel.cs", SearchOption.AllDirectories))
+            .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+                           && !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
             .ToArray();
 
         Assert.Equal(4, settingsViewModels.Length);
@@ -64,26 +66,26 @@ public sealed partial class ProviderArchitectureTests
         var expectedTypes = new HashSet<string>(StringComparer.Ordinal)
         {
             "Anthropic.AnthropicAgentProvider",
+            "Anthropic.AnthropicCredentialProtocol",
             "Anthropic.AnthropicProviderConfiguration",
             "Anthropic.AnthropicSettingsView",
             "Anthropic.AnthropicSettingsViewModel",
             "Anthropic.AppPackageModule",
-            "Anthropic.PackageModule",
             "Gemini.GeminiAgentProvider",
+            "Gemini.GeminiCredentialProtocol",
             "Gemini.GeminiEmbeddingProvider",
             "Gemini.GeminiProviderConfiguration",
             "Gemini.GeminiSettingsView",
             "Gemini.GeminiSettingsViewModel",
             "Gemini.AppPackageModule",
-            "Gemini.PackageModule",
             "LMStudio.LMStudioAgentProvider",
+            "LMStudio.LMStudioCredentialProtocol",
             "LMStudio.LMStudioEmbeddingProvider",
             "LMStudio.LMStudioProviderConfiguration",
             "LMStudio.LMStudioSettingsLoadState",
             "LMStudio.LMStudioSettingsView",
             "LMStudio.LMStudioSettingsViewModel",
             "LMStudio.AppPackageModule",
-            "LMStudio.PackageModule",
             "OpenAI.ApiKeyAuthStrategy",
             "OpenAI.AppPackageModule",
             "OpenAI.CodexConnectedAuthStrategy",
@@ -97,7 +99,6 @@ public sealed partial class ProviderArchitectureTests
             "OpenAI.OpenAiProviderConfiguration",
             "OpenAI.OpenAiSettingsView",
             "OpenAI.OpenAiSettingsViewModel",
-            "OpenAI.PackageModule",
         };
         var providerRoot = Path.Combine(GetRepositoryRoot(), "src");
         var actualTypes = Directory.EnumerateDirectories(providerRoot, "Sunder.Package.Agent.Provider.*")
@@ -118,7 +119,7 @@ public sealed partial class ProviderArchitectureTests
     }
 
     [Fact]
-    public void VendorTestProjects_ReferenceOnlyTheirProviderContractsAndTestSupport()
+    public void VendorTestProjects_ReferenceOnlyTheirWorkerAppContractsAndTestSupport()
     {
         var testsDirectory = Path.Combine(GetRepositoryRoot(), "tests");
         var testProjects = Directory.EnumerateDirectories(testsDirectory, "Sunder.Package.Agent.Provider.*.Tests")
@@ -132,10 +133,19 @@ public sealed partial class ProviderArchitectureTests
             var vendor = projectName["Sunder.Package.Agent.Provider.".Length..^".Tests".Length];
             var expectedReferences = new HashSet<string>(StringComparer.Ordinal)
             {
-                $"Sunder.Package.Agent.Provider.{vendor}",
                 "Sunder.Package.Agent.Contracts",
                 "Sunder.Package.Agent.Provider.TestSupport",
             };
+            if (string.Equals(vendor, "OpenAI", StringComparison.Ordinal))
+            {
+                expectedReferences.Add("Sunder.Package.Agent.Provider.OpenAI.Worker");
+                expectedReferences.Add("Sunder.Package.Agent.Provider.OpenAI.App");
+            }
+            else
+            {
+                expectedReferences.Add($"Sunder.Package.Agent.Provider.{vendor}");
+                expectedReferences.Add($"Sunder.Package.Agent.Provider.{vendor}.App");
+            }
             var actualReferences = XDocument.Load(projectPath).Descendants("ProjectReference")
                 .Select(element => (string)element.Attribute("Include")!)
                 .Select(include => include.Replace('\\', Path.DirectorySeparatorChar))

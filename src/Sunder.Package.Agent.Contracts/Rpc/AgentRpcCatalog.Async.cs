@@ -160,7 +160,7 @@ public sealed partial class AgentRpcProviderReference<TClient>
 
         if (current is null
             || current.State != SunderRpcProviderState.Active
-            || !AgentRpcProviderHandle.From(Provider).Matches(current))
+            || !_handle.Matches(current))
         {
             Retire();
             return null;

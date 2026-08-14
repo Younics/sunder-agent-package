@@ -54,39 +54,51 @@ public sealed class McpSunderConfigurationSyncService(
         }
     }
 
-    private Task<McpConfigurationImportResult> SyncCoreAsync(
+    private async Task<McpConfigurationImportResult> SyncCoreAsync(
         AgentWorkspaceRecord? workspace,
         bool includeKnownWorkspaces,
         CancellationToken cancellationToken)
-        => SyncFilesAsync(EnumerateConfigurationPaths(workspace, includeKnownWorkspaces), cancellationToken);
-
-    private IEnumerable<string> EnumerateConfigurationPaths(AgentWorkspaceRecord? workspace, bool includeKnownWorkspaces)
     {
+        var paths = await EnumerateConfigurationPathsAsync(
+            workspace,
+            includeKnownWorkspaces,
+            cancellationToken).ConfigureAwait(false);
+        return await SyncFilesAsync(paths, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<IReadOnlyList<string>> EnumerateConfigurationPathsAsync(
+        AgentWorkspaceRecord? workspace,
+        bool includeKnownWorkspaces,
+        CancellationToken cancellationToken)
+    {
+        var paths = new List<string>();
         foreach (var path in EnumerateGlobalConfigurationPaths())
         {
-            yield return path;
+            paths.Add(path);
         }
 
         if (workspace is not null)
         {
             foreach (var path in EnumerateWorkspaceConfigurationPaths(workspace))
             {
-                yield return path;
+                paths.Add(path);
             }
         }
 
         if (!includeKnownWorkspaces)
         {
-            yield break;
+            return paths;
         }
 
-        foreach (var knownWorkspace in ListKnownWorkspaces())
+        foreach (var knownWorkspace in await ListKnownWorkspacesAsync(cancellationToken).ConfigureAwait(false))
         {
             foreach (var path in EnumerateWorkspaceConfigurationPaths(knownWorkspace))
             {
-                yield return path;
+                paths.Add(path);
             }
         }
+
+        return paths;
     }
 
     private IEnumerable<string> EnumerateGlobalConfigurationPaths()
@@ -125,7 +137,8 @@ public sealed class McpSunderConfigurationSyncService(
         }
     }
 
-    private IReadOnlyList<AgentWorkspaceRecord> ListKnownWorkspaces()
+    private async Task<IReadOnlyList<AgentWorkspaceRecord>> ListKnownWorkspacesAsync(
+        CancellationToken cancellationToken)
     {
         if (_rpcCatalog is null)
         {
@@ -133,8 +146,12 @@ public sealed class McpSunderConfigurationSyncService(
         }
 
         var result = new List<AgentWorkspaceRecord>();
-        foreach (var reference in _rpcCatalog.GetServiceReferences(AgentRpcServices.RuntimeCatalogs))
+        var references = await _rpcCatalog.GetServiceReferencesAsync(
+            AgentRpcServices.RuntimeCatalogs,
+            cancellationToken).ConfigureAwait(false);
+        foreach (var reference in references)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (!reference.TryAcquire(out var lease))
             {
                 continue;

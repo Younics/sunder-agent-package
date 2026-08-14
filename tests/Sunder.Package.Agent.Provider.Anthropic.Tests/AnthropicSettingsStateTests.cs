@@ -1,9 +1,15 @@
+extern alias AnthropicApp;
+
+using System.Text.Json;
+using Sunder.Package.Agent.Provider.Anthropic.Protocol.Generated;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Package.Agent.Provider.TestSupport;
 using Sunder.Sdk.Abstractions;
-using Sunder.Sdk.Runtime;
 using Sunder.Sdk.Storage;
 using Xunit;
+using AnthropicSettingsViewModel = AnthropicApp::Sunder.Package.Agent.Provider.Anthropic.AnthropicSettingsViewModel;
+using IProviderCredentialOwnerClient = AnthropicApp::Sunder.Package.Agent.Provider.Shared.IProviderCredentialOwnerClient;
+using ProviderCredentialSnapshot = AnthropicApp::Sunder.Package.Agent.Provider.Shared.ProviderCredentialSnapshot;
 
 namespace Sunder.Package.Agent.Provider.Anthropic.Tests;
 
@@ -20,14 +26,14 @@ public sealed class AnthropicSettingsStateTests
             {
                 [AnthropicProviderConfiguration.ApiKeySecretKey] = storedCanary,
             });
-        var runtime = CreateCredentialRuntime(context);
-        using var viewModel = new AnthropicSettingsViewModel(context, runtime);
+        var ownerClient = new CredentialOwnerClientFake(context);
+        using var viewModel = new AnthropicSettingsViewModel(context, ownerClient);
 
         await viewModel.InitializeAsync();
 
         Assert.True(viewModel.ApiKeySettings.HasStoredCredential);
         Assert.Null(viewModel.ApiKeySettings.EnteredCredential);
-        Assert.All(runtime.Invocations, invocation =>
+        Assert.All(ownerClient.Invocations, invocation =>
             Assert.DoesNotContain(storedCanary, invocation.ResponseJson, StringComparison.Ordinal));
 
         viewModel.ApiKeySettings.EnteredCredential = "   ";
@@ -39,13 +45,13 @@ public sealed class AnthropicSettingsStateTests
         await viewModel.ApiKeySettings.SaveCredentialCommand.ExecuteAsync(null);
         Assert.Equal(replacementCanary, await context.Secrets.GetSecretAsync(AnthropicProviderConfiguration.ApiKeySecretKey));
         Assert.Null(viewModel.ApiKeySettings.EnteredCredential);
-        var setCommand = Assert.Single(runtime.Invocations, invocation =>
-            invocation.OperationId == ProviderCredentialRuntimeOperations.Command.OperationId
+        var setCommand = Assert.Single(ownerClient.Invocations, invocation =>
+            invocation.MethodId == "command"
             && invocation.RequestJson.Contains(replacementCanary, StringComparison.Ordinal));
         Assert.DoesNotContain(replacementCanary, setCommand.ResponseJson, StringComparison.Ordinal);
         Assert.DoesNotContain(
-            runtime.Invocations,
-            invocation => invocation.OperationId == ProviderCredentialRuntimeOperations.Query.OperationId
+            ownerClient.Invocations,
+            invocation => invocation.MethodId == "query"
                 && invocation.RequestJson.Contains(replacementCanary, StringComparison.Ordinal));
 
         viewModel.ApiKeySettings.RequestClearCredentialCommand.Execute(null);
@@ -66,7 +72,7 @@ public sealed class AnthropicSettingsStateTests
             secrets: secrets);
         using var viewModel = new AnthropicSettingsViewModel(
             context,
-            CreateCredentialRuntime(context));
+            new CredentialOwnerClientFake(context));
         viewModel.ApiKeySettings.EnteredCredential = "retry-key";
 
         await viewModel.ApiKeySettings.SaveCredentialCommand.ExecuteAsync(null);
@@ -83,7 +89,7 @@ public sealed class AnthropicSettingsStateTests
         var context = new ProviderTestPackageContext(
             "sunder.package.agent.provider.anthropic",
             settings: state);
-        using var viewModel = new AnthropicSettingsViewModel(context, NullPackageRuntimeClient.Instance);
+        using var viewModel = new AnthropicSettingsViewModel(context, new CredentialOwnerClientFake(context));
         viewModel.UtilityModelSettings.SelectedUtilityModel = viewModel.UtilityModelSettings.UtilityModels.Last();
 
         var save = viewModel.UtilityModelSettings.SaveUtilityModelCommand.ExecuteAsync(null);
@@ -96,25 +102,58 @@ public sealed class AnthropicSettingsStateTests
         Assert.Null(await state.GetValueAsync(AnthropicProviderConfiguration.UtilityModelKey));
     }
 
-    private static ProviderTestRuntimeClient CreateCredentialRuntime(ProviderTestPackageContext context)
+    private sealed record CredentialOwnerInvocation(
+        string MethodId,
+        string RequestJson,
+        string ResponseJson);
+
+    private sealed class CredentialOwnerClientFake : IProviderCredentialOwnerClient
     {
-        var handler = new ProviderCredentialRuntimeHandler(new ProviderCredentialAccessor(
-            context.Secrets,
-            AnthropicProviderConfiguration.ApiKeySecretKey));
-        return new ProviderTestRuntimeClient(async (operationId, request, cancellationToken) =>
+        private readonly ProviderCredentialRpcProvider _provider;
+        private readonly List<CredentialOwnerInvocation> _invocations = [];
+
+        internal CredentialOwnerClientFake(ProviderTestPackageContext context)
         {
-            if (operationId == ProviderCredentialRuntimeOperations.Query.OperationId)
-            {
-                return await handler.HandleAsync((ProviderCredentialQuery)request, cancellationToken);
-            }
+            _provider = new ProviderCredentialRpcProvider(new ProviderCredentialAccessor(
+                context.Secrets,
+                AnthropicProviderConfiguration.ApiKeySecretKey));
+        }
 
-            if (operationId == ProviderCredentialRuntimeOperations.Command.OperationId)
-            {
-                return await handler.HandleAsync((ProviderCredentialCommand)request, cancellationToken);
-            }
+        internal IReadOnlyList<CredentialOwnerInvocation> Invocations => _invocations;
 
-            throw new InvalidOperationException($"Unexpected Runtime operation '{operationId}'.");
-        });
+        public async ValueTask<ProviderCredentialSnapshot> GetStatusAsync(
+            CancellationToken cancellationToken = default)
+        {
+            var request = new CredentialQuery();
+            var response = await _provider.QueryAsync(null!, request, cancellationToken);
+            Record("query", request, response);
+            return new ProviderCredentialSnapshot(response.HasStoredCredential);
+        }
+
+        public async ValueTask<ProviderCredentialSnapshot> SetAsync(
+            string credential,
+            CancellationToken cancellationToken = default)
+        {
+            var request = new CredentialCommand { Kind = 0, Credential = credential };
+            var response = await _provider.CommandAsync(null!, request, cancellationToken);
+            Record("command", request, response);
+            return new ProviderCredentialSnapshot(response.HasStoredCredential);
+        }
+
+        public async ValueTask<ProviderCredentialSnapshot> ClearAsync(
+            CancellationToken cancellationToken = default)
+        {
+            var request = new CredentialCommand { Kind = 1 };
+            var response = await _provider.CommandAsync(null!, request, cancellationToken);
+            Record("command", request, response);
+            return new ProviderCredentialSnapshot(response.HasStoredCredential);
+        }
+
+        private void Record<TRequest, TResponse>(string methodId, TRequest request, TResponse response)
+            => _invocations.Add(new CredentialOwnerInvocation(
+                methodId,
+                JsonSerializer.Serialize(request),
+                JsonSerializer.Serialize(response)));
     }
 
     private sealed class ThrowingSecrets : IPackageSecrets

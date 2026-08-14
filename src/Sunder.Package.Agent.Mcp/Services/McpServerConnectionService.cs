@@ -2,8 +2,6 @@ using ModelContextProtocol.Client;
 
 namespace Sunder.Package.Agent.Mcp.Services;
 
-internal sealed record McpConnectionPresentation(McpConnectionStatus Status, string Detail, string Diagnostics);
-
 public sealed class McpServerConnectionService(
     McpServerCatalogService catalog,
     McpClientConnectionManager connections,

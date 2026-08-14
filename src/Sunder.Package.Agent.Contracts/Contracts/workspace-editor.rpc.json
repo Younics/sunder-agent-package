@@ -1,14 +1,16 @@
 {
-  "descriptorVersion": 1,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "descriptorVersion": 2,
   "contractId": "sunder.agent.workspace.editor",
   "version": "1.0.0",
-  "services": [
-    {
-      "serviceId": "workspace-editor",
-      "methods": [
-        {
-          "methodId": "describe",
+  "errors": {},
+  "services": {
+    "workspace-editor": {
+      "methods": {
+        "describe": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/AgentRpcEmpty"
           },
@@ -16,9 +18,10 @@
             "$ref": "#/$defs/AgentRpcIdentity"
           }
         },
-        {
-          "methodId": "can-edit",
+        "can-edit": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/AgentWorkspaceEditorContext"
           },
@@ -26,9 +29,10 @@
             "$ref": "#/$defs/Boolean"
           }
         },
-        {
-          "methodId": "get-sections",
+        "get-sections": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/AgentWorkspaceEditorContext"
           },
@@ -36,9 +40,10 @@
             "$ref": "#/$defs/ListOfAgentEditorSection"
           }
         },
-        {
-          "methodId": "save-section",
+        "save-section": {
           "kind": "unary",
+          "idempotency": "none",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/WorkspaceEditorSaveRequest"
           },
@@ -46,9 +51,9 @@
             "$ref": "#/$defs/AgentEditorSaveResult"
           }
         }
-      ]
+      }
     }
-  ],
+  },
   "$defs": {
     "AgentRpcEmpty": {
       "type": "object",
@@ -79,8 +84,7 @@
     },
     "DateTimeOffset": {
       "type": "string",
-      "minLength": 0,
-      "maxLength": 1000000
+      "logicalType": "utc-date-time"
     },
     "Int32": {
       "type": "integer",

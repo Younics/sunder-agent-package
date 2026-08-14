@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <SunderPackageFamilyId>sunder.package.agent.execution.local</SunderPackageFamilyId>
+    <SunderPackageRole>app</SunderPackageRole>
+    <SunderPackageProject>true</SunderPackageProject>
+    <SunderSdkAvaloniaReference>true</SunderSdkAvaloniaReference>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <AssemblyName>Sunder.Package.Agent.Execution.Local.App</AssemblyName>
+    <SunderPackageAssetsDirectory>$(MSBuildProjectDirectory)\..\Assets</SunderPackageAssetsDirectory>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="CommunityToolkit.Mvvm" />
+    <ProjectReference Include="..\..\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
+    <ProjectReference Include="..\Protocol\LocalProtocol.csproj" />
+    <Compile Include="..\PackageMetadata.cs" Link="PackageMetadata.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <SunderContractBundle Include="..\Protocol\Contracts\local-execution-presentation.rpc.json"
+                          ContractId="sunder.package.agent.execution.local.presentation"
+                          Version="2.0.0"
+                          DescriptorPath="contracts/local-execution-presentation.rpc.json"
+                          Exposure="package" />
+    <SunderUsesContract Include="sunder.package.agent.execution.local.presentation"
+                        Role="app"
+                        ContractVersion="2.0.0"
+                        Required="true"
+                        Actions="discover;invoke" />
+  </ItemGroup>
+
+  <Import Project="..\..\Sunder.Package.Agent.Shared\Sunder.Package.Agent.Shared.props" />
+
+</Project>

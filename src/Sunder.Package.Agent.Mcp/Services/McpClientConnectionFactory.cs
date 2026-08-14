@@ -70,7 +70,7 @@ internal sealed class McpClientConnectionFactory(
                 Command = launch.Command,
                 Arguments = server.CommandParts.Skip(1).ToArray(),
                 WorkingDirectory = launch.WorkingDirectory,
-                EnvironmentVariables = launch.EnvironmentVariables?.ToDictionary(item => item.Key, item => (string?)item.Value, StringComparer.OrdinalIgnoreCase),
+                EnvironmentVariables = launch.EnvironmentVariables.ToDictionary(item => item.Key, item => item.Value, StringComparer.OrdinalIgnoreCase),
                 StandardErrorLines = standardError,
             },
             loggerFactory);

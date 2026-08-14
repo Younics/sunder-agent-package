@@ -16,7 +16,7 @@
         "type": "Direct",
         "requested": "[1.1.0, 1.2.0)",
         "resolved": "1.1.0",
-        "contentHash": "qbBDgVS5otbNfuCDyOoG8oRzttwq3PhAa36kkh9Qc4j93m23Z3zjBt3+YOOUqh1elalsZbOTp+gNKSQ0QPginA==",
+        "contentHash": "ExpKC8Dy3YKA4D1VUoGdb20QYGpnCn5JVX9nveREnP7aKTIGO4JgtegoHAUrzQXSFLN8rTNU8XkKDCKTxCt2pQ==",
         "dependencies": {
           "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.8",
           "Microsoft.Extensions.Logging.Abstractions": "10.0.8"
@@ -163,12 +163,28 @@
       "sunder.package.agent.memory.semantic": {
         "type": "Project",
         "dependencies": {
+          "Microsoft.Data.Sqlite": "[10.0.8, )",
+          "Microsoft.Extensions.DependencyInjection": "[10.0.8, )",
+          "Sunder.Package.Agent.Protocol": "[2.0.0, )",
+          "Sunder.Sdk": "[1.1.0, 1.2.0)",
+          "Sunder.Sdk.Worker": "[1.1.0, 1.1.0]"
+        }
+      },
+      "sunder.package.agent.memory.semantic.app": {
+        "type": "Project",
+        "dependencies": {
           "Avalonia": "[12.0.3, )",
           "CommunityToolkit.Mvvm": "[8.4.2, )",
-          "Microsoft.Data.Sqlite": "[10.0.8, )",
           "Sunder.Package.Agent.Protocol": "[2.0.0, )",
           "Sunder.Sdk": "[1.1.0, 1.2.0)",
           "Sunder.Sdk.Avalonia": "[1.1.0, 1.2.0)"
+        }
+      },
+      "sunder.package.agent.memory.semantic.protocol": {
+        "type": "Project",
+        "dependencies": {
+          "Sunder.Package.Agent.Protocol": "[2.0.0, )",
+          "Sunder.Sdk": "[1.1.0, 1.2.0)"
         }
       },
       "Sunder.Package.Agent.Protocol": {
@@ -212,6 +228,15 @@
         "resolved": "10.5.2",
         "contentHash": "Ei+YWV9Ybnps7pR1dgjlG29gelXEwZkhLVAcWmKe6HvXS6LNBYgSdWiY3Hk9OZXYtK34rv/NtLWBQYQGOBQYPQ=="
       },
+      "Microsoft.Extensions.DependencyInjection": {
+        "type": "CentralTransitive",
+        "requested": "[10.0.8, )",
+        "resolved": "10.0.8",
+        "contentHash": "daf62xHIrq8pnE709hgaZZN9tSam9TGGepWe1+bE6V3GEuVwJiMs6ib+38lfMCyAJAHiX0vapxBhsuMSV7U+cg==",
+        "dependencies": {
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.8"
+        }
+      },
       "SQLitePCLRaw.bundle_e_sqlite3": {
         "type": "CentralTransitive",
         "requested": "[3.0.3, )",
@@ -232,11 +257,19 @@
         "type": "CentralTransitive",
         "requested": "[1.1.0, 1.2.0)",
         "resolved": "1.1.0",
-        "contentHash": "Ajo7d8Yrk2lZkNz66SyWzr5Y0cncLFykHkgdU7Q6Ou9hDMhQPIIVr9asEQ2xljwLOUdxWSqv75cWLbVkS2qqeg==",
+        "contentHash": "3qIle7/tWC6ZWYOs1Px5asg6RgVmg1+qD+QTksXMOG/y+f8uzi4w01yPKAdOoI843MZbyH5MFnJhnTO46jgeHg==",
         "dependencies": {
           "Avalonia": "12.0.3",
-          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.8",
-          "Sunder.Sdk": "1.1.0"
+          "Sunder.Sdk": "[1.1.0, 1.2.0)"
+        }
+      },
+      "Sunder.Sdk.Worker": {
+        "type": "CentralTransitive",
+        "requested": "[1.1.0, 1.1.0]",
+        "resolved": "1.1.0",
+        "contentHash": "5mIeGLPO8ifBg4bpCCOLS6emm1IAzvTojXwIq1tnUX46TY/Nb0DjhdnvxuDez9BzbeNDyvbi9R4xUvhwnzWvxA==",
+        "dependencies": {
+          "Sunder.Sdk": "[1.1.0]"
         }
       }
     }

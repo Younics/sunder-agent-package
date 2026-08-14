@@ -1,0 +1,4270 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "descriptorVersion": 2,
+  "contractId": "sunder.agent.owner.runtime",
+  "version": "2.0.0",
+  "errors": {
+    "agent.owner.operation-failed": {
+      "description": "The requested Agent operation could not be completed."
+    }
+  },
+  "services": {
+    "agent-runtime": {
+      "methods": {
+        "chat-snapshot": {
+          "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": ["agent.owner.operation-failed"],
+          "requestSchema": {
+            "$ref": "#/$defs/AgentChatSnapshotRequest"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentChatSnapshotProjection"
+          }
+        },
+        "dashboard": {
+          "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": ["agent.owner.operation-failed"],
+          "requestSchema": {
+            "$ref": "#/$defs/AgentDashboardRequest"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentDashboardProjection"
+          }
+        },
+        "transcript-page": {
+          "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": ["agent.owner.operation-failed"],
+          "requestSchema": {
+            "$ref": "#/$defs/AgentTranscriptPageRequest"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentTranscriptPage"
+          }
+        },
+        "catalog": {
+          "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": ["agent.owner.operation-failed"],
+          "requestSchema": {
+            "$ref": "#/$defs/AgentCatalogRequest"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentCatalogProjection"
+          }
+        },
+        "profile-command": {
+          "kind": "unary",
+          "idempotency": "none",
+          "errors": ["agent.owner.operation-failed"],
+          "requestSchema": {
+            "$ref": "#/$defs/AgentProfileCommand"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentProfileCommandResult"
+          }
+        },
+        "workspace-command": {
+          "kind": "unary",
+          "idempotency": "none",
+          "errors": ["agent.owner.operation-failed"],
+          "requestSchema": {
+            "$ref": "#/$defs/AgentWorkspaceCommand"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentWorkspaceCommandResult"
+          }
+        },
+        "session-command": {
+          "kind": "unary",
+          "idempotency": "none",
+          "errors": ["agent.owner.operation-failed"],
+          "requestSchema": {
+            "$ref": "#/$defs/AgentSessionCommand"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentSessionCommandResult"
+          }
+        },
+        "run-command": {
+          "kind": "unary",
+          "idempotency": "none",
+          "errors": ["agent.owner.operation-failed"],
+          "requestSchema": {
+            "$ref": "#/$defs/AgentRunCommand"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentRunCommandResult"
+          }
+        },
+        "run-status": {
+          "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": ["agent.owner.operation-failed"],
+          "requestSchema": {
+            "$ref": "#/$defs/AgentRunCommandStatusRequest"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentRunCommandStatusResult"
+          }
+        },
+        "permission-command": {
+          "kind": "unary",
+          "idempotency": "none",
+          "errors": ["agent.owner.operation-failed"],
+          "requestSchema": {
+            "$ref": "#/$defs/AgentPermissionCommand"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentPermissionProjection"
+          }
+        },
+        "attachment-transfer": {
+          "kind": "unary",
+          "idempotency": "none",
+          "errors": ["agent.owner.operation-failed"],
+          "requestSchema": {
+            "$ref": "#/$defs/AgentAttachmentTransferRequest"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentAttachmentTransferResult"
+          }
+        },
+        "history-search": {
+          "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": ["agent.owner.operation-failed"],
+          "requestSchema": {
+            "$ref": "#/$defs/HistorySearchRequest"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/HistorySearchResponse"
+          }
+        },
+        "history-state": {
+          "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": ["agent.owner.operation-failed"],
+          "requestSchema": {
+            "$ref": "#/$defs/HistorySearchStateRequest"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/HistorySearchState"
+          }
+        },
+        "history-command": {
+          "kind": "unary",
+          "idempotency": "none",
+          "errors": ["agent.owner.operation-failed"],
+          "requestSchema": {
+            "$ref": "#/$defs/HistorySearchCommand"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/HistorySearchCommandResult"
+          }
+        },
+        "transcript-around": {
+          "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": ["agent.owner.operation-failed"],
+          "requestSchema": {
+            "$ref": "#/$defs/AgentTranscriptAroundTurnRequest"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentTranscriptAroundTurnPage"
+          }
+        },
+        "transcript-tool-detail": {
+          "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": ["agent.owner.operation-failed"],
+          "requestSchema": {
+            "$ref": "#/$defs/AgentTranscriptToolDetailRequest"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AgentTranscriptToolDetailResponse"
+          }
+        },
+        "changes": {
+          "kind": "server-stream",
+          "idempotency": "idempotent",
+          "errors": ["agent.owner.operation-failed"],
+          "requestSchema": {
+            "$ref": "#/$defs/AgentChangeSubscription"
+          },
+          "eventSchema": {
+            "$ref": "#/$defs/AgentRuntimeChange"
+          }
+        },
+        "history-status": {
+          "kind": "server-stream",
+          "idempotency": "idempotent",
+          "errors": ["agent.owner.operation-failed"],
+          "requestSchema": {
+            "$ref": "#/$defs/HistorySearchStatusSubscription"
+          },
+          "eventSchema": {
+            "$ref": "#/$defs/HistorySearchStatus"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "AgentChatSnapshotRequest": {
+      "type": "object",
+      "properties": {
+        "includeInitialTranscript": {
+          "type": "boolean"
+        },
+        "initialTranscriptLimit": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "preferredProfileId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "preferredSessionId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "preferredWorkspaceId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        }
+      },
+      "required": [
+        "includeInitialTranscript",
+        "initialTranscriptLimit"
+      ],
+      "additionalProperties": false
+    },
+    "AgentChatSnapshotProjection": {
+      "type": "object",
+      "properties": {
+        "initialTranscript": {
+          "$ref": "#/$defs/AgentTranscriptPage"
+        },
+        "permissions": {
+          "$ref": "#/$defs/AgentChatPermissionProjection"
+        },
+        "profiles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentProfileRecord"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "runtimeInstanceId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "selectedProfile": {
+          "$ref": "#/$defs/AgentProfileRecord"
+        },
+        "selectedSession": {
+          "$ref": "#/$defs/AgentSessionSnapshot"
+        },
+        "selectedWorkspace": {
+          "$ref": "#/$defs/AgentWorkspaceRecord"
+        },
+        "workspaceBindings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentWorkspaceBindingRecord"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "workspaceSessions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentSessionSnapshot"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "workspaces": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentWorkspaceRecord"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        }
+      },
+      "required": [
+        "initialTranscript",
+        "permissions",
+        "profiles",
+        "revision",
+        "workspaceBindings",
+        "workspaceSessions",
+        "workspaces"
+      ],
+      "additionalProperties": false
+    },
+    "AgentTranscriptPage": {
+      "type": "object",
+      "properties": {
+        "continuation": {
+          "$ref": "#/$defs/TranscriptPageCursor"
+        },
+        "hasMore": {
+          "type": "boolean"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "turns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentTurnRecord"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        }
+      },
+      "required": [
+        "hasMore",
+        "revision",
+        "turns"
+      ],
+      "additionalProperties": false
+    },
+    "AgentChatPermissionProjection": {
+      "type": "object",
+      "properties": {
+        "pendingRequests": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentPendingPermissionRequestRecord"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "sessionState": {
+          "$ref": "#/$defs/AgentSessionPermissionState"
+        }
+      },
+      "required": [
+        "pendingRequests",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    "AgentProfileRecord": {
+      "type": "object",
+      "properties": {
+        "behaviorLoopId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "behaviorLoopSettingsJson": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "behaviorLoopSourceId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "chatModelId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "chatProviderId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "createdAtUtc": {
+          "type": "string",
+          "logicalType": "utc-date-time"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "embeddingModelId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "embeddingProviderId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "instructions": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "isInternal": {
+          "type": "boolean"
+        },
+        "modelBindings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentProfileModelBindingRecord"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "profileId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "selectableCapabilityAssignments": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentProfileSelectableCapabilityAssignmentRecord"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "updatedAtUtc": {
+          "type": "string",
+          "logicalType": "utc-date-time"
+        }
+      },
+      "required": [
+        "createdAtUtc",
+        "displayName",
+        "isInternal",
+        "profileId",
+        "updatedAtUtc"
+      ],
+      "additionalProperties": false
+    },
+    "AgentSessionSnapshot": {
+      "type": "object",
+      "properties": {
+        "checkpoint": {
+          "$ref": "#/$defs/AgentRunCheckpointRecord"
+        },
+        "session": {
+          "$ref": "#/$defs/AgentSessionRecord"
+        }
+      },
+      "required": [
+        "session"
+      ],
+      "additionalProperties": false
+    },
+    "AgentWorkspaceRecord": {
+      "type": "object",
+      "properties": {
+        "createdAtUtc": {
+          "type": "string",
+          "logicalType": "utc-date-time"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "documents": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentWorkspaceDocumentRecord"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentWorkspacePathRecord"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "updatedAtUtc": {
+          "type": "string",
+          "logicalType": "utc-date-time"
+        },
+        "workspaceId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        }
+      },
+      "required": [
+        "createdAtUtc",
+        "displayName",
+        "documents",
+        "paths",
+        "updatedAtUtc",
+        "workspaceId"
+      ],
+      "additionalProperties": false
+    },
+    "AgentWorkspaceBindingRecord": {
+      "type": "object",
+      "properties": {
+        "bindingId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "contributionId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "createdAtUtc": {
+          "type": "string",
+          "logicalType": "utc-date-time"
+        },
+        "extensionPointId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "isEnabled": {
+          "type": "boolean"
+        },
+        "role": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "sortOrder": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "updatedAtUtc": {
+          "type": "string",
+          "logicalType": "utc-date-time"
+        },
+        "workspaceId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        }
+      },
+      "required": [
+        "bindingId",
+        "contributionId",
+        "createdAtUtc",
+        "extensionPointId",
+        "isEnabled",
+        "role",
+        "sortOrder",
+        "updatedAtUtc",
+        "workspaceId"
+      ],
+      "additionalProperties": false
+    },
+    "TranscriptPageCursor": {
+      "type": "object",
+      "properties": {
+        "createdAtUtc": {
+          "type": "string",
+          "logicalType": "utc-date-time"
+        },
+        "turnId": {
+          "type": "string",
+          "logicalType": "uuid"
+        }
+      },
+      "required": [
+        "createdAtUtc",
+        "turnId"
+      ],
+      "additionalProperties": false
+    },
+    "AgentTurnRecord": {
+      "type": "object",
+      "properties": {
+        "contentRevision": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "createdAtUtc": {
+          "type": "string",
+          "logicalType": "utc-date-time"
+        },
+        "isStreaming": {
+          "type": "boolean"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentTurnItemRecord"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "kind": {
+          "$ref": "#/$defs/AgentTurnKind"
+        },
+        "role": {
+          "$ref": "#/$defs/AgentMessageRole"
+        },
+        "runId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "runRevision": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "sessionId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "turnId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "updatedAtUtc": {
+          "type": "string",
+          "logicalType": "utc-date-time"
+        }
+      },
+      "required": [
+        "contentRevision",
+        "createdAtUtc",
+        "isStreaming",
+        "items",
+        "kind",
+        "role",
+        "sessionId",
+        "turnId",
+        "updatedAtUtc"
+      ],
+      "additionalProperties": false
+    },
+    "AgentPendingPermissionRequestRecord": {
+      "type": "object",
+      "properties": {
+        "actionId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "argumentsJson": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "bindingId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "boundaryId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "callId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "claimLeaseExpiresAtUtc": {
+          "type": "string",
+          "logicalType": "utc-date-time"
+        },
+        "claimToken": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "claimedAtUtc": {
+          "type": "string",
+          "logicalType": "utc-date-time"
+        },
+        "command": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "continuationConsumedAtUtc": {
+          "type": "string",
+          "logicalType": "utc-date-time"
+        },
+        "continuationToken": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "createdAtUtc": {
+          "type": "string",
+          "logicalType": "utc-date-time"
+        },
+        "decidedAtUtc": {
+          "type": "string",
+          "logicalType": "utc-date-time"
+        },
+        "decisionSummary": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "executionFingerprint": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "executionSnapshotJson": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "executionStartedAtUtc": {
+          "type": "string",
+          "logicalType": "utc-date-time"
+        },
+        "isMutation": {
+          "type": "boolean"
+        },
+        "parentSessionId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "profileId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "resourceClaimSetVersion": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "resourceClaims": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentResourceClaim"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "resourceDisplayName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "resourceReference": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "rootSessionId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "runId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "runRevision": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "sessionId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "status": {
+          "$ref": "#/$defs/AgentPendingPermissionStatus"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "toolExecutionId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "toolId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "userMessage": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "userTurnId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "workspaceId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        }
+      },
+      "required": [
+        "actionId",
+        "argumentsJson",
+        "boundaryId",
+        "callId",
+        "createdAtUtc",
+        "executionFingerprint",
+        "executionSnapshotJson",
+        "isMutation",
+        "requestId",
+        "resourceClaimSetVersion",
+        "resourceClaims",
+        "runId",
+        "runRevision",
+        "sessionId",
+        "status",
+        "summary",
+        "userMessage",
+        "userTurnId"
+      ],
+      "additionalProperties": false
+    },
+    "AgentSessionPermissionState": {
+      "type": "object",
+      "properties": {
+        "isUnrestrictedModeEnabled": {
+          "type": "boolean"
+        },
+        "sessionId": {
+          "type": "string",
+          "logicalType": "uuid"
+        }
+      },
+      "required": [
+        "isUnrestrictedModeEnabled",
+        "sessionId"
+      ],
+      "additionalProperties": false
+    },
+    "AgentProfileModelBindingRecord": {
+      "type": "object",
+      "properties": {
+        "capabilityKind": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "modelId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "profileId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "providerId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "settingsJson": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "updatedAtUtc": {
+          "type": "string",
+          "logicalType": "utc-date-time"
+        }
+      },
+      "required": [
+        "capabilityKind",
+        "profileId",
+        "updatedAtUtc"
+      ],
+      "additionalProperties": false
+    },
+    "AgentProfileSelectableCapabilityAssignmentRecord": {
+      "type": "object",
+      "properties": {
+        "capabilityId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "sourceId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        }
+      },
+      "required": [
+        "capabilityId",
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "AgentRunCheckpointRecord": {
+      "type": "object",
+      "properties": {
+        "checkpointId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "createdAtUtc": {
+          "type": "string",
+          "logicalType": "utc-date-time"
+        },
+        "runRevision": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "sessionId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "status": {
+          "$ref": "#/$defs/AgentRunStatus"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        }
+      },
+      "required": [
+        "checkpointId",
+        "createdAtUtc",
+        "runRevision",
+        "sessionId",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "AgentSessionRecord": {
+      "type": "object",
+      "properties": {
+        "agentKind": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "behaviorLoopId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "createdAtUtc": {
+          "type": "string",
+          "logicalType": "utc-date-time"
+        },
+        "parentRunId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "parentRunRevision": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "parentSessionId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "parentToolCallId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "profileId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "rootSessionId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "sessionId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "state": {
+          "$ref": "#/$defs/AgentSessionState"
+        },
+        "taskId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "title": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "updatedAtUtc": {
+          "type": "string",
+          "logicalType": "utc-date-time"
+        },
+        "workspaceId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        }
+      },
+      "required": [
+        "createdAtUtc",
+        "sessionId",
+        "state",
+        "title",
+        "updatedAtUtc"
+      ],
+      "additionalProperties": false
+    },
+    "AgentWorkspaceDocumentRecord": {
+      "type": "object",
+      "properties": {
+        "createdAtUtc": {
+          "type": "string",
+          "logicalType": "utc-date-time"
+        },
+        "documentId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "filePath": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "sortOrder": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "updatedAtUtc": {
+          "type": "string",
+          "logicalType": "utc-date-time"
+        },
+        "workspaceId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        }
+      },
+      "required": [
+        "createdAtUtc",
+        "documentId",
+        "filePath",
+        "sortOrder",
+        "updatedAtUtc",
+        "workspaceId"
+      ],
+      "additionalProperties": false
+    },
+    "AgentWorkspacePathRecord": {
+      "type": "object",
+      "properties": {
+        "createdAtUtc": {
+          "type": "string",
+          "logicalType": "utc-date-time"
+        },
+        "hostPath": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "isDefault": {
+          "type": "boolean"
+        },
+        "pathId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "sortOrder": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "updatedAtUtc": {
+          "type": "string",
+          "logicalType": "utc-date-time"
+        },
+        "workspaceId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        }
+      },
+      "required": [
+        "createdAtUtc",
+        "hostPath",
+        "isDefault",
+        "pathId",
+        "sortOrder",
+        "updatedAtUtc",
+        "workspaceId"
+      ],
+      "additionalProperties": false
+    },
+    "AgentTurnItemRecord": {
+      "type": "object",
+      "properties": {
+        "argumentsJson": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "backendId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "callId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "errorCode": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "isError": {
+          "type": "boolean"
+        },
+        "isToolHeaderProjection": {
+          "type": "boolean"
+        },
+        "itemId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "kind": {
+          "$ref": "#/$defs/AgentTurnItemKind"
+        },
+        "presentationPayloadJson": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "resultSummary": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "sequenceNumber": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "sourcesJson": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "structuredPayloadJson": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "textContent": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "toolDetailRevision": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "toolErrorSummary": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "toolExecutionId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "toolExecutionStatus": {
+          "$ref": "#/$defs/AgentToolExecutionStatus"
+        },
+        "toolHasDetails": {
+          "type": "boolean"
+        },
+        "toolHeaderHint": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "toolId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "toolOwnerPackageId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "toolSchemaId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "toolSchemaVersion": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "turnId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "wasTruncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "isError",
+        "isToolHeaderProjection",
+        "itemId",
+        "kind",
+        "sequenceNumber",
+        "toolDetailRevision",
+        "turnId",
+        "wasTruncated"
+      ],
+      "additionalProperties": false
+    },
+    "AgentTurnKind": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2,
+      "enum": [
+        0,
+        1,
+        2
+      ]
+    },
+    "AgentMessageRole": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 3,
+      "enum": [
+        0,
+        1,
+        2,
+        3
+      ]
+    },
+    "AgentResourceClaim": {
+      "type": "object",
+      "properties": {
+        "actionId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "bindingGeneration": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "bindingId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "caseSensitivePath": {
+          "type": "boolean"
+        },
+        "configuredRoot": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "executionTargetOwnerPackageId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "logicalPath": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "namespaceId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "resourceIndex": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "rootIdentityChainFingerprint": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "targetExists": {
+          "type": "boolean"
+        },
+        "targetIdentity": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "targetIsAuthorityRoot": {
+          "type": "boolean"
+        },
+        "targetKind": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "toolCallId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "toolOwnerPackageId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "version": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "workspaceGeneration": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "workspaceId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        }
+      },
+      "required": [
+        "actionId",
+        "bindingGeneration",
+        "bindingId",
+        "caseSensitivePath",
+        "executionTargetOwnerPackageId",
+        "logicalPath",
+        "namespaceId",
+        "resourceIndex",
+        "rootIdentityChainFingerprint",
+        "targetExists",
+        "targetIsAuthorityRoot",
+        "toolCallId",
+        "toolOwnerPackageId",
+        "version",
+        "workspaceGeneration",
+        "workspaceId"
+      ],
+      "additionalProperties": false
+    },
+    "AgentPendingPermissionStatus": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 5,
+      "enum": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ]
+    },
+    "AgentRunStatus": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 6,
+      "enum": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ]
+    },
+    "AgentSessionState": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 5,
+      "enum": [
+        0,
+        1,
+        2,
+        3,
+        5
+      ]
+    },
+    "AgentTurnItemKind": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 3,
+      "enum": [
+        0,
+        1,
+        2,
+        3
+      ]
+    },
+    "AgentToolExecutionStatus": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4,
+      "enum": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "AgentDashboardRequest": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "AgentDashboardProjection": {
+      "type": "object",
+      "properties": {
+        "profiles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentProfileRecord"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "workspaceBindings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentWorkspaceBindingRecord"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "workspaces": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentWorkspaceRecord"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        }
+      },
+      "required": [
+        "profiles",
+        "revision",
+        "workspaceBindings",
+        "workspaces"
+      ],
+      "additionalProperties": false
+    },
+    "AgentTranscriptPageRequest": {
+      "type": "object",
+      "properties": {
+        "anchorCreatedAtUtc": {
+          "type": "string",
+          "logicalType": "utc-date-time"
+        },
+        "anchorTurnId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "direction": {
+          "$ref": "#/$defs/AgentTranscriptPageDirection"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "sessionId": {
+          "type": "string",
+          "logicalType": "uuid"
+        }
+      },
+      "required": [
+        "direction",
+        "limit",
+        "sessionId"
+      ],
+      "additionalProperties": false
+    },
+    "AgentTranscriptPageDirection": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 3,
+      "enum": [
+        0,
+        1,
+        2,
+        3
+      ]
+    },
+    "AgentCatalogRequest": {
+      "type": "object",
+      "properties": {
+        "chatProviderId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "embeddingProviderId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "profile": {
+          "$ref": "#/$defs/AgentProfileRecord"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "AgentCatalogProjection": {
+      "type": "object",
+      "properties": {
+        "behaviorLoops": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentBehaviorLoopDescriptor"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "chatModels": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentModelDescriptor"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "chatProviders": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentProviderDescriptor"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "chatReadiness": {
+          "$ref": "#/$defs/AgentProviderReadiness"
+        },
+        "embeddingModels": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentEmbeddingModelDescriptor"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "embeddingProviders": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentEmbeddingProviderDescriptor"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "embeddingReadiness": {
+          "$ref": "#/$defs/AgentEmbeddingProviderReadiness"
+        },
+        "executionTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentExecutionTargetDescriptor"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "hasEmbeddingConsumers": {
+          "type": "boolean"
+        },
+        "localTools": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentToolCatalogEntry"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "selectableCapabilities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentProfileSelectableCapabilityDescriptor"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        }
+      },
+      "required": [
+        "behaviorLoops",
+        "chatModels",
+        "chatProviders",
+        "embeddingModels",
+        "embeddingProviders",
+        "executionTargets",
+        "hasEmbeddingConsumers",
+        "localTools",
+        "revision",
+        "selectableCapabilities"
+      ],
+      "additionalProperties": false
+    },
+    "AgentBehaviorLoopDescriptor": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "featureKinds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 1000000
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "loopId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "settingsSchemaJson": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "sourceId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        }
+      },
+      "required": [
+        "description",
+        "displayName",
+        "loopId"
+      ],
+      "additionalProperties": false
+    },
+    "AgentModelDescriptor": {
+      "type": "object",
+      "properties": {
+        "contextWindow": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "isRecommended": {
+          "type": "boolean"
+        },
+        "maxOutputTokens": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "modeOptions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentModelModeOptionDescriptor"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "modelId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "releaseDate": {
+          "$ref": "#/$defs/Date"
+        },
+        "speedOptions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentModelSpeedOptionDescriptor"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "variants": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentModelVariantDescriptor"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        }
+      },
+      "required": [
+        "contextWindow",
+        "displayName",
+        "isRecommended",
+        "maxOutputTokens",
+        "modelId"
+      ],
+      "additionalProperties": false
+    },
+    "AgentProviderDescriptor": {
+      "type": "object",
+      "properties": {
+        "displayName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "packageId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "providerId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "supportedAuthModes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentAuthMode"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "supportsInterruptibleRuns": {
+          "type": "boolean"
+        },
+        "supportsStreaming": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "displayName",
+        "providerId",
+        "supportedAuthModes",
+        "supportsInterruptibleRuns",
+        "supportsStreaming"
+      ],
+      "additionalProperties": false
+    },
+    "AgentProviderReadiness": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "providerId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "status": {
+          "$ref": "#/$defs/AgentProviderReadinessStatus"
+        }
+      },
+      "required": [
+        "message",
+        "providerId",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "AgentEmbeddingModelDescriptor": {
+      "type": "object",
+      "properties": {
+        "dimensions": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "isRecommended": {
+          "type": "boolean"
+        },
+        "modelId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        }
+      },
+      "required": [
+        "displayName",
+        "isRecommended",
+        "modelId"
+      ],
+      "additionalProperties": false
+    },
+    "AgentEmbeddingProviderDescriptor": {
+      "type": "object",
+      "properties": {
+        "displayName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "packageId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "providerId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "supportedAuthModes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentAuthMode"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        }
+      },
+      "required": [
+        "displayName",
+        "providerId",
+        "supportedAuthModes"
+      ],
+      "additionalProperties": false
+    },
+    "AgentEmbeddingProviderReadiness": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "providerId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "status": {
+          "$ref": "#/$defs/AgentProviderReadinessStatus"
+        }
+      },
+      "required": [
+        "message",
+        "providerId",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "AgentExecutionTargetDescriptor": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "facets": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 1000000
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "supportsFiles": {
+          "type": "boolean"
+        },
+        "supportsShell": {
+          "type": "boolean"
+        },
+        "targetId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "targetKind": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        }
+      },
+      "required": [
+        "displayName",
+        "facets",
+        "supportsFiles",
+        "supportsShell",
+        "targetId",
+        "targetKind"
+      ],
+      "additionalProperties": false
+    },
+    "AgentToolCatalogEntry": {
+      "type": "object",
+      "properties": {
+        "descriptor": {
+          "$ref": "#/$defs/AgentToolDescriptor"
+        },
+        "readiness": {
+          "$ref": "#/$defs/AgentToolReadiness"
+        }
+      },
+      "required": [
+        "descriptor",
+        "readiness"
+      ],
+      "additionalProperties": false
+    },
+    "AgentProfileSelectableCapabilityDescriptor": {
+      "type": "object",
+      "properties": {
+        "capabilityId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "description": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "groupDescription": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "groupDisplayName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "groupId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "groupSortOrder": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "isSelectable": {
+          "type": "boolean"
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "sourceDisplayName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "sourceId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "statusText": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        }
+      },
+      "required": [
+        "capabilityId",
+        "displayName",
+        "groupSortOrder",
+        "isSelectable",
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "AgentModelModeOptionDescriptor": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "disablesReasoning": {
+          "type": "boolean"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "modeOptionId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        }
+      },
+      "required": [
+        "disablesReasoning",
+        "displayName",
+        "modeOptionId"
+      ],
+      "additionalProperties": false
+    },
+    "Date": {
+      "type": "string",
+      "minLength": 10,
+      "maxLength": 10
+    },
+    "AgentModelSpeedOptionDescriptor": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "speedOptionId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        }
+      },
+      "required": [
+        "displayName",
+        "speedOptionId"
+      ],
+      "additionalProperties": false
+    },
+    "AgentModelVariantDescriptor": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "reasoningEffort": {
+          "$ref": "#/$defs/AgentReasoningEffort"
+        },
+        "variantId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        }
+      },
+      "required": [
+        "displayName",
+        "variantId"
+      ],
+      "additionalProperties": false
+    },
+    "AgentAuthMode": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1,
+      "enum": [
+        0,
+        1
+      ]
+    },
+    "AgentProviderReadinessStatus": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2,
+      "enum": [
+        0,
+        1,
+        2
+      ]
+    },
+    "AgentToolDescriptor": {
+      "type": "object",
+      "properties": {
+        "activationRequirement": {
+          "$ref": "#/$defs/AgentToolActivationRequirement"
+        },
+        "aliases": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 1000000
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "argumentsJsonSchema": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "concurrencyMode": {
+          "$ref": "#/$defs/AgentToolConcurrencyMode"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "isReadOnly": {
+          "type": "boolean"
+        },
+        "priority": {
+          "$ref": "#/$defs/AgentToolPriority"
+        },
+        "requiresNetwork": {
+          "type": "boolean"
+        },
+        "runtimeInstructions": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "selectionGroupDescription": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "selectionGroupDisplayName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "selectionGroupId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "selectionScope": {
+          "$ref": "#/$defs/AgentToolSelectionScope"
+        },
+        "sourceDisplayName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "sourceId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "sourceKind": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "toolId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        }
+      },
+      "required": [
+        "concurrencyMode",
+        "description",
+        "displayName",
+        "isReadOnly",
+        "priority",
+        "requiresNetwork",
+        "selectionScope",
+        "toolId"
+      ],
+      "additionalProperties": false
+    },
+    "AgentToolReadiness": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "status": {
+          "$ref": "#/$defs/AgentToolReadinessStatus"
+        },
+        "toolId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        }
+      },
+      "required": [
+        "message",
+        "status",
+        "toolId"
+      ],
+      "additionalProperties": false
+    },
+    "AgentReasoningEffort": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4,
+      "enum": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "AgentToolActivationRequirement": {
+      "type": "object",
+      "properties": {
+        "capabilityId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "capabilityKind": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "sourceId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        }
+      },
+      "required": [
+        "capabilityKind"
+      ],
+      "additionalProperties": false
+    },
+    "AgentToolConcurrencyMode": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1,
+      "enum": [
+        0,
+        1
+      ]
+    },
+    "AgentToolPriority": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2,
+      "enum": [
+        0,
+        1,
+        2
+      ]
+    },
+    "AgentToolSelectionScope": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1,
+      "enum": [
+        0,
+        1
+      ]
+    },
+    "AgentToolReadinessStatus": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 3,
+      "enum": [
+        0,
+        3
+      ]
+    },
+    "AgentProfileCommand": {
+      "type": "object",
+      "properties": {
+        "assignments": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentProfileSelectableCapabilityAssignmentRecord"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "behaviorLoopId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "behaviorLoopSettingsJson": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "behaviorLoopSourceId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "chatModelId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "chatModelSettingsJson": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "chatProviderId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "description": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "embeddingModelId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "embeddingProviderId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "instructions": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "kind": {
+          "$ref": "#/$defs/AgentProfileCommandKind"
+        },
+        "profileId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "AgentProfileCommandKind": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2,
+      "enum": [
+        0,
+        1,
+        2
+      ]
+    },
+    "AgentProfileCommandResult": {
+      "type": "object",
+      "properties": {
+        "profile": {
+          "$ref": "#/$defs/AgentProfileRecord"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    "AgentWorkspaceCommand": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "documents": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentWorkspaceDocumentRecord"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "executionTargetId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "kind": {
+          "$ref": "#/$defs/AgentWorkspaceCommandKind"
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentWorkspacePathRecord"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "workspaceId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "AgentWorkspaceCommandKind": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 3,
+      "enum": [
+        0,
+        1,
+        2,
+        3
+      ]
+    },
+    "AgentWorkspaceCommandResult": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "warmup": {
+          "$ref": "#/$defs/AgentExecutionTargetWarmupResult"
+        },
+        "workspace": {
+          "$ref": "#/$defs/AgentWorkspaceRecord"
+        }
+      },
+      "required": [
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    "AgentExecutionTargetWarmupResult": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "status": {
+          "$ref": "#/$defs/AgentExecutionTargetWarmupStatus"
+        }
+      },
+      "required": [
+        "message",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "AgentExecutionTargetWarmupStatus": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2,
+      "enum": [
+        0,
+        1,
+        2
+      ]
+    },
+    "AgentSessionCommand": {
+      "type": "object",
+      "properties": {
+        "behaviorLoopId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "kind": {
+          "$ref": "#/$defs/AgentSessionCommandKind"
+        },
+        "profileId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "session": {
+          "$ref": "#/$defs/AgentSessionRecord"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "workspaceId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "AgentSessionCommandKind": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2,
+      "enum": [
+        0,
+        1,
+        2
+      ]
+    },
+    "AgentSessionCommandResult": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "session": {
+          "$ref": "#/$defs/AgentSessionSnapshot"
+        }
+      },
+      "required": [
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    "AgentRunCommand": {
+      "type": "object",
+      "properties": {
+        "approveForSession": {
+          "type": "boolean"
+        },
+        "attachmentHandles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentAttachmentUploadHandle"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "kind": {
+          "$ref": "#/$defs/AgentRunCommandKind"
+        },
+        "permissionRequestId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "profileId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "rollbackAnchorTurnId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "sessionId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "userMessage": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "userTurnId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "workspaceId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        }
+      },
+      "required": [
+        "approveForSession",
+        "kind",
+        "sessionId"
+      ],
+      "additionalProperties": false
+    },
+    "AgentAttachmentUploadHandle": {
+      "type": "object",
+      "properties": {
+        "transferId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        }
+      },
+      "required": [
+        "transferId"
+      ],
+      "additionalProperties": false
+    },
+    "AgentRunCommandKind": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4,
+      "enum": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "AgentRunCommandResult": {
+      "type": "object",
+      "properties": {
+        "checkpoint": {
+          "$ref": "#/$defs/AgentRunCheckpointRecord"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "runId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "userTurnId": {
+          "type": "string",
+          "logicalType": "uuid"
+        }
+      },
+      "required": [
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    "AgentRunCommandStatusRequest": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "userTurnId": {
+          "type": "string",
+          "logicalType": "uuid"
+        }
+      },
+      "required": [
+        "sessionId",
+        "userTurnId"
+      ],
+      "additionalProperties": false
+    },
+    "AgentRunCommandStatusResult": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "status": {
+          "$ref": "#/$defs/AgentRunCommandStatus"
+        }
+      },
+      "required": [
+        "revision",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "AgentRunCommandStatus": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2,
+      "enum": [
+        0,
+        1,
+        2
+      ]
+    },
+    "AgentPermissionCommand": {
+      "type": "object",
+      "properties": {
+        "actionId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "boundaryId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "decision": {
+          "$ref": "#/$defs/AgentPermissionDecision"
+        },
+        "isEnabled": {
+          "type": "boolean"
+        },
+        "kind": {
+          "$ref": "#/$defs/AgentPermissionCommandKind"
+        },
+        "sessionId": {
+          "type": "string",
+          "logicalType": "uuid"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "AgentPermissionDecision": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2,
+      "enum": [
+        0,
+        1,
+        2
+      ]
+    },
+    "AgentPermissionCommandKind": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 3,
+      "enum": [
+        0,
+        1,
+        2,
+        3
+      ]
+    },
+    "AgentPermissionProjection": {
+      "type": "object",
+      "properties": {
+        "actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentPermissionActionDescriptor"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "overrides": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentPermissionOverride"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "pendingRequests": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentPendingPermissionRequestRecord"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "sessionState": {
+          "$ref": "#/$defs/AgentSessionPermissionState"
+        }
+      },
+      "required": [
+        "actions",
+        "overrides",
+        "pendingRequests",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    "AgentPermissionActionDescriptor": {
+      "type": "object",
+      "properties": {
+        "actionId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "boundaries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentPermissionBoundaryDescriptor"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "description": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        }
+      },
+      "required": [
+        "actionId",
+        "boundaries",
+        "description",
+        "displayName"
+      ],
+      "additionalProperties": false
+    },
+    "AgentPermissionOverride": {
+      "type": "object",
+      "properties": {
+        "actionId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "boundaryId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "decision": {
+          "$ref": "#/$defs/AgentPermissionDecision"
+        },
+        "updatedAtUtc": {
+          "type": "string",
+          "logicalType": "utc-date-time"
+        }
+      },
+      "required": [
+        "actionId",
+        "boundaryId",
+        "decision",
+        "updatedAtUtc"
+      ],
+      "additionalProperties": false
+    },
+    "AgentPermissionBoundaryDescriptor": {
+      "type": "object",
+      "properties": {
+        "boundaryId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "defaultDecision": {
+          "$ref": "#/$defs/AgentPermissionDecision"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        }
+      },
+      "required": [
+        "boundaryId",
+        "defaultDecision",
+        "description",
+        "displayName"
+      ],
+      "additionalProperties": false
+    },
+    "AgentAttachmentTransferRequest": {
+      "type": "object",
+      "properties": {
+        "content": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "kind": {
+          "$ref": "#/$defs/AgentAttachmentTransferKind"
+        },
+        "metadata": {
+          "$ref": "#/$defs/AgentAttachmentMetadata"
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "transferId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "upload": {
+          "$ref": "#/$defs/AgentAttachmentUploadDescriptor"
+        }
+      },
+      "required": [
+        "kind",
+        "offset"
+      ],
+      "additionalProperties": false
+    },
+    "AgentAttachmentTransferKind": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4,
+      "enum": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "AgentAttachmentMetadata": {
+      "type": "object",
+      "properties": {
+        "attachmentId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "fileName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "isText": {
+          "type": "boolean"
+        },
+        "kind": {
+          "$ref": "#/$defs/AgentAttachmentKind"
+        },
+        "mediaType": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "sha256": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "storageRelativePath": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "wasTruncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "attachmentId",
+        "fileName",
+        "isText",
+        "kind",
+        "mediaType",
+        "sha256",
+        "sizeBytes",
+        "storageRelativePath",
+        "wasTruncated"
+      ],
+      "additionalProperties": false
+    },
+    "AgentAttachmentUploadDescriptor": {
+      "type": "object",
+      "properties": {
+        "fileName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "mediaType": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "sha256": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        }
+      },
+      "required": [
+        "fileName",
+        "sha256",
+        "sizeBytes"
+      ],
+      "additionalProperties": false
+    },
+    "AgentAttachmentKind": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 5,
+      "enum": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ]
+    },
+    "AgentAttachmentTransferResult": {
+      "type": "object",
+      "properties": {
+        "content": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "isComplete": {
+          "type": "boolean"
+        },
+        "nextOffset": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "totalBytes": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "transferId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        }
+      },
+      "required": [
+        "isComplete",
+        "nextOffset",
+        "totalBytes"
+      ],
+      "additionalProperties": false
+    },
+    "HistorySearchRequest": {
+      "type": "object",
+      "properties": {
+        "activity": {
+          "$ref": "#/$defs/HistoryActivityKind"
+        },
+        "continuation": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "fromUtc": {
+          "type": "string",
+          "logicalType": "utc-date-time"
+        },
+        "includeChildSessions": {
+          "type": "boolean"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "profileId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "query": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "role": {
+          "$ref": "#/$defs/HistorySearchRoleFilter"
+        },
+        "sessionId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "toUtc": {
+          "type": "string",
+          "logicalType": "utc-date-time"
+        },
+        "workspaceId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        }
+      },
+      "required": [
+        "activity",
+        "includeChildSessions",
+        "limit",
+        "query",
+        "role"
+      ],
+      "additionalProperties": false
+    },
+    "HistoryActivityKind": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 6,
+      "enum": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ]
+    },
+    "HistorySearchRoleFilter": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2,
+      "enum": [
+        0,
+        1,
+        2
+      ]
+    },
+    "HistorySearchResponse": {
+      "type": "object",
+      "properties": {
+        "continuation": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "isPartial": {
+          "type": "boolean"
+        },
+        "restarted": {
+          "type": "boolean"
+        },
+        "results": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HistorySearchHit"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "status": {
+          "$ref": "#/$defs/HistorySearchStatus"
+        }
+      },
+      "required": [
+        "isPartial",
+        "restarted",
+        "results",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "HistorySearchHit": {
+      "type": "object",
+      "properties": {
+        "activity": {
+          "$ref": "#/$defs/HistoryActivityKind"
+        },
+        "anchorKind": {
+          "$ref": "#/$defs/HistoryAnchorKind"
+        },
+        "callId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "documentId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "isChildSession": {
+          "type": "boolean"
+        },
+        "itemId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "matchReasons": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 1000000
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 1000000
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "profileId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "role": {
+          "$ref": "#/$defs/AgentMessageRole"
+        },
+        "rootSessionId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "sessionId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "sessionTitle": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "snippet": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "symbols": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 1000000
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "timestampUtc": {
+          "type": "string",
+          "logicalType": "utc-date-time"
+        },
+        "turnId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "workspaceId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "workspaceName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        }
+      },
+      "required": [
+        "activity",
+        "anchorKind",
+        "documentId",
+        "isChildSession",
+        "itemId",
+        "matchReasons",
+        "paths",
+        "sessionId",
+        "sessionTitle",
+        "snippet",
+        "symbols",
+        "timestampUtc",
+        "turnId",
+        "workspaceId",
+        "workspaceName"
+      ],
+      "additionalProperties": false
+    },
+    "HistorySearchStatus": {
+      "type": "object",
+      "properties": {
+        "availability": {
+          "$ref": "#/$defs/HistorySearchAvailability"
+        },
+        "embeddedDocuments": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "embeddingGeneration": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "embeddingModelId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "embeddingProviderId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "embeddingProviderPackageId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "failureCode": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "failureMessage": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "indexedDocuments": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "lastReconciledAtUtc": {
+          "type": "string",
+          "logicalType": "utc-date-time"
+        },
+        "lexicalEnabled": {
+          "type": "boolean"
+        },
+        "pendingChanges": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "progressCompleted": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "progressTotal": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "projectionRevision": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "runtimeInstanceId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "semanticConfigurationRevision": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "semanticEnabled": {
+          "type": "boolean"
+        },
+        "semanticReady": {
+          "type": "boolean"
+        },
+        "textGeneration": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "availability",
+        "embeddedDocuments",
+        "indexedDocuments",
+        "lexicalEnabled",
+        "pendingChanges",
+        "progressCompleted",
+        "projectionRevision",
+        "revision",
+        "runtimeInstanceId",
+        "semanticConfigurationRevision",
+        "semanticEnabled",
+        "semanticReady"
+      ],
+      "additionalProperties": false
+    },
+    "HistoryAnchorKind": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1,
+      "enum": [
+        0,
+        1
+      ]
+    },
+    "HistorySearchAvailability": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4,
+      "enum": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "HistorySearchStateRequest": {
+      "type": "object",
+      "properties": {
+        "continuation": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "embeddingProviderId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "embeddingProviderPackageId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "includeAdvancedFilters": {
+          "type": "boolean"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "workspaceId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        }
+      },
+      "required": [
+        "includeAdvancedFilters",
+        "limit"
+      ],
+      "additionalProperties": false
+    },
+    "HistorySearchState": {
+      "type": "object",
+      "properties": {
+        "continuation": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "embeddingModels": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HistoryEmbeddingModelOption"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "embeddingProviders": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HistoryEmbeddingProviderOption"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "embeddingReadiness": {
+          "$ref": "#/$defs/AgentEmbeddingProviderReadiness"
+        },
+        "profiles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HistorySearchFilterOption"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "sessions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HistorySearchFilterOption"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        },
+        "status": {
+          "$ref": "#/$defs/HistorySearchStatus"
+        },
+        "workspaces": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HistorySearchFilterOption"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        }
+      },
+      "required": [
+        "embeddingModels",
+        "embeddingProviders",
+        "profiles",
+        "sessions",
+        "status",
+        "workspaces"
+      ],
+      "additionalProperties": false
+    },
+    "HistoryEmbeddingModelOption": {
+      "type": "object",
+      "properties": {
+        "dimensions": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "isRecommended": {
+          "type": "boolean"
+        },
+        "modelId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "packageId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "providerId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        }
+      },
+      "required": [
+        "displayName",
+        "isRecommended",
+        "modelId",
+        "packageId",
+        "providerId"
+      ],
+      "additionalProperties": false
+    },
+    "HistoryEmbeddingProviderOption": {
+      "type": "object",
+      "properties": {
+        "displayName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "packageId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "providerId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        }
+      },
+      "required": [
+        "displayName",
+        "packageId",
+        "providerId"
+      ],
+      "additionalProperties": false
+    },
+    "HistorySearchFilterOption": {
+      "type": "object",
+      "properties": {
+        "displayName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "id": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "parentId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        }
+      },
+      "required": [
+        "displayName",
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "HistorySearchCommand": {
+      "type": "object",
+      "properties": {
+        "embeddingModelId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "embeddingProviderId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "embeddingProviderPackageId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "kind": {
+          "$ref": "#/$defs/HistorySearchCommandKind"
+        },
+        "semanticEnabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "HistorySearchCommandKind": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2,
+      "enum": [
+        0,
+        1,
+        2
+      ]
+    },
+    "HistorySearchCommandResult": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/HistorySearchStatus"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "AgentTranscriptAroundTurnRequest": {
+      "type": "object",
+      "properties": {
+        "afterLimit": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "beforeLimit": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "itemId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "sessionId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "turnId": {
+          "type": "string",
+          "logicalType": "uuid"
+        }
+      },
+      "required": [
+        "afterLimit",
+        "beforeLimit",
+        "sessionId",
+        "turnId"
+      ],
+      "additionalProperties": false
+    },
+    "AgentTranscriptAroundTurnPage": {
+      "type": "object",
+      "properties": {
+        "anchorTurnId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "hasNewer": {
+          "type": "boolean"
+        },
+        "hasOlder": {
+          "type": "boolean"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "turns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentTurnRecord"
+          },
+          "minItems": 0,
+          "maxItems": 1000000
+        }
+      },
+      "required": [
+        "anchorTurnId",
+        "hasNewer",
+        "hasOlder",
+        "revision",
+        "turns"
+      ],
+      "additionalProperties": false
+    },
+    "AgentTranscriptToolDetailRequest": {
+      "type": "object",
+      "properties": {
+        "callId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "itemId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "runId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "runRevision": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "sessionId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "toolExecutionId": {
+          "type": "string",
+          "logicalType": "uuid"
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "additionalProperties": false
+    },
+    "AgentTranscriptToolDetailResponse": {
+      "type": "object",
+      "properties": {
+        "detail": {
+          "$ref": "#/$defs/AgentTranscriptToolDetailRecord"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "AgentTranscriptToolDetailRecord": {
+      "type": "object",
+      "properties": {
+        "argumentsJson": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "backendId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "callId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "callItemId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "errorCode": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "isError": {
+          "type": "boolean"
+        },
+        "outputText": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "presentationPayloadJson": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "resultItemId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "resultSummary": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "runId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "runRevision": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "sessionId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "sourcesJson": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "status": {
+          "$ref": "#/$defs/AgentToolExecutionStatus"
+        },
+        "structuredPayloadJson": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "toolExecutionId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "toolId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "toolOwnerPackageId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "toolSchemaId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "toolSchemaVersion": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "wasTransportTruncated": {
+          "type": "boolean"
+        },
+        "wasTruncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "isError",
+        "revision",
+        "sessionId",
+        "toolId",
+        "wasTransportTruncated",
+        "wasTruncated"
+      ],
+      "additionalProperties": false
+    },
+    "AgentChangeSubscription": {
+      "type": "object",
+      "properties": {
+        "afterRevision": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "supportsTurnMutations": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "afterRevision",
+        "supportsTurnMutations"
+      ],
+      "additionalProperties": false
+    },
+    "AgentRuntimeChange": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/AgentRuntimeChangeKind"
+        },
+        "profile": {
+          "$ref": "#/$defs/AgentProfileRecord"
+        },
+        "profileId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "runActivity": {
+          "$ref": "#/$defs/AgentRunActivityUpdate"
+        },
+        "runtimeInstanceId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "session": {
+          "$ref": "#/$defs/AgentSessionSnapshot"
+        },
+        "sessionId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "turn": {
+          "$ref": "#/$defs/AgentTurnRecord"
+        },
+        "turnMutation": {
+          "$ref": "#/$defs/AgentTurnMutation"
+        },
+        "workspace": {
+          "$ref": "#/$defs/AgentWorkspaceRecord"
+        },
+        "workspaceId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        }
+      },
+      "required": [
+        "kind",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    "AgentRuntimeChangeKind": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10,
+      "enum": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10
+      ]
+    },
+    "AgentRunActivityUpdate": {
+      "type": "object",
+      "properties": {
+        "createdAtUtc": {
+          "type": "string",
+          "logicalType": "utc-date-time"
+        },
+        "kind": {
+          "$ref": "#/$defs/AgentRunActivityKind"
+        },
+        "runRevision": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "text": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        }
+      },
+      "required": [
+        "createdAtUtc",
+        "kind",
+        "runRevision",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "AgentTurnMutation": {
+      "type": "object",
+      "properties": {
+        "baseContentLength": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "contentRevision": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "kind": {
+          "$ref": "#/$defs/AgentTurnMutationKind"
+        },
+        "runtimeRevision": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "sessionId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        },
+        "turn": {
+          "$ref": "#/$defs/AgentTurnRecord"
+        },
+        "turnId": {
+          "type": "string",
+          "logicalType": "uuid"
+        },
+        "updatedAtUtc": {
+          "type": "string",
+          "logicalType": "utc-date-time"
+        }
+      },
+      "required": [
+        "baseContentLength",
+        "contentRevision",
+        "kind",
+        "runtimeRevision",
+        "sessionId",
+        "turnId",
+        "updatedAtUtc"
+      ],
+      "additionalProperties": false
+    },
+    "AgentRunActivityKind": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 3,
+      "enum": [
+        0,
+        1,
+        2,
+        3
+      ]
+    },
+    "AgentTurnMutationKind": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 3,
+      "enum": [
+        0,
+        1,
+        2,
+        3
+      ]
+    },
+    "HistorySearchStatusSubscription": {
+      "type": "object",
+      "properties": {
+        "afterRevision": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "runtimeInstanceId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000000
+        }
+      },
+      "required": [
+        "afterRevision"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -10,7 +11,6 @@ using Sunder.Package.Agent.Mcp.Services;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Logging;
 using Sunder.Sdk.Callbacks;
-using Sunder.Sdk.Runtime;
 using Sunder.Sdk.Storage;
 using Xunit;
 
@@ -70,6 +70,108 @@ public sealed class McpRefactorTests
     }
 
     [Fact]
+    public async Task CommandResolver_RemovesUnconfiguredWorkerEnvironmentFromTransport()
+    {
+        const string configuredName = "MCP_EXPLICIT_TEST_TOKEN";
+        var allowedNames = new HashSet<string>(
+            OperatingSystem.IsWindows()
+                ? [
+                    "APPDATA", "HOMEDRIVE", "HOMEPATH", "LOCALAPPDATA", "PATH", "PATHEXT",
+                    "PROCESSOR_ARCHITECTURE", "PROGRAMFILES", "SYSTEMDRIVE", "SYSTEMROOT",
+                    "TEMP", "USERNAME", "USERPROFILE",
+                ]
+                : ["HOME", "LOGNAME", "PATH", "SHELL", "TERM", "USER"],
+            StringComparer.OrdinalIgnoreCase);
+        var inheritedNames = Environment.GetEnvironmentVariables().Keys
+            .OfType<string>()
+            .Where(name => !allowedNames.Contains(name))
+            .Where(name => !string.Equals(name, configuredName, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        Assert.NotEmpty(inheritedNames);
+
+        var resolution = await McpCommandResolver.ResolveAsync(
+            OperatingSystem.IsWindows()
+                ? Environment.GetEnvironmentVariable("COMSPEC") ?? "cmd.exe"
+                : "/bin/sh",
+            workingDirectory: null,
+            new Dictionary<string, string> { [configuredName] = "configured-secret" },
+            NullLogger.Instance,
+            CancellationToken.None);
+
+        Assert.Equal("configured-secret", resolution.EnvironmentVariables[configuredName]);
+        Assert.All(inheritedNames, name =>
+        {
+            Assert.True(resolution.EnvironmentVariables.TryGetValue(name, out var value));
+            Assert.Null(value);
+        });
+    }
+
+    [Fact]
+    public async Task CommandResolver_LoginShellTimeoutKillsAndDrainsProcessTree()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var fixture = CreateBlockingShellProbe();
+        try
+        {
+            var probe = McpCommandResolver.TryReadLoginShellPathAsync(
+                fixture.ScriptPath,
+                ShellProbeEnvironment(),
+                NullLogger.Instance,
+                TimeSpan.FromSeconds(1),
+                CancellationToken.None);
+            await WaitUntilAsync(() => File.Exists(fixture.ProcessIdsPath));
+            fixture.ProcessIds.AddRange(ReadProcessIds(fixture.ProcessIdsPath));
+
+            Assert.Null(await probe.WaitAsync(TimeSpan.FromSeconds(5)));
+            await WaitUntilAsync(() => fixture.ProcessIds.All(static processId => !IsProcessRunning(processId)));
+        }
+        finally
+        {
+            TerminateProcesses(fixture.ProcessIds);
+            Directory.Delete(fixture.RootPath, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task CommandResolver_LoginShellCancellationPropagatesAfterProcessTreeDrain()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var fixture = CreateBlockingShellProbe();
+        using var cancellation = new CancellationTokenSource();
+        try
+        {
+            var probe = McpCommandResolver.TryReadLoginShellPathAsync(
+                fixture.ScriptPath,
+                ShellProbeEnvironment(),
+                NullLogger.Instance,
+                TimeSpan.FromSeconds(30),
+                cancellation.Token);
+            await WaitUntilAsync(() => File.Exists(fixture.ProcessIdsPath));
+            fixture.ProcessIds.AddRange(ReadProcessIds(fixture.ProcessIdsPath));
+
+            await cancellation.CancelAsync();
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+                probe.WaitAsync(TimeSpan.FromSeconds(5)));
+            await WaitUntilAsync(() => fixture.ProcessIds.All(static processId => !IsProcessRunning(processId)));
+        }
+        finally
+        {
+            await cancellation.CancelAsync();
+            TerminateProcesses(fixture.ProcessIds);
+            Directory.Delete(fixture.RootPath, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task LegacyToolIdentity_CanonicalizesForPersistedCalls()
     {
         var context = new TestPackageContext();
@@ -94,7 +196,7 @@ public sealed class McpRefactorTests
         var catalog = new McpServerCatalogService(context);
         await catalog.SaveServerAsync(CreateServer("one", "Foo Bar"), Empty, Empty);
 
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        var error = await Assert.ThrowsAsync<McpManagementOperationException>(() =>
             catalog.SaveServerAsync(CreateServer("two", "foo-bar"), Empty, Empty));
 
         Assert.Contains("already exists", error.Message, StringComparison.OrdinalIgnoreCase);
@@ -184,7 +286,7 @@ public sealed class McpRefactorTests
             oauth: null!,
             context);
         using var appGateway = new McpAppRuntimeGateway(
-            new McpHandlerRuntimeClient(handler),
+            new McpHandlerManagementClient(handler),
             NullPackageCallbackClient.Instance);
 
         var remoteDocument = (await appGateway.LoadDocumentAsync(remote.Server.ServerId))!;
@@ -297,190 +399,6 @@ public sealed class McpRefactorTests
         Assert.False(storedEnvironment.ContainsKey("ENV_CLEAR"));
         Assert.Equal(environmentReplacementCanary, storedEnvironment["ENV_REPLACE"]);
         Assert.Null(await context.Secrets.GetSecretAsync(clearedEnvironmentKey));
-    }
-
-    [Fact]
-    public async Task PackageStorageMigration_UsesCaseEquivalentPayloadServerIdForStateAndSecrets()
-    {
-        const string payloadServerId = "server-one";
-        const string legacyKeyServerId = "SERVER-ONE";
-        var context = new TestPackageContext();
-        var server = CreateServer(payloadServerId, "case-preserved");
-        var payload = JsonSerializer.Serialize(server);
-        var legacyStateKey = $"mcp.servers.{legacyKeyServerId}";
-        var legacySecretKey = McpServerCatalogService.BuildLegacyApiKeySecretKey(payloadServerId);
-        await context.State.SetValueAsync(legacyStateKey, payload);
-        await context.Secrets.SetSecretAsync(legacySecretKey, "secret");
-
-        var migration = new McpPackageStorageMigration(context);
-        await migration.EnsureAsync();
-
-        Assert.Null(await context.State.GetValueAsync(legacyStateKey));
-        Assert.Equal(payload, await context.State.GetValueAsync(McpServerCatalogService.BuildServerKey(payloadServerId)));
-        Assert.Null(await context.Secrets.GetSecretAsync(legacySecretKey));
-        Assert.Equal(
-            "secret",
-            await context.Secrets.GetSecretAsync(McpServerCatalogService.BuildApiKeySecretKey(payloadServerId)));
-        var catalog = new McpServerCatalogService(context, migration);
-        Assert.Equal(payloadServerId, Assert.Single(await catalog.ListServersAsync()).ServerId);
-
-        await catalog.DeleteServerAsync(legacyKeyServerId);
-
-        Assert.Empty(await catalog.ListServersAsync());
-        Assert.Null(await catalog.GetServerAsync(payloadServerId));
-        Assert.Null(await context.State.GetValueAsync(McpServerCatalogService.BuildServerKey(payloadServerId)));
-    }
-
-    [Fact]
-    public async Task PackageStorageMigration_RejectsCaseCollidingPayloadIdentitiesWithoutMutation()
-    {
-        const string firstKey = "mcp.servers.Server-One";
-        const string secondKey = "mcp.servers.SERVER-ONE";
-        var context = new TestPackageContext();
-        var firstPayload = JsonSerializer.Serialize(CreateServer("server-one", "first"));
-        var secondPayload = JsonSerializer.Serialize(CreateServer("SERVER-ONE", "second"));
-        await context.State.SetValueAsync(firstKey, firstPayload);
-        await context.State.SetValueAsync(secondKey, secondPayload);
-
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => new McpPackageStorageMigration(context).EnsureAsync());
-
-        Assert.Contains("collision", exception.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(firstPayload, await context.State.GetValueAsync(firstKey));
-        Assert.Equal(secondPayload, await context.State.GetValueAsync(secondKey));
-        Assert.Null(await context.State.GetValueAsync(McpServerCatalogService.BuildServerKey("server-one")));
-    }
-
-    [Fact]
-    public async Task PackageStorageMigration_CleansCrashRemnantsWithoutOrphanResurrection()
-    {
-        const string liveServerId = "live-server";
-        const string deletedServerId = "deleted-server";
-        const string headerName = "X-Token";
-        const string environmentName = "TOKEN";
-        var context = new TestPackageContext();
-        var live = CreateServer(liveServerId, "live") with
-        {
-            PersistenceVersion = 3,
-            HeaderNames = [headerName],
-            EnvironmentVariableNames = [environmentName],
-            OAuthEnabled = true,
-        };
-        await context.State.SetValueAsync(
-            McpServerCatalogService.BuildServerKey(liveServerId),
-            JsonSerializer.Serialize(live));
-
-        var exactHeader = McpServerCatalogService.BuildLegacyHeaderSecretKey(
-            liveServerId,
-            live.PersistenceVersion,
-            headerName);
-        var mixedCaseHeader = McpServerCatalogService.BuildLegacyHeaderSecretKey(
-            liveServerId.ToUpperInvariant(),
-            live.PersistenceVersion,
-            headerName.ToLowerInvariant());
-        var currentEnvironment = McpServerCatalogService.BuildEnvironmentSecretKey(
-            liveServerId,
-            live.PersistenceVersion,
-            environmentName);
-        context.Secrets.Seed(exactHeader, "current-header");
-        context.Secrets.Seed(mixedCaseHeader, "conflicting-case-remnant");
-        context.Secrets.Seed(currentEnvironment, "current-environment");
-        context.Secrets.Seed(
-            McpServerCatalogService.BuildLegacyEnvironmentSecretKey(
-                liveServerId.ToUpperInvariant(),
-                live.PersistenceVersion,
-                environmentName.ToLowerInvariant()),
-            "stale-environment");
-        context.Secrets.Seed(McpOAuthSecretKeys.LegacyTokenCache(liveServerId.ToUpperInvariant()), "oauth-token");
-
-        context.Secrets.Seed(
-            McpServerCatalogService.BuildLegacyHeaderSecretKey(liveServerId, 2, headerName),
-            "old-version");
-        context.Secrets.Seed(
-            McpServerCatalogService.BuildHeaderSecretKey(liveServerId, 2, headerName),
-            "portable-old-version");
-        context.Secrets.Seed(
-            McpServerCatalogService.BuildApiKeySecretKey(liveServerId),
-            "superseded-live-api-key");
-        context.Secrets.Seed(McpServerCatalogService.BuildLegacyApiKeySecretKey(deletedServerId), "orphan-api-key");
-        context.Secrets.Seed(McpServerCatalogService.BuildLegacyAuthorizationSecretKey(deletedServerId), "orphan-authorization");
-        context.Secrets.Seed(McpOAuthSecretKeys.LegacyTokenCache(deletedServerId), "orphan-token-cache");
-        context.Secrets.Seed(McpOAuthSecretKeys.LegacyClientRegistration(deletedServerId), "orphan-registration");
-        context.Secrets.Seed(McpOAuthSecretKeys.LegacyClientSecret(deletedServerId), "orphan-client-secret");
-        context.Secrets.Seed(
-            McpServerCatalogService.BuildLegacyHeaderSecretKey(deletedServerId, 0, "X-Legacy"),
-            "orphan-unversioned-header");
-        context.Secrets.Seed(
-            McpServerCatalogService.BuildLegacyHeaderSecretKey(deletedServerId, 7, "X-Orphan"),
-            "orphan-header");
-        context.Secrets.Seed(
-            McpServerCatalogService.BuildLegacyEnvironmentSecretKey(deletedServerId, 0, "LEGACY_ENV"),
-            "orphan-unversioned-environment");
-        context.Secrets.Seed(
-            McpServerCatalogService.BuildLegacyEnvironmentSecretKey(deletedServerId, 7, "ORPHAN_ENV"),
-            "orphan-environment");
-        context.Secrets.Seed(
-            McpServerCatalogService.BuildApiKeySecretKey(deletedServerId),
-            "portable-orphan-api-key");
-        context.Secrets.Seed("unrelated.secret", "preserved");
-
-        var migration = new McpPackageStorageMigration(context);
-        await migration.EnsureAsync();
-        var catalog = new McpServerCatalogService(context, migration);
-        var migrated = Assert.Single(await catalog.ListServersAsync());
-
-        Assert.Equal("current-header", (await catalog.GetHeadersAsync(migrated))[headerName]);
-        Assert.Equal("current-environment", (await catalog.GetEnvironmentVariablesAsync(migrated))[environmentName]);
-        Assert.Equal("oauth-token", await context.Secrets.GetSecretAsync(McpOAuthSecretKeys.TokenCache(liveServerId)));
-        Assert.Equal("preserved", await context.Secrets.GetSecretAsync("unrelated.secret"));
-        Assert.DoesNotContain(
-            context.Secrets.Keys,
-            key => key.StartsWith("mcp.servers.", StringComparison.OrdinalIgnoreCase));
-        Assert.Null(await context.Secrets.GetSecretAsync(
-            McpServerCatalogService.BuildHeaderSecretKey(liveServerId, 2, headerName)));
-        Assert.Null(await context.Secrets.GetSecretAsync(
-            McpServerCatalogService.BuildApiKeySecretKey(liveServerId)));
-        Assert.Null(await context.Secrets.GetSecretAsync(
-            McpServerCatalogService.BuildApiKeySecretKey(deletedServerId)));
-
-        var recreated = CreateServer(deletedServerId, "recreated") with
-        {
-            IsEnabled = false,
-            HeaderNames = ["X-Orphan"],
-        };
-        await catalog.SaveServerAsync(recreated, Empty, Empty);
-        var savedRecreated = Assert.IsType<ConfiguredMcpServerRecord>(await catalog.GetServerAsync(deletedServerId));
-
-        Assert.Empty(await catalog.GetHeadersAsync(savedRecreated));
-        Assert.Null(await context.Secrets.GetSecretAsync(McpOAuthSecretKeys.ClientSecret(deletedServerId)));
-    }
-
-    [Fact]
-    public async Task PackageStorageMigration_UnknownOwnedSecretShapeFailsAtomically()
-    {
-        var context = new TestPackageContext();
-        var live = CreateServer("live-server", "live") with
-        {
-            PersistenceVersion = 1,
-            HeaderNames = ["X-Token"],
-        };
-        await context.State.SetValueAsync(
-            McpServerCatalogService.BuildServerKey(live.ServerId),
-            JsonSerializer.Serialize(live));
-        var legacyHeader = McpServerCatalogService.BuildLegacyHeaderSecretKey(
-            live.ServerId,
-            live.PersistenceVersion,
-            "X-Token");
-        context.Secrets.Seed(legacyHeader, "preserved");
-        context.Secrets.Seed("mcp.servers.live-server.unknown:shape", "unknown");
-
-        await Assert.ThrowsAsync<InvalidDataException>(
-            () => new McpPackageStorageMigration(context).EnsureAsync());
-
-        Assert.Equal("preserved", context.Secrets.GetRaw(legacyHeader));
-        Assert.Equal("unknown", context.Secrets.GetRaw("mcp.servers.live-server.unknown:shape"));
-        Assert.Null(context.Secrets.GetRaw(
-            McpServerCatalogService.BuildHeaderSecretKey(live.ServerId, live.PersistenceVersion, "X-Token")));
     }
 
     [Fact]
@@ -907,7 +825,7 @@ public sealed class McpRefactorTests
         await catalog.SaveServerAsync(CreateServer("one", "one"), Empty, Empty);
         var factory = new FakeConnectionFactory { BlockConnect = true };
         await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance, factory);
-        using var viewModel = new AgentMcpSettingsViewModel(catalog, manager);
+        using var viewModel = CreateSettingsViewModel(catalog, manager);
         await WaitUntilAsync(() => viewModel.SelectedServer is not null);
 
         var discovery = viewModel.DiscoverToolsCommand.ExecuteAsync(null);
@@ -931,7 +849,7 @@ public sealed class McpRefactorTests
         await catalog.SaveServerAsync(CreateServer("one", "one"), Empty, Empty);
         var factory = new FakeConnectionFactory { BlockConnect = true };
         await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance, factory);
-        using var viewModel = new AgentMcpSettingsViewModel(catalog, manager);
+        using var viewModel = CreateSettingsViewModel(catalog, manager);
         await viewModel.Initialization;
 
         var discovery = viewModel.DiscoverToolsCommand.ExecuteAsync(null);
@@ -949,6 +867,92 @@ public sealed class McpRefactorTests
     }
 
     private static readonly IReadOnlyDictionary<string, string> Empty = new Dictionary<string, string>();
+
+    private static IReadOnlyDictionary<string, string?> ShellProbeEnvironment()
+        => new Dictionary<string, string?>
+        {
+            ["HOME"] = Path.GetTempPath(),
+            ["PATH"] = "/usr/bin:/bin",
+        };
+
+    private static BlockingShellProbeFixture CreateBlockingShellProbe()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            throw new PlatformNotSupportedException();
+        }
+
+        var root = Path.Combine(Path.GetTempPath(), "sunder-mcp-shell-probe-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var scriptPath = Path.Combine(root, "blocking-shell");
+        var processIdsPath = Path.Combine(root, "process-ids");
+        File.WriteAllText(scriptPath, $$"""
+            #!/bin/sh
+            sleep 30 &
+            child=$!
+            printf '%s %s' "$$" "$child" > '{{processIdsPath}}'
+            wait "$child"
+            """);
+        File.SetUnixFileMode(
+            scriptPath,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        return new BlockingShellProbeFixture(root, scriptPath, processIdsPath, []);
+    }
+
+    private static IReadOnlyList<int> ReadProcessIds(string path)
+        => File.ReadAllText(path)
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(static value => int.Parse(value))
+            .ToArray();
+
+    private static bool IsProcessRunning(int processId)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(processId);
+            return !process.HasExited;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    private static void TerminateProcesses(IEnumerable<int> processIds)
+    {
+        foreach (var processId in processIds)
+        {
+            try
+            {
+                using var process = Process.GetProcessById(processId);
+                if (!process.HasExited)
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    private sealed record BlockingShellProbeFixture(
+        string RootPath,
+        string ScriptPath,
+        string ProcessIdsPath,
+        List<int> ProcessIds);
+
+    private static AgentMcpSettingsViewModel CreateSettingsViewModel(
+        McpServerCatalogService catalog,
+        McpClientConnectionManager connections)
+        => new(
+            new McpLocalManagementGateway(
+                new McpSettingsEditorService(catalog),
+                new McpConfigurationCoordinator(
+                    new McpEcosystemConfigurationImporter(catalog),
+                    syncService: null),
+                new McpServerConnectionService(catalog, connections, oauthService: null),
+                new McpOAuthCoordinator(oauthService: null, connections)));
 
     private static ConfiguredMcpServerRecord CreateServer(string id, string name)
         => new()
@@ -1084,36 +1088,20 @@ public sealed class McpRefactorTests
         public IPackageLogging Logging { get; } = NullPackageLogging.Instance;
     }
 
-    private sealed class McpHandlerRuntimeClient(McpRuntimeHandler handler) : IPackageRuntimeClient
+    private sealed class McpHandlerManagementClient(McpRuntimeHandler handler) : IMcpOwnerManagementClient
     {
-        public bool IsAvailable => true;
-
-        public async ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-            PackageRuntimeOperation<TRequest, TResponse> operation,
-            TRequest request,
+        public ValueTask<McpProjection> QueryAsync(
+            McpQuery query,
             CancellationToken cancellationToken = default)
-            where TRequest : class
-            where TResponse : class
-        {
-            if (operation.OperationId == McpRuntimeOperations.Query.OperationId)
-            {
-                return (TResponse)(object)await handler.HandleAsync((McpQuery)(object)request, cancellationToken);
-            }
+            => handler.HandleAsync(query, cancellationToken);
 
-            if (operation.OperationId == McpRuntimeOperations.Command.OperationId)
-            {
-                return (TResponse)(object)await handler.HandleAsync((McpCommand)(object)request, cancellationToken);
-            }
-
-            throw new InvalidOperationException($"Unexpected Runtime operation '{operation.OperationId}'.");
-        }
-
-        public IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-            PackageRuntimeStream<TRequest, TEvent> stream,
-            TRequest request,
+        public ValueTask<McpProjection> CommandAsync(
+            McpCommand command,
             CancellationToken cancellationToken = default)
-            where TRequest : class
-            where TEvent : class
+            => handler.HandleAsync(command, cancellationToken);
+
+        public IAsyncEnumerable<McpChanged> WatchChangesAsync(
+            CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
     }
 

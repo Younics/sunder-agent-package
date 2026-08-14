@@ -100,7 +100,7 @@ sunder.package.agent
   +-- orchestration: behavior loops, subagents, child runs
 ```
 
-Extension packages use `Sunder.Package.Agent.Protocol` to publish schema-validated capabilities to the core Agent package. Managed Runtime modules publish handlers with `RegisterRpcProvider`; Worker V2 targets pass immutable `SunderWorkerProviderRegistration` entries in `SunderWorkerV2Options` to `SunderWorkerV2.RunAsync`. Both routes keep providers, tools, execution targets, and memory features independently installable without sharing live extension objects across package activations.
+Extension packages use `Sunder.Package.Agent.Protocol` to publish schema-validated capabilities to the core Agent package. Worker V3 targets pass immutable `SunderWorkerProviderRegistration` entries in `SunderWorkerV3Options` to `SunderWorker.RunAsync`. This keeps providers, tools, execution targets, and memory features independently installable without sharing live extension objects across package activations.
 
 Extension ownership is mandatory. Stack exporters use owned catalog contributions to include provider, execution-target, behavior-loop, skill, and subagent package dependencies; an ownerless catalog result is rejected by the SDK.
 
@@ -126,7 +126,7 @@ Browser callbacks are host-owned; packages never bind callback ports. OpenAI Cod
 
 Every Agent runtime package and `Sunder.Package.Agent.Protocol` ships at one 2.x family version. Protocol references use `[2.0.0,3.0.0)` and extension runtime dependencies use `>=2.0.0 <3.0.0`. Rebuild and release the complete family together. Cross-package capabilities use only the 18 schema-first descriptors, generated bindings, and manifest-declared RPC providers; Runtime rejects mixed package baselines before activation.
 
-Agent data upgrades are forward-only through one ordered SQLite migration ledger, currently through migration 20, `durable-resource-claims`, with checksum `849bc5010a9c700c8cb683e2992e442dc4471fed275135b39f60ae8d54f46fa0`. Migration 20 adds durable resource-claim persistence and execution-target ownership while leaving migrations 1-19 and their checksums unchanged. Each applied migration records its number, immutable name, and SHA-256 checksum in the same transaction as its schema change. Startup refuses unknown, newer, renamed, or checksum-mismatched entries. If validation fails, back up `agent/agent.db` and use an Agent build that recognizes the ledger; do not edit or delete ledger rows.
+Agent 2.0 creates the complete current SQLite schema from one checksummed `agent-2.0-baseline` entry. Startup accepts only an absent or empty database, or the exact current one-entry ledger; old, partial, ledgerless nonempty, and checksum-mismatched databases fail without mutation. Semantic Memory applies the same policy with its own `semantic-memory-2.0-baseline`. Do not edit or delete ledger rows.
 
 App package modules own presentation and async Runtime gateways only. Runtime stores and authorities stay in Runtime composition, and Subsessions reads sessions, checkpoints, transcript pages, and change notifications through separate narrow async ports.
 
@@ -156,7 +156,7 @@ dotnet test tests/Sunder.Package.Agent.Provider.OpenAI.Tests/Sunder.Package.Agen
 
 ## Release Tags
 
-`agent/vX.Y.Z` releases `Sunder.Package.Agent.Protocol` and all 15 runtime packages as one family. For a new release, the workflow builds once from one Agent commit and one Core `main` commit resolved once at workflow start; a recovery rerun reuses the preserved evidence's Core SHA. It validates the exact artifacts through Package Format, Runtime lifecycle, and App snapshot activation, publishes immutable versions without moving Registry tags, verifies downloaded bytes, and only then promotes `latest` for stable releases or `preview` for prereleases.
+`agent/vX.Y.Z` releases `Sunder.Package.Agent.Protocol` and all 15 runtime packages as one family. Six native jobs build every Worker against final locked remote Core packages; Windows and macOS apphosts are signed and verified before Core Runtime lifecycle and metric-budget gates run. Fan-in aggregates only those exact leaves, records the immutable Core SDK tag/package/commit provenance, validates the final archives through Package Format, Runtime lifecycle, and App snapshot activation, publishes immutable versions without moving Registry tags, verifies downloaded bytes, and only then promotes `latest` for stable releases or `preview` for prereleases.
 
 Stable releases require `PublicAPI.Unshipped.txt` to contain no API entries. The 2.x baseline belongs to the `Sunder.Package.Agent.Protocol` package and assembly identity. The retained `Sunder.Package.Agent.Contracts.*` source namespaces are types inside that artifact, not a second package. Full operator steps and required repository configuration are in [`docs/RELEASES.md`](docs/RELEASES.md).
 

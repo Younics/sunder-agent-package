@@ -19,6 +19,10 @@ mkdir -p "$mock_bin" "$fixture_dir/expected" "$fixture_dir/published"
 
 cat > "$mock_bin/dotnet" <<'EOF'
 #!/usr/bin/env bash
+printf '%s\n' "$*" >> "$MOCK_DOTNET_LOG"
+if [[ "${MOCK_DOTNET_TRUST_FAILURE:-false}" == "true" && "$*" == "nuget trust source "* ]]; then
+  exit 12
+fi
 exit 0
 EOF
 cat > "$mock_bin/unzip" <<'EOF'
@@ -30,6 +34,7 @@ exec "$REAL_UNZIP" "$@"
 EOF
 chmod +x "$mock_bin/dotnet" "$mock_bin/unzip"
 export REAL_UNZIP="$real_unzip"
+export MOCK_DOTNET_LOG="$fixture_dir/dotnet.log"
 
 printf '<Types />\n' > "$fixture_dir/expected/[Content_Types].xml"
 printf '<package />\n' > "$fixture_dir/expected/fixture.nuspec"
@@ -45,6 +50,23 @@ cp "$fixture_dir/expected/fixture.nuspec" "$fixture_dir/published/fixture.nuspec
 )
 
 PATH="$mock_bin:$PATH" bash "$verifier" "$fixture_dir/expected.nupkg" "$fixture_dir/published.nupkg"
+grep -Fq 'nuget trust source nuget.org --source-url https://api.nuget.org/v3/index.json --configfile' "$MOCK_DOTNET_LOG" \
+  || { printf 'NuGet verifier did not trust certificates advertised by the NuGet.org service index.\n' >&2; exit 1; }
+grep -Fq 'nuget verify ' "$MOCK_DOTNET_LOG" \
+  || { printf 'NuGet verifier did not run signature verification.\n' >&2; exit 1; }
+grep -Fq ' --all --configfile ' "$MOCK_DOTNET_LOG" \
+  || { printf 'NuGet verifier did not enforce its trusted-signer configuration.\n' >&2; exit 1; }
+if grep -Fq 'nuget trust repository' "$MOCK_DOTNET_LOG"; then
+  printf 'NuGet verifier trusted a certificate supplied only by the package.\n' >&2
+  exit 1
+fi
+
+trust_failure_log="$fixture_dir/trust-failure.log"
+if MOCK_DOTNET_TRUST_FAILURE=true PATH="$mock_bin:$PATH" \
+  bash "$verifier" "$fixture_dir/expected.nupkg" "$fixture_dir/published.nupkg" > "$trust_failure_log" 2>&1; then
+  printf 'NuGet verifier masked a NuGet.org signer-discovery failure.\n' >&2
+  exit 1
+fi
 
 printf '<Types changed="true" />\n' > "$fixture_dir/published/[Content_Types].xml"
 (
@@ -68,4 +90,4 @@ fi
 grep -Fq "Failed to extract NuGet package entry '[Content_Types].xml'" "$extraction_failure_log" \
   || { printf 'NuGet verifier did not report the failed literal member extraction.\n' >&2; exit 1; }
 
-printf 'NuGet verification fixture passed: literal member names are hashed and extraction failures are fatal.\n'
+printf 'NuGet verification fixture passed: canonical bytes, NuGet.org signer trust, and extraction failures are enforced.\n'

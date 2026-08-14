@@ -5,7 +5,6 @@ using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Callbacks;
-using Sunder.Sdk.Runtime;
 
 namespace Sunder.Package.Agent.Provider.OpenAI;
 
@@ -26,21 +25,21 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject,
     internal static IReadOnlyCollection<string> OwnedConfigurationKeys { get; } =
         [OpenAiAuthMode.ConfigurationKey, OpenAiProviderConfiguration.ApiKeySecretKey, OpenAiProviderConfiguration.UtilityModelKey];
 
-    public OpenAiSettingsViewModel(
+    internal OpenAiSettingsViewModel(
         IPackageContext packageContext,
-        IPackageRuntimeClient runtimeClient)
+        IOpenAiOwnerManagementClient management)
         : this(
             packageContext,
-            new OpenAiAuthPresentationService(runtimeClient),
+            new OpenAiAuthPresentationService(management),
             new PackageCallbackFlowRunner(packageContext.Callbacks),
-            new ProviderCredentialAppRuntimeGateway(runtimeClient))
+            new ProviderCredentialOwnerClient(management))
     {
     }
 
     internal OpenAiSettingsViewModel(
         IPackageContext packageContext,
         OpenAiAuthPresentationService authPresentation,
-        IProviderCredentialSettingsGateway credentials)
+        IProviderCredentialOwnerClient credentials)
         : this(
             packageContext,
             authPresentation,
@@ -53,7 +52,7 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject,
         IPackageContext packageContext,
         OpenAiAuthPresentationService authPresentation,
         PackageCallbackFlowRunner callbackFlow,
-        IProviderCredentialSettingsGateway credentials)
+        IProviderCredentialOwnerClient credentials)
     {
         _packageContext = packageContext;
         _authPresentation = authPresentation;
@@ -401,9 +400,7 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject,
             : OpenAiAuthMode.CodexConnected));
 
     internal static string? NormalizeLegacyUtilityModelId(string? modelId)
-        => string.Equals(modelId?.Trim(), "openai/gpt-5.5-fast", StringComparison.OrdinalIgnoreCase)
-            ? "openai/gpt-5.5"
-            : modelId;
+        => OpenAiProviderConfiguration.NormalizeLegacyUtilityModelId(modelId);
 }
 
 public sealed record OpenAiAuthModeOption(string ModeId, string DisplayName);

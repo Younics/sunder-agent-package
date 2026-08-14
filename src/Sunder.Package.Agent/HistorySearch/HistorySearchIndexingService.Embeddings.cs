@@ -354,11 +354,11 @@ internal static class HistoryVectorCodec
         double sum = 0;
         foreach (var value in result.Values)
         {
-            if (!float.IsFinite(value))
+            if (!double.IsFinite(value))
             {
                 return false;
             }
-            sum += (double)value * value;
+            sum += value * value;
         }
         if (!double.IsFinite(sum) || sum <= 1e-20)
         {

@@ -1,6 +1,6 @@
 using System.Reflection;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
+using Sunder.Package.Agent.Tools.Files;
+using Sunder.Package.Agent.Tools.Web;
 using Sunder.Package.Agent.Tools.Web.Services;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Logging;
@@ -42,76 +42,61 @@ public sealed class ToolPackageRoleCompositionTests
     [InlineData("Sunder.Package.Agent.Tools.Files")]
     [InlineData("Sunder.Package.Agent.Tools.Shell")]
     [InlineData("Sunder.Package.Agent.Tools.Web")]
-    public void ToolPackage_ExposesOnlyRuntimeRole(string assemblyName)
+    public void ToolPackage_ExposesOnlyWorkerRole(string assemblyName)
     {
         var moduleTypes = Assembly.Load(assemblyName).GetTypes()
             .Where(static type => !type.IsAbstract)
             .ToArray();
 
-        if (string.Equals(assemblyName, "Sunder.Package.Agent.Tools.Shell", StringComparison.Ordinal))
-        {
-            Assert.DoesNotContain(moduleTypes, typeof(ISunderRuntimePackageModule).IsAssignableFrom);
-            Assert.NotNull(Assembly.Load(assemblyName).EntryPoint);
-        }
-        else
-        {
-            Assert.Single(moduleTypes, typeof(ISunderRuntimePackageModule).IsAssignableFrom);
-        }
         Assert.DoesNotContain(moduleTypes, typeof(ISunderAppPackageModule).IsAssignableFrom);
+        Assert.NotNull(Assembly.Load(assemblyName).EntryPoint);
     }
 
     [Theory]
     [MemberData(nameof(ToolPackages))]
-    public async Task RuntimeRole_BuildsAndRegistersExactContributions(string assemblyName, string[] expectedRegistrations)
+    public void WorkerRole_GeneratesExactContributions(string assemblyName, string[] expectedRegistrations)
     {
-        if (string.Equals(assemblyName, "Sunder.Package.Agent.Tools.Shell", StringComparison.Ordinal))
+        var package = Assert.Single(
+            AgentPackageRepositoryInventory.GetRuntimePackageProjects(),
+            package => package.Name == assemblyName);
+        var configuration = new DirectoryInfo(AppContext.BaseDirectory.TrimEnd(
+            Path.DirectorySeparatorChar,
+            Path.AltDirectorySeparatorChar)).Parent?.Name ?? "Debug";
+        var manifestPath = Path.Combine(
+            package.DirectoryPath,
+            "obj",
+            configuration,
+            "net10.0",
+            System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier,
+            "sunder-package.json");
+        using var manifest = System.Text.Json.JsonDocument.Parse(File.ReadAllText(manifestPath));
+        var actual = manifest.RootElement.GetProperty("provides")
+            .EnumerateArray()
+            .Select(static provider => "rpc-provider:" + provider.GetProperty("providerId").GetString())
+            .ToList();
+        if (manifest.RootElement.GetProperty("targets")[0].GetProperty("requiredHostCapabilities")
+            .EnumerateArray()
+            .Any(static capability => capability.GetString() == "settings.schema.v1"))
         {
-            var package = Assert.Single(
-                AgentPackageRepositoryInventory.GetRuntimePackageProjects(),
-                static package => package.Name == "Sunder.Package.Agent.Tools.Shell");
-            var configuration = new DirectoryInfo(AppContext.BaseDirectory.TrimEnd(
-                Path.DirectorySeparatorChar,
-                Path.AltDirectorySeparatorChar)).Parent?.Name ?? "Debug";
-            var manifestPath = Path.Combine(
-                package.DirectoryPath,
-                "obj",
-                configuration,
-                "net10.0",
-                System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier,
-                "sunder-package.json");
-            using var manifest = System.Text.Json.JsonDocument.Parse(File.ReadAllText(manifestPath));
-            var actual = manifest.RootElement.GetProperty("provides")
-                .EnumerateArray()
-                .Select(static provider => "rpc-provider:" + provider.GetProperty("providerId").GetString())
-                .Order(StringComparer.Ordinal);
-
-            Assert.Equal(expectedRegistrations.Order(StringComparer.Ordinal), actual);
-            return;
+            actual.Add("settings-schema");
         }
 
+        Assert.Equal(expectedRegistrations.Order(StringComparer.Ordinal), actual.Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void FilesComposition_DefersDurableWorkspaceCreationUntilActivation()
+    {
         using var packageScope = RegressionTestPackageScope.Create();
-        var services = new ServiceCollection();
-        services.AddSingleton(packageScope.Context);
-        services.AddSingleton<Sunder.Package.Agent.Protocol.AgentRpcCatalog>(new RegressionTestExtensionCatalog());
+        var claimsRoot = packageScope.Context.Storage.RoleLocalWorkspace.GetLocalPath(
+            "files/scoped-instruction-claims");
+        var source = new FilesToolSource(packageScope.Context);
 
-        var moduleType = Assert.Single(
-            Assembly.Load(assemblyName).GetTypes(),
-            static type => !type.IsAbstract && typeof(ISunderRuntimePackageModule).IsAssignableFrom(type));
-        var module = Assert.IsAssignableFrom<ISunderRuntimePackageModule>(Activator.CreateInstance(moduleType));
-        module.ConfigureRuntimeServices(services, packageScope.Context);
+        Assert.False(Directory.Exists(claimsRoot));
 
-        await using var serviceProvider = services.BuildServiceProvider(new ServiceProviderOptions
-        {
-            ValidateOnBuild = true,
-            ValidateScopes = true,
-        });
-        var registry = new RecordingPackageContributionRegistry();
+        source.Activate();
 
-        module.RegisterRuntimeContributions(registry, serviceProvider);
-
-        Assert.Equal(
-            expectedRegistrations.Order(StringComparer.Ordinal),
-            registry.Registrations.Order(StringComparer.Ordinal));
+        Assert.True(Directory.Exists(claimsRoot));
     }
 
     [Fact]
@@ -188,6 +173,34 @@ public sealed class ToolPackageRoleCompositionTests
         {
             TestPackageStorageGuards.Key(key);
             throw new NotSupportedException();
+        }
+    }
+
+    private sealed class MutableSettings : IPackageSettings
+    {
+        private readonly Dictionary<string, string> _values = new(StringComparer.Ordinal);
+
+        public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default)
+            => GetStoredValueAsync(key, cancellationToken);
+
+        public Task<string?> GetStoredValueAsync(string key, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(_values.GetValueOrDefault(key));
+        }
+
+        public Task SetValueAsync(string key, string value, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            _values[key] = value;
+            return Task.CompletedTask;
+        }
+
+        public Task DeleteValueAsync(string key, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            _values.Remove(key);
+            return Task.CompletedTask;
         }
     }
 }

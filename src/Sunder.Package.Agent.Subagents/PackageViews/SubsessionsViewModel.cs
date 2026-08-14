@@ -5,7 +5,6 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Shared.PackageViews;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Package.Agent.Subagents.Runtime;
@@ -23,7 +22,6 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
     private const string ListRefreshChannel = "subsessions-list";
     private const string NavigationChannel = "subsessions-navigation";
 
-    private readonly AgentRpcCatalog? _rpcCatalog;
     private readonly IPresentationDispatcher _uiDispatcher;
     private readonly TranscriptTimelineState<SubsessionTranscriptRowViewModel> _timeline;
     private readonly TranscriptItemsProjection<SubsessionTranscriptRowViewModel> _transcriptItemsProjection;
@@ -48,27 +46,14 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
     private int _suppressAutomaticTranscriptLoad;
     private bool _disposed;
 
-    public SubsessionsViewModel(
-        AgentRpcCatalog? rpcCatalog,
-        TimeSpan? activityQuietDelay = null)
-        : this(rpcCatalog, activityQuietDelay, PresentationDispatcher.Capture())
-    {
-    }
-
-    internal SubsessionsViewModel(
-        AgentRpcCatalog? rpcCatalog,
+    private SubsessionsViewModel(
         TimeSpan? activityQuietDelay,
         IPresentationDispatcher uiDispatcher)
     {
         _uiDispatcher = uiDispatcher;
         _activityTicker.SetEnabled(false);
-        _rpcCatalog = rpcCatalog;
-        var toolPresentation = new TranscriptToolPresentationService(() =>
-            rpcCatalog is not null
-                ? rpcCatalog.GetServiceReferences(AgentRpcServices.ToolSources)
-                    .Select(static reference =>
-                        (IAgentToolPresentationResolver)new RpcToolSourcePresentationResolver(reference))
-                : []);
+        var toolPresentation = new TranscriptToolPresentationService(
+            static () => []);
         var rowFactory = new SubsessionTranscriptRowFactory(
             toolPresentation,
             LoadToolDetailAsync,
@@ -82,7 +67,8 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
             rowProjector,
             InitialTranscriptTurnLimit,
             OlderTranscriptTurnPageSize,
-            TranscriptVisibleRowLimit);
+            TranscriptVisibleRowLimit,
+            uiDispatcher);
         RunActivityRow = new SubsessionActivityTranscriptRowViewModel(_activityTicker);
         TailSentinelRow = new SubsessionTranscriptTailSentinelRowViewModel();
         _transcriptItemsProjection = new TranscriptItemsProjection<SubsessionTranscriptRowViewModel>(
@@ -310,29 +296,11 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         bool isExpanded)
         => _timeline.SetRowExpanded(row, isExpanded);
 
-    private void EnsureRuntimeReaders()
-    {
-        if (_sessionReader is not null || _rpcCatalog is null)
-        {
-            return;
-        }
-
-        var runtimeReference = _rpcCatalog
-            .GetServiceReferences(AgentRpcServices.RuntimeCatalogs)
-            .FirstOrDefault();
-        if (runtimeReference is not null)
-        {
-            var adapter = new SubsessionLocalRuntimeAdapter(runtimeReference);
-            SetRuntimePorts(adapter, adapter, adapter, adapter, ownsChangeNotifications: true);
-        }
-    }
-
     internal async Task ReloadSubsessionsAsync(
         Guid? selectedSessionId,
         CancellationToken cancellationToken = default,
         bool suppressTranscriptLoad = false)
     {
-        EnsureRuntimeReaders();
         if (_sessionReader is null || _checkpointReader is null)
         {
             throw new InvalidOperationException("The Agent runtime is not available.");

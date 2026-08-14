@@ -36,7 +36,7 @@ public sealed class McpEcosystemConfigurationImporter(McpServerCatalogService se
     {
         if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
         {
-            throw new InvalidOperationException("Select an existing MCP configuration file.");
+            throw new McpManagementOperationException("Select an existing MCP configuration file.");
         }
 
         var result = new MutableImportResult();
@@ -218,8 +218,3 @@ public sealed class McpEcosystemConfigurationImporter(McpServerCatalogService se
         public McpConfigurationImportResult ToResult() => new(Imported, Skipped, Warnings.ToArray());
     }
 }
-
-public sealed record McpConfigurationImportResult(
-    int ImportedCount,
-    int SkippedCount,
-    IReadOnlyList<string> Warnings);

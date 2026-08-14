@@ -29,7 +29,7 @@ Use the Protocol package and the Sunder SDK only. Extensions must not reference 
 | `Sunder.Package.Agent.Contracts.Models` | Immutable domain requests, descriptors, results, and enums used by those adapters |
 | `Sunder.Sdk.Rpc` | Host RPC registration, discovery, invocation, endpoint, and error contracts |
 
-Most Agent capabilities belong in an `ISunderRuntimePackageModule`. Register an activation-owned handler with `ISunderRuntimeContributionRegistry.RegisterRpcProvider`. Add an `ISunderAppPackageModule` only for presentation or an App-side proxy over Runtime operations.
+Most Agent capabilities belong in an exact-RID Worker V3 executable. Pass activation-owned handlers to `SunderWorker.RunAsync` as immutable `SunderWorkerProviderRegistration` entries. Add an `ISunderAppPackageModule` only for presentation or an App-side client over owner-only RPC.
 
 `Sunder.Package.Agent.Protocol` is the shipped NuGet and assembly identity. The repository retains source folder `src/Sunder.Package.Agent.Contracts` and the `Sunder.Package.Agent.Contracts.*` namespaces for the package-local implementation interfaces and stable API types already carried by that artifact. The path and namespace do not identify another package or a cross-package CLR ABI; all 18 cross-package boundaries are the descriptors and generated bindings under the Protocol identity.
 

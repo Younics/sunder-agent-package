@@ -88,7 +88,7 @@ mkdir -p \
 jq -cn '
   {
     archiveFormatVersion: 1,
-    manifestVersion: 1,
+    manifestVersion: 3,
     id: "fixture.package",
     name: "Fixture Package",
     summary: "Registry release fixture",
@@ -101,8 +101,8 @@ jq -cn '
       kind: "worker",
       entryPoint: "bin/worker",
       targetFramework: "net10.0",
-      sdkVersion: "1.0.0",
-      requiredHostCapabilities: ["worker-protocol.v2"],
+      sdkVersion: "1.1.0",
+      requiredHostCapabilities: ["rpc.v2", "sdk-baseline-1-1.v1", "worker-protocol.v3"],
       views: []
     }],
     contractBundles: [],

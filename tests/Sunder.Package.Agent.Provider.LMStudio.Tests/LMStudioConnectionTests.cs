@@ -1,9 +1,15 @@
+extern alias LMStudioApp;
+
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Provider.LMStudio.Protocol.Generated;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Package.Agent.Provider.TestSupport;
 using Sunder.Sdk.Abstractions;
-using Sunder.Sdk.Runtime;
+using Sunder.Sdk.Rpc;
 using Xunit;
+using LMStudioSettingsViewModel = LMStudioApp::Sunder.Package.Agent.Provider.LMStudio.LMStudioSettingsViewModel;
+using IProviderCredentialOwnerClient = LMStudioApp::Sunder.Package.Agent.Provider.Shared.IProviderCredentialOwnerClient;
+using ProviderCredentialSnapshot = LMStudioApp::Sunder.Package.Agent.Provider.Shared.ProviderCredentialSnapshot;
 
 namespace Sunder.Package.Agent.Provider.LMStudio.Tests;
 
@@ -113,7 +119,7 @@ public sealed class LMStudioConnectionTests
                 [LMStudioProviderConfiguration.ApiKeyKey] = "local-key",
             });
         var credentials = new ProviderCredentialAccessor(context.Secrets, LMStudioProviderConfiguration.ApiKeyKey);
-        using var settings = new LMStudioSettingsViewModel(context, CreateCredentialRuntime(credentials));
+        using var settings = new LMStudioSettingsViewModel(context, new CredentialOwnerClientFake(credentials));
         using var connection = new LMStudioConnection(
             context,
             credentials,
@@ -129,14 +135,13 @@ public sealed class LMStudioConnectionTests
     }
 
     [Fact]
-    public async Task FirstOpenRuntimeFailure_IsContainedAndRetryHydratesAuthoritativeSettings()
+    public async Task FirstOpenOwnerRpcFailure_IsContainedAndRetryHydratesAuthoritativeSettings()
     {
         var settings = new FailOnceKeyValueStore(
-            new PackageRuntimeInvocationException(
-                "runtime.v1.unavailable",
-                isTransient: true,
-                statusCode: 503,
-                correlationId: "lm-retry"),
+            new SunderRpcException(new SunderRpcError(
+                SunderRpcErrorKind.Unavailable,
+                "lmstudio.owner.unavailable",
+                "LM Studio owner RPC is unavailable.")),
             new Dictionary<string, string>
             {
                 [LMStudioProviderConfiguration.BaseUrlKey] = "https://lmstudio.test/v1",
@@ -153,8 +158,8 @@ public sealed class LMStudioConnectionTests
         Assert.True(viewModel.IsError);
         Assert.False(viewModel.CanMutate);
         Assert.False(viewModel.SaveSettingsCommand.CanExecute(null));
-        Assert.Equal("runtime.v1.unavailable", viewModel.RuntimeErrorCode);
-        Assert.Equal("lm-retry", viewModel.RuntimeCorrelationId);
+        Assert.Equal("lmstudio.owner.unavailable", viewModel.RuntimeErrorCode);
+        Assert.Null(viewModel.RuntimeCorrelationId);
 
         await viewModel.RetryInitializationCommand.ExecuteAsync(null);
 
@@ -316,27 +321,39 @@ public sealed class LMStudioConnectionTests
     private static LMStudioSettingsViewModel CreateSettings(ProviderTestPackageContext context)
         => new(
             context,
-            CreateCredentialRuntime(new ProviderCredentialAccessor(
+            new CredentialOwnerClientFake(new ProviderCredentialAccessor(
                 context.Secrets,
                 LMStudioProviderConfiguration.ApiKeyKey)));
 
-    private static ProviderTestRuntimeClient CreateCredentialRuntime(ProviderCredentialAccessor credentials)
+    private sealed class CredentialOwnerClientFake(ProviderCredentialAccessor credentials)
+        : IProviderCredentialOwnerClient
     {
-        var handler = new ProviderCredentialRuntimeHandler(credentials);
-        return new ProviderTestRuntimeClient(async (operationId, request, cancellationToken) =>
-        {
-            if (operationId == ProviderCredentialRuntimeOperations.Query.OperationId)
-            {
-                return await handler.HandleAsync((ProviderCredentialQuery)request, cancellationToken);
-            }
+        private readonly ProviderCredentialRpcProvider _provider = new(credentials);
 
-            if (operationId == ProviderCredentialRuntimeOperations.Command.OperationId)
-            {
-                return await handler.HandleAsync((ProviderCredentialCommand)request, cancellationToken);
-            }
+        public async ValueTask<ProviderCredentialSnapshot> GetStatusAsync(
+            CancellationToken cancellationToken = default)
+            => ToSnapshot(await _provider.QueryAsync(
+                null!,
+                new CredentialQuery(),
+                cancellationToken));
 
-            throw new InvalidOperationException($"Unexpected Runtime operation '{operationId}'.");
-        });
+        public async ValueTask<ProviderCredentialSnapshot> SetAsync(
+            string credential,
+            CancellationToken cancellationToken = default)
+            => ToSnapshot(await _provider.CommandAsync(
+                null!,
+                new CredentialCommand { Kind = 0, Credential = credential },
+                cancellationToken));
+
+        public async ValueTask<ProviderCredentialSnapshot> ClearAsync(
+            CancellationToken cancellationToken = default)
+            => ToSnapshot(await _provider.CommandAsync(
+                null!,
+                new CredentialCommand { Kind = 1 },
+                cancellationToken));
+
+        private static ProviderCredentialSnapshot ToSnapshot(CredentialSnapshot snapshot)
+            => new(snapshot.HasStoredCredential);
     }
 
     private static PackageViewNavigationContext CreateNavigationContext()

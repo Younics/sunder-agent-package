@@ -1,6 +1,6 @@
 # Chat And Embedding Providers
 
-Provider packages run in the Sunder Runtime. Keep network clients, credentials, model translation, retries, and provider-specific state out of App composition. An optional App module may expose settings through typed Runtime operations, but it must not contain provider authority.
+Provider packages run as supervised workers in the Sunder Runtime. Keep network clients, credentials, model translation, retries, and provider-specific state out of App composition. An optional App module may expose settings through typed owner RPC, but it must not contain provider authority.
 
 ## Chat Provider Contract
 
@@ -52,6 +52,7 @@ Model `Variants`, `SpeedOptions`, and `ModeOptions` are persisted as `AgentChatM
 - Do not claim native or multiple tool calling unless translated responses preserve all call/result pairs.
 - Distinguish caller cancellation from provider timeout/transient transport interruption. The default behavior loop can persist an interrupted run for resumable failures.
 - Stream `UsageContent` when upstream usage is available. Populate `TotalTokenCount` when it represents the complete context usage; otherwise populate both `InputTokenCount` and `OutputTokenCount`. The Runtime uses usage from the successful attempt to decide whether session context should be compacted.
+- `ChatOptions` temperature, top-p, frequency-penalty, and presence-penalty values are binary32. Agent RPC widens them losslessly to binary64 on send and rejects non-representable binary64 values with `agent.chat.option-not-representable` on receive; it never silently rounds at the wire boundary.
 - Never log API keys, bearer tokens, prompt bodies, attachment bytes, or private provider payloads.
 - Use `AgentChatClientContext.LogProviderEventAsync` for best-effort structured package logging. It merges provider/model/correlation attributes and deliberately does not let logging failures break a run.
 
@@ -69,9 +70,9 @@ Implement `IAgentEmbeddingProvider`, adapt it with `AgentEmbeddingProviderRpc.Cr
 | `GenerateEmbeddingAsync` | Return one result or `null` only when the input intentionally has no embedding. |
 | `GenerateEmbeddingsAsync` | Preserve input count and index order. Use `null` at an invalid/empty input's index rather than shifting later results. |
 
-Every non-null `AgentEmbeddingGenerationResult` must repeat the selected `ModelId`; `Dimensions` is derived from the returned values. A provider must not mix dimensions for one model generation. Validate upstream response indexes and counts before returning.
+Every non-null `AgentEmbeddingGenerationResult` must repeat the selected `ModelId`; `Dimensions` is derived from the returned binary64 (`double`) values. Do not narrow embedding components to `float` at the Agent RPC boundary. A provider must not mix dimensions for one model generation. Validate upstream response indexes and counts before returning.
 
-Semantic memory resolves the embedding binding on the profile, checks readiness, and degrades to lexical/full-text recall when embeddings are disabled, absent, or unavailable. Background indexing records generation failures and retries bounded work; an embedding outage must not corrupt existing memory generations.
+Semantic memory resolves the embedding binding on the profile, checks readiness, and degrades to lexical/full-text recall when embeddings are disabled, absent, or unavailable. Background indexing records generation failures and retries bounded work; an embedding outage must not corrupt existing memory generations. Internal semantic-memory similarity scores and compact history-index vector storage may use binary32 because they are domain-internal derived data, not Agent RPC values.
 
 ## Utility Models
 
@@ -83,28 +84,36 @@ A chat provider may additionally implement `IAgentUtilityModelProvider` to expos
 - Store schema-declared non-secret preferences through `IPackageContext.Settings` and register one `PackageSettingsSchema`.
 - Keep operational token caches and provider continuation state in package-owned secret/state storage as appropriate.
 - Browser authorization uses Sunder's callback abstractions. Packages must never bind their own callback port.
-- Keep App settings views as presentation clients over Runtime operations. Do not duplicate secrets or network clients in App DI.
+- Keep App settings views as presentation clients over owner RPC. Do not duplicate secrets or network clients in App DI.
 - Project only credential presence to App. Blank input retains the stored credential; non-empty replacements and explicit clears cross to Runtime only as commands, and Runtime responses never echo the value.
 
 ## Registration
 
 ```csharp
-public void ConfigureRuntimeServices(IServiceCollection services, IPackageContext context)
+await SunderWorker.RunAsync(context =>
 {
-    services.AddSingleton<AcmeChatProvider>();
-    services.AddSingleton<AcmeEmbeddingProvider>();
-}
+    var chat = new AcmeChatProvider(context);
+    var embedding = new AcmeEmbeddingProvider(context);
+    return new SunderWorkerV3Options(
+    [
+        Register("acme.chat", AgentRpcContractIds.ChatProvider, AgentChatProviderRpc.CreateHandler(chat)),
+        Register("acme.embedding", AgentRpcContractIds.EmbeddingProvider, AgentEmbeddingProviderRpc.CreateHandler(embedding)),
+    ]);
+});
 
-public void RegisterRuntimeContributions(
-    ISunderRuntimeContributionRegistry registry,
-    IServiceProvider services)
+static SunderWorkerProviderRegistration Register(
+    string providerId,
+    string contractId,
+    ISunderRpcServiceHandler handler)
 {
-    registry.RegisterRpcProvider(
-        "acme.chat",
-        AgentChatProviderRpc.CreateHandler(services.GetRequiredService<AcmeChatProvider>()));
-    registry.RegisterRpcProvider(
-        "acme.embedding",
-        AgentEmbeddingProviderRpc.CreateHandler(services.GetRequiredService<AcmeEmbeddingProvider>()));
+    var descriptor = AgentRpcContractDescriptors.Get(contractId);
+    return new(
+        providerId,
+        descriptor.ContractId,
+        descriptor.Version,
+        descriptor.Sha256,
+        descriptor.AbiSha256 ?? throw new InvalidDataException("Agent RPC is missing its ABI hash."),
+        handler);
 }
 ```
 

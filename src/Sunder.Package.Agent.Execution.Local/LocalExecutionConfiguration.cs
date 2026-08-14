@@ -6,8 +6,8 @@ namespace Sunder.Package.Agent.Execution.Local;
 
 public static class LocalExecutionConfiguration
 {
-    public const string TimeoutKey = "shell.timeoutSeconds.default";
-    public const string DefaultTimeoutSeconds = "300";
+    public const string TimeoutKey = LocalExecutionPresentationDefaults.TimeoutKey;
+    public const string DefaultTimeoutSeconds = LocalExecutionPresentationDefaults.DefaultTimeoutSeconds;
 
     internal static async ValueTask<int> ResolveDefaultTimeoutSecondsAsync(
         IPackageContext packageContext,

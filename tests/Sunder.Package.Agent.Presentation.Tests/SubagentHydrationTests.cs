@@ -4,8 +4,6 @@ using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
-using Sunder.Package.Agent.Subagents.PackageViews;
-using Sunder.Package.Agent.Subagents.Services;
 using Sunder.Package.Agent.Tests;
 using Xunit;
 
@@ -30,7 +28,8 @@ public sealed class SubagentHydrationTests
             provider.Descriptor.ProviderId,
             "model",
             []);
-        using var viewModel = new SubagentsViewModel(service, extensions);
+        using var gateway = new WorkerBackedSubagentManagementGateway(service, extensions);
+        using var viewModel = new SubagentsViewModel(gateway);
 
         var initialization = viewModel.InitializeAsync();
         await provider.LoadStarted.Task.WaitAsync(TestContext.Current.CancellationToken);
@@ -66,7 +65,8 @@ public sealed class SubagentHydrationTests
             provider.Descriptor.ProviderId,
             "model",
             []);
-        using var viewModel = new SubagentsViewModel(service, extensions);
+        using var gateway = new WorkerBackedSubagentManagementGateway(service, extensions);
+        using var viewModel = new SubagentsViewModel(gateway);
 
         var initialization = viewModel.InitializeAsync();
         await provider.LoadStarted.Task.WaitAsync(TestContext.Current.CancellationToken);

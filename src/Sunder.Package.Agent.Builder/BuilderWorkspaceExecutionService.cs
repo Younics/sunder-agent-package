@@ -1,41 +1,27 @@
-using System.Text;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Sdk.Runtime;
+using Sunder.Package.Agent.Protocol;
+using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Builder;
 
-public sealed record BuilderProcessResult(
-    int ExitCode,
-    string StandardOutput,
-    string StandardError,
-    bool WasTruncated = false)
-{
-    public string CombinedOutput => (StandardOutput + Environment.NewLine + StandardError).Trim();
-}
-
 public sealed class BuilderWorkspaceExecutionService
 {
-    private readonly IBuilderRuntimeGateway _runtime;
+    private readonly IBuilderRpcGateway _rpc;
 
-    public BuilderWorkspaceExecutionService(IPackageRuntimeClient runtimeClient)
-        : this(new BuilderAppRuntimeGateway(runtimeClient))
-    {
-    }
-
-    public BuilderWorkspaceExecutionService(IAgentWorkspaceExecutionResolver resolver)
-        : this(new BuilderLocalRuntimeGateway(resolver))
+    public BuilderWorkspaceExecutionService(ISunderRpcClient rpcClient)
+        : this(new BuilderAppRpcGateway(rpcClient))
     {
     }
 
     public BuilderWorkspaceExecutionService()
-        : this(EmptyBuilderRuntimeGateway.Instance)
+        : this(EmptyBuilderRpcGateway.Instance)
     {
     }
 
-    private BuilderWorkspaceExecutionService(IBuilderRuntimeGateway runtime)
+    private BuilderWorkspaceExecutionService(IBuilderRpcGateway rpc)
     {
-        _runtime = runtime;
+        _rpc = rpc;
     }
 
     public async Task<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesAsync(
@@ -43,8 +29,8 @@ public sealed class BuilderWorkspaceExecutionService
     {
         cancellationToken.ThrowIfCancellationRequested();
         var invocation = Task.Run(
-            () => _runtime.InvokeAsync(
-                new BuilderRuntimeRequest(BuilderRuntimeOperationKind.ListWorkspaces),
+            () => _rpc.InvokeAsync(
+                new BuilderRpcRequest(BuilderRpcOperationKind.ListWorkspaces),
                 cancellationToken).AsTask(),
             CancellationToken.None);
         var response = await invocation.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -55,12 +41,12 @@ public sealed class BuilderWorkspaceExecutionService
         string workspaceId,
         CancellationToken cancellationToken = default)
     {
-        var resolution = (await _runtime.InvokeAsync(new BuilderRuntimeRequest(
-                BuilderRuntimeOperationKind.ResolveWorkspace,
+        var resolution = (await _rpc.InvokeAsync(new BuilderRpcRequest(
+                BuilderRpcOperationKind.ResolveWorkspace,
                 workspaceId), cancellationToken).ConfigureAwait(false)).Execution
             ?? throw new InvalidDataException("Runtime did not return workspace execution details.");
         var context = new AgentExecutionTargetContext(null, null, resolution.Workspace, resolution.Binding);
-        var proxy = new BuilderRuntimeExecutionTargetProxy(_runtime, resolution);
+        var proxy = new BuilderRpcExecutionTargetProxy(_rpc, resolution);
         return new BuilderWorkspaceExecution(
             resolution.Workspace,
             resolution.Binding,
@@ -74,18 +60,18 @@ public sealed class BuilderWorkspaceExecutionService
     }
 }
 
-internal sealed class EmptyBuilderRuntimeGateway : IBuilderRuntimeGateway
+internal sealed class EmptyBuilderRpcGateway : IBuilderRpcGateway
 {
-    internal static EmptyBuilderRuntimeGateway Instance { get; } = new();
+    internal static EmptyBuilderRpcGateway Instance { get; } = new();
 
-    public ValueTask<BuilderRuntimeResponse> InvokeAsync(
-        BuilderRuntimeRequest request,
+    public ValueTask<BuilderRpcResponse> InvokeAsync(
+        BuilderRpcRequest request,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return request.Kind == BuilderRuntimeOperationKind.ListWorkspaces
-            ? ValueTask.FromResult(new BuilderRuntimeResponse(Workspaces: []))
-            : ValueTask.FromException<BuilderRuntimeResponse>(
+        return request.Kind == BuilderRpcOperationKind.ListWorkspaces
+            ? ValueTask.FromResult(new BuilderRpcResponse(Workspaces: []))
+            : ValueTask.FromException<BuilderRpcResponse>(
                 new InvalidOperationException("Agent workspace execution service is unavailable."));
     }
 }
@@ -114,15 +100,17 @@ public sealed record BuilderWorkspaceExecution(
         int timeoutSeconds = 600,
         CancellationToken cancellationToken = default)
     {
-        var result = ExecutionTarget is IAgentProcessExecutionTarget processTarget
-            ? await processTarget.ExecuteProcessAsync(
-                Context,
-                new AgentProcessCommandRequest(fileName, arguments, workingDirectory, timeoutSeconds),
-                cancellationToken)
-            : await ExecutionTarget.ExecuteShellAsync(
-                Context,
-                new AgentShellCommandRequest(BuildCommand(fileName, arguments), workingDirectory, timeoutSeconds),
-                cancellationToken);
+        if (!Target.SupportsFacet(AgentExecutionFacetIds.ProcessExecution)
+            || ExecutionTarget is not IAgentProcessExecutionTarget processTarget)
+        {
+            throw new NotSupportedException(
+                "Package Builder requires the execution target's structured process-execution facet.");
+        }
+
+        var result = await processTarget.ExecuteProcessAsync(
+            Context,
+            new AgentProcessCommandRequest(fileName, arguments, workingDirectory, timeoutSeconds),
+            cancellationToken);
         return new BuilderProcessResult(result.ExitCode, result.Output, string.Empty, result.WasTruncated);
     }
 
@@ -206,37 +194,6 @@ public sealed record BuilderWorkspaceExecution(
             ? StringComparison.OrdinalIgnoreCase
             : StringComparison.Ordinal;
 
-    private string BuildCommand(string fileName, IReadOnlyList<string> arguments)
-    {
-        if (IsWindows)
-        {
-            return string.Join(' ', new[] { QuoteWindows(fileName) }.Concat(arguments.Select(QuoteWindows)));
-        }
-
-        return string.Join(' ', new[] { QuotePosix(fileName) }.Concat(arguments.Select(QuotePosix)));
-    }
-
     public static string QuotePosix(string value)
         => "'" + value.Replace("'", "'\\''", StringComparison.Ordinal) + "'";
-
-    public static string QuoteWindows(string value)
-    {
-        if (value.Length == 0)
-        {
-            return "\"\"";
-        }
-
-        var builder = new StringBuilder(value.Length + 2).Append('"');
-        foreach (var ch in value)
-        {
-            if (ch is '"' or '`')
-            {
-                builder.Append('`');
-            }
-
-            builder.Append(ch);
-        }
-
-        return builder.Append('"').ToString();
-    }
 }

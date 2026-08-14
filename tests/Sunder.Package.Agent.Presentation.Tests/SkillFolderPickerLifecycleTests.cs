@@ -1,6 +1,6 @@
 using System.Reflection;
 using Avalonia.Headless.XUnit;
-using Sunder.Package.Agent.Skills.PackageViews;
+using Sunder.Package.Agent.Skills.Runtime;
 using Sunder.Package.Agent.Skills.Services;
 using Sunder.Package.Agent.Tests;
 using Xunit;
@@ -15,8 +15,9 @@ public sealed class SkillFolderPickerLifecycleTests
         using var scope = RegressionTestPackageScope.Create();
         var store = new SkillStore(scope.Context);
         var viewModel = new SkillSettingsViewModel(
-            store,
-            new SkillImportService(store, new NoOpGitHubSkillClient(), scope.Context));
+            new SkillLocalManagementGateway(
+                store,
+                new SkillImportService(store, new NoOpGitHubSkillClient(), scope.Context)));
         await viewModel.InitializeAsync();
         var view = new SkillSettingsView(viewModel);
         var picker = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);

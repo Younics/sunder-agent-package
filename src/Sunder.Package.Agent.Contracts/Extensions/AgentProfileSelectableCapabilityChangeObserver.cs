@@ -38,10 +38,20 @@ public sealed class AgentProfileSelectableCapabilityChangeObserver : IDisposable
     /// The role-local RPC catalog to observe. The observer does not dispose it.
     /// </param>
     public AgentProfileSelectableCapabilityChangeObserver(AgentRpcCatalog catalog)
+        : this(catalog, refreshProviderSubscriptions: true)
+    {
+    }
+
+    internal AgentProfileSelectableCapabilityChangeObserver(
+        AgentRpcCatalog catalog,
+        bool refreshProviderSubscriptions)
     {
         _catalog = catalog;
         _catalog.Changed += OnCatalogChanged;
-        RefreshProviderSubscriptions();
+        if (refreshProviderSubscriptions)
+        {
+            RefreshProviderSubscriptions();
+        }
     }
 
     /// <summary>

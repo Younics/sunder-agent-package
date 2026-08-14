@@ -6,7 +6,7 @@ using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
 using Sunder.Sdk.Abstractions;
-using Sunder.Sdk.Runtime;
+using Sunder.Sdk.Rpc;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -27,7 +27,6 @@ public sealed class WorkspaceEditorFailureContainmentTests
         var error = Assert.Single(host.ViewModel.EditorSections, static section => section.IsError);
         Assert.Equal("Healthy settings", Assert.Single(host.ViewModel.EditorSections, static section => !section.IsError).Title);
         Assert.Contains("runtime.editor.discovery", error.DiagnosticText, StringComparison.Ordinal);
-        Assert.Contains("discovery-123", error.DiagnosticText, StringComparison.Ordinal);
         Assert.DoesNotContain("sensitive runtime detail", error.ErrorMessage, StringComparison.Ordinal);
         Assert.Equal(2, host.Catalog.GetServiceReferences(AgentRpcServices.WorkspaceEditors).Count);
 
@@ -291,12 +290,11 @@ public sealed class WorkspaceEditorFailureContainmentTests
         Assert.DoesNotContain(host.ViewModel.EditorSections, section => section.Title == "Recovered settings");
     }
 
-    private static PackageRuntimeInvocationException RuntimeFailure(string code, string correlationId)
-        => new(
+    private static SunderRpcException RuntimeFailure(string code, string correlationId)
+        => new(new SunderRpcError(
+            SunderRpcErrorKind.Domain,
             code,
-            isTransient: true,
-            statusCode: 503,
-            correlationId);
+            $"Workspace editor RPC failed ({correlationId})."));
 
     private static IReadOnlyList<AgentEditorSection> CreateMalformedGraph(string failureKind)
         => failureKind switch

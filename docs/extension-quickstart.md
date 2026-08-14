@@ -4,16 +4,20 @@ This quickstart creates a headless Runtime package with one fixed, read-only Age
 
 ## 1. Create The Project
 
-Start with `dotnet new sunder-package`. The template creates an aggregate package with a non-packable package-local Protocol project for protocols owned by your package. Add the Agent Protocol reference and provider declaration to the Runtime leaf:
+Start with `dotnet new sunder-package`. The template creates an aggregate package, a self-contained Worker project, and a non-packable package-local Protocol project for protocols owned by your package. Add the Agent Protocol reference and provider declaration to the Worker project:
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="Sunder.Sdk" Version="[1.1.0,1.2.0)" />
+  <PackageReference Include="Sunder.Sdk.Worker" Version="[1.1.0,1.2.0)" />
   <PackageReference Include="Sunder.Package.Build" Version="[1.1.0,1.2.0)" PrivateAssets="all" />
   <PackageReference Include="Sunder.Package.Agent.Protocol" Version="[2.0.0,3.0.0)" />
 </ItemGroup>
 
 <ItemGroup>
+  <SunderPackageTarget Include="runtime/$(RuntimeIdentifier)"
+                       Role="runtime"
+                       Rid="$(RuntimeIdentifier)"
+                       Kind="worker" />
   <SunderRpcProvider Include="acme.tools"
                      ContractId="sunder.agent.tool.source"
                      ContractVersion="1.0.0"
@@ -42,36 +46,35 @@ using Sunder.Sdk.Packaging;
 
 Do not maintain a source `sunder-package.json`; the build generates it from compiled metadata and MSBuild RPC items.
 
-## 3. Publish The Provider
+## 3. Run The Provider Worker
 
-Register services first, then publish an activation-owned RPC handler:
+Create the implementation and return its activation-owned RPC handler from the canonical worker entry point:
 
 ```csharp
-using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Protocol;
-using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Worker;
 
-public sealed class PackageModule : ISunderRuntimePackageModule
+await SunderWorker.RunAsync(_ =>
 {
-    public void ConfigureRuntimeServices(IServiceCollection services, IPackageContext context)
-    {
-        services.AddSingleton<CurrentUtcTimeTool>();
-        services.AddSingleton(provider => new AgentStaticToolSourceAdapter(
-            "acme-tools",
-            "Acme tools",
-            "acme",
-            [provider.GetRequiredService<CurrentUtcTimeTool>()]));
-    }
-
-    public void RegisterRuntimeContributions(
-        ISunderRuntimeContributionRegistry registry,
-        IServiceProvider services)
-        => registry.RegisterRpcProvider(
+    var source = new AgentStaticToolSourceAdapter(
+        "acme-tools",
+        "Acme tools",
+        "acme",
+        [new CurrentUtcTimeTool()]);
+    var descriptor = AgentRpcContractDescriptors.Get(AgentRpcContractIds.ToolSource);
+    return new SunderWorkerV3Options(
+    [
+        new SunderWorkerProviderRegistration(
             "acme.tools",
-            AgentToolSourceRpc.CreateHandler(
-                services.GetRequiredService<AgentStaticToolSourceAdapter>()));
-}
+            descriptor.ContractId,
+            descriptor.Version,
+            descriptor.Sha256,
+            descriptor.AbiSha256 ?? throw new InvalidDataException("Agent tool RPC is missing its ABI hash."),
+            AgentToolSourceRpc.CreateHandler(source)),
+    ]);
+});
 ```
 
 The provider id must match the `SunderRpcProvider` item. The Host stamps ownership and caller identity, validates every request and response against `tool-source.rpc.json`, and retires the exact endpoint when the package activation ends. The local implementation interface and adapter never cross the package boundary.
@@ -84,7 +87,7 @@ dotnet build
 dotnet publish -c Release
 ```
 
-Build emits `sunder-dev`; publish emits a versioned `.sunderpkg`. Confirm the generated manifest contains the Agent 2.x runtime dependency, the `sunder.agent.tool.source` contract bundle, and the `acme.tools` Runtime provider.
+Build emits a current-RID `sunder-dev`; publish emits a native worker leaf that an aggregate project combines with the other exact-RID leaves into a versioned `.sunderpkg`. Confirm the generated manifest contains the Agent 2.x runtime dependency, the `sunder.agent.tool.source` contract bundle, and the `acme.tools` Runtime provider.
 
 ## 5. Choose Another Contract
 

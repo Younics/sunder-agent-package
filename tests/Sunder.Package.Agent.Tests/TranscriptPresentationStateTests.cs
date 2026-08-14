@@ -4,6 +4,7 @@ using Sunder.Package.Agent.Contracts.Models;
 using Xunit;
 using CorePresentation = AgentCore::Sunder.Package.Agent.Shared.PackageViews;
 using CoreViews = AgentCore::Sunder.Package.Agent.PackageViews;
+using TranscriptPageCursor = Sunder.Package.Agent.Runtime.TranscriptPageCursor;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -445,7 +446,7 @@ public sealed class TranscriptPresentationStateTests
         using var timeline = CreateTimeline(initialLimit: 4, pageSize: 30, visibleLimit: 60);
         var sessionId = Guid.NewGuid();
         var turns = CreateTurns(sessionId, 0, 1);
-        var continuation = new CorePresentation.TranscriptPageCursor(
+        var continuation = new TranscriptPageCursor(
             DateTimeOffset.UnixEpoch.AddSeconds(-10),
             Guid.NewGuid());
         var initial = timeline.BeginInitialLoad(sessionId);
@@ -469,7 +470,7 @@ public sealed class TranscriptPresentationStateTests
         using var timeline = CreateTimeline(initialLimit: 4, pageSize: 2, visibleLimit: 4);
         var sessionId = Guid.NewGuid();
         var initialTurns = CreateTurns(sessionId, 0, 4);
-        var unchangedContinuation = CorePresentation.TranscriptPageCursor.FromTurn(initialTurns[0]);
+        var unchangedContinuation = TranscriptPageCursor.FromTurn(initialTurns[0]);
         var initial = timeline.BeginInitialLoad(sessionId);
         Assert.True(timeline.TryCompleteInitialLoad(
             initial,
@@ -504,7 +505,7 @@ public sealed class TranscriptPresentationStateTests
             hasNewerRows: true,
             CorePresentation.TranscriptRowAnchorKey.Text(turns[1].TurnId)));
 
-        var olderContinuation = new CorePresentation.TranscriptPageCursor(
+        var olderContinuation = new TranscriptPageCursor(
             DateTimeOffset.UnixEpoch.AddSeconds(-10),
             Guid.NewGuid());
         Assert.True(await timeline.LoadOlderAsync((_, _, _, limit, _) =>
@@ -524,7 +525,7 @@ public sealed class TranscriptPresentationStateTests
         }));
         Assert.False(timeline.HasOlderRows);
 
-        var newerContinuation = new CorePresentation.TranscriptPageCursor(
+        var newerContinuation = new TranscriptPageCursor(
             DateTimeOffset.UnixEpoch.AddSeconds(10),
             Guid.NewGuid());
         Assert.True(await timeline.LoadNewerAsync((_, _, _, limit, _) =>
@@ -1496,7 +1497,7 @@ public sealed class TranscriptPresentationStateTests
         Assert.Equal(
             CorePresentation.TranscriptLiveTurnResult.Buffered,
             timeline.ApplyLiveTurn(newerTurn));
-        var unchangedContinuation = CorePresentation.TranscriptPageCursor.FromTurn(initialTurns[^1]);
+        var unchangedContinuation = TranscriptPageCursor.FromTurn(initialTurns[^1]);
         var loadCount = 0;
 
         var loaded = await timeline.LoadNewerAsync((_, _, _, _, _) =>
@@ -1529,7 +1530,7 @@ public sealed class TranscriptPresentationStateTests
             hasOlderRows: false,
             hasNewerRows: true,
             targetAnchorKey: CorePresentation.TranscriptRowAnchorKey.Text(initialTurns[0].TurnId)));
-        var continuation = CorePresentation.TranscriptPageCursor.FromTurn(
+        var continuation = TranscriptPageCursor.FromTurn(
             CreateTurns(sessionId, 4, 1).Single());
 
         Assert.True(await timeline.LoadNewerAsync((_, _, _, _, _) => Task.FromResult(

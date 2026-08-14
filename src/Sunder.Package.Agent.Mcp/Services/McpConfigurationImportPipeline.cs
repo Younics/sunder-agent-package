@@ -12,12 +12,22 @@ internal static class McpConfigurationSourceReader
     {
         var json = await BoundedImportIO.ReadUtf8FileAsync(filePath, MaxDocumentBytes, cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
-        var document = JsonDocument.Parse(json, new JsonDocumentOptions
+        JsonDocument document;
+        try
         {
-            AllowTrailingCommas = true,
-            CommentHandling = JsonCommentHandling.Skip,
-            MaxDepth = MaxJsonDepth,
-        });
+            document = JsonDocument.Parse(json, new JsonDocumentOptions
+            {
+                AllowTrailingCommas = true,
+                CommentHandling = JsonCommentHandling.Skip,
+                MaxDepth = MaxJsonDepth,
+            });
+        }
+        catch (JsonException exception)
+        {
+            throw new McpManagementOperationException(
+                "The MCP configuration file contains invalid JSON.",
+                exception);
+        }
         try
         {
             McpJsonShapeValidator.RejectDuplicateProperties(document.RootElement);
@@ -40,7 +50,8 @@ internal static class McpJsonShapeValidator
     {
         if (depth > McpConfigurationSourceReader.MaxJsonDepth)
         {
-            throw new InvalidDataException($"MCP JSON exceeds the {McpConfigurationSourceReader.MaxJsonDepth}-level depth limit.");
+            throw new McpManagementOperationException(
+                $"MCP JSON exceeds the {McpConfigurationSourceReader.MaxJsonDepth}-level depth limit.");
         }
 
         if (value.ValueKind == JsonValueKind.Object)
@@ -50,7 +61,8 @@ internal static class McpJsonShapeValidator
             {
                 if (!names.TryAdd(property.Name, property.Name))
                 {
-                    throw new InvalidDataException($"MCP JSON contains duplicate or case-colliding property '{property.Name}' at '{path}' (first seen as '{names[property.Name]}').");
+                    throw new McpManagementOperationException(
+                        $"MCP JSON contains duplicate or case-colliding property '{property.Name}' at '{path}' (first seen as '{names[property.Name]}').");
                 }
 
                 Visit(property.Value, path + "." + property.Name, depth + 1);

@@ -87,6 +87,8 @@ public sealed class SkillImportReplacementTests
             var context = new TestPackageContext(root);
             var store = new SkillStore(context);
             var lockPath = context.Storage.RoleLocalWorkspace.GetLocalPath("skills/skills.json.lock");
+            Assert.False(Directory.Exists(Path.GetDirectoryName(lockPath)));
+            store.Activate();
             using var externalLease = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
 
             var save = Task.Run(() => store.SaveSkill(CreateRecord("blocked")));

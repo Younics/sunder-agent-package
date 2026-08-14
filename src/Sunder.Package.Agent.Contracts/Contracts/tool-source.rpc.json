@@ -1,14 +1,16 @@
 {
-  "descriptorVersion": 1,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "descriptorVersion": 2,
   "contractId": "sunder.agent.tool.source",
   "version": "1.0.0",
-  "services": [
-    {
-      "serviceId": "tool-source",
-      "methods": [
-        {
-          "methodId": "describe",
+  "errors": {},
+  "services": {
+    "tool-source": {
+      "methods": {
+        "describe": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/AgentRpcEmpty"
           },
@@ -16,9 +18,10 @@
             "$ref": "#/$defs/ToolSourceDescription"
           }
         },
-        {
-          "methodId": "list-tools",
+        "list-tools": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/AgentToolSourceContextWire"
           },
@@ -26,9 +29,10 @@
             "$ref": "#/$defs/ListOfAgentToolDescriptor"
           }
         },
-        {
-          "methodId": "get-readiness",
+        "get-readiness": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/ToolReadinessRequest"
           },
@@ -36,9 +40,10 @@
             "$ref": "#/$defs/AgentRpcOptionalOfAgentToolReadiness"
           }
         },
-        {
-          "methodId": "preflight",
+        "preflight": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/ToolInvocationRequest"
           },
@@ -46,9 +51,10 @@
             "$ref": "#/$defs/AgentRpcOptionalOfAgentToolResult"
           }
         },
-        {
-          "methodId": "execute",
+        "execute": {
           "kind": "unary",
+          "idempotency": "none",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/ToolInvocationRequest"
           },
@@ -56,9 +62,10 @@
             "$ref": "#/$defs/AgentToolResult"
           }
         },
-        {
-          "methodId": "permission",
+        "permission": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/ToolInvocationRequest"
           },
@@ -66,9 +73,10 @@
             "$ref": "#/$defs/AgentRpcOptionalOfAgentPermissionRequestWire"
           }
         },
-        {
-          "methodId": "presentation",
+        "presentation": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/AgentToolPresentationRequest"
           },
@@ -76,9 +84,9 @@
             "$ref": "#/$defs/AgentRpcOptionalOfAgentToolPresentation"
           }
         }
-      ]
+      }
     }
-  ],
+  },
   "$defs": {
     "AgentRpcEmpty": {
       "type": "object",
@@ -113,8 +121,7 @@
     },
     "DateTimeOffset": {
       "type": "string",
-      "minLength": 0,
-      "maxLength": 1000000
+      "logicalType": "utc-date-time"
     },
     "Boolean": {
       "type": "boolean"
@@ -295,13 +302,11 @@
     },
     "Guid": {
       "type": "string",
-      "minLength": 0,
-      "maxLength": 1000000
+      "logicalType": "uuid"
     },
     "Nullable": {
       "type": "string",
-      "minLength": 0,
-      "maxLength": 1000000
+      "logicalType": "uuid"
     },
     "AgentWorkspaceDocumentRecord": {
       "type": "object",
@@ -449,6 +454,9 @@
     "AgentRpcProviderHandle": {
       "type": "object",
       "properties": {
+        "abiSha256": {
+          "$ref": "#/$defs/String"
+        },
         "activationEpoch": {
           "$ref": "#/$defs/Int64"
         },
@@ -458,10 +466,10 @@
         "contractId": {
           "$ref": "#/$defs/String"
         },
-        "contractSha256": {
+        "contractVersion": {
           "$ref": "#/$defs/String"
         },
-        "contractVersion": {
+        "descriptorSha256": {
           "$ref": "#/$defs/String"
         },
         "endpointReference": {
@@ -481,11 +489,12 @@
         }
       },
       "required": [
+        "abiSha256",
         "activationEpoch",
         "activationId",
         "contractId",
-        "contractSha256",
         "contractVersion",
+        "descriptorSha256",
         "endpointReference",
         "packageId",
         "packageVersion",

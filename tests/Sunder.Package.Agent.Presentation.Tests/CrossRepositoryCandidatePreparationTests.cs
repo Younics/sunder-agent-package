@@ -1,17 +1,22 @@
 using System.Net;
+using System.Net.Http.Json;
+using System.Net.Http.Headers;
 using System.Text;
+using System.Text.Json;
 using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
 using Microsoft.Extensions.DependencyInjection;
 using Sunder.App.Services;
 using Sunder.Package.Agent.PackageViews;
 using Sunder.Package.Agent.Protocol;
+using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Tests;
 using Sunder.Runtime.Client;
+using Sunder.Runtime.Contracts;
 using Sunder.Runtime.LocalState;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Notifications;
-using Sunder.Sdk.Runtime;
+using Sunder.Sdk.Rpc;
 using Xunit;
 
 namespace Sunder.Package.Agent.Presentation.Tests;
@@ -19,17 +24,17 @@ namespace Sunder.Package.Agent.Presentation.Tests;
 public sealed class CrossRepositoryCandidatePreparationTests
 {
     [AvaloniaFact]
-    public async Task SelectedAgentChat_RecoversWhenCandidateRuntimeBecomesLeaseReady()
+    public async Task SelectedAgentChat_RecoversWhenCandidateOwnerProviderBecomesLeaseReady()
     {
         using var packageScope = RegressionTestPackageScope.Create();
-        var handler = new AgentRuntimeHandler();
-        using var transport = new RuntimePackageOperationClient(
+        var handler = new AgentRpcRuntimeHandler();
+        var management = new RuntimeManagementClient(
             () => new RuntimeConnectionInfo(new Uri("http://127.0.0.1:5199"), "test-token"),
             handler);
-        var publication = new AppPackageGenerationPublication();
-        var runtime = new AppPackageRuntimeClient("sunder.package.agent", transport, publication);
+        await using var runtime = new RuntimeAppWebRpcClient(management, "candidate-app-session");
         var services = CreateAppServices(packageScope, runtime);
         await using var provider = services.BuildServiceProvider();
+        var availability = provider.GetRequiredService<IAgentRuntimeAvailability>();
         AgentChatView? view = null;
         Window? window = null;
         var context = new PackageViewNavigationContext(
@@ -37,27 +42,19 @@ public sealed class CrossRepositoryCandidatePreparationTests
             new Dictionary<string, string?>());
         try
         {
-            Assert.False(runtime.IsAvailable);
-            Assert.False(publication.IsPublished);
-            using (publication.BeginRuntimePreparation())
-            {
-                view = ActivatorUtilities.CreateInstance<AgentChatView>(provider);
-                var viewModel = Assert.IsType<AgentChatViewModel>(view.DataContext);
-                window = new Window { Width = 900, Height = 700, Content = view };
-                window.Show();
+            view = ActivatorUtilities.CreateInstance<AgentChatView>(provider);
+            var viewModel = Assert.IsType<AgentChatViewModel>(view.DataContext);
+            window = new Window { Width = 900, Height = 700, Content = view };
+            window.Show();
 
-                Assert.False(await view.PrepareNavigationAsync(context));
+            Assert.False(await view.PrepareNavigationAsync(context));
 
-                Assert.Equal(1, handler.ChatSnapshotRequestCount);
-                Assert.Equal(0, handler.SuccessfulChatSnapshotRequestCount);
-                Assert.Contains("Reconnecting", viewModel.StatusText, StringComparison.OrdinalIgnoreCase);
-                Assert.NotEqual("Unable to load Agent Chat", viewModel.SetupTitle);
-                Assert.False(publication.IsPublished);
-            }
+            Assert.True(handler.OwnerDiscoveryRequestCount > 0);
+            Assert.Equal(0, handler.ChatSnapshotRequestCount);
+            Assert.Contains("Reconnecting", viewModel.StatusText, StringComparison.OrdinalIgnoreCase);
+            Assert.NotEqual("Unable to load Agent Chat", viewModel.SetupTitle);
+            Assert.False(availability.IsRuntimeAvailable);
 
-            Assert.False(runtime.IsAvailable);
-            publication.Publish();
-            Assert.True(runtime.IsAvailable);
             handler.EnableLeases();
 
             await handler.SuccessfulChatSnapshot.Task.WaitAsync(TimeSpan.FromSeconds(3));
@@ -65,22 +62,24 @@ public sealed class CrossRepositoryCandidatePreparationTests
                 .StatusText.Contains("Reconnecting", StringComparison.OrdinalIgnoreCase));
 
             var initializedViewModel = Assert.IsType<AgentChatViewModel>(view.DataContext);
-            Assert.Equal(2, handler.ChatSnapshotRequestCount);
-            Assert.Equal(1, handler.SuccessfulChatSnapshotRequestCount);
+            Assert.Equal(1, handler.ChatSnapshotRequestCount);
             Assert.Equal("Create an agent before chatting", initializedViewModel.SetupTitle);
             Assert.DoesNotContain("Reconnecting", initializedViewModel.StatusText, StringComparison.OrdinalIgnoreCase);
+            Assert.True(availability.IsRuntimeAvailable);
 
-            publication.Revoke();
-            var retired = await Assert.ThrowsAsync<PackageRuntimeInvocationException>(async () =>
-                await runtime.InvokeAsync(
-                    new PackageRuntimeOperation<EchoRequest, EchoResponse>("test.retired.v1"),
-                    new EchoRequest("retired")));
-            Assert.Equal("runtime.v1.unavailable", retired.Code);
+            handler.DisableLeases();
+            var owner = new AgentOwnerRpcClient(runtime);
+            var retired = await Assert.ThrowsAsync<SunderRpcException>(async () =>
+                await owner.InvokeAsync(
+                    new AgentOwnerRpcOperation<EchoRequest, EchoResponse>(
+                        static (_, request, _) => ValueTask.FromResult(new EchoResponse(request.Value))),
+                    new EchoRequest("retired"),
+                    CancellationToken.None));
+            Assert.Equal("agent.runtime.unavailable", retired.Error.Code);
             Assert.Equal(0, handler.RetiredRequestCount);
         }
         finally
         {
-            publication.Revoke();
             window?.Close();
             view?.Dispose();
         }
@@ -102,12 +101,12 @@ public sealed class CrossRepositoryCandidatePreparationTests
 
     private static ServiceCollection CreateAppServices(
         RegressionTestPackageScope packageScope,
-        IPackageRuntimeClient runtime)
+        ISunderRpcClient runtime)
     {
         var services = new ServiceCollection();
         services.AddSingleton<IPackageContext>(packageScope.Context);
         services.AddSingleton(runtime);
-        services.AddSingleton<IPackageRuntimeClient>(runtime);
+        services.AddSingleton<ISunderRpcClient>(runtime);
         services.AddSingleton<AgentRpcCatalog>(new RegressionTestExtensionCatalog());
         services.AddSingleton<IPackageShellViewService, NoOpPackageShellViewService>();
         services.AddSingleton<IPackageNotificationService>(NullPackageNotificationService.Instance);
@@ -120,17 +119,18 @@ public sealed class CrossRepositoryCandidatePreparationTests
 
     private sealed record EchoResponse(string Value);
 
-    private sealed class AgentRuntimeHandler : HttpMessageHandler
+    private sealed class AgentRpcRuntimeHandler : HttpMessageHandler
     {
+        private static readonly JsonSerializerOptions WebJson = new(JsonSerializerDefaults.Web);
+        private static readonly Guid ActivationId = new("11111111-1111-1111-1111-111111111111");
+        private int _ownerDiscoveryRequestCount;
         private int _chatSnapshotRequestCount;
-        private int _successfulChatSnapshotRequestCount;
         private int _retiredRequestCount;
         private int _leasesEnabled;
 
-        public int ChatSnapshotRequestCount => Volatile.Read(ref _chatSnapshotRequestCount);
+        public int OwnerDiscoveryRequestCount => Volatile.Read(ref _ownerDiscoveryRequestCount);
 
-        public int SuccessfulChatSnapshotRequestCount
-            => Volatile.Read(ref _successfulChatSnapshotRequestCount);
+        public int ChatSnapshotRequestCount => Volatile.Read(ref _chatSnapshotRequestCount);
 
         public int RetiredRequestCount => Volatile.Read(ref _retiredRequestCount);
 
@@ -139,86 +139,220 @@ public sealed class CrossRepositoryCandidatePreparationTests
 
         public void EnableLeases() => Volatile.Write(ref _leasesEnabled, 1);
 
-        protected override Task<HttpResponseMessage> SendAsync(
+        public void DisableLeases() => Volatile.Write(ref _leasesEnabled, 0);
+
+        protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (request.RequestUri?.AbsolutePath == "/api/handshake")
+            var path = request.RequestUri?.AbsolutePath;
+            if (path == "/api/handshake")
             {
-                return Task.FromResult(JsonResponse(
-                    "{\"protocolIdentity\":\"dev.sunder.runtime\",\"protocolRevision\":5,\"minimumSupportedRevision\":5,\"maximumSupportedRevision\":5,\"runtimeInstanceId\":\"11111111-1111-1111-1111-111111111111\",\"supportedFeatures\":[\"api.v1\",\"package-runtime-operations.v1\",\"package-runtime-stream-envelopes.v1\"],\"product\":{\"productName\":\"Sunder.Runtime.Host\",\"productVersion\":\"Development\",\"informationalVersion\":\"Development\"}}"));
+                return Json(new RuntimeHandshakeResponse(
+                    RuntimeProtocol.Identity,
+                    RuntimeProtocol.CurrentRevision,
+                    RuntimeProtocol.MinimumSupportedRevision,
+                    RuntimeProtocol.MaximumSupportedRevision,
+                    ActivationId,
+                    [RuntimeProtocolFeatures.VersionedApiV1, RuntimeProtocolFeatures.AppWebRpcV2],
+                    new RuntimeProductVersionDiagnostics(
+                        "Sunder.Runtime.Host",
+                        "Development",
+                        "Development")));
             }
 
-            return request.RequestUri?.AbsolutePath switch
+            switch (path)
             {
-                "/api/v1/packages/sunder.package.agent/operations/agent.chat.snapshot.v1" =>
-                    Task.FromResult(ChatSnapshotResponse()),
-                "/api/v1/packages/sunder.package.agent/streams/agent.changes.v1" =>
-                    Task.FromResult(ChangeStreamResponse()),
-                "/api/v1/packages/sunder.package.agent/operations/test.retired.v1" =>
-                    Task.FromResult(RetiredResponse()),
-                _ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound)),
-            };
+                case "/api/v1/rpc/app/discover":
+                    return await DiscoverAsync(request, cancellationToken);
+                case "/api/v1/rpc/app/call-scopes/open":
+                    return Json(new RuntimeRpcAppCallScopeDescriptor(
+                        $"scope-{Guid.NewGuid():N}",
+                        DateTimeOffset.UtcNow.AddMinutes(1)));
+                case "/api/v1/rpc/app/call-scopes/close":
+                case "/api/v1/rpc/app-sessions/close":
+                    return new HttpResponseMessage(HttpStatusCode.NoContent);
+                case "/api/v1/rpc/app/invoke":
+                    return await InvokeAsync(request, cancellationToken);
+                case "/api/v1/rpc/app/subscribe":
+                    return await SubscribeAsync(request, cancellationToken);
+                default:
+                    return new HttpResponseMessage(HttpStatusCode.NotFound);
+            }
         }
 
-        private HttpResponseMessage RetiredResponse()
+        private async Task<HttpResponseMessage> DiscoverAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
         {
-            Interlocked.Increment(ref _retiredRequestCount);
-            return JsonResponse("{\"value\":\"unexpected\"}");
+            var discover = await request.Content!.ReadFromJsonAsync<RuntimeRpcAppDiscoverRequest>(
+                WebJson,
+                cancellationToken);
+            Assert.Equal(AgentOwnerRuntimeRpc.ContractId, discover?.ContractId);
+            Interlocked.Increment(ref _ownerDiscoveryRequestCount);
+            RuntimeRpcProviderDescriptor[] providers = Volatile.Read(ref _leasesEnabled) == 0
+                ? Array.Empty<RuntimeRpcProviderDescriptor>()
+                : [CreateOwnerProvider()];
+            return Json(new RuntimeRpcAppDiscoverResponse(
+                new RuntimeRpcCatalogSnapshot(1, 1, providers, ResetRequired: false),
+                Error: null));
         }
 
-        private HttpResponseMessage ChatSnapshotResponse()
+        private async Task<HttpResponseMessage> InvokeAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
         {
-            Interlocked.Increment(ref _chatSnapshotRequestCount);
-            if (Volatile.Read(ref _leasesEnabled) == 0)
+            var invocation = await request.Content!.ReadFromJsonAsync<RuntimeRpcAppInvokeRequest>(
+                WebJson,
+                cancellationToken)
+                ?? throw new InvalidOperationException("The RPC invocation request was empty.");
+            if (invocation.MethodId == "chat-snapshot")
             {
-                return UnavailableResponse();
+                Interlocked.Increment(ref _chatSnapshotRequestCount);
+                SuccessfulChatSnapshot.TrySetResult();
+                return Json(new RuntimeRpcAppInvokeResponse(
+                    JsonSerializer.SerializeToElement(new
+                    {
+                        Revision = 1L,
+                        Profiles = Array.Empty<object>(),
+                        Workspaces = Array.Empty<object>(),
+                        WorkspaceBindings = Array.Empty<object>(),
+                        SelectedProfile = (object?)null,
+                        SelectedWorkspace = (object?)null,
+                        SelectedSession = (object?)null,
+                        WorkspaceSessions = Array.Empty<object>(),
+                        InitialTranscript = new
+                        {
+                            Revision = 1L,
+                            Turns = Array.Empty<object>(),
+                            HasMore = false,
+                            Continuation = (object?)null,
+                        },
+                        Permissions = new
+                        {
+                            Revision = 1L,
+                            SessionState = (object?)null,
+                            PendingRequests = Array.Empty<object>(),
+                        },
+                        RuntimeInstanceId = "candidate-runtime",
+                    }, WebJson),
+                    Error: null));
             }
 
-            Interlocked.Increment(ref _successfulChatSnapshotRequestCount);
-            SuccessfulChatSnapshot.TrySetResult();
-            return JsonResponse(
-                """
+            if (invocation.MethodId == "test.retired.v2")
+            {
+                Interlocked.Increment(ref _retiredRequestCount);
+            }
+            return Json(new RuntimeRpcAppInvokeResponse(
+                Value: null,
+                new RuntimeRpcErrorDescriptor(
+                    RuntimeRpcErrorKind.NotFound,
+                    "test.method-not-found",
+                    "The test method was not found.")));
+        }
+
+        private async Task<HttpResponseMessage> SubscribeAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var subscription = await request.Content!.ReadFromJsonAsync<RuntimeRpcAppInvokeRequest>(
+                WebJson,
+                cancellationToken)
+                ?? throw new InvalidOperationException("The RPC subscription request was empty.");
+            Assert.Equal("changes", subscription.MethodId);
+            var frame = new RuntimeRpcAppSubscriptionFrame(
+                RuntimeRpcAppStreamFrameTypes.Event,
+                JsonSerializer.SerializeToElement(new
                 {
-                  "revision":1,
-                  "profiles":[],
-                  "workspaces":[],
-                  "workspaceBindings":[],
-                  "selectedProfile":null,
-                  "selectedWorkspace":null,
-                  "selectedSession":null,
-                  "workspaceSessions":[],
-                  "initialTranscript":{"revision":1,"turns":[],"hasMore":false,"continuation":null},
-                  "permissions":{"revision":1,"sessionState":null,"pendingRequests":[]},
-                  "runtimeInstanceId":"candidate-runtime"
-                }
-                """);
+                    Revision = 1L,
+                    Kind = 0,
+                    RuntimeInstanceId = "candidate-runtime",
+                }, WebJson),
+                Error: null);
+            var payload = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(frame, WebJson) + "\n");
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StreamContent(new BlockingEventStream(payload))
+                {
+                    Headers = { ContentType = new MediaTypeHeaderValue("application/x-ndjson") },
+                },
+            };
         }
 
-        private HttpResponseMessage ChangeStreamResponse()
-            => Volatile.Read(ref _leasesEnabled) == 0
-                ? UnavailableResponse()
-                : JsonResponse(
-                    "{\"type\":\"event\",\"event\":{\"revision\":1,\"kind\":0,\"runtimeInstanceId\":\"candidate-runtime\"}}\n{\"type\":\"completed\"}\n",
-                    "application/x-ndjson");
+        private static RuntimeRpcProviderDescriptor CreateOwnerProvider()
+        {
+            var descriptor = AgentOwnerRuntimeRpc.Descriptor;
+            return new RuntimeRpcProviderDescriptor(
+                "sunder.package.agent",
+                "2.0.0",
+                AgentOwnerRuntimeRpc.ProviderId,
+                descriptor.ContractId,
+                descriptor.Version,
+                descriptor.Sha256,
+                descriptor.AbiSha256
+                    ?? throw new InvalidOperationException("The Agent owner RPC descriptor has no ABI hash."),
+                ActivationId,
+                ActivationEpoch: 1,
+                SessionGeneration: 1,
+                EndpointReference: "rpc1_agent_owner",
+                CatalogRevision: 1,
+                RuntimeRpcProviderState.Active,
+                FaultCode: null);
+        }
 
-        private static HttpResponseMessage UnavailableResponse()
-            => new(HttpStatusCode.ServiceUnavailable)
-            {
-                Content = new StringContent(
-                    "{\"title\":\"Runtime unavailable\",\"detail\":\"The candidate Runtime generation is not lease-ready.\",\"code\":\"runtime.v1.unavailable\"}",
-                    Encoding.UTF8,
-                    "application/problem+json"),
-            };
+        private static HttpResponseMessage Json<T>(T value)
+            => new(HttpStatusCode.OK) { Content = JsonContent.Create(value, options: WebJson) };
+    }
 
-        private static HttpResponseMessage JsonResponse(
-            string content,
-            string mediaType = "application/json")
-            => new(HttpStatusCode.OK)
+    private sealed class BlockingEventStream(byte[] payload) : Stream
+    {
+        private int _position;
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position
+        {
+            get => _position;
+            set => throw new NotSupportedException();
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            if (_position >= payload.Length) return 0;
+            var length = Math.Min(count, payload.Length - _position);
+            payload.AsSpan(_position, length).CopyTo(buffer.AsSpan(offset, length));
+            _position += length;
+            return length;
+        }
+
+        public override ValueTask<int> ReadAsync(
+            Memory<byte> buffer,
+            CancellationToken cancellationToken = default)
+        {
+            if (_position < payload.Length)
             {
-                Content = new StringContent(content, Encoding.UTF8, mediaType),
-            };
+                var length = Math.Min(buffer.Length, payload.Length - _position);
+                payload.AsMemory(_position, length).CopyTo(buffer);
+                _position += length;
+                return ValueTask.FromResult(length);
+            }
+
+            return new ValueTask<int>(WaitForCancellationAsync(cancellationToken));
+        }
+
+        private static async Task<int> WaitForCancellationAsync(CancellationToken cancellationToken)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return 0;
+        }
+
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
     private sealed class NoOpPackageShellViewService : IPackageShellViewService

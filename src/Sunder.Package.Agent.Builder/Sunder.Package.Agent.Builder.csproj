@@ -1,17 +1,46 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <SunderSdkAvaloniaReference>true</SunderSdkAvaloniaReference>
+    <SunderPackageFamilyId>sunder.package.agent.builder</SunderPackageFamilyId>
+    <SunderPackageRole>worker</SunderPackageRole>
     <SunderPackageProject>true</SunderPackageProject>
+    <SunderSdkWorkerReference>true</SunderSdkWorkerReference>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
-    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <OutputType>Exe</OutputType>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">$(NETCoreSdkRuntimeIdentifier)</RuntimeIdentifier>
+    <RuntimeIdentifiers>win-x64;win-arm64;linux-x64;linux-arm64;osx-x64;osx-arm64</RuntimeIdentifiers>
+    <SelfContained>true</SelfContained>
+    <UseAppHost>true</UseAppHost>
+    <PublishSingleFile>false</PublishSingleFile>
+    <SunderGeneratedPackageManifest>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\obj\$(Configuration)\$(TargetFramework)\$(RuntimeIdentifier)\sunder-package.json'))</SunderGeneratedPackageManifest>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Avalonia" />
     <ProjectReference Include="..\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
+    <ProjectReference Include="Protocol\Sunder.Package.Agent.Builder.Protocol.csproj" />
+    <Compile Include="BuilderRpcBridge.cs" />
+    <Compile Include="BuilderRpcProvider.cs" />
+    <Compile Include="PackageMetadata.cs" />
+    <Compile Include="Program.cs" />
+    <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
 
-  <Import Project="..\Sunder.Package.Agent.Shared\Sunder.Package.Agent.Shared.props" />
+  <ItemGroup>
+    <SunderPackageTarget Include="runtime/$(RuntimeIdentifier)"
+                         Role="runtime"
+                         Rid="$(RuntimeIdentifier)"
+                         Kind="worker" />
+    <SunderContractBundle Include="Protocol\Contracts\builder-runtime.rpc.json"
+                          ContractId="sunder.package.agent.builder.runtime"
+                          Version="2.0.0"
+                          DescriptorPath="contracts/builder-runtime.rpc.json"
+                          Exposure="package" />
+    <SunderRpcProvider Include="builder.runtime"
+                       ContractId="sunder.package.agent.builder.runtime"
+                       ContractVersion="2.0.0"
+                       Role="runtime"
+                       Audience="owner" />
+  </ItemGroup>
 
 </Project>

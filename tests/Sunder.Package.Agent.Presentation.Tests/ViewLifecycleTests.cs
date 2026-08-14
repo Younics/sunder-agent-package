@@ -1,3 +1,10 @@
+extern alias AnthropicApp;
+extern alias GeminiApp;
+extern alias LMStudioApp;
+extern alias McpApp;
+extern alias MemoryApp;
+extern alias OpenAiApp;
+
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
@@ -21,9 +28,9 @@ using Sunder.Package.Agent.Builder;
 using Sunder.Package.Agent.Execution.Docker;
 using Sunder.Package.Agent.Execution.Local;
 using Sunder.Package.Agent.Mcp;
+using Sunder.Package.Agent.Mcp.Runtime;
 using Sunder.Package.Agent.Mcp.Services;
 using Sunder.Package.Agent.Memory.Semantic;
-using Sunder.Package.Agent.Memory.Semantic.PackageViews;
 using Sunder.Package.Agent.Memory.Semantic.Services;
 using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.PackageViews;
@@ -36,16 +43,23 @@ using Sunder.Package.Agent.Provider.Anthropic;
 using Sunder.Package.Agent.Provider.Gemini;
 using Sunder.Package.Agent.Provider.LMStudio;
 using Sunder.Package.Agent.Provider.OpenAI;
-using Sunder.Package.Agent.Skills.PackageViews;
+using Sunder.Package.Agent.Skills.Runtime;
 using Sunder.Package.Agent.Skills.Services;
-using Sunder.Package.Agent.Subagents.PackageViews;
-using Sunder.Package.Agent.Subagents.Services;
 using Sunder.Package.Agent.Tests;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Notifications;
 using Sunder.Sdk.Rpc;
-using Sunder.Sdk.Runtime;
 using Xunit;
+using AnthropicSettingsView = AnthropicApp::Sunder.Package.Agent.Provider.Anthropic.AnthropicSettingsView;
+using GeminiSettingsView = GeminiApp::Sunder.Package.Agent.Provider.Gemini.GeminiSettingsView;
+using LMStudioSettingsView = LMStudioApp::Sunder.Package.Agent.Provider.LMStudio.LMStudioSettingsView;
+using AgentMcpSettingsView = McpApp::Sunder.Package.Agent.Mcp.AgentMcpSettingsView;
+using AgentMcpSettingsViewModel = McpApp::Sunder.Package.Agent.Mcp.AgentMcpSettingsViewModel;
+using MemoryAppPackageModule = MemoryApp::Sunder.Package.Agent.Memory.Semantic.AppPackageModule;
+using MemoryInspectorView = MemoryApp::Sunder.Package.Agent.Memory.Semantic.PackageViews.MemoryInspectorView;
+using MemoryInspectorViewModel = MemoryApp::Sunder.Package.Agent.Memory.Semantic.PackageViews.MemoryInspectorViewModel;
+using OpenAiSettingsView = OpenAiApp::Sunder.Package.Agent.Provider.OpenAI.OpenAiSettingsView;
+using OpenAiSettingsViewModel = OpenAiApp::Sunder.Package.Agent.Provider.OpenAI.OpenAiSettingsViewModel;
 
 namespace Sunder.Package.Agent.Presentation.Tests;
 
@@ -1288,14 +1302,15 @@ public sealed class ViewLifecycleTests
         var runtime = new BlockingRuntimeClient();
         var services = new ServiceCollection();
         services.AddSingleton<IPackageContext>(scope.Context);
-        services.AddSingleton<IPackageRuntimeClient>(runtime);
+        services.AddSingleton<IAgentOwnerClient>(runtime);
+        services.AddSingleton<ISunderRpcClient>(new ThrowingRpcClient());
         services.AddSingleton<AgentRpcCatalog>(new RegressionTestExtensionCatalog());
         services.AddSingleton<IPackageShellViewService, NoOpPackageShellViewService>();
         services.AddSingleton<IPackageNotificationService>(NullPackageNotificationService.Instance);
         services.AddSingleton<IBackgroundProcessQueue, NoOpBackgroundProcessQueue>();
         new Sunder.Package.Agent.AppPackageModule().ConfigureAppServices(services, scope.Context);
-        new Sunder.Package.Agent.Memory.Semantic.AppPackageModule().ConfigureAppServices(services, scope.Context);
-        new Sunder.Package.Agent.Subagents.AppPackageModule().ConfigureAppServices(services, scope.Context);
+        new MemoryAppPackageModule().ConfigureAppServices(services, scope.Context);
+        new SubagentsAppPackageModule().ConfigureAppServices(services, scope.Context);
         new Sunder.Package.Agent.Builder.AppPackageModule().ConfigureAppServices(services, scope.Context);
         await using var provider = services.BuildServiceProvider();
 
@@ -1329,7 +1344,7 @@ public sealed class ViewLifecycleTests
         using var scope = RegressionTestPackageScope.Create();
         var runtime = new BlockingDockerSettingsRuntimeClient();
         var services = new ServiceCollection();
-        services.AddSingleton<IPackageRuntimeClient>(runtime);
+        services.AddSingleton<IDockerExecutionPresentationClient>(runtime);
         services.AddSingleton<IBackgroundProcessQueue, NoOpBackgroundProcessQueue>();
         new Sunder.Package.Agent.Execution.Docker.AppPackageModule()
             .ConfigureAppServices(services, scope.Context);
@@ -1420,15 +1435,18 @@ public sealed class ViewLifecycleTests
         services.ExtensionCatalog.AddProvider(
             AgentRpcServices.RuntimeCatalogs,
             new AgentRuntimeCatalog(services.SessionService, profileService, services.WorkspaceService));
+        using var subagentGateway = new WorkerBackedSubagentManagementGateway(
+            subagentService,
+            services.ExtensionCatalog);
+        using var subsessionRuntime = new CatalogBackedSubsessionRuntimeAdapter(services.ExtensionCatalog);
 
         using var profiles = new AgentProfilesView(profileService);
         using var workspaces = new AgentWorkspacesView(
             services.WorkspaceService,
             services.TargetService,
-            services.ExtensionCatalog,
-            new AgentExecutionTargetWarmupService(services.WorkspaceService, services.TargetService));
-        using var subagents = new SubagentsView(new SubagentsViewModel(subagentService, services.ExtensionCatalog));
-        using var subsessions = new SubsessionsView(new SubsessionsViewModel(services.ExtensionCatalog));
+            services.ExtensionCatalog);
+        using var subagents = new SubagentsView(new SubagentsViewModel(subagentGateway));
+        using var subsessions = new SubsessionsView(subsessionRuntime.CreateViewModel());
         var inspector = CreateMemoryInspector(scope.Context, services.ExtensionCatalog);
         var memoryViewModel = (MemoryInspectorViewModel)Activator.CreateInstance(
             typeof(MemoryInspectorViewModel),
@@ -2674,9 +2692,10 @@ public sealed class ViewLifecycleTests
             [parent, child],
             [profile],
             [parallelTurn]);
-        var catalog = new RegressionTestExtensionCatalog();
+        using var catalog = new RegressionTestExtensionCatalog();
         catalog.AddProvider(AgentRpcServices.RuntimeCatalogs, runtime, "test.runtime");
-        var viewModel = new SubsessionsViewModel(catalog);
+        using var runtimeAdapter = new CatalogBackedSubsessionRuntimeAdapter(catalog);
+        var viewModel = runtimeAdapter.CreateViewModel();
         using var view = new SubsessionsView(viewModel);
         var source = new Border { Background = Avalonia.Media.Brushes.DimGray };
         var candidateHost = new ContentControl
@@ -2796,6 +2815,8 @@ public sealed class ViewLifecycleTests
     public async Task SubsessionsView_SameSessionNonAnchorClearsHighlightBeforeAnchorAndAccessibilityLabel()
     {
         var harness = CreateSubsessionHistoryHighlightHarness();
+        using var catalog = harness.Catalog;
+        using var runtimeAdapter = harness.RuntimeAdapter;
         using var view = harness.View;
         var window = harness.Window;
         try
@@ -2870,6 +2891,8 @@ public sealed class ViewLifecycleTests
     public async Task SubsessionsView_RapidRepeatHistoryHighlightIgnoresOlderClearCallback()
     {
         var harness = CreateSubsessionHistoryHighlightHarness();
+        using var catalog = harness.Catalog;
+        using var runtimeAdapter = harness.RuntimeAdapter;
         using var view = harness.View;
         var window = harness.Window;
         try
@@ -2957,9 +2980,10 @@ public sealed class ViewLifecycleTests
             [parent, child],
             [profile],
             turns);
-        var catalog = new RegressionTestExtensionCatalog();
+        using var catalog = new RegressionTestExtensionCatalog();
         catalog.AddProvider(AgentRpcServices.RuntimeCatalogs, runtime, "test.runtime");
-        var viewModel = new SubsessionsViewModel(catalog);
+        using var runtimeAdapter = new CatalogBackedSubsessionRuntimeAdapter(catalog);
+        var viewModel = runtimeAdapter.CreateViewModel();
         using var view = new SubsessionsView(viewModel);
         var window = new Window { Width = 900, Height = 500, Content = view };
         window.Show();
@@ -3088,7 +3112,8 @@ public sealed class ViewLifecycleTests
             AgentRpcServices.RuntimeCatalogs,
             new AgentRuntimeCatalog(services.SessionService, profileService, services.WorkspaceService));
 
-        var viewModel = new SubsessionsViewModel(services.ExtensionCatalog);
+        using var runtimeAdapter = new CatalogBackedSubsessionRuntimeAdapter(services.ExtensionCatalog);
+        var viewModel = runtimeAdapter.CreateViewModel();
         using var view = new SubsessionsView(viewModel);
         var window = new Window { Width = 900, Height = 900, Content = view };
         window.Show();
@@ -3283,6 +3308,9 @@ public sealed class ViewLifecycleTests
                     transcript,
                     coordinator,
                     "waiting-for-live-detached-row"));
+            await GetPendingRuntimeRefresh(viewModel).WaitAsync(TimeSpan.FromSeconds(10));
+            await Dispatcher.UIThread.InvokeAsync(static () => { }, DispatcherPriority.Background);
+            await GetPendingCoordinatorOperations(view);
             Assert.True(viewModel.HasNewerTranscriptRows);
             Assert.DoesNotContain(
                 viewModel.Messages.OfType<SubsessionTextTranscriptRowViewModel>(),
@@ -3549,12 +3577,10 @@ public sealed class ViewLifecycleTests
         var services = CreateAgentServices(scope);
         using var profileService = services.ProfileService;
         services.WorkspaceService.CreateWorkspace("Initial workspace");
-        var warmup = new AgentExecutionTargetWarmupService(services.WorkspaceService, services.TargetService);
         var view = new AgentWorkspacesView(
             services.WorkspaceService,
             services.TargetService,
-            services.ExtensionCatalog,
-            warmup);
+            services.ExtensionCatalog);
         var viewModel = Assert.IsType<AgentWorkspacesViewModel>(view.DataContext);
         await view.OnNavigatedToAsync(new PackageViewNavigationContext(
             "sunder.package.agent.workspaces",
@@ -3622,10 +3648,13 @@ public sealed class ViewLifecycleTests
         var catalog = new McpServerCatalogService(scope.Context);
         await using var connections = new McpClientConnectionManager(NullLoggerFactory.Instance);
         var viewModel = new AgentMcpSettingsViewModel(
-            new McpSettingsEditorService(catalog),
-            new McpConfigurationCoordinator(new McpEcosystemConfigurationImporter(catalog), syncService: null),
-            new McpServerConnectionService(catalog, connections, oauthService: null),
-            new McpOAuthCoordinator(oauthService: null, connections));
+            new McpLocalManagementGateway(
+                new McpSettingsEditorService(catalog),
+                new McpConfigurationCoordinator(
+                    new McpEcosystemConfigurationImporter(catalog),
+                    syncService: null),
+                new McpServerConnectionService(catalog, connections, oauthService: null),
+                new McpOAuthCoordinator(oauthService: null, connections)));
         Assert.Same(viewModel.InitializeAsync(), viewModel.InitializeAsync());
         await viewModel.InitializeAsync();
         var view = new AgentMcpSettingsView(viewModel);
@@ -3645,7 +3674,7 @@ public sealed class ViewLifecycleTests
         using var scope = RegressionTestPackageScope.Create();
         var store = new SkillStore(scope.Context);
         var importer = new SkillImportService(store, new NoOpGitHubSkillClient(), scope.Context);
-        var viewModel = new SkillSettingsViewModel(store, importer);
+        var viewModel = new SkillSettingsViewModel(new SkillLocalManagementGateway(store, importer));
         Assert.Same(viewModel.InitializeAsync(), viewModel.InitializeAsync());
         await viewModel.InitializeAsync();
         var view = new SkillSettingsView(viewModel);
@@ -3664,7 +3693,9 @@ public sealed class ViewLifecycleTests
         using var scope = RegressionTestPackageScope.Create();
         var service = new SubagentService(new SubagentStore(scope.Context));
         service.CreateSubagent("Initial subagent");
-        var viewModel = new SubagentsViewModel(service, new RegressionTestExtensionCatalog());
+        using var catalog = new RegressionTestExtensionCatalog();
+        using var gateway = new WorkerBackedSubagentManagementGateway(service, catalog);
+        var viewModel = new SubagentsViewModel(gateway);
         await viewModel.InitializeAsync();
         var view = new SubagentsView(viewModel);
         var subagentCount = viewModel.Subagents.Count;
@@ -3689,7 +3720,8 @@ public sealed class ViewLifecycleTests
         services.ExtensionCatalog.AddProvider(
             AgentRpcServices.RuntimeCatalogs,
             new AgentRuntimeCatalog(services.SessionService, profileService, services.WorkspaceService));
-        var viewModel = new SubsessionsViewModel(services.ExtensionCatalog);
+        using var runtimeAdapter = new CatalogBackedSubsessionRuntimeAdapter(services.ExtensionCatalog);
+        var viewModel = runtimeAdapter.CreateViewModel();
         await viewModel.InitializeAsync();
         var view = new SubsessionsView(viewModel);
         var subsessionCount = viewModel.Subsessions.Count;
@@ -3707,12 +3739,13 @@ public sealed class ViewLifecycleTests
     {
         using var scope = RegressionTestPackageScope.Create();
         var store = new SkillStore(scope.Context);
-        await File.WriteAllTextAsync(
-            scope.Context.Storage.RoleLocalWorkspace.GetLocalPath("skills/skills.json"),
-            "{ malformed");
+        var indexPath = scope.Context.Storage.RoleLocalWorkspace.GetLocalPath("skills/skills.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(indexPath)!);
+        await File.WriteAllTextAsync(indexPath, "{ malformed");
         var viewModel = new SkillSettingsViewModel(
-            store,
-            new SkillImportService(store, new NoOpGitHubSkillClient(), scope.Context));
+            new SkillLocalManagementGateway(
+                store,
+                new SkillImportService(store, new NoOpGitHubSkillClient(), scope.Context)));
 
         await viewModel.InitializeAsync();
 
@@ -3726,12 +3759,14 @@ public sealed class ViewLifecycleTests
     {
         using var scope = RegressionTestPackageScope.Create();
         var store = new SubagentStore(scope.Context);
-        await File.WriteAllTextAsync(
-            scope.Context.Storage.RoleLocalWorkspace.GetLocalPath("subagents/subagents.json"),
-            "{ malformed");
-        var viewModel = new SubagentsViewModel(
+        var indexPath = scope.Context.Storage.RoleLocalWorkspace.GetLocalPath("subagents/subagents.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(indexPath)!);
+        await File.WriteAllTextAsync(indexPath, "{ malformed");
+        using var catalog = new RegressionTestExtensionCatalog();
+        using var gateway = new WorkerBackedSubagentManagementGateway(
             new SubagentService(store),
-            new RegressionTestExtensionCatalog());
+            catalog);
+        var viewModel = new SubagentsViewModel(gateway);
 
         await viewModel.InitializeAsync();
 
@@ -3744,7 +3779,8 @@ public sealed class ViewLifecycleTests
     public async Task SubsessionInitialization_CatalogFailureIsPresented()
     {
         using var catalog = new AgentRpcCatalog(new ThrowingRpcClient());
-        var viewModel = new SubsessionsViewModel(catalog);
+        using var runtimeAdapter = new CatalogBackedSubsessionRuntimeAdapter(catalog);
+        var viewModel = runtimeAdapter.CreateViewModel();
 
         await viewModel.InitializeAsync();
 
@@ -3756,7 +3792,8 @@ public sealed class ViewLifecycleTests
     public async Task SubsessionsView_OrdinaryInitializationFailureOpensWithVisibleRetry()
     {
         using var catalog = new AgentRpcCatalog(new ThrowingRpcClient());
-        var viewModel = new SubsessionsViewModel(catalog);
+        using var runtimeAdapter = new CatalogBackedSubsessionRuntimeAdapter(catalog);
+        var viewModel = runtimeAdapter.CreateViewModel();
         using var view = new SubsessionsView(viewModel);
         var window = new Window { Width = 800, Height = 500, Content = view };
         window.Show();
@@ -3778,7 +3815,8 @@ public sealed class ViewLifecycleTests
     public async Task SubsessionsView_AnchoredInitializationFailureCompletesVisibleFallbackPlacement()
     {
         using var catalog = new AgentRpcCatalog(new ThrowingRpcClient());
-        var viewModel = new SubsessionsViewModel(catalog);
+        using var runtimeAdapter = new CatalogBackedSubsessionRuntimeAdapter(catalog);
+        var viewModel = runtimeAdapter.CreateViewModel();
         using var view = new SubsessionsView(viewModel);
         var window = new Window { Width = 800, Height = 500, Content = view };
         window.Show();
@@ -3828,7 +3866,8 @@ public sealed class ViewLifecycleTests
         services.ExtensionCatalog.AddProvider(
             AgentRpcServices.RuntimeCatalogs,
             new AgentRuntimeCatalog(services.SessionService, profileService, services.WorkspaceService));
-        var viewModel = new SubsessionsViewModel(services.ExtensionCatalog);
+        using var runtimeAdapter = new CatalogBackedSubsessionRuntimeAdapter(services.ExtensionCatalog);
+        var viewModel = runtimeAdapter.CreateViewModel();
         using var view = new SubsessionsView(viewModel);
         var window = new Window { Width = 800, Height = 500, Content = view };
         window.Show();
@@ -3868,7 +3907,9 @@ public sealed class ViewLifecycleTests
     public void OpenAiSettingsView_HasBoundAuthorizeButton()
     {
         using var scope = RegressionTestPackageScope.Create();
-        var viewModel = new OpenAiSettingsViewModel(scope.Context, NullPackageRuntimeClient.Instance);
+        var viewModel = new OpenAiSettingsViewModel(
+            scope.Context,
+            new ConnectedOpenAiManagementClient(isConnected: false));
         using var view = new OpenAiSettingsView(viewModel);
 
         var button = view.FindControl<Button>("AuthorizeButton");
@@ -3882,17 +3923,17 @@ public sealed class ViewLifecycleTests
     public async Task OpenAiSettingsView_InitializesPersistedRuntimeAuthStatus()
     {
         using var scope = RegressionTestPackageScope.Create();
-        var runtime = new ConnectedOpenAiRuntimeClient();
-        var viewModel = new OpenAiSettingsViewModel(scope.Context, runtime);
+        var management = new ConnectedOpenAiManagementClient();
+        var viewModel = new OpenAiSettingsViewModel(scope.Context, management);
         using var view = new OpenAiSettingsView(viewModel);
 
-        Assert.Equal(0, runtime.InvocationCount);
+        Assert.Equal(0, management.InvocationCount);
         var lifecycle = Assert.IsAssignableFrom<IPackageViewNavigationPreparationTarget>(view.DataContext);
         Assert.True(await lifecycle.PrepareNavigationAsync(new PackageViewNavigationContext(
             "settings:sunder.package.agent.provider.openai",
             new Dictionary<string, string?>())));
 
-        Assert.True(runtime.InvocationCount > 0);
+        Assert.True(management.InvocationCount > 0);
         Assert.Equal("Connected, active", viewModel.CodexStatusLabel);
         Assert.True(viewModel.CanDisconnectAction);
         Assert.Equal("Reauthorize with ChatGPT Plus/Pro", viewModel.AuthorizationButtonLabel);
@@ -3924,12 +3965,12 @@ public sealed class ViewLifecycleTests
 
     private static ServiceCollection CreateHistoryAppServices(
         RegressionTestPackageScope scope,
-        IPackageRuntimeClient runtime)
+        IAgentOwnerClient runtime)
     {
         var services = new ServiceCollection();
         services.AddSingleton<IPackageContext>(scope.Context);
         services.AddSingleton(runtime);
-        services.AddSingleton<IPackageRuntimeClient>(runtime);
+        services.AddSingleton<IAgentOwnerClient>(runtime);
         services.AddSingleton<AgentRpcCatalog>(new RegressionTestExtensionCatalog());
         services.AddSingleton<IPackageShellViewService, NoOpPackageShellViewService>();
         services.AddSingleton<IPackageNotificationService>(NullPackageNotificationService.Instance);
@@ -4063,56 +4104,53 @@ public sealed class ViewLifecycleTests
         AgentExecutionTargetService TargetService,
         AgentProfileService ProfileService);
 
-    private sealed class ConnectedOpenAiRuntimeClient : IPackageRuntimeClient
+    private sealed class ConnectedOpenAiManagementClient(bool isConnected = true)
+        : IOpenAiOwnerManagementClient
     {
         private readonly DateTimeOffset _expiresAtUtc = DateTimeOffset.UtcNow.AddHours(1);
 
-        public bool IsAvailable => true;
-
         public int InvocationCount { get; private set; }
 
-        public ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-            PackageRuntimeOperation<TRequest, TResponse> operation,
-            TRequest request,
+        public ValueTask<OpenAiAuthOperationResult> GetAuthStatusAsync(
             CancellationToken cancellationToken = default)
-            where TRequest : class
-            where TResponse : class
         {
             cancellationToken.ThrowIfCancellationRequested();
             InvocationCount++;
-            var response = operation.OperationId switch
-            {
-                "provider.credential.query.v1" => Activator.CreateInstance(
-                    typeof(TResponse),
-                    System.Reflection.BindingFlags.Instance
-                    | System.Reflection.BindingFlags.Public
-                    | System.Reflection.BindingFlags.NonPublic,
-                    binder: null,
-                    args: [true],
-                    culture: null),
-                "openai.auth.v1" => Activator.CreateInstance(
-                    typeof(TResponse),
-                    System.Reflection.BindingFlags.Instance
-                    | System.Reflection.BindingFlags.Public
-                    | System.Reflection.BindingFlags.NonPublic,
-                    binder: null,
-                    args: [true, true, _expiresAtUtc, null],
-                    culture: null),
-                _ => throw new InvalidOperationException($"Unexpected runtime operation '{operation.OperationId}'."),
-            };
-            return ValueTask.FromResult(Assert.IsType<TResponse>(response));
+            return ValueTask.FromResult(new OpenAiAuthOperationResult(
+                isConnected,
+                isConnected,
+                isConnected ? _expiresAtUtc : null));
         }
 
-        public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-            PackageRuntimeStream<TRequest, TEvent> stream,
-            TRequest request,
-            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
-            where TRequest : class
-            where TEvent : class
+        public ValueTask<OpenAiAuthOperationResult> DisconnectAuthAsync(
+            CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            await Task.CompletedTask;
-            yield break;
+            InvocationCount++;
+            return ValueTask.FromResult(new OpenAiAuthOperationResult(false, false, null));
+        }
+
+        public ValueTask<bool> HasCredentialAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            InvocationCount++;
+            return ValueTask.FromResult(false);
+        }
+
+        public ValueTask<bool> SetCredentialAsync(
+            string credential,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            InvocationCount++;
+            return ValueTask.FromResult(true);
+        }
+
+        public ValueTask<bool> ClearCredentialAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            InvocationCount++;
+            return ValueTask.FromResult(false);
         }
     }
 
@@ -4240,13 +4278,11 @@ public sealed class ViewLifecycleTests
         AgentProfileRecord profile,
         AgentWorkspaceRecord workspace,
         AgentSessionRecord session,
-        IReadOnlyList<AgentTurnRecord> turns) : IPackageRuntimeClient
+        IReadOnlyList<AgentTurnRecord> turns) : IAgentOwnerClient
     {
         private int _aroundLoadCount;
         private int _chatSnapshotLoadCount;
         private int _transcriptPageLoadCount;
-
-        public bool IsAvailable => true;
 
         public int AroundLoadCount => Volatile.Read(ref _aroundLoadCount);
 
@@ -4267,41 +4303,51 @@ public sealed class ViewLifecycleTests
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-            PackageRuntimeOperation<TRequest, TResponse> operation,
+            AgentOwnerRpcOperation<TRequest, TResponse> operation,
             TRequest request,
             CancellationToken cancellationToken = default)
             where TRequest : class
             where TResponse : class
         {
             cancellationToken.ThrowIfCancellationRequested();
-            return operation.OperationId switch
+            if (operation.Is(AgentRuntimeOperations.ChatSnapshot))
             {
-                "agent.chat.snapshot.v1" => new ValueTask<TResponse>(
-                    CreateChatSnapshot<TRequest, TResponse>(request)),
-                "agent.transcript.around.v1" => new ValueTask<TResponse>(
-                    LoadAroundTurnAsync<TRequest, TResponse>(request, cancellationToken)),
-                "agent.transcript.page.v1" => new ValueTask<TResponse>(
-                    CreateTranscriptPage<TResponse>()),
-                "agent.workspaces.command.v1" => new ValueTask<TResponse>(CreateResponse<TResponse>(new
+                return new ValueTask<TResponse>(CreateChatSnapshot<TRequest, TResponse>(request));
+            }
+            if (operation.Is(AgentRuntimeOperations.TranscriptAround))
+            {
+                return new ValueTask<TResponse>(
+                    LoadAroundTurnAsync<TRequest, TResponse>(request, cancellationToken));
+            }
+            if (operation.Is(AgentRuntimeOperations.Transcript))
+            {
+                return new ValueTask<TResponse>(CreateTranscriptPage<TResponse>());
+            }
+            if (operation.Is(AgentRuntimeOperations.Workspaces))
+            {
+                return new ValueTask<TResponse>(CreateResponse<TResponse>(new
                 {
                     Revision = 1L,
                     Workspace = (object?)null,
                     Warmup = AgentExecutionTargetWarmupResult.Skipped(
                         "No execution target is required for this test."),
-                })),
-                "agent.dashboard.v1" => new ValueTask<TResponse>(CreateResponse<TResponse>(new
+                }));
+            }
+            if (operation.Is(AgentRuntimeOperations.Dashboard))
+            {
+                return new ValueTask<TResponse>(CreateResponse<TResponse>(new
                 {
                     Revision = 1L,
                     Profiles = new[] { profile },
                     Workspaces = new[] { workspace },
                     WorkspaceBindings = Array.Empty<AgentWorkspaceBindingRecord>(),
-                })),
-                _ => throw new NotSupportedException(operation.OperationId),
-            };
+                }));
+            }
+            throw new NotSupportedException(operation.Describe());
         }
 
         public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-            PackageRuntimeStream<TRequest, TEvent> stream,
+            AgentOwnerRpcStream<TRequest, TEvent> stream,
             TRequest request,
             [System.Runtime.CompilerServices.EnumeratorCancellation]
             CancellationToken cancellationToken = default)
@@ -4452,17 +4498,16 @@ public sealed class ViewLifecycleTests
         Newer,
     }
 
-    private sealed class BlockingRuntimeClient : IPackageRuntimeClient
+    private sealed class BlockingRuntimeClient : IAgentOwnerClient
     {
         private int _invocationCount;
         private int _subscriptionCount;
 
-        public bool IsAvailable => true;
         public int InvocationCount => Volatile.Read(ref _invocationCount);
         public int SubscriptionCount => Volatile.Read(ref _subscriptionCount);
 
         public ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-            PackageRuntimeOperation<TRequest, TResponse> operation,
+            AgentOwnerRpcOperation<TRequest, TResponse> operation,
             TRequest request,
             CancellationToken cancellationToken = default)
             where TRequest : class
@@ -4473,7 +4518,7 @@ public sealed class ViewLifecycleTests
         }
 
         public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-            PackageRuntimeStream<TRequest, TEvent> stream,
+            AgentOwnerRpcStream<TRequest, TEvent> stream,
             TRequest request,
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
             where TRequest : class
@@ -4836,6 +4881,18 @@ public sealed class ViewLifecycleTests
             .GetValue(coordinator));
     }
 
+    private static Task GetPendingRuntimeRefresh(SubsessionsViewModel viewModel)
+    {
+        var refresh = typeof(SubsessionsViewModel)
+            .GetField(
+                "_runtimeRefresh",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(viewModel)!;
+        return Assert.IsAssignableFrom<Task>(refresh.GetType()
+            .GetProperty("WhenIdle", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public)!
+            .GetValue(refresh));
+    }
+
     private static async Task WaitForPendingCoordinatorOperationsAsync(
         AgentChatView view,
         TimeSpan? timeout = null)
@@ -4899,7 +4956,9 @@ public sealed class ViewLifecycleTests
         SubsessionsView View,
         Window Window,
         AgentSessionRecord Child,
-        AgentTurnRecord[] Turns) CreateSubsessionHistoryHighlightHarness()
+        AgentTurnRecord[] Turns,
+        RegressionTestExtensionCatalog Catalog,
+        CatalogBackedSubsessionRuntimeAdapter RuntimeAdapter) CreateSubsessionHistoryHighlightHarness()
     {
         var createdAt = new DateTimeOffset(2026, 7, 28, 12, 0, 0, TimeSpan.Zero);
         var parent = new AgentSessionRecord(
@@ -4926,11 +4985,12 @@ public sealed class ViewLifecycleTests
         var runtime = new TestSubsessionRuntimeCatalog([parent, child], [], turns);
         var catalog = new RegressionTestExtensionCatalog();
         catalog.AddProvider(AgentRpcServices.RuntimeCatalogs, runtime, "test.runtime");
-        var viewModel = new SubsessionsViewModel(catalog);
+        var runtimeAdapter = new CatalogBackedSubsessionRuntimeAdapter(catalog);
+        var viewModel = runtimeAdapter.CreateViewModel();
         var view = new SubsessionsView(viewModel);
         var window = new Window { Width = 900, Height = 500, Content = view };
         window.Show();
-        return (viewModel, view, window, child, turns);
+        return (viewModel, view, window, child, turns, catalog, runtimeAdapter);
     }
 
     private static object GetTranscriptScrollCoordinator(AgentChatView view)
@@ -5624,7 +5684,7 @@ public sealed class ViewLifecycleTests
             => Task.CompletedTask;
     }
 
-    private sealed class BlockingDockerSettingsRuntimeClient : IPackageRuntimeClient
+    private sealed class BlockingDockerSettingsRuntimeClient : IDockerExecutionPresentationClient
     {
         private int _invocationCount;
         private readonly TaskCompletionSource _responseReady =
@@ -5633,8 +5693,6 @@ public sealed class ViewLifecycleTests
         private string? _dockerCliPath;
         private IReadOnlyList<DockerImageDefinition>? _images;
         private long _catalogRevision;
-
-        public bool IsAvailable => true;
 
         public int InvocationCount => Volatile.Read(ref _invocationCount);
 
@@ -5654,48 +5712,19 @@ public sealed class ViewLifecycleTests
             _responseReady.TrySetResult();
         }
 
-        public async ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-            PackageRuntimeOperation<TRequest, TResponse> operation,
-            TRequest request,
+        public async ValueTask<DockerExecutionOperationResponse> ExecuteAsync(
+            DockerExecutionOperationRequest request,
             CancellationToken cancellationToken = default)
-            where TRequest : class
-            where TResponse : class
         {
-            Assert.Equal("docker-execution.presentation.v1", operation.OperationId);
-            Assert.Equal(
-                "GetSettings",
-                request.GetType().GetProperty("Kind")?.GetValue(request)?.ToString());
+            Assert.Equal(DockerExecutionOperationKind.GetSettings, request.Kind);
             Interlocked.Increment(ref _invocationCount);
             Started.TrySetResult();
             await _responseReady.Task.WaitAsync(cancellationToken);
-            var constructor = Assert.Single(
-                typeof(TResponse).GetConstructors(
-                    System.Reflection.BindingFlags.Instance
-                    | System.Reflection.BindingFlags.Public
-                    | System.Reflection.BindingFlags.NonPublic),
-                candidate => candidate.GetParameters().Length == 7);
-            return Assert.IsType<TResponse>(constructor.Invoke(
-            [
+            return new DockerExecutionOperationResponse(
                 _timeoutSeconds,
                 _dockerCliPath,
                 _images,
-                true,
-                null,
-                _catalogRevision,
-                null,
-            ]));
-        }
-
-        public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-            PackageRuntimeStream<TRequest, TEvent> stream,
-            TRequest request,
-            [System.Runtime.CompilerServices.EnumeratorCancellation]
-            CancellationToken cancellationToken = default)
-            where TRequest : class
-            where TEvent : class
-        {
-            await Task.CompletedTask;
-            yield break;
+                CatalogRevision: _catalogRevision);
         }
     }
 
@@ -5729,35 +5758,40 @@ public sealed class ViewLifecycleTests
         public bool Cancel(Guid processId) => false;
     }
 
-    private sealed class HistoryRuntimeClient : IPackageRuntimeClient
+    private sealed class HistoryRuntimeClient : IAgentOwnerClient
     {
         private int _searchCount;
 
-        public bool IsAvailable => true;
         internal int SearchCount => Volatile.Read(ref _searchCount);
 
         public ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-            PackageRuntimeOperation<TRequest, TResponse> operation,
+            AgentOwnerRpcOperation<TRequest, TResponse> operation,
             TRequest request,
             CancellationToken cancellationToken = default)
             where TRequest : class
             where TResponse : class
         {
             cancellationToken.ThrowIfCancellationRequested();
-            return operation.OperationId switch
+            if (operation.Is(AgentRuntimeOperations.HistorySearch))
             {
-                "agent.history.search.v1" => new ValueTask<TResponse>(CreateSearchResponse<TResponse>()),
-                "agent.history.state.v1" => new ValueTask<TResponse>(CreateStateResponse<TRequest, TResponse>(request)),
-                "agent.history.command.v1" => new ValueTask<TResponse>(CreateResponse<TResponse>(new
+                return new ValueTask<TResponse>(CreateSearchResponse<TResponse>());
+            }
+            if (operation.Is(AgentRuntimeOperations.HistoryState))
+            {
+                return new ValueTask<TResponse>(CreateStateResponse<TRequest, TResponse>(request));
+            }
+            if (operation.Is(AgentRuntimeOperations.HistoryCommands))
+            {
+                return new ValueTask<TResponse>(CreateResponse<TResponse>(new
                 {
                     Status = CreateStatus(),
-                })),
-                _ => throw new NotSupportedException(operation.OperationId),
-            };
+                }));
+            }
+            throw new NotSupportedException(operation.Describe());
         }
 
         public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-            PackageRuntimeStream<TRequest, TEvent> stream,
+            AgentOwnerRpcStream<TRequest, TEvent> stream,
             TRequest request,
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
             where TRequest : class

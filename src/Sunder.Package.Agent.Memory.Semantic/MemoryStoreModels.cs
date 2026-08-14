@@ -60,24 +60,12 @@ public sealed record StoredMemoryEmbeddingRecord(
     string ModelId,
     string CanonicalTextHash,
     int Dimensions,
-    IReadOnlyList<float> Values,
+    IReadOnlyList<double> Values,
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset UpdatedAtUtc)
 {
     public long MemoryRevision { get; init; }
 }
-
-internal sealed record StoredMemoryEmbeddingGenerationRecord(
-    string GenerationId,
-    Guid SessionId,
-    string ProviderId,
-    string ModelId,
-    string? ConfigurationFingerprint,
-    string? SourceFingerprint,
-    int? MaxCanonicalTextChars,
-    int ExpectedMemoryCount,
-    DateTimeOffset CreatedAtUtc,
-    DateTimeOffset? CompletedAtUtc);
 
 public sealed record StoredMemorySearchResult(
     StoredMemoryRecord Memory,

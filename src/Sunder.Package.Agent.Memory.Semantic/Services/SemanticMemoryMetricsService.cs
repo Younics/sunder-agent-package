@@ -42,11 +42,3 @@ public sealed class SemanticMemoryMetricsService
             CorrectionCount: Interlocked.Read(ref _correctionCount),
             WorkerFailureCount: Interlocked.Read(ref _workerFailureCount));
 }
-
-public sealed record SemanticMemoryMetricsSnapshot(
-    long PromotionCandidateCount,
-    long PromotionWriteCount,
-    long RecallRequestCount,
-    long RecallEntryCount,
-    long CorrectionCount,
-    long WorkerFailureCount);

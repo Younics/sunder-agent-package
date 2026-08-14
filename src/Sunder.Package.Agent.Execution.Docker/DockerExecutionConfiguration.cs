@@ -6,8 +6,8 @@ namespace Sunder.Package.Agent.Execution.Docker;
 
 public static class DockerExecutionConfiguration
 {
-    public const string TimeoutKey = "docker.timeoutSeconds.default";
-    public const string DefaultTimeoutSeconds = "300";
+    public const string TimeoutKey = DockerExecutionPresentationDefaults.TimeoutKey;
+    public const string DefaultTimeoutSeconds = DockerExecutionPresentationDefaults.DefaultTimeoutSeconds;
 
     internal static async ValueTask<int> ResolveDefaultTimeoutSecondsAsync(
         IPackageContext packageContext,

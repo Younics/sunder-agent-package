@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Shared.Presentation;
 
 namespace Sunder.Package.Agent.Shared.PackageViews;
@@ -9,6 +10,7 @@ internal sealed partial class TranscriptTimelineState<TRow> : INotifyPropertyCha
     where TRow : class
 {
     private readonly TranscriptRowProjector<TRow> _projector;
+    private readonly IPresentationDispatcher? _presentationDispatcher;
     private readonly OperationState _initialOperation = new();
     private readonly OperationState _pageOperation = new();
     private readonly Dictionary<Guid, AgentTurnRecord> _pendingTurnsById = [];
@@ -43,9 +45,11 @@ internal sealed partial class TranscriptTimelineState<TRow> : INotifyPropertyCha
         TranscriptRowProjector<TRow> projector,
         int initialTurnLimit,
         int pageSize,
-        int visibleRowLimit)
+        int visibleRowLimit,
+        IPresentationDispatcher? presentationDispatcher = null)
     {
         _projector = projector;
+        _presentationDispatcher = presentationDispatcher;
         _initialTurnLimit = initialTurnLimit;
         _pageSize = pageSize;
         _visibleRowLimit = visibleRowLimit;

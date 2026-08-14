@@ -4,6 +4,7 @@ using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Skills.PackageViews;
+using Sunder.Package.Agent.Skills.Runtime;
 using Sunder.Package.Agent.Skills.Services;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Stacks;
@@ -221,7 +222,7 @@ public sealed class SkillPackageTests
             var store = new SkillStore(context);
             var importer = new SkillImportService(store, new TestGitHubSkillClient(), context);
             InstallSkill(store, "docs-skill", "Docs Skill");
-            using var viewModel = new SkillSettingsViewModel(store, importer)
+            using var viewModel = new SkillSettingsViewModel(new SkillLocalManagementGateway(store, importer))
             {
                 IsCompactLayout = true,
             };
@@ -264,7 +265,7 @@ public sealed class SkillPackageTests
             var store = new SkillStore(context);
             var importer = new SkillImportService(store, new TestGitHubSkillClient(), context);
             InstallSkill(store, "docs-skill", "Docs Skill");
-            using var viewModel = new SkillSettingsViewModel(store, importer)
+            using var viewModel = new SkillSettingsViewModel(new SkillLocalManagementGateway(store, importer))
             {
                 IsCompactLayout = true,
             };
@@ -295,7 +296,9 @@ public sealed class SkillPackageTests
             var store = new SkillStore(context);
             var importer = new SkillImportService(store, new TestGitHubSkillClient(), context);
             var timeProvider = new ManualTimerTimeProvider();
-            using var viewModel = new SkillSettingsViewModel(store, importer, timeProvider);
+            using var viewModel = new SkillSettingsViewModel(
+                new SkillLocalManagementGateway(store, importer),
+                timeProvider);
 
             await viewModel.ImportLocalFolderAsync(source);
 
@@ -337,7 +340,7 @@ public sealed class SkillPackageTests
             var context = new TestPackageContext(Path.Combine(root, "install"));
             var store = new SkillStore(context);
             var importer = new SkillImportService(store, new TestGitHubSkillClient(), context);
-            using var viewModel = new SkillSettingsViewModel(store, importer)
+            using var viewModel = new SkillSettingsViewModel(new SkillLocalManagementGateway(store, importer))
             {
                 IsCompactLayout = true,
             };

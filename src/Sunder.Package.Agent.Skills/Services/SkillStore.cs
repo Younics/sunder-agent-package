@@ -17,17 +17,17 @@ public sealed class SkillStore
     private readonly IPackageContext _packageContext;
     private readonly string _indexPath;
     private readonly string _lockPath;
+    private int _initialized;
 
     public SkillStore(IPackageContext packageContext)
     {
         _packageContext = packageContext;
-        Directory.CreateDirectory(SkillsRootPath);
         _indexPath = packageContext.Storage.RoleLocalWorkspace.GetLocalPath("skills/skills.json");
         _lockPath = _indexPath + ".lock";
         _syncRoot = SharedLocks.GetOrAdd(_indexPath, static _ => new object());
-        using var transaction = EnterTransaction();
-        SkillBatchReplacementCommitter.RecoverInterruptedBatch(this);
     }
+
+    public void Activate() => EnsureInitialized();
 
     public string SkillsRootPath => _packageContext.Storage.RoleLocalWorkspace.GetLocalPath(SkillConstants.SkillsRelativeRoot);
 
@@ -294,6 +294,7 @@ public sealed class SkillStore
 
     private IDisposable EnterTransaction()
     {
+        EnsureInitialized();
         var ownsProcessLock = !Monitor.IsEntered(_syncRoot);
         Monitor.Enter(_syncRoot);
         try
@@ -306,6 +307,36 @@ public sealed class SkillStore
         {
             Monitor.Exit(_syncRoot);
             throw;
+        }
+    }
+
+    private void EnsureInitialized()
+    {
+        if (Volatile.Read(ref _initialized) == 2)
+        {
+            return;
+        }
+
+        lock (_syncRoot)
+        {
+            if (_initialized == 2)
+            {
+                return;
+            }
+
+            Directory.CreateDirectory(SkillsRootPath);
+            Directory.CreateDirectory(Path.GetDirectoryName(_indexPath)!);
+            _initialized = 2;
+            try
+            {
+                using var processLock = AcquireProcessLock();
+                SkillBatchReplacementCommitter.RecoverInterruptedBatch(this);
+            }
+            catch
+            {
+                _initialized = 0;
+                throw;
+            }
         }
     }
 

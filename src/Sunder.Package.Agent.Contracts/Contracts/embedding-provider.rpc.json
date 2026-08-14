@@ -1,14 +1,16 @@
 {
-  "descriptorVersion": 1,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "descriptorVersion": 2,
   "contractId": "sunder.agent.embedding.provider",
   "version": "1.0.0",
-  "services": [
-    {
-      "serviceId": "embedding-provider",
-      "methods": [
-        {
-          "methodId": "describe",
+  "errors": {},
+  "services": {
+    "embedding-provider": {
+      "methods": {
+        "describe": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/AgentRpcEmpty"
           },
@@ -16,9 +18,10 @@
             "$ref": "#/$defs/AgentEmbeddingProviderDescriptor"
           }
         },
-        {
-          "methodId": "list-models",
+        "list-models": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/AgentRpcEmpty"
           },
@@ -26,9 +29,10 @@
             "$ref": "#/$defs/ListOfAgentEmbeddingModelDescriptor"
           }
         },
-        {
-          "methodId": "get-readiness",
+        "get-readiness": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/AgentRpcEmpty"
           },
@@ -36,9 +40,10 @@
             "$ref": "#/$defs/AgentEmbeddingProviderReadiness"
           }
         },
-        {
-          "methodId": "space-identity",
+        "space-identity": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/StringRequest"
           },
@@ -46,9 +51,10 @@
             "$ref": "#/$defs/String"
           }
         },
-        {
-          "methodId": "generate",
+        "generate": {
           "kind": "unary",
+          "idempotency": "none",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/EmbeddingRequest"
           },
@@ -56,9 +62,10 @@
             "$ref": "#/$defs/AgentRpcOptionalOfAgentEmbeddingGenerationResult"
           }
         },
-        {
-          "methodId": "generate-batch",
+        "generate-batch": {
           "kind": "unary",
+          "idempotency": "none",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/EmbeddingBatchRequest"
           },
@@ -66,9 +73,9 @@
             "$ref": "#/$defs/ListOfNullableAgentEmbeddingGenerationResult"
           }
         }
-      ]
+      }
     }
-  ],
+  },
   "$defs": {
     "AgentRpcEmpty": {
       "type": "object",

@@ -5,6 +5,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.Anthropic\Sunder.Package.Agent.Provider.Anthropic.csproj" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.Anthropic\App\Sunder.Package.Agent.Provider.Anthropic.App.csproj"
+                      Aliases="AnthropicApp" />
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
     <ProjectReference Include="..\Sunder.Package.Agent.Provider.TestSupport\Sunder.Package.Agent.Provider.TestSupport.csproj" />
   </ItemGroup>

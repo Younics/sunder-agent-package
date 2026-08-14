@@ -2,7 +2,6 @@ using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Package.Agent.Provider.TestSupport;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Callbacks;
-using Sunder.Sdk.Runtime;
 using Xunit;
 
 namespace Sunder.Package.Agent.Provider.OpenAI.Tests;
@@ -15,7 +14,7 @@ public sealed class OpenAiSettingsViewModelTests
         var context = new ProviderTestPackageContext("sunder.package.agent.provider.openai");
         var viewModel = new OpenAiSettingsViewModel(
             context,
-            new StubRuntimeClient(new OpenAiAuthOperationResult(false, false, null)));
+            new StubOwnerManagementClient(new OpenAiAuthOperationResult(false, false, null)));
 
         Assert.Equal(OpenAiAuthMode.CodexConnected, viewModel.SelectedAuthMode?.ModeId);
 
@@ -31,7 +30,7 @@ public sealed class OpenAiSettingsViewModelTests
         var context = new ProviderTestPackageContext("sunder.package.agent.provider.openai");
         using var viewModel = new OpenAiSettingsViewModel(
             context,
-            new StubRuntimeClient(new OpenAiAuthOperationResult(
+            new StubOwnerManagementClient(new OpenAiAuthOperationResult(
                 false,
                 true,
                 null,
@@ -78,11 +77,11 @@ public sealed class OpenAiSettingsViewModelTests
             return CallbackStatus(PackageCallbackSessionState.Pending);
         };
         callbacks.Enqueue(CallbackStatus(PackageCallbackSessionState.Completed));
-        var runtime = new StubRuntimeClient(new OpenAiAuthOperationResult(
+        var management = new StubOwnerManagementClient(new OpenAiAuthOperationResult(
             true,
             true,
             DateTimeOffset.UtcNow.AddHours(1)));
-        using var viewModel = CreateViewModel(context, callbacks, runtime);
+        using var viewModel = CreateViewModel(context, callbacks, management);
 
         await viewModel.AuthorizeCommand.ExecuteAsync(null);
 
@@ -91,7 +90,7 @@ public sealed class OpenAiSettingsViewModelTests
         Assert.Equal(1, callbacks.OpenCount);
         Assert.True(viewModel.IsCodexConnected);
         Assert.Equal("Connected, active", viewModel.CodexStatusLabel);
-        Assert.True(runtime.InvocationCount > 0);
+        Assert.True(management.InvocationCount > 0);
     }
 
     [Fact]
@@ -110,7 +109,7 @@ public sealed class OpenAiSettingsViewModelTests
         using var viewModel = CreateViewModel(
             context,
             callbacks,
-            new StubRuntimeClient(new OpenAiAuthOperationResult(true, true, DateTimeOffset.UtcNow.AddHours(1))));
+            new StubOwnerManagementClient(new OpenAiAuthOperationResult(true, true, DateTimeOffset.UtcNow.AddHours(1))));
 
         var first = viewModel.AuthorizeCommand.ExecuteAsync(null);
         await started.Task.WaitAsync(TimeSpan.FromSeconds(2));
@@ -137,7 +136,7 @@ public sealed class OpenAiSettingsViewModelTests
         using var viewModel = CreateViewModel(
             context,
             callbacks,
-            new StubRuntimeClient(new OpenAiAuthOperationResult(true, true, DateTimeOffset.UtcNow.AddHours(1))));
+            new StubOwnerManagementClient(new OpenAiAuthOperationResult(true, true, DateTimeOffset.UtcNow.AddHours(1))));
 
         await viewModel.AuthorizeCommand.ExecuteAsync(null);
         Assert.True(viewModel.AuthorizeCommand.CanExecute(null));
@@ -208,10 +207,10 @@ public sealed class OpenAiSettingsViewModelTests
     private static OpenAiSettingsViewModel CreateViewModel(
         ProviderTestPackageContext context,
         FakePackageCallbackClient callbacks,
-        StubRuntimeClient? runtime = null,
+        StubOwnerManagementClient? management = null,
         PackageCallbackFlowRunner? callbackFlow = null)
     {
-        runtime ??= new StubRuntimeClient(new OpenAiAuthOperationResult(false, false, null));
+        management ??= new StubOwnerManagementClient(new OpenAiAuthOperationResult(false, false, null));
         callbackFlow ??= new PackageCallbackFlowRunner(
             callbacks,
             TimeProvider.System,
@@ -223,9 +222,9 @@ public sealed class OpenAiSettingsViewModelTests
             });
         return new OpenAiSettingsViewModel(
             context,
-            new OpenAiAuthPresentationService(runtime),
+            new OpenAiAuthPresentationService(management),
             callbackFlow,
-            new ProviderCredentialAppRuntimeGateway(runtime));
+            new ProviderCredentialOwnerClient(management));
     }
 
     private static PackageCallbackSessionStatus CallbackStatus(
@@ -240,47 +239,51 @@ public sealed class OpenAiSettingsViewModelTests
             new Uri("https://auth.openai.example/authorize"),
             DateTimeOffset.UtcNow.AddMinutes(5));
 
-    private sealed class StubRuntimeClient(OpenAiAuthOperationResult response) : IPackageRuntimeClient
+    private sealed class StubOwnerManagementClient(OpenAiAuthOperationResult response) : IOpenAiOwnerManagementClient
     {
-        public bool IsAvailable => true;
+        private bool _hasCredential;
 
         public int InvocationCount { get; private set; }
 
-        public ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-            PackageRuntimeOperation<TRequest, TResponse> operation,
-            TRequest request,
+        public ValueTask<OpenAiAuthOperationResult> GetAuthStatusAsync(
             CancellationToken cancellationToken = default)
-            where TRequest : class
-            where TResponse : class
         {
             cancellationToken.ThrowIfCancellationRequested();
             InvocationCount++;
-            if (operation.OperationId == OpenAiRuntimeOperations.Auth.OperationId)
-            {
-                return ValueTask.FromResult((TResponse)(object)response);
-            }
-
-            if (operation.OperationId == ProviderCredentialRuntimeOperations.Query.OperationId)
-            {
-                return ValueTask.FromResult((TResponse)(object)new ProviderCredentialSnapshot(false));
-            }
-
-            if (operation.OperationId == ProviderCredentialRuntimeOperations.Command.OperationId)
-            {
-                var command = Assert.IsType<ProviderCredentialCommand>(request);
-                return ValueTask.FromResult((TResponse)(object)new ProviderCredentialSnapshot(
-                    command.Kind == ProviderCredentialCommandKind.Set));
-            }
-
-            throw new InvalidOperationException($"Unexpected Runtime operation '{operation.OperationId}'.");
+            return ValueTask.FromResult(response);
         }
 
-        public IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-            PackageRuntimeStream<TRequest, TEvent> stream,
-            TRequest request,
+        public ValueTask<OpenAiAuthOperationResult> DisconnectAuthAsync(
             CancellationToken cancellationToken = default)
-            where TRequest : class
-            where TEvent : class
-            => throw new NotSupportedException();
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            InvocationCount++;
+            return ValueTask.FromResult(new OpenAiAuthOperationResult(false, false, null));
+        }
+
+        public ValueTask<bool> HasCredentialAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            InvocationCount++;
+            return ValueTask.FromResult(_hasCredential);
+        }
+
+        public ValueTask<bool> SetCredentialAsync(
+            string credential,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            InvocationCount++;
+            _hasCredential = true;
+            return ValueTask.FromResult(true);
+        }
+
+        public ValueTask<bool> ClearCredentialAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            InvocationCount++;
+            _hasCredential = false;
+            return ValueTask.FromResult(false);
+        }
     }
 }

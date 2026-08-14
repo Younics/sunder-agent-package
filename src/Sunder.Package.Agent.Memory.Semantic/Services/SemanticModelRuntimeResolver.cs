@@ -343,7 +343,7 @@ public sealed class SemanticModelRuntimeResolver : IDisposable
                         binding,
                         lease.PackageId,
                         providerId,
-                        reference.Provider,
+                        reference.ToHandle(),
                         providerSpaceIdentity));
                 lock (_configurationCacheSync)
                 {
@@ -364,11 +364,11 @@ public sealed class SemanticModelRuntimeResolver : IDisposable
         AgentProfileModelBindingRecord binding,
         string ownerPackageId,
         string providerId,
-        Sunder.Sdk.Rpc.SunderRpcProviderSnapshot provider,
+        AgentRpcProviderHandle provider,
         string? providerSpaceIdentity)
     {
         var source = string.Join('\n',
-            "semantic-memory-embedding-space-v1",
+            "semantic-memory-embedding-space-v2",
             ownerPackageId.Trim().ToLowerInvariant(),
             providerId,
             binding.ModelId!.Trim(),
@@ -376,7 +376,8 @@ public sealed class SemanticModelRuntimeResolver : IDisposable
             providerSpaceIdentity?.Trim() ?? string.Empty,
             provider.PackageVersion,
             provider.ContractVersion,
-            provider.ContractSha256,
+            provider.DescriptorSha256,
+            provider.AbiSha256,
             provider.ProviderId);
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(source))).ToLowerInvariant();
     }
@@ -617,32 +618,4 @@ internal sealed class EmbeddingProviderRetiredException : InvalidOperationExcept
         : base($"Embedding provider '{providerId}' retired during invocation.", innerException)
     {
     }
-}
-
-public sealed record SemanticEmbeddingContext(
-    string StatusLabel,
-    string StatusText,
-    bool IsReady,
-    string? ProviderId = null,
-    string? ModelId = null,
-    string? ProviderDisplayName = null,
-    string? ConfigurationFingerprint = null)
-{
-    public static SemanticEmbeddingContext Ready(
-        string providerId,
-        string modelId,
-        string providerDisplayName,
-        string configurationFingerprint = "")
-        => new(
-            "Ready",
-            $"Semantic retrieval is active via {providerDisplayName} / {modelId}.",
-            true,
-            providerId,
-            modelId,
-            providerDisplayName,
-            configurationFingerprint);
-
-    public static SemanticEmbeddingContext Disabled(string statusText) => new("Disabled", statusText, false);
-
-    public static SemanticEmbeddingContext Unavailable(string statusText) => new("Unavailable", statusText, false);
 }

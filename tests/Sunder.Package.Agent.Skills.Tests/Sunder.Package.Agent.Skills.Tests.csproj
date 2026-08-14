@@ -5,6 +5,15 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Skills\Sunder.Package.Agent.Skills.csproj" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Skills\App\SkillsApp.csproj" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Skills\Protocol\SkillsProtocol.csproj" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Skills\Aggregate\SkillsPackage.csproj"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\Sunder.Package.Agent.Tests\AgentPackageRepositoryInventory.cs"
+             Link="TestSupport\AgentPackageRepositoryInventory.cs" />
   </ItemGroup>
 
   <ItemGroup>

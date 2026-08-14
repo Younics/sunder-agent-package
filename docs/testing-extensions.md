@@ -20,13 +20,13 @@ For a tool, test descriptor, readiness, valid execution, every validation error,
 
 ## Composition Tests
 
-Create a service collection, call `ConfigureRuntimeServices`, build the provider, and pass a capture implementation of `ISunderRuntimeContributionRegistry` to `RegisterRuntimeContributions`.
+Call the worker configuration factory with a deterministic fake `IPackageContext`, then inspect the returned `SunderWorkerV3Options` and its immutable provider registrations. If the worker builds a service provider, resolve through its `SunderWorkerComposition` rather than constructing a second graph.
 
 Assert:
 
 - The intended provider id and RPC handler are registered exactly once.
 - The instance is the DI-owned singleton, not a second allocation.
-- Settings schema, operations, streams, callbacks, and background services are registered in the correct role.
+- Settings schema, owner RPC, callbacks, and lifecycle hooks are registered in the correct role.
 - Runtime authority is absent from App services/registrations.
 - App presentation and typed Runtime clients are absent from headless Runtime composition.
 

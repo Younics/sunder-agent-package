@@ -1,15 +1,42 @@
 using System.Diagnostics;
 using System.Text;
+using Sunder.Agent.Execution.Common;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Execution.Docker;
 
 internal static class DockerCli
 {
-    internal const string ExecutablePathConfigurationKey = "docker.executablePath";
+    internal const string ExecutablePathConfigurationKey =
+        DockerExecutionPresentationDefaults.DockerCliPathKey;
 
     private const string ExecutablePathEnvironmentVariable = "SUNDER_DOCKER_CLI_PATH";
     private const string PathEnvironmentVariable = "PATH";
+
+    private static readonly string[] DockerEnvironmentVariables =
+    [
+        "DOCKER_HOST",
+        "DOCKER_CONTEXT",
+        "DOCKER_CONFIG",
+        "DOCKER_CERT_PATH",
+        "DOCKER_TLS_VERIFY",
+        "DOCKER_API_VERSION",
+        "DOCKER_DEFAULT_PLATFORM",
+        "DOCKER_CONTENT_TRUST",
+        "DOCKER_CONTENT_TRUST_SERVER",
+        "DOCKER_CUSTOM_HEADERS",
+        "BUILDKIT_HOST",
+        "SSH_AUTH_SOCK",
+        "XDG_RUNTIME_DIR",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "no_proxy",
+    ];
 
     private static readonly string[] UnixFallbackPaths =
     [
@@ -64,6 +91,8 @@ internal static class DockerCli
             startInfo.ArgumentList.Add(arg);
         }
 
+        ChildProcessEnvironment.ApplyBase(startInfo);
+        PropagateDockerEnvironment(startInfo);
         AugmentPath(startInfo, executablePath);
         return startInfo;
     }
@@ -158,18 +187,40 @@ internal static class DockerCli
         AddPathPart(pathParts, Path.GetDirectoryName(dockerPath));
         if (!OperatingSystem.IsWindows())
         {
+            AddPathPart(pathParts, Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                ".docker",
+                "bin"));
+            AddPathPart(pathParts, Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                ".local",
+                "bin"));
             AddPathPart(pathParts, "/usr/local/bin");
             AddPathPart(pathParts, "/opt/homebrew/bin");
             AddPathPart(pathParts, "/Applications/Docker.app/Contents/Resources/bin");
+            AddPathPart(pathParts, "/usr/bin");
+            AddPathPart(pathParts, "/bin");
         }
-
-        var existingPath = Environment.GetEnvironmentVariable(PathEnvironmentVariable);
-        foreach (var path in (existingPath ?? string.Empty).Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        else
         {
-            AddPathPart(pathParts, path);
+            foreach (var path in ChildProcessEnvironment.GetWindowsExecutableDirectories())
+            {
+                AddPathPart(pathParts, path);
+            }
         }
 
         startInfo.Environment[PathEnvironmentVariable] = string.Join(Path.PathSeparator, pathParts);
+    }
+
+    private static void PropagateDockerEnvironment(ProcessStartInfo startInfo)
+    {
+        foreach (var name in DockerEnvironmentVariables)
+        {
+            if (Environment.GetEnvironmentVariable(name) is { Length: > 0 } value)
+            {
+                startInfo.Environment[name] = value;
+            }
+        }
     }
 
     private static void AddPathPart(List<string> pathParts, string? path)

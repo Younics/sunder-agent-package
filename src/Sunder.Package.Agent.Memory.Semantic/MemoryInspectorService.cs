@@ -439,31 +439,3 @@ public sealed class MemoryInspectorService(
     private sealed record SessionProfileResolution(bool SessionExists, string? ProfileId);
 
 }
-
-public sealed record SemanticMemoryStatusRecord(string StatusText, bool CanReindex);
-
-public sealed record SemanticMemorySessionStateRecord(
-    SemanticEmbeddingContext Context,
-    SemanticMemoryStatusRecord Status
-);
-
-public sealed record SemanticMemoryReindexResult(string Message, int IndexedMemoryCount);
-
-public sealed record SemanticMemoryWorkerStatusRecord(
-    string StatusText,
-    bool IsRunning,
-    int PendingItemCount,
-    long ProcessedItemCount,
-    DateTimeOffset? LastSuccessfulRunAtUtc,
-    DateTimeOffset? LastFailureAtUtc,
-    string? LastFailureMessage,
-    bool HasFailure
-);
-
-public sealed record MemorySemanticIndexStatusRecord(
-    string StatusLabel,
-    string StatusText,
-    SemanticMemoryEntryIndexState? IndexState = null,
-    string? ProviderDisplayName = null,
-    string? ModelId = null
-);

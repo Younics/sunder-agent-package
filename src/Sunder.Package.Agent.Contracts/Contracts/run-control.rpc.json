@@ -1,14 +1,29 @@
 {
-  "descriptorVersion": 1,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "descriptorVersion": 2,
   "contractId": "sunder.agent.run.control",
   "version": "1.0.0",
-  "services": [
-    {
-      "serviceId": "run-control",
-      "methods": [
-        {
-          "methodId": "is-current",
+  "errors": {
+    "agent.chat.option-not-representable": {
+      "description": "A numeric chat option cannot be represented losslessly by the provider-facing Microsoft.Extensions.AI ChatOptions binary32 field."
+    },
+    "agent.run-control.capability-unavailable": {
+      "description": "The active behavior loop does not implement the requested run-control capability."
+    },
+    "agent.run-control.prompt-context-acknowledgment-unavailable": {
+      "description": "The active behavior loop cannot acknowledge prompt context."
+    },
+    "agent.run-control.default-loop-unavailable": {
+      "description": "The active behavior loop cannot delegate to the default loop."
+    }
+  },
+  "services": {
+    "run-control": {
+      "methods": {
+        "is-current": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/RunControlInvocation"
           },
@@ -16,9 +31,10 @@
             "$ref": "#/$defs/Boolean"
           }
         },
-        {
-          "methodId": "list-turns",
+        "list-turns": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/RunControlInvocation"
           },
@@ -26,9 +42,10 @@
             "$ref": "#/$defs/ListOfAgentTurnRecord"
           }
         },
-        {
-          "methodId": "list-recent-turns",
+        "list-recent-turns": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/RunControlRecentTurnsRequest"
           },
@@ -36,9 +53,10 @@
             "$ref": "#/$defs/ListOfAgentTurnRecord"
           }
         },
-        {
-          "methodId": "build-instruction-context",
+        "build-instruction-context": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/RunControlInvocation"
           },
@@ -46,9 +64,12 @@
             "$ref": "#/$defs/AgentBehaviorInstructionContext"
           }
         },
-        {
-          "methodId": "select-session-context",
+        "select-session-context": {
           "kind": "unary",
+          "idempotency": "none",
+          "errors": [
+            "agent.run-control.capability-unavailable"
+          ],
           "requestSchema": {
             "$ref": "#/$defs/RunControlSessionProjectionRequest"
           },
@@ -56,9 +77,12 @@
             "$ref": "#/$defs/AgentRpcEmpty"
           }
         },
-        {
-          "methodId": "report-activity",
+        "report-activity": {
           "kind": "unary",
+          "idempotency": "none",
+          "errors": [
+            "agent.run-control.capability-unavailable"
+          ],
           "requestSchema": {
             "$ref": "#/$defs/RunControlActivityRequest"
           },
@@ -66,9 +90,12 @@
             "$ref": "#/$defs/AgentRpcEmpty"
           }
         },
-        {
-          "methodId": "get-run-budget",
+        "get-run-budget": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [
+            "agent.run-control.capability-unavailable"
+          ],
           "requestSchema": {
             "$ref": "#/$defs/RunControlInvocation"
           },
@@ -76,9 +103,12 @@
             "$ref": "#/$defs/AgentRunBudgetState"
           }
         },
-        {
-          "methodId": "charge-run-budget",
+        "charge-run-budget": {
           "kind": "unary",
+          "idempotency": "none",
+          "errors": [
+            "agent.run-control.capability-unavailable"
+          ],
           "requestSchema": {
             "$ref": "#/$defs/RunControlBudgetChargeRequest"
           },
@@ -86,9 +116,12 @@
             "$ref": "#/$defs/AgentRunBudgetState"
           }
         },
-        {
-          "methodId": "acknowledge-prompt-context",
+        "acknowledge-prompt-context": {
           "kind": "unary",
+          "idempotency": "none",
+          "errors": [
+            "agent.run-control.prompt-context-acknowledgment-unavailable"
+          ],
           "requestSchema": {
             "$ref": "#/$defs/RunControlPromptContextRequest"
           },
@@ -96,9 +129,10 @@
             "$ref": "#/$defs/AgentRpcEmpty"
           }
         },
-        {
-          "methodId": "discard-prompt-context",
+        "discard-prompt-context": {
           "kind": "unary",
+          "idempotency": "none",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/RunControlInvocation"
           },
@@ -106,9 +140,10 @@
             "$ref": "#/$defs/AgentRpcEmpty"
           }
         },
-        {
-          "methodId": "list-ready-tools",
+        "list-ready-tools": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/RunControlInvocation"
           },
@@ -116,9 +151,10 @@
             "$ref": "#/$defs/ListOfAgentToolDescriptor"
           }
         },
-        {
-          "methodId": "save-checkpoint",
+        "save-checkpoint": {
           "kind": "unary",
+          "idempotency": "none",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/RunControlCheckpointRequest"
           },
@@ -126,9 +162,10 @@
             "$ref": "#/$defs/AgentRunCheckpointRecord"
           }
         },
-        {
-          "methodId": "log-event",
+        "log-event": {
           "kind": "unary",
+          "idempotency": "none",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/RunControlLogRequest"
           },
@@ -136,9 +173,10 @@
             "$ref": "#/$defs/AgentRpcEmpty"
           }
         },
-        {
-          "methodId": "upsert-assistant-turn",
+        "upsert-assistant-turn": {
           "kind": "unary",
+          "idempotency": "none",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/RunControlAssistantTurnRequest"
           },
@@ -146,9 +184,10 @@
             "$ref": "#/$defs/AgentTurnRecord"
           }
         },
-        {
-          "methodId": "complete-assistant-turn",
+        "complete-assistant-turn": {
           "kind": "unary",
+          "idempotency": "none",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/RunControlCompleteTurnRequest"
           },
@@ -156,9 +195,10 @@
             "$ref": "#/$defs/AgentTurnRecord"
           }
         },
-        {
-          "methodId": "publish-lifecycle",
+        "publish-lifecycle": {
           "kind": "unary",
+          "idempotency": "none",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/RunControlLifecycleRequest"
           },
@@ -166,9 +206,10 @@
             "$ref": "#/$defs/AgentRpcEmpty"
           }
         },
-        {
-          "methodId": "invoke-tool",
+        "invoke-tool": {
           "kind": "unary",
+          "idempotency": "none",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/RunControlToolRequest"
           },
@@ -176,9 +217,10 @@
             "$ref": "#/$defs/AgentToolCallOutcome"
           }
         },
-        {
-          "methodId": "invoke-tools",
+        "invoke-tools": {
           "kind": "unary",
+          "idempotency": "none",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/RunControlToolsRequest"
           },
@@ -186,9 +228,12 @@
             "$ref": "#/$defs/ListOfAgentToolCallOutcome"
           }
         },
-        {
-          "methodId": "run-default",
+        "run-default": {
           "kind": "unary",
+          "idempotency": "none",
+          "errors": [
+            "agent.run-control.default-loop-unavailable"
+          ],
           "requestSchema": {
             "$ref": "#/$defs/RunControlDefaultLoopRequest"
           },
@@ -196,9 +241,12 @@
             "$ref": "#/$defs/AgentBehaviorLoopResult"
           }
         },
-        {
-          "methodId": "stream-chat",
+        "stream-chat": {
           "kind": "server-stream",
+          "idempotency": "none",
+          "errors": [
+            "agent.chat.option-not-representable"
+          ],
           "requestSchema": {
             "$ref": "#/$defs/RunControlChatRequest"
           },
@@ -206,14 +254,13 @@
             "$ref": "#/$defs/AgentChatStreamEvent"
           }
         }
-      ]
+      }
     }
-  ],
+  },
   "$defs": {
     "Guid": {
       "type": "string",
-      "minLength": 0,
-      "maxLength": 1000000
+      "logicalType": "uuid"
     },
     "RunControlInvocation": {
       "type": "object",
@@ -237,8 +284,7 @@
     },
     "DateTimeOffset": {
       "type": "string",
-      "minLength": 0,
-      "maxLength": 1000000
+      "logicalType": "utc-date-time"
     },
     "String": {
       "type": "string",
@@ -263,8 +309,7 @@
     },
     "Nullable": {
       "type": "string",
-      "minLength": 0,
-      "maxLength": 1000000
+      "logicalType": "uuid"
     },
     "AgentToolExecutionStatus": {
       "type": "integer",
@@ -1988,39 +2033,7 @@
     },
     "SunderRpcContentReference": {
       "type": "object",
-      "properties": {
-        "expiresAtUtc": {
-          "$ref": "#/$defs/DateTimeOffset"
-        },
-        "fileName": {
-          "$ref": "#/$defs/String"
-        },
-        "id": {
-          "$ref": "#/$defs/String"
-        },
-        "length": {
-          "$ref": "#/$defs/Int64"
-        },
-        "mediaType": {
-          "$ref": "#/$defs/String"
-        },
-        "repeatability": {
-          "$ref": "#/$defs/SunderRpcContentRepeatability"
-        },
-        "sha256": {
-          "$ref": "#/$defs/String"
-        }
-      },
-      "required": [
-        "expiresAtUtc",
-        "fileName",
-        "id",
-        "length",
-        "mediaType",
-        "repeatability",
-        "sha256"
-      ],
-      "additionalProperties": false
+      "logicalType": "content-reference"
     },
     "RunControlChatContext": {
       "type": "object",
@@ -2158,7 +2171,8 @@
     "Nullable7": {
       "type": "number",
       "minimum": -9007199254740991,
-      "maximum": 9007199254740991
+      "maximum": 9007199254740991,
+      "description": "A finite binary64 wire value produced by losslessly widening a finite IEEE 754 binary32 chat option; other values fail with agent.chat.option-not-representable."
     },
     "AgentChatTool": {
       "type": "object",
@@ -2267,8 +2281,7 @@
     },
     "Nullable8": {
       "type": "string",
-      "minLength": 0,
-      "maxLength": 1000000
+      "logicalType": "utc-date-time"
     },
     "AgentChatStreamEvent": {
       "type": "object",

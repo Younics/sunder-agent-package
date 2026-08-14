@@ -1,13 +1,12 @@
 using Microsoft.Extensions.DependencyInjection;
-using Sunder.Package.Agent.Contracts;
-using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Provider.OpenAI.Auth;
 using Sunder.Package.Agent.Provider.OpenAI.Transport;
+using Sunder.Package.Agent.Provider.OpenAI.Worker;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Package.Agent.Provider.TestSupport;
 using Sunder.Sdk.Abstractions;
-using Sunder.Sdk.Runtime;
+using Sunder.Sdk.Rpc;
 using Xunit;
 
 namespace Sunder.Package.Agent.Provider.OpenAI.Tests;
@@ -15,81 +14,56 @@ namespace Sunder.Package.Agent.Provider.OpenAI.Tests;
 public sealed class OpenAiPackageCompositionTests
 {
     [Fact]
-    public void RuntimeAndAppComposition_KeepProvidersCredentialsAndAuthRuntimeOnly()
+    public async Task WorkerAndAppComposition_KeepProvidersCredentialsAndAuthWorkerOnly()
     {
         var context = new ProviderTestPackageContext("sunder.package.agent.provider.openai");
-        var runtimeServices = new ServiceCollection();
-        runtimeServices.AddSingleton<IPackageContext>(context);
-        var runtimeModule = new PackageModule();
-        runtimeModule.ConfigureRuntimeServices(runtimeServices, context);
+        var options = OpenAiWorkerConfiguration.CreateCore(context);
+        await using var composition = Assert.IsType<Sunder.Sdk.Worker.SunderWorkerComposition>(options.Composition);
+        var workerServices = composition.Services;
 
-        Assert.Contains(runtimeServices, descriptor => descriptor.ServiceType == typeof(ProviderCredentialAccessor));
-        Assert.Contains(runtimeServices, descriptor => descriptor.ServiceType == typeof(ProviderCredentialRuntimeHandler));
-        Assert.Contains(runtimeServices, descriptor => descriptor.ServiceType == typeof(ApiKeyAuthStrategy));
-        Assert.Contains(runtimeServices, descriptor => descriptor.ServiceType == typeof(CodexConnectedAuthStrategy));
-        Assert.Contains(runtimeServices, descriptor => descriptor.ServiceType == typeof(OpenAiPackageAuthHandler));
-        Assert.Contains(runtimeServices, descriptor => descriptor.ServiceType == typeof(IPackageAuthHandler));
-        Assert.Contains(runtimeServices, descriptor => descriptor.ServiceType == typeof(IPackageCallbackHandler));
-        Assert.Contains(runtimeServices, descriptor => descriptor.ServiceType == typeof(OpenAiAuthOperationHandler));
-        Assert.Contains(runtimeServices, descriptor => descriptor.ServiceType == typeof(OpenAiAgentProvider));
-        Assert.Contains(runtimeServices, descriptor => descriptor.ServiceType == typeof(OpenAiEmbeddingProvider));
-        Assert.Contains(runtimeServices, descriptor => descriptor.ServiceType == typeof(IAgentChatProvider));
-        Assert.Contains(runtimeServices, descriptor => descriptor.ServiceType == typeof(IAgentEmbeddingProvider));
-        Assert.DoesNotContain(runtimeServices, descriptor => descriptor.ServiceType == typeof(OpenAiSettingsViewModel));
-        Assert.DoesNotContain(runtimeServices, descriptor => descriptor.ServiceType == typeof(OpenAiAuthPresentationService));
+        Assert.NotNull(workerServices.GetService<ProviderCredentialAccessor>());
+        Assert.NotNull(workerServices.GetService<ApiKeyAuthStrategy>());
+        Assert.NotNull(workerServices.GetService<CodexConnectedAuthStrategy>());
+        Assert.NotNull(workerServices.GetService<OpenAiPackageAuthHandler>());
+        Assert.NotNull(workerServices.GetService<OpenAiAuthOperationHandler>());
+        Assert.NotNull(workerServices.GetService<OpenAiManagementRpcProvider>());
+        Assert.NotNull(workerServices.GetService<OpenAiAgentProvider>());
+        Assert.NotNull(workerServices.GetService<OpenAiEmbeddingProvider>());
+        Assert.Null(workerServices.GetService<OpenAiSettingsViewModel>());
+        Assert.Null(workerServices.GetService<OpenAiAuthPresentationService>());
 
-        using var runtimeProvider = runtimeServices.BuildServiceProvider();
-        var runtimeRegistry = new ProviderCompositionTestRegistry();
-        runtimeModule.RegisterRuntimeContributions(runtimeRegistry, runtimeProvider);
         Assert.Equal(
             [
                 "openai.chat",
                 "openai.embedding",
                 "openai.continuation.cleaner",
+                OpenAiManagementProtocol.ProviderId,
             ],
-            runtimeRegistry.RpcProviderIds);
-        Assert.All(runtimeRegistry.RpcHandlerTypes, type => Assert.Equal(typeof(AgentRpcServiceHandler), type));
-        Assert.Same(OpenAiProviderConfiguration.Schema, Assert.Single(runtimeRegistry.SettingsSchemas));
-        Assert.Equal(
-            [
-                OpenAiRuntimeOperations.Auth.OperationId,
-                ProviderCredentialRuntimeOperations.Query.OperationId,
-                ProviderCredentialRuntimeOperations.Command.OperationId,
-            ],
-            runtimeRegistry.RuntimeOperationIds);
-        Assert.Equal(
-            [
-                typeof(OpenAiAuthOperationHandler),
-                typeof(ProviderCredentialRuntimeHandler),
-                typeof(ProviderCredentialRuntimeHandler),
-            ],
-            runtimeRegistry.RuntimeOperationHandlerTypes);
+            options.Providers.Select(provider => provider.ProviderId));
+        Assert.All(options.Providers, provider => Assert.IsAssignableFrom<ISunderRpcServiceHandler>(provider.Handler));
+        Assert.Same(OpenAiProviderConfiguration.Schema, options.SettingsSchema);
+        Assert.Same(workerServices.GetRequiredService<OpenAiPackageAuthHandler>(), options.AuthHandler);
+        Assert.Empty(options.CallbackHandlers);
 
         var appServices = new ServiceCollection();
-        appServices.AddSingleton<IPackageRuntimeClient>(NullPackageRuntimeClient.Instance);
         var appModule = new AppPackageModule();
         appModule.ConfigureAppServices(appServices, context);
+        Assert.Contains(appServices, descriptor => descriptor.ServiceType == typeof(IOpenAiOwnerManagementClient));
         Assert.Contains(appServices, descriptor => descriptor.ServiceType == typeof(OpenAiSettingsViewModel));
         Assert.Contains(appServices, descriptor => descriptor.ServiceType == typeof(OpenAiAuthPresentationService));
-        Assert.Contains(appServices, descriptor => descriptor.ServiceType == typeof(ProviderCredentialAppRuntimeGateway));
+        Assert.Contains(appServices, descriptor => descriptor.ServiceType == typeof(ProviderCredentialOwnerClient));
         Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(ProviderCredentialAccessor));
-        Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(ProviderCredentialRuntimeHandler));
         Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(ApiKeyAuthStrategy));
         Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(CodexConnectedAuthStrategy));
         Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(OpenAiPackageAuthHandler));
-        Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(IPackageAuthHandler));
-        Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(IPackageCallbackHandler));
+        Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(OpenAiManagementRpcProvider));
         Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(OpenAiAgentProvider));
         Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(OpenAiEmbeddingProvider));
-        Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(IAgentChatProvider));
-        Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(IAgentEmbeddingProvider));
 
         using var appProvider = appServices.BuildServiceProvider();
         var appRegistry = new ProviderCompositionTestRegistry();
         appModule.RegisterAppContributions(appRegistry, appProvider);
         Assert.Equal([typeof(OpenAiSettingsView)], appRegistry.SettingsViewTypes);
-        Assert.Empty(appRegistry.RpcProviderIds);
-        Assert.Empty(appRegistry.RuntimeOperationIds);
     }
 
     [Fact]
@@ -99,8 +73,7 @@ public sealed class OpenAiPackageCompositionTests
         using var strategy = new CodexConnectedAuthStrategy(context);
         var handler = new OpenAiAuthOperationHandler(strategy);
 
-        var result = await handler.HandleAsync(
-            new OpenAiAuthOperationRequest(OpenAiAuthOperationKind.GetStatus));
+        var result = await handler.GetStatusAsync();
 
         Assert.False(result.IsConnected);
         Assert.False(result.HasCachedSession);
@@ -121,8 +94,7 @@ public sealed class OpenAiPackageCompositionTests
         using var strategy = new CodexConnectedAuthStrategy(context);
         var handler = new OpenAiAuthOperationHandler(strategy);
 
-        var result = await handler.HandleAsync(
-            new OpenAiAuthOperationRequest(OpenAiAuthOperationKind.GetStatus));
+        var result = await handler.GetStatusAsync();
 
         Assert.True(result.IsConnected);
         Assert.True(result.HasCachedSession);

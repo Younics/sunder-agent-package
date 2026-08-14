@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AssemblyName>Sunder.Package.Agent.Provider.OpenAI.Shared</AssemblyName>
+    <RootNamespace>Sunder.Package.Agent.Provider.OpenAI</RootNamespace>
+    <SunderPackageProject>false</SunderPackageProject>
+    <SunderSdkReference>true</SunderSdkReference>
+    <SunderPackageBuildReference>true</SunderPackageBuildReference>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
+    <Compile Include="..\OpenAiAuthMode.cs" Link="OpenAiAuthMode.cs" />
+    <Compile Include="..\OpenAiModelCatalog.cs" Link="OpenAiModelCatalog.cs" />
+    <Compile Include="..\OpenAiModelIds.cs" Link="OpenAiModelIds.cs" />
+    <Compile Include="..\OpenAiProviderConfiguration.cs" Link="OpenAiProviderConfiguration.cs" />
+    <Compile Include="..\..\Sunder.Package.Agent.Provider.Shared\ProviderModelCatalog.cs"
+             Link="Provider.Shared\ProviderModelCatalog.cs" />
+    <Compile Include="..\..\Sunder.Package.Agent.Provider.Shared\ProviderModelId.cs"
+             Link="Provider.Shared\ProviderModelId.cs" />
+    <EmbeddedResource Include="Contracts\openai-management.rpc.json"
+                      LogicalName="Sunder.Package.Agent.Provider.OpenAI.Contracts.openai-management.rpc.json" />
+    <SunderRpcBinding Include="Contracts\openai-management.rpc.json"
+                      Namespace="Sunder.Package.Agent.Provider.OpenAI.Protocol.Generated"
+                      OutputFile="OpenAiManagementRpc.g.cs" />
+  </ItemGroup>
+
+</Project>

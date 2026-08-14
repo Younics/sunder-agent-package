@@ -1,20 +1,66 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <SunderSdkAvaloniaReference>true</SunderSdkAvaloniaReference>
+    <SunderPackageFamilyId>sunder.package.agent.provider.anthropic</SunderPackageFamilyId>
+    <SunderPackageRole>worker</SunderPackageRole>
     <SunderPackageProject>true</SunderPackageProject>
+    <SunderSdkWorkerReference>true</SunderSdkWorkerReference>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
-    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <OutputType>Exe</OutputType>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">$(NETCoreSdkRuntimeIdentifier)</RuntimeIdentifier>
+    <RuntimeIdentifiers>win-x64;win-arm64;linux-x64;linux-arm64;osx-x64;osx-arm64</RuntimeIdentifiers>
+    <SelfContained>true</SelfContained>
+    <UseAppHost>true</UseAppHost>
+    <PublishSingleFile>false</PublishSingleFile>
+    <SunderGeneratedPackageManifest>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\obj\$(Configuration)\$(TargetFramework)\$(RuntimeIdentifier)\sunder-package.json'))</SunderGeneratedPackageManifest>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Avalonia" />
     <PackageReference Include="Anthropic" />
-    <PackageReference Include="CommunityToolkit.Mvvm" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
     <ProjectReference Include="..\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
+    <ProjectReference Include="Protocol\Sunder.Package.Agent.Provider.Anthropic.Protocol.csproj" />
   </ItemGroup>
 
-  <Import Project="..\Sunder.Package.Agent.Shared\Sunder.Package.Agent.Shared.props" />
-  <Import Project="..\Sunder.Package.Agent.Provider.Shared\Sunder.Package.Agent.Provider.Shared.props" />
+  <ItemGroup>
+    <Compile Remove="Aggregate\**\*" />
+    <Compile Remove="App\**\*" />
+    <Compile Remove="Protocol\**\*" />
+    <None Remove="Aggregate\**\*" />
+    <None Remove="App\**\*" />
+    <None Remove="Protocol\**\*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderChatResponseAggregator.cs" Link="Provider.Shared\ProviderChatResponseAggregator.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderConfigurationSections.cs" Link="Provider.Shared\ProviderConfigurationSections.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderContextWindowFailureClassifier.cs" Link="Provider.Shared\ProviderContextWindowFailureClassifier.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderCredentialAccessor.cs" Link="Provider.Shared\ProviderCredentialAccessor.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderEmbeddingBatch.cs" Link="Provider.Shared\ProviderEmbeddingBatch.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderErrorDiagnosticExtractor.cs" Link="Provider.Shared\ProviderErrorDiagnosticExtractor.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderJson.cs" Link="Provider.Shared\ProviderJson.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderModelCatalog.cs" Link="Provider.Shared\ProviderModelCatalog.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderModelId.cs" Link="Provider.Shared\ProviderModelId.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderResponseUpdates.cs" Link="Provider.Shared\ProviderResponseUpdates.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderStreamTelemetry.cs" Link="Provider.Shared\ProviderStreamTelemetry.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderToolResult.cs" Link="Provider.Shared\ProviderToolResult.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <SunderPackageTarget Include="runtime/$(RuntimeIdentifier)"
+                         Role="runtime"
+                         Rid="$(RuntimeIdentifier)"
+                         Kind="worker" />
+    <SunderContractBundle Include="Protocol\Contracts\credential-settings.rpc.json"
+                          ContractId="sunder.package.agent.provider.anthropic.credentials"
+                          Version="2.0.0"
+                          DescriptorPath="contracts/credential-settings.rpc.json"
+                          Exposure="package" />
+    <SunderRpcProvider Include="anthropic.credentials"
+                       ContractId="sunder.package.agent.provider.anthropic.credentials"
+                       ContractVersion="2.0.0"
+                       Role="runtime"
+                       Audience="owner" />
+  </ItemGroup>
 
 </Project>

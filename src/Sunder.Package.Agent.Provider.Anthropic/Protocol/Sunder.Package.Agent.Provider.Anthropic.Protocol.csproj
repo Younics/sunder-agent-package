@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <SunderPackageFamilyId>sunder.package.agent.provider.anthropic</SunderPackageFamilyId>
+    <SunderPackageRole>protocol</SunderPackageRole>
+    <SunderPackageProject>false</SunderPackageProject>
+    <AssemblyName>Sunder.Package.Agent.Provider.Anthropic.Protocol</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <SunderRpcBinding Include="Contracts\credential-settings.rpc.json"
+                      Namespace="Sunder.Package.Agent.Provider.Anthropic.Protocol.Generated"
+                      OutputFile="CredentialSettings.g.cs" />
+    <EmbeddedResource Include="Contracts\credential-settings.rpc.json"
+                      LogicalName="Sunder.Package.Agent.Provider.Anthropic.Protocol.credential-settings.rpc.json" />
+  </ItemGroup>
+
+</Project>

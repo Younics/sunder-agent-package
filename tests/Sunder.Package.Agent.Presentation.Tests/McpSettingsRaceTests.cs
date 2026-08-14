@@ -1,14 +1,19 @@
+extern alias McpApp;
+
 using System.Collections.Concurrent;
 using System.Reflection;
 using Avalonia.Headless.XUnit;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Sunder.Package.Agent.Mcp;
+using Sunder.Package.Agent.Mcp.Runtime;
 using Sunder.Package.Agent.Mcp.Services;
 using Sunder.Package.Agent.Tests;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Logging;
 using Xunit;
+using AgentMcpSettingsViewModel = McpApp::Sunder.Package.Agent.Mcp.AgentMcpSettingsViewModel;
+using McpStatusKind = McpApp::Sunder.Package.Agent.Mcp.McpStatusKind;
 
 namespace Sunder.Package.Agent.Presentation.Tests;
 
@@ -109,11 +114,7 @@ public sealed class McpSettingsRaceTests
             TestContext.Current.CancellationToken);
         await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance);
         await using var oauth = new McpOAuthService(context);
-        using var viewModel = new AgentMcpSettingsViewModel(
-            new McpSettingsEditorService(catalog),
-            new McpConfigurationCoordinator(new McpEcosystemConfigurationImporter(catalog), syncService: null),
-            new McpServerConnectionService(catalog, manager, oauth),
-            new McpOAuthCoordinator(oauth, manager));
+        using var viewModel = CreateViewModel(catalog, manager, oauth);
         await GetTask(viewModel, "Initialization");
         var blockedSecret = context.SecretsStore.BlockNextRead();
 
@@ -265,12 +266,16 @@ public sealed class McpSettingsRaceTests
 
     private static AgentMcpSettingsViewModel CreateViewModel(
         McpServerCatalogService catalog,
-        McpClientConnectionManager manager)
+        McpClientConnectionManager manager,
+        McpOAuthService? oauth = null)
         => new(
-            new McpSettingsEditorService(catalog),
-            new McpConfigurationCoordinator(new McpEcosystemConfigurationImporter(catalog), syncService: null),
-            new McpServerConnectionService(catalog, manager, oauthService: null),
-            new McpOAuthCoordinator(oauthService: null, manager));
+            new McpLocalManagementGateway(
+                new McpSettingsEditorService(catalog),
+                new McpConfigurationCoordinator(
+                    new McpEcosystemConfigurationImporter(catalog),
+                    syncService: null),
+                new McpServerConnectionService(catalog, manager, oauth),
+                new McpOAuthCoordinator(oauth, manager)));
 
     private static Task GetTask(object instance, string propertyName)
         => Assert.IsAssignableFrom<Task>(instance.GetType()

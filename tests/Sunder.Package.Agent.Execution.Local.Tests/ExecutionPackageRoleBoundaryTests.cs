@@ -11,10 +11,8 @@ using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Avalonia;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Settings;
-using Sunder.Sdk.Runtime;
+using Sunder.Sdk.Storage;
 using Xunit;
-using LocalPackageModule = Sunder.Package.Agent.Execution.Local.PackageModule;
-using DockerPackageModule = Sunder.Package.Agent.Execution.Docker.PackageModule;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
 
@@ -28,15 +26,16 @@ public sealed class ExecutionPackageRoleBoundaryTests
         using var scope = RegressionTestPackageScope.Create();
         var services = new ServiceCollection();
         services.AddSingleton(scope.Context);
-        services.AddSingleton<IPackageRuntimeClient>(NullPackageRuntimeClient.Instance);
         services.AddSingleton<IBackgroundProcessQueue, NoopBackgroundProcessQueue>();
 
         if (local)
         {
+            services.AddSingleton<ILocalExecutionPresentationClient, NoopLocalPresentationClient>();
             new Sunder.Package.Agent.Execution.Local.AppPackageModule().ConfigureAppServices(services, scope.Context);
         }
         else
         {
+            services.AddSingleton<IDockerExecutionPresentationClient, NoopDockerPresentationClient>();
             new Sunder.Package.Agent.Execution.Docker.AppPackageModule().ConfigureAppServices(services, scope.Context);
         }
 
@@ -66,44 +65,23 @@ public sealed class ExecutionPackageRoleBoundaryTests
     }
 
     [Theory]
-    [InlineData(true, "local-execution.presentation.v1")]
-    [InlineData(false, "docker-execution.presentation.v1")]
-    public void RuntimeModules_OwnExecutionAndRegisterTypedPresentationOperation(bool local, string operationId)
+    [InlineData(true)]
+    [InlineData(false)]
+    public void WorkerLeaves_HaveNoAppModuleAndUseOwnerRpcV2(bool local)
     {
-        using var scope = RegressionTestPackageScope.Create();
-        var services = new ServiceCollection();
-        services.AddSingleton(scope.Context);
+        var workerAssembly = local
+            ? typeof(LocalExecutionTarget).Assembly
+            : typeof(DockerExecutionTarget).Assembly;
+        var descriptor = local
+            ? LocalExecutionPresentationRpc.Descriptor
+            : DockerExecutionPresentationRpc.Descriptor;
 
-        if (local)
-        {
-            new LocalPackageModule().ConfigureRuntimeServices(services, scope.Context);
-        }
-        else
-        {
-            new DockerPackageModule().ConfigureRuntimeServices(services, scope.Context);
-        }
-
-        var serviceTypeNames = services.Select(descriptor => descriptor.ServiceType.Name).ToArray();
-        Assert.Contains(local ? nameof(LocalExecutionTarget) : nameof(DockerExecutionTarget), serviceTypeNames);
-        Assert.DoesNotContain(serviceTypeNames, name => name.EndsWith("SettingsViewModel", StringComparison.Ordinal));
-        Assert.DoesNotContain(serviceTypeNames, name => name.EndsWith("WorkspaceEditorPresentationContributor", StringComparison.Ordinal));
-
-        using var provider = services.BuildServiceProvider();
-        var registry = new RecordingRuntimeRegistry();
-        if (local)
-        {
-            new LocalPackageModule().RegisterRuntimeContributions(registry, provider);
-        }
-        else
-        {
-            new DockerPackageModule().RegisterRuntimeContributions(registry, provider);
-        }
-
-        Assert.Contains(operationId, registry.OperationIds);
-        var providerPrefix = local ? "local" : "docker";
-        Assert.Contains($"{providerPrefix}.execution.target", registry.RpcProviderIds);
-        Assert.Contains($"{providerPrefix}.workspace.path.migrator", registry.RpcProviderIds);
-        Assert.Contains($"{providerPrefix}.workspace.editor", registry.RpcProviderIds);
+        Assert.DoesNotContain(
+            workerAssembly.GetTypes(),
+            type => typeof(ISunderAppPackageModule).IsAssignableFrom(type));
+        Assert.Equal(SunderRpcProtocol.DescriptorVersionV2, descriptor.DescriptorVersion);
+        Assert.NotNull(descriptor.AbiSha256);
+        Assert.Single(descriptor.Services);
     }
 
     [Fact]
@@ -111,9 +89,9 @@ public sealed class ExecutionPackageRoleBoundaryTests
     {
         using var scope = RegressionTestPackageScope.Create();
         var catalog = new LocalShellCatalogService(scope.Context);
-        var handler = new LocalExecutionRuntimeOperationHandler(scope.Context, catalog);
+        var handler = new LocalExecutionPresentationRpcHandler(scope.Context, catalog);
 
-        var response = await handler.HandleAsync(new LocalExecutionOperationRequest(
+        var response = await handler.ExecuteAsync(new LocalExecutionOperationRequest(
                 LocalExecutionOperationKind.SaveShells,
                 Shells:
                 [
@@ -223,9 +201,9 @@ public sealed class ExecutionPackageRoleBoundaryTests
         using var scope = RegressionTestPackageScope.Create();
         var runner = new DockerCliRunner(scope.Context);
         var catalog = new DockerImageCatalogService(scope.Context, runner);
-        var handler = new DockerExecutionRuntimeOperationHandler(scope.Context, runner, catalog);
+        var handler = new DockerExecutionPresentationRpcHandler(scope.Context, runner, catalog);
 
-        var response = await handler.HandleAsync(new DockerExecutionOperationRequest(
+        var response = await handler.ExecuteAsync(new DockerExecutionOperationRequest(
                 DockerExecutionOperationKind.SaveSettings,
                 TimeoutSeconds: "300",
                 DockerCliPath: "relative/docker"));
@@ -348,9 +326,9 @@ public sealed class ExecutionPackageRoleBoundaryTests
         using var scope = RegressionTestPackageScope.Create();
         var runner = new DockerCliRunner(scope.Context);
         var catalog = new DockerImageCatalogService(scope.Context, runner);
-        var handler = new DockerExecutionRuntimeOperationHandler(scope.Context, runner, catalog);
+        var handler = new DockerExecutionPresentationRpcHandler(scope.Context, runner, catalog);
 
-        var response = await handler.HandleAsync(new DockerExecutionOperationRequest(
+        var response = await handler.ExecuteAsync(new DockerExecutionOperationRequest(
             DockerExecutionOperationKind.AddImage,
             ImageReference: imageReference));
 
@@ -366,9 +344,9 @@ public sealed class ExecutionPackageRoleBoundaryTests
         using var scope = RegressionTestPackageScope.Create();
         var runner = new DockerCliRunner(scope.Context);
         var catalog = new DockerImageCatalogService(scope.Context, runner);
-        var handler = new DockerExecutionRuntimeOperationHandler(scope.Context, runner, catalog);
+        var handler = new DockerExecutionPresentationRpcHandler(scope.Context, runner, catalog);
 
-        var response = await handler.HandleAsync(new DockerExecutionOperationRequest(
+        var response = await handler.ExecuteAsync(new DockerExecutionOperationRequest(
             DockerExecutionOperationKind.AddImage,
             ImageReference: "repository/image:latest"));
 
@@ -379,23 +357,17 @@ public sealed class ExecutionPackageRoleBoundaryTests
     }
 
     [Fact]
-    public async Task DockerRuntimeOperation_ReturnsCachedSemanticCatalogFailureAfterBackgroundStart()
+    public async Task DockerActivation_RejectsSemanticCatalogFailureBeforeRuntimeOperations()
     {
         using var scope = RegressionTestPackageScope.Create();
-        const string json = "{\"Version\":1,\"Images\":[],\"UnknownPolicy\":true}";
+        const string json = "{\"schemaVersion\":3,\"revision\":1,\"images\":[],\"unknownPolicy\":true}";
         await scope.Context.Storage.State.SetValueAsync(DockerImageCatalogService.ImagesKey, json);
         var migration = new DockerPackageStorageMigration(scope.Context);
-        await migration.StartAsync();
-        var runner = new DockerCliRunner(scope.Context);
-        var catalog = new DockerImageCatalogService(scope.Context, runner, migration);
-        var handler = new DockerExecutionRuntimeOperationHandler(scope.Context, runner, catalog);
 
-        var response = await handler.HandleAsync(new DockerExecutionOperationRequest(
-            DockerExecutionOperationKind.GetSettings));
+        var exception = await Assert.ThrowsAsync<DockerExecutionDomainException>(
+            () => migration.StartAsync());
 
-        Assert.False(response.Success);
-        Assert.Equal("docker.catalog.unknown-data", response.Error?.Code);
-        Assert.NotNull(response.Error?.CorrelationId);
+        Assert.Equal("docker.catalog.unknown-data", exception.Code);
         Assert.Equal(json, await scope.Context.Storage.State.GetValueAsync(DockerImageCatalogService.ImagesKey));
     }
 
@@ -405,7 +377,7 @@ public sealed class ExecutionPackageRoleBoundaryTests
         using var scope = RegressionTestPackageScope.Create();
         var services = new ServiceCollection();
         services.AddSingleton(scope.Context);
-        services.AddSingleton<IPackageRuntimeClient>(new FailingDockerRuntimeClient());
+        services.AddSingleton<IDockerExecutionPresentationClient>(new FailingDockerRuntimeClient());
         services.AddSingleton<IBackgroundProcessQueue, NoopBackgroundProcessQueue>();
         var module = new Sunder.Package.Agent.Execution.Docker.AppPackageModule();
         module.ConfigureAppServices(services, scope.Context);
@@ -454,27 +426,6 @@ public sealed class ExecutionPackageRoleBoundaryTests
         public void RegisterSettingsView<TView>() where TView : Control => SettingsViews.Add(typeof(TView));
     }
 
-    private sealed class RecordingRuntimeRegistry : ISunderRuntimeContributionRegistry
-    {
-        public List<string> OperationIds { get; } = [];
-        public List<string> RpcProviderIds { get; } = [];
-
-        public void RegisterBackgroundService<TService>() where TService : class, IPackageBackgroundService { }
-        public void RegisterSettingsSchema(PackageSettingsSchema schema) { }
-        public void RegisterRpcProvider(string providerId, ISunderRpcServiceHandler handler)
-            => RpcProviderIds.Add(providerId);
-        public void RegisterRuntimeOperation<TRequest, TResponse>(
-            PackageRuntimeOperation<TRequest, TResponse> operation,
-            IPackageRuntimeOperationHandler<TRequest, TResponse> handler)
-            where TRequest : class where TResponse : class
-            => OperationIds.Add(operation.OperationId);
-        public void RegisterRuntimeStream<TRequest, TEvent>(
-            PackageRuntimeStream<TRequest, TEvent> stream,
-            IPackageRuntimeStreamHandler<TRequest, TEvent> handler)
-            where TRequest : class where TEvent : class
-        { }
-    }
-
     private sealed class NoopBackgroundProcessQueue : IBackgroundProcessQueue
     {
         public event EventHandler<BackgroundProcessChangedEventArgs>? ProcessChanged { add { } remove { } }
@@ -483,70 +434,51 @@ public sealed class ExecutionPackageRoleBoundaryTests
         public bool Cancel(Guid processId) => false;
     }
 
-    private sealed class RecordingDockerRuntimeClient : IPackageRuntimeClient
+    private sealed class RecordingDockerRuntimeClient : IDockerExecutionPresentationClient
     {
-        public bool IsAvailable => true;
-
-        public ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-            PackageRuntimeOperation<TRequest, TResponse> operation,
-            TRequest request,
+        public ValueTask<DockerExecutionOperationResponse> ExecuteAsync(
+            DockerExecutionOperationRequest request,
             CancellationToken cancellationToken = default)
-            where TRequest : class
-            where TResponse : class
         {
             cancellationToken.ThrowIfCancellationRequested();
-            Assert.Equal(DockerExecutionRuntimeOperations.Execute.OperationId, operation.OperationId);
             var response = new DockerExecutionOperationResponse(
                 "300",
                 string.Empty,
                 [new DockerImageDefinition("agent0ai/agent-zero:1.0", DockerImageStatus.NotPulled, null, null)],
                 CatalogRevision: 1);
-            return ValueTask.FromResult((TResponse)(object)response);
-        }
-
-        public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-            PackageRuntimeStream<TRequest, TEvent> stream,
-            TRequest request,
-            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
-            where TRequest : class
-            where TEvent : class
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            await Task.CompletedTask;
-            yield break;
+            return ValueTask.FromResult(response);
         }
     }
 
-    private sealed class FailingDockerRuntimeClient : IPackageRuntimeClient
+    private sealed class FailingDockerRuntimeClient : IDockerExecutionPresentationClient
     {
-        public bool IsAvailable => true;
-
-        public ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-            PackageRuntimeOperation<TRequest, TResponse> operation,
-            TRequest request,
+        public ValueTask<DockerExecutionOperationResponse> ExecuteAsync(
+            DockerExecutionOperationRequest request,
             CancellationToken cancellationToken = default)
-            where TRequest : class
-            where TResponse : class
         {
             cancellationToken.ThrowIfCancellationRequested();
-            return ValueTask.FromException<TResponse>(new PackageRuntimeInvocationException(
-                "docker.command.failed",
-                isTransient: true,
-                statusCode: 503,
-                correlationId: "docker-host-defense"));
+            return ValueTask.FromException<DockerExecutionOperationResponse>(
+                new SunderRpcException(new SunderRpcError(
+                    SunderRpcErrorKind.Unavailable,
+                    "docker.command.failed",
+                    "Docker is unavailable.")));
         }
+    }
 
-        public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-            PackageRuntimeStream<TRequest, TEvent> stream,
-            TRequest request,
-            [System.Runtime.CompilerServices.EnumeratorCancellation]
+    private sealed class NoopLocalPresentationClient : ILocalExecutionPresentationClient
+    {
+        public ValueTask<LocalExecutionOperationResponse> ExecuteAsync(
+            LocalExecutionOperationRequest request,
             CancellationToken cancellationToken = default)
-            where TRequest : class
-            where TEvent : class
-        {
-            await Task.CompletedTask;
-            yield break;
-        }
+            => ValueTask.FromException<LocalExecutionOperationResponse>(new NotSupportedException());
+    }
+
+    private sealed class NoopDockerPresentationClient : IDockerExecutionPresentationClient
+    {
+        public ValueTask<DockerExecutionOperationResponse> ExecuteAsync(
+            DockerExecutionOperationRequest request,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromException<DockerExecutionOperationResponse>(new NotSupportedException());
     }
 
     private sealed class RecordingBackgroundProcessQueue : IBackgroundProcessQueue

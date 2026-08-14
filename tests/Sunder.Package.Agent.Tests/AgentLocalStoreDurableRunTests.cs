@@ -29,27 +29,7 @@ public sealed class AgentLocalStoreDurableRunTests
 
         Assert.Equal(
             [
-                (1L, "legacy-schema-baseline"),
-                (2L, "agent-runs"),
-                (3L, "pending-permission-state"),
-                (4L, "typed-run-suspensions"),
-                (5L, "permission-claim-recovery"),
-                (6L, "parent-continuation-work"),
-                (7L, "permission-execution-snapshot"),
-                (8L, "turn-content-revisions"),
-                (9L, "turn-run-ownership"),
-                (10L, "remove-dormant-continuity-and-permission-schema"),
-                (11L, "durable-run-budgets"),
-                (12L, "tool-execution-ledger"),
-                (13L, "durable-lifecycle-outbox"),
-                (14L, "durable-user-turn-admission"),
-                (15L, "anchored-session-context"),
-                (16L, "tool-execution-provenance"),
-                (17L, "lifecycle-payload-erasure-and-replay-watermarks"),
-                (18L, "runtime-generation-ownership"),
-                (19L, "lifecycle-durability-hardening"),
-                (20L, "durable-resource-claims"),
-                (21L, "legacy-tool-execution-identities"),
+                (1L, "agent-2.0-baseline"),
             ],
             migrations.Select(static migration => (migration.Version, migration.Name)));
         Assert.All(migrations, migration => Assert.Matches("^[0-9a-f]{64}$", migration.Checksum));

@@ -1,5 +1,6 @@
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Subagents.Models;
+using Sunder.Package.Agent.Subagents.Runtime;
 
 namespace Sunder.Package.Agent.Subagents.Services;
 
@@ -46,10 +47,12 @@ public sealed class SubagentService(SubagentStore store)
     {
         if (string.IsNullOrWhiteSpace(description))
         {
-            throw new InvalidOperationException("Subagent description is required before the subagent can be saved or used.");
+            throw new SubagentOwnerOperationException(
+                "Subagent description is required before the subagent can be saved or used.");
         }
 
-        var existing = _store.Get(subagentId) ?? throw new InvalidOperationException($"Subagent '{subagentId}' was not found.");
+        var existing = _store.Get(subagentId)
+            ?? throw new SubagentOwnerOperationException($"Subagent '{subagentId}' was not found.");
         var normalizedProviderId = Normalize(chatProviderId);
         var saved = existing with
         {

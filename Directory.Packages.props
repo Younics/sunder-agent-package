@@ -13,10 +13,10 @@
     <PackageVersion Include="Sunder.Package.Build" Version="[1.1.0,1.2.0)" />
     <!-- UI -->
     <PackageVersion Include="Avalonia" Version="12.0.3"
-                    Condition="'$(MSBuildProjectName)' != 'Sunder.Package.Agent.Presentation.Tests'" />
+                    Condition="'$(SunderPackageFamilyId)' != 'sunder.package.agent' or '$(SunderPackageRole)' != 'test'" />
     <!-- 12.0.4 fixes intermittent xUnit v3 TestContext loss in Avalonia headless tests. -->
     <PackageVersion Include="Avalonia" Version="12.0.4"
-                    Condition="'$(MSBuildProjectName)' == 'Sunder.Package.Agent.Presentation.Tests'" />
+                    Condition="'$(SunderPackageFamilyId)' == 'sunder.package.agent' and '$(SunderPackageRole)' == 'test'" />
     <PackageVersion Include="Avalonia.Themes.Fluent" Version="12.0.4" />
     <PackageVersion Include="Avalonia.Controls.ItemsRepeater" Version="12.0.0" />
     <PackageVersion Include="Avalonia.AvaloniaEdit" Version="12.0.0" />

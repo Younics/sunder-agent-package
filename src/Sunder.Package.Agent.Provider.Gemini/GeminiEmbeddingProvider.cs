@@ -114,7 +114,7 @@ public sealed class GeminiEmbeddingProvider : IAgentEmbeddingProvider, IAgentEmb
             var embedding = response.Embeddings?.FirstOrDefault();
             results[input.Index] = embedding?.Values is null
                 ? null
-                : new AgentEmbeddingGenerationResult(modelId, embedding.Values.Select(value => (float)value).ToArray());
+                : new AgentEmbeddingGenerationResult(modelId, embedding.Values.Select(static value => (double)value).ToArray());
         }
 
         return results;

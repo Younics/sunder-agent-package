@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AssemblyName>Sunder.Package.Agent.Skills.App</AssemblyName>
+    <SunderPackageFamilyId>sunder.package.agent.skills</SunderPackageFamilyId>
+    <SunderPackageRole>app</SunderPackageRole>
+    <SunderPackageProject>true</SunderPackageProject>
+    <SunderSdkAvaloniaReference>true</SunderSdkAvaloniaReference>
+    <SunderSdkStacksReference>true</SunderSdkStacksReference>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <SunderPackageAssetsDirectory>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\..\Assets'))</SunderPackageAssetsDirectory>
+    <DefineConstants>$(DefineConstants);SUNDER_SKILLS_APP</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="CommunityToolkit.Mvvm" />
+    <PackageReference Include="Octokit" />
+    <ProjectReference Include="..\..\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
+    <ProjectReference Include="..\Protocol\SkillsProtocol.csproj" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\PackageMetadata.cs" Link="PackageMetadata.cs" />
+    <Compile Include="..\Properties\AssemblyInfo.cs" Link="Properties\AssemblyInfo.cs" />
+    <Compile Include="..\PackageViews\**\*.cs" Link="PackageViews\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\Runtime\SkillRuntimeGateway.cs" Link="Runtime\SkillRuntimeGateway.cs" />
+    <AvaloniaXaml Include="..\PackageViews\**\*.axaml" Link="PackageViews\%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <SunderContractBundle Include="..\Protocol\Contracts\skills-owner.rpc.json"
+                          ContractId="sunder.package.agent.skills.owner"
+                          Version="2.0.0"
+                          DescriptorPath="contracts/skills-owner.rpc.json"
+                          Exposure="package" />
+    <SunderUsesContract Include="sunder.package.agent.skills.owner"
+                        Role="app"
+                        ContractVersion="2.0.0"
+                        Required="true"
+                        Actions="discover;invoke;subscribe" />
+  </ItemGroup>
+
+  <Import Project="..\..\Sunder.Package.Agent.Shared\Sunder.Package.Agent.Shared.props" />
+
+</Project>

@@ -1,6 +1,5 @@
 using Sunder.Package.Agent.Execution.Local;
 using Sunder.Sdk.Abstractions;
-using Sunder.Sdk.Runtime;
 using Xunit;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
@@ -185,39 +184,21 @@ public sealed class LocalSettingsLifecycleTests
     private static LocalShellDefinition Shell(string id, string name, string path)
         => new(id, name, path, "custom", IsDetected: false);
 
-    private sealed class BlockingLocalRuntimeClient : IPackageRuntimeClient
+    private sealed class BlockingLocalRuntimeClient : ILocalExecutionPresentationClient
     {
         private int _requestIndex;
-
-        public bool IsAvailable => true;
 
         public PendingRequest[] Requests { get; } =
             Enumerable.Range(0, 12).Select(_ => new PendingRequest()).ToArray();
 
-        public async ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-            PackageRuntimeOperation<TRequest, TResponse> operation,
-            TRequest request,
+        public async ValueTask<LocalExecutionOperationResponse> ExecuteAsync(
+            LocalExecutionOperationRequest request,
             CancellationToken cancellationToken = default)
-            where TRequest : class
-            where TResponse : class
         {
-            Assert.Equal(LocalExecutionRuntimeOperations.Execute.OperationId, operation.OperationId);
             var pending = Requests[Interlocked.Increment(ref _requestIndex) - 1];
-            pending.Request = Assert.IsType<LocalExecutionOperationRequest>(request);
+            pending.Request = request;
             pending.Started.TrySetResult();
-            return (TResponse)(object)await pending.Response.Task;
-        }
-
-        public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-            PackageRuntimeStream<TRequest, TEvent> stream,
-            TRequest request,
-            [System.Runtime.CompilerServices.EnumeratorCancellation]
-            CancellationToken cancellationToken = default)
-            where TRequest : class
-            where TEvent : class
-        {
-            await Task.CompletedTask;
-            yield break;
+            return await pending.Response.Task;
         }
     }
 

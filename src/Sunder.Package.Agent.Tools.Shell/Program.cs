@@ -6,12 +6,12 @@ using Sunder.Sdk.Worker;
 AgentRpcCatalog? ownedCatalog = null;
 try
 {
-    await SunderWorkerV2.RunAsync(context =>
+    await SunderWorker.RunAsync(context =>
     {
         var catalog = AgentRpcCatalog.CreateDormant(context.Rpc);
         ownedCatalog = catalog;
         var source = new ShellToolSource();
-        return new SunderWorkerV2Options(
+        return new SunderWorkerOptions(
         [
             Register(
                 "shell.tools",
@@ -56,5 +56,7 @@ static SunderWorkerProviderRegistration Register(
         descriptor.ContractId,
         descriptor.Version,
         descriptor.Sha256,
+        descriptor.AbiSha256 ?? throw new InvalidOperationException(
+            $"Agent RPC contract '{descriptor.ContractId}' does not have a V2 ABI identity."),
         handler);
 }

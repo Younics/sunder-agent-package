@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AssemblyName>Sunder.Package.Agent.Provider.OpenAI.App</AssemblyName>
+    <RootNamespace>Sunder.Package.Agent.Provider.OpenAI</RootNamespace>
+    <SunderPackageFamilyId>sunder.package.agent.provider.openai</SunderPackageFamilyId>
+    <SunderPackageRole>app</SunderPackageRole>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <SunderAgentSharedCallbackFlow>true</SunderAgentSharedCallbackFlow>
+    <SunderPackageAssetsDirectory>$(MSBuildProjectDirectory)\..\Assets</SunderPackageAssetsDirectory>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="CommunityToolkit.Mvvm" />
+    <ProjectReference Include="..\Shared\Sunder.Package.Agent.Provider.OpenAI.Shared.csproj" />
+    <Compile Include="..\OpenAiSettingsView.axaml.cs" Link="OpenAiSettingsView.axaml.cs" />
+    <Compile Include="..\OpenAiSettingsViewModel.cs" Link="OpenAiSettingsViewModel.cs" />
+    <Compile Include="..\PackageMetadata.cs" Link="PackageMetadata.cs" />
+    <Compile Include="..\Management\OpenAiAppManagement.cs"
+             Link="Management\OpenAiAppManagement.cs" />
+    <Compile Include="..\Management\OpenAiCredentialOwnerClient.cs"
+              Link="Management\OpenAiCredentialOwnerClient.cs" />
+    <Compile Include="..\..\Sunder.Package.Agent.Provider.Shared\ApiKeySettingsState.cs"
+             Link="Provider.Shared\ApiKeySettingsState.cs" />
+    <Compile Include="..\..\Sunder.Package.Agent.Provider.Shared\UtilityModelSettingsState.cs"
+             Link="Provider.Shared\UtilityModelSettingsState.cs" />
+    <AvaloniaXaml Include="..\OpenAiSettingsView.axaml" Link="OpenAiSettingsView.axaml" />
+    <AvaloniaResource Include="..\..\Sunder.Package.Agent.Provider.Shared\ProviderSettingsStyles.axaml"
+                      Link="Provider.Shared\ProviderSettingsStyles.axaml" />
+    <SunderContractBundle Include="..\Shared\Contracts\openai-management.rpc.json"
+                          ContractId="sunder.package.agent.provider.openai.management"
+                          Version="2.0.0"
+                          DescriptorPath="contracts/openai-management.rpc.json"
+                          Exposure="package" />
+    <SunderUsesContract Include="sunder.package.agent.provider.openai.management"
+                        Role="app"
+                        ContractVersion="2.0.0"
+                        Required="true"
+                        Actions="discover;invoke" />
+  </ItemGroup>
+
+  <Import Project="..\..\Sunder.Package.Agent.Shared\Sunder.Package.Agent.Shared.props" />
+
+</Project>

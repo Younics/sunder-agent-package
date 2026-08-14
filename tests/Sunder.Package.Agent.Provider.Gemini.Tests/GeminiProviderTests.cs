@@ -1,9 +1,14 @@
+extern alias GeminiApp;
+
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Provider.Gemini;
+using Sunder.Package.Agent.Provider.Gemini.Protocol.Generated;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Package.Agent.Provider.TestSupport;
-using Sunder.Sdk.Runtime;
 using Xunit;
+using GeminiSettingsViewModel = GeminiApp::Sunder.Package.Agent.Provider.Gemini.GeminiSettingsViewModel;
+using IProviderCredentialOwnerClient = GeminiApp::Sunder.Package.Agent.Provider.Shared.IProviderCredentialOwnerClient;
+using ProviderCredentialSnapshot = GeminiApp::Sunder.Package.Agent.Provider.Shared.ProviderCredentialSnapshot;
 
 namespace Sunder.Package.Agent.Provider.Gemini.Tests;
 
@@ -63,22 +68,9 @@ public sealed class GeminiProviderTests
         var credentials = new ProviderCredentialAccessor(
             context.Secrets,
             GeminiProviderConfiguration.ApiKeySecretKey);
-        var credentialHandler = new ProviderCredentialRuntimeHandler(credentials);
-        var runtime = new ProviderTestRuntimeClient(async (operationId, request, cancellationToken) =>
-        {
-            if (operationId == ProviderCredentialRuntimeOperations.Query.OperationId)
-            {
-                return await credentialHandler.HandleAsync((ProviderCredentialQuery)request, cancellationToken);
-            }
-
-            if (operationId == ProviderCredentialRuntimeOperations.Command.OperationId)
-            {
-                return await credentialHandler.HandleAsync((ProviderCredentialCommand)request, cancellationToken);
-            }
-
-            throw new InvalidOperationException($"Unexpected Runtime operation '{operationId}'.");
-        });
-        using var settings = new GeminiSettingsViewModel(context, runtime);
+        using var settings = new GeminiSettingsViewModel(
+            context,
+            new CredentialOwnerClientFake(credentials));
         var chat = new GeminiAgentProvider(context, credentials);
         var embeddings = new GeminiEmbeddingProvider(context, credentials);
 
@@ -104,7 +96,11 @@ public sealed class GeminiProviderTests
             {
                 [GeminiProviderConfiguration.UtilityModelKey] = "gemini/unknown-model",
             });
-        using var settings = new GeminiSettingsViewModel(context, NullPackageRuntimeClient.Instance);
+        using var settings = new GeminiSettingsViewModel(
+            context,
+            new CredentialOwnerClientFake(new ProviderCredentialAccessor(
+                context.Secrets,
+                GeminiProviderConfiguration.ApiKeySecretKey)));
 
         Assert.Equal(
             GeminiProviderConfiguration.DefaultUtilityModelId,
@@ -125,6 +121,37 @@ public sealed class GeminiProviderTests
         Assert.NotEmpty(models.Single(model => model.ModelId == "gemini/gemini-3-flash-preview").Variants ?? []);
         Assert.Null(models.Single(model => model.ModelId == "gemini/gemini-flash-latest").Variants);
         Assert.Null(models.Single(model => model.ModelId == "gemini/gemma-4-31b-it").Variants);
+    }
+
+    private sealed class CredentialOwnerClientFake(ProviderCredentialAccessor credentials)
+        : IProviderCredentialOwnerClient
+    {
+        private readonly ProviderCredentialRpcProvider _provider = new(credentials);
+
+        public async ValueTask<ProviderCredentialSnapshot> GetStatusAsync(
+            CancellationToken cancellationToken = default)
+            => ToSnapshot(await _provider.QueryAsync(
+                null!,
+                new CredentialQuery(),
+                cancellationToken));
+
+        public async ValueTask<ProviderCredentialSnapshot> SetAsync(
+            string credential,
+            CancellationToken cancellationToken = default)
+            => ToSnapshot(await _provider.CommandAsync(
+                null!,
+                new CredentialCommand { Kind = 0, Credential = credential },
+                cancellationToken));
+
+        public async ValueTask<ProviderCredentialSnapshot> ClearAsync(
+            CancellationToken cancellationToken = default)
+            => ToSnapshot(await _provider.CommandAsync(
+                null!,
+                new CredentialCommand { Kind = 1 },
+                cancellationToken));
+
+        private static ProviderCredentialSnapshot ToSnapshot(CredentialSnapshot snapshot)
+            => new(snapshot.HasStoredCredential);
     }
 
 }

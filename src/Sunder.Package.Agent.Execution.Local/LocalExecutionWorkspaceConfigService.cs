@@ -6,8 +6,8 @@ using System.Text;
 using System.Text.Json;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Shared.Storage;
 using Sunder.Sdk.Abstractions;
-using Sunder.Sdk.Storage;
 
 namespace Sunder.Package.Agent.Execution.Local;
 
@@ -16,20 +16,11 @@ public sealed class LocalExecutionWorkspaceConfigService : IAgentWorkspacePathMi
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
     private static readonly ConditionalWeakTable<IPackageKeyValueStore, ConcurrentDictionary<string, SemaphoreSlim>> MutationGates = new();
     private readonly IPackageContext _packageContext;
-    private readonly LocalPackageStorageMigration _storageMigration;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _mutationGates;
 
     public LocalExecutionWorkspaceConfigService(IPackageContext packageContext)
-        : this(packageContext, new LocalPackageStorageMigration(packageContext))
-    {
-    }
-
-    internal LocalExecutionWorkspaceConfigService(
-        IPackageContext packageContext,
-        LocalPackageStorageMigration storageMigration)
     {
         _packageContext = packageContext;
-        _storageMigration = storageMigration;
         _mutationGates = MutationGates.GetValue(
             packageContext.Storage.State,
             static _ => new ConcurrentDictionary<string, SemaphoreSlim>(StringComparer.Ordinal));
@@ -41,7 +32,6 @@ public sealed class LocalExecutionWorkspaceConfigService : IAgentWorkspacePathMi
         string bindingId,
         CancellationToken cancellationToken = default)
     {
-        await _storageMigration.EnsureAsync(cancellationToken).ConfigureAwait(false);
         var json = await _packageContext.Storage.State.GetValueAsync(BuildKey(bindingId), cancellationToken);
         if (string.IsNullOrWhiteSpace(json))
         {
@@ -64,7 +54,6 @@ public sealed class LocalExecutionWorkspaceConfigService : IAgentWorkspacePathMi
         LocalExecutionWorkspaceConfig config,
         CancellationToken cancellationToken = default)
     {
-        await _storageMigration.EnsureAsync(cancellationToken).ConfigureAwait(false);
         var gate = _mutationGates.GetOrAdd(bindingId, static _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -82,7 +71,6 @@ public sealed class LocalExecutionWorkspaceConfigService : IAgentWorkspacePathMi
         Func<LocalExecutionWorkspaceConfig, CancellationToken, ValueTask<LocalExecutionWorkspaceConfig>> update,
         CancellationToken cancellationToken)
     {
-        await _storageMigration.EnsureAsync(cancellationToken).ConfigureAwait(false);
         var gate = _mutationGates.GetOrAdd(bindingId, static _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -135,7 +123,6 @@ public sealed class LocalExecutionWorkspaceConfigService : IAgentWorkspacePathMi
         AgentWorkspacePathMigrationContext context,
         CancellationToken cancellationToken = default)
     {
-        await _storageMigration.EnsureAsync(cancellationToken).ConfigureAwait(false);
         var json = await _packageContext.Storage.State.GetValueAsync(BuildKey(context.Binding.BindingId), cancellationToken);
         if (string.IsNullOrWhiteSpace(json))
         {
@@ -217,7 +204,7 @@ public sealed class LocalExecutionWorkspaceConfigService : IAgentWorkspacePathMi
             : StringComparer.Ordinal;
 
     internal static string BuildKey(string bindingId)
-        => PackageStorageKeyFactory.Create("workspace-bindings.config", 2, bindingId);
+        => CurrentPackageStorageKey.Create("workspace-bindings.config", 2, bindingId);
 
     private static string? TryGetString(JsonElement element, string propertyName)
         => element.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.String

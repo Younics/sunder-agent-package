@@ -106,16 +106,6 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
         _rpcCatalog.Changed += OnRpcCatalogChanged;
     }
 
-    public AgentWorkspacesViewModel(
-        AgentWorkspaceService workspaceService,
-        AgentExecutionTargetService executionTargetService,
-        AgentRpcCatalog rpcCatalog,
-        AgentExecutionTargetWarmupService warmupService,
-        IPackageSettingsNavigationService? settingsNavigationService = null)
-        : this(workspaceService, warmupService, rpcCatalog, settingsNavigationService)
-    {
-    }
-
     public ObservableCollection<AgentWorkspaceRecord> Workspaces { get; } = [];
 
     public ObservableCollection<ExecutionTargetOption> ExecutionTargets { get; } = [];

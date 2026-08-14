@@ -1,14 +1,20 @@
 {
-  "descriptorVersion": 1,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "descriptorVersion": 2,
   "contractId": "sunder.agent.execution.target",
   "version": "1.0.0",
-  "services": [
-    {
-      "serviceId": "execution-target",
-      "methods": [
-        {
-          "methodId": "describe",
+  "errors": {
+    "agent.execution.facet-unavailable": {
+      "description": "The execution target does not implement the requested optional facet."
+    }
+  },
+  "services": {
+    "execution-target": {
+      "methods": {
+        "describe": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/AgentRpcEmpty"
           },
@@ -16,9 +22,10 @@
             "$ref": "#/$defs/AgentExecutionTargetDescriptor"
           }
         },
-        {
-          "methodId": "configuration-generation",
+        "configuration-generation": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/AgentExecutionTargetContextWire"
           },
@@ -26,9 +33,10 @@
             "$ref": "#/$defs/AgentRpcOptionalOfString"
           }
         },
-        {
-          "methodId": "readiness",
+        "readiness": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/AgentExecutionTargetContextWire"
           },
@@ -36,9 +44,10 @@
             "$ref": "#/$defs/AgentExecutionTargetReadiness"
           }
         },
-        {
-          "methodId": "shell",
+        "shell": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/AgentExecutionTargetContextWire"
           },
@@ -46,9 +55,10 @@
             "$ref": "#/$defs/AgentExecutionShellDescriptor"
           }
         },
-        {
-          "methodId": "resolve-file",
+        "resolve-file": {
           "kind": "unary",
+          "idempotency": "none",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/ExecutionPathRequest"
           },
@@ -56,9 +66,10 @@
             "$ref": "#/$defs/AgentResolvedResourceWire"
           }
         },
-        {
-          "methodId": "execute-shell",
+        "execute-shell": {
           "kind": "unary",
+          "idempotency": "none",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/ExecutionShellRequest"
           },
@@ -66,9 +77,10 @@
             "$ref": "#/$defs/AgentShellCommandResult"
           }
         },
-        {
-          "methodId": "read-file",
+        "read-file": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/ExecutionFileReadRequest"
           },
@@ -76,9 +88,10 @@
             "$ref": "#/$defs/AgentFileReadResult"
           }
         },
-        {
-          "methodId": "write-file",
+        "write-file": {
           "kind": "unary",
+          "idempotency": "none",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/ExecutionFileWriteRequest"
           },
@@ -86,9 +99,10 @@
             "$ref": "#/$defs/AgentFileMutationResultWire"
           }
         },
-        {
-          "methodId": "delete-file",
+        "delete-file": {
           "kind": "unary",
+          "idempotency": "none",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/ExecutionFileDeleteRequest"
           },
@@ -96,9 +110,12 @@
             "$ref": "#/$defs/AgentFileMutationResultWire"
           }
         },
-        {
-          "methodId": "execute-process",
+        "execute-process": {
           "kind": "unary",
+          "idempotency": "none",
+          "errors": [
+            "agent.execution.facet-unavailable"
+          ],
           "requestSchema": {
             "$ref": "#/$defs/ExecutionProcessRequest"
           },
@@ -106,9 +123,12 @@
             "$ref": "#/$defs/AgentShellCommandResult"
           }
         },
-        {
-          "methodId": "resolve-resources",
+        "resolve-resources": {
           "kind": "unary",
+          "idempotency": "none",
+          "errors": [
+            "agent.execution.facet-unavailable"
+          ],
           "requestSchema": {
             "$ref": "#/$defs/ExecutionResourcesRequest"
           },
@@ -116,9 +136,12 @@
             "$ref": "#/$defs/ListOfAgentResolvedExecutionResource"
           }
         },
-        {
-          "methodId": "validate-resource-authority",
+        "validate-resource-authority": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [
+            "agent.execution.facet-unavailable"
+          ],
           "requestSchema": {
             "$ref": "#/$defs/AgentExecutionTargetContextWire"
           },
@@ -126,9 +149,12 @@
             "$ref": "#/$defs/AgentResourceAuthorityValidation"
           }
         },
-        {
-          "methodId": "release-resource-authority",
+        "release-resource-authority": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [
+            "agent.execution.facet-unavailable"
+          ],
           "requestSchema": {
             "$ref": "#/$defs/ResourceCapabilitiesRequest"
           },
@@ -136,9 +162,12 @@
             "$ref": "#/$defs/AgentRpcEmpty"
           }
         },
-        {
-          "methodId": "execution-scope",
+        "execution-scope": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [
+            "agent.execution.facet-unavailable"
+          ],
           "requestSchema": {
             "$ref": "#/$defs/AgentExecutionTargetContextWire"
           },
@@ -146,9 +175,12 @@
             "$ref": "#/$defs/AgentExecutionScopeDescriptor"
           }
         },
-        {
-          "methodId": "map-path",
+        "map-path": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [
+            "agent.execution.facet-unavailable"
+          ],
           "requestSchema": {
             "$ref": "#/$defs/ExecutionPathRequest"
           },
@@ -156,9 +188,12 @@
             "$ref": "#/$defs/AgentExecutionPathMapping"
           }
         },
-        {
-          "methodId": "list-path",
+        "list-path": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [
+            "agent.execution.facet-unavailable"
+          ],
           "requestSchema": {
             "$ref": "#/$defs/AgentExecutionTargetContextWire"
           },
@@ -166,9 +201,12 @@
             "$ref": "#/$defs/ListOfString"
           }
         },
-        {
-          "methodId": "add-path",
+        "add-path": {
           "kind": "unary",
+          "idempotency": "none",
+          "errors": [
+            "agent.execution.facet-unavailable"
+          ],
           "requestSchema": {
             "$ref": "#/$defs/ExecutionPathRequest"
           },
@@ -176,9 +214,12 @@
             "$ref": "#/$defs/AgentRpcEmpty"
           }
         },
-        {
-          "methodId": "legacy-file-search",
+        "legacy-file-search": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [
+            "agent.execution.facet-unavailable"
+          ],
           "requestSchema": {
             "$ref": "#/$defs/ExecutionFileSearchProcessRequest"
           },
@@ -186,9 +227,12 @@
             "$ref": "#/$defs/AgentFileSearchProcessResult"
           }
         },
-        {
-          "methodId": "structured-file-search",
+        "structured-file-search": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [
+            "agent.execution.facet-unavailable"
+          ],
           "requestSchema": {
             "$ref": "#/$defs/ExecutionFileSearchRequest"
           },
@@ -196,9 +240,12 @@
             "$ref": "#/$defs/AgentFileSearchResult"
           }
         },
-        {
-          "methodId": "discover-instructions",
+        "discover-instructions": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [
+            "agent.execution.facet-unavailable"
+          ],
           "requestSchema": {
             "$ref": "#/$defs/ExecutionInstructionDiscoveryRequest"
           },
@@ -206,9 +253,9 @@
             "$ref": "#/$defs/AgentScopedInstructionDiscoveryResult"
           }
         }
-      ]
+      }
     }
-  ],
+  },
   "$defs": {
     "AgentRpcEmpty": {
       "type": "object",
@@ -363,8 +410,7 @@
     },
     "DateTimeOffset": {
       "type": "string",
-      "minLength": 0,
-      "maxLength": 1000000
+      "logicalType": "utc-date-time"
     },
     "AgentWorkspaceBindingRecord": {
       "type": "object",
@@ -412,13 +458,11 @@
     },
     "Guid": {
       "type": "string",
-      "minLength": 0,
-      "maxLength": 1000000
+      "logicalType": "uuid"
     },
     "Nullable": {
       "type": "string",
-      "minLength": 0,
-      "maxLength": 1000000
+      "logicalType": "uuid"
     },
     "AgentWorkspaceDocumentRecord": {
       "type": "object",

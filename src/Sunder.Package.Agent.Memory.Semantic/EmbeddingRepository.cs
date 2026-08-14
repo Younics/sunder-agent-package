@@ -772,7 +772,7 @@ internal sealed partial class EmbeddingRepository(string databasePath)
             reader.GetString(3),
             reader.GetString(4),
             reader.GetInt32(5),
-            JsonSerializer.Deserialize<IReadOnlyList<float>>(reader.GetString(6)) ?? [],
+            JsonSerializer.Deserialize<IReadOnlyList<double>>(reader.GetString(6)) ?? [],
             DateTimeOffset.Parse(reader.GetString(7)),
             DateTimeOffset.Parse(reader.GetString(8)))
         {

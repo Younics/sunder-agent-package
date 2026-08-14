@@ -91,6 +91,30 @@ public sealed class SemanticMemoryIndexingReliabilityTests
     }
 
     [Fact]
+    public async Task BackgroundService_CommitBeforeStart_BeginsOnlyAfterPreparationAndExposesCompletion()
+    {
+        await using var harness = new IndexingHarness();
+        harness.AddMemory("A committed generation waits for background-service preparation.");
+        var generation = new PackageRuntimeGeneration(Guid.NewGuid(), 1);
+
+        await harness.Worker.CommitGenerationAsync(generation);
+
+        Assert.False(harness.Worker.GetStatus().IsRunning);
+        Assert.True(harness.Worker.GenerationCompletion.IsCompletedSuccessfully);
+
+        await harness.Worker.StartAsync();
+        var generationCompletion = harness.Worker.GenerationCompletion;
+        await WaitUntilAsync(() => harness.ActiveEmbeddings.Count == 1);
+
+        Assert.True(harness.Worker.GetStatus().IsRunning);
+        Assert.False(generationCompletion.IsCompleted);
+
+        await harness.Worker.StopAsync();
+        await generationCompletion.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(harness.Worker.GenerationCompletion.IsCompletedSuccessfully);
+    }
+
+    [Fact]
     public async Task BackgroundService_RepeatedMonitorTicks_DoNotCallProviderForCurrentSession()
     {
         await using var harness = new IndexingHarness();

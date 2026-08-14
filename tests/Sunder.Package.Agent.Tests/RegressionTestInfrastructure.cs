@@ -603,19 +603,35 @@ internal sealed class RegressionTestRpcState : IDisposable
         ISunderRpcServiceHandler handler,
         IDisposable ownedCatalog,
         string? providerId = null)
+        => Add(
+            packageId,
+            AgentRpcContractDescriptors.Get(contractId),
+            implementation,
+            handler,
+            ownedCatalog,
+            providerId);
+
+    public void Add(
+        string packageId,
+        SunderRpcContractDescriptor descriptor,
+        object implementation,
+        ISunderRpcServiceHandler handler,
+        IDisposable ownedCatalog,
+        string? providerId = null)
     {
         lock (_gate)
         {
             var sequence = ++_providerSequence;
             var endpoint = new SunderRpcEndpointReference($"test.rpc.{Guid.NewGuid():N}");
-            var descriptor = AgentRpcContractDescriptors.Get(contractId);
             var snapshot = new SunderRpcProviderSnapshot(
                 packageId,
                 "1.0.0",
                 providerId ?? $"test.provider.{sequence}",
-                contractId,
+                descriptor.ContractId,
                 descriptor.Version,
                 descriptor.Sha256,
+                descriptor.AbiSha256 ?? throw new InvalidOperationException(
+                    $"Agent RPC contract '{descriptor.ContractId}' does not expose a V2 ABI SHA-256."),
                 Guid.NewGuid(),
                 sequence,
                 1,

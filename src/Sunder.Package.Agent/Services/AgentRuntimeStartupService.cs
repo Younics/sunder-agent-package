@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.HistorySearch;
 using Sunder.Package.Agent.Storage;
 using Sunder.Sdk.Abstractions;
@@ -17,7 +18,7 @@ internal sealed class AgentRuntimeStartupService(
     HistorySearchIndexingService historySearch,
     AgentRuntimeGenerationOptions generationOptions,
     IPackageContext packageContext)
-    : IPackageRuntimeGenerationParticipant, IAsyncDisposable
+    : IAsyncDisposable
 {
     private static readonly TimeSpan AttachmentOrphanGrace = TimeSpan.FromHours(1);
     private static readonly AgentRuntimeProcessIdentity ProcessIdentity = CreateProcessIdentity();
@@ -425,7 +426,8 @@ internal sealed class AgentRuntimeStartupService(
             if (current is null
                 || current.Epoch == generation.ActivationId
                 || current.Status != "Committed"
-                || current.LeaseExpiresAtUtc <= now)
+                || current.LeaseExpiresAtUtc <= now
+                || generation.SessionGeneration > current.RuntimeSessionGeneration)
             {
                 if (store.TryCommitRuntimeGeneration(
                         generation,

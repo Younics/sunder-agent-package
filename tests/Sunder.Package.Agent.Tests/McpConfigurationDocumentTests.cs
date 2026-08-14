@@ -234,7 +234,8 @@ public sealed class McpConfigurationDocumentTests
             HeaderNames = ["Authorization"],
         };
 
-        var exception = Assert.Throws<InvalidOperationException>(() => McpTransportSecurity.ValidateRemoteEndpoint(server));
+        var exception = Assert.Throws<McpManagementOperationException>(() =>
+            McpTransportSecurity.ValidateRemoteEndpoint(server));
 
         Assert.Contains("must use HTTPS", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -248,7 +249,8 @@ public sealed class McpConfigurationDocumentTests
             EndpointUrl = "https://user:password@mcp.example.test/events",
         };
 
-        var exception = Assert.Throws<InvalidOperationException>(() => McpTransportSecurity.ValidateRemoteEndpoint(server));
+        var exception = Assert.Throws<McpManagementOperationException>(() =>
+            McpTransportSecurity.ValidateRemoteEndpoint(server));
 
         Assert.Contains("user-info credentials", exception.Message, StringComparison.OrdinalIgnoreCase);
     }

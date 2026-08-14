@@ -544,7 +544,7 @@ public sealed class MemoryEvaluationTests
         public ValueTask<IReadOnlyList<AgentEmbeddingGenerationResult?>> GenerateEmbeddingsAsync(string modelId, IReadOnlyList<string> texts, CancellationToken cancellationToken = default)
             => ValueTask.FromResult<IReadOnlyList<AgentEmbeddingGenerationResult?>>(texts.Select(text => (AgentEmbeddingGenerationResult?)new AgentEmbeddingGenerationResult(modelId, CreateVector(text))).ToArray());
 
-        private static IReadOnlyList<float> CreateVector(string text)
+        private static IReadOnlyList<double> CreateVector(string text)
         {
             var normalized = text.Trim().ToLowerInvariant();
             if (normalized.Contains("concise", StringComparison.Ordinal) || normalized.Contains("brief", StringComparison.Ordinal))

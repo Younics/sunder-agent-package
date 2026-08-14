@@ -10,7 +10,7 @@ using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
 using Sunder.Sdk.Abstractions;
-using Sunder.Sdk.Runtime;
+using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Storage;
 using Xunit;
 using CorePresentation = AgentCore::Sunder.Package.Agent.Shared.PackageViews;
@@ -271,7 +271,7 @@ public sealed class AgentRuntimeCorrectnessTests
 
         Assert.Equal(1, client.SnapshotInvocationCount);
         Assert.Equal(snapshot.SelectedProfile, viewModel.SelectedProfile);
-        Assert.Equal(snapshot.SelectedWorkspace, viewModel.SelectedWorkspace);
+        Assert.Equal(snapshot.SelectedWorkspace?.WorkspaceId, viewModel.SelectedWorkspace?.WorkspaceId);
         Assert.Equal(snapshot.SelectedSession?.Session.SessionId, viewModel.SelectedSession?.SessionId);
         Assert.Equal("Live after snapshot.", Assert.IsType<AgentTextTranscriptRowViewModel>(
             viewModel.Messages[0]).Content);
@@ -357,7 +357,7 @@ public sealed class AgentRuntimeCorrectnessTests
             gateway,
             gateway);
 
-        var failure = await Assert.ThrowsAsync<InvalidOperationException>(
+        var failure = await Assert.ThrowsAsync<SunderRpcException>(
             () => viewModel.InitializeAsync());
         viewModel.ReportStartupFailure(failure);
         Assert.False(viewModel.IsInitialized);
@@ -376,7 +376,8 @@ public sealed class AgentRuntimeCorrectnessTests
     {
         var snapshot = CreateChatSnapshot(revision: 30);
         var startup = new InterleavedStartupProfileGateway(snapshot);
-        using var dataGateway = new AgentAppRuntimeGateway(new StaticChatSnapshotRuntimeClient(snapshot));
+        using var dataGateway = new AgentAppRuntimeGateway(
+            new StaticChatSnapshotRuntimeClient(snapshot));
         using var viewModel = new AgentChatViewModel(
             startup,
             dataGateway,
@@ -410,7 +411,7 @@ public sealed class AgentRuntimeCorrectnessTests
             gateway,
             gateway);
 
-        var failure = await Assert.ThrowsAsync<PackageRuntimeInvocationException>(
+        var failure = await Assert.ThrowsAsync<SunderRpcException>(
             () => viewModel.InitializeAsync());
         viewModel.ReportStartupFailure(failure);
         await gateway.InitializeAsync();
@@ -456,7 +457,8 @@ public sealed class AgentRuntimeCorrectnessTests
                     true),
             },
         };
-        using var gateway = new AgentAppRuntimeGateway(new StaticChatSnapshotRuntimeClient(initial));
+        using var gateway = new AgentAppRuntimeGateway(
+            new StaticChatSnapshotRuntimeClient(initial));
         using var viewModel = new AgentChatViewModel(
             gateway,
             gateway,
@@ -523,7 +525,8 @@ public sealed class AgentRuntimeCorrectnessTests
         {
             InitialTranscript = new AgentTranscriptPage(snapshot.Revision, [userTurn], false),
         };
-        using var gateway = new AgentAppRuntimeGateway(new StaticChatSnapshotRuntimeClient(snapshot));
+        using var gateway = new AgentAppRuntimeGateway(
+            new StaticChatSnapshotRuntimeClient(snapshot));
         using var viewModel = new AgentChatViewModel(
             gateway,
             gateway,
@@ -1026,7 +1029,8 @@ public sealed class AgentRuntimeCorrectnessTests
     public async Task ChatViewModel_InitialProjectionUsesSnapshotSessionsForSenderAndChildLinks()
     {
         var snapshot = CreateChatSnapshotWithChildLink(revision: 61);
-        using var gateway = new AgentAppRuntimeGateway(new StaticChatSnapshotRuntimeClient(snapshot));
+        using var gateway = new AgentAppRuntimeGateway(
+            new StaticChatSnapshotRuntimeClient(snapshot));
         using var viewModel = new AgentChatViewModel(
             gateway,
             gateway,
@@ -1145,7 +1149,8 @@ public sealed class AgentRuntimeCorrectnessTests
     [Fact]
     public void Gateway_RuntimeInstanceChangeForcesResnapshotAcrossOverlappingRevisions()
     {
-        using var gateway = new AgentAppRuntimeGateway(new ToggleRuntimeClient(isAvailable: true));
+        using var gateway = new AgentAppRuntimeGateway(
+            new ToggleRuntimeClient(isAvailable: true));
         typeof(AgentAppRuntimeGateway)
             .GetField("_runtimeInstanceId", BindingFlags.Instance | BindingFlags.NonPublic)!
             .SetValue(gateway, "runtime-1");
@@ -1174,7 +1179,8 @@ public sealed class AgentRuntimeCorrectnessTests
     [Fact]
     public void Gateway_TurnChangedReconstructsAppendAndCompletionMutations()
     {
-        using var gateway = new AgentAppRuntimeGateway(new ToggleRuntimeClient(isAvailable: true));
+        using var gateway = new AgentAppRuntimeGateway(
+            new ToggleRuntimeClient(isAvailable: true));
         var changes = new List<AgentTurnRecord>();
         gateway.TurnChanged += (_, turn) => changes.Add(turn);
         var sessionId = Guid.NewGuid();
@@ -1260,7 +1266,8 @@ public sealed class AgentRuntimeCorrectnessTests
     [Fact]
     public void Gateway_ChatSnapshotPreservesOtherSessionStreamingReconstruction()
     {
-        using var gateway = new AgentAppRuntimeGateway(new ToggleRuntimeClient(isAvailable: true));
+        using var gateway = new AgentAppRuntimeGateway(
+            new ToggleRuntimeClient(isAvailable: true));
         var sessionId = Guid.NewGuid();
         var turnId = Guid.NewGuid();
         var now = DateTimeOffset.UtcNow;
@@ -1334,7 +1341,8 @@ public sealed class AgentRuntimeCorrectnessTests
     [Fact]
     public void Gateway_StaleReplacementDoesNotRaiseCompatibilityTurnChanged()
     {
-        using var gateway = new AgentAppRuntimeGateway(new ToggleRuntimeClient(isAvailable: true));
+        using var gateway = new AgentAppRuntimeGateway(
+            new ToggleRuntimeClient(isAvailable: true));
         var sessionId = Guid.NewGuid();
         var turnId = Guid.NewGuid();
         var now = DateTimeOffset.UtcNow;
@@ -1482,7 +1490,7 @@ public sealed class AgentRuntimeCorrectnessTests
         var client = new ToggleRuntimeClient(isAvailable: false);
         using var gateway = new AgentAppRuntimeGateway(client);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => gateway.InitializeAsync());
+        await Assert.ThrowsAsync<SunderRpcException>(() => gateway.InitializeAsync());
         client.IsAvailable = true;
 
         await WaitUntilAsync(() => gateway.IsRuntimeAvailable);
@@ -1568,6 +1576,12 @@ public sealed class AgentRuntimeCorrectnessTests
             await Task.Delay(25);
         }
     }
+
+    private static SunderRpcException RuntimeUnavailable()
+        => new(new SunderRpcError(
+            SunderRpcErrorKind.Unavailable,
+            "agent.runtime.unavailable",
+            "Runtime unavailable."));
 
     private static AgentChatSnapshotProjection CreateChatSnapshot(long revision)
     {
@@ -2069,7 +2083,7 @@ public sealed class AgentRuntimeCorrectnessTests
     }
 
     private sealed class ToggleRuntimeClient(bool isAvailable, bool blockDashboard = false)
-        : IPackageRuntimeClient
+        : IAgentOwnerClient
     {
         private readonly TaskCompletionSource _dashboardRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private volatile bool _isAvailable = isAvailable;
@@ -2086,7 +2100,7 @@ public sealed class AgentRuntimeCorrectnessTests
         public void ReleaseDashboard() => _dashboardRelease.TrySetResult();
 
         public async ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-            PackageRuntimeOperation<TRequest, TResponse> operation,
+            AgentOwnerRpcOperation<TRequest, TResponse> operation,
             TRequest request,
             CancellationToken cancellationToken = default)
             where TRequest : class
@@ -2094,26 +2108,26 @@ public sealed class AgentRuntimeCorrectnessTests
         {
             if (!IsAvailable)
             {
-                throw new InvalidOperationException("Runtime unavailable.");
+                throw RuntimeUnavailable();
             }
-            if (blockDashboard && ReferenceEquals(operation, AgentRuntimeOperations.Dashboard))
+            if (blockDashboard && operation.Is(AgentRuntimeOperations.Dashboard))
             {
                 Interlocked.Increment(ref _dashboardInvocationCount);
                 await _dashboardRelease.Task.WaitAsync(cancellationToken);
             }
-            else if (ReferenceEquals(operation, AgentRuntimeOperations.Dashboard))
+            else if (operation.Is(AgentRuntimeOperations.Dashboard))
             {
                 Interlocked.Increment(ref _dashboardInvocationCount);
             }
-            if (ReferenceEquals(operation, AgentRuntimeOperations.Dashboard))
+            if (operation.Is(AgentRuntimeOperations.Dashboard))
             {
                 return (TResponse)(object)new AgentDashboardProjection(0, [], [], []);
             }
-            throw new NotSupportedException(operation.OperationId);
+            throw new NotSupportedException(operation.Describe());
         }
 
         public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-            PackageRuntimeStream<TRequest, TEvent> stream,
+            AgentOwnerRpcStream<TRequest, TEvent> stream,
             TRequest request,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
             where TRequest : class
@@ -2121,7 +2135,7 @@ public sealed class AgentRuntimeCorrectnessTests
         {
             if (!IsAvailable)
             {
-                throw new InvalidOperationException("Runtime unavailable.");
+                throw RuntimeUnavailable();
             }
             yield return (TEvent)(object)new AgentRuntimeChange(0, AgentRuntimeChangeKind.Connected);
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
@@ -2129,7 +2143,7 @@ public sealed class AgentRuntimeCorrectnessTests
     }
 
     private sealed class UnavailableThenReadyChatRuntimeClient(
-        AgentChatSnapshotProjection snapshot) : IPackageRuntimeClient
+        AgentChatSnapshotProjection snapshot) : IAgentOwnerClient
     {
         private int _isAvailable;
         private int _successfulSnapshotInvocationCount;
@@ -2142,7 +2156,7 @@ public sealed class AgentRuntimeCorrectnessTests
         public void MakeReady() => Volatile.Write(ref _isAvailable, 1);
 
         public ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-            PackageRuntimeOperation<TRequest, TResponse> operation,
+            AgentOwnerRpcOperation<TRequest, TResponse> operation,
             TRequest request,
             CancellationToken cancellationToken = default)
             where TRequest : class
@@ -2151,11 +2165,11 @@ public sealed class AgentRuntimeCorrectnessTests
             cancellationToken.ThrowIfCancellationRequested();
             if (!IsAvailable)
             {
-                throw new InvalidOperationException("Runtime unavailable.");
+                throw RuntimeUnavailable();
             }
-            if (!ReferenceEquals(operation, AgentRuntimeOperations.ChatSnapshot))
+            if (!operation.Is(AgentRuntimeOperations.ChatSnapshot))
             {
-                throw new NotSupportedException(operation.OperationId);
+                throw new NotSupportedException(operation.Describe());
             }
 
             Interlocked.Increment(ref _successfulSnapshotInvocationCount);
@@ -2163,7 +2177,7 @@ public sealed class AgentRuntimeCorrectnessTests
         }
 
         public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-            PackageRuntimeStream<TRequest, TEvent> stream,
+            AgentOwnerRpcStream<TRequest, TEvent> stream,
             TRequest request,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
             where TRequest : class
@@ -2171,7 +2185,7 @@ public sealed class AgentRuntimeCorrectnessTests
         {
             if (!IsAvailable)
             {
-                throw new InvalidOperationException("Runtime unavailable.");
+                throw RuntimeUnavailable();
             }
 
             yield return (TEvent)(object)new AgentRuntimeChange(
@@ -2337,7 +2351,7 @@ public sealed class AgentRuntimeCorrectnessTests
             => Task.FromResult<AgentEmbeddingProviderReadiness?>(null);
     }
 
-    private sealed class PermanentChatStartupFailureRuntimeClient : IPackageRuntimeClient
+    private sealed class PermanentChatStartupFailureRuntimeClient : IAgentOwnerClient
     {
         private int _chatSnapshotInvocationCount;
 
@@ -2349,31 +2363,31 @@ public sealed class AgentRuntimeCorrectnessTests
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-            PackageRuntimeOperation<TRequest, TResponse> operation,
+            AgentOwnerRpcOperation<TRequest, TResponse> operation,
             TRequest request,
             CancellationToken cancellationToken = default)
             where TRequest : class
             where TResponse : class
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (ReferenceEquals(operation, AgentRuntimeOperations.ChatSnapshot))
+            if (operation.Is(AgentRuntimeOperations.ChatSnapshot))
             {
                 Interlocked.Increment(ref _chatSnapshotInvocationCount);
-                return ValueTask.FromException<TResponse>(new PackageRuntimeInvocationException(
-                    "runtime.v1.validation",
-                    isTransient: false,
-                    statusCode: 400));
+                return ValueTask.FromException<TResponse>(new SunderRpcException(new SunderRpcError(
+                    SunderRpcErrorKind.Validation,
+                    "agent.owner.validation",
+                    "The owner RPC request is invalid.")));
             }
-            if (ReferenceEquals(operation, AgentRuntimeOperations.Dashboard))
+            if (operation.Is(AgentRuntimeOperations.Dashboard))
             {
                 return ValueTask.FromResult((TResponse)(object)new AgentDashboardProjection(0, [], [], []));
             }
 
-            throw new NotSupportedException(operation.OperationId);
+            throw new NotSupportedException(operation.Describe());
         }
 
         public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-            PackageRuntimeStream<TRequest, TEvent> stream,
+            AgentOwnerRpcStream<TRequest, TEvent> stream,
             TRequest request,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
             where TRequest : class
@@ -2388,7 +2402,7 @@ public sealed class AgentRuntimeCorrectnessTests
         }
     }
 
-    private sealed class CapturingRunRuntimeClient : IPackageRuntimeClient
+    private sealed class CapturingRunRuntimeClient : IAgentOwnerClient
     {
         public bool IsAvailable => true;
 
@@ -2397,23 +2411,23 @@ public sealed class AgentRuntimeCorrectnessTests
         public AgentRunCommandStatusRequest? LastStatusRequest { get; private set; }
 
         public ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-            PackageRuntimeOperation<TRequest, TResponse> operation,
+            AgentOwnerRpcOperation<TRequest, TResponse> operation,
             TRequest request,
             CancellationToken cancellationToken = default)
             where TRequest : class
             where TResponse : class
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (ReferenceEquals(operation, AgentRuntimeOperations.RunStatus))
+            if (operation.Is(AgentRuntimeOperations.RunStatus))
             {
                 LastStatusRequest = (AgentRunCommandStatusRequest)(object)request;
                 return ValueTask.FromResult((TResponse)(object)new AgentRunCommandStatusResult(
                     1,
                     AgentRunCommandStatus.Pending));
             }
-            if (!ReferenceEquals(operation, AgentRuntimeOperations.Runs))
+            if (!operation.Is(AgentRuntimeOperations.Runs))
             {
-                throw new NotSupportedException(operation.OperationId);
+                throw new NotSupportedException(operation.Describe());
             }
 
             var command = (AgentRunCommand)(object)request;
@@ -2429,7 +2443,7 @@ public sealed class AgentRuntimeCorrectnessTests
         }
 
         public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-            PackageRuntimeStream<TRequest, TEvent> stream,
+            AgentOwnerRpcStream<TRequest, TEvent> stream,
             TRequest request,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
             where TRequest : class
@@ -2440,7 +2454,7 @@ public sealed class AgentRuntimeCorrectnessTests
         }
     }
 
-    private sealed class FaultAfterCanceledDashboardRuntimeClient : IPackageRuntimeClient
+    private sealed class FaultAfterCanceledDashboardRuntimeClient : IAgentOwnerClient
     {
         private int _dashboardInvocationCount;
 
@@ -2454,15 +2468,15 @@ public sealed class AgentRuntimeCorrectnessTests
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public async ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-            PackageRuntimeOperation<TRequest, TResponse> operation,
+            AgentOwnerRpcOperation<TRequest, TResponse> operation,
             TRequest request,
             CancellationToken cancellationToken = default)
             where TRequest : class
             where TResponse : class
         {
-            if (!ReferenceEquals(operation, AgentRuntimeOperations.Dashboard))
+            if (!operation.Is(AgentRuntimeOperations.Dashboard))
             {
-                throw new NotSupportedException(operation.OperationId);
+                throw new NotSupportedException(operation.Describe());
             }
 
             var invocation = Interlocked.Increment(ref _dashboardInvocationCount);
@@ -2484,7 +2498,7 @@ public sealed class AgentRuntimeCorrectnessTests
         }
 
         public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-            PackageRuntimeStream<TRequest, TEvent> stream,
+            AgentOwnerRpcStream<TRequest, TEvent> stream,
             TRequest request,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
             where TRequest : class
@@ -2496,7 +2510,7 @@ public sealed class AgentRuntimeCorrectnessTests
     }
 
     private sealed class BlockingChatSnapshotRuntimeClient(AgentChatSnapshotProjection snapshot)
-        : IPackageRuntimeClient
+        : IAgentOwnerClient
     {
         private readonly TaskCompletionSource _snapshotRelease = new(
             TaskCreationOptions.RunContinuationsAsynchronously);
@@ -2511,13 +2525,13 @@ public sealed class AgentRuntimeCorrectnessTests
         public void ReleaseSnapshot() => _snapshotRelease.TrySetResult();
 
         public async ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-            PackageRuntimeOperation<TRequest, TResponse> operation,
+            AgentOwnerRpcOperation<TRequest, TResponse> operation,
             TRequest request,
             CancellationToken cancellationToken = default)
             where TRequest : class
             where TResponse : class
         {
-            if (ReferenceEquals(operation, AgentRuntimeOperations.ChatSnapshot))
+            if (operation.Is(AgentRuntimeOperations.ChatSnapshot))
             {
                 Interlocked.Increment(ref _snapshotInvocationCount);
                 SnapshotStarted.TrySetResult();
@@ -2525,11 +2539,11 @@ public sealed class AgentRuntimeCorrectnessTests
                 return (TResponse)(object)snapshot;
             }
 
-            throw new NotSupportedException(operation.OperationId);
+            throw new NotSupportedException(operation.Describe());
         }
 
         public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-            PackageRuntimeStream<TRequest, TEvent> stream,
+            AgentOwnerRpcStream<TRequest, TEvent> stream,
             TRequest request,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
             where TRequest : class
@@ -2579,7 +2593,7 @@ public sealed class AgentRuntimeCorrectnessTests
     private sealed class RacingChatSnapshotRuntimeClient(
         AgentChatSnapshotProjection first,
         AgentChatSnapshotProjection second)
-        : IPackageRuntimeClient
+        : IAgentOwnerClient
     {
         private readonly TaskCompletionSource _delayedRequestRelease = new(
             TaskCreationOptions.RunContinuationsAsynchronously);
@@ -2598,15 +2612,15 @@ public sealed class AgentRuntimeCorrectnessTests
         public void ReleaseDelayedRequest() => _delayedRequestRelease.TrySetResult();
 
         public async ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-            PackageRuntimeOperation<TRequest, TResponse> operation,
+            AgentOwnerRpcOperation<TRequest, TResponse> operation,
             TRequest request,
             CancellationToken cancellationToken = default)
             where TRequest : class
             where TResponse : class
         {
-            if (!ReferenceEquals(operation, AgentRuntimeOperations.ChatSnapshot))
+            if (!operation.Is(AgentRuntimeOperations.ChatSnapshot))
             {
-                throw new NotSupportedException(operation.OperationId);
+                throw new NotSupportedException(operation.Describe());
             }
 
             var chatRequest = (AgentChatSnapshotRequest)(object)request;
@@ -2630,7 +2644,7 @@ public sealed class AgentRuntimeCorrectnessTests
         }
 
         public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-            PackageRuntimeStream<TRequest, TEvent> stream,
+            AgentOwnerRpcStream<TRequest, TEvent> stream,
             TRequest request,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
             where TRequest : class
@@ -2644,7 +2658,7 @@ public sealed class AgentRuntimeCorrectnessTests
     private sealed class ResnapshotChatRuntimeClient(
         AgentChatSnapshotProjection initial,
         AgentChatSnapshotProjection refreshed)
-        : IPackageRuntimeClient
+        : IAgentOwnerClient
     {
         private int _chatSnapshotInvocationCount;
         private int _dashboardInvocationCount;
@@ -2655,14 +2669,14 @@ public sealed class AgentRuntimeCorrectnessTests
         public int DashboardInvocationCount => Volatile.Read(ref _dashboardInvocationCount);
 
         public ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-            PackageRuntimeOperation<TRequest, TResponse> operation,
+            AgentOwnerRpcOperation<TRequest, TResponse> operation,
             TRequest request,
             CancellationToken cancellationToken = default)
             where TRequest : class
             where TResponse : class
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (ReferenceEquals(operation, AgentRuntimeOperations.ChatSnapshot))
+            if (operation.Is(AgentRuntimeOperations.ChatSnapshot))
             {
                 ChatSnapshotRequests.Enqueue((AgentChatSnapshotRequest)(object)request);
                 var response = Interlocked.Increment(ref _chatSnapshotInvocationCount) == 1
@@ -2670,16 +2684,16 @@ public sealed class AgentRuntimeCorrectnessTests
                     : refreshed;
                 return ValueTask.FromResult((TResponse)(object)response);
             }
-            if (ReferenceEquals(operation, AgentRuntimeOperations.Dashboard))
+            if (operation.Is(AgentRuntimeOperations.Dashboard))
             {
                 Interlocked.Increment(ref _dashboardInvocationCount);
                 return ValueTask.FromResult((TResponse)(object)new AgentDashboardProjection(0, [], [], []));
             }
-            return ValueTask.FromException<TResponse>(new NotSupportedException(operation.OperationId));
+            return ValueTask.FromException<TResponse>(new NotSupportedException(operation.Describe()));
         }
 
         public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-            PackageRuntimeStream<TRequest, TEvent> stream,
+            AgentOwnerRpcStream<TRequest, TEvent> stream,
             TRequest request,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
             where TRequest : class
@@ -2698,30 +2712,30 @@ public sealed class AgentRuntimeCorrectnessTests
     }
 
     private sealed class StaticChatSnapshotRuntimeClient(AgentChatSnapshotProjection snapshot)
-        : IPackageRuntimeClient
+        : IAgentOwnerClient
     {
         public bool IsAvailable => true;
         public ConcurrentQueue<AgentChatSnapshotRequest> ChatSnapshotRequests { get; } = new();
 
         public ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-            PackageRuntimeOperation<TRequest, TResponse> operation,
+            AgentOwnerRpcOperation<TRequest, TResponse> operation,
             TRequest request,
             CancellationToken cancellationToken = default)
             where TRequest : class
             where TResponse : class
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (ReferenceEquals(operation, AgentRuntimeOperations.ChatSnapshot))
+            if (operation.Is(AgentRuntimeOperations.ChatSnapshot))
             {
                 ChatSnapshotRequests.Enqueue((AgentChatSnapshotRequest)(object)request);
             }
-            return ReferenceEquals(operation, AgentRuntimeOperations.ChatSnapshot)
+            return operation.Is(AgentRuntimeOperations.ChatSnapshot)
                 ? ValueTask.FromResult((TResponse)(object)snapshot)
-                : ValueTask.FromException<TResponse>(new NotSupportedException(operation.OperationId));
+                : ValueTask.FromException<TResponse>(new NotSupportedException(operation.Describe()));
         }
 
         public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-            PackageRuntimeStream<TRequest, TEvent> stream,
+            AgentOwnerRpcStream<TRequest, TEvent> stream,
             TRequest request,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
             where TRequest : class
@@ -2735,22 +2749,22 @@ public sealed class AgentRuntimeCorrectnessTests
     private sealed class SelectionChatSnapshotRuntimeClient(
         AgentChatSnapshotProjection first,
         AgentChatSnapshotProjection second)
-        : IPackageRuntimeClient
+        : IAgentOwnerClient
     {
         public bool IsAvailable => true;
         public ConcurrentQueue<AgentChatSnapshotRequest> Requests { get; } = new();
 
         public ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-            PackageRuntimeOperation<TRequest, TResponse> operation,
+            AgentOwnerRpcOperation<TRequest, TResponse> operation,
             TRequest request,
             CancellationToken cancellationToken = default)
             where TRequest : class
             where TResponse : class
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (!ReferenceEquals(operation, AgentRuntimeOperations.ChatSnapshot))
+            if (!operation.Is(AgentRuntimeOperations.ChatSnapshot))
             {
-                return ValueTask.FromException<TResponse>(new NotSupportedException(operation.OperationId));
+                return ValueTask.FromException<TResponse>(new NotSupportedException(operation.Describe()));
             }
 
             var chatRequest = (AgentChatSnapshotRequest)(object)request;
@@ -2762,7 +2776,7 @@ public sealed class AgentRuntimeCorrectnessTests
         }
 
         public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-            PackageRuntimeStream<TRequest, TEvent> stream,
+            AgentOwnerRpcStream<TRequest, TEvent> stream,
             TRequest request,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
             where TRequest : class
@@ -2774,7 +2788,7 @@ public sealed class AgentRuntimeCorrectnessTests
     }
 
     private sealed class OrderedResnapshotRuntimeClient(AgentChatSnapshotProjection[] snapshots)
-        : IPackageRuntimeClient
+        : IAgentOwnerClient
     {
         private readonly TaskCompletionSource _oldResnapshotRelease = new(
             TaskCreationOptions.RunContinuationsAsynchronously);
@@ -2791,15 +2805,15 @@ public sealed class AgentRuntimeCorrectnessTests
         public void ReleaseOldResnapshot() => _oldResnapshotRelease.TrySetResult();
 
         public async ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-            PackageRuntimeOperation<TRequest, TResponse> operation,
+            AgentOwnerRpcOperation<TRequest, TResponse> operation,
             TRequest request,
             CancellationToken cancellationToken = default)
             where TRequest : class
             where TResponse : class
         {
-            if (!ReferenceEquals(operation, AgentRuntimeOperations.ChatSnapshot))
+            if (!operation.Is(AgentRuntimeOperations.ChatSnapshot))
             {
-                throw new NotSupportedException(operation.OperationId);
+                throw new NotSupportedException(operation.Describe());
             }
 
             var invocation = Interlocked.Increment(ref _invocationCount);
@@ -2817,7 +2831,7 @@ public sealed class AgentRuntimeCorrectnessTests
         }
 
         public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-            PackageRuntimeStream<TRequest, TEvent> stream,
+            AgentOwnerRpcStream<TRequest, TEvent> stream,
             TRequest request,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
             where TRequest : class
@@ -2843,7 +2857,7 @@ public sealed class AgentRuntimeCorrectnessTests
         }
     }
 
-    private sealed class DisconnectingRuntimeClient : IPackageRuntimeClient
+    private sealed class DisconnectingRuntimeClient : IAgentOwnerClient
     {
         private int _subscriptionCount;
         private long _lastDeliveredRevision;
@@ -2853,21 +2867,21 @@ public sealed class AgentRuntimeCorrectnessTests
         public long LastDeliveredRevision => Interlocked.Read(ref _lastDeliveredRevision);
 
         public ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-            PackageRuntimeOperation<TRequest, TResponse> operation,
+            AgentOwnerRpcOperation<TRequest, TResponse> operation,
             TRequest request,
             CancellationToken cancellationToken = default)
             where TRequest : class
             where TResponse : class
         {
-            if (ReferenceEquals(operation, AgentRuntimeOperations.Dashboard))
+            if (operation.Is(AgentRuntimeOperations.Dashboard))
             {
                 return ValueTask.FromResult((TResponse)(object)new AgentDashboardProjection(0, [], [], []));
             }
-            return ValueTask.FromException<TResponse>(new NotSupportedException(operation.OperationId));
+            return ValueTask.FromException<TResponse>(new NotSupportedException(operation.Describe()));
         }
 
         public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-            PackageRuntimeStream<TRequest, TEvent> stream,
+            AgentOwnerRpcStream<TRequest, TEvent> stream,
             TRequest request,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
             where TRequest : class
@@ -2891,7 +2905,7 @@ public sealed class AgentRuntimeCorrectnessTests
         }
     }
 
-    private sealed class PermissionRuntimeClient : IPackageRuntimeClient
+    private sealed class PermissionRuntimeClient : IAgentOwnerClient
     {
         private int _subscriptionCount;
 
@@ -2900,18 +2914,18 @@ public sealed class AgentRuntimeCorrectnessTests
         public int SubscriptionCount => Volatile.Read(ref _subscriptionCount);
 
         public ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-            PackageRuntimeOperation<TRequest, TResponse> operation,
+            AgentOwnerRpcOperation<TRequest, TResponse> operation,
             TRequest request,
             CancellationToken cancellationToken = default)
             where TRequest : class
             where TResponse : class
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (ReferenceEquals(operation, AgentRuntimeOperations.Dashboard))
+            if (operation.Is(AgentRuntimeOperations.Dashboard))
             {
                 return ValueTask.FromResult((TResponse)(object)new AgentDashboardProjection(0, [], [], []));
             }
-            if (ReferenceEquals(operation, AgentRuntimeOperations.Permissions))
+            if (operation.Is(AgentRuntimeOperations.Permissions))
             {
                 return ValueTask.FromResult((TResponse)(object)new AgentPermissionProjection(
                     0,
@@ -2929,11 +2943,11 @@ public sealed class AgentRuntimeCorrectnessTests
                     PendingRequests: []));
             }
 
-            return ValueTask.FromException<TResponse>(new NotSupportedException(operation.OperationId));
+            return ValueTask.FromException<TResponse>(new NotSupportedException(operation.Describe()));
         }
 
         public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-            PackageRuntimeStream<TRequest, TEvent> stream,
+            AgentOwnerRpcStream<TRequest, TEvent> stream,
             TRequest request,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
             where TRequest : class

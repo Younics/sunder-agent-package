@@ -120,7 +120,9 @@ public sealed class LMStudioEmbeddingProvider :
         var embeddings = response.Value
             .Select(embedding => new ProviderIndexedEmbedding(
                 embedding.Index,
-                new AgentEmbeddingGenerationResult(modelId, embedding.ToFloats().ToArray())))
+                new AgentEmbeddingGenerationResult(
+                    modelId,
+                    embedding.ToFloats().ToArray().Select(static value => (double)value).ToArray())))
             .ToArray();
 
         ProviderEmbeddingBatch.ApplyIndexedResults(results, validTexts, embeddings);

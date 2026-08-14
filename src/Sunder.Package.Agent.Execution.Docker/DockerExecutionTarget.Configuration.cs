@@ -1,5 +1,5 @@
 using Sunder.Agent.Execution.Common;
-using Sunder.Sdk.Storage;
+using Sunder.Package.Agent.Shared.Storage;
 
 namespace Sunder.Package.Agent.Execution.Docker;
 
@@ -67,7 +67,7 @@ public sealed partial class DockerExecutionTarget
     }
 
     private static string BuildImageIdentityKey(string imageReference)
-        => PackageStorageKeyFactory.Create("image-identities", 1, imageReference);
+        => CurrentPackageStorageKey.Create("image-identities", 1, imageReference);
 
     private static bool IsValidImageIdentity(string? identity)
         => identity is not null

@@ -1,29 +1,76 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <SunderPackageFamilyId>sunder.package.agent</SunderPackageFamilyId>
+    <SunderPackageRole>worker</SunderPackageRole>
     <SunderPackageProject>true</SunderPackageProject>
+    <SunderSdkWorkerReference>true</SunderSdkWorkerReference>
     <SunderSdkStacksReference>true</SunderSdkStacksReference>
-    <SunderSdkAvaloniaReference>true</SunderSdkAvaloniaReference>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
-    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
-    <SunderAgentSharedTranscript>true</SunderAgentSharedTranscript>
+    <OutputType>Exe</OutputType>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">$(NETCoreSdkRuntimeIdentifier)</RuntimeIdentifier>
+    <RuntimeIdentifiers>win-x64;win-arm64;linux-x64;linux-arm64;osx-x64;osx-arm64</RuntimeIdentifiers>
+    <SelfContained>true</SelfContained>
+    <UseAppHost>true</UseAppHost>
+    <PublishSingleFile>false</PublishSingleFile>
+    <SunderGeneratedPackageManifest>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\obj\$(Configuration)\$(TargetFramework)\$(RuntimeIdentifier)\sunder-package.json'))</SunderGeneratedPackageManifest>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Avalonia" />
-    <PackageReference Include="Avalonia.Controls.ItemsRepeater" />
-    <PackageReference Include="CommunityToolkit.Mvvm" />
-    <PackageReference Include="LiveMarkdown.Avalonia" />
     <PackageReference Include="Microsoft.Data.Sqlite" />
     <PackageReference Include="Microsoft.Extensions.AI" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
     <PackageReference Include="Microsoft.Extensions.Http.Resilience" />
     <ProjectReference Include="..\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
+    <ProjectReference Include="OwnerProtocol\Sunder.Package.Agent.OwnerProtocol.csproj" />
+    <Compile Include="..\Sunder.Package.Agent.Shared\Composition\PackageServiceCollectionExtensions.cs"
+             Link="Composition\PackageServiceCollectionExtensions.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Shared\Threading\ReferenceCountedKeyedLock.cs"
+             Link="Threading\ReferenceCountedKeyedLock.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Shared\PackageViews\TranscriptTurnTransportProjection.cs"
+             Link="PackageViews\TranscriptTurnTransportProjection.cs" />
   </ItemGroup>
 
   <ItemGroup>
-    <AvaloniaResource Include="Assets\**" />
+    <Compile Remove="Aggregate\**\*" />
+    <Compile Remove="App\**\*" />
+    <Compile Remove="OwnerProtocol\**\*" />
+    <Compile Remove="PackageViews\**\*" />
+    <Compile Remove="HistorySearch\HistorySearchModels.cs" />
+    <Compile Remove="HistorySearch\HistorySearchNavigation.cs" />
+    <Compile Remove="HistorySearch\HistorySearchText.cs" />
+    <Compile Remove="HistorySearch\HistorySecretRedactor.cs" />
+    <Compile Remove="Models\AgentPendingPermissionRequestRecord.cs" />
+    <Compile Remove="Models\AgentRunActivityUpdate.cs" />
+    <Compile Remove="Runtime\AgentAppRuntimeGateway*.cs" />
+    <Compile Remove="Runtime\AgentPresentationGateways.cs" />
+    <Compile Remove="Runtime\AgentRuntimeContracts.cs" />
+    <Compile Remove="Runtime\AgentTranscriptAnchorContracts.cs" />
+    <Compile Remove="Services\AgentChatSelectionStateService.cs" />
+    <Compile Remove="Services\AgentAttachmentUploadRules.cs" />
+    <Compile Remove="Services\AgentRpcInvocation.cs" />
+    <Compile Remove="Services\AgentSessionTitleDefaults.cs" />
+    <Compile Remove="Services\AgentToolPresentationService.cs" />
+    <None Remove="Aggregate\**\*" />
+    <None Remove="App\**\*" />
+    <None Remove="OwnerProtocol\**\*" />
   </ItemGroup>
 
-  <Import Project="..\Sunder.Package.Agent.Shared\Sunder.Package.Agent.Shared.props" />
+  <ItemGroup>
+    <SunderContractBundle Include="OwnerProtocol\Contracts\agent-owner-runtime.rpc.json"
+                          ContractId="sunder.agent.owner.runtime"
+                          Version="2.0.0"
+                          DescriptorPath="contracts/agent-owner-runtime.rpc.json"
+                          Exposure="package" />
+    <SunderRpcProvider Include="agent.owner.runtime"
+                       ContractId="sunder.agent.owner.runtime"
+                       ContractVersion="2.0.0"
+                       Role="runtime"
+                       Audience="owner" />
+    <SunderPackageTarget Include="runtime/$(RuntimeIdentifier)"
+                         Role="runtime"
+                         Rid="$(RuntimeIdentifier)"
+                         Kind="worker" />
+  </ItemGroup>
 
 </Project>

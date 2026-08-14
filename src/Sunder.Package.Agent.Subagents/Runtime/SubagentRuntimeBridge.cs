@@ -6,8 +6,6 @@ using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Package.Agent.Shared.PackageViews;
 using Sunder.Package.Agent.Subagents.Models;
 using Sunder.Package.Agent.Subagents.Services;
-using Sunder.Sdk.Abstractions;
-using Sunder.Sdk.Runtime;
 
 namespace Sunder.Package.Agent.Subagents.Runtime;
 
@@ -26,151 +24,7 @@ internal interface ISubagentManagementGateway
     Task<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>> ListPackageCapabilitiesAsync(CancellationToken cancellationToken = default);
 }
 
-internal interface ISubsessionSessionReader
-{
-    Task<SubsessionSessionCatalog> ListSessionsAsync(CancellationToken cancellationToken = default);
-}
-
-internal interface ISubsessionCheckpointReader
-{
-    Task<IReadOnlyList<AgentRunCheckpointRecord>> ListLatestCheckpointsAsync(
-        CancellationToken cancellationToken = default);
-}
-
-internal interface ISubsessionTranscriptPageReader
-{
-    Task<SubsessionTranscriptPage> ListRecentTurnsAsync(
-        Guid sessionId,
-        int limit,
-        CancellationToken cancellationToken = default);
-
-    Task<SubsessionTranscriptPage> ListTurnsBeforeAsync(
-        Guid sessionId,
-        DateTimeOffset beforeCreatedAtUtc,
-        Guid beforeTurnId,
-        int limit,
-        CancellationToken cancellationToken = default);
-
-    Task<SubsessionTranscriptPage> ListTurnsAfterAsync(
-        Guid sessionId,
-        DateTimeOffset afterCreatedAtUtc,
-        Guid afterTurnId,
-        int limit,
-        CancellationToken cancellationToken = default);
-
-    Task<SubsessionAroundTurnPage> LoadAroundTurnAsync(
-        Guid sessionId,
-        Guid turnId,
-        DateTimeOffset turnCreatedAtUtc,
-        Guid itemId,
-        int beforeLimit,
-        int afterLimit,
-        CancellationToken cancellationToken = default);
-
-    Task<AgentTranscriptToolDetailRecord?> LoadToolDetailAsync(
-        AgentTranscriptToolDetailRequest request,
-        CancellationToken cancellationToken = default)
-        => Task.FromResult<AgentTranscriptToolDetailRecord?>(null);
-}
-
-internal interface ISubsessionChangeNotifications
-{
-    event Action<Guid>? SessionChanged;
-    event Action<Guid, AgentTurnRecord>? TurnChanged;
-    event Action? ResnapshotRequired;
-}
-
-internal interface ISubagentPresentationInitialization
-{
-    Task InitializeAsync(CancellationToken cancellationToken = default);
-}
-
-internal sealed record SubsessionSessionCatalog(
-    IReadOnlyList<AgentSessionRecord> Sessions,
-    IReadOnlyList<AgentProfileRecord> Profiles);
-
-internal sealed record SubsessionAroundTurnPage(
-    IReadOnlyList<AgentTurnRecord> Turns,
-    bool HasOlder,
-    bool HasNewer,
-    Guid AnchorTurnId);
-
-internal sealed record SubsessionTranscriptPage(
-    IReadOnlyList<AgentTurnRecord> Turns,
-    bool HasMore,
-    TranscriptPageCursor? Continuation = null);
-
-internal sealed record SubagentSaveRequest(
-    string SubagentId,
-    string DisplayName,
-    string? Description,
-    string? Instructions,
-    string? ChatProviderId,
-    string? ChatModelId,
-    IReadOnlyList<AgentProfileSelectableCapabilityAssignmentRecord>? Assignments,
-    string? ChatModelSettingsJson);
-
-internal static class SubagentRuntimeOperations
-{
-    internal static readonly PackageRuntimeOperation<SubagentQuery, SubagentProjection> Query = new("subagents.query.v1");
-    internal static readonly PackageRuntimeOperation<SubagentCommand, SubagentProjection> Command = new("subagents.command.v1");
-    internal static readonly PackageRuntimeStream<SubagentChangeSubscription, SubagentChanged> Changes = new("subagents.changes.v1");
-}
-
-internal enum SubagentQueryKind { Management, ProviderModels, RuntimeCatalog, RecentTurns, TurnsBefore, TurnsAfter, AroundTurn, ToolDetail }
-internal sealed record SubagentQuery(
-    SubagentQueryKind Kind,
-    string? ProviderId = null,
-    Guid? SessionId = null,
-    int Limit = 100,
-    DateTimeOffset? AnchorCreatedAtUtc = null,
-    Guid? AnchorTurnId = null,
-    Guid? ItemId = null,
-    int AfterLimit = 0,
-    AgentTranscriptToolDetailRequest? ToolDetailRequest = null);
-
-internal enum SubagentCommandKind { Create, Save, Delete }
-internal sealed record SubagentCommand(SubagentCommandKind Kind, string? Value = null, SubagentSaveRequest? Save = null);
-
-internal sealed record SubagentProviderProjection(
-    string ProviderId,
-    string DisplayName,
-    string? PackageId,
-    IReadOnlyList<AgentModelDescriptor>? Models = null,
-    AgentProviderReadiness? Readiness = null);
-
-internal sealed record SubagentProjection(
-    IReadOnlyList<SubagentRecord>? Subagents = null,
-    SubagentRecord? Subagent = null,
-    IReadOnlyList<SubagentProviderProjection>? Providers = null,
-    IReadOnlyList<AgentToolDescriptor>? Tools = null,
-    IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>? Capabilities = null,
-    IReadOnlyList<AgentSessionRecord>? Sessions = null,
-    IReadOnlyList<AgentProfileRecord>? Profiles = null,
-    IReadOnlyList<AgentRunCheckpointRecord>? Checkpoints = null,
-    SubsessionTranscriptPage? TranscriptPage = null,
-    SubsessionAroundTurnPage? AroundTurn = null,
-    AgentTranscriptToolDetailRecord? ToolDetail = null);
-
-internal sealed record SubagentChangeSubscription(long AfterRevision = 0);
-internal enum SubagentChangeKind
-{
-    Connected,
-    ResnapshotRequired,
-    Subagents,
-    Catalog,
-    Session,
-    Turn,
-    Profile,
-}
-internal sealed record SubagentChanged(
-    long Revision,
-    SubagentChangeKind Kind,
-    Guid? SessionId = null,
-    AgentTurnRecord? Turn = null,
-    string? ProfileId = null,
-    string? RuntimeInstanceId = null);
-
+#if SUNDER_SUBAGENTS_WORKER
 internal sealed class SubagentLocalManagementGateway(
     SubagentService service,
     AgentRpcCatalog rpcCatalog) : ISubagentManagementGateway, IDisposable
@@ -194,7 +48,9 @@ internal sealed class SubagentLocalManagementGateway(
     public Task<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>> ListPackageCapabilitiesAsync(CancellationToken cancellationToken = default) => _capabilities.ListPackageCapabilitiesAsync(cancellationToken);
     public void Dispose() => _capabilities.Dispose();
 }
+#endif
 
+#if SUNDER_SUBAGENTS_APP
 internal sealed class SubagentAppRuntimeGateway :
     ISubagentManagementGateway,
     ISubsessionSessionReader,
@@ -204,7 +60,7 @@ internal sealed class SubagentAppRuntimeGateway :
     ISubagentPresentationInitialization,
     IDisposable
 {
-    private readonly IPackageRuntimeClient _client;
+    private readonly ISubagentOwnerClient _client;
     private readonly CancellationTokenSource _lifetime = new();
     private readonly object _runtimeSnapshotLock = new();
     private IReadOnlyList<ProviderCatalogOption>? _providers;
@@ -215,7 +71,12 @@ internal sealed class SubagentAppRuntimeGateway :
     private string? _changeRuntimeInstanceId;
     private int _disposed;
 
-    public SubagentAppRuntimeGateway(IPackageRuntimeClient client)
+    public SubagentAppRuntimeGateway(Sunder.Sdk.Rpc.ISunderRpcClient client)
+        : this(new SubagentOwnerClient(client))
+    {
+    }
+
+    internal SubagentAppRuntimeGateway(ISubagentOwnerClient client)
     {
         _client = client;
     }
@@ -424,9 +285,9 @@ internal sealed class SubagentAppRuntimeGateway :
     }
 
     private async Task<SubagentProjection> InvokeAsync(SubagentQuery request, CancellationToken cancellationToken)
-        => await _client.InvokeAsync(SubagentRuntimeOperations.Query, request, cancellationToken).ConfigureAwait(false);
+        => await _client.QueryAsync(request, cancellationToken).ConfigureAwait(false);
     private async Task<SubagentProjection> CommandAsync(SubagentCommand request, CancellationToken cancellationToken)
-        => await _client.InvokeAsync(SubagentRuntimeOperations.Command, request, cancellationToken).ConfigureAwait(false);
+        => await _client.CommandAsync(request, cancellationToken).ConfigureAwait(false);
 
     private async Task ObserveChangesAsync(CancellationToken cancellationToken)
     {
@@ -434,8 +295,7 @@ internal sealed class SubagentAppRuntimeGateway :
         {
             try
             {
-                await foreach (var change in _client.SubscribeAsync(
-                                   SubagentRuntimeOperations.Changes,
+                await foreach (var change in _client.SubscribeChangesAsync(
                                    new SubagentChangeSubscription(Interlocked.Read(ref _changeRevision)),
                                    cancellationToken))
                 {
@@ -522,12 +382,12 @@ internal sealed class SubagentAppRuntimeGateway :
         => _providers = (projection.Providers ?? []).Select(provider =>
             new ProviderCatalogOption(provider.ProviderId, provider.DisplayName, provider.PackageId)).ToArray();
 }
+#endif
 
+#if SUNDER_SUBAGENTS_WORKER
 internal sealed class SubagentRuntimeHandler(
     SubagentService service,
-    AgentRpcCatalog rpcCatalog)
-    : IPackageRuntimeOperationHandler<SubagentQuery, SubagentProjection>,
-      IPackageRuntimeOperationHandler<SubagentCommand, SubagentProjection>
+    AgentRpcCatalog rpcCatalog) : IDisposable
 {
     private readonly SubagentEditorCapabilityCatalog _capabilities = new(rpcCatalog);
 
@@ -557,10 +417,10 @@ internal sealed class SubagentRuntimeHandler(
                 SubagentQueryKind.ToolDetail => new(ToolDetail: SubsessionLocalRuntimeAdapter.GetTranscriptToolDetail(
                         runtime,
                         request.ToolDetailRequest
-                        ?? throw new InvalidOperationException("A tool detail request is required.")) is { } detail
+                        ?? throw new SubagentOwnerOperationException("A tool detail request is required.")) is { } detail
                     ? SubsessionAroundTurnPayload.FitToolDetail(detail)
                     : null),
-                _ => throw new InvalidOperationException("Unknown subagent query."),
+                _ => throw new SubagentOwnerOperationException("Unknown subagent query."),
             },
             cancellationToken);
     }
@@ -574,7 +434,7 @@ internal sealed class SubagentRuntimeHandler(
             SubagentCommandKind.Save when request.Save is { } save => service.SaveSubagent(save.SubagentId, save.DisplayName,
                 save.Description, save.Instructions, save.ChatProviderId, save.ChatModelId, save.Assignments, save.ChatModelSettingsJson),
             SubagentCommandKind.Delete => Delete(Require(request.Value)),
-            _ => throw new InvalidOperationException("Unknown subagent command."),
+            _ => throw new SubagentOwnerOperationException("Unknown subagent command."),
         };
         return ValueTask.FromResult(new SubagentProjection(Subagents: service.ListSubagents(), Subagent: result));
     }
@@ -645,7 +505,7 @@ internal sealed class SubagentRuntimeHandler(
             .FirstOrDefault();
         if (reference is null || !reference.TryAcquire(out var lease))
         {
-            throw new InvalidOperationException("The Agent runtime catalog is not available.");
+            throw new SubagentOwnerOperationException("The Agent runtime catalog is not available.");
         }
 
         using (lease)
@@ -654,7 +514,7 @@ internal sealed class SubagentRuntimeHandler(
             var result = await Task.Run(() => callback(lease.Service), cancellationToken);
             if (lease.RetirementToken.IsCancellationRequested)
             {
-                throw new InvalidOperationException("The Agent runtime catalog became unavailable.");
+                throw new SubagentOwnerOperationException("The Agent runtime catalog became unavailable.");
             }
             return result;
         }
@@ -690,13 +550,16 @@ internal sealed class SubagentRuntimeHandler(
                 Require(request.AnchorCreatedAtUtc),
                 Require(request.AnchorTurnId),
                 limit + 1),
-            _ => throw new InvalidOperationException("Unknown subsession transcript page direction."),
+            _ => throw new SubagentOwnerOperationException("Unknown subsession transcript page direction."),
         };
         return SubsessionLocalRuntimeAdapter.BuildTranscriptPage(turns, limit, request.Kind);
     }
 
     private SubagentRecord? Delete(string id) { service.DeleteSubagent(id); return null; }
-    private static string Require(string? value) => string.IsNullOrWhiteSpace(value) ? throw new InvalidOperationException("A value is required.") : value;
-    private static Guid Require(Guid? value) => value ?? throw new InvalidOperationException("A session id is required.");
-    private static DateTimeOffset Require(DateTimeOffset? value) => value ?? throw new InvalidOperationException("A transcript anchor is required.");
+    private static string Require(string? value) => string.IsNullOrWhiteSpace(value) ? throw new SubagentOwnerOperationException("A value is required.") : value;
+    private static Guid Require(Guid? value) => value ?? throw new SubagentOwnerOperationException("A session id is required.");
+    private static DateTimeOffset Require(DateTimeOffset? value) => value ?? throw new SubagentOwnerOperationException("A transcript anchor is required.");
+
+    public void Dispose() => _capabilities.Dispose();
 }
+#endif

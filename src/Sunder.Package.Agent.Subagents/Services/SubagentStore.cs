@@ -21,14 +21,16 @@ public sealed class SubagentStore
     private readonly object _syncRoot;
     private readonly string _filePath;
     private readonly string _lockPath;
+    private int _initialized;
 
     public SubagentStore(IPackageContext context)
     {
         _filePath = context.Storage.RoleLocalWorkspace.GetLocalPath("subagents/subagents.json");
-        Directory.CreateDirectory(Path.GetDirectoryName(_filePath)!);
         _lockPath = _filePath + ".lock";
         _syncRoot = PathLocks.GetOrAdd(_filePath, static _ => new object());
     }
+
+    public void Activate() => EnsureInitialized();
 
     public IReadOnlyList<SubagentRecord> List()
     {
@@ -186,6 +188,7 @@ public sealed class SubagentStore
 
     private IDisposable EnterTransaction()
     {
+        EnsureInitialized();
         Monitor.Enter(_syncRoot);
         try
         {
@@ -195,6 +198,25 @@ public sealed class SubagentStore
         {
             Monitor.Exit(_syncRoot);
             throw;
+        }
+    }
+
+    private void EnsureInitialized()
+    {
+        if (Volatile.Read(ref _initialized) != 0)
+        {
+            return;
+        }
+
+        lock (_syncRoot)
+        {
+            if (_initialized != 0)
+            {
+                return;
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(_filePath)!);
+            Volatile.Write(ref _initialized, 1);
         }
     }
 

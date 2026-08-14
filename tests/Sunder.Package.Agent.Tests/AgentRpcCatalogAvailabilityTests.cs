@@ -138,6 +138,20 @@ public sealed class AgentRpcCatalogAvailabilityTests
     }
 
     [Fact]
+    public async Task WatcherStopsAfterCallerGenerationBecomesStale()
+    {
+        var client = new UnavailableRpcClient(SunderRpcErrorKind.StaleEndpoint);
+        using var catalog = new AgentRpcCatalog(client);
+
+        await client.FirstWatchStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await Task.Delay(TimeSpan.FromMilliseconds(500));
+
+        Assert.Equal(1, client.WatchAttempts);
+        Assert.Equal(AgentRpcCatalogAvailability.Unavailable, catalog.Availability);
+        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, catalog.AvailabilityError?.Kind);
+    }
+
+    [Fact]
     public void RetiredReference_IsReplacedWhenTheEndpointIsDiscoverableAgain()
     {
         var client = new RecoveringReferenceRpcClient();
@@ -171,6 +185,39 @@ public sealed class AgentRpcCatalogAvailabilityTests
         var lease = await reference.TryAcquireAsync();
 
         Assert.Null(lease);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AsyncReferenceAcquisition_RejectsChangedProviderHashAtSameEndpoint(bool changeAbi)
+    {
+        var client = new RecoveringReferenceRpcClient();
+        using var catalog = new AgentRpcCatalog(client);
+        var service = new AgentRpcService<object>(
+            client.Provider.ContractId,
+            static (_, _) => new object());
+        var reference = Assert.Single(catalog.GetServiceReferences(service));
+        client.ReplaceProviderHash(changeAbi);
+
+        var lease = await reference.TryAcquireAsync();
+
+        Assert.Null(lease);
+    }
+
+    [Fact]
+    public void Discovery_RejectsAgentV2ProviderWithoutAbiHash()
+    {
+        var client = new RecoveringReferenceRpcClient();
+        client.RemoveAbiHash();
+        using var catalog = new AgentRpcCatalog(client);
+        var service = new AgentRpcService<object>(
+            client.Provider.ContractId,
+            static (_, _) => new object());
+
+        var exception = Assert.Throws<InvalidOperationException>(() => catalog.GetServiceReferences(service));
+
+        Assert.Contains("does not expose an ABI SHA-256", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -220,6 +267,12 @@ public sealed class AgentRpcCatalogAvailabilityTests
 
     private sealed class UnavailableRpcClient(SunderRpcErrorKind errorKind) : ISunderRpcClient
     {
+        private int _watchAttempts;
+
+        public int WatchAttempts => Volatile.Read(ref _watchAttempts);
+        public TaskCompletionSource FirstWatchStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public ValueTask<SunderRpcProviderSnapshot?> GetProviderAsync(
             SunderRpcEndpointReference endpoint,
             CancellationToken cancellationToken = default)
@@ -243,7 +296,11 @@ public sealed class AgentRpcCatalogAvailabilityTests
         {
             await Task.Yield();
             cancellationToken.ThrowIfCancellationRequested();
-            if (errorKind is SunderRpcErrorKind.Unavailable or SunderRpcErrorKind.PermissionDenied) throw Failure();
+            Interlocked.Increment(ref _watchAttempts);
+            FirstWatchStarted.TrySetResult();
+            if (errorKind is SunderRpcErrorKind.Unavailable
+                or SunderRpcErrorKind.PermissionDenied
+                or SunderRpcErrorKind.StaleEndpoint) throw Failure();
             yield break;
         }
 
@@ -487,6 +544,13 @@ public sealed class AgentRpcCatalogAvailabilityTests
         public void ReplaceSessionGeneration()
             => Provider = Provider with { SessionGeneration = Provider.SessionGeneration + 1 };
 
+        public void ReplaceProviderHash(bool abi)
+            => Provider = abi
+                ? Provider with { AbiSha256 = new string('c', 64) }
+                : Provider with { DescriptorSha256 = new string('b', 64) };
+
+        public void RemoveAbiHash() => Provider = Provider with { AbiSha256 = null };
+
         public ValueTask<SunderRpcProviderSnapshot?> GetProviderAsync(
             SunderRpcEndpointReference endpoint,
             CancellationToken cancellationToken = default)
@@ -607,6 +671,7 @@ public sealed class AgentRpcCatalogAvailabilityTests
             contractId,
             "1.0.0",
             new string('a', 64),
+            new string('b', 64),
             Guid.NewGuid(),
             1,
             1,

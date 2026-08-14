@@ -62,30 +62,32 @@ internal static class McpConfigurationDocument
     {
         if (string.IsNullOrWhiteSpace(normalizedName))
         {
-            throw new InvalidOperationException("Machine name is required.");
+            throw new McpManagementOperationException("Machine name is required.");
         }
 
         if (string.IsNullOrWhiteSpace(rawJson))
         {
-            throw new InvalidOperationException("Paste an MCP server object before saving.");
+            throw new McpManagementOperationException("Paste an MCP server object before saving.");
         }
 
         if (rawJson.Length > McpConfigurationSourceReader.MaxDocumentBytes)
         {
-            throw new InvalidOperationException($"MCP configuration exceeds the {McpConfigurationSourceReader.MaxDocumentBytes}-character limit.");
+            throw new McpManagementOperationException(
+                $"MCP configuration exceeds the {McpConfigurationSourceReader.MaxDocumentBytes}-character limit.");
         }
 
         using var document = JsonDocument.Parse(rawJson, JsonDocumentOptions);
         McpJsonShapeValidator.RejectDuplicateProperties(document.RootElement);
         if (document.RootElement.ValueKind != JsonValueKind.Object)
         {
-            throw new InvalidOperationException("MCP configuration must be a JSON object.");
+            throw new McpManagementOperationException("MCP configuration must be a JSON object.");
         }
 
         if (document.RootElement.TryGetProperty("mcp", out _)
             || document.RootElement.TryGetProperty("$schema", out _))
         {
-            throw new InvalidOperationException("Paste only the bare MCP server object, not the outer Sunder config wrapper.");
+            throw new McpManagementOperationException(
+                "Paste only the bare MCP server object, not the outer Sunder config wrapper.");
         }
 
         var parsed = ParseDocument(document.RootElement);
@@ -169,7 +171,7 @@ internal static class McpConfigurationDocument
                 description = server.Description,
                 oauth = BuildOAuthEditorObject(server),
             },
-            _ => throw new InvalidOperationException($"Unsupported MCP transport '{server.TransportType}'."),
+            _ => throw new McpManagementOperationException($"Unsupported MCP transport '{server.TransportType}'."),
         };
 
         return Serialize(payload);
@@ -182,7 +184,8 @@ internal static class McpConfigurationDocument
         {
             "local" => ParseLocal(root),
             "remote" => ParseRemote(root),
-            _ => throw new InvalidOperationException("Unsupported MCP server type. Use 'local' or 'remote'."),
+            _ => throw new McpManagementOperationException(
+                "Unsupported MCP server type. Use 'local' or 'remote'."),
         };
     }
 
@@ -191,7 +194,8 @@ internal static class McpConfigurationDocument
         var commandElement = ReadRequiredProperty(root, "command");
         if (commandElement.ValueKind != JsonValueKind.Array)
         {
-            throw new InvalidOperationException("Local MCP configuration requires 'command' to be an array of strings.");
+            throw new McpManagementOperationException(
+                "Local MCP configuration requires 'command' to be an array of strings.");
         }
 
         var commandParts = new List<string>();
@@ -199,7 +203,8 @@ internal static class McpConfigurationDocument
         {
             if (item.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(item.GetString()))
             {
-                throw new InvalidOperationException("Local MCP 'command' array must contain only non-empty strings.");
+                throw new McpManagementOperationException(
+                    "Local MCP 'command' array must contain only non-empty strings.");
             }
 
             commandParts.Add(item.GetString()!.Trim());
@@ -207,7 +212,8 @@ internal static class McpConfigurationDocument
 
         if (commandParts.Count == 0)
         {
-            throw new InvalidOperationException("Local MCP configuration requires at least one command segment.");
+            throw new McpManagementOperationException(
+                "Local MCP configuration requires at least one command segment.");
         }
 
         var legacyTimeoutMilliseconds = ReadOptionalPositiveInt(root, "timeout");
@@ -237,7 +243,8 @@ internal static class McpConfigurationDocument
         var endpointUrl = ReadRequiredString(root, "url").Trim();
         if (!Uri.TryCreate(endpointUrl, UriKind.Absolute, out _))
         {
-            throw new InvalidOperationException("Remote MCP configuration requires 'url' to be an absolute URL.");
+            throw new McpManagementOperationException(
+                "Remote MCP configuration requires 'url' to be an absolute URL.");
         }
 
         var legacyTimeoutMilliseconds = ReadOptionalPositiveInt(root, "timeout");
@@ -301,7 +308,7 @@ internal static class McpConfigurationDocument
 
         if (value.ValueKind != JsonValueKind.Object)
         {
-            throw new InvalidOperationException("'oauth' must be a boolean or object.");
+            throw new McpManagementOperationException("'oauth' must be a boolean or object.");
         }
 
         var enabled = ReadOptionalBool(value, "enabled") ?? true;
@@ -317,7 +324,8 @@ internal static class McpConfigurationDocument
     {
         if (!root.TryGetProperty(propertyName, out var value))
         {
-            throw new InvalidOperationException($"MCP configuration is missing required property '{propertyName}'.");
+            throw new McpManagementOperationException(
+                $"MCP configuration is missing required property '{propertyName}'.");
         }
 
         return value;
@@ -328,7 +336,8 @@ internal static class McpConfigurationDocument
         var value = ReadOptionalString(root, propertyName);
         if (string.IsNullOrWhiteSpace(value))
         {
-            throw new InvalidOperationException($"MCP configuration is missing required property '{propertyName}'.");
+            throw new McpManagementOperationException(
+                $"MCP configuration is missing required property '{propertyName}'.");
         }
 
         return value;
@@ -341,7 +350,9 @@ internal static class McpConfigurationDocument
             return null;
         }
 
-        return value.ValueKind == JsonValueKind.String ? value.GetString() : throw new InvalidOperationException($"'{propertyName}' must be a string.");
+        return value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : throw new McpManagementOperationException($"'{propertyName}' must be a string.");
     }
 
     private static bool? ReadOptionalBool(JsonElement root, string propertyName)
@@ -355,7 +366,7 @@ internal static class McpConfigurationDocument
         {
             JsonValueKind.True => true,
             JsonValueKind.False => false,
-            _ => throw new InvalidOperationException($"'{propertyName}' must be a boolean."),
+            _ => throw new McpManagementOperationException($"'{propertyName}' must be a boolean."),
         };
     }
 
@@ -368,7 +379,7 @@ internal static class McpConfigurationDocument
 
         if (value.ValueKind != JsonValueKind.Number || !value.TryGetInt32(out var parsedValue) || parsedValue <= 0)
         {
-            throw new InvalidOperationException($"'{propertyName}' must be a positive integer.");
+            throw new McpManagementOperationException($"'{propertyName}' must be a positive integer.");
         }
 
         return parsedValue;
@@ -391,7 +402,8 @@ internal static class McpConfigurationDocument
 
         if (value.ValueKind != JsonValueKind.Object)
         {
-            throw new InvalidOperationException($"'{propertyName}' must be an object of string values.");
+            throw new McpManagementOperationException(
+                $"'{propertyName}' must be an object of string values.");
         }
 
         var names = new List<string>();
@@ -401,13 +413,14 @@ internal static class McpConfigurationDocument
         {
             if (string.IsNullOrWhiteSpace(property.Name))
             {
-                throw new InvalidOperationException($"'{propertyName}' entries must use non-empty names.");
+                throw new McpManagementOperationException(
+                    $"'{propertyName}' entries must use non-empty names.");
             }
 
             var name = property.Name.Trim();
             if (!uniqueNames.Add(name))
             {
-                throw new InvalidOperationException(
+                throw new McpManagementOperationException(
                     $"'{propertyName}' contains duplicate or case-colliding name '{name}'.");
             }
 
@@ -418,7 +431,7 @@ internal static class McpConfigurationDocument
 
             if (property.Value.ValueKind != JsonValueKind.String)
             {
-                throw new InvalidOperationException(
+                throw new McpManagementOperationException(
                     $"'{propertyName}.{property.Name}' must be a string value or null.");
             }
 
@@ -465,7 +478,8 @@ internal static class McpConfigurationDocument
 
         if (value.ValueKind != JsonValueKind.Array)
         {
-            throw new InvalidOperationException($"'{propertyName}' must be a string or array of strings.");
+            throw new McpManagementOperationException(
+                $"'{propertyName}' must be a string or array of strings.");
         }
 
         var result = new List<string>();
@@ -473,7 +487,8 @@ internal static class McpConfigurationDocument
         {
             if (item.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(item.GetString()))
             {
-                throw new InvalidOperationException($"'{propertyName}' must contain only non-empty strings.");
+                throw new McpManagementOperationException(
+                    $"'{propertyName}' must contain only non-empty strings.");
             }
 
             result.Add(item.GetString()!.Trim());

@@ -222,27 +222,18 @@ public sealed class ProviderSharedUtilitiesTests
     }
 
     [Fact]
-    public async Task UtilityModelSelection_NormalizesKnownValuesAndFallsBackForUnknownValues()
+    public async Task OpenAiUtilityModelSelection_NormalizesLegacyValuesAndFallsBackForUnknownValues()
     {
-        var selection = new ProviderUtilityModelSelection(
-            "utility.modelId",
-            "vendor/default",
-            [
-                new PackageSettingsOption("vendor/default", "Default"),
-                new PackageSettingsOption("vendor/other", "Other"),
-            ],
-            value => string.Equals(value?.Trim(), "vendor/legacy", StringComparison.OrdinalIgnoreCase)
-                ? "vendor/other"
-                : value);
+        var selection = OpenAiProviderConfiguration.UtilityModelSelection;
         var normalizedContext = new ProviderTestPackageContext(
-            "vendor.package",
-            new Dictionary<string, string> { ["utility.modelId"] = " vendor/legacy " });
+            "sunder.package.agent.provider.openai",
+            new Dictionary<string, string> { [OpenAiProviderConfiguration.UtilityModelKey] = " openai/gpt-5.5-fast " });
         var unknownContext = new ProviderTestPackageContext(
-            "vendor.package",
-            new Dictionary<string, string> { ["utility.modelId"] = "vendor/unknown" });
+            "sunder.package.agent.provider.openai",
+            new Dictionary<string, string> { [OpenAiProviderConfiguration.UtilityModelKey] = "openai/unknown" });
 
-        Assert.Equal("vendor/other", await selection.ResolveAsync(normalizedContext.Settings));
-        Assert.Equal("vendor/default", await selection.ResolveAsync(unknownContext.Settings));
+        Assert.Equal("openai/gpt-5.5", await selection.ResolveAsync(normalizedContext.Settings));
+        Assert.Equal(OpenAiProviderConfiguration.DefaultUtilityModelId, await selection.ResolveAsync(unknownContext.Settings));
     }
 
     [Fact]

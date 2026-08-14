@@ -2,12 +2,10 @@ using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 using Sunder.Package.Agent.HistorySearch;
 using Sunder.Package.Agent.Storage;
-using Sunder.Sdk.Runtime;
 
 namespace Sunder.Package.Agent.Runtime;
 
 internal sealed class AgentHistorySearchHandler(HistorySearchService search)
-    : IPackageRuntimeOperationHandler<HistorySearchRequest, HistorySearchResponse>
 {
     public async ValueTask<HistorySearchResponse> HandleAsync(
         HistorySearchRequest request,
@@ -16,7 +14,6 @@ internal sealed class AgentHistorySearchHandler(HistorySearchService search)
 }
 
 internal sealed class AgentHistoryStateHandler(HistorySearchService search)
-    : IPackageRuntimeOperationHandler<HistorySearchStateRequest, HistorySearchState>
 {
     public async ValueTask<HistorySearchState> HandleAsync(
         HistorySearchStateRequest request,
@@ -25,7 +22,6 @@ internal sealed class AgentHistoryStateHandler(HistorySearchService search)
 }
 
 internal sealed class AgentHistoryCommandHandler(HistorySearchService search)
-    : IPackageRuntimeOperationHandler<HistorySearchCommand, HistorySearchCommandResult>
 {
     public async ValueTask<HistorySearchCommandResult> HandleAsync(
         HistorySearchCommand request,
@@ -36,7 +32,6 @@ internal sealed class AgentHistoryCommandHandler(HistorySearchService search)
 internal sealed class AgentTranscriptAroundTurnHandler(
     AgentLocalStore store,
     AgentRuntimeChangeHub changes)
-    : IPackageRuntimeOperationHandler<AgentTranscriptAroundTurnRequest, AgentTranscriptAroundTurnPage>
 {
     public ValueTask<AgentTranscriptAroundTurnPage> HandleAsync(
         AgentTranscriptAroundTurnRequest request,
@@ -44,10 +39,11 @@ internal sealed class AgentTranscriptAroundTurnHandler(
     {
         cancellationToken.ThrowIfCancellationRequested();
         var session = store.GetSession(request.SessionId)
-            ?? throw new InvalidOperationException("The requested root session is no longer available.");
+            ?? throw new AgentOwnerOperationException("The requested root session is no longer available.");
         if (session.ParentSessionId is not null)
         {
-            throw new InvalidOperationException("Child-session transcript anchors must be opened in Subsessions.");
+            throw new AgentOwnerOperationException(
+                "Child-session transcript anchors must be opened in Subsessions.");
         }
         var page = store.LoadTranscriptAroundTurn(
             request.SessionId,
@@ -59,9 +55,7 @@ internal sealed class AgentTranscriptAroundTurnHandler(
     }
 }
 
-internal sealed class AgentHistoryStatusStream :
-    IPackageRuntimeStreamHandler<HistorySearchStatusSubscription, HistorySearchStatus>,
-    IDisposable
+internal sealed class AgentHistoryStatusStream : IDisposable
 {
     private readonly HistorySearchRuntimeState _state;
     private readonly object _lock = new();

@@ -1,16 +1,9 @@
 using Avalonia;
 using Avalonia.Threading;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Runtime;
 
 namespace Sunder.Package.Agent.Shared.PackageViews;
-
-internal readonly record struct TranscriptPageCursor(
-    DateTimeOffset CreatedAtUtc,
-    Guid TurnId)
-{
-    internal static TranscriptPageCursor FromTurn(AgentTurnRecord turn)
-        => new(turn.CreatedAtUtc, turn.TurnId);
-}
 
 internal sealed record TranscriptTurnPage(
     IReadOnlyList<AgentTurnRecord> Turns,
@@ -406,11 +399,22 @@ internal sealed partial class TranscriptTimelineState<TRow>
                candidate.TurnId.ToString("D"),
                boundary.TurnId.ToString("D")) > 0;
 
-    private static async Task<TResult> RunOnPresentationThreadAsync<TResult>(
+    private async Task<TResult> RunOnPresentationThreadAsync<TResult>(
         Func<TResult> action,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (_presentationDispatcher is not null)
+        {
+            var result = default(TResult)!;
+            await _presentationDispatcher.InvokeAsync(() =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                result = action();
+            }).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            return result;
+        }
         if (Application.Current is null || Dispatcher.UIThread.CheckAccess())
         {
             return action();
@@ -422,7 +426,7 @@ internal sealed partial class TranscriptTimelineState<TRow>
             cancellationToken);
     }
 
-    private static async Task RunOnPresentationThreadAsync(
+    private async Task RunOnPresentationThreadAsync(
         Action action,
         CancellationToken cancellationToken)
         => _ = await RunOnPresentationThreadAsync(

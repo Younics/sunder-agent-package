@@ -4,7 +4,6 @@ using Sunder.Package.Agent.Skills.Runtime;
 using Sunder.Package.Agent.Skills.Services;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Logging;
-using Sunder.Sdk.Runtime;
 using Sunder.Sdk.Storage;
 using Xunit;
 
@@ -49,35 +48,30 @@ public sealed class SkillRuntimeTransferTests
         }
     }
 
-    private sealed class HandlerRuntimeClient(SkillRuntimeHandler handler) : IPackageRuntimeClient
+    private sealed class HandlerRuntimeClient(SkillRuntimeHandler handler) : ISkillOwnerClient
     {
-        public bool IsAvailable => true;
         public SkillCommand? LastCommand { get; private set; }
 
-        public async ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(PackageRuntimeOperation<TRequest, TResponse> operation, TRequest request, CancellationToken cancellationToken = default)
-            where TRequest : class where TResponse : class
+        public ValueTask<SkillProjection> QueryAsync(CancellationToken cancellationToken = default)
+            => handler.HandleAsync(new SkillQuery(), cancellationToken);
+
+        public ValueTask<SkillProjection> CommandAsync(
+            SkillCommand command,
+            CancellationToken cancellationToken = default)
         {
-            if (request is SkillCommand command)
-            {
-                LastCommand = command;
-                return (TResponse)(object)await handler.HandleAsync(command, cancellationToken);
-            }
-            if (request is SkillQuery query)
-            {
-                return (TResponse)(object)await handler.HandleAsync(query, cancellationToken);
-            }
-            throw new InvalidOperationException();
+            LastCommand = command;
+            return handler.HandleAsync(command, cancellationToken);
         }
 
-        public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(PackageRuntimeStream<TRequest, TEvent> stream, TRequest request, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
-            where TRequest : class where TEvent : class
+        public async IAsyncEnumerable<SkillChanged> SubscribeChangesAsync(
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             await Task.CompletedTask;
             yield break;
         }
     }
 
-    private sealed class TestContext(string root, IPackageFileStore files) : IPackageContext
+    internal sealed class TestContext(string root, IPackageFileStore files) : IPackageContext
     {
         public string PackageId => "sunder.package.agent.skills";
         public string Version => "1.0.0";

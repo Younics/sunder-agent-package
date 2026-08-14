@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <SunderPackageFamilyId>sunder.package.agent.memory.semantic</SunderPackageFamilyId>
+    <SunderPackageRole>aggregate</SunderPackageRole>
+    <SunderPackageAggregateProject>true</SunderPackageAggregateProject>
+    <SunderPackageWorkerProject>..\Sunder.Package.Agent.Memory.Semantic.csproj</SunderPackageWorkerProject>
+    <SunderPackageWorkerDirectory>..</SunderPackageWorkerDirectory>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\App\Sunder.Package.Agent.Memory.Semantic.App.csproj"
+                      ReferenceOutputAssembly="false" />
+    <SunderPackageTargetLeaf Include="..\App\bin\$(Configuration)\$(TargetFramework)\sunder-dev"
+                             DiscoveryRoot="..\App\bin\$(Configuration)\$(TargetFramework)" />
+  </ItemGroup>
+
+</Project>

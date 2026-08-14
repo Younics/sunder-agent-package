@@ -6,7 +6,6 @@ using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.PackageViews;
 using Sunder.Package.Agent.Runtime;
 using Sunder.Sdk.Abstractions;
-using Sunder.Sdk.Runtime;
 using Xunit;
 using AgentPresentationDispatcher = AgentCore::Sunder.Package.Agent.Shared.Presentation.IPresentationDispatcher;
 
@@ -86,7 +85,7 @@ public sealed class AgentPermissionPresentationRaceTests
     [Fact]
     public async Task GatewayRejectsStalePermissionCacheCompletionAfterMutation()
     {
-        var client = new RacingPermissionRuntimeClient();
+        var client = new RacingPermissionOwnerClient();
         using var gateway = new AgentAppRuntimeGateway(client);
 
         var staleRead = gateway.LoadGlobalPermissionsAsync();
@@ -299,10 +298,8 @@ public sealed class AgentPermissionPresentationRaceTests
             => ConnectionStateChanged?.Invoke(AgentRuntimeConnectionState.Connected);
     }
 
-    private sealed class RacingPermissionRuntimeClient : IPackageRuntimeClient
+    private sealed class RacingPermissionOwnerClient : IAgentOwnerClient
     {
-        public bool IsAvailable => true;
-
         public TaskCompletionSource ReadStarted { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -310,13 +307,13 @@ public sealed class AgentPermissionPresentationRaceTests
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public async ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-            PackageRuntimeOperation<TRequest, TResponse> operation,
+            AgentOwnerRpcOperation<TRequest, TResponse> operation,
             TRequest request,
             CancellationToken cancellationToken = default)
             where TRequest : class
             where TResponse : class
         {
-            Assert.Same(AgentRuntimeOperations.Permissions, operation);
+            Assert.True(operation.Is(AgentRuntimeOperations.Permissions));
             var command = Assert.IsType<AgentPermissionCommand>(request);
             if (command.Kind == AgentPermissionCommandKind.Read)
             {
@@ -330,7 +327,7 @@ public sealed class AgentPermissionPresentationRaceTests
         }
 
         public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-            PackageRuntimeStream<TRequest, TEvent> stream,
+            AgentOwnerRpcStream<TRequest, TEvent> stream,
             TRequest request,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
             where TRequest : class

@@ -5,7 +5,26 @@ artifact_dir="${1:?Usage: generate-release-evidence.sh <artifact-directory> [nam
 shift
 [[ -d "$artifact_dir" ]] || { printf 'Artifact directory not found: %s\n' "$artifact_dir" >&2; exit 1; }
 
-hash_file() { sha256sum "$1" | cut -d ' ' -f 1; }
+core_material='null'
+if [[ -n "${SUNDER_CORE_TAG:-}${SUNDER_CORE_COMMIT:-}${SUNDER_CORE_PACKAGE_VERSION:-}" ]]; then
+  [[ "${SUNDER_CORE_COMMIT:-}" =~ ^[0-9a-f]{40}$ ]] \
+    || { printf 'SUNDER_CORE_COMMIT must be a full lowercase Git SHA.\n' >&2; exit 2; }
+  [[ "${SUNDER_CORE_TAG:-}" == "sdk/v${SUNDER_CORE_PACKAGE_VERSION:-}" ]] \
+    || { printf 'SUNDER_CORE_TAG must identify SUNDER_CORE_PACKAGE_VERSION.\n' >&2; exit 2; }
+  core_material="$(jq -cn \
+    --arg tag "$SUNDER_CORE_TAG" \
+    --arg sha "$SUNDER_CORE_COMMIT" \
+    --arg version "$SUNDER_CORE_PACKAGE_VERSION" \
+    '{name: "sunder-core-sdk", tag: $tag, sha: $sha, packageVersion: $version}')"
+fi
+
+hash_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | cut -d ' ' -f 1
+  else
+    shasum -a 256 "$1" | cut -d ' ' -f 1
+  fi
+}
 mapfile -d '' -t artifacts < <(find "$artifact_dir" -type f -print0 | sort -z)
 [[ ${#artifacts[@]} -gt 0 ]] || { printf 'No release artifacts found in %s.\n' "$artifact_dir" >&2; exit 1; }
 
@@ -26,6 +45,10 @@ done
     printf '%s{"name":"%s","sha":"%s"}' "$separator" "${source%%=*}" "${source#*=}"
     separator=','
   done
+  printf '],"materials":['
+  if [[ "$core_material" != null ]]; then
+    printf '%s' "$core_material"
+  fi
   printf '],"artifacts":['
   separator=''
   for file in "${artifacts[@]}"; do

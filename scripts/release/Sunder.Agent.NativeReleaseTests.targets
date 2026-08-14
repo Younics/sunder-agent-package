@@ -1,0 +1,6 @@
+<Project>
+  <ItemGroup Condition="'$(SunderAgentNativeReleaseTestSource)' != '' and '$(MSBuildProjectName)' == 'Sunder.Runtime.Host.Tests'">
+    <Compile Include="$(SunderAgentNativeReleaseTestSource)"
+             Link="AgentNativeReleaseSmokeTests.agent-release.cs" />
+  </ItemGroup>
+</Project>

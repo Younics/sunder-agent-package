@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Reflection;
+using System.Text.Json;
 using System.Threading.Channels;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
@@ -9,9 +10,12 @@ using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.HistorySearch;
 using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.Protocol;
+using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Worker;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -19,6 +23,219 @@ namespace Sunder.Package.Agent.Tests;
 public sealed class AgentRuntimeStartupServiceTests
 {
     private static readonly TimeSpan TestTimeout = TimeSpan.FromSeconds(15);
+
+    [Fact]
+    public async Task WorkerActivation_DoesNotWaitForPreActivationCatalogDiscovery()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var client = new BlockingActivationRpcClient();
+        var catalog = AgentRpcCatalog.CreateDormant(client);
+        var services = new ServiceCollection();
+        services.AddSingleton<IPackageContext>(scope.Context);
+        services.AddSingleton(catalog);
+        new PackageModule().ConfigureRuntimeServices(services, scope.Context);
+        await using var provider = services.BuildServiceProvider();
+        var deferred = new DeferredAgentRpcServiceHandler("test.deferred", _ => NoOpRpcHandler.Instance);
+        var lifecycle = new AgentWorkerLifecycle(provider, [deferred]);
+        lifecycle.CommitGeneration(new PackageRuntimeGeneration(Guid.NewGuid(), 1));
+
+        await lifecycle.ActivateAsync(
+                static (_, _, _) => ValueTask.CompletedTask,
+                CancellationToken.None)
+            .AsTask()
+            .WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.True(deferred.IsActive);
+        await lifecycle.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task WorkerActivation_NewerHostGenerationSupersedesPriorLeaseBeforeDeferredProvidersActivate()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var catalog = AgentRpcCatalog.CreateDormant(
+            new RegressionTestRpcClient(new RegressionTestRpcState(), "sunder.package.agent"));
+        var services = new ServiceCollection();
+        services.AddSingleton<IPackageContext>(scope.Context);
+        services.AddSingleton(catalog);
+        new PackageModule().ConfigureRuntimeServices(services, scope.Context);
+        await using var provider = services.BuildServiceProvider();
+        var handlerActivated = false;
+        var deferred = new DeferredAgentRpcServiceHandler("test.deferred", _ =>
+        {
+            handlerActivated = true;
+            return NoOpRpcHandler.Instance;
+        });
+        var lifecycle = new AgentWorkerLifecycle(provider, [deferred]);
+        var store = provider.GetRequiredService<AgentLocalStore>();
+        var oldEpoch = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+        Assert.True(store.TryCommitRuntimeGeneration(
+            new PackageRuntimeGeneration(oldEpoch, 1),
+            GetCurrentProcessIdentity(),
+            expectedCurrentEpoch: null,
+            now,
+            now.AddMinutes(5)));
+        var candidate = new PackageRuntimeGeneration(Guid.NewGuid(), 2);
+        lifecycle.CommitGeneration(candidate);
+
+        var activation = lifecycle.ActivateAsync(
+            static (_, _, _) => ValueTask.CompletedTask,
+            CancellationToken.None).AsTask();
+        await activation.WaitAsync(TestTimeout);
+
+        Assert.True(handlerActivated);
+        Assert.True(deferred.IsActive);
+        Assert.Equal(candidate.ActivationId, store.OwnedRuntimeGeneration);
+        Assert.True(provider.GetRequiredService<AgentBackgroundWorkService>().IsRunning);
+        Assert.Equal("Expired", ExecuteString(
+            store.DatabasePath,
+            $"SELECT Status FROM AgentRuntimeGenerations WHERE Epoch = '{oldEpoch}';"));
+        await lifecycle.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task WorkerActivation_ProviderFailureRejectsCandidateAndUnwindsStartup()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var catalog = AgentRpcCatalog.CreateDormant(
+            new RegressionTestRpcClient(new RegressionTestRpcState(), "sunder.package.agent"));
+        var services = new ServiceCollection();
+        services.AddSingleton<IPackageContext>(scope.Context);
+        services.AddSingleton(catalog);
+        new PackageModule().ConfigureRuntimeServices(services, scope.Context);
+        await using var provider = services.BuildServiceProvider();
+        var first = new DeferredAgentRpcServiceHandler("test.first", _ => NoOpRpcHandler.Instance);
+        var failing = new DeferredAgentRpcServiceHandler("test.failure", _ =>
+            throw new InvalidOperationException("Injected deferred provider startup failure."));
+        var lifecycle = new AgentWorkerLifecycle(provider, [first, failing]);
+        lifecycle.CommitGeneration(new PackageRuntimeGeneration(Guid.NewGuid(), 1));
+        var faultReported = false;
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => lifecycle.ActivateAsync(
+            (_, _, _) =>
+            {
+                faultReported = true;
+                return ValueTask.CompletedTask;
+            },
+            CancellationToken.None).AsTask());
+
+        Assert.Contains("deferred provider startup failure", exception.Message, StringComparison.Ordinal);
+        Assert.False(first.IsActive);
+        Assert.False(failing.IsActive);
+        Assert.False(faultReported);
+        Assert.Null(provider.GetRequiredService<AgentLocalStore>().OwnedRuntimeGeneration);
+        Assert.False(provider.GetRequiredService<AgentBackgroundWorkService>().IsRunning);
+    }
+
+    [Fact]
+    public async Task WorkerGenerationFault_ReportsBeforeBoundedCleanupAndPreservesOriginalWhenCleanupHangs()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var catalog = AgentRpcCatalog.CreateDormant(
+            new RegressionTestRpcClient(new RegressionTestRpcState(), "sunder.package.agent"));
+        var services = new ServiceCollection();
+        services.AddSingleton<IPackageContext>(scope.Context);
+        services.AddSingleton(catalog);
+        new PackageModule().ConfigureRuntimeServices(services, scope.Context);
+        await using var provider = services.BuildServiceProvider();
+        var deferred = new DeferredAgentRpcServiceHandler("test.deferred", _ => NoOpRpcHandler.Instance);
+        var lifecycle = new AgentWorkerLifecycle(provider, [deferred], TimeSpan.FromMilliseconds(50));
+        Assert.IsAssignableFrom<ISunderWorkerLifecycleService>(lifecycle);
+        lifecycle.CommitGeneration(new PackageRuntimeGeneration(Guid.NewGuid(), 1));
+        var reportCalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var providerWasActiveAtReport = false;
+        var workersWereActiveAtReport = false;
+        await lifecycle.ActivateAsync(
+            (_, _, _) =>
+            {
+                providerWasActiveAtReport = deferred.IsActive;
+                workersWereActiveAtReport = provider
+                    .GetRequiredService<AgentBackgroundWorkService>()
+                    .IsRunning;
+                reportCalled.TrySetResult();
+                return ValueTask.CompletedTask;
+            },
+            CancellationToken.None);
+        var releaseCleanup = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        SetPrivateField(
+            provider.GetRequiredService<HistorySearchIndexingService>(),
+            "_worker",
+            releaseCleanup.Task);
+        var startup = provider.GetRequiredService<AgentRuntimeStartupService>();
+        var original = new InvalidOperationException("generation ownership failed");
+
+        FaultGenerationCompletion(startup, original);
+
+        await reportCalled.Task.WaitAsync(TestTimeout);
+        var observed = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => lifecycle.Completion.WaitAsync(TestTimeout));
+        Assert.Same(original, observed);
+        Assert.True(providerWasActiveAtReport);
+        Assert.True(workersWereActiveAtReport);
+        Assert.False(deferred.IsActive);
+
+        releaseCleanup.TrySetResult();
+        await startup.StopAsync().WaitAsync(TestTimeout);
+        await lifecycle.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task WorkerGenerationFault_PreservesOriginalWhenCleanupFails()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var catalog = AgentRpcCatalog.CreateDormant(
+            new RegressionTestRpcClient(new RegressionTestRpcState(), "sunder.package.agent"));
+        var services = new ServiceCollection();
+        services.AddSingleton<IPackageContext>(scope.Context);
+        services.AddSingleton(catalog);
+        new PackageModule().ConfigureRuntimeServices(services, scope.Context);
+        var provider = services.BuildServiceProvider();
+        var deferred = new DeferredAgentRpcServiceHandler("test.deferred", _ => NoOpRpcHandler.Instance);
+        var lifecycle = new AgentWorkerLifecycle(provider, [deferred], TimeSpan.FromSeconds(1));
+        lifecycle.CommitGeneration(new PackageRuntimeGeneration(Guid.NewGuid(), 1));
+        var reportCalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            await lifecycle.ActivateAsync(
+                (_, _, _) =>
+                {
+                    reportCalled.TrySetResult();
+                    return ValueTask.CompletedTask;
+                },
+                CancellationToken.None);
+            var cleanupFailure = new IOException("cleanup failed");
+            SetPrivateField(
+                provider.GetRequiredService<HistorySearchIndexingService>(),
+                "_worker",
+                Task.FromException(cleanupFailure));
+            var startup = provider.GetRequiredService<AgentRuntimeStartupService>();
+            var original = new InvalidOperationException("generation ownership failed");
+
+            FaultGenerationCompletion(startup, original);
+
+            await reportCalled.Task.WaitAsync(TestTimeout);
+            var observed = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => lifecycle.Completion.WaitAsync(TestTimeout));
+            Assert.Same(original, observed);
+            Assert.False(deferred.IsActive);
+            var failedWorker = GetPrivateField<Task>(
+                provider.GetRequiredService<HistorySearchIndexingService>(),
+                "_worker");
+            Assert.Same(cleanupFailure, Assert.Single(failedWorker.Exception!.InnerExceptions));
+        }
+        finally
+        {
+            try
+            {
+                await provider.DisposeAsync();
+            }
+            catch
+            {
+                // The injected cleanup failure is expected during provider disposal too.
+            }
+        }
+    }
 
     [Fact]
     public async Task FailedPartialStartup_UnwindsWorkersAndCanRetry()
@@ -43,14 +260,14 @@ public sealed class AgentRuntimeStartupServiceTests
         var abandonedGeneration = projection.BeginTextGeneration();
         var startup = provider.GetRequiredService<AgentRuntimeStartupService>();
         var store = provider.GetRequiredService<AgentLocalStore>();
-        using (var connection = Open(store.DatabasePath))
+        using (var connection = Open(projection.DatabasePath))
         using (var command = connection.CreateCommand())
         {
             command.CommandText = """
-                CREATE TRIGGER RejectStartupLifecycleSubscription
-                BEFORE INSERT ON AgentLifecycleSubscriptions
+                CREATE TRIGGER RejectStartupHistoryConfiguration
+                BEFORE UPDATE ON HistoryConfiguration
                 BEGIN
-                    SELECT RAISE(ABORT, 'startup subscription rejected');
+                    SELECT RAISE(ABORT, 'startup history configuration rejected');
                 END;
                 """;
             command.ExecuteNonQuery();
@@ -66,10 +283,10 @@ public sealed class AgentRuntimeStartupServiceTests
             projection.DatabasePath,
             $"SELECT COUNT(*) FROM HistoryProjectionGenerations WHERE GenerationId = {abandonedGeneration};"));
 
-        using (var connection = Open(store.DatabasePath))
+        using (var connection = Open(projection.DatabasePath))
         using (var command = connection.CreateCommand())
         {
-            command.CommandText = "DROP TRIGGER RejectStartupLifecycleSubscription;";
+            command.CommandText = "DROP TRIGGER RejectStartupHistoryConfiguration;";
             command.ExecuteNonQuery();
         }
         var workspace = provider.GetRequiredService<AgentWorkspaceService>().CreateWorkspace("Retry history");
@@ -97,9 +314,14 @@ public sealed class AgentRuntimeStartupServiceTests
     public async Task CanceledStartup_DoesNotLatchStartedState()
     {
         using var scope = RegressionTestPackageScope.Create();
+        var catalog = new RegressionTestExtensionCatalog();
+        var cleaner = new BlockingSessionDataCleaner();
+        var observer = new BlockingLifecycleObserver();
+        catalog.AddProvider(AgentRpcServices.SessionCleaners, cleaner);
+        catalog.AddProvider(AgentRpcServices.DurableLifecycleObservers, observer);
         var services = new ServiceCollection();
         services.AddSingleton<IPackageContext>(scope.Context);
-        services.AddSingleton<Sunder.Package.Agent.Protocol.AgentRpcCatalog>(new RegressionTestExtensionCatalog());
+        services.AddSingleton<Sunder.Package.Agent.Protocol.AgentRpcCatalog>(catalog);
         new PackageModule().ConfigureRuntimeServices(services, scope.Context);
         await using var provider = services.BuildServiceProvider();
         var startup = provider.GetRequiredService<AgentRuntimeStartupService>();
@@ -118,7 +340,19 @@ public sealed class AgentRuntimeStartupServiceTests
 
         await startup.StartAsync();
         Assert.False(backgroundWork.IsRunning);
-        await startup.CommitGenerationAsync(generation);
+        var commit = startup.CommitGenerationAsync(generation);
+        try
+        {
+            await commit.WaitAsync(TimeSpan.FromSeconds(2));
+            await cleaner.DescriptorReadStarted.WaitAsync(TimeSpan.FromSeconds(2));
+            await observer.DescriptorReadStarted.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+        finally
+        {
+            cleaner.ReleaseDescriptor();
+            observer.ReleaseDescriptor();
+            await commit.WaitAsync(TestTimeout);
+        }
 
         Assert.Equal(generation.ActivationId, store.OwnedRuntimeGeneration);
         Assert.True(backgroundWork.IsRunning);
@@ -131,7 +365,7 @@ public sealed class AgentRuntimeStartupServiceTests
     }
 
     [Fact]
-    public async Task CandidateStart_PreservesLivePriorGenerationUntilItStopsThenActivates()
+    public async Task CandidateStart_NewerHostGenerationSupersedesLivePriorGenerationAndRecovers()
     {
         using var scope = RegressionTestPackageScope.Create();
         await using var provider = CreateProvider(scope.Context);
@@ -150,20 +384,13 @@ public sealed class AgentRuntimeStartupServiceTests
 
         await startup.StartAsync();
         var candidate = new PackageRuntimeGeneration(Guid.NewGuid(), 2);
-        var commit = startup.CommitGenerationAsync(candidate);
-
-        Assert.False(commit.IsCompleted);
-        Assert.Null(store.OwnedRuntimeGeneration);
-        Assert.Equal(oldEpoch, store.GetCurrentRuntimeGeneration()?.Epoch);
-        Assert.Equal(1, ExecuteInt64(
-            projection.DatabasePath,
-            $"SELECT COUNT(*) FROM HistoryProjectionGenerations WHERE GenerationId = {abandonedGeneration};"));
-
-        store.StopRuntimeGeneration(oldEpoch, DateTimeOffset.UtcNow);
-        await commit.WaitAsync(TestTimeout);
+        await startup.CommitGenerationAsync(candidate).WaitAsync(TestTimeout);
 
         Assert.Equal(candidate.ActivationId, store.GetCurrentRuntimeGeneration()?.Epoch);
         Assert.Equal(candidate.ActivationId, store.OwnedRuntimeGeneration);
+        Assert.Equal("Expired", ExecuteString(
+            store.DatabasePath,
+            $"SELECT Status FROM AgentRuntimeGenerations WHERE Epoch = '{oldEpoch}';"));
         Assert.Equal(0, ExecuteInt64(
             projection.DatabasePath,
             $"SELECT COUNT(*) FROM HistoryProjectionGenerations WHERE GenerationId = {abandonedGeneration};"));
@@ -268,7 +495,7 @@ public sealed class AgentRuntimeStartupServiceTests
     }
 
     [Fact]
-    public async Task HostTimeout_KeepsLeaseUntilOwnedWorkDrainsAndBlocksReplacement()
+    public async Task HostTimeout_KeepsLeaseUntilOwnedWorkDrainsAndBlocksPeerGeneration()
     {
         using var scope = RegressionTestPackageScope.Create();
         await using var provider = CreateProvider(scope.Context);
@@ -302,7 +529,7 @@ public sealed class AgentRuntimeStartupServiceTests
         Assert.Equal(generation.ActivationId, store.OwnedRuntimeGeneration);
         Assert.Equal("Committed", store.GetCurrentRuntimeGeneration()?.Status);
         var replacement = replacementProvider.GetRequiredService<AgentRuntimeStartupService>();
-        var replacementGeneration = new PackageRuntimeGeneration(Guid.NewGuid(), 2);
+        var replacementGeneration = new PackageRuntimeGeneration(Guid.NewGuid(), 1);
         await replacement.StartAsync();
         var replacementCommit = replacement.CommitGenerationAsync(replacementGeneration);
         Assert.False(replacementCommit.IsCompleted);
@@ -448,7 +675,7 @@ public sealed class AgentRuntimeStartupServiceTests
         await startup.StartAsync();
         await startup.CommitGenerationAsync(generation);
         var replacement = replacementProvider.GetRequiredService<AgentRuntimeStartupService>();
-        var replacementGeneration = new PackageRuntimeGeneration(Guid.NewGuid(), 2);
+        var replacementGeneration = new PackageRuntimeGeneration(Guid.NewGuid(), 1);
         await replacement.StartAsync();
         var initialOwnership = Assert.IsType<AgentRuntimeGenerationOwnership>(
             store.GetCurrentRuntimeGeneration());
@@ -846,6 +1073,14 @@ public sealed class AgentRuntimeStartupServiceTests
         field.SetValue(instance, value);
     }
 
+    private static void FaultGenerationCompletion(
+        AgentRuntimeStartupService startup,
+        Exception exception)
+    {
+        var completion = GetPrivateField<TaskCompletionSource>(startup, "_generationCompletion");
+        Assert.True(completion.TrySetException(exception));
+    }
+
     private sealed class NoOpDurableObserver : IAgentDurableLifecycleObserver
     {
         public string ObserverId => "test.startup-observer";
@@ -856,6 +1091,140 @@ public sealed class AgentRuntimeStartupServiceTests
             AgentDurableLifecycleEventEnvelope lifecycleEvent,
             CancellationToken cancellationToken = default)
             => ValueTask.CompletedTask;
+    }
+
+    private sealed class NoOpRpcHandler : ISunderRpcServiceHandler
+    {
+        internal static NoOpRpcHandler Instance { get; } = new();
+
+        public ValueTask<JsonElement> InvokeUnaryAsync(
+            SunderRpcInvocationContext context,
+            string serviceId,
+            string methodId,
+            JsonElement request,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(default(JsonElement));
+
+        public async IAsyncEnumerable<JsonElement> InvokeServerStreamAsync(
+            SunderRpcInvocationContext context,
+            string serviceId,
+            string methodId,
+            JsonElement request,
+            [System.Runtime.CompilerServices.EnumeratorCancellation]
+            CancellationToken cancellationToken = default)
+        {
+            await Task.CompletedTask;
+            yield break;
+        }
+    }
+
+    private sealed class BlockingActivationRpcClient : ISunderRpcClient
+    {
+        public ValueTask<SunderRpcProviderSnapshot?> GetProviderAsync(
+            SunderRpcEndpointReference endpoint,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult<SunderRpcProviderSnapshot?>(null);
+
+        public ValueTask<bool> TryReportInvariantViolationAsync(
+            SunderRpcEndpointReference endpoint,
+            Exception exception,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(false);
+
+        public async ValueTask<SunderRpcCatalogSnapshot> DiscoverAsync(
+            string contractId,
+            CancellationToken cancellationToken = default)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            throw new UnreachableException();
+        }
+
+        public async IAsyncEnumerable<SunderRpcCatalogEvent> WatchAsync(
+            long afterRevision,
+            long afterSequence,
+            [System.Runtime.CompilerServices.EnumeratorCancellation]
+            CancellationToken cancellationToken = default)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            yield break;
+        }
+
+        public ValueTask<JsonElement> InvokeAsync(
+            SunderRpcEndpointReference endpoint,
+            string serviceId,
+            string methodId,
+            JsonElement request,
+            SunderRpcCallOptions? options = null,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromException<JsonElement>(new NotSupportedException());
+
+        public async IAsyncEnumerable<JsonElement> SubscribeAsync(
+            SunderRpcEndpointReference endpoint,
+            string serviceId,
+            string methodId,
+            JsonElement request,
+            SunderRpcCallOptions? options = null,
+            [System.Runtime.CompilerServices.EnumeratorCancellation]
+            CancellationToken cancellationToken = default)
+        {
+            await Task.CompletedTask;
+            yield break;
+        }
+    }
+
+    private sealed class BlockingSessionDataCleaner : IAgentSessionDataCleaner
+    {
+        private readonly TaskCompletionSource _descriptorReadStarted = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _releaseDescriptor = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public string CleanerId
+        {
+            get
+            {
+                _descriptorReadStarted.TrySetResult();
+                _releaseDescriptor.Task.GetAwaiter().GetResult();
+                return "test.blocking-cleaner";
+            }
+        }
+
+        internal Task DescriptorReadStarted => _descriptorReadStarted.Task;
+
+        public void DeleteSessionData(Guid sessionId)
+        {
+        }
+
+        internal void ReleaseDescriptor() => _releaseDescriptor.TrySetResult();
+    }
+
+    private sealed class BlockingLifecycleObserver : IAgentDurableLifecycleObserver
+    {
+        private readonly TaskCompletionSource _descriptorReadStarted = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _releaseDescriptor = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public string ObserverId
+        {
+            get
+            {
+                _descriptorReadStarted.TrySetResult();
+                _releaseDescriptor.Task.GetAwaiter().GetResult();
+                return "test.blocking-observer";
+            }
+        }
+
+        public string DisplayName => "Blocking startup observer";
+
+        internal Task DescriptorReadStarted => _descriptorReadStarted.Task;
+
+        public ValueTask HandleDurableLifecycleEventAsync(
+            AgentDurableLifecycleEventEnvelope lifecycleEvent,
+            CancellationToken cancellationToken = default)
+            => ValueTask.CompletedTask;
+
+        internal void ReleaseDescriptor() => _releaseDescriptor.TrySetResult();
     }
 
     private sealed class MutableTimeProvider(DateTimeOffset now) : TimeProvider

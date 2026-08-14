@@ -1,14 +1,16 @@
 {
-  "descriptorVersion": 1,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "descriptorVersion": 2,
   "contractId": "sunder.agent.prompt.context.contributor",
   "version": "1.0.0",
-  "services": [
-    {
-      "serviceId": "prompt-context-contributor",
-      "methods": [
-        {
-          "methodId": "describe",
+  "errors": {},
+  "services": {
+    "prompt-context-contributor": {
+      "methods": {
+        "describe": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/AgentRpcEmpty"
           },
@@ -16,9 +18,10 @@
             "$ref": "#/$defs/PromptContextContributorDescription"
           }
         },
-        {
-          "methodId": "contribute",
+        "contribute": {
           "kind": "unary",
+          "idempotency": "idempotent",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/PromptContextRequestWire"
           },
@@ -26,9 +29,10 @@
             "$ref": "#/$defs/AgentRpcOptionalOfAgentPromptContextContribution"
           }
         },
-        {
-          "methodId": "acknowledge",
+        "acknowledge": {
           "kind": "unary",
+          "idempotency": "none",
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/AgentPromptContextReceipt"
           },
@@ -36,9 +40,9 @@
             "$ref": "#/$defs/AgentRpcEmpty"
           }
         }
-      ]
+      }
     }
-  ],
+  },
   "$defs": {
     "AgentRpcEmpty": {
       "type": "object",
@@ -246,8 +250,7 @@
     },
     "DateTimeOffset": {
       "type": "string",
-      "minLength": 0,
-      "maxLength": 1000000
+      "logicalType": "utc-date-time"
     },
     "AgentWorkspaceBindingRecord": {
       "type": "object",
@@ -300,12 +303,14 @@
     },
     "Guid": {
       "type": "string",
-      "minLength": 0,
-      "maxLength": 1000000
+      "logicalType": "uuid"
     },
     "AgentRpcProviderHandle": {
       "type": "object",
       "properties": {
+        "abiSha256": {
+          "$ref": "#/$defs/String"
+        },
         "activationEpoch": {
           "$ref": "#/$defs/Int64"
         },
@@ -315,10 +320,10 @@
         "contractId": {
           "$ref": "#/$defs/String"
         },
-        "contractSha256": {
+        "contractVersion": {
           "$ref": "#/$defs/String"
         },
-        "contractVersion": {
+        "descriptorSha256": {
           "$ref": "#/$defs/String"
         },
         "endpointReference": {
@@ -338,11 +343,12 @@
         }
       },
       "required": [
+        "abiSha256",
         "activationEpoch",
         "activationId",
         "contractId",
-        "contractSha256",
         "contractVersion",
+        "descriptorSha256",
         "endpointReference",
         "packageId",
         "packageVersion",
@@ -505,8 +511,7 @@
     },
     "Nullable": {
       "type": "string",
-      "minLength": 0,
-      "maxLength": 1000000
+      "logicalType": "uuid"
     },
     "AgentToolExecutionStatus": {
       "type": "integer",

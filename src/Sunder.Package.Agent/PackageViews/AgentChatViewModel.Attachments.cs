@@ -107,9 +107,9 @@ public sealed partial class AgentChatViewModel
 
     private bool TryAddAttachmentUpload(AgentAttachmentUploadRequest upload)
     {
-        if (PendingAttachments.Count >= AgentAttachmentService.MaxAttachmentsPerMessage)
+        if (PendingAttachments.Count >= AgentAttachmentUploadRules.MaxAttachmentsPerMessage)
         {
-            SetAttachmentStatus($"A message can include at most {AgentAttachmentService.MaxAttachmentsPerMessage} attachments.");
+            SetAttachmentStatus($"A message can include at most {AgentAttachmentUploadRules.MaxAttachmentsPerMessage} attachments.");
             return false;
         }
 

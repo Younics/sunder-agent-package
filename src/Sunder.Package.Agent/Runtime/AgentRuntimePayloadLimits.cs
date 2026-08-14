@@ -7,7 +7,7 @@ namespace Sunder.Package.Agent.Runtime;
 
 internal static class AgentRuntimePayloadLimits
 {
-    // These mirror Core's RuntimePackageOperationPolicyOptions defaults.
+    // These mirror Core's default RPC transport limits.
     internal const int RuntimeMaximumRequestBytes = 1024 * 1024;
     internal const int RuntimeMaximumResponseBytes = 4 * 1024 * 1024;
     internal const int RuntimeMaximumEventBytes = 1024 * 1024;
@@ -16,7 +16,7 @@ internal static class AgentRuntimePayloadLimits
     internal const int MaximumOperationResponseBytes = RuntimeMaximumResponseBytes - (64 * 1024);
     internal const int MaximumStreamEventBytes = RuntimeMaximumEventBytes - (32 * 1024);
     internal const int AttachmentUploadChunkBytes = 512 * 1024;
-    internal const int AttachmentDownloadChunkBytes = 2 * 1024 * 1024;
+    internal const int AttachmentDownloadChunkBytes = 512 * 1024;
     internal const int MaximumRunMessageCharacters = 256 * 1024;
 
     internal const int MaximumProjectedTurnItems = 32;

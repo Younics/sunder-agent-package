@@ -1,24 +1,12 @@
 using System.Text.Json;
-using System.Text.Json.Nodes;
-using Sunder.Agent.Execution.Common;
 using Sunder.Sdk.Abstractions;
-using Sunder.Sdk.Storage;
+using Sunder.Sdk.Worker;
 
 namespace Sunder.Package.Agent.Execution.Docker;
 
-internal sealed class DockerPackageStorageMigration(IPackageContext packageContext) : IPackageBackgroundService
+internal sealed class DockerPackageStorageMigration(IPackageContext packageContext) : ISunderWorkerLifecycleService
 {
     private const string WorkspaceKeyPrefix = "workspace-bindings.config.v2.";
-    private static readonly PackageStorageKeyMigration[] PhysicalMigrations =
-    [
-        PackageStorageKeyMigration.OpaqueId(
-            "workspace-bindings:",
-            ":config",
-            "workspace-bindings.config",
-            2),
-        PackageStorageKeyMigration.Exact("docker.images:v1", DockerImageCatalogService.ImagesKey),
-        PackageStorageKeyMigration.Exact("docker.images.initialized", "docker.images.initialized.v1"),
-    ];
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         PropertyNameCaseInsensitive = true,
@@ -40,21 +28,36 @@ internal sealed class DockerPackageStorageMigration(IPackageContext packageConte
     private readonly object _syncRoot = new();
     private readonly DockerImageCatalogCoordinator _coordinator =
         DockerImageCatalogService.GetCoordinator(packageContext.Storage.State);
-    private Task? _physicalMigration;
-    private Task? _semanticMigration;
+    private Task? _initialization;
 
     public async Task StartAsync(CancellationToken cancellationToken = default)
+        => await EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
+
+    public Task Completion => Task.CompletedTask;
+
+    public ValueTask PrepareCandidateAsync(CancellationToken cancellationToken = default)
     {
-        await EnsurePhysicalMigrationAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            await EnsureSemanticMigrationAsync(cancellationToken).ConfigureAwait(false);
-        }
-        catch (DockerExecutionDomainException)
-        {
-            // The cached fault is returned through the first Docker operation instead of rejecting Runtime publication.
-        }
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.CompletedTask;
     }
+
+    public ValueTask CommitGenerationAsync(
+        SunderWorkerGenerationContext generation,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.CompletedTask;
+    }
+
+    public async ValueTask ActivateAsync(
+        SunderWorkerContext context,
+        CancellationToken cancellationToken = default)
+        => await StartAsync(cancellationToken).ConfigureAwait(false);
+
+    public async ValueTask ShutdownAsync(
+        SunderWorkerShutdownContext context,
+        CancellationToken cancellationToken = default)
+        => await StopAsync(cancellationToken).ConfigureAwait(false);
 
     public Task StopAsync(CancellationToken cancellationToken = default)
     {
@@ -63,62 +66,58 @@ internal sealed class DockerPackageStorageMigration(IPackageContext packageConte
     }
 
     internal async Task EnsureAsync(CancellationToken cancellationToken = default)
-    {
-        await EnsurePhysicalMigrationAsync(cancellationToken).ConfigureAwait(false);
-        await EnsureSemanticMigrationAsync(cancellationToken).ConfigureAwait(false);
-    }
+        => await EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
 
-    private Task EnsurePhysicalMigrationAsync(CancellationToken cancellationToken)
+    private Task EnsureInitializedAsync(CancellationToken cancellationToken)
     {
         Task migration;
+        var ownsMigration = false;
         lock (_syncRoot)
         {
-            migration = _physicalMigration ??= MigratePhysicalKeysAsync(CancellationToken.None);
+            if (_initialization is null)
+            {
+                _initialization = InitializeStateAsync(cancellationToken);
+                ownsMigration = true;
+            }
+            migration = _initialization;
         }
 
-        return cancellationToken.CanBeCanceled ? migration.WaitAsync(cancellationToken) : migration;
+        return AwaitMigrationAsync(migration, ownsMigration, cancellationToken);
     }
 
-    private Task EnsureSemanticMigrationAsync(CancellationToken cancellationToken)
+    private async Task AwaitMigrationAsync(
+        Task migration,
+        bool ownsMigration,
+        CancellationToken cancellationToken)
     {
-        Task migration;
-        lock (_syncRoot)
+        try
         {
-            migration = _semanticMigration ??= MigrateSemanticStateAsync(CancellationToken.None);
+            await (cancellationToken.CanBeCanceled
+                    ? migration.WaitAsync(cancellationToken)
+                    : migration)
+                .ConfigureAwait(false);
         }
-
-        return cancellationToken.CanBeCanceled ? migration.WaitAsync(cancellationToken) : migration;
+        catch (OperationCanceledException) when (
+            migration.IsCanceled || (ownsMigration && cancellationToken.IsCancellationRequested))
+        {
+            lock (_syncRoot)
+            {
+                if (ReferenceEquals(_initialization, migration))
+                {
+                    _initialization = null;
+                }
+            }
+            throw;
+        }
     }
 
-    private async Task MigratePhysicalKeysAsync(CancellationToken cancellationToken)
-    {
-        if (packageContext.Storage.State is IPackageStorageKeyMigrator migrator)
-        {
-            await migrator.MigrateKeysAsync(PhysicalMigrations, cancellationToken).ConfigureAwait(false);
-        }
-    }
-
-    private async Task MigrateSemanticStateAsync(CancellationToken cancellationToken)
+    private async Task InitializeStateAsync(CancellationToken cancellationToken)
     {
         await _coordinator.MigrationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await MigrateCatalogAsync(cancellationToken).ConfigureAwait(false);
-            await MigrateWorkspaceConfigsAsync(cancellationToken).ConfigureAwait(false);
-            await MigrateSettingAsync(
-                DockerExecutionConfiguration.TimeoutKey,
-                static value => BoundedValue.TryParseInt32(
-                    value,
-                    1,
-                    BoundedProcessRunner.MaximumTimeoutSeconds,
-                    out _),
-                "docker.migration.timeout-invalid",
-                cancellationToken).ConfigureAwait(false);
-            await MigrateSettingAsync(
-                DockerCli.ExecutablePathConfigurationKey,
-                static value => value.Length <= 1024 && Path.IsPathFullyQualified(value),
-                "docker.migration.cli-path-invalid",
-                cancellationToken).ConfigureAwait(false);
+            await ValidateCatalogAsync(cancellationToken).ConfigureAwait(false);
+            await ValidateWorkspaceConfigsAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -126,7 +125,7 @@ internal sealed class DockerPackageStorageMigration(IPackageContext packageConte
         }
     }
 
-    private async Task MigrateCatalogAsync(CancellationToken cancellationToken)
+    private async Task ValidateCatalogAsync(CancellationToken cancellationToken)
     {
         await _coordinator.MutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -146,88 +145,49 @@ internal sealed class DockerPackageStorageMigration(IPackageContext packageConte
                 {
                     throw new JsonException("Catalog root is not an object.");
                 }
-                var hasSchemaVersion = HasProperty(document.RootElement, "schemaVersion");
-                if (TryReadInt32(document.RootElement, "schemaVersion", out var schemaVersion))
+                if (!TryReadInt32(document.RootElement, "schemaVersion", out var schemaVersion))
                 {
-                    if (schemaVersion > DockerImageCatalogService.CurrentSchemaVersion)
-                    {
-                        return;
-                    }
-                    if (schemaVersion == DockerImageCatalogService.CurrentSchemaVersion)
-                    {
-                        DockerImageCatalogService.ValidateCatalogProperties(document.RootElement, legacy: false);
-                        return;
-                    }
-                    if (schemaVersion == 2)
-                    {
-                        DockerImageCatalogService.ValidateCatalogProperties(document.RootElement, legacy: false);
-                        var previous = JsonSerializer.Deserialize<DockerImageCatalogState>(json, JsonOptions)
-                            ?? throw new JsonException("Docker image catalog is null.");
-                        if (previous.Revision < 0 || previous.Images is null)
-                        {
-                            throw new DockerExecutionDomainException(
-                                "docker.catalog.malformed",
-                                "The stored Docker image catalog is malformed and was left unchanged.");
-                        }
-                        var migratedSchema2Images = previous.Images
-                            .Select(MigrateSchema2Image)
-                            .ToArray();
-                        if (migratedSchema2Images.Select(image => image.ImageReference)
-                            .Distinct(StringComparer.OrdinalIgnoreCase)
-                            .Count() != migratedSchema2Images.Length)
-                        {
-                            throw new DockerExecutionDomainException(
-                                "docker.catalog.malformed",
-                                "The stored Docker image catalog contains duplicate references and was left unchanged.");
-                        }
-                        var migratedSchema2 = new DockerImageCatalogState(
-                            DockerImageCatalogService.CurrentSchemaVersion,
-                            checked(previous.Revision + 1),
-                            migratedSchema2Images);
-                        await packageContext.Storage.State.SetValueAsync(
-                            DockerImageCatalogService.ImagesKey,
-                            JsonSerializer.Serialize(migratedSchema2, JsonOptions),
-                            cancellationToken).ConfigureAwait(false);
-                        return;
-                    }
+                    throw new DockerExecutionDomainException(
+                        "docker.catalog.malformed",
+                        "The stored Docker image catalog is malformed and was left unchanged.");
+                }
+                if (schemaVersion != DockerImageCatalogService.CurrentSchemaVersion)
+                {
                     throw new DockerExecutionDomainException(
                         "docker.catalog.unsupported-schema",
                         "The stored Docker image catalog uses an unsupported schema and was left unchanged.");
                 }
-                if (hasSchemaVersion)
+
+                DockerImageCatalogService.ValidateCatalogProperties(document.RootElement, legacy: false);
+                var catalog = JsonSerializer.Deserialize<DockerImageCatalogState>(json, JsonOptions)
+                    ?? throw new JsonException("Docker image catalog is null.");
+                if (catalog.Revision < 0 || catalog.Images is null)
                 {
                     throw new DockerExecutionDomainException(
                         "docker.catalog.malformed",
                         "The stored Docker image catalog is malformed and was left unchanged.");
                 }
 
-                DockerImageCatalogService.ValidateCatalogProperties(document.RootElement, legacy: true);
-                var legacy = JsonSerializer.Deserialize<LegacyDockerImageCatalogState>(json, JsonOptions)
-                    ?? throw new JsonException("Legacy catalog is null.");
-                if (legacy.Version != 1 || legacy.Images is null)
+                foreach (var image in catalog.Images)
                 {
-                    throw new DockerExecutionDomainException(
-                        "docker.catalog.unsupported-schema",
-                        "The stored Docker image catalog uses an unsupported schema and was left unchanged.");
+                    if (!Enum.IsDefined(image.Status))
+                    {
+                        throw new DockerExecutionDomainException(
+                            "docker.catalog.malformed",
+                            "The stored Docker image catalog contains an unknown image status and was left unchanged.");
+                    }
+                    _ = image.Status == DockerImageStatus.NeedsAttention
+                        ? DockerImageCatalogService.NormalizeLegacyImageReference(image.ImageReference)
+                        : DockerImageCatalogService.NormalizeImageReference(image.ImageReference);
                 }
-
-                var migratedImages = legacy.Images.Select(MigrateLegacyImage).ToArray();
-                if (migratedImages.Select(image => image.ImageReference)
+                if (catalog.Images.Select(image => image.ImageReference)
                     .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .Count() != migratedImages.Length)
+                    .Count() != catalog.Images.Count)
                 {
                     throw new DockerExecutionDomainException(
                         "docker.catalog.malformed",
                         "The stored Docker image catalog contains duplicate references and was left unchanged.");
                 }
-                var migrated = new DockerImageCatalogState(
-                    DockerImageCatalogService.CurrentSchemaVersion,
-                    1,
-                    migratedImages);
-                await packageContext.Storage.State.SetValueAsync(
-                    DockerImageCatalogService.ImagesKey,
-                    JsonSerializer.Serialize(migrated, JsonOptions),
-                    cancellationToken).ConfigureAwait(false);
             }
             catch (DockerExecutionDomainException)
             {
@@ -247,7 +207,7 @@ internal sealed class DockerPackageStorageMigration(IPackageContext packageConte
         }
     }
 
-    private async Task MigrateWorkspaceConfigsAsync(CancellationToken cancellationToken)
+    private async Task ValidateWorkspaceConfigsAsync(CancellationToken cancellationToken)
     {
         var keys = await packageContext.Storage.State.ListKeysAsync(
             WorkspaceKeyPrefix,
@@ -261,11 +221,15 @@ internal sealed class DockerPackageStorageMigration(IPackageContext packageConte
                 continue;
             }
 
-            JsonObject root;
+            JsonElement root;
             try
             {
-                root = JsonNode.Parse(json) as JsonObject
-                    ?? throw new JsonException("Workspace config root is not an object.");
+                using var document = JsonDocument.Parse(json);
+                root = document.RootElement.Clone();
+                if (root.ValueKind != JsonValueKind.Object)
+                {
+                    throw new JsonException("Workspace config root is not an object.");
+                }
             }
             catch (JsonException exception)
             {
@@ -275,160 +239,46 @@ internal sealed class DockerPackageStorageMigration(IPackageContext packageConte
                     innerException: exception);
             }
 
-            var hasSchemaVersion = TryGetNode(root, "schemaVersion", out var schemaNode);
-            var schemaVersion = hasSchemaVersion
-                ? ReadWorkspaceSchemaVersion(schemaNode)
-                : 1;
-            if (schemaVersion > DockerImageCatalogService.CurrentSchemaVersion)
+            if (!TryReadInt32(root, "schemaVersion", out var schemaVersion))
             {
-                continue;
+                throw new DockerExecutionDomainException(
+                    "docker.workspace-config.malformed",
+                    "A stored Docker workspace configuration is malformed and was left unchanged.");
             }
-            if (schemaVersion is < 1 or > DockerImageCatalogService.CurrentSchemaVersion)
+            if (schemaVersion != DockerImageCatalogService.CurrentSchemaVersion)
             {
                 throw new DockerExecutionDomainException(
                     "docker.workspace-config.unsupported-schema",
                     "A stored Docker workspace configuration uses an unsupported schema and was left unchanged.");
             }
 
-            var unknownProperty = root.Select(property => property.Key)
-                .FirstOrDefault(property => !WorkspaceProperties.Contains(property));
-            if (unknownProperty is not null)
+            var observedProperties = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var property in root.EnumerateObject())
             {
-                throw new DockerExecutionDomainException(
-                    "docker.workspace-config.unknown-data",
-                    "A stored Docker workspace configuration contains unknown data and was left unchanged.");
-            }
-            if (schemaVersion == DockerImageCatalogService.CurrentSchemaVersion)
-            {
-                continue;
-            }
-
-            var needsAttention = false;
-            if (TryGetNode(root, "imageReference", out var imageNode)
-                && imageNode is not null)
-            {
-                var imageReference = imageNode.GetValue<string?>();
-                if (!string.IsNullOrWhiteSpace(imageReference))
+                if (!WorkspaceProperties.Contains(property.Name))
                 {
-                    try
-                    {
-                        _ = DockerImageCatalogService.NormalizeImageReference(imageReference);
-                    }
-                    catch (DockerExecutionDomainException exception) when (
-                        exception.Code == "docker.image-reference.unpinned")
-                    {
-                        _ = DockerImageCatalogService.NormalizeLegacyImageReference(imageReference);
-                        needsAttention = true;
-                    }
+                    throw new DockerExecutionDomainException(
+                        "docker.workspace-config.unknown-data",
+                        "A stored Docker workspace configuration contains unknown data and was left unchanged.");
+                }
+                if (!observedProperties.Add(property.Name))
+                {
+                    throw new DockerExecutionDomainException(
+                        "docker.workspace-config.malformed",
+                        "A stored Docker workspace configuration is malformed and was left unchanged.");
                 }
             }
 
-            SetNode(root, "schemaVersion", DockerImageCatalogService.CurrentSchemaVersion);
-            SetNode(root, "imageReferenceNeedsAttention", needsAttention);
-            await packageContext.Storage.State.SetValueAsync(
-                key,
-                root.ToJsonString(JsonOptions),
-                cancellationToken).ConfigureAwait(false);
-        }
-    }
-
-    private async Task MigrateSettingAsync(
-        string key,
-        Func<string, bool> validate,
-        string invalidCode,
-        CancellationToken cancellationToken)
-    {
-        var legacy = await packageContext.Storage.State.GetValueAsync(key, cancellationToken)
-            .ConfigureAwait(false);
-        if (legacy is null)
-        {
-            return;
-        }
-        if (!validate(legacy))
-        {
-            throw new DockerExecutionDomainException(
-                invalidCode,
-                "Legacy Docker settings contain an invalid value and were left unchanged.");
-        }
-
-        var authoritative = await packageContext.Settings.GetStoredValueAsync(key, cancellationToken)
-            .ConfigureAwait(false);
-        if (authoritative is null)
-        {
-            await packageContext.Settings.SetValueAsync(key, legacy, cancellationToken).ConfigureAwait(false);
-        }
-        else if (!string.Equals(authoritative, legacy, StringComparison.Ordinal))
-        {
-            throw new DockerExecutionDomainException(
-                "docker.migration.settings-conflict",
-                "Legacy and authoritative Docker settings conflict and were left unchanged.");
-        }
-
-        await packageContext.Storage.State.DeleteValueAsync(key, cancellationToken).ConfigureAwait(false);
-    }
-
-    private static DockerImageDefinition MigrateLegacyImage(DockerImageDefinition image)
-    {
-        if (!Enum.IsDefined(image.Status))
-        {
-            throw new DockerExecutionDomainException(
-                "docker.catalog.malformed",
-                "The stored Docker image catalog contains an unknown image status and was left unchanged.");
-        }
-        try
-        {
-            var normalized = DockerImageCatalogService.NormalizeImageReference(image.ImageReference);
-            return image with
+            var config = JsonSerializer.Deserialize<DockerExecutionWorkspaceConfig>(json, JsonOptions)
+                ?? throw new DockerExecutionDomainException(
+                    "docker.workspace-config.malformed",
+                    "A stored Docker workspace configuration is malformed and was left unchanged.");
+            if (!string.IsNullOrWhiteSpace(config.ImageReference))
             {
-                ImageReference = normalized,
-                Status = image.Status == DockerImageStatus.Pulling
-                    ? DockerImageStatus.NotPulled
-                    : image.Status,
-            };
-        }
-        catch (DockerExecutionDomainException exception) when (
-            exception.Code == "docker.image-reference.unpinned")
-        {
-            return image with
-            {
-                ImageReference = DockerImageCatalogService.NormalizeLegacyImageReference(image.ImageReference),
-                Status = DockerImageStatus.NeedsAttention,
-                LastMessage = "Legacy tagless reference requires an explicit tag or sha256 digest.",
-            };
-        }
-    }
-
-    private static DockerImageDefinition MigrateSchema2Image(DockerImageDefinition image)
-    {
-        if (!Enum.IsDefined(image.Status))
-        {
-            throw new DockerExecutionDomainException(
-                "docker.catalog.malformed",
-                "The stored Docker image catalog contains an unknown image status and was left unchanged.");
-        }
-        try
-        {
-            var normalized = DockerImageCatalogService.NormalizeImageReference(image.ImageReference);
-            return image with
-            {
-                ImageReference = normalized,
-                Status = image.Status is DockerImageStatus.Pulling or DockerImageStatus.NeedsAttention
-                    ? DockerImageStatus.NotPulled
-                    : image.Status,
-                LastMessage = image.Status == DockerImageStatus.NeedsAttention
-                    ? "Image reference is valid; refresh readiness before use."
-                    : image.LastMessage,
-            };
-        }
-        catch (DockerExecutionDomainException exception) when (
-            exception.Code == "docker.image-reference.unpinned")
-        {
-            return image with
-            {
-                ImageReference = DockerImageCatalogService.NormalizeLegacyImageReference(image.ImageReference),
-                Status = DockerImageStatus.NeedsAttention,
-                LastMessage = "Legacy tagless reference requires an explicit tag or sha256 digest.",
-            };
+                _ = config.ImageReferenceNeedsAttention
+                    ? DockerImageCatalogService.NormalizeLegacyImageReference(config.ImageReference)
+                    : DockerImageCatalogService.NormalizeImageReference(config.ImageReference);
+            }
         }
     }
 
@@ -447,50 +297,4 @@ internal sealed class DockerPackageStorageMigration(IPackageContext packageConte
         return false;
     }
 
-    private static bool HasProperty(JsonElement element, string propertyName)
-        => element.EnumerateObject().Any(property => string.Equals(
-            property.Name,
-            propertyName,
-            StringComparison.OrdinalIgnoreCase));
-
-    private static bool TryGetNode(JsonObject root, string propertyName, out JsonNode? node)
-    {
-        foreach (var property in root)
-        {
-            if (string.Equals(property.Key, propertyName, StringComparison.OrdinalIgnoreCase))
-            {
-                node = property.Value;
-                return true;
-            }
-        }
-        node = null;
-        return false;
-    }
-
-    private static int ReadWorkspaceSchemaVersion(JsonNode? node)
-    {
-        try
-        {
-            return node?.GetValue<int>()
-                ?? throw new InvalidOperationException("Workspace schema version is null.");
-        }
-        catch (Exception exception) when (exception is InvalidOperationException or FormatException)
-        {
-            throw new DockerExecutionDomainException(
-                "docker.workspace-config.malformed",
-                "A stored Docker workspace configuration is malformed and was left unchanged.",
-                innerException: exception);
-        }
-    }
-
-    private static void SetNode(JsonObject root, string propertyName, JsonNode? value)
-    {
-        var existingName = root.Select(property => property.Key)
-            .FirstOrDefault(name => string.Equals(name, propertyName, StringComparison.OrdinalIgnoreCase));
-        root[existingName ?? propertyName] = value;
-    }
-
-    private sealed record LegacyDockerImageCatalogState(
-        int Version,
-        IReadOnlyList<DockerImageDefinition> Images);
 }

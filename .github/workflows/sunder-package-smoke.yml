@@ -40,16 +40,18 @@ jobs:
       contents: read
     steps:
       - name: Checkout Agent repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           path: sunder-agent-package
+          persist-credentials: false
 
       - name: Checkout resolved Core commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: Younics/sunder-core
           ref: ${{ needs.core-dependency.outputs.commit }}
           path: sunder-core
+          persist-credentials: false
 
       - name: Verify exact Core checkout
         working-directory: sunder-core
@@ -59,7 +61,7 @@ jobs:
         run: test "$(git rev-parse HEAD)" = "$EXPECTED_CORE_COMMIT"
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
@@ -82,32 +84,33 @@ jobs:
           mkdir -p "$output"
           version="$(jq -er '.releaseVersion' packages.json)"
 
-          shell_worker="src/Sunder.Package.Agent.Tools.Shell/Sunder.Package.Agent.Tools.Shell.csproj"
-          for rid in win-x64 win-arm64 linux-x64 linux-arm64 osx-x64 osx-arm64; do
-            dotnet restore "$shell_worker" --force-evaluate -r "$rid" -p:SunderUseSourceSdk=true
-            dotnet build "$shell_worker" -c Release --no-restore -m:1 -r "$rid" \
-              -p:SunderUseSourceSdk=true -p:SunderAgentVersion="$version" \
-              -p:ContinuousIntegrationBuild=true
-          done
-          dotnet restore "$shell_worker" --force-evaluate -r linux-x64 -p:SunderUseSourceSdk=true
+          while IFS= read -r worker_project; do
+            for rid in win-x64 win-arm64 linux-x64 linux-arm64 osx-x64 osx-arm64; do
+              dotnet restore "$worker_project" --force-evaluate -r "$rid" -p:SunderUseSourceSdk=true
+              dotnet build "$worker_project" -c Release --no-restore -m:1 -r "$rid" \
+                -p:SunderUseSourceSdk=true -p:SunderAgentVersion="$version" \
+                -p:ContinuousIntegrationBuild=true
+            done
+            dotnet restore "$worker_project" --force-evaluate -p:SunderUseSourceSdk=true
+          done < <(jq -r '.packages | map(select(.workerProjectPath != null)) | sort_by(.key)[] | .workerProjectPath' packages.json)
 
           dotnet pack src/Sunder.Package.Agent.Contracts/Sunder.Package.Agent.Contracts.csproj \
             -c Release --no-build --no-restore -o "$output" \
             -p:SunderUseSourceSdk=true -p:SunderAgentVersion="$version" \
             -p:ContinuousIntegrationBuild=true
 
-          while IFS=$'\t' read -r package_id project_path; do
+          while IFS=$'\t' read -r package_id project_path worker_project_path; do
             output_path="$output/$package_id.$version.sunderpkg"
             extra_properties=()
-            if [[ "$package_id" == "sunder.package.agent.tools.shell" ]]; then
-              extra_properties+=("-p:SunderShellUniversal=true")
+            if [[ -n "$worker_project_path" ]]; then
+              extra_properties+=("-p:SunderAgentUniversalWorkerPackage=true")
             fi
             dotnet msbuild "$project_path" -t:PackSunderPackage -m:1 \
               -p:Configuration=Release -p:SunderUseSourceSdk=true \
               -p:SunderAgentVersion="$version" -p:ContinuousIntegrationBuild=true \
               -p:SunderPackageOutputPath="$output_path" \
               "${extra_properties[@]}"
-          done < <(jq -r '.packages | map(select(.artifactType == "sunderpkg")) | sort_by(.key)[] | [.packageId, .projectPath] | @tsv' packages.json)
+          done < <(jq -r '.packages | map(select(.artifactType == "sunderpkg")) | sort_by(.key)[] | [.packageId, .projectPath, (.workerProjectPath // "")] | @tsv' packages.json)
 
           runtime_count="$(jq '[.packages[] | select(.artifactType == "sunderpkg")] | length' packages.json)"
           test "$(find "$output" -maxdepth 1 -name '*.sunderpkg' -type f | wc -l)" -eq "$runtime_count"
@@ -120,15 +123,38 @@ jobs:
             exit 1
           fi
 
-          shell_archive="$output/sunder.package.agent.tools.shell.$version.sunderpkg"
-          shell_manifest="$RUNNER_TEMP/sunder-agent-shell-manifest.json"
-          unzip -p "$shell_archive" manifest/sunder-package.json > "$shell_manifest"
-          jq -e '
-            ([.targets[].rid] | sort) == ["linux-arm64", "linux-x64", "osx-arm64", "osx-x64", "win-arm64", "win-x64"] and
-            ([.targets[].kind] | unique) == ["worker"] and
-            all(.targets[]; .requiredHostCapabilities | index("worker-protocol.v2") != null) and
-            ([.provides[].providerId] | sort) == ["shell.permissions", "shell.prompt.context", "shell.tools"]
-          ' "$shell_manifest" >/dev/null
+          while IFS=$'\t' read -r package_id provider_ids; do
+            archive="$output/$package_id.$version.sunderpkg"
+            manifest="$RUNNER_TEMP/$package_id-manifest.json"
+            content_index="$RUNNER_TEMP/$package_id-content-index.json"
+            unzip -p "$archive" manifest/sunder-package.json > "$manifest"
+            unzip -p "$archive" manifest/content-index.json > "$content_index"
+            jq --argjson provider_ids "$provider_ids" -e '
+              def supported_rids: ["linux-arm64", "linux-x64", "osx-arm64", "osx-x64", "win-arm64", "win-x64"];
+              ([.targets[] | select(.role == "runtime") | .rid] | sort) == supported_rids and
+              (([.targets[] | select(.role == "app") | .rid] | sort) as $app_rids |
+                $app_rids == [] or $app_rids == supported_rids) and
+              all(.targets[];
+                if .role == "runtime" then
+                  .kind == "worker" and (.requiredHostCapabilities | index("worker-protocol.v3") != null)
+                elif .role == "app" then
+                  .kind == "avalonia" and (.requiredHostCapabilities | index("worker-protocol.v3") == null)
+                else false end) and
+              ([.provides[].providerId] | sort) == ($provider_ids | sort)
+            ' "$manifest" >/dev/null
+            jq -e '
+              all(.files[];
+                .path == "manifest/sunder-package.json" or
+                (.path | startswith("payload/shared/")) or
+                (.path | startswith("payload/app/")) or
+                (.path | startswith("payload/runtime/"))) and
+              all(.files[] | select(.path | startswith("payload/app/"));
+                (.path | contains("Sunder.Sdk.Worker")) == false and
+                (.path | test("/[^/]+\\.runtimeconfig\\.json$")) == false) and
+              all(.files[] | select(.path | startswith("payload/runtime/"));
+                (.path | test("/[^/]+\\.App\\.(dll|pdb|deps\\.json)$")) == false)
+            ' "$content_index" >/dev/null
+          done < <(jq -r '.packages | map(select(.workerProjectPath != null)) | sort_by(.key)[] | [.packageId, (.providerIds | tojson)] | @tsv' packages.json)
 
       - name: Build Core validation and smoke paths
         working-directory: sunder-core
@@ -178,7 +204,7 @@ jobs:
           dotnet test languages/csharp/dotnet/tests/Sunder.App.Tests/Sunder.App.Tests.csproj -c Release --no-build --no-restore --filter "FullyQualifiedName=$test_fqn"
 
       - name: Upload verified family artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sunder-agent-family-smoke
           path: sunder-agent-package/artifacts/family/*

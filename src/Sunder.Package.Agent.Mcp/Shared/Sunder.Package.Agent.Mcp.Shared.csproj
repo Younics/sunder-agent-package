@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AssemblyName>Sunder.Package.Agent.Mcp.Shared</AssemblyName>
+    <RootNamespace>Sunder.Package.Agent.Mcp</RootNamespace>
+    <SunderPackageProject>false</SunderPackageProject>
+    <SunderSdkReference>true</SunderSdkReference>
+    <SunderPackageBuildReference>true</SunderPackageBuildReference>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\ConfiguredMcpServerRecord.cs" Link="ConfiguredMcpServerRecord.cs" />
+    <Compile Include="..\ConfiguredMcpTransportType.cs" Link="ConfiguredMcpTransportType.cs" />
+    <Compile Include="..\McpConfigurationDocument.cs" Link="McpConfigurationDocument.cs" />
+    <Compile Include="..\Services\McpCatalogDiagnostic.cs" Link="Services\McpCatalogDiagnostic.cs" />
+    <Compile Include="..\Services\McpConfigurationImportPipeline.cs" Link="Services\McpConfigurationImportPipeline.cs" />
+    <Compile Include="..\Services\McpConnectionStatus.cs" Link="Services\McpConnectionStatus.cs" />
+    <Compile Include="..\Services\McpTransportSecurity.cs" Link="Services\McpTransportSecurity.cs" />
+    <Compile Include="..\..\Sunder.Package.Agent.Shared\Importing\BoundedImportIO.cs"
+             Link="Importing\BoundedImportIO.cs" />
+    <EmbeddedResource Include="Contracts\mcp-management.rpc.json"
+                      LogicalName="Sunder.Package.Agent.Mcp.Contracts.mcp-management.rpc.json" />
+    <SunderRpcBinding Include="Contracts\mcp-management.rpc.json"
+                      Namespace="Sunder.Package.Agent.Mcp.Protocol.Generated"
+                      OutputFile="McpManagementRpc.g.cs" />
+  </ItemGroup>
+
+</Project>

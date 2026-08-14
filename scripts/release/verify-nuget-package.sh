@@ -72,11 +72,16 @@ if ! diff -u "$expected_manifest" "$published_manifest"; then
   exit 1
 fi
 
-dotnet nuget verify "$published_package" --all
 cat > "$signature_config" <<'EOF'
 <?xml version="1.0" encoding="utf-8"?>
 <configuration>
+  <config>
+    <add key="signatureValidationMode" value="require" />
+  </config>
   <trustedSigners />
 </configuration>
 EOF
-dotnet nuget trust repository nuget.org "$published_package" --configfile "$signature_config"
+dotnet nuget trust source nuget.org \
+  --source-url https://api.nuget.org/v3/index.json \
+  --configfile "$signature_config"
+dotnet nuget verify "$published_package" --all --configfile "$signature_config"

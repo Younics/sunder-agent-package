@@ -449,7 +449,7 @@ public sealed partial class SemanticMemoryRetrievalBackend(
            && embedding.MemoryRevision == memory.Memory.MemoryRevision
            && embedding.Dimensions is > 0 and <= MaxEmbeddingDimensions
            && embedding.Values.Count == embedding.Dimensions
-           && embedding.Values.All(float.IsFinite);
+           && embedding.Values.All(double.IsFinite);
 
     private static bool IsValidEmbeddingResult(
         AgentEmbeddingGenerationResult? result,
@@ -459,7 +459,7 @@ public sealed partial class SemanticMemoryRetrievalBackend(
            && string.Equals(result.ModelId, expectedModelId, StringComparison.Ordinal)
            && result.Values.Count is > 0 and <= MaxEmbeddingDimensions
            && (expectedDimensions is null || result.Values.Count == expectedDimensions)
-           && result.Values.All(float.IsFinite);
+           && result.Values.All(double.IsFinite);
 
     private static IReadOnlyList<StoredMemoryRecord> FilterRecallableMemories(
         Guid sessionId,
@@ -516,7 +516,7 @@ public sealed partial class SemanticMemoryRetrievalBackend(
 
     private static string BuildIndexKey(Guid sessionId) => sessionId.ToString("N");
 
-    private static float CalculateCosineSimilarity(IReadOnlyList<float> left, IReadOnlyList<float> right)
+    private static float CalculateCosineSimilarity(IReadOnlyList<double> left, IReadOnlyList<double> right)
     {
         if (left.Count == 0 || right.Count == 0 || left.Count != right.Count)
         {
@@ -559,13 +559,6 @@ public sealed record PreparedEmbeddingMemory(
     string CanonicalTextHash)
 {
     public int MaxCanonicalTextChars { get; init; }
-}
-
-public enum SemanticMemoryEntryIndexState
-{
-    Missing = 0,
-    Stale = 1,
-    Indexed = 2,
 }
 
 public sealed record HybridRecallCandidateSet(
