@@ -92,7 +92,7 @@ internal sealed partial class EmbeddingRepository
             transaction.Commit();
             if (deleted > 0)
             {
-                MemoryDatabase.TruncateWal(connection);
+                _walCheckpointMaintenance.ScheduleCheckpoint();
             }
             return deleted;
         }
@@ -162,7 +162,7 @@ internal sealed partial class EmbeddingRepository
         transaction.Commit();
         if (removed > 0 || staleRemoved > 0)
         {
-            MemoryDatabase.TruncateWal(connection);
+            _walCheckpointMaintenance.ScheduleCheckpoint();
         }
         return removed;
     }

@@ -205,6 +205,66 @@ public sealed class BuilderViewModelTests
     }
 
     [Fact]
+    public async Task DeleteSelectedProjectAsync_FailedOptimisticSaveRestoresProjectWithoutOverwritingNewerSelection()
+    {
+        var deletedProject = CreateProject("one", "One Package");
+        var remainingProject = CreateProject("two", "Two Package");
+        var store = new BlockingFailingSaveBuilderProjectStore(
+            deletedProject.ToRecord(),
+            remainingProject.ToRecord());
+        await using var viewModel = CreateViewModel(store: store);
+        await viewModel.InitializeAsync();
+        var deleted = viewModel.Projects.Single(project => project.Id == deletedProject.Id);
+        var remaining = viewModel.Projects.Single(project => project.Id == remainingProject.Id);
+        viewModel.ActivateProject(deleted);
+
+        var deletion = viewModel.DeleteSelectedProjectAsync();
+        await store.SaveStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        viewModel.ActivateProject(remaining);
+        store.ReleaseSave.TrySetResult();
+        await deletion.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Equal(2, viewModel.Projects.Count);
+        Assert.Contains(viewModel.Projects, project => project.Id == deletedProject.Id);
+        Assert.Equal(remainingProject.Id, viewModel.SelectedProject?.Id);
+        Assert.Equal("Project deletion was not saved. The project was restored.", viewModel.StatusText);
+    }
+
+    [Fact]
+    public async Task DeleteSelectedProjectAsync_FailedSavePersistsProjectCreatedDuringReconciliation()
+    {
+        var deletedProject = CreateProject("one", "One Package");
+        var remainingProject = CreateProject("two", "Two Package");
+        var store = new BlockingFailingSaveBuilderProjectStore(
+            deletedProject.ToRecord(),
+            remainingProject.ToRecord());
+        var viewModel = CreateViewModel(store: store);
+        string createdProjectId;
+        try
+        {
+            await viewModel.InitializeAsync();
+            viewModel.ActivateProject(viewModel.Projects.Single(project => project.Id == deletedProject.Id));
+
+            var deletion = viewModel.DeleteSelectedProjectAsync();
+            await store.SaveStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            await viewModel.CreateProjectAsync();
+            createdProjectId = Assert.IsType<BuilderProjectViewModel>(viewModel.SelectedProject).Id;
+            store.ReleaseSave.TrySetResult();
+            await deletion.WaitAsync(TimeSpan.FromSeconds(2));
+
+            Assert.Contains(viewModel.Projects, project => project.Id == createdProjectId);
+        }
+        finally
+        {
+            await viewModel.DisposeAsync();
+        }
+
+        Assert.Contains(store.LastSavedProjects, project => project.Id == createdProjectId);
+        Assert.Contains(store.LastSavedProjects, project => project.Id == deletedProject.Id);
+        Assert.Contains(store.LastSavedProjects, project => project.Id == remainingProject.Id);
+    }
+
+    [Fact]
     public async Task InitializeSelectedProjectAsync_WhenValid_EnqueuesMainIndicatorProcessAndLocksProjectIdentity()
     {
         var queue = new TestBackgroundProcessQueue();
@@ -726,6 +786,42 @@ public sealed class BuilderViewModelTests
         {
             SaveStarted.TrySetResult();
             await ReleaseSave.Task.WaitAsync(cancellationToken);
+        }
+    }
+
+    private sealed class BlockingFailingSaveBuilderProjectStore(
+        params BuilderProjectRecord[] projects) : IBuilderProjectStore
+    {
+        private int _saveCount;
+
+        public IReadOnlyList<BuilderProjectRecord> LastSavedProjects { get; private set; } = projects;
+
+        public TaskCompletionSource SaveStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource ReleaseSave { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task<IReadOnlyList<BuilderProjectRecord>> LoadAsync(
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult<IReadOnlyList<BuilderProjectRecord>>(projects);
+        }
+
+        public async Task SaveAsync(
+            IReadOnlyList<BuilderProjectRecord> updatedProjects,
+            CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Increment(ref _saveCount) != 1)
+            {
+                LastSavedProjects = updatedProjects.ToArray();
+                return;
+            }
+
+            SaveStarted.TrySetResult();
+            await ReleaseSave.Task.WaitAsync(cancellationToken);
+            throw new IOException("Injected builder save failure.");
         }
     }
 

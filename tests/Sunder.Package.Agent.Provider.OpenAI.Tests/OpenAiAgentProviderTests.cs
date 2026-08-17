@@ -489,6 +489,28 @@ public sealed class OpenAiAgentProviderTests
         Assert.Equal("organization-id", CodexConnectedAuthStrategy.ExtractChatGptAccountId(jwt));
     }
 
+    [Fact]
+    public void ExtractChatGptAccountId_NonObjectAuthClaimReturnsNull()
+    {
+        var jwt = CreateJwt(new Dictionary<string, object?>
+        {
+            ["https://api.openai.com/auth"] = "not-an-object",
+        });
+
+        Assert.Null(CodexConnectedAuthStrategy.ExtractChatGptAccountId(jwt));
+    }
+
+    [Fact]
+    public void ExtractChatGptAccountId_NonObjectOrganizationEntriesReturnNull()
+    {
+        var jwt = CreateJwt(new Dictionary<string, object?>
+        {
+            ["organizations"] = new object?[] { "not-an-object", null, 42 },
+        });
+
+        Assert.Null(CodexConnectedAuthStrategy.ExtractChatGptAccountId(jwt));
+    }
+
     private static OpenAiAgentProvider CreateProvider(TestPackageContext packageContext)
     {
         var codexConnectedAuthStrategy = new CodexConnectedAuthStrategy(packageContext);

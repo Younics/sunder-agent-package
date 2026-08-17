@@ -201,6 +201,36 @@ public sealed class OpenAiSettingsViewModelTests
         Assert.Equal(1, callbacks.OpenCount);
     }
 
+    [Fact]
+    public async Task ExpectedFailure_ReconciliationPublishesBoundStateThroughDispatcher()
+    {
+        var callbacks = new FakePackageCallbackClient();
+        var context = Context(callbacks);
+        var management = new FailOnceOwnerManagementClient();
+        var dispatcher = new TrackingPresentationDispatcher();
+        using var viewModel = new OpenAiSettingsViewModel(
+            context,
+            new OpenAiAuthPresentationService(management),
+            new PackageCallbackFlowRunner(callbacks),
+            new ProviderCredentialOwnerClient(management),
+            PresentationOperationObserver.CreateUnreported("OpenAI settings test"),
+            dispatcher);
+        var offDispatcherNotifications = 0;
+        viewModel.PropertyChanged += (_, _) =>
+        {
+            if (!dispatcher.IsDispatching)
+            {
+                Interlocked.Increment(ref offDispatcherNotifications);
+            }
+        };
+
+        await viewModel.RefreshStatusCommand.ExecuteAsync(null);
+
+        Assert.True(management.AuthStatusCallCount >= 2);
+        Assert.Equal(0, Volatile.Read(ref offDispatcherNotifications));
+        Assert.Equal("Not connected", viewModel.CodexStatusLabel);
+    }
+
     private static ProviderTestPackageContext Context(FakePackageCallbackClient callbacks)
         => new("sunder.package.agent.provider.openai", callbacks: callbacks);
 
@@ -284,6 +314,63 @@ public sealed class OpenAiSettingsViewModelTests
             InvocationCount++;
             _hasCredential = false;
             return ValueTask.FromResult(false);
+        }
+    }
+
+    private sealed class FailOnceOwnerManagementClient : IOpenAiOwnerManagementClient
+    {
+        private int _authStatusCallCount;
+
+        public int AuthStatusCallCount => Volatile.Read(ref _authStatusCallCount);
+
+        public async ValueTask<OpenAiAuthOperationResult> GetAuthStatusAsync(
+            CancellationToken cancellationToken = default)
+        {
+            await Task.Yield();
+            cancellationToken.ThrowIfCancellationRequested();
+            if (Interlocked.Increment(ref _authStatusCallCount) == 1)
+            {
+                throw new IOException("Injected asynchronous auth status failure.");
+            }
+            return new OpenAiAuthOperationResult(false, false, null);
+        }
+
+        public ValueTask<OpenAiAuthOperationResult> DisconnectAuthAsync(
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new OpenAiAuthOperationResult(false, false, null));
+
+        public ValueTask<bool> HasCredentialAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(false);
+
+        public ValueTask<bool> SetCredentialAsync(
+            string credential,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(true);
+
+        public ValueTask<bool> ClearCredentialAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(false);
+    }
+
+    private sealed class TrackingPresentationDispatcher : IPresentationDispatcher
+    {
+        private readonly AsyncLocal<int> _dispatchDepth = new();
+
+        public bool IsDispatching => _dispatchDepth.Value > 0;
+
+        public bool CheckAccess() => IsDispatching;
+
+        public Task InvokeAsync(Action action)
+        {
+            _dispatchDepth.Value++;
+            try
+            {
+                action();
+                return Task.CompletedTask;
+            }
+            finally
+            {
+                _dispatchDepth.Value--;
+            }
         }
     }
 }

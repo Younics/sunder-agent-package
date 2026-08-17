@@ -151,11 +151,16 @@ internal sealed class SubagentOwnerProvider(
                            new SubagentChangeSubscription(request.AfterRevision),
                            cancellationToken).ConfigureAwait(false))
         {
-            yield return await WriteContentAsync(
+            var content = await TryWriteChangeContentAsync(
                 context,
                 change,
                 "subagents-change.json",
                 cancellationToken).ConfigureAwait(false);
+            if (content is null)
+            {
+                yield break;
+            }
+            yield return content;
         }
     }
 
@@ -214,6 +219,42 @@ internal sealed class SubagentOwnerProvider(
             cancellationToken).ConfigureAwait(false);
         return new OwnerContent { Content = content };
     }
+
+    private static async ValueTask<OwnerContent?> TryWriteChangeContentAsync<T>(
+        SunderRpcInvocationContext context,
+        T value,
+        string fileName,
+        CancellationToken cancellationToken)
+        where T : notnull
+    {
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(value, SubagentOwnerJson.Options);
+        await using var stream = new MemoryStream(bytes, writable: false);
+        // Keep the retirement boundary around the Host-owned authority call only.
+        try
+        {
+            var content = await context.RegisterContentAsync(
+                stream,
+                SubagentOwnerJson.ContentOptions(fileName, bytes.LongLength),
+                cancellationToken).ConfigureAwait(false);
+            return new OwnerContent { Content = content };
+        }
+        catch (SunderRpcException exception) when (IsContentRegistrationRetirement(exception))
+        {
+            return null;
+        }
+        catch (OperationCanceledException) when (
+            cancellationToken.IsCancellationRequested
+            || context.CancellationToken.IsCancellationRequested)
+        {
+            return null;
+        }
+    }
+
+    private static bool IsContentRegistrationRetirement(SunderRpcException exception)
+        => exception.Error.Kind is SunderRpcErrorKind.StaleEndpoint
+            or SunderRpcErrorKind.Cancelled
+            or SunderRpcErrorKind.Unavailable
+            or SunderRpcErrorKind.DeadlineExceeded;
 }
 #endif
 

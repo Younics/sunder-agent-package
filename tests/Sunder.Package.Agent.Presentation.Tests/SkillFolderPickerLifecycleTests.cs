@@ -35,6 +35,27 @@ public sealed class SkillFolderPickerLifecycleTests
         Assert.Empty(viewModel.Skills);
     }
 
+    [AvaloniaFact]
+    public async Task FolderPickerFailureIsObservedByPresentationBoundary()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var store = new SkillStore(scope.Context);
+        var viewModel = new SkillSettingsViewModel(
+            new SkillLocalManagementGateway(
+                store,
+                new SkillImportService(store, new NoOpGitHubSkillClient(), scope.Context)));
+        await viewModel.InitializeAsync();
+        using var view = new SkillSettingsView(viewModel);
+
+        view.SubmitLocalFolderImport(
+            viewModel,
+            Task.FromException<string?>(new IOException("Injected picker failure.")));
+        await Task.Delay(50);
+
+        Assert.Same(viewModel, view.DataContext);
+        Assert.Empty(viewModel.Skills);
+    }
+
     private sealed class NoOpGitHubSkillClient : IGitHubSkillClient
     {
         public Task<string?> TryGetDefaultBranchAsync(

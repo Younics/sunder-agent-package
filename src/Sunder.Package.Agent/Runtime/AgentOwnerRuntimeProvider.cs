@@ -1,5 +1,6 @@
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.HistorySearch;
+using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Runtime;
 
@@ -20,87 +21,108 @@ internal sealed class AgentOwnerRuntimeProvider(
     AgentTranscriptAroundTurnHandler transcriptAround,
     AgentTranscriptToolDetailHandler transcriptToolDetail,
     AgentRuntimeChangeHub changes,
-    AgentHistoryStatusStream historyStatus) : IAgentOwnerRuntimeProvider
+    AgentHistoryStatusStream historyStatus,
+    AgentRuntimeTransportBudgetState transportBudgets) : IAgentOwnerRuntimeProvider
 {
+    public ValueTask<AgentTransportProfile> NegotiateTransportProfileAsync(
+        AgentTransportProfileRequest request,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(transportBudgets.Negotiate(request));
+    }
+
     public ValueTask<AgentChatSnapshotProjection> GetChatSnapshotAsync(
         AgentChatSnapshotRequest request,
         CancellationToken cancellationToken)
-        => chatSnapshot.HandleAsync(request, cancellationToken);
+        => FitAsync(chatSnapshot.HandleAsync(request, cancellationToken));
 
     public ValueTask<AgentDashboardProjection> GetDashboardAsync(
         AgentDashboardRequest request,
         CancellationToken cancellationToken)
-        => dashboard.HandleAsync(request, cancellationToken);
+        => FitAsync(dashboard.HandleAsync(request, cancellationToken));
 
     public ValueTask<AgentTranscriptPage> GetTranscriptPageAsync(
         AgentTranscriptPageRequest request,
         CancellationToken cancellationToken)
-        => transcript.HandleAsync(request, cancellationToken);
+        => FitAsync(transcript.HandleAsync(request, cancellationToken));
 
     public ValueTask<AgentCatalogProjection> GetCatalogAsync(
         AgentCatalogRequest request,
         CancellationToken cancellationToken)
-        => catalog.HandleAsync(request, cancellationToken);
+        => FitAsync(catalog.HandleAsync(request, cancellationToken));
 
     public ValueTask<AgentProfileCommandResult> ExecuteProfileCommandAsync(
         AgentProfileCommand request,
         CancellationToken cancellationToken)
-        => profiles.HandleAsync(request, cancellationToken);
+        => FitAsync(profiles.HandleAsync(request, cancellationToken));
 
     public ValueTask<AgentWorkspaceCommandResult> ExecuteWorkspaceCommandAsync(
         AgentWorkspaceCommand request,
         CancellationToken cancellationToken)
-        => workspaces.HandleAsync(request, cancellationToken);
+        => FitAsync(workspaces.HandleAsync(request, cancellationToken));
 
     public ValueTask<AgentSessionCommandResult> ExecuteSessionCommandAsync(
         AgentSessionCommand request,
         CancellationToken cancellationToken)
-        => sessions.HandleAsync(request, cancellationToken);
+        => FitAsync(sessions.HandleAsync(request, cancellationToken));
 
     public ValueTask<AgentRunCommandResult> ExecuteRunCommandAsync(
         AgentRunCommand request,
         CancellationToken cancellationToken)
-        => runs.HandleAsync(request, cancellationToken);
+        => FitAsync(runs.HandleAsync(request, cancellationToken));
 
     public ValueTask<AgentRunCommandStatusResult> GetRunStatusAsync(
         AgentRunCommandStatusRequest request,
         CancellationToken cancellationToken)
-        => runs.HandleAsync(request, cancellationToken);
+        => FitAsync(runs.HandleAsync(request, cancellationToken));
 
     public ValueTask<AgentPermissionProjection> ExecutePermissionCommandAsync(
         AgentPermissionCommand request,
         CancellationToken cancellationToken)
-        => permissions.HandleAsync(request, cancellationToken);
+        => FitAsync(permissions.HandleAsync(request, cancellationToken));
 
-    public ValueTask<AgentAttachmentTransferResult> TransferAttachmentAsync(
-        AgentAttachmentTransferRequest request,
+    public ValueTask<AgentAttachmentContentUploadResult> UploadAttachmentAsync(
+        SunderRpcInvocationContext context,
+        AgentAttachmentContentUploadRequest request,
         CancellationToken cancellationToken)
-        => attachments.HandleAsync(request, cancellationToken);
+        => FitAsync(attachments.UploadAsync(context, request, cancellationToken));
+
+    public ValueTask<AgentAttachmentContentDownloadResult> DownloadAttachmentAsync(
+        SunderRpcInvocationContext context,
+        AgentAttachmentContentDownloadRequest request,
+        CancellationToken cancellationToken)
+        => FitAsync(attachments.DownloadAsync(context, request, cancellationToken));
+
+    public ValueTask<AgentAttachmentContentDiscardResult> DiscardAttachmentAsync(
+        AgentAttachmentContentDiscardRequest request,
+        CancellationToken cancellationToken)
+        => FitAsync(attachments.DiscardAsync(request, cancellationToken));
 
     public ValueTask<HistorySearchResponse> SearchHistoryAsync(
         HistorySearchRequest request,
         CancellationToken cancellationToken)
-        => historySearch.HandleAsync(request, cancellationToken);
+        => FitAsync(historySearch.HandleAsync(request, cancellationToken));
 
     public ValueTask<HistorySearchState> GetHistoryStateAsync(
         HistorySearchStateRequest request,
         CancellationToken cancellationToken)
-        => historyState.HandleAsync(request, cancellationToken);
+        => FitAsync(historyState.HandleAsync(request, cancellationToken));
 
     public ValueTask<HistorySearchCommandResult> ExecuteHistoryCommandAsync(
         HistorySearchCommand request,
         CancellationToken cancellationToken)
-        => historyCommands.HandleAsync(request, cancellationToken);
+        => FitAsync(historyCommands.HandleAsync(request, cancellationToken));
 
     public ValueTask<AgentTranscriptAroundTurnPage> GetTranscriptAroundAsync(
         AgentTranscriptAroundTurnRequest request,
         CancellationToken cancellationToken)
-        => transcriptAround.HandleAsync(request, cancellationToken);
+        => FitAsync(transcriptAround.HandleAsync(request, cancellationToken));
 
-    public ValueTask<AgentTranscriptToolDetailResponse> GetTranscriptToolDetailAsync(
+    public ValueTask<AgentTranscriptToolDetailResult> GetTranscriptToolDetailAsync(
         AgentTranscriptToolDetailRequest request,
         CancellationToken cancellationToken)
-        => transcriptToolDetail.HandleAsync(request, cancellationToken);
+        => FitAsync(transcriptToolDetail.HandleAsync(request, cancellationToken));
 
     public IAsyncEnumerable<AgentRuntimeChange> WatchChangesAsync(
         AgentChangeSubscription request,
@@ -111,4 +133,16 @@ internal sealed class AgentOwnerRuntimeProvider(
         HistorySearchStatusSubscription request,
         CancellationToken cancellationToken)
         => historyStatus.SubscribeAsync(request, cancellationToken);
+
+    private static async ValueTask<T> AwaitAsync<T>(ValueTask<T> pending)
+        where T : class
+        => await pending.ConfigureAwait(false);
+
+    private async ValueTask<T> FitAsync<T>(ValueTask<T> pending)
+        where T : class
+    {
+        var response = await AwaitAsync(pending).ConfigureAwait(false);
+        AgentRuntimePayloadLimits.EnsureResponseFits(response, transportBudgets.Current);
+        return response;
+    }
 }

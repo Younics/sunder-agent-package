@@ -3,6 +3,7 @@ using Sunder.Package.Agent.Memory.Semantic;
 using Sunder.Package.Agent.Memory.Semantic.PackageViews;
 using Sunder.Package.Agent.Memory.Semantic.Runtime;
 using Sunder.Package.Agent.Memory.Semantic.Services;
+using Sunder.Sdk.Rpc;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -81,6 +82,27 @@ public sealed class MemoryInspectorAuthorityRaceTests
         Assert.Equal(2, gateway.WorkerStatusCallCount);
         Assert.Equal(current.SessionId, Assert.Single(viewModel.Sessions).SessionId);
         Assert.Equal("current-worker", viewModel.SemanticWorkerStatusText);
+    }
+
+    [Fact]
+    public async Task RefreshCommand_ExpectedGatewayFailureIsContainedAndReconciled()
+    {
+        var selected = Session("Selected");
+        var gateway = new DeferredMemoryInspectorGateway([selected]);
+        using var viewModel = new MemoryInspectorViewModel(gateway);
+        await viewModel.InitializeAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        var failedRefresh = gateway.DeferNextSessionList();
+
+        var refresh = viewModel.RefreshCommand.ExecuteAsync(null);
+        await failedRefresh.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        failedRefresh.Fail(new SunderRpcException(new SunderRpcError(
+            SunderRpcErrorKind.Unavailable,
+            "test.memory-unavailable",
+            "Injected semantic memory transport failure.")));
+        await refresh.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Equal(selected.SessionId, Assert.Single(viewModel.Sessions).SessionId);
+        Assert.True(gateway.SessionListCallCount >= 3);
     }
 
     private static AgentSessionRecord Session(string title)
@@ -299,5 +321,7 @@ public sealed class MemoryInspectorAuthorityRaceTests
         }
 
         public void Complete(T value) => _completion.TrySetResult(value);
+
+        public void Fail(Exception exception) => _completion.TrySetException(exception);
     }
 }

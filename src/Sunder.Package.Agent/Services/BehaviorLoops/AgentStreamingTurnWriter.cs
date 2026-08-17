@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using System.Threading.Channels;
 using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
@@ -25,20 +26,26 @@ internal sealed class AgentStreamingTurnWriter(
 
     public void ResetForRetry(AgentStreamingTurnState state)
     {
+        AgentTurnRecord? turnToReset;
         lock (state.SyncRoot)
         {
-            if (state.AssistantTurnState.Turn is not null && state.Content.Length > 0)
-            {
-                state.AssistantTurnState.Turn = state.Host.UpsertAssistantTurn(
-                    state.AssistantTurnState.Turn,
-                    string.Empty);
-            }
+            turnToReset = state.Content.Length > 0
+                ? state.AssistantTurnState.Turn
+                : null;
+        }
 
+        var resetTurn = turnToReset is null
+            ? null
+            : state.Host.UpsertAssistantTurn(turnToReset, string.Empty);
+
+        lock (state.SyncRoot)
+        {
+            state.AssistantTurnState.Turn = resetTurn ?? state.AssistantTurnState.Turn;
             state.Content.Clear();
-            state.PersistedContentLength = 0;
+            state.ContentGeneration = checked(state.ContentGeneration + 1);
+            state.PersistedContentGeneration = state.ContentGeneration;
             state.ToolCalls.Clear();
             state.ProviderUsage = null;
-            state.LastAssistantFlushTimestamp = null;
             state.SuppressPendingFlush = false;
         }
     }
@@ -50,23 +57,22 @@ internal sealed class AgentStreamingTurnWriter(
         ChatOptions chatOptions,
         CancellationToken cancellationToken)
     {
-        using var flushCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var flushTask = FlushPendingTextAsync(state, flushCancellation.Token);
+        using var streamCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var flushPump = new AssistantStreamFlushPump(state, streamCancellation);
+        var cancellationRegistration = cancellationToken.UnsafeRegister(
+            static pump => ((AssistantStreamFlushPump)pump!).Abort(),
+            flushPump);
         var protocolLeakDetected = false;
+        var flushFinalSnapshot = false;
         try
         {
             await foreach (var streamUpdate in chatClient.GetStreamingResponseAsync(
                                promptMessages,
                                chatOptions,
-                               cancellationToken))
+                               streamCancellation.Token)
+                               .WithCancellation(streamCancellation.Token))
             {
-                if (!state.Host.IsCurrentRun())
-                {
-                    state.TerminalResult = new AgentBehaviorLoopResult(
-                        state.Context.RunningCheckpoint,
-                        AgentBehaviorLoopCompletionKind.Interrupted);
-                    return;
-                }
+                cancellationToken.ThrowIfCancellationRequested();
 
                 if (!string.IsNullOrEmpty(streamUpdate.Text)
                     || streamUpdate.Contents.Any(IsContentBearingOutput))
@@ -98,14 +104,11 @@ internal sealed class AgentStreamingTurnWriter(
                 lock (state.SyncRoot)
                 {
                     state.Content.Append(streamUpdate.Text);
+                    state.ContentGeneration = checked(state.ContentGeneration + 1);
                     containsProtocolLeak = AgentVisibleResponseGuard.ContainsProtocolLeak(state.Content.ToString());
                     if (containsProtocolLeak)
                     {
                         state.SuppressPendingFlush = true;
-                    }
-                    if (!containsProtocolLeak && ShouldFlushAssistantStream(state))
-                    {
-                        FlushAssistantStream(state);
                     }
                 }
 
@@ -114,23 +117,36 @@ internal sealed class AgentStreamingTurnWriter(
                     protocolLeakDetected = true;
                     break;
                 }
+
+                flushPump.Schedule(cancellationToken);
+            }
+
+            if (!protocolLeakDetected)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                flushFinalSnapshot = true;
             }
         }
         finally
         {
-            flushCancellation.Cancel();
             try
             {
-                await flushTask;
+                await flushPump.StopAsync(flushFinalSnapshot);
             }
-            catch (OperationCanceledException) when (flushCancellation.IsCancellationRequested)
+            finally
             {
+                cancellationRegistration.Dispose();
+                flushPump.Dispose();
             }
         }
 
         if (protocolLeakDetected)
         {
             await BlockProtocolLeakAsync(state, cancellationToken);
+        }
+        else
+        {
+            cancellationToken.ThrowIfCancellationRequested();
         }
     }
 
@@ -153,14 +169,6 @@ internal sealed class AgentStreamingTurnWriter(
                 state.ToolCalls,
                 state.TerminalResult,
                 state.ProviderUsage?.ContextTokenCount);
-        }
-
-        lock (state.SyncRoot)
-        {
-            if (state.Content.Length > state.PersistedContentLength)
-            {
-                FlushAssistantStream(state);
-            }
         }
 
         return new AgentProviderCycleResult(
@@ -191,37 +199,235 @@ internal sealed class AgentStreamingTurnWriter(
             });
     }
 
-    private static bool ShouldFlushAssistantStream(AgentStreamingTurnState state)
-        => state.AssistantTurnState.Turn is null
-           || state.LastAssistantFlushTimestamp is not { } lastFlushTimestamp
-           || state.TimeProvider.GetElapsedTime(lastFlushTimestamp) >= AssistantStreamFlushInterval;
-
-    private static void FlushAssistantStream(AgentStreamingTurnState state)
+    private sealed class AssistantStreamFlushPump : IDisposable
     {
-        state.AssistantTurnState.Turn = state.Host.UpsertAssistantTurn(
-            state.AssistantTurnState.Turn,
-            state.Content.ToString());
-        state.PersistedContentLength = state.Content.Length;
-        state.LastAssistantFlushTimestamp = state.TimeProvider.GetTimestamp();
-    }
-
-    private static async Task FlushPendingTextAsync(
-        AgentStreamingTurnState state,
-        CancellationToken cancellationToken)
-    {
-        using var timer = new PeriodicTimer(AssistantStreamFlushInterval, state.TimeProvider);
-        while (await timer.WaitForNextTickAsync(cancellationToken))
+        private readonly AgentStreamingTurnState _state;
+        private readonly Channel<bool> _signals = Channel.CreateBounded<bool>(new BoundedChannelOptions(1)
         {
-            lock (state.SyncRoot)
+            AllowSynchronousContinuations = false,
+            FullMode = BoundedChannelFullMode.DropWrite,
+            SingleReader = true,
+            SingleWriter = false,
+        });
+        private readonly CancellationTokenSource _waitCancellation = new();
+        private readonly object _lifecycleSync = new();
+        private readonly Task _worker;
+        private FlushPumpStopMode _stopMode;
+        private long? _lastFlushTimestamp;
+
+        public AssistantStreamFlushPump(
+            AgentStreamingTurnState state,
+            CancellationTokenSource streamCancellation)
+        {
+            _state = state;
+            _streamCancellation = streamCancellation;
+            _worker = Task.Run(RunAsync);
+        }
+
+        private readonly CancellationTokenSource _streamCancellation;
+
+        public void Schedule(CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var observeWorker = false;
+            lock (_lifecycleSync)
             {
-                if (state.Host.IsCurrentRun()
-                    && !state.SuppressPendingFlush
-                    && state.Content.Length > state.PersistedContentLength
-                    && ShouldFlushAssistantStream(state))
+                if (_stopMode == FlushPumpStopMode.Running && !_worker.IsCompleted)
                 {
-                    FlushAssistantStream(state);
+                    _signals.Writer.TryWrite(true);
+                    return;
+                }
+
+                observeWorker = _worker.IsCompleted;
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            if (observeWorker)
+            {
+                _worker.GetAwaiter().GetResult();
+            }
+
+            throw new InvalidOperationException("The assistant stream flush pump is no longer accepting updates.");
+        }
+
+        public void Abort() => RequestStop(FlushPumpStopMode.Abort);
+
+        public async Task StopAsync(bool flushFinalSnapshot)
+        {
+            RequestStop(flushFinalSnapshot
+                ? FlushPumpStopMode.FlushFinal
+                : FlushPumpStopMode.Abort);
+            await _worker;
+        }
+
+        public void Dispose() => _waitCancellation.Dispose();
+
+        private async Task RunAsync()
+        {
+            try
+            {
+                try
+                {
+                    while (GetStopMode() == FlushPumpStopMode.Running
+                           && await _signals.Reader.WaitToReadAsync(_waitCancellation.Token))
+                    {
+                        DrainSignals();
+                        if (GetStopMode() != FlushPumpStopMode.Running)
+                        {
+                            break;
+                        }
+
+                        await WaitForCadenceAsync();
+                        DrainSignals();
+                        if (TryCaptureSnapshot(out var snapshot)
+                            && TryBeginPersistence(FlushPumpStopMode.Running))
+                        {
+                            Persist(snapshot);
+                        }
+                    }
+                }
+                catch (OperationCanceledException ex) when (
+                    _waitCancellation.IsCancellationRequested
+                    && ex.CancellationToken == _waitCancellation.Token)
+                {
+                }
+
+                if (GetStopMode() == FlushPumpStopMode.FlushFinal
+                    && TryCaptureSnapshot(out var finalSnapshot)
+                    && TryBeginPersistence(FlushPumpStopMode.FlushFinal))
+                {
+                    Persist(finalSnapshot);
                 }
             }
+            catch
+            {
+                try
+                {
+                    _streamCancellation.Cancel();
+                }
+                catch
+                {
+                    // Preserve the durable persistence failure surfaced by the pump.
+                }
+                throw;
+            }
+            finally
+            {
+                _signals.Writer.TryComplete();
+            }
+        }
+
+        private async Task WaitForCadenceAsync()
+        {
+            if (_lastFlushTimestamp is not { } lastFlushTimestamp)
+            {
+                return;
+            }
+
+            var remaining = AssistantStreamFlushInterval
+                - _state.TimeProvider.GetElapsedTime(lastFlushTimestamp);
+            if (remaining > TimeSpan.Zero)
+            {
+                await Task.Delay(remaining, _state.TimeProvider, _waitCancellation.Token);
+            }
+        }
+
+        private bool TryCaptureSnapshot(out AssistantStreamSnapshot snapshot)
+        {
+            lock (_state.SyncRoot)
+            {
+                if (_state.SuppressPendingFlush
+                    || _state.ContentGeneration <= _state.PersistedContentGeneration)
+                {
+                    snapshot = default;
+                    return false;
+                }
+
+                snapshot = new AssistantStreamSnapshot(
+                    _state.AssistantTurnState.Turn,
+                    _state.Content.ToString(),
+                    _state.ContentGeneration);
+                return true;
+            }
+        }
+
+        private bool TryBeginPersistence(FlushPumpStopMode requiredMode)
+        {
+            lock (_lifecycleSync)
+            {
+                return _stopMode == requiredMode;
+            }
+        }
+
+        private FlushPumpStopMode GetStopMode()
+        {
+            lock (_lifecycleSync)
+            {
+                return _stopMode;
+            }
+        }
+
+        private void Persist(AssistantStreamSnapshot snapshot)
+        {
+            var persistedTurn = _state.Host.UpsertAssistantTurn(snapshot.Turn, snapshot.Content);
+            var flushTimestamp = _state.TimeProvider.GetTimestamp();
+            lock (_state.SyncRoot)
+            {
+                if (snapshot.Generation > _state.PersistedContentGeneration)
+                {
+                    _state.AssistantTurnState.Turn = persistedTurn;
+                    _state.PersistedContentGeneration = snapshot.Generation;
+                }
+            }
+
+            _lastFlushTimestamp = flushTimestamp;
+        }
+
+        private void RequestStop(FlushPumpStopMode stopMode)
+        {
+            var interruptWait = false;
+            lock (_lifecycleSync)
+            {
+                if (_stopMode == FlushPumpStopMode.Abort
+                    || _stopMode == stopMode)
+                {
+                    return;
+                }
+
+                if (_stopMode == FlushPumpStopMode.FlushFinal
+                    && stopMode != FlushPumpStopMode.Abort)
+                {
+                    return;
+                }
+
+                _stopMode = stopMode;
+                interruptWait = true;
+            }
+
+            if (interruptWait)
+            {
+                _signals.Writer.TryComplete();
+                _waitCancellation.Cancel();
+            }
+        }
+
+        private void DrainSignals()
+        {
+            while (_signals.Reader.TryRead(out _))
+            {
+            }
+        }
+
+        private readonly record struct AssistantStreamSnapshot(
+            AgentTurnRecord? Turn,
+            string Content,
+            long Generation);
+
+        private enum FlushPumpStopMode
+        {
+            Running,
+            FlushFinal,
+            Abort,
         }
     }
 }
@@ -253,9 +459,9 @@ internal sealed class AgentStreamingTurnState(
 
     public ReasoningActivityReporter ReasoningActivity { get; } = new(host as IAgentRunActivitySink);
 
-    public long? LastAssistantFlushTimestamp { get; set; }
+    public long ContentGeneration { get; set; }
 
-    public int PersistedContentLength { get; set; }
+    public long PersistedContentGeneration { get; set; }
 
     public bool SuppressPendingFlush { get; set; }
 

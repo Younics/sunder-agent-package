@@ -51,14 +51,6 @@ public sealed class AgentExecutionTargetWarmupService(
         {
             return AgentExecutionTargetWarmupResult.Failed(ex.Message);
         }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            return AgentExecutionTargetWarmupResult.Failed(ex.Message);
-        }
     }
 
     public IReadOnlyList<AgentExecutionTargetDescriptor> ListTargets()

@@ -1,6 +1,8 @@
 using Avalonia.Controls;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Runtime;
+using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Notifications;
 
 namespace Sunder.Package.Agent.PackageViews;
 
@@ -16,6 +18,19 @@ public partial class AgentPermissionsView : UserControl, IDisposable
         : this()
     {
         _viewModel = new AgentPermissionsViewModel(permissionService);
+        DataContext = _viewModel;
+    }
+
+    public AgentPermissionsView(
+        IAgentPermissionGateway permissionService,
+        IPackageContext packageContext,
+        IPackageNotificationService notifications)
+        : this()
+    {
+        _viewModel = new AgentPermissionsViewModel(
+            permissionService,
+            packageContext,
+            notifications);
         DataContext = _viewModel;
     }
 

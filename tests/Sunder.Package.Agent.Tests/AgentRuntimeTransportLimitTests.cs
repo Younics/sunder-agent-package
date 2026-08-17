@@ -2,10 +2,14 @@ extern alias AgentCore;
 
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.HistorySearch;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Runtime;
+using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Subagents.Runtime;
+using Sunder.Sdk.Rpc;
 using Xunit;
 using AgentRuntimePayloadLimits = AgentCore::Sunder.Package.Agent.Runtime.AgentRuntimePayloadLimits;
 
@@ -13,14 +17,289 @@ namespace Sunder.Package.Agent.Tests;
 
 public sealed class AgentRuntimeTransportLimitTests
 {
+    private const int Mebibyte = 1024 * 1024;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly AgentTransportProfile TestProfile = new(
+        1024 * 1024,
+        1024 * 1024,
+        1024 * 1024,
+        32 * 1024 * 1024,
+        RuntimeReported: true);
+    private static int ResponsePayloadBytes => AgentRuntimePayloadLimits.GetResponsePayloadBytes(TestProfile);
+    private static int EventPayloadBytes => AgentRuntimePayloadLimits.GetEventPayloadBytes(TestProfile);
 
     [Fact]
-    public void AgentTransportLimits_MirrorCoreDefaults()
+    public void AgentTransportLimits_UseStandardFallbackAndRetainPayloadReserve()
     {
-        Assert.Equal(1024 * 1024, AgentRuntimePayloadLimits.RuntimeMaximumRequestBytes);
-        Assert.Equal(4 * 1024 * 1024, AgentRuntimePayloadLimits.RuntimeMaximumResponseBytes);
-        Assert.Equal(1024 * 1024, AgentRuntimePayloadLimits.RuntimeMaximumEventBytes);
+        Assert.Equal(8 * 1024 * 1024, AgentRuntimePayloadLimits.StandardFallbackProfile.RequestValueBytes);
+        Assert.Equal(8 * 1024 * 1024, AgentRuntimePayloadLimits.StandardFallbackProfile.ResponseValueBytes);
+        Assert.Equal(8 * 1024 * 1024, AgentRuntimePayloadLimits.StandardFallbackProfile.EventValueBytes);
+        Assert.Equal(64 * 1024 * 1024, AgentRuntimePayloadLimits.StandardFallbackProfile.ContentReferenceBytes);
+
+        var budgets = new AgentRuntimeTransportBudgetState();
+        Assert.Equal(AgentRuntimePayloadLimits.StandardFallbackProfile, budgets.Current);
+        var negotiated = budgets.Negotiate(new AgentTransportProfileRequest(
+            TestProfile.RequestValueBytes,
+            TestProfile.ResponseValueBytes,
+            TestProfile.EventValueBytes,
+            TestProfile.ContentReferenceBytes,
+            RuntimeReported: true));
+
+        var expected = TestProfile with { RuntimeReported = false };
+        Assert.Equal(expected, negotiated);
+        Assert.Equal(expected, budgets.Current);
+        Assert.Equal(
+            TestProfile.ResponseValueBytes - AgentRuntimePayloadLimits.EnvelopeReserveBytes,
+            AgentRuntimePayloadLimits.GetResponsePayloadBytes(negotiated));
+    }
+
+    [Fact]
+    public void RuntimeTransportBudgets_InitializeFromWorkerAndNegotiateComponentwise()
+    {
+        using var rpcState = new RegressionTestRpcState();
+        var workerProfile = ResourceProfile(4 * Mebibyte, 128 * Mebibyte);
+        var budgets = new AgentRuntimeTransportBudgetState(new RegressionTestRpcClient(
+            rpcState,
+            "sunder.package.agent",
+            workerProfile));
+
+        Assert.Equal(
+            new AgentTransportProfile(
+                4 * Mebibyte,
+                4 * Mebibyte,
+                4 * Mebibyte,
+                128 * Mebibyte,
+                RuntimeReported: true),
+            budgets.Current);
+
+        var negotiated = budgets.Negotiate(new AgentTransportProfileRequest(
+            2 * Mebibyte,
+            8 * Mebibyte,
+            Mebibyte,
+            256 * Mebibyte,
+            RuntimeReported: true));
+
+        Assert.Equal(
+            new AgentTransportProfile(
+                2 * Mebibyte,
+                4 * Mebibyte,
+                Mebibyte,
+                128 * Mebibyte,
+                RuntimeReported: true),
+            negotiated);
+        Assert.Equal(negotiated, budgets.Current);
+    }
+
+    [Theory]
+    [InlineData(1, 1)]
+    [InlineData(8, 64)]
+    [InlineData(16, 256)]
+    [InlineData(32, 256)]
+    public void RuntimeTransportBudgets_HandleMatchingStandardLargeAndCustomHighProfiles(
+        int valueMebibytes,
+        int contentMebibytes)
+    {
+        using var rpcState = new RegressionTestRpcState();
+        var valueBytes = valueMebibytes * Mebibyte;
+        var contentBytes = contentMebibytes * Mebibyte;
+        var budgets = new AgentRuntimeTransportBudgetState(new RegressionTestRpcClient(
+            rpcState,
+            "sunder.package.agent",
+            ResourceProfile(valueBytes, contentBytes)));
+
+        var negotiated = budgets.Negotiate(new AgentTransportProfileRequest(
+            valueBytes,
+            valueBytes,
+            valueBytes,
+            contentBytes,
+            RuntimeReported: true));
+
+        Assert.Equal(
+            new AgentTransportProfile(
+                valueBytes,
+                valueBytes,
+                valueBytes,
+                contentBytes,
+                RuntimeReported: true),
+            negotiated);
+    }
+
+    [Fact]
+    public void RuntimeTransportBudgets_UseFallbackForMissingSidesAndRequireBothReports()
+    {
+        var appOnly = new AgentRuntimeTransportBudgetState().Negotiate(new AgentTransportProfileRequest(
+            16 * Mebibyte,
+            16 * Mebibyte,
+            16 * Mebibyte,
+            256 * Mebibyte,
+            RuntimeReported: true));
+        Assert.Equal(AgentRuntimePayloadLimits.StandardFallbackProfile, appOnly);
+
+        using var rpcState = new RegressionTestRpcState();
+        var workerOnlyBudgets = new AgentRuntimeTransportBudgetState(new RegressionTestRpcClient(
+            rpcState,
+            "sunder.package.agent",
+            ResourceProfile(2 * Mebibyte, 4 * Mebibyte)));
+        var workerOnly = workerOnlyBudgets.Negotiate(new AgentTransportProfileRequest(
+            AgentRuntimePayloadLimits.StandardFallbackProfile.RequestValueBytes,
+            AgentRuntimePayloadLimits.StandardFallbackProfile.ResponseValueBytes,
+            AgentRuntimePayloadLimits.StandardFallbackProfile.EventValueBytes,
+            AgentRuntimePayloadLimits.StandardFallbackProfile.ContentReferenceBytes,
+            RuntimeReported: false));
+        Assert.Equal(
+            new AgentTransportProfile(
+                2 * Mebibyte,
+                2 * Mebibyte,
+                2 * Mebibyte,
+                4 * Mebibyte,
+                RuntimeReported: false),
+            workerOnly);
+
+        var neither = new AgentRuntimeTransportBudgetState().Negotiate(new AgentTransportProfileRequest(
+            AgentRuntimePayloadLimits.StandardFallbackProfile.RequestValueBytes,
+            AgentRuntimePayloadLimits.StandardFallbackProfile.ResponseValueBytes,
+            AgentRuntimePayloadLimits.StandardFallbackProfile.EventValueBytes,
+            AgentRuntimePayloadLimits.StandardFallbackProfile.ContentReferenceBytes,
+            RuntimeReported: false));
+        Assert.Equal(AgentRuntimePayloadLimits.StandardFallbackProfile, neither);
+    }
+
+    [Fact]
+    public void RuntimeTransportBudgets_RejectInvalidAppProposalDimensions()
+    {
+        var budgets = new AgentRuntimeTransportBudgetState();
+        var valid = new AgentTransportProfileRequest(
+            AgentRuntimePayloadLimits.MinimumValueBytes,
+            AgentRuntimePayloadLimits.MinimumValueBytes,
+            AgentRuntimePayloadLimits.MinimumValueBytes,
+            AgentRuntimePayloadLimits.MinimumContentReferenceBytes,
+            RuntimeReported: false);
+
+        Assert.Throws<AgentOwnerOperationException>(() => budgets.Negotiate(valid with
+        {
+            RequestValueBytes = AgentRuntimePayloadLimits.MinimumValueBytes - 1,
+        }));
+        Assert.Throws<AgentOwnerOperationException>(() => budgets.Negotiate(valid with
+        {
+            ResponseValueBytes = AgentRuntimePayloadLimits.MaximumValueBytes + 1,
+        }));
+        Assert.Throws<AgentOwnerOperationException>(() => budgets.Negotiate(valid with
+        {
+            EventValueBytes = AgentRuntimePayloadLimits.MinimumValueBytes - 1,
+        }));
+        Assert.Throws<AgentOwnerOperationException>(() => budgets.Negotiate(valid with
+        {
+            ContentReferenceBytes = AgentRuntimePayloadLimits.MaximumContentReferenceBytes + 1,
+        }));
+    }
+
+    [Fact]
+    public void PackageModule_WiresWorkerRpcResourceProfileAndAllowsMissingClient()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        using var rpcState = new RegressionTestRpcState();
+        var workerProfile = ResourceProfile(16 * Mebibyte, 256 * Mebibyte);
+        var profiledServices = new ServiceCollection();
+        profiledServices.AddSingleton<ISunderRpcClient>(new RegressionTestRpcClient(
+            rpcState,
+            "sunder.package.agent",
+            workerProfile));
+        new PackageModule().ConfigureRuntimeServices(profiledServices, scope.Context);
+        using var profiledProvider = profiledServices.BuildServiceProvider();
+
+        Assert.Equal(
+            new AgentTransportProfile(
+                16 * Mebibyte,
+                16 * Mebibyte,
+                16 * Mebibyte,
+                256 * Mebibyte,
+                RuntimeReported: true),
+            profiledProvider.GetRequiredService<AgentRuntimeTransportBudgetState>().Current);
+
+        var fallbackServices = new ServiceCollection();
+        new PackageModule().ConfigureRuntimeServices(fallbackServices, scope.Context);
+        using var fallbackProvider = fallbackServices.BuildServiceProvider();
+        Assert.Equal(
+            AgentRuntimePayloadLimits.StandardFallbackProfile,
+            fallbackProvider.GetRequiredService<AgentRuntimeTransportBudgetState>().Current);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task OwnerRpc_ProposesSdkProfileOrStandardFallback(bool runtimeReported)
+    {
+        using var rpcState = new RegressionTestRpcState();
+        var resourceProfile = runtimeReported
+            ? ResourceProfile(12 * Mebibyte, 96 * Mebibyte)
+            : null;
+        var expected = runtimeReported
+            ? new AgentTransportProfile(
+                12 * Mebibyte,
+                12 * Mebibyte,
+                12 * Mebibyte,
+                96 * Mebibyte,
+                RuntimeReported: true)
+            : AgentRuntimePayloadLimits.StandardFallbackProfile;
+        var owner = CreateOwnerClient(rpcState, resourceProfile, expected, out var handler);
+
+        var negotiated = await owner.GetTransportProfileAsync(CancellationToken.None);
+
+        Assert.Equal(expected, negotiated);
+        Assert.Equal(
+            new AgentTransportProfileRequest(
+                expected.RequestValueBytes,
+                expected.ResponseValueBytes,
+                expected.EventValueBytes,
+                expected.ContentReferenceBytes,
+                expected.RuntimeReported),
+            handler.Request);
+    }
+
+    [Theory]
+    [InlineData("request")]
+    [InlineData("response")]
+    [InlineData("event")]
+    [InlineData("content")]
+    public async Task OwnerRpc_RejectsResponseAboveAnyProposedDimension(string dimension)
+    {
+        using var rpcState = new RegressionTestRpcState();
+        var proposed = new AgentTransportProfile(
+            8 * Mebibyte,
+            8 * Mebibyte,
+            8 * Mebibyte,
+            64 * Mebibyte,
+            RuntimeReported: true);
+        var response = dimension switch
+        {
+            "request" => proposed with { RequestValueBytes = 16 * Mebibyte },
+            "response" => proposed with { ResponseValueBytes = 16 * Mebibyte },
+            "event" => proposed with { EventValueBytes = 16 * Mebibyte },
+            "content" => proposed with { ContentReferenceBytes = 128 * Mebibyte },
+            _ => throw new ArgumentOutOfRangeException(nameof(dimension)),
+        };
+        var owner = CreateOwnerClient(
+            rpcState,
+            ResourceProfile(proposed.RequestValueBytes, proposed.ContentReferenceBytes),
+            response,
+            out _);
+
+        await Assert.ThrowsAsync<InvalidDataException>(() =>
+            owner.GetTransportProfileAsync(CancellationToken.None).AsTask());
+    }
+
+    [Fact]
+    public async Task OwnerRpc_RejectsReportedResponseWhenItsProposalWasUnreported()
+    {
+        using var rpcState = new RegressionTestRpcState();
+        var owner = CreateOwnerClient(
+            rpcState,
+            resourceProfile: null,
+            AgentRuntimePayloadLimits.StandardFallbackProfile with { RuntimeReported = true },
+            out _);
+
+        await Assert.ThrowsAsync<InvalidDataException>(() =>
+            owner.GetTransportProfileAsync(CancellationToken.None).AsTask());
     }
 
     [Fact]
@@ -57,22 +336,25 @@ public sealed class AgentRuntimeTransportLimitTests
             now);
         var page = new AgentTranscriptAroundTurnPage(1, [turn], true, true, turnId);
 
-        var fitted = AgentRuntimePayloadLimits.FitAroundTurnPage(page, requestedItemId);
+        var fitted = AgentRuntimePayloadLimits.FitAroundTurnPage(
+            page,
+            requestedItemId,
+            ResponsePayloadBytes);
 
         Assert.True(AgentRuntimePayloadLimits.GetSerializedByteCount(fitted)
-                    <= AgentRuntimePayloadLimits.MaximumOperationResponseBytes);
+                    <= ResponsePayloadBytes);
         Assert.Contains(Assert.Single(fitted.Turns).Items, item => item.ItemId == requestedItemId);
 
         var subsession = SubsessionAroundTurnPayload.Fit(
             new SubsessionAroundTurnPage([turn], true, true, turnId),
             requestedItemId);
         Assert.True(JsonSerializer.SerializeToUtf8Bytes(subsession).Length
-                    <= AgentRuntimePayloadLimits.MaximumOperationResponseBytes);
+                    <= SubsessionAroundTurnPayload.MaximumResponseBytes);
         Assert.Contains(Assert.Single(subsession.Turns).Items, item => item.ItemId == requestedItemId);
     }
 
     [Fact]
-    public async Task AttachmentGateway_ChunksUploadsAndDownloadsBelowCoreTransportLimits()
+    public async Task AttachmentGateway_TransfersEachAttachmentAsCallScopedContent()
     {
         var upload = CreateBytes((5 * 1024 * 1024) + 137);
         var download = CreateBytes((7 * 1024 * 1024) + 251);
@@ -101,10 +383,48 @@ public sealed class AgentRuntimeTransportLimitTests
         Assert.Equal(download, read);
         Assert.NotNull(client.RunCommand);
         Assert.Single(client.RunCommand!.AttachmentHandles!);
-        Assert.True(client.MaximumRequestBytes < AgentRuntimePayloadLimits.RuntimeMaximumRequestBytes);
-        Assert.True(client.MaximumResponseBytes < AgentRuntimePayloadLimits.RuntimeMaximumResponseBytes);
-        Assert.True(client.UploadChunkCount > 1);
-        Assert.True(client.DownloadChunkCount > 1);
+        Assert.True(client.MaximumRequestBytes < TestProfile.RequestValueBytes);
+        Assert.True(client.MaximumResponseBytes < TestProfile.ResponseValueBytes);
+        Assert.Equal(1, client.UploadContentCount);
+        Assert.Equal(1, client.DownloadContentCount);
+    }
+
+    [Fact]
+    public async Task OwnerRpc_TransfersAttachmentContentThroughCallScope()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        using var catalog = new RegressionTestExtensionCatalog();
+        var serviceCollection = new ServiceCollection();
+        serviceCollection.AddSingleton<AgentRpcCatalog>(catalog);
+        new PackageModule().ConfigureRuntimeServices(serviceCollection, scope.Context);
+        await using var services = serviceCollection.BuildServiceProvider();
+        var client = catalog.AddOwnerRuntimeProvider(
+            services.GetRequiredService<AgentOwnerRuntimeProvider>());
+        var uploads = services.GetRequiredService<AgentAttachmentTransferService>();
+        var attachments = services.GetRequiredService<AgentAttachmentService>();
+        var content = CreateBytes((2 * 1024 * 1024) + 137);
+        var request = new AgentAttachmentUploadRequest(
+            "round-trip.bin",
+            "application/octet-stream",
+            content);
+
+        var handle = await client.UploadAttachmentAsync(request, CancellationToken.None);
+        var adoption = uploads.BeginAdoption([handle]);
+        try
+        {
+            Assert.Equal(content, await File.ReadAllBytesAsync(Assert.Single(adoption.Uploads).SourcePath));
+        }
+        finally
+        {
+            uploads.ReleaseAdoption(adoption);
+        }
+
+        var stored = await attachments.StoreAttachmentAsync(Guid.NewGuid(), request);
+        var downloaded = await client.DownloadAttachmentAsync(stored.Metadata, CancellationToken.None);
+
+        Assert.Equal(content, downloaded);
+        await client.DiscardAttachmentAsync(handle, CancellationToken.None);
+        Assert.Throws<AgentAttachmentTransferOperationException>(() => uploads.BeginAdoption([handle]));
     }
 
     [Fact]
@@ -121,7 +441,7 @@ public sealed class AgentRuntimeTransportLimitTests
                 "workspace",
                 []));
 
-        Assert.Contains("transport limit", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("negotiated Runtime value limit", error.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Null(client.RunCommand);
     }
 
@@ -131,7 +451,8 @@ public sealed class AgentRuntimeTransportLimitTests
         var turn = CreateTurn(new string('\\', 6 * 1024 * 1024));
         var page = AgentRuntimePayloadLimits.FitTranscriptPage(
             new AgentTranscriptPage(7, [turn], HasMore: false),
-            AgentTranscriptPageDirection.Turn);
+            AgentTranscriptPageDirection.Turn,
+            maximumBytes: ResponsePayloadBytes);
 
         Assert.True(page.HasMore);
         Assert.Single(page.Turns);
@@ -143,7 +464,7 @@ public sealed class AgentRuntimeTransportLimitTests
             StringComparison.Ordinal);
         Assert.True(
             AgentRuntimePayloadLimits.GetSerializedByteCount(page)
-            <= AgentRuntimePayloadLimits.MaximumOperationResponseBytes);
+            <= ResponsePayloadBytes);
 
         var oversized = new AgentRuntimeChange(
             8,
@@ -153,12 +474,13 @@ public sealed class AgentRuntimeTransportLimitTests
             RuntimeInstanceId: "runtime");
         var projected = AgentRuntimePayloadLimits.ReplaceWithResnapshotIfOversized(
             oversized,
+            EventPayloadBytes,
             oversized);
 
         Assert.Equal(AgentRuntimeChangeKind.ResnapshotRequired, projected.Kind);
         Assert.True(
             AgentRuntimePayloadLimits.GetSerializedByteCount(projected)
-            <= AgentRuntimePayloadLimits.MaximumStreamEventBytes);
+            <= EventPayloadBytes);
 
         var subsessionChange = SubsessionAroundTurnPayload.FitChange(new SubagentChanged(
             9,
@@ -202,7 +524,7 @@ public sealed class AgentRuntimeTransportLimitTests
             ToolSchemaVersion: "1",
             Revision: 42);
 
-        var agent = AgentRuntimePayloadLimits.FitToolDetail(detail);
+        var agent = AgentRuntimePayloadLimits.FitToolDetail(detail, ResponsePayloadBytes);
         var subsession = SubsessionAroundTurnPayload.FitToolDetail(detail);
 
         Assert.True(agent.WasTransportTruncated);
@@ -210,8 +532,8 @@ public sealed class AgentRuntimeTransportLimitTests
         Assert.Equal(executionId, agent.ToolExecutionId);
         Assert.Equal(42, agent.Revision);
         Assert.True(AgentRuntimePayloadLimits.GetSerializedByteCount(
-                        new AgentTranscriptToolDetailResponse(agent))
-                    <= AgentRuntimePayloadLimits.MaximumOperationResponseBytes);
+                        new AgentTranscriptToolDetailResult(Found: true, agent))
+                    <= ResponsePayloadBytes);
         Assert.True(subsession.WasTransportTruncated);
         Assert.Equal(sessionId, subsession.SessionId);
         Assert.Equal(executionId, subsession.ToolExecutionId);
@@ -233,11 +555,12 @@ public sealed class AgentRuntimeTransportLimitTests
         {
             var page = AgentRuntimePayloadLimits.FitTranscriptPage(
                 new AgentTranscriptPage(13, [turn], HasMore: false),
-                direction);
+                direction,
+                maximumBytes: ResponsePayloadBytes);
 
             AssertProjectedTurn(page.Turns, page.HasMore, page.Continuation?.TurnId, turn.TurnId);
             Assert.True(AgentRuntimePayloadLimits.GetSerializedByteCount(page)
-                        <= AgentRuntimePayloadLimits.MaximumOperationResponseBytes);
+                        <= ResponsePayloadBytes);
             var roundTrip = Assert.IsType<AgentTranscriptPage>(JsonSerializer.Deserialize<AgentTranscriptPage>(
                 JsonSerializer.SerializeToUtf8Bytes(page, JsonOptions),
                 JsonOptions));
@@ -273,22 +596,25 @@ public sealed class AgentRuntimeTransportLimitTests
 
         var agentBefore = AgentRuntimePayloadLimits.FitTranscriptPage(
             new AgentTranscriptPage(11, turns[1..], HasMore: true),
-            AgentTranscriptPageDirection.Before);
+            AgentTranscriptPageDirection.Before,
+            maximumBytes: ResponsePayloadBytes);
         var agentRecent = AgentRuntimePayloadLimits.FitTranscriptPage(
             new AgentTranscriptPage(11, turns[1..], HasMore: true),
-            AgentTranscriptPageDirection.Recent);
+            AgentTranscriptPageDirection.Recent,
+            maximumBytes: ResponsePayloadBytes);
         var agentAfter = AgentRuntimePayloadLimits.FitTranscriptPage(
             new AgentTranscriptPage(11, turns[..30], HasMore: true),
-            AgentTranscriptPageDirection.After);
+            AgentTranscriptPageDirection.After,
+            maximumBytes: ResponsePayloadBytes);
         AssertDirectionalPage(agentBefore.Turns, agentBefore.HasMore, turns[^1].TurnId);
         AssertDirectionalPage(agentRecent.Turns, agentRecent.HasMore, turns[^1].TurnId);
         AssertDirectionalPage(agentAfter.Turns, agentAfter.HasMore, turns[0].TurnId);
         Assert.True(AgentRuntimePayloadLimits.GetSerializedByteCount(agentBefore)
-                    <= AgentRuntimePayloadLimits.MaximumOperationResponseBytes);
+                    <= ResponsePayloadBytes);
         Assert.True(AgentRuntimePayloadLimits.GetSerializedByteCount(agentRecent)
-                    <= AgentRuntimePayloadLimits.MaximumOperationResponseBytes);
+                    <= ResponsePayloadBytes);
         Assert.True(AgentRuntimePayloadLimits.GetSerializedByteCount(agentAfter)
-                    <= AgentRuntimePayloadLimits.MaximumOperationResponseBytes);
+                    <= ResponsePayloadBytes);
         Assert.Equal(agentBefore.Turns[0].TurnId, agentBefore.Continuation?.TurnId);
         Assert.Equal(agentRecent.Turns[0].TurnId, agentRecent.Continuation?.TurnId);
         Assert.Equal(agentAfter.Turns[^1].TurnId, agentAfter.Continuation?.TurnId);
@@ -392,18 +718,121 @@ public sealed class AgentRuntimeTransportLimitTests
         return bytes;
     }
 
+    private static SunderRpcResourceProfile ResourceProfile(int valueBytes, int contentBytes)
+        => new(
+            new string('a', 64),
+            valueBytes,
+            MaximumValueDepth: 64,
+            MaximumValueNodes: 524_288,
+            MaximumObjectMembers: 4_096,
+            MaximumInlineDecodedBytes: 512 * 1024,
+            contentBytes);
+
+    private static AgentOwnerRpcClient CreateOwnerClient(
+        RegressionTestRpcState state,
+        SunderRpcResourceProfile? resourceProfile,
+        AgentTransportProfile response,
+        out TransportProfileRpcHandler handler)
+    {
+        handler = new TransportProfileRpcHandler(response);
+        state.Add(
+            "sunder.package.agent",
+            AgentOwnerRuntimeRpc.Descriptor,
+            handler,
+            handler,
+            handler,
+            AgentOwnerRuntimeRpc.ProviderId);
+        return new AgentOwnerRpcClient(new RegressionTestRpcClient(
+            state,
+            "sunder.package.agent.app",
+            resourceProfile));
+    }
+
+    private sealed class TransportProfileRpcHandler(AgentTransportProfile response)
+        : ISunderRpcServiceHandler, IDisposable
+    {
+        public AgentTransportProfileRequest? Request { get; private set; }
+
+        public ValueTask<JsonElement> InvokeUnaryAsync(
+            SunderRpcInvocationContext context,
+            string serviceId,
+            string methodId,
+            JsonElement request,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Request = request.Deserialize<AgentTransportProfileRequest>(JsonOptions)
+                      ?? throw new InvalidDataException("Transport proposal was not deserializable.");
+            return ValueTask.FromResult(JsonSerializer.SerializeToElement(response, JsonOptions));
+        }
+
+        public async IAsyncEnumerable<JsonElement> InvokeServerStreamAsync(
+            SunderRpcInvocationContext context,
+            string serviceId,
+            string methodId,
+            JsonElement request,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await Task.CompletedTask;
+            yield break;
+        }
+
+        public void Dispose()
+        {
+        }
+    }
+
     private sealed class BoundedAttachmentOwnerClient(byte[] downloadContent)
         : IAgentOwnerClient
     {
-        private readonly Dictionary<string, MemoryStream> _uploads = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, byte[]> _uploads = new(StringComparer.Ordinal);
         private readonly byte[] _downloadContent = downloadContent;
 
+        public AgentTransportProfile TransportProfile => TestProfile;
         public int MaximumRequestBytes { get; private set; }
         public int MaximumResponseBytes { get; private set; }
-        public int UploadChunkCount { get; private set; }
-        public int DownloadChunkCount { get; private set; }
+        public int UploadContentCount { get; private set; }
+        public int DownloadContentCount { get; private set; }
         public byte[]? UploadedContent { get; private set; }
         public AgentRunCommand? RunCommand { get; private set; }
+
+        public ValueTask<AgentTransportProfile> GetTransportProfileAsync(CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult(TransportProfile);
+        }
+
+        public ValueTask<AgentAttachmentUploadHandle> UploadAttachmentAsync(
+            AgentAttachmentUploadRequest upload,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Assert.InRange(upload.Content.Length, 1, TransportProfile.ContentReferenceBytes);
+            var transferId = Guid.NewGuid().ToString("N");
+            _uploads.Add(transferId, upload.Content.ToArray());
+            UploadContentCount++;
+            return ValueTask.FromResult(new AgentAttachmentUploadHandle(transferId));
+        }
+
+        public ValueTask<byte[]> DownloadAttachmentAsync(
+            AgentAttachmentMetadata metadata,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Assert.Equal(_downloadContent.Length, metadata.SizeBytes);
+            DownloadContentCount++;
+            return ValueTask.FromResult(_downloadContent.ToArray());
+        }
+
+        public ValueTask DiscardAttachmentAsync(
+            AgentAttachmentUploadHandle handle,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            _uploads.Remove(handle.TransferId);
+            return ValueTask.CompletedTask;
+        }
 
         public ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
             AgentOwnerRpcOperation<TRequest, TResponse> operation,
@@ -415,21 +844,18 @@ public sealed class AgentRuntimeTransportLimitTests
             cancellationToken.ThrowIfCancellationRequested();
             var requestBytes = JsonSerializer.SerializeToUtf8Bytes(request, JsonOptions).Length;
             MaximumRequestBytes = Math.Max(MaximumRequestBytes, requestBytes);
-            if (requestBytes > AgentRuntimePayloadLimits.RuntimeMaximumRequestBytes)
+            if (requestBytes > AgentRuntimePayloadLimits.GetRequestPayloadBytes(TransportProfile))
             {
                 throw new InvalidDataException("Request exceeded the simulated Core transport limit.");
             }
 
             object response;
-            if (operation.Is(AgentRuntimeOperations.AttachmentTransfers))
-            {
-                response = HandleTransfer((AgentAttachmentTransferRequest)(object)request);
-            }
-            else if (operation.Is(AgentRuntimeOperations.Runs))
+            if (operation.Is(AgentRuntimeOperations.Runs))
             {
                 RunCommand = (AgentRunCommand)(object)request;
                 var handle = Assert.Single(RunCommand.AttachmentHandles!);
-                UploadedContent = _uploads[handle.TransferId].ToArray();
+                UploadedContent = _uploads[handle.TransferId];
+                _uploads.Remove(handle.TransferId);
                 response = new AgentRunCommandResult(
                     1,
                     new AgentRunCheckpointRecord(
@@ -447,7 +873,7 @@ public sealed class AgentRuntimeTransportLimitTests
 
             var responseBytes = JsonSerializer.SerializeToUtf8Bytes(response, JsonOptions).Length;
             MaximumResponseBytes = Math.Max(MaximumResponseBytes, responseBytes);
-            if (responseBytes > AgentRuntimePayloadLimits.RuntimeMaximumResponseBytes)
+            if (responseBytes > AgentRuntimePayloadLimits.GetResponsePayloadBytes(TransportProfile))
             {
                 throw new InvalidDataException("Response exceeded the simulated Core transport limit.");
             }
@@ -465,48 +891,5 @@ public sealed class AgentRuntimeTransportLimitTests
             yield break;
         }
 
-        private AgentAttachmentTransferResult HandleTransfer(AgentAttachmentTransferRequest request)
-        {
-            switch (request.Kind)
-            {
-                case AgentAttachmentTransferKind.BeginUpload:
-                    var transferId = Guid.NewGuid().ToString("N");
-                    _uploads.Add(transferId, new MemoryStream(request.Upload!.SizeBytes));
-                    return new AgentAttachmentTransferResult(
-                        transferId,
-                        TotalBytes: request.Upload.SizeBytes);
-                case AgentAttachmentTransferKind.WriteUploadChunk:
-                    var upload = _uploads[request.TransferId!];
-                    Assert.Equal(request.Offset, upload.Length);
-                    upload.Write(request.Content!);
-                    UploadChunkCount++;
-                    return new AgentAttachmentTransferResult(
-                        request.TransferId,
-                        checked((int)upload.Length),
-                        checked((int)upload.Capacity));
-                case AgentAttachmentTransferKind.CompleteUpload:
-                    var completed = _uploads[request.TransferId!];
-                    return new AgentAttachmentTransferResult(
-                        request.TransferId,
-                        checked((int)completed.Length),
-                        checked((int)completed.Length),
-                        IsComplete: true);
-                case AgentAttachmentTransferKind.AbortUpload:
-                    return new AgentAttachmentTransferResult(IsComplete: true);
-                case AgentAttachmentTransferKind.ReadDownloadChunk:
-                    var count = Math.Min(
-                        AgentRuntimePayloadLimits.AttachmentDownloadChunkBytes,
-                        _downloadContent.Length - request.Offset);
-                    var content = _downloadContent.AsSpan(request.Offset, count).ToArray();
-                    DownloadChunkCount++;
-                    return new AgentAttachmentTransferResult(
-                        NextOffset: request.Offset + count,
-                        TotalBytes: _downloadContent.Length,
-                        Content: content,
-                        IsComplete: request.Offset + count == _downloadContent.Length);
-                default:
-                    throw new ArgumentOutOfRangeException();
-            }
-        }
     }
 }

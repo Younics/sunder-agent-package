@@ -13,7 +13,7 @@
     <PackageReference Include="Avalonia" />
     <ProjectReference Include="..\..\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
     <ProjectReference Include="..\Protocol\Sunder.Package.Agent.Builder.Protocol.csproj" />
-    <Compile Include="..\BuilderOperationQueue.cs;..\BuilderPathService.cs;..\BuilderProjectApplicationService.cs;..\BuilderProjectPersistence.cs;..\BuilderProjectRecord.cs;..\BuilderProjectStore.cs;..\BuilderProjectViewModels.cs;..\BuilderSetupService.cs;..\BuilderUiDispatcher.cs;..\BuilderViewModel.Operations.cs;..\BuilderViewModels.cs;..\BuilderWorkspaceExecutionService.cs"
+    <Compile Include="..\BuilderOperationQueue.cs;..\BuilderPathService.cs;..\BuilderProjectApplicationService.cs;..\BuilderProjectPersistence.cs;..\BuilderProjectRecord.cs;..\BuilderProjectStore.cs;..\BuilderProjectViewModels.cs;..\BuilderSetupService.cs;..\BuilderUiDispatcher.cs;..\BuilderViewModel.Operations.cs;..\BuilderViewModel.PresentationOperations.cs;..\BuilderViewModels.cs;..\BuilderWorkspaceExecutionService.cs"
              Link="%(Filename)%(Extension)" />
     <Compile Include="..\PackageMetadata.cs" Link="PackageMetadata.cs" />
   </ItemGroup>
@@ -21,12 +21,12 @@
   <ItemGroup>
     <SunderContractBundle Include="..\Protocol\Contracts\builder-runtime.rpc.json"
                           ContractId="sunder.package.agent.builder.runtime"
-                          Version="2.0.0"
+                           Version="2.0.0"
                           DescriptorPath="contracts/builder-runtime.rpc.json"
                           Exposure="package" />
     <SunderUsesContract Include="sunder.package.agent.builder.runtime"
                         Role="app"
-                        ContractVersion="2.0.0"
+                         ContractVersion="2.0.0"
                         Required="true"
                         Actions="discover;invoke" />
   </ItemGroup>

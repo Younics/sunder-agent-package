@@ -1745,7 +1745,8 @@ public sealed class HistorySearchHardeningTests
         Assert.NotNull(first.Continuation);
         Assert.Empty(first.Sessions.Select(option => option.Id).Intersect(second.Sessions.Select(option => option.Id)));
         Assert.True(AgentRuntimePayloadLimits.GetSerializedByteCount(first)
-                    <= AgentRuntimePayloadLimits.MaximumOperationResponseBytes);
+                    <= AgentRuntimePayloadLimits.GetResponsePayloadBytes(
+                        AgentRuntimePayloadLimits.StandardFallbackProfile));
         Assert.All(first.Sessions, option => Assert.InRange(option.DisplayName.Length, 1, HistorySearchLimits.MaximumDisplayCharacters));
     }
 

@@ -6,6 +6,8 @@ namespace Sunder.Package.Agent.Storage;
 
 public sealed partial class AgentLocalStore
 {
+    internal Action? AfterUserTurnAdmissionCommit { get; set; }
+
     internal AgentUserTurnAdmissionResult AdmitUserTurn(AgentUserTurnAdmissionRequest request)
         => AdmitUserTurn(request, []);
 
@@ -132,16 +134,17 @@ public sealed partial class AgentLocalStore
             checkpoint: checkpoint);
 
         transaction.Commit();
+        AfterUserTurnAdmissionCommit?.Invoke();
         if (rollback?.DeletedTurnIds.Count > 0)
         {
-            CheckpointWriteAheadLog(connection);
+            ScheduleWriteAheadLogCheckpoint();
         }
         if (rollback?.DeletedSessionIds.Count > 0)
         {
             SignalSessionCleanupJobsChanged();
         }
         return new AgentUserTurnAdmissionResult(
-            GetRun(run.Key.RunId) ?? run,
+            run,
             userTurn,
             checkpoint,
             rollback,

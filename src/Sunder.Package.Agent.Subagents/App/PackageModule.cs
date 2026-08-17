@@ -1,10 +1,12 @@
 using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Shared.Composition;
+using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Package.Agent.Subagents.PackageViews;
 using Sunder.Package.Agent.Subagents.Runtime;
 using Sunder.Package.Agent.Subagents.Services;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Avalonia;
+using Sunder.Sdk.Notifications;
 using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Subagents;
@@ -27,7 +29,18 @@ public sealed class AppPackageModule : ISunderAppPackageModule
             provider.GetRequiredService<ISubsessionSessionReader>(),
             provider.GetRequiredService<ISubsessionCheckpointReader>(),
             provider.GetRequiredService<ISubsessionTranscriptPageReader>(),
-            provider.GetRequiredService<ISubsessionChangeNotifications>()));
+            provider.GetRequiredService<ISubsessionChangeNotifications>(),
+            PresentationDispatcher.Capture(),
+            new PresentationOperationObserver(
+                context,
+                provider.GetService<IPackageNotificationService>()
+                    ?? NullPackageNotificationService.Instance,
+                "Subsessions")));
+        services.AddTransient(provider => new SubsessionsView(
+            provider.GetRequiredService<SubsessionsViewModel>(),
+            context,
+            provider.GetService<IPackageNotificationService>()
+                ?? NullPackageNotificationService.Instance));
     }
 
     public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services)

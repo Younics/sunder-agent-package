@@ -1,13 +1,15 @@
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Logging;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Shared.Storage;
 using Sunder.Package.Agent.Shared.Threading;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Memory.Semantic;
 
-public sealed partial class MemoryLocalStore
+public sealed partial class MemoryLocalStore : IDisposable, IAsyncDisposable
 {
     public const int MaxRecallableMemoriesPerSession = 512;
     public const string ActiveState = MemoryRecordStates.Active;
@@ -20,6 +22,7 @@ public sealed partial class MemoryLocalStore
     private readonly object _initializationSync = new();
     private readonly string _contentRootPath;
     private readonly IMemoryPhysicalMaintenance _physicalMaintenance;
+    private readonly SqliteWalCheckpointMaintenance _walCheckpointMaintenance;
     private MemoryRepository _memories = null!;
     private EvidenceRepository _evidence = null!;
     private EmbeddingRepository _embeddings = null!;
@@ -47,6 +50,10 @@ public sealed partial class MemoryLocalStore
         _contentRootPath = packageContext.ContentRootPath;
         _physicalMaintenance = physicalMaintenance;
         DatabasePath = packageContext.Storage.RoleLocalWorkspace.GetLocalPath("memory/agent-memory.db");
+        _walCheckpointMaintenance = new SqliteWalCheckpointMaintenance(
+            DatabasePath,
+            "Semantic memory store",
+            packageContext.Logging.LoggerFactory.CreateLogger<MemoryLocalStore>());
         if (initialize)
         {
             Initialize();
@@ -54,6 +61,22 @@ public sealed partial class MemoryLocalStore
     }
 
     public string DatabasePath { get; }
+
+    internal int WalCheckpointAttemptCount => _walCheckpointMaintenance.AttemptCount;
+
+    internal Task<bool> WaitForWalCheckpointAttemptAfterAsync(
+        int attemptCount,
+        CancellationToken cancellationToken = default)
+        => _walCheckpointMaintenance.WaitForAttemptAfterAsync(attemptCount, cancellationToken);
+
+    internal Task WaitForWalCheckpointIdleAsync(CancellationToken cancellationToken = default)
+        => _walCheckpointMaintenance.WaitForIdleAsync(cancellationToken);
+
+    internal void RetryWalCheckpoint() => _walCheckpointMaintenance.ScheduleCheckpoint();
+
+    public ValueTask DisposeAsync() => _walCheckpointMaintenance.DisposeAsync();
+
+    public void Dispose() => _walCheckpointMaintenance.Dispose();
 
     internal static MemoryLocalStore CreateDeferred(IPackageContext packageContext)
         => new(packageContext, SqliteMemoryPhysicalMaintenance.Instance, initialize: false);
@@ -79,10 +102,11 @@ public sealed partial class MemoryLocalStore
             Directory.CreateDirectory(Path.GetDirectoryName(DatabasePath)!);
             new MemorySchemaMigrator(DatabasePath).Migrate();
             var evidence = new EvidenceRepository(DatabasePath);
-            _embeddings = new EmbeddingRepository(DatabasePath);
+            _embeddings = new EmbeddingRepository(DatabasePath, _walCheckpointMaintenance);
             _memories = new MemoryRepository(DatabasePath, evidence);
             _evidence = evidence;
             _initialized = true;
+            _walCheckpointMaintenance.ScheduleCheckpoint();
         }
     }
 

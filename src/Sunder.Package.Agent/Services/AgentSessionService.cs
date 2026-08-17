@@ -80,13 +80,13 @@ public sealed partial class AgentSessionService(AgentLocalStore store, AgentRpcC
             var parentWorkspaceId = NormalizeWorkspaceId(_store.GetSession(parentSessionId.Value)?.WorkspaceId);
             if (parentWorkspaceId is null)
             {
-                throw new InvalidOperationException("Child sessions must have a parent session with an assigned workspace.");
+                throw new AgentSessionOperationException("Child sessions must have a parent session with an assigned workspace.");
             }
 
             if (normalizedWorkspaceId is not null
                 && !string.Equals(normalizedWorkspaceId, parentWorkspaceId, StringComparison.OrdinalIgnoreCase))
             {
-                throw new InvalidOperationException("Child sessions must use their parent session workspace.");
+                throw new AgentSessionOperationException("Child sessions must use their parent session workspace.");
             }
 
             return parentWorkspaceId;
@@ -94,12 +94,12 @@ public sealed partial class AgentSessionService(AgentLocalStore store, AgentRpcC
 
         if (normalizedWorkspaceId is null)
         {
-            throw new InvalidOperationException("Root sessions must be created with an explicit workspace id.");
+            throw new AgentSessionOperationException("Root sessions must be created with an explicit workspace id.");
         }
 
         if (IsUnassignedSessionsWorkspace(normalizedWorkspaceId))
         {
-            throw new InvalidOperationException("Root sessions cannot be created in Unassigned Sessions.");
+            throw new AgentSessionOperationException("Root sessions cannot be created in Unassigned Sessions.");
         }
 
         return normalizedWorkspaceId;
@@ -108,9 +108,10 @@ public sealed partial class AgentSessionService(AgentLocalStore store, AgentRpcC
     private AgentSessionRecord NormalizeSessionWorkspaceForUpdate(AgentSessionRecord session)
     {
         var workspaceId = NormalizeWorkspaceId(session.WorkspaceId)
-            ?? throw new InvalidOperationException("Sessions must have an assigned workspace.");
-        var current = _store.GetSession(session.SessionId);
-        var currentWorkspaceId = NormalizeWorkspaceId(current?.WorkspaceId);
+            ?? throw new AgentSessionOperationException("Sessions must have an assigned workspace.");
+        var current = _store.GetSession(session.SessionId)
+            ?? throw new AgentSessionOperationException("Session was not found.");
+        var currentWorkspaceId = NormalizeWorkspaceId(current.WorkspaceId);
         if (currentWorkspaceId is null)
         {
             return session with { WorkspaceId = workspaceId };
@@ -118,21 +119,21 @@ public sealed partial class AgentSessionService(AgentLocalStore store, AgentRpcC
 
         if (IsUnassignedSessionsWorkspace(workspaceId) && !IsUnassignedSessionsWorkspace(currentWorkspaceId))
         {
-            throw new InvalidOperationException("Sessions cannot be moved to Unassigned Sessions.");
+            throw new AgentSessionOperationException("Sessions cannot be moved to Unassigned Sessions.");
         }
 
         if (!IsUnassignedSessionsWorkspace(workspaceId)
             && !IsUnassignedSessionsWorkspace(currentWorkspaceId)
             && !string.Equals(workspaceId, currentWorkspaceId, StringComparison.OrdinalIgnoreCase))
         {
-            throw new InvalidOperationException("Sessions cannot be moved between workspaces.");
+            throw new AgentSessionOperationException("Sessions cannot be moved between workspaces.");
         }
 
         if (!IsUnassignedSessionsWorkspace(workspaceId)
             && IsUnassignedSessionsWorkspace(currentWorkspaceId)
-            && current?.ParentSessionId is null)
+            && current.ParentSessionId is null)
         {
-            throw new InvalidOperationException("Unassigned root sessions cannot be moved into a workspace.");
+            throw new AgentSessionOperationException("Unassigned root sessions cannot be moved into a workspace.");
         }
 
         return session with { WorkspaceId = workspaceId };
@@ -754,3 +755,6 @@ public sealed partial class AgentSessionService(AgentLocalStore store, AgentRpcC
     }
 
 }
+
+internal sealed class AgentSessionOperationException(string message)
+    : InvalidOperationException(message);

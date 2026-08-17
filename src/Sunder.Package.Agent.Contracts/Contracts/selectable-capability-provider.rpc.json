@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "descriptorVersion": 2,
+  "schemaProfile": "sunder.rpc.values.v1",
   "contractId": "sunder.agent.selectable.capability.provider",
   "version": "1.0.0",
   "errors": {},
@@ -12,7 +13,7 @@
           "idempotency": "idempotent",
           "errors": [],
           "requestSchema": {
-            "$ref": "#/$defs/AgentRpcEmpty"
+            "$ref": "#/$defs/Unit"
           },
           "responseSchema": {
             "$ref": "#/$defs/AgentRpcIdentity"
@@ -26,7 +27,7 @@
             "$ref": "#/$defs/AgentProfileSelectableCapabilityRequest"
           },
           "responseSchema": {
-            "$ref": "#/$defs/ListOfAgentProfileSelectableCapabilityDescriptor"
+            "$ref": "#/$defs/AgentProfileSelectableCapabilityDescriptorCollection"
           }
         },
         "watch": {
@@ -34,7 +35,7 @@
           "idempotency": "idempotent",
           "errors": [],
           "requestSchema": {
-            "$ref": "#/$defs/AgentRpcEmpty"
+            "$ref": "#/$defs/Unit"
           },
           "eventSchema": {
             "$ref": "#/$defs/AgentRpcChange"
@@ -44,25 +45,25 @@
     }
   },
   "$defs": {
-    "AgentRpcEmpty": {
+    "Unit": {
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
-    "String": {
+    "TextValue": {
       "type": "string",
       "minLength": 0,
-      "maxLength": 1000000
+      "maxLength": 65536
     },
     "AgentRpcIdentity": {
       "type": "object",
       "properties": {
         "displayName": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         },
         "id": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         }
       },
       "required": [
@@ -71,33 +72,33 @@
       ],
       "additionalProperties": false
     },
-    "DateTimeOffset": {
+    "Timestamp": {
       "type": "string",
-      "logicalType": "utc-date-time"
+      "format": "date-time"
     },
-    "Boolean": {
+    "Flag": {
       "type": "boolean"
     },
     "AgentProfileModelBindingRecord": {
       "type": "object",
       "properties": {
         "capabilityKind": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/TextValue"
         },
         "modelId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "profileId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "providerId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "settingsJson": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/JsonText"
         },
         "updatedAtUtc": {
-          "$ref": "#/$defs/DateTimeOffset"
+          "$ref": "#/$defs/Timestamp"
         }
       },
       "required": [
@@ -107,25 +108,25 @@
       ],
       "additionalProperties": false
     },
-    "ListOfAgentProfileModelBindingRecord": {
+    "AgentProfileModelBindingRecordCollection": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentProfileModelBindingRecord"
       },
       "minItems": 0,
-      "maxItems": 1000000
+      "maxItems": 10000
     },
     "AgentProfileSelectableCapabilityAssignmentRecord": {
       "type": "object",
       "properties": {
         "capabilityId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "kind": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "sourceId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         }
       },
       "required": [
@@ -134,64 +135,64 @@
       ],
       "additionalProperties": false
     },
-    "ListOfAgentProfileSelectableCapabilityAssignmentRecord": {
+    "AgentProfileSelectableCapabilityAssignmentRecordCollection": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentProfileSelectableCapabilityAssignmentRecord"
       },
       "minItems": 0,
-      "maxItems": 1000000
+      "maxItems": 10000
     },
     "AgentProfileRecord": {
       "type": "object",
       "properties": {
         "behaviorLoopId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "behaviorLoopSettingsJson": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/JsonText"
         },
         "behaviorLoopSourceId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "chatModelId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "chatProviderId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "createdAtUtc": {
-          "$ref": "#/$defs/DateTimeOffset"
+          "$ref": "#/$defs/Timestamp"
         },
         "description": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         },
         "displayName": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         },
         "embeddingModelId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "embeddingProviderId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "instructions": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/ContentText"
         },
         "isInternal": {
-          "$ref": "#/$defs/Boolean"
+          "$ref": "#/$defs/Flag"
         },
         "modelBindings": {
-          "$ref": "#/$defs/ListOfAgentProfileModelBindingRecord"
+          "$ref": "#/$defs/AgentProfileModelBindingRecordCollection"
         },
         "profileId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "selectableCapabilityAssignments": {
-          "$ref": "#/$defs/ListOfAgentProfileSelectableCapabilityAssignmentRecord"
+          "$ref": "#/$defs/AgentProfileSelectableCapabilityAssignmentRecordCollection"
         },
         "updatedAtUtc": {
-          "$ref": "#/$defs/DateTimeOffset"
+          "$ref": "#/$defs/Timestamp"
         }
       },
       "required": [
@@ -213,49 +214,44 @@
       "required": [],
       "additionalProperties": false
     },
-    "Int32": {
-      "type": "integer",
-      "minimum": -2147483648,
-      "maximum": 2147483647
-    },
     "AgentProfileSelectableCapabilityDescriptor": {
       "type": "object",
       "properties": {
         "capabilityId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "description": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         },
         "displayName": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         },
         "groupDescription": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         },
         "groupDisplayName": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         },
         "groupId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "groupSortOrder": {
-          "$ref": "#/$defs/Int32"
+          "$ref": "#/$defs/SortOrder"
         },
         "isSelectable": {
-          "$ref": "#/$defs/Boolean"
+          "$ref": "#/$defs/Flag"
         },
         "kind": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "sourceDisplayName": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         },
         "sourceId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "statusText": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         }
       },
       "required": [
@@ -267,30 +263,56 @@
       ],
       "additionalProperties": false
     },
-    "ListOfAgentProfileSelectableCapabilityDescriptor": {
+    "AgentProfileSelectableCapabilityDescriptorCollection": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentProfileSelectableCapabilityDescriptor"
       },
       "minItems": 0,
-      "maxItems": 1000000
-    },
-    "Int64": {
-      "type": "integer",
-      "minimum": -9007199254740991,
-      "maximum": 9007199254740991
+      "maxItems": 10000
     },
     "AgentRpcChange": {
       "type": "object",
       "properties": {
         "revision": {
-          "$ref": "#/$defs/Int64"
+          "$ref": "#/$defs/Revision"
         }
       },
       "required": [
         "revision"
       ],
       "additionalProperties": false
+    },
+    "Identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "DisplayText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 8192
+    },
+    "ContentText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 900000
+    },
+    "JsonText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 900000,
+      "description": "Bounded opaque JSON text that may be malformed, truncated, or interpreted by an extension-owned schema."
+    },
+    "SortOrder": {
+      "type": "integer",
+      "minimum": -100000,
+      "maximum": 100000
+    },
+    "Revision": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
     }
   }
 }

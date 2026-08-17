@@ -14,14 +14,14 @@ namespace Sunder.Package.Agent.Tests;
 
 public sealed class AgentRpcWireCompatibilityTests
 {
+    private const string ExactTimestampText = "2026-07-28T12:34:56.123456789+05:30";
     private const string CanonicalNanosecondJson =
-        "{\"timestamp\":\"2026-07-28T12:34:56.123456789Z\",\"value\":1.0000000000000002}";
+        "{\"timestamp\":\"" + ExactTimestampText + "\",\"value\":1.0000000000000002}";
     private const double Binary64Value = 1.0000000000000002d;
-    private static readonly DateTimeOffset RepresentableTimestamp =
-        new DateTimeOffset(2026, 7, 28, 12, 34, 56, TimeSpan.Zero).AddTicks(1_234_567);
+    private static readonly SunderRpcOffsetDateTime ExactTimestamp = new(ExactTimestampText);
 
     [Fact]
-    public async Task Handler_AcceptsNanosecondUtcTextAndPreservesBinary64Values()
+    public async Task Handler_PreservesExactOffsetNanosecondsAndBinary64Values()
     {
         WireProbe? observed = null;
         var handler = AgentRpcServiceHandler.Create()
@@ -39,16 +39,16 @@ public sealed class AgentRpcWireCompatibilityTests
             Parse(CanonicalNanosecondJson));
 
         AssertProbe(observed!);
-        Assert.Equal("2026-07-28T12:34:56.1234567Z", response.GetProperty("timestamp").GetString());
+        Assert.Equal(ExactTimestampText, response.GetProperty("timestamp").GetString());
         AssertBinary64(response.GetProperty("value").GetDouble());
     }
 
     [Fact]
-    public async Task Client_AcceptsNanosecondUtcResponsesForUnaryAndStreamCalls()
+    public async Task Client_PreservesExactOffsetNanosecondsForUnaryAndStreamCalls()
     {
         var client = new RawRpcClient(Parse(CanonicalNanosecondJson));
         var endpoint = new SunderRpcEndpointReference("rpc1_wire_compatibility");
-        var request = new WireProbe(RepresentableTimestamp, Binary64Value);
+        var request = new WireProbe(ExactTimestamp, Binary64Value);
 
         var response = await AgentRpcServiceHandler.InvokeAsync<WireProbe, WireProbe>(
             client,
@@ -75,7 +75,46 @@ public sealed class AgentRpcWireCompatibilityTests
     }
 
     [Fact]
-    public async Task ChatHandler_PreservesLosslesslyWidenedBinary32Options()
+    public async Task DateTimeOffsetProjection_RejectsUnrepresentableNanoseconds()
+    {
+        var handler = AgentRpcServiceHandler.Create()
+            .AddUnary<DateTimeOffsetProbe, DateTimeOffsetProbe>("wire", "echo", (_, request, _) =>
+                ValueTask.FromResult(request))
+            .Build();
+
+        await Assert.ThrowsAsync<JsonException>(() => handler.InvokeUnaryAsync(
+            null!,
+            "wire",
+            "echo",
+            Parse("{\"timestamp\":\"2026-07-28T12:34:56.123456789Z\"}")).AsTask());
+    }
+
+    [Fact]
+    public async Task NullableUnary_UsesJsonNullWithoutAnEnvelope()
+    {
+        var handler = AgentRpcServiceHandler.Create()
+            .AddNullableUnary<AgentRpcEmpty, string>("wire", "none", (_, _, _) =>
+                ValueTask.FromResult<string?>(null))
+            .Build();
+        var response = await handler.InvokeUnaryAsync(
+            null!,
+            "wire",
+            "none",
+            JsonSerializer.SerializeToElement(new AgentRpcEmpty()));
+        Assert.Equal(JsonValueKind.Null, response.ValueKind);
+
+        var client = new RawRpcClient(Parse("null"));
+        var result = await AgentRpcServiceHandler.InvokeNullableAsync<AgentRpcEmpty, string>(
+            client,
+            new SunderRpcEndpointReference("rpc1_wire_compatibility"),
+            "wire",
+            "none",
+            new AgentRpcEmpty());
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task ChatHandler_PreservesBinary32Options()
     {
         var temperature = float.BitIncrement(0.5f);
         var topP = float.BitDecrement(1f);
@@ -113,7 +152,7 @@ public sealed class AgentRpcWireCompatibilityTests
     [InlineData("topP")]
     [InlineData("frequencyPenalty")]
     [InlineData("presencePenalty")]
-    public async Task ChatHandler_RejectsBinary64OptionsThatWouldRoundToBinary32(string propertyName)
+    public async Task ChatHandler_DecodesNumbersUsingBinary32Semantics(string propertyName)
     {
         var request = Parse(
             "{\"providerId\":\"probe\",\"modelId\":\"probe-model\",\"messages\":[],\"options\":{\""
@@ -122,13 +161,99 @@ public sealed class AgentRpcWireCompatibilityTests
         AssertChatRequestIsSchemaValid(request);
 
         var provider = new ChatProviderProbe();
-        var exception = await Assert.ThrowsAsync<SunderRpcException>(
-            () => DrainAsync(AgentChatProviderRpc.CreateHandler(provider), request));
+        await DrainAsync(AgentChatProviderRpc.CreateHandler(provider), request);
 
-        Assert.Equal(SunderRpcErrorKind.Domain, exception.Error.Kind);
-        Assert.Equal("agent.chat.option-not-representable", exception.Error.Code);
-        Assert.Contains(propertyName, exception.Error.Message, StringComparison.Ordinal);
-        Assert.Equal(0, provider.Client.CallCount);
+        Assert.Equal(1, provider.Client.CallCount);
+        var options = Assert.IsType<ChatOptions>(provider.Client.ObservedOptions);
+        var actual = propertyName switch
+        {
+            "temperature" => options.Temperature,
+            "topP" => options.TopP,
+            "frequencyPenalty" => options.FrequencyPenalty,
+            "presencePenalty" => options.PresencePenalty,
+            _ => throw new ArgumentOutOfRangeException(nameof(propertyName)),
+        };
+        AssertSingleBits(1f, actual);
+    }
+
+    [Fact]
+    public void ChatWire_UsesNativeJsonCanonicalBytesAndDistinctJsonPresence()
+    {
+        var options = new AgentChatOptions(
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            [],
+            new Dictionary<string, JsonElement>
+            {
+                ["count"] = JsonSerializer.SerializeToElement(3),
+            },
+            [0, 1, 255]);
+        var optionsJson = Parse(AgentRpcServiceHandler.Serialize(options));
+        Assert.Equal(JsonValueKind.Number, optionsJson.GetProperty("additionalProperties").GetProperty("count").ValueKind);
+        Assert.Equal("AAH/", optionsJson.GetProperty("continuationHandle").GetString());
+        AssertSchemaValid("sunder.agent.chat.provider", "#/$defs/AgentChatOptions", optionsJson);
+
+        var absent = Parse(AgentRpcServiceHandler.Serialize(new AgentChatContent("text")));
+        var explicitNull = Parse(AgentRpcServiceHandler.Serialize(new AgentChatContent(
+            "tool-result",
+            Json: new SunderRpcOptional<JsonElement>(JsonSerializer.SerializeToElement<object?>(null)))));
+        Assert.False(absent.TryGetProperty("json", out _));
+        Assert.Equal(JsonValueKind.Null, explicitNull.GetProperty("json").ValueKind);
+    }
+
+    [Fact]
+    public async Task WireEnums_UseKebabCaseStringsAndRejectIntegers()
+    {
+        var serialized = Parse(AgentRpcServiceHandler.Serialize(new EnumProbe(
+            AgentProviderReadinessStatus.NeedsConfiguration)));
+        Assert.Equal("needs-configuration", serialized.GetProperty("status").GetString());
+
+        var handler = AgentRpcServiceHandler.Create()
+            .AddUnary<EnumProbe, EnumProbe>("wire", "echo", (_, request, _) => ValueTask.FromResult(request))
+            .Build();
+        await Assert.ThrowsAsync<JsonException>(() => handler.InvokeUnaryAsync(
+            null!,
+            "wire",
+            "echo",
+            Parse("{\"status\":1}")).AsTask());
+    }
+
+    [Fact]
+    public void ChatEvents_EncodeOnlyTheirTaggedVariant()
+    {
+        AgentChatStreamEvent error = AgentChatStreamEvent.Error(
+            "provider-error",
+            "Provider failed.",
+            "Safe details.",
+            AgentChatProviderFailureKind.ContextWindowExceeded);
+
+        var json = Parse(AgentRpcServiceHandler.Serialize(error));
+        Assert.Equal("error", json.GetProperty("kind").GetString());
+        Assert.Equal("context-window-exceeded", json.GetProperty("errorFailureKind").GetString());
+        Assert.False(json.TryGetProperty("contentItems", out _));
+        AssertSchemaValid("sunder.agent.chat.provider", "#/$defs/AgentChatStreamEvent", json);
+    }
+
+    [Fact]
+    public void CatalogEvents_EncodeOnlyTheirTaggedVariant()
+    {
+        AgentRuntimeCatalogEvent catalogEvent = new AgentSessionCatalogEvent(1, Guid.NewGuid());
+
+        var json = Parse(AgentRpcServiceHandler.Serialize(catalogEvent));
+        Assert.Equal("session", json.GetProperty("kind").GetString());
+        Assert.False(json.TryGetProperty("profileId", out _));
+        Assert.False(json.TryGetProperty("turn", out _));
+        AssertSchemaValid("sunder.agent.runtime.catalog", "#/$defs/AgentRuntimeCatalogEvent", json);
     }
 
     [Fact]
@@ -171,13 +296,13 @@ public sealed class AgentRpcWireCompatibilityTests
 
     private static void AssertProbe(WireProbe probe)
     {
-        Assert.Equal(RepresentableTimestamp, probe.Timestamp);
+        Assert.Equal(ExactTimestamp, probe.Timestamp);
         AssertBinary64(probe.Value);
     }
 
     private static void AssertRequest(JsonElement request)
     {
-        Assert.Equal("2026-07-28T12:34:56.1234567Z", request.GetProperty("timestamp").GetString());
+        Assert.Equal(ExactTimestampText, request.GetProperty("timestamp").GetString());
         AssertBinary64(request.GetProperty("value").GetDouble());
     }
 
@@ -190,9 +315,12 @@ public sealed class AgentRpcWireCompatibilityTests
             BitConverter.SingleToInt32Bits(Assert.IsType<float>(actual)));
 
     private static void AssertChatRequestIsSchemaValid(JsonElement request)
+        => AssertSchemaValid("sunder.agent.chat.provider", "#/$defs/AgentChatStreamRequest", request);
+
+    private static void AssertSchemaValid(string contractId, string schemaReference, JsonElement value)
     {
-        var descriptor = AgentRpcContractDescriptors.Get("sunder.agent.chat.provider");
-        Assert.True(descriptor.IsValid("#/$defs/AgentChatStreamRequest", request, out var error), error);
+        var descriptor = AgentRpcContractDescriptors.Get(contractId);
+        Assert.True(descriptor.IsValid(schemaReference, value, out var error), error);
     }
 
     private static async Task DrainAsync(ISunderRpcServiceHandler handler, JsonElement request)
@@ -212,7 +340,9 @@ public sealed class AgentRpcWireCompatibilityTests
         return document.RootElement.Clone();
     }
 
-    private sealed record WireProbe(DateTimeOffset Timestamp, double Value);
+    private sealed record WireProbe(SunderRpcOffsetDateTime Timestamp, double Value);
+    private sealed record DateTimeOffsetProbe(DateTimeOffset Timestamp);
+    private sealed record EnumProbe(AgentProviderReadinessStatus Status);
 
     private sealed class ChatProviderProbe : IAgentChatProvider
     {

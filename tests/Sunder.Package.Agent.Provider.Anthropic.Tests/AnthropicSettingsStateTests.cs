@@ -134,7 +134,7 @@ public sealed class AnthropicSettingsStateTests
             string credential,
             CancellationToken cancellationToken = default)
         {
-            var request = new CredentialCommand { Kind = 0, Credential = credential };
+            var request = new CredentialCommand { Kind = CredentialOperation.Set, Credential = credential };
             var response = await _provider.CommandAsync(null!, request, cancellationToken);
             Record("command", request, response);
             return new ProviderCredentialSnapshot(response.HasStoredCredential);
@@ -143,7 +143,7 @@ public sealed class AnthropicSettingsStateTests
         public async ValueTask<ProviderCredentialSnapshot> ClearAsync(
             CancellationToken cancellationToken = default)
         {
-            var request = new CredentialCommand { Kind = 1 };
+            var request = new CredentialCommand { Kind = CredentialOperation.Clear };
             var response = await _provider.CommandAsync(null!, request, cancellationToken);
             Record("command", request, response);
             return new ProviderCredentialSnapshot(response.HasStoredCredential);

@@ -342,14 +342,14 @@ public sealed class LMStudioConnectionTests
             CancellationToken cancellationToken = default)
             => ToSnapshot(await _provider.CommandAsync(
                 null!,
-                new CredentialCommand { Kind = 0, Credential = credential },
+                new CredentialCommand { Kind = CredentialOperation.Set, Credential = credential },
                 cancellationToken));
 
         public async ValueTask<ProviderCredentialSnapshot> ClearAsync(
             CancellationToken cancellationToken = default)
             => ToSnapshot(await _provider.CommandAsync(
                 null!,
-                new CredentialCommand { Kind = 1 },
+                new CredentialCommand { Kind = CredentialOperation.Clear },
                 cancellationToken));
 
         private static ProviderCredentialSnapshot ToSnapshot(CredentialSnapshot snapshot)

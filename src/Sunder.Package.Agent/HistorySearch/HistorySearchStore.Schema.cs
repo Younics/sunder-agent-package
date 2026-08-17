@@ -313,7 +313,14 @@ internal sealed partial class HistorySearchStore
         command.ExecuteNonQuery();
         transaction.Commit();
         _ftsSecureDeleteEnabled = TryEnableFtsSecureDelete(connection);
-        CheckpointTruncate(connection);
+        if (databasePath is null)
+        {
+            ScheduleCheckpointTruncate();
+        }
+        else
+        {
+            CheckpointTruncate(connection);
+        }
     }
 
     private static void ReclaimAbandonedGenerations(

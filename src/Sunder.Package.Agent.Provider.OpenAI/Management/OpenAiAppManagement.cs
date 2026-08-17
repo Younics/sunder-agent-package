@@ -1,4 +1,3 @@
-using System.Globalization;
 using Sunder.Package.Agent.Provider.OpenAI.Protocol.Generated;
 using Sunder.Sdk.Rpc;
 
@@ -9,18 +8,18 @@ internal sealed class OpenAiOwnerManagementRpcClient(ISunderRpcClient rpc) : IOp
     public async ValueTask<OpenAiAuthOperationResult> GetAuthStatusAsync(
         CancellationToken cancellationToken = default)
         => ToResult(await InvokeAsync(
-            static (client, token) => client.GetAuthStatusAsync(new EmptyRequest(), token),
+            static (client, token) => client.GetAuthStatusAsync(new ManagementQuery(), token),
             cancellationToken));
 
     public async ValueTask<OpenAiAuthOperationResult> DisconnectAuthAsync(
         CancellationToken cancellationToken = default)
         => ToResult(await InvokeAsync(
-            static (client, token) => client.DisconnectAuthAsync(new EmptyRequest(), token),
+            static (client, token) => client.DisconnectAuthAsync(new ManagementQuery(), token),
             cancellationToken));
 
     public async ValueTask<bool> HasCredentialAsync(CancellationToken cancellationToken = default)
         => (await InvokeAsync(
-            static (client, token) => client.GetCredentialStatusAsync(new EmptyRequest(), token),
+            static (client, token) => client.GetCredentialStatusAsync(new ManagementQuery(), token),
             cancellationToken)).HasStoredCredential;
 
     public async ValueTask<bool> SetCredentialAsync(
@@ -34,7 +33,7 @@ internal sealed class OpenAiOwnerManagementRpcClient(ISunderRpcClient rpc) : IOp
 
     public async ValueTask<bool> ClearCredentialAsync(CancellationToken cancellationToken = default)
         => (await InvokeAsync(
-            static (client, token) => client.ClearCredentialAsync(new EmptyRequest(), token),
+            static (client, token) => client.ClearCredentialAsync(new ManagementQuery(), token),
             cancellationToken)).HasStoredCredential;
 
     private async ValueTask<T> InvokeAsync<T>(
@@ -66,12 +65,11 @@ internal sealed class OpenAiOwnerManagementRpcClient(ISunderRpcClient rpc) : IOp
         => new(
             status.IsConnected,
             status.HasCachedSession,
-            string.IsNullOrWhiteSpace(status.ExpiresAtUtc)
-                ? null
-                : DateTimeOffset.Parse(
-                    status.ExpiresAtUtc,
-                    CultureInfo.InvariantCulture,
-                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal),
+            status.ExpiresAtUtc is { } expiry
+                ? expiry.TryGetDateTimeOffset(out var value)
+                    ? value.ToUniversalTime()
+                    : throw new InvalidDataException("The OpenAI auth expiry exceeds .NET precision.")
+                : null,
             status.ErrorMessage);
 }
 

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Services;
 using Sunder.Sdk.Logging;
 
 namespace Sunder.Package.Agent.Services.BehaviorLoops;
@@ -186,19 +187,28 @@ internal sealed class AgentLoopTerminalHandler
                 AgentBehaviorLoopCompletionKind.Interrupted);
         }
 
-        var result = await FailAsync(
-            host,
-            assistantTurnState,
-            $"### Agent run failed\n\n{exception.Message}",
-            exception.Message,
-            CancellationToken.None);
+        var presentation = AgentFailurePresentationPolicy.Create(exception);
+        assistantTurnState.Turn = host.UpsertAssistantTurn(
+            assistantTurnState.Turn,
+            presentation.Markdown);
+        assistantTurnState.Turn = host.CompleteAssistantTurn(assistantTurnState.Turn);
+        var checkpoint = host.SaveCheckpoint(
+            presentation.Status,
+            presentation.CheckpointSummary);
+        await host.PublishLifecycleEventAsync(
+            presentation.LifecycleEventKind,
+            presentation.Status,
+            triggerTurn: assistantTurnState.Turn,
+            checkpoint: checkpoint,
+            isInterrupted: presentation.IsInterrupted,
+            cancellationToken: CancellationToken.None);
         host.LogEvent(
-            PackageLogLevel.Error,
-            "behavior.loop.failed",
-            exception.Message,
+            presentation.IsInterrupted ? PackageLogLevel.Warning : PackageLogLevel.Error,
+            presentation.IsInterrupted ? "behavior.loop.interrupted" : "behavior.loop.failed",
+            presentation.CheckpointSummary,
             elapsedMilliseconds,
             exception: exception);
-        return result;
+        return new AgentBehaviorLoopResult(checkpoint, ToCompletionKind(checkpoint.Status));
     }
 
     private static AgentBehaviorLoopCompletionKind ToCompletionKind(AgentRunStatus status)

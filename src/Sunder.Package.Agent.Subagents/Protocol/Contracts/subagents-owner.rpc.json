@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "descriptorVersion": 2,
+  "schemaProfile": "sunder.rpc.values.v1",
   "contractId": "sunder.package.agent.subagents.owner",
   "version": "2.0.0",
   "errors": {
@@ -36,11 +37,11 @@
     }
   },
   "$defs": {
-    "SunderRpcContentReference": {
+    "ContentReference": {
       "type": "object",
       "logicalType": "content-reference"
     },
-    "SafeInteger": {
+    "ChangeRevision": {
       "type": "integer",
       "minimum": 0,
       "maximum": 9007199254740991
@@ -48,7 +49,7 @@
     "OwnerContent": {
       "type": "object",
       "properties": {
-        "content": { "$ref": "#/$defs/SunderRpcContentReference" }
+        "content": { "$ref": "#/$defs/ContentReference" }
       },
       "required": ["content"],
       "additionalProperties": false
@@ -56,7 +57,7 @@
     "ChangeSubscription": {
       "type": "object",
       "properties": {
-        "afterRevision": { "$ref": "#/$defs/SafeInteger" }
+        "afterRevision": { "$ref": "#/$defs/ChangeRevision" }
       },
       "required": ["afterRevision"],
       "additionalProperties": false

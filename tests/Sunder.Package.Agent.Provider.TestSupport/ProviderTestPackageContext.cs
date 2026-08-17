@@ -14,13 +14,15 @@ public sealed class ProviderTestPackageContext : IPackageContext
         IPackageKeyValueStore? state = null,
         IPackageSecrets? secrets = null,
         IPackageKeyValueStore? settings = null,
-        IPackageCallbackClient? callbacks = null)
+        IPackageCallbackClient? callbacks = null,
+        IPackageLogging? logging = null)
     {
         PackageId = packageId;
         Storage = new ProviderTestStorageContext(state);
         Settings = new ProviderTestSettings(settings ?? new ProviderTestKeyValueStore(configurationValues));
         Secrets = secrets ?? new ProviderTestSecrets(secretValues);
         Callbacks = callbacks ?? NullPackageCallbackClient.Instance;
+        Logging = logging ?? NullPackageLogging.Instance;
     }
 
     public string PackageId { get; }
@@ -40,7 +42,7 @@ public sealed class ProviderTestPackageContext : IPackageContext
     public IPackageCallbackClient Callbacks { get; }
 
 
-    public IPackageLogging Logging { get; } = NullPackageLogging.Instance;
+    public IPackageLogging Logging { get; }
 }
 
 public sealed class ProviderTestStorageContext : IPackageStorageContext

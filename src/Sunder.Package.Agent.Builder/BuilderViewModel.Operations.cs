@@ -1,4 +1,5 @@
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Builder;
@@ -29,36 +30,32 @@ public sealed partial class BuilderViewModel
         var succeeded = false;
         try
         {
-            await InitializeCoreAsync(_lifetime.Token);
-            await _uiDispatcher.InvokeAsync(() =>
-            {
-                if (StatusText.StartsWith(
-                        "Package builder initialization failed:",
-                        StringComparison.Ordinal))
+            await RunPresentationOperationAsync(
+                BuilderInitializationOperation,
+                async cancellationToken =>
                 {
-                    RuntimeLogText = string.Empty;
-                    StatusText = string.Empty;
-                }
-            });
-            succeeded = true;
-        }
-        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
-        {
-            succeeded = true;
-        }
-        catch (Exception ex)
-        {
-            if (!_disposed)
-            {
-                await _uiDispatcher.InvokeAsync(() =>
-                {
-                    if (!_disposed)
+                    try
                     {
-                        RuntimeLogText = ex.ToString();
-                        StatusText = $"Package builder initialization failed: {ex.Message}";
+                        await InitializeCoreAsync(cancellationToken);
+                        await _uiDispatcher.InvokeAsync(() =>
+                        {
+                            if (StatusText.StartsWith(
+                                    "Package builder initialization failed:",
+                                    StringComparison.Ordinal))
+                            {
+                                RuntimeLogText = string.Empty;
+                                StatusText = string.Empty;
+                            }
+                        });
+                        succeeded = true;
                     }
-                });
-            }
+                    catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+                    {
+                        succeeded = true;
+                    }
+                },
+                ReconcileBuilderInitializationAsync,
+                _lifetime.Token);
         }
         finally
         {
@@ -72,6 +69,27 @@ public sealed partial class BuilderViewModel
         }
     }
 
+    private Task ReconcileBuilderInitializationAsync(
+        Exception exception,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var failure = exception.InnerException ?? exception;
+        return _uiDispatcher.InvokeAsync(() =>
+        {
+            if (!_disposed)
+            {
+                RuntimeLogText = failure.ToString();
+                StatusText = $"Package builder initialization failed: {failure.Message}";
+            }
+        });
+    }
+
+    private static bool IsExpectedBuilderInitializationFailure(Exception exception)
+        => !PresentationExceptionPolicy.IsFatal(exception)
+           && (PresentationExceptionPolicy.IsExpectedOperationFailure(exception)
+               || exception is InvalidOperationException or InvalidDataException);
+
     private async Task InitializeCoreAsync(CancellationToken cancellationToken)
     {
         while (true)
@@ -81,11 +99,26 @@ public sealed partial class BuilderViewModel
             var applied = false;
             try
             {
-                var workspacesTask = _applicationService.ListWorkspacesAsync(snapshot.CancellationToken);
-                var projectsTask = _applicationService.LoadProjectsAsync(snapshot.CancellationToken);
-                await Task.WhenAll(workspacesTask, projectsTask)
-                    .WaitAsync(snapshot.CancellationToken)
-                    .ConfigureAwait(false);
+                Task<IReadOnlyList<AgentWorkspaceRecord>> workspacesTask;
+                Task<IReadOnlyList<BuilderProjectRecord>> projectsTask;
+                try
+                {
+                    workspacesTask = _applicationService.ListWorkspacesAsync(snapshot.CancellationToken);
+                    projectsTask = _applicationService.LoadProjectsAsync(snapshot.CancellationToken);
+                    await Task.WhenAll(workspacesTask, projectsTask)
+                        .WaitAsync(snapshot.CancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception exception) when (IsExpectedBuilderInitializationFailure(exception))
+                {
+                    throw new PresentationOperationException(
+                        "Package Builder initialization failed.",
+                        exception);
+                }
                 var workspaces = await workspacesTask.WaitAsync(snapshot.CancellationToken).ConfigureAwait(false);
                 var projects = await projectsTask.WaitAsync(snapshot.CancellationToken).ConfigureAwait(false);
                 snapshot.CancellationToken.ThrowIfCancellationRequested();
@@ -97,7 +130,6 @@ public sealed partial class BuilderViewModel
                     }
                     ApplyLoadedWorkspaces(workspaces);
                     ApplyLoadedProjects(projects);
-                    _projectsLoaded = true;
                     if (revision == _snapshotRevision)
                     {
                         _snapshotRefreshPending = false;
@@ -124,8 +156,15 @@ public sealed partial class BuilderViewModel
     }
 
     public Task RefreshSetupAsync()
+        => RunPresentationOperationAsync(
+            BuilderSetupOperation,
+            RefreshSetupCoreAsync,
+            ReconcileBuilderSnapshotAsync);
+
+    private Task RefreshSetupCoreAsync(CancellationToken operationCancellation)
         => RunBusyAsync(async cancellationToken =>
         {
+            operationCancellation.ThrowIfCancellationRequested();
             var workspaceId = await _uiDispatcher.InvokeAsync(() => SelectedProject?.WorkspaceId ?? string.Empty);
             if (string.IsNullOrWhiteSpace(workspaceId))
             {
@@ -136,20 +175,34 @@ public sealed partial class BuilderViewModel
                 () => _applicationService.CheckSetupAsync(workspaceId, cancellationToken),
                 cancellationToken);
             await _uiDispatcher.InvokeAsync(() => ApplySetupStatuses(statuses));
-        });
+        }, operationCancellation);
 
     public Task InstallDotnetSdkAsync()
-        => InstallPrerequisiteAsync(
-            "Downloading .NET SDK installer...",
-            (workspaceId, cancellationToken) => _applicationService.InstallDotnetSdkAsync(workspaceId, cancellationToken));
+        => RunPresentationOperationAsync(
+            BuilderSetupOperation,
+            cancellationToken => InstallPrerequisiteAsync(
+                "Downloading .NET SDK installer...",
+                (workspaceId, token) => _applicationService.InstallDotnetSdkAsync(workspaceId, token),
+                cancellationToken),
+            ReconcileBuilderSnapshotAsync);
 
     public Task InstallTemplateAsync()
-        => InstallPrerequisiteAsync(
-            "Installing Sunder package template...",
-            (workspaceId, cancellationToken) => _applicationService.InstallTemplateAsync(workspaceId, cancellationToken));
+        => RunPresentationOperationAsync(
+            BuilderSetupOperation,
+            cancellationToken => InstallPrerequisiteAsync(
+                "Installing Sunder package template...",
+                (workspaceId, token) => _applicationService.InstallTemplateAsync(workspaceId, token),
+                cancellationToken),
+            ReconcileBuilderSnapshotAsync);
 
     public Task CreateProjectAsync()
+        => RunPresentationOperationAsync(
+            BuilderCreateOperation,
+            CreateProjectCoreAsync);
+
+    private Task CreateProjectCoreAsync(CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var now = DateTimeOffset.UtcNow;
         var project = new BuilderProjectViewModel(new BuilderProjectRecord(
             Guid.NewGuid().ToString("N"),
@@ -160,16 +213,29 @@ public sealed partial class BuilderViewModel
             string.Empty,
             now,
             now));
-        _projectsLoaded = true;
         _snapshotRefreshPending = true;
         _snapshotRevision++;
         _requests.Invalidate(SnapshotChannel);
         _listDetail.Reconcile([.. Projects, project], selectFirstWhenUnrouted: false);
         _listDetail.ShowNewDetail(project);
+        _persistence.RequestSave(CaptureProjects());
         return Task.CompletedTask;
     }
 
     public Task DeleteSelectedProjectAsync()
+    {
+        BuilderProjectDeletion? deletion = null;
+        return RunPresentationOperationAsync(
+            BuilderDeleteOperation,
+            cancellationToken => DeleteSelectedProjectCoreAsync(
+                cancellationToken,
+                value => deletion = value),
+            cancellationToken => ReconcileProjectDeletionAsync(deletion, cancellationToken));
+    }
+
+    private Task DeleteSelectedProjectCoreAsync(
+        CancellationToken operationCancellation,
+        Action<BuilderProjectDeletion> captureDeletion)
         => RunBusyAsync(async cancellationToken =>
         {
             var deletion = await _uiDispatcher.InvokeAsync(RemoveSelectedProject);
@@ -178,11 +244,48 @@ public sealed partial class BuilderViewModel
                 return;
             }
 
+            captureDeletion(deletion);
             await _persistence.SaveNowAsync(deletion.Projects, cancellationToken);
             await _uiDispatcher.InvokeAsync(() => CompleteProjectDeletion(deletion));
-        });
+        }, operationCancellation);
 
-    public async Task InitializeSelectedProjectAsync()
+    private async Task ReconcileProjectDeletionAsync(
+        BuilderProjectDeletion? deletion,
+        CancellationToken cancellationToken)
+    {
+        if (deletion is null)
+        {
+            await ReconcileBuilderSnapshotAsync(cancellationToken);
+            return;
+        }
+
+        var workspacesTask = _applicationService.ListWorkspacesAsync(cancellationToken);
+        var projectsTask = _applicationService.LoadProjectsAsync(cancellationToken);
+        await Task.WhenAll(workspacesTask, projectsTask).ConfigureAwait(false);
+        var workspaces = await workspacesTask.ConfigureAwait(false);
+        var projects = await projectsTask.ConfigureAwait(false);
+        await _uiDispatcher.InvokeAsync(() =>
+        {
+            _locallyDeletedProjectIds.Remove(deletion.ProjectId);
+            ApplyLoadedWorkspaces(workspaces);
+            ApplyLoadedProjects(projects);
+            StatusText = projects.Any(project => string.Equals(
+                project.Id,
+                deletion.ProjectId,
+                StringComparison.OrdinalIgnoreCase))
+                ? "Project deletion was not saved. The project was restored."
+                : $"Deleted package project '{deletion.Name}'.";
+            _persistence.RequestSave(CaptureProjects());
+        });
+    }
+
+    public Task InitializeSelectedProjectAsync()
+        => RunPresentationOperationAsync(
+            BuilderInitializeProjectOperation,
+            InitializeSelectedProjectCoreAsync,
+            ReconcileBuilderSnapshotAsync);
+
+    private async Task InitializeSelectedProjectCoreAsync(CancellationToken cancellationToken)
     {
         if (!TryValidateSelectedProject(requireExistingFolder: false, requireInitializedPaths: false, out var project, out var record))
         {
@@ -198,7 +301,7 @@ public sealed partial class BuilderViewModel
 
         record = record with { UpdatedAtUtc = DateTimeOffset.UtcNow };
         ApplyProjectRecord(project, record);
-        await _persistence.SaveNowAsync(CaptureProjects(), _lifetime.Token);
+        await _persistence.SaveNowAsync(CaptureProjects(), cancellationToken);
         StatusText = "Package initialization queued.";
         RuntimeLogText = string.Empty;
         IsSelectedProjectInitializing = true;
@@ -208,30 +311,38 @@ public sealed partial class BuilderViewModel
                 $"Initialize {record.DisplayName}",
                 context => RunInitializeOperationAsync(project, record, workspacePath, context));
         }
-        catch (Exception ex)
+        catch
         {
             IsSelectedProjectInitializing = false;
-            RuntimeLogText = ex.Message;
-            StatusText = "Initialization failed. See runtime log.";
+            throw;
         }
     }
 
     public Task BuildSelectedProjectAsync()
-        => QueueBuildOrPublishAsync(isPublish: false);
+        => RunPresentationOperationAsync(
+            BuilderBuildOperation,
+            cancellationToken => QueueBuildOrPublishAsync(isPublish: false, cancellationToken),
+            ReconcileBuilderSnapshotAsync);
 
     public Task PublishSelectedProjectAsync()
-        => QueueBuildOrPublishAsync(isPublish: true);
+        => RunPresentationOperationAsync(
+            BuilderPublishOperation,
+            cancellationToken => QueueBuildOrPublishAsync(isPublish: true, cancellationToken),
+            ReconcileBuilderSnapshotAsync);
 
     private async Task InstallPrerequisiteAsync(
         string initialStatus,
-        Func<string, CancellationToken, Task<string>> install)
+        Func<string, CancellationToken, Task<string>> install,
+        CancellationToken operationCancellation)
     {
         await RunBusyAsync(async cancellationToken =>
         {
+            operationCancellation.ThrowIfCancellationRequested();
             var workspaceId = await _uiDispatcher.InvokeAsync(() => SelectedProject?.WorkspaceId ?? string.Empty);
             if (string.IsNullOrWhiteSpace(workspaceId))
             {
-                throw new InvalidOperationException("Select a workspace before continuing.");
+                await _uiDispatcher.InvokeAsync(() => StatusText = "Select a workspace before continuing.");
+                return;
             }
 
             await _uiDispatcher.InvokeAsync(() => StatusText = initialStatus);
@@ -242,7 +353,7 @@ public sealed partial class BuilderViewModel
                 ApplySetupStatuses(statuses);
                 StatusText = message;
             });
-        });
+        }, operationCancellation);
     }
 
     private async Task RunInitializeOperationAsync(
@@ -289,8 +400,11 @@ public sealed partial class BuilderViewModel
         }
     }
 
-    private Task QueueBuildOrPublishAsync(bool isPublish)
+    private Task QueueBuildOrPublishAsync(
+        bool isPublish,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!TryValidateSelectedProject(true, true, out var project, out var record))
         {
             return Task.CompletedTask;
@@ -393,8 +507,13 @@ public sealed partial class BuilderViewModel
         }
     }
 
-    private async Task RunBusyAsync(Func<CancellationToken, Task> action)
+    private async Task RunBusyAsync(
+        Func<CancellationToken, Task> action,
+        CancellationToken operationCancellation = default)
     {
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            operationCancellation,
+            _lifetime.Token);
         var started = await _uiDispatcher.InvokeAsync(() =>
         {
             if (IsBusy || _disposed)
@@ -412,18 +531,17 @@ public sealed partial class BuilderViewModel
 
         try
         {
-            await action(_lifetime.Token);
-        }
-        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
-        {
-        }
-        catch (Exception ex)
-        {
-            await _uiDispatcher.InvokeAsync(() => StatusText = ex.Message);
+            await action(linkedCancellation.Token);
         }
         finally
         {
-            await _uiDispatcher.InvokeAsync(() => IsBusy = false);
+            await _uiDispatcher.InvokeAsync(() =>
+            {
+                if (!_disposed)
+                {
+                    IsBusy = false;
+                }
+            });
         }
     }
 }

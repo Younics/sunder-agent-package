@@ -32,35 +32,56 @@ public sealed partial class AgentChatViewModel
 
             var sessionId = selectedSession.SessionId;
             var runtimeInstanceId = _appliedRuntimeInstanceId;
-            _backgroundTasks.Run(async cancellationToken =>
-            {
-                var permissions = await _chatPermissionCommandGateway.SetSessionUnrestrictedModeAsync(
-                    sessionId,
-                    value,
-                    cancellationToken).ConfigureAwait(false);
-                await InvokeOnUiThreadAsync(() =>
+            var intentRevision = Interlocked.Increment(ref _unrestrictedModeIntentRevision);
+            _operations.Submit(
+                ChangeSessionPermissionOperation,
+                async cancellationToken =>
                 {
-                    if (SelectedSession?.SessionId != sessionId
-                        || !string.Equals(
-                            runtimeInstanceId,
-                            _appliedRuntimeInstanceId,
-                            StringComparison.Ordinal)
-                        || permissions.Revision < _appliedPermissionRevision)
+                    await _unrestrictedModeMutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                    try
                     {
-                        return;
+                        if (intentRevision != Volatile.Read(ref _unrestrictedModeIntentRevision))
+                        {
+                            return;
+                        }
+
+                        var permissions = await _chatPermissionCommandGateway.SetSessionUnrestrictedModeAsync(
+                            sessionId,
+                            value,
+                            cancellationToken).ConfigureAwait(false);
+                        await InvokeOnUiThreadAsync(() =>
+                        {
+                            if (SelectedSession?.SessionId != sessionId
+                                || intentRevision != Volatile.Read(ref _unrestrictedModeIntentRevision)
+                                || !string.Equals(
+                                    runtimeInstanceId,
+                                    _appliedRuntimeInstanceId,
+                                    StringComparison.Ordinal)
+                                || permissions.Revision < _appliedPermissionRevision)
+                            {
+                                return;
+                            }
+                            _appliedPermissionRevision = permissions.Revision;
+                            _permissionPanel.ApplySnapshot(
+                                sessionId,
+                                permissions.SessionState,
+                                permissions.PendingRequests);
+                            OnPropertyChanged(nameof(IsUnrestrictedModeEnabled));
+                            NotifyPermissionPanelChanged();
+                            OnIsUnrestrictedModeEnabledChanged(
+                                value,
+                                AgentPermissionPanelState.DescribeUnrestrictedMode(value));
+                        }).ConfigureAwait(false);
                     }
-                    _appliedPermissionRevision = permissions.Revision;
-                    _permissionPanel.ApplySnapshot(
-                        sessionId,
-                        permissions.SessionState,
-                        permissions.PendingRequests);
-                    OnPropertyChanged(nameof(IsUnrestrictedModeEnabled));
-                    NotifyPermissionPanelChanged();
-                    OnIsUnrestrictedModeEnabledChanged(
-                        value,
-                        AgentPermissionPanelState.DescribeUnrestrictedMode(value));
-                }).ConfigureAwait(false);
-            });
+                    finally
+                    {
+                        _unrestrictedModeMutationGate.Release();
+                    }
+                },
+                cancellationToken => ReconcileSessionPermissionsAsync(
+                    sessionId,
+                    cancellationToken,
+                    intentRevision));
         }
     }
 
@@ -77,7 +98,16 @@ public sealed partial class AgentChatViewModel
     }
 
     [RelayCommand]
-    private async Task ApprovePermissionAsync(AgentPendingPermissionRequestRecord? request)
+    private Task ApprovePermissionAsync(AgentPendingPermissionRequestRecord? request)
+        => RunOperationAsync(
+            ResolvePermissionOperation,
+            cancellationToken => ApprovePermissionCoreAsync(request, approveForSession: false, cancellationToken),
+            cancellationToken => ReconcileSelectedSessionPermissionsAsync(request, cancellationToken));
+
+    private async Task ApprovePermissionCoreAsync(
+        AgentPendingPermissionRequestRecord? request,
+        bool approveForSession,
+        CancellationToken cancellationToken)
     {
         var selectedSession = SelectedSession;
         if (selectedSession is null
@@ -87,7 +117,10 @@ public sealed partial class AgentChatViewModel
             return;
         }
 
-        var summary = await _permissionPanel.ApproveAsync(request, approveForSession: false)
+        cancellationToken.ThrowIfCancellationRequested();
+        var summary = await _permissionPanel.ApproveAsync(request, approveForSession)
+            .ConfigureAwait(false);
+        await ReconcileSessionPermissionsAsync(selectedSession.SessionId, cancellationToken)
             .ConfigureAwait(false);
         await InvokeOnUiThreadAsync(() =>
         {
@@ -98,28 +131,22 @@ public sealed partial class AgentChatViewModel
     }
 
     [RelayCommand]
-    private async Task ApprovePermissionForSessionAsync(AgentPendingPermissionRequestRecord? request)
-    {
-        var selectedSession = SelectedSession;
-        if (selectedSession is null
-            || request is null
-            || string.IsNullOrWhiteSpace(request.RequestId))
-        {
-            return;
-        }
-
-        var summary = await _permissionPanel.ApproveAsync(request, approveForSession: true)
-            .ConfigureAwait(false);
-        await InvokeOnUiThreadAsync(() =>
-        {
-            NotifyPermissionPanelChanged();
-            ApplySessionStatus(selectedSession, summary);
-            SyncSelectedSessionState(selectedSession.SessionId);
-        }).ConfigureAwait(false);
-    }
+    private Task ApprovePermissionForSessionAsync(AgentPendingPermissionRequestRecord? request)
+        => RunOperationAsync(
+            ResolvePermissionOperation,
+            cancellationToken => ApprovePermissionCoreAsync(request, approveForSession: true, cancellationToken),
+            cancellationToken => ReconcileSelectedSessionPermissionsAsync(request, cancellationToken));
 
     [RelayCommand]
-    private async Task DenyPermissionAsync(AgentPendingPermissionRequestRecord? request)
+    private Task DenyPermissionAsync(AgentPendingPermissionRequestRecord? request)
+        => RunOperationAsync(
+            ResolvePermissionOperation,
+            cancellationToken => DenyPermissionCoreAsync(request, cancellationToken),
+            cancellationToken => ReconcileSelectedSessionPermissionsAsync(request, cancellationToken));
+
+    private async Task DenyPermissionCoreAsync(
+        AgentPendingPermissionRequestRecord? request,
+        CancellationToken cancellationToken)
     {
         var selectedSession = SelectedSession;
         if (selectedSession is null
@@ -129,7 +156,10 @@ public sealed partial class AgentChatViewModel
             return;
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         var summary = await _permissionPanel.DenyAsync(request).ConfigureAwait(false);
+        await ReconcileSessionPermissionsAsync(selectedSession.SessionId, cancellationToken)
+            .ConfigureAwait(false);
         await InvokeOnUiThreadAsync(() =>
         {
             ApplySessionStatus(selectedSession, summary);
@@ -137,4 +167,11 @@ public sealed partial class AgentChatViewModel
             SyncSelectedSessionState(selectedSession.SessionId);
         }).ConfigureAwait(false);
     }
+
+    private Task ReconcileSelectedSessionPermissionsAsync(
+        AgentPendingPermissionRequestRecord? request,
+        CancellationToken cancellationToken)
+        => request is null
+            ? Task.CompletedTask
+            : ReconcileSessionPermissionsAsync(request.SessionId, cancellationToken);
 }

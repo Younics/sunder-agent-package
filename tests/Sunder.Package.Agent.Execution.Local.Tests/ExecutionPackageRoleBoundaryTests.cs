@@ -85,6 +85,37 @@ public sealed class ExecutionPackageRoleBoundaryTests
     }
 
     [Fact]
+    public async Task DockerPresentation_TransfersLargeCatalogThroughContentReference()
+    {
+        var images = Enumerable.Range(0, 2500)
+            .Select(index => new DockerImageDefinition(
+                $"registry.example.test/team/image-{index}:1.0",
+                DockerImageStatus.Ready,
+                DateTimeOffset.UtcNow,
+                new string('x', 512)))
+            .ToArray();
+        var provider = new LargeDockerPresentationClient(images);
+        using var state = new RegressionTestRpcState();
+        state.Add(
+            "sunder.package.agent.execution.docker",
+            DockerExecutionPresentationRpc.Descriptor,
+            provider,
+            DockerExecutionPresentationRpc.CreateHandler(provider),
+            NoOpDisposable.Instance,
+            DockerExecutionPresentationRpc.ProviderId);
+        var client = new DockerExecutionPresentationRpcClient(new RegressionTestRpcClient(
+            state,
+            "sunder.package.agent.execution.docker"));
+
+        var response = await client.ExecuteAsync(new DockerExecutionOperationRequest(
+            DockerExecutionOperationKind.GetSettings));
+
+        Assert.Equal(images.Length, response.Images?.Count);
+        Assert.Equal(images[2499], response.Images?[2499]);
+        Assert.Equal("sunder.rpc.values.v1", DockerExecutionPresentationRpc.Descriptor.SchemaProfile);
+    }
+
+    [Fact]
     public async Task LocalRuntimeOperation_RejectsUnboundedShellPath()
     {
         using var scope = RegressionTestPackageScope.Create();
@@ -479,6 +510,26 @@ public sealed class ExecutionPackageRoleBoundaryTests
             DockerExecutionOperationRequest request,
             CancellationToken cancellationToken = default)
             => ValueTask.FromException<DockerExecutionOperationResponse>(new NotSupportedException());
+    }
+
+    private sealed class LargeDockerPresentationClient(IReadOnlyList<DockerImageDefinition> images)
+        : IDockerExecutionPresentationClient
+    {
+        public ValueTask<DockerExecutionOperationResponse> ExecuteAsync(
+            DockerExecutionOperationRequest request,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new DockerExecutionOperationResponse(
+                Images: images,
+                CatalogRevision: 1));
+    }
+
+    private sealed class NoOpDisposable : IDisposable
+    {
+        internal static NoOpDisposable Instance { get; } = new();
+
+        public void Dispose()
+        {
+        }
     }
 
     private sealed class RecordingBackgroundProcessQueue : IBackgroundProcessQueue

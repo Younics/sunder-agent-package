@@ -40,7 +40,7 @@ namespace Sunder.Package.Agent.Provider.LMStudio
             => InvokeAsync(
                 (client, token) => client.CommandAsync(new CredentialCommand
                 {
-                    Kind = 0,
+                    Kind = CredentialOperation.Set,
                     Credential = credential,
                 }, token),
                 cancellationToken);
@@ -50,7 +50,7 @@ namespace Sunder.Package.Agent.Provider.LMStudio
             => InvokeAsync(
                 static (client, token) => client.CommandAsync(new CredentialCommand
                 {
-                    Kind = 1,
+                    Kind = CredentialOperation.Clear,
                 }, token),
                 cancellationToken);
 

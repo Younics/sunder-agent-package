@@ -7,16 +7,19 @@ internal sealed class PackageCallbackFlowRunner
 {
     private static readonly TimeSpan DefaultPollInterval = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan MaximumPollInterval = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan DefaultCleanupTimeout = TimeSpan.FromSeconds(2);
     private readonly IPackageCallbackClient _callbacks;
     private readonly TimeProvider _timeProvider;
     private readonly TimeSpan _pollInterval;
+    private readonly TimeSpan _cleanupTimeout;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
 
     public PackageCallbackFlowRunner(
         IPackageCallbackClient callbacks,
         TimeProvider? timeProvider = null,
         TimeSpan? pollInterval = null,
-        Func<TimeSpan, CancellationToken, Task>? delay = null)
+        Func<TimeSpan, CancellationToken, Task>? delay = null,
+        TimeSpan? cleanupTimeout = null)
     {
         _callbacks = callbacks ?? throw new ArgumentNullException(nameof(callbacks));
         _timeProvider = timeProvider ?? TimeProvider.System;
@@ -27,6 +30,8 @@ internal sealed class PackageCallbackFlowRunner
         }
 
         _pollInterval = requestedInterval > MaximumPollInterval ? MaximumPollInterval : requestedInterval;
+        _cleanupTimeout = cleanupTimeout ?? DefaultCleanupTimeout;
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(_cleanupTimeout, TimeSpan.Zero);
         _delay = delay ?? ((duration, cancellationToken) =>
             Task.Delay(duration, _timeProvider, cancellationToken));
     }
@@ -57,32 +62,44 @@ internal sealed class PackageCallbackFlowRunner
             return RequireCompleted(status, flowName);
         }
 
-        if (status.LaunchUri is null || !status.LaunchUri.IsAbsoluteUri)
+        try
         {
-            throw new InvalidOperationException(
-                $"{flowName} did not return a valid browser launch URI.{FormatDetail(status.Message)}");
-        }
-
-        ThrowIfExpired(status, flowName);
-        await _callbacks.OpenLaunchUriAsync(status.LaunchUri, cancellationToken).ConfigureAwait(false);
-
-        while (status.State == PackageCallbackSessionState.Pending)
-        {
-            var remaining = status.ExpiresAtUtc - _timeProvider.GetUtcNow();
-            if (remaining <= TimeSpan.Zero)
+            if (status.LaunchUri is null || !status.LaunchUri.IsAbsoluteUri)
             {
-                throw Expired(flowName, status.Message);
+                throw new InvalidOperationException(
+                    $"{flowName} did not return a valid browser launch URI.{FormatDetail(status.Message)}");
             }
 
-            await _delay(
-                remaining < _pollInterval ? remaining : _pollInterval,
-                cancellationToken).ConfigureAwait(false);
-            status = await _callbacks.GetStatusAsync(
-                status.CallbackSessionId,
-                cancellationToken).ConfigureAwait(false);
-        }
+            ThrowIfExpired(status, flowName);
+            await _callbacks.OpenLaunchUriAsync(status.LaunchUri, cancellationToken).ConfigureAwait(false);
 
-        return RequireCompleted(status, flowName);
+            while (status.State == PackageCallbackSessionState.Pending)
+            {
+                var remaining = status.ExpiresAtUtc - _timeProvider.GetUtcNow();
+                if (remaining <= TimeSpan.Zero)
+                {
+                    throw Expired(flowName, status.Message);
+                }
+
+                await _delay(
+                    remaining < _pollInterval ? remaining : _pollInterval,
+                    cancellationToken).ConfigureAwait(false);
+                status = await _callbacks.GetStatusAsync(
+                    status.CallbackSessionId,
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            return RequireCompleted(status, flowName);
+        }
+        catch
+        {
+            if (status.State == PackageCallbackSessionState.Pending)
+            {
+                await TryCancelAsync(status.CallbackSessionId).ConfigureAwait(false);
+            }
+
+            throw;
+        }
     }
 
     private static PackageCallbackSessionStatus RequireCompleted(
@@ -112,6 +129,39 @@ internal sealed class PackageCallbackFlowRunner
 
     private static TimeoutException Expired(string flowName, string? detail)
         => new($"{flowName} expired before it completed.{FormatDetail(detail)}");
+
+    private async Task TryCancelAsync(string callbackSessionId)
+    {
+        try
+        {
+            using var timeoutCancellation = new CancellationTokenSource(_cleanupTimeout);
+            var cleanup = _callbacks.CancelAsync(callbackSessionId, timeoutCancellation.Token).AsTask();
+            try
+            {
+                await cleanup.WaitAsync(_cleanupTimeout).ConfigureAwait(false);
+            }
+            catch (TimeoutException)
+            {
+                _ = ObserveCleanupAsync(cleanup);
+            }
+        }
+        catch
+        {
+            // Preserve the flow failure or cancellation that triggered cleanup.
+        }
+    }
+
+    private static async Task ObserveCleanupAsync(Task cleanup)
+    {
+        try
+        {
+            await cleanup.ConfigureAwait(false);
+        }
+        catch
+        {
+            // Cleanup remains best effort after the caller has resumed.
+        }
+    }
 
     private static string FormatDetail(string? detail)
         => string.IsNullOrWhiteSpace(detail) ? string.Empty : $" {detail.Trim()}";

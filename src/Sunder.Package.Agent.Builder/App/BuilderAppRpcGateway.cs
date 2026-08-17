@@ -39,7 +39,10 @@ internal sealed class BuilderAppRpcGateway(ISunderRpcClient rpcClient) : IBuilde
             var response = await new BuilderRuntimeClient(scope, provider.Endpoint)
                 .ExecuteAsync(BuilderRpcWireMapper.ToWire(request), cancellationToken)
                 .ConfigureAwait(false);
-            return BuilderRpcWireMapper.ToDomain(response);
+            return await BuilderRpcPayloadLimits.ReadResponseAsync(
+                scope,
+                response.Content,
+                cancellationToken).ConfigureAwait(false);
         }
         catch (SunderRpcException exception) when (exception.Error.Kind == SunderRpcErrorKind.Cancelled)
         {

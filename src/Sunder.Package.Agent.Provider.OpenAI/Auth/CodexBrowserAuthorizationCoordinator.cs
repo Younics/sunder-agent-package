@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using Sunder.Sdk.Logging;
@@ -9,11 +8,14 @@ internal sealed class CodexBrowserAuthorizationCoordinator : IDisposable
 {
     private const string AuthorizeUrl = "https://auth.openai.com/oauth/authorize";
     private const string Scope = "openid profile email offline_access api.connectors.read api.connectors.invoke";
+    private const string LifeSciencesStateSuffix = ".onboarding_entrypoint=life_sciences";
     private readonly CodexOAuthClient _oauthClient;
     private readonly CodexAuthTelemetry _telemetry;
     private readonly TimeProvider _timeProvider;
     private readonly TimeSpan _pendingLifetime;
-    private readonly ConcurrentDictionary<string, PendingBrowserAuthorization> _pending = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _pendingGate = new();
+    private readonly Dictionary<string, PendingBrowserAuthorization> _pending = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, PendingBrowserAuthorization> _inFlight = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _interactiveGate = new(1, 1);
 
     public CodexBrowserAuthorizationCoordinator(
@@ -29,7 +31,7 @@ internal sealed class CodexBrowserAuthorizationCoordinator : IDisposable
         _pendingLifetime = pendingLifetime;
     }
 
-    public static TimeSpan DefaultPendingLifetime { get; } = TimeSpan.FromMinutes(10);
+    public static TimeSpan DefaultPendingLifetime { get; } = TimeSpan.FromMinutes(5);
 
     public string CreateAuthorizationUrl(string authSessionId, Uri callbackUri)
     {
@@ -42,14 +44,19 @@ internal sealed class CodexBrowserAuthorizationCoordinator : IDisposable
             verifier,
             callbackUri.ToString(),
             _timeProvider.GetUtcNow().Add(_pendingLifetime));
-        if (_pending.TryGetValue(authSessionId, out var replaced))
+        PendingBrowserAuthorization? replacedPending;
+        PendingBrowserAuthorization? replacedInFlight;
+        lock (_pendingGate)
         {
-            replaced.CancelExpiration();
+            _pending.Remove(authSessionId, out replacedPending);
+            _inFlight.Remove(authSessionId, out replacedInFlight);
+            _pending[authSessionId] = pending;
         }
 
-        _pending[authSessionId] = pending;
+        CancelPending(replacedPending);
+        replacedInFlight?.CancelWork();
         _ = ExpirePendingFlowAsync(authSessionId, pending);
-        _telemetry.Write(
+        _telemetry.WriteObserved(
             PackageLogLevel.Information,
             "openai.codex.auth.browser.start",
             "OpenAI browser authorization URL was created.",
@@ -64,21 +71,43 @@ internal sealed class CodexBrowserAuthorizationCoordinator : IDisposable
     public async Task<OpenAiCodexSession> CompleteAuthorizationAsync(
         string authSessionId,
         IReadOnlyDictionary<string, string?> queryValues,
+        Func<OpenAiCodexSession, CancellationToken, Task> saveSession,
         CancellationToken cancellationToken)
     {
         await _interactiveGate.WaitAsync(cancellationToken);
+        PendingBrowserAuthorization? pending = null;
+        var completed = false;
         try
         {
-            var pending = TakePending(authSessionId);
+            ValidateCallbackState(authSessionId, queryValues);
+            pending = TakePending(authSessionId);
             ValidateCallback(queryValues, out var code);
-            return await _oauthClient.ExchangeAuthorizationCodeAsync(
+            using var operationCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken,
+                pending.WorkCancellation.Token);
+            var session = await _oauthClient.ExchangeAuthorizationCodeAsync(
                 code,
                 pending.Verifier,
                 pending.RedirectUri,
-                cancellationToken);
+                operationCancellation.Token);
+            await saveSession(session, operationCancellation.Token);
+            operationCancellation.Token.ThrowIfCancellationRequested();
+            if (!TryCompleteInFlight(authSessionId, pending))
+            {
+                pending.CancelWork();
+                throw new OperationCanceledException(pending.WorkCancellation.Token);
+            }
+
+            completed = true;
+            return session;
         }
         finally
         {
+            if (pending is not null)
+            {
+                FinishInFlight(authSessionId, pending, completed);
+            }
+
             _interactiveGate.Release();
         }
     }
@@ -86,30 +115,69 @@ internal sealed class CodexBrowserAuthorizationCoordinator : IDisposable
     public void Dispose()
     {
         CancelPendingAuthorizations();
-        _interactiveGate.Dispose();
     }
 
     public void CancelPendingAuthorizations()
     {
-        foreach (var entry in _pending)
+        PendingBrowserAuthorization[] pending;
+        PendingBrowserAuthorization[] inFlight;
+        lock (_pendingGate)
         {
-            if (_pending.TryRemove(entry.Key, out var pending))
-            {
-                pending.CancelExpiration();
-            }
+            pending = _pending.Values.ToArray();
+            inFlight = _inFlight.Values.ToArray();
+            _pending.Clear();
+            _inFlight.Clear();
         }
+
+        foreach (var authorization in pending)
+        {
+            CancelPending(authorization);
+        }
+
+        foreach (var authorization in inFlight)
+        {
+            authorization.CancelWork();
+        }
+    }
+
+    public void CancelAuthorization(string authSessionId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(authSessionId);
+        PendingBrowserAuthorization? pending;
+        PendingBrowserAuthorization? inFlight;
+        lock (_pendingGate)
+        {
+            _pending.Remove(authSessionId, out pending);
+            _inFlight.Remove(authSessionId, out inFlight);
+        }
+
+        CancelPending(pending);
+        inFlight?.CancelWork();
     }
 
     private PendingBrowserAuthorization TakePending(string authSessionId)
     {
-        if (!_pending.TryRemove(authSessionId, out var pending))
+        PendingBrowserAuthorization? pending;
+        var expired = false;
+        lock (_pendingGate)
         {
-            throw new InvalidOperationException("No pending OpenAI browser auth session was found.");
+            if (!_pending.Remove(authSessionId, out pending))
+            {
+                throw new InvalidOperationException("No pending OpenAI browser auth session was found.");
+            }
+
+            expired = pending.ExpiresAtUtc <= _timeProvider.GetUtcNow();
+            if (!expired)
+            {
+                _inFlight[authSessionId] = pending;
+            }
         }
 
         pending.CancelExpiration();
-        if (pending.ExpiresAtUtc <= _timeProvider.GetUtcNow())
+        if (expired)
         {
+            pending.CancelWork();
+            pending.DisposeWork();
             throw new InvalidOperationException("The pending OpenAI browser auth session expired. Start authorization again.");
         }
 
@@ -121,9 +189,19 @@ internal sealed class CodexBrowserAuthorizationCoordinator : IDisposable
         try
         {
             await Task.Delay(_pendingLifetime, _timeProvider, pending.ExpirationCancellation.Token);
-            if (_pending.TryGetValue(authSessionId, out var current) && ReferenceEquals(current, pending))
+            var removed = false;
+            lock (_pendingGate)
             {
-                _pending.TryRemove(authSessionId, out _);
+                if (_pending.TryGetValue(authSessionId, out var current) && ReferenceEquals(current, pending))
+                {
+                    removed = _pending.Remove(authSessionId);
+                }
+            }
+
+            if (removed)
+            {
+                pending.CancelWork();
+                pending.DisposeWork();
             }
         }
         catch (OperationCanceledException) when (pending.ExpirationCancellation.IsCancellationRequested)
@@ -138,12 +216,88 @@ internal sealed class CodexBrowserAuthorizationCoordinator : IDisposable
     private void RemoveExpiredPendingFlows()
     {
         var now = _timeProvider.GetUtcNow();
-        foreach (var entry in _pending)
+        List<PendingBrowserAuthorization>? expired = null;
+        lock (_pendingGate)
         {
-            if (entry.Value.ExpiresAtUtc <= now && _pending.TryRemove(entry.Key, out var expired))
+            foreach (var entry in _pending.ToArray())
             {
-                expired.CancelExpiration();
+                if (entry.Value.ExpiresAtUtc <= now && _pending.Remove(entry.Key))
+                {
+                    (expired ??= []).Add(entry.Value);
+                }
             }
+        }
+
+        if (expired is null)
+        {
+            return;
+        }
+
+        foreach (var authorization in expired)
+        {
+            CancelPending(authorization);
+        }
+    }
+
+    private bool TryCompleteInFlight(string authSessionId, PendingBrowserAuthorization pending)
+    {
+        lock (_pendingGate)
+        {
+            if (!_inFlight.TryGetValue(authSessionId, out var current)
+                || !ReferenceEquals(current, pending)
+                || pending.WorkCancellation.IsCancellationRequested)
+            {
+                return false;
+            }
+
+            _inFlight.Remove(authSessionId);
+            return true;
+        }
+    }
+
+    private void FinishInFlight(
+        string authSessionId,
+        PendingBrowserAuthorization pending,
+        bool completed)
+    {
+        if (!completed)
+        {
+            lock (_pendingGate)
+            {
+                if (_inFlight.TryGetValue(authSessionId, out var current) && ReferenceEquals(current, pending))
+                {
+                    _inFlight.Remove(authSessionId);
+                }
+            }
+        }
+
+        pending.DisposeWork();
+    }
+
+    private static void CancelPending(PendingBrowserAuthorization? pending)
+    {
+        if (pending is null)
+        {
+            return;
+        }
+
+        pending.CancelExpiration();
+        pending.CancelWork();
+        pending.DisposeWork();
+    }
+
+    private static void ValidateCallbackState(
+        string authSessionId,
+        IReadOnlyDictionary<string, string?> queryValues)
+    {
+        if (!queryValues.TryGetValue("state", out var state)
+            || (!string.Equals(state, authSessionId, StringComparison.Ordinal)
+                && !string.Equals(
+                    state,
+                    authSessionId + LifeSciencesStateSuffix,
+                    StringComparison.Ordinal)))
+        {
+            throw new InvalidOperationException("OpenAI browser sign-in returned an invalid authorization state.");
         }
     }
 
@@ -219,15 +373,38 @@ internal sealed class CodexBrowserAuthorizationCoordinator : IDisposable
         public string RedirectUri { get; } = redirectUri;
         public DateTimeOffset ExpiresAtUtc { get; } = expiresAtUtc;
         public CancellationTokenSource ExpirationCancellation { get; } = new();
+        public CancellationTokenSource WorkCancellation { get; } = new();
 
         public void CancelExpiration()
         {
-            if (!ExpirationCancellation.IsCancellationRequested)
+            try
             {
-                ExpirationCancellation.Cancel();
+                if (!ExpirationCancellation.IsCancellationRequested)
+                {
+                    ExpirationCancellation.Cancel();
+                }
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
+
+        public void CancelWork()
+        {
+            try
+            {
+                if (!WorkCancellation.IsCancellationRequested)
+                {
+                    WorkCancellation.Cancel();
+                }
+            }
+            catch (ObjectDisposedException)
+            {
             }
         }
 
         public void DisposeExpiration() => ExpirationCancellation.Dispose();
+
+        public void DisposeWork() => WorkCancellation.Dispose();
     }
 }

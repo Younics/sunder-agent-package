@@ -13,6 +13,43 @@ namespace Sunder.Package.Agent.Tests;
 public sealed class SubagentRuntimeChangeTests
 {
     [Fact]
+    public async Task CommittedSubagentMutation_IsolatesThrowingListenerAndPublishesChange()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        using var catalog = new RegressionTestExtensionCatalog();
+        var service = new SubagentService(new SubagentStore(scope.Context));
+        service.SubagentsChanged += static () => throw new InvalidOperationException("Injected listener failure.");
+        using var stream = new SubagentRuntimeChangeStream(service, catalog);
+        await using var subscription = stream.SubscribeAsync(
+            new SubagentChangeSubscription(stream.Revision)).GetAsyncEnumerator();
+        _ = await ReadUntilAsync(subscription, change => change.Kind == SubagentChangeKind.Connected);
+
+        var created = service.CreateSubagent("Listener-isolated Subagent");
+        var change = await ReadUntilAsync(
+            subscription,
+            item => item.Kind == SubagentChangeKind.Subagents);
+
+        Assert.Equal(SubagentChangeKind.Subagents, change.Kind);
+        Assert.Equal(created.SubagentId, Assert.Single(service.ListSubagents()).SubagentId);
+    }
+
+    [Fact]
+    public void CommittedSubagentMutation_PropagatesWrappedFatalListenerFailure()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var service = new SubagentService(new SubagentStore(scope.Context));
+        var fatal = new Exception(
+            "Wrapped fatal listener failure.",
+            new OutOfMemoryException("Injected fatal listener failure."));
+        service.SubagentsChanged += () => throw fatal;
+
+        var thrown = Assert.Throws<Exception>(() => service.CreateSubagent("Persisted before fatal listener"));
+
+        Assert.Same(fatal, thrown);
+        Assert.Single(service.ListSubagents());
+    }
+
+    [Fact]
     public async Task ChangeStream_SlowSubscriberOverSixtyFourEventsRequiresResnapshot()
     {
         using var scope = RegressionTestPackageScope.Create();
@@ -127,6 +164,24 @@ public sealed class SubagentRuntimeChangeTests
         await turnChanged.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.Equal([0, 65], client.AfterRevisions.ToArray());
+    }
+
+    [Fact]
+    public async Task AppGateway_FailedChangeProcessingReconnectsBeforeAdvancingRevision()
+    {
+        var client = new FailingCatalogRefreshRuntimeClient();
+        using var gateway = new SubagentAppRuntimeGateway(client);
+        var catalogChanged = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        gateway.CatalogChanged += static () => throw new InvalidOperationException("Injected app listener failure.");
+        gateway.CatalogChanged += () => catalogChanged.TrySetResult();
+
+        await gateway.InitializeAsync();
+        await catalogChanged.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal([0, 1], client.AfterRevisions.ToArray());
+        Assert.Equal("provider.replayed", Assert.Single(
+            await gateway.ListChatProvidersAsync()).ProviderId);
     }
 
     [Fact]
@@ -321,6 +376,69 @@ public sealed class SubagentRuntimeChangeTests
                     null)],
                 now,
                 now);
+        }
+    }
+
+    private sealed class FailingCatalogRefreshRuntimeClient : ISubagentOwnerClient
+    {
+        private int _subscriptionCount;
+        private int _managementQueryCount;
+
+        public ConcurrentQueue<long> AfterRevisions { get; } = new();
+
+        public async ValueTask<SubagentProjection> QueryAsync(
+            SubagentQuery request,
+            CancellationToken cancellationToken = default)
+        {
+            Assert.Equal(SubagentQueryKind.Management, request.Kind);
+            await Task.Yield();
+            cancellationToken.ThrowIfCancellationRequested();
+            if (Interlocked.Increment(ref _managementQueryCount) == 1)
+            {
+                throw new IOException("Injected catalog refresh failure.");
+            }
+            return new SubagentProjection(Providers:
+            [
+                new SubagentProviderProjection(
+                    "provider.replayed",
+                    "Replayed Provider",
+                    "test.provider.package"),
+            ]);
+        }
+
+        public ValueTask<SubagentProjection> CommandAsync(
+            SubagentCommand request,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromException<SubagentProjection>(new NotSupportedException(request.Kind.ToString()));
+
+        public async IAsyncEnumerable<SubagentChanged> SubscribeChangesAsync(
+            SubagentChangeSubscription request,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            AfterRevisions.Enqueue(request.AfterRevision);
+            if (Interlocked.Increment(ref _subscriptionCount) == 1)
+            {
+                yield return new SubagentChanged(
+                    1,
+                    SubagentChangeKind.Connected,
+                    RuntimeInstanceId: "runtime");
+                yield return new SubagentChanged(
+                    2,
+                    SubagentChangeKind.Catalog,
+                    RuntimeInstanceId: "runtime");
+            }
+            else
+            {
+                yield return new SubagentChanged(
+                    2,
+                    SubagentChangeKind.Catalog,
+                    RuntimeInstanceId: "runtime");
+                yield return new SubagentChanged(
+                    2,
+                    SubagentChangeKind.Connected,
+                    RuntimeInstanceId: "runtime");
+            }
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
         }
     }
 

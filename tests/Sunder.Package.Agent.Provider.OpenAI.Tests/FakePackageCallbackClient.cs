@@ -11,10 +11,14 @@ internal sealed class FakePackageCallbackClient : IPackageCallbackClient
     public int StartCount { get; private set; }
     public int StatusCount { get; private set; }
     public int OpenCount { get; private set; }
+    public int CancelCount { get; private set; }
     public string? StartedHandlerId { get; private set; }
     public IReadOnlyDictionary<string, string>? StartedParameters { get; private set; }
     public Uri? OpenedUri { get; private set; }
+    public string? CancelledSessionId { get; private set; }
     public Func<CancellationToken, ValueTask<PackageCallbackSessionStatus>>? StartOperation { get; set; }
+    public Func<CancellationToken, ValueTask>? OpenOperation { get; set; }
+    public Func<CancellationToken, ValueTask<bool>>? CancelOperation { get; set; }
 
     public void Enqueue(params PackageCallbackSessionStatus[] statuses)
     {
@@ -51,7 +55,10 @@ internal sealed class FakePackageCallbackClient : IPackageCallbackClient
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult(false);
+        CancelCount++;
+        CancelledSessionId = callbackSessionId;
+        return CancelOperation?.Invoke(cancellationToken)
+            ?? ValueTask.FromResult(false);
     }
 
     public ValueTask<PackageCallbackSessionStatus> WaitForCompletionAsync(
@@ -65,7 +72,7 @@ internal sealed class FakePackageCallbackClient : IPackageCallbackClient
         cancellationToken.ThrowIfCancellationRequested();
         OpenCount++;
         OpenedUri = launchUri;
-        return ValueTask.CompletedTask;
+        return OpenOperation?.Invoke(cancellationToken) ?? ValueTask.CompletedTask;
     }
 
     private PackageCallbackSessionStatus NextStatus()

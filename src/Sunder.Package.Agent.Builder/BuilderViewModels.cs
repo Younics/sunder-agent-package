@@ -16,6 +16,7 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
     private readonly BuilderPathService _pathService;
     private readonly IBuilderUiDispatcher _uiDispatcher;
     private readonly PresentationTaskScope _tasks = new();
+    private readonly PresentationOperationObserver _presentationOperations;
     private readonly TimedStatusController _statusVisibility = new();
     private readonly CancellationTokenSource _lifetime = new();
     private readonly LatestRequestCoordinator _requests = new();
@@ -30,7 +31,6 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
     private string _runtimeLogText = string.Empty;
     private bool _isBusy;
     private bool _isSetupComplete;
-    private bool _projectsLoaded;
     private bool _isSelectedProjectInitialized;
     private bool _isSelectedProjectInitializing;
     private bool _showStatusMessage;
@@ -45,12 +45,30 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
         BuilderProjectPersistence persistence,
         BuilderPathService pathService,
         IBuilderUiDispatcher uiDispatcher)
+        : this(
+            applicationService,
+            operationQueue,
+            persistence,
+            pathService,
+            uiDispatcher,
+            PresentationOperationObserver.CreateUnreported("Package Builder"))
+    {
+    }
+
+    internal BuilderViewModel(
+        BuilderProjectApplicationService applicationService,
+        BuilderOperationQueue operationQueue,
+        BuilderProjectPersistence persistence,
+        BuilderPathService pathService,
+        IBuilderUiDispatcher uiDispatcher,
+        PresentationOperationObserver presentationOperations)
     {
         _applicationService = applicationService;
         _operationQueue = operationQueue;
         _persistence = persistence;
         _pathService = pathService;
         _uiDispatcher = uiDispatcher;
+        _presentationOperations = presentationOperations;
         _listDetail = new KeyedAdaptiveListDetailState<string, BuilderProjectViewModel>(
             Projects,
             static project => project.Id,
@@ -235,7 +253,14 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
     public bool HasRuntimeLog => !string.IsNullOrWhiteSpace(RuntimeLogText);
 
     public Task EnsureSelectedProjectSetupAsync()
+        => RunPresentationOperationAsync(
+            BuilderSetupOperation,
+            EnsureSelectedProjectSetupCoreAsync,
+            ReconcileBuilderSnapshotAsync);
+
+    private Task EnsureSelectedProjectSetupCoreAsync(CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (!TryValidateSelectedProject(requireExistingFolder: false, requireInitializedPaths: false, out _, out var record))
         {
             return Task.CompletedTask;
@@ -296,6 +321,7 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
         _persistence.SaveFailed -= OnPersistenceSaveFailed;
         _listDetail.PropertyChanged -= OnListDetailPropertyChanged;
         _statusVisibility.Dispose();
+        _presentationOperations.Dispose();
         _tasks.Dispose();
         _lifetime.Cancel();
         if (initializationTask is not null)
@@ -308,19 +334,13 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
             {
             }
         }
-        var projects = await _uiDispatcher.InvokeAsync(() =>
+        await _uiDispatcher.InvokeAsync(() =>
         {
             if (_observedSelectedProject is not null)
             {
                 _observedSelectedProject.PropertyChanged -= OnSelectedProjectPropertyChanged;
             }
-
-            return _projectsLoaded ? CaptureProjects() : null;
         }).ConfigureAwait(false);
-        if (projects is not null)
-        {
-            await _persistence.SaveNowAsync(projects, CancellationToken.None).ConfigureAwait(false);
-        }
         await _persistence.DisposeAsync().ConfigureAwait(false);
         _listDetail.Dispose();
         _requests.Dispose();
@@ -487,6 +507,7 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
 
         UpdateSelectedProjectInitialized();
         NotifyProjectStatePropertiesChanged();
+        _persistence.RequestSave(CaptureProjects());
     }
 
     private void ApplyProjectRecord(BuilderProjectViewModel project, BuilderProjectRecord record)
@@ -528,7 +549,6 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
 
         var project = SelectedProject;
         var clearSelection = IsCompactLayout;
-        _projectsLoaded = true;
         _snapshotRefreshPending = true;
         _snapshotRevision++;
         _locallyDeletedProjectIds.Add(project.Id);
@@ -578,13 +598,10 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
         => IsSelectedProjectInitialized = _pathService.IsProjectInitialized(SelectedProject?.ToRecord());
 
     private void OnPersistenceSaveFailed(object? sender, BuilderPersistenceFailedEventArgs e)
-        => _tasks.Run(_ => _uiDispatcher.InvokeAsync(() =>
-        {
-            if (!_disposed)
-            {
-                StatusText = $"Failed to save runtime settings: {e.Exception.Message}";
-            }
-        }));
+        => _presentationOperations.Submit(
+            BuilderPersistenceOperation,
+            _ => Task.FromException(e.Exception),
+            ReconcileBuilderSnapshotAsync);
 
     private void ShowStatusMessageForCurrentText()
     {

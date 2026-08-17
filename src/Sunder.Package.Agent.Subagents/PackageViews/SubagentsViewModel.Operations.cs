@@ -61,7 +61,10 @@ public sealed partial class SubagentsViewModel
                     : [.. Subagents, created]);
                 if (_listDetail.TryShowCreatedDetail(created.SubagentId, intentRevision))
                 {
-                    ClearStatus();
+                    if (_listDetail.DetailPhase != AdaptiveDetailPhase.Error)
+                    {
+                        ClearStatus();
+                    }
                 }
                 hydration = _currentDetailLoad;
             });

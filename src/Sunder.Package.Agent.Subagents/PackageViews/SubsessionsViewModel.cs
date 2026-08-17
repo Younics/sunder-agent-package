@@ -29,6 +29,7 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
     private readonly AgentRunActivityState _runActivity;
     private readonly AsyncOnce _initialization = new();
     private readonly PresentationTaskScope _tasks = new();
+    private readonly PresentationOperationObserver _operations;
     private readonly LatestRequestCoordinator _requests = new();
     private readonly KeyedAdaptiveListDetailState<Guid, SubsessionListItemViewModel> _listDetail;
     private readonly SerializedRefreshLoop _runtimeRefresh;
@@ -48,9 +49,12 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
 
     private SubsessionsViewModel(
         TimeSpan? activityQuietDelay,
-        IPresentationDispatcher uiDispatcher)
+        IPresentationDispatcher uiDispatcher,
+        PresentationOperationObserver? operationObserver = null)
     {
         _uiDispatcher = uiDispatcher;
+        _operations = operationObserver
+            ?? PresentationOperationObserver.CreateUnreported("Subsessions");
         _activityTicker.SetEnabled(false);
         var toolPresentation = new TranscriptToolPresentationService(
             static () => []);
@@ -92,7 +96,10 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         _listDetail.PropertyChanged += OnListDetailPropertyChanged;
         _runtimeRefresh = new SerializedRefreshLoop(
             RefreshFromRuntimeAsync,
-            exception => RunOnUiThread(() => SetLoadFailure(exception.Message)));
+            exception => _operations.Submit(
+                SubsessionRefreshOperation,
+                _ => Task.FromException(exception),
+                ReconcileSubsessionsAsync));
     }
 
     private Task<AgentTranscriptToolDetailRecord?> LoadToolDetailAsync(
@@ -235,7 +242,15 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
     }
 
     [RelayCommand]
-    private async Task OpenChildSessionAsync(SubsessionChildSessionLinkViewModel? childSession)
+    private Task OpenChildSessionAsync(SubsessionChildSessionLinkViewModel? childSession)
+        => _operations.RunAsync(
+            SubsessionNavigationOperation,
+            cancellationToken => OpenChildSessionCoreAsync(childSession, cancellationToken),
+            ReconcileSubsessionsAsync);
+
+    private async Task OpenChildSessionCoreAsync(
+        SubsessionChildSessionLinkViewModel? childSession,
+        CancellationToken cancellationToken)
     {
         if (childSession is null
             || SelectedSubsession?.SessionId == childSession.SessionId
@@ -244,7 +259,7 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
             return;
         }
 
-        await ReloadSubsessionsAsync(childSession.SessionId);
+        await ReloadSubsessionsAsync(childSession.SessionId, cancellationToken);
     }
 
     [RelayCommand]
@@ -323,9 +338,24 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
                 return;
             }
 
-            var sessionsTask = _sessionReader.ListSessionsAsync(refresh.CancellationToken);
-            var checkpointsTask = _checkpointReader.ListLatestCheckpointsAsync(refresh.CancellationToken);
-            await Task.WhenAll(sessionsTask, checkpointsTask);
+            Task<SubsessionSessionCatalog> sessionsTask;
+            Task<IReadOnlyList<AgentRunCheckpointRecord>> checkpointsTask;
+            try
+            {
+                sessionsTask = _sessionReader.ListSessionsAsync(refresh.CancellationToken);
+                checkpointsTask = _checkpointReader.ListLatestCheckpointsAsync(refresh.CancellationToken);
+                await Task.WhenAll(sessionsTask, checkpointsTask);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception exception) when (IsExpectedSubsessionRuntimeFailure(exception))
+            {
+                throw new PresentationOperationException(
+                    "Subsessions could not read the Agent Runtime snapshot.",
+                    exception);
+            }
             var catalog = await sessionsTask;
             var checkpoints = await checkpointsTask;
             var subsessions = catalog.Sessions

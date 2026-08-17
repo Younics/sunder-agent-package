@@ -6,7 +6,7 @@ namespace Sunder.Package.Agent.Builder;
 
 internal sealed class BuilderRpcProvider(AgentRpcCatalog rpcCatalog) : IBuilderRuntimeProvider
 {
-    public async ValueTask<BuilderExecuteResponse> ExecuteAsync(
+    public async ValueTask<BuilderResultContent> ExecuteAsync(
         SunderRpcInvocationContext context,
         BuilderExecuteRequest request,
         CancellationToken cancellationToken = default)
@@ -60,14 +60,28 @@ internal sealed class BuilderRpcProvider(AgentRpcCatalog rpcCatalog) : IBuilderR
             }
         }
 
-        if (BuilderRpcPayloadLimits.GetSerializedSize(response)
-            >= BuilderRpcPayloadLimits.MaximumResponseBytes - BuilderRpcPayloadLimits.ResponseSafetyBytes)
+        byte[] bytes;
+        try
         {
-            throw Domain(
-                "agent.builder.response-too-large",
-                "Package Builder RPC response exceeds the host transport limit.");
+            bytes = BuilderRpcPayloadLimits.SerializeResponse(response);
         }
-        return BuilderRpcWireMapper.ToWire(response);
+        catch (InvalidDataException exception)
+        {
+            throw Domain("agent.builder.response-too-large", exception.Message);
+        }
+
+        await using var stream = new MemoryStream(bytes, writable: false);
+        var content = await context.RegisterContentAsync(
+            stream,
+            new SunderRpcContentRegistrationOptions(
+                "application/json",
+                "builder-result.json",
+                bytes.LongLength,
+                Repeatability: SunderRpcContentRepeatability.SingleUse,
+                MaximumUses: 1),
+            cancellationToken).ConfigureAwait(false);
+        BuilderRpcPayloadLimits.ValidateRegisteredContent(content, bytes, context.DeadlineUtc);
+        return new BuilderResultContent { Content = content };
     }
 
     private SunderRpcException WorkspaceExecutionUnavailable(string? message = null)

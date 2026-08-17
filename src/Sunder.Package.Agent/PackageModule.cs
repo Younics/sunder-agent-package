@@ -10,6 +10,7 @@ using Sunder.Package.Agent.Services.BehaviorLoops;
 using Sunder.Package.Agent.Shared.Composition;
 using Sunder.Package.Agent.Storage;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent;
 
@@ -21,6 +22,8 @@ public sealed partial class PackageModule
         services.TryAddSingleton<IPackageContext>(context);
         services.AddSingleton(_ => new AgentLocalStore(context));
         services.TryAddSingleton<AgentRpcCatalog>();
+        services.AddSingleton(provider => new AgentRuntimeTransportBudgetState(
+            provider.GetService<ISunderRpcClient>()));
         services.AddSingleton<AgentRunControlRegistry>();
         services.AddSingleton(provider => AgentRpcServices.CreateBehaviorLoops(
             provider.GetRequiredService<AgentRunControlRegistry>(),

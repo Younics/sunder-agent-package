@@ -146,7 +146,7 @@ public sealed partial class AgentLocalStore
         transaction.Commit();
         if (workspaceCreatedAtUtc is not null || deletedSessionIds.Count > 0)
         {
-            CheckpointWriteAheadLog(connection);
+            ScheduleWriteAheadLogCheckpoint();
         }
         if (deletedSessionIds.Count > 0)
         {

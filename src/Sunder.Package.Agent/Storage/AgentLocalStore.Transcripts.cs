@@ -111,7 +111,7 @@ public sealed partial class AgentLocalStore
         transaction.Commit();
         if (result.DeletedTurnIds.Count > 0)
         {
-            CheckpointWriteAheadLog(connection);
+            ScheduleWriteAheadLogCheckpoint();
         }
         if (result.DeletedSessionIds.Count > 0)
         {

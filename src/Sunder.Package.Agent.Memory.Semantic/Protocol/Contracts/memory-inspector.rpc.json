@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "descriptorVersion": 2,
+  "schemaProfile": "sunder.rpc.values.v1",
   "contractId": "sunder.agent.memory.semantic.inspector",
   "version": "2.0.0",
   "errors": {
@@ -16,14 +17,14 @@
           "idempotency": "idempotent",
           "errors": ["memory.semantic.operation-failed"],
           "requestSchema": { "$ref": "#/$defs/MemoryQuery" },
-          "responseSchema": { "$ref": "#/$defs/MemoryProjection" }
+          "responseSchema": { "$ref": "#/$defs/MemoryProjectionContent" }
         },
         "command": {
           "kind": "unary",
           "idempotency": "none",
           "errors": ["memory.semantic.operation-failed"],
           "requestSchema": { "$ref": "#/$defs/MemoryCommand" },
-          "responseSchema": { "$ref": "#/$defs/MemoryProjection" }
+          "responseSchema": { "$ref": "#/$defs/MemoryProjectionContent" }
         },
         "changes": {
           "kind": "server-stream",
@@ -36,461 +37,203 @@
     }
   },
   "$defs": {
-    "Uuid": {
+    "MemoryId": {
       "type": "string",
-      "logicalType": "uuid"
+      "format": "uuid"
     },
-    "UtcDateTime": {
+    "ProfileId": {
       "type": "string",
-      "logicalType": "utc-date-time"
+      "minLength": 1,
+      "maxLength": 256
     },
-    "Text": {
+    "SearchText": {
       "type": "string",
       "minLength": 0,
-      "maxLength": 1000000
+      "maxLength": 1024
     },
-    "Boolean": {
-      "type": "boolean"
+    "MemoryCategory": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
     },
-    "Int32": {
-      "type": "integer",
-      "minimum": -2147483648,
-      "maximum": 2147483647
+    "MemoryContent": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 65536
     },
-    "NonNegativeInt32": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 2147483647
+    "EvidenceText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 65536
     },
-    "SafeInt64": {
-      "type": "integer",
-      "minimum": -9007199254740991,
-      "maximum": 9007199254740991
+    "CorrectionNote": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 4096
     },
-    "NonNegativeInt64": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 9007199254740991
+    "StatusText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 2048
     },
-    "FiniteNumber": {
+    "ProviderId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "ModelId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "ConfigurationFingerprint": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "MemoryScore": {
       "type": "number",
-      "minimum": -1000000000,
-      "maximum": 1000000000
+      "format": "float32",
+      "minimum": 0,
+      "maximum": 1
     },
-    "NullableUuid": {
-      "oneOf": [
-        { "type": "null" },
-        { "$ref": "#/$defs/Uuid" }
-      ]
+    "AccessCount": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2147483647
     },
-    "NullableText": {
-      "oneOf": [
-        { "type": "null" },
-        { "$ref": "#/$defs/Text" }
-      ]
-    },
-    "NullableUtcDateTime": {
-      "oneOf": [
-        { "type": "null" },
-        { "$ref": "#/$defs/UtcDateTime" }
-      ]
-    },
-    "NullableSafeInt64": {
-      "oneOf": [
-        { "type": "null" },
-        { "$ref": "#/$defs/SafeInt64" }
-      ]
+    "MemoryRevision": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
     },
     "MemoryQueryKind": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 8,
-      "enum": [0, 1, 2, 3, 4, 5, 6, 7, 8]
+      "type": "string",
+      "minLength": 7,
+      "maxLength": 21,
+      "enum": [
+        "sessions",
+        "session-checkpoint",
+        "working-summary",
+        "memories",
+        "details",
+        "semantic-state",
+        "semantic-index-status",
+        "worker-status",
+        "metrics"
+      ]
     },
     "MemoryCommandKind": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 6,
-      "enum": [0, 1, 2, 3, 4, 5, 6]
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 9,
+      "enum": ["update", "pin", "contest", "forget", "supersede", "correct", "reindex"]
     },
-    "MemoryChangeKind": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 1,
-      "enum": [0, 1]
+    "MemoryProvenance": {
+      "type": "string",
+      "minLength": 4,
+      "maxLength": 9,
+      "enum": ["unknown", "user", "assistant", "tool"]
     },
-    "AgentSessionState": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 5,
-      "enum": [0, 1, 2, 3, 5]
+    "MemoryState": {
+      "type": "string",
+      "minLength": 6,
+      "maxLength": 10,
+      "enum": ["active", "contested", "forgotten", "superseded"]
     },
-    "AgentMemoryProvenance": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 3,
-      "enum": [0, 1, 2, 3]
-    },
-    "SemanticMemoryEntryIndexState": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 2,
-      "enum": [0, 1, 2]
-    },
-    "NullableSemanticMemoryEntryIndexState": {
-      "oneOf": [
-        { "type": "null" },
-        { "$ref": "#/$defs/SemanticMemoryEntryIndexState" }
-      ]
-    },
-    "StoredMemoryRecord": {
+    "StoredMemory": {
       "type": "object",
       "properties": {
-        "memoryId": { "$ref": "#/$defs/Uuid" },
-        "sessionId": { "$ref": "#/$defs/Uuid" },
-        "category": { "$ref": "#/$defs/Text" },
-        "content": { "$ref": "#/$defs/Text" },
-        "evidenceText": { "$ref": "#/$defs/NullableText" },
-        "sourceTurnId": { "$ref": "#/$defs/NullableUuid" },
-        "importance": { "$ref": "#/$defs/FiniteNumber" },
-        "confidence": { "$ref": "#/$defs/FiniteNumber" },
-        "isPinned": { "$ref": "#/$defs/Boolean" },
-        "state": { "$ref": "#/$defs/Text" },
-        "supersededByMemoryId": { "$ref": "#/$defs/NullableUuid" },
-        "createdAtUtc": { "$ref": "#/$defs/UtcDateTime" },
-        "updatedAtUtc": { "$ref": "#/$defs/UtcDateTime" },
-        "lastAccessedAtUtc": { "$ref": "#/$defs/NullableUtcDateTime" },
-        "accessCount": { "$ref": "#/$defs/NonNegativeInt32" },
-        "provenance": { "$ref": "#/$defs/AgentMemoryProvenance" },
-        "memoryRevision": { "$ref": "#/$defs/NonNegativeInt64" },
-        "isManual": { "$ref": "#/$defs/Boolean" }
+        "memoryId": { "$ref": "#/$defs/MemoryId" },
+        "sessionId": { "$ref": "#/$defs/MemoryId" },
+        "category": { "$ref": "#/$defs/MemoryCategory" },
+        "content": { "$ref": "#/$defs/MemoryContent" },
+        "evidenceText": { "$ref": "#/$defs/EvidenceText" },
+        "sourceTurnId": { "$ref": "#/$defs/MemoryId" },
+        "importance": { "$ref": "#/$defs/MemoryScore" },
+        "confidence": { "$ref": "#/$defs/MemoryScore" },
+        "isPinned": { "type": "boolean" },
+        "state": { "$ref": "#/$defs/MemoryState" },
+        "supersededByMemoryId": { "$ref": "#/$defs/MemoryId" },
+        "createdAtUtc": { "type": "string", "format": "date-time" },
+        "updatedAtUtc": { "type": "string", "format": "date-time" },
+        "lastAccessedAtUtc": { "type": "string", "format": "date-time" },
+        "accessCount": { "$ref": "#/$defs/AccessCount" },
+        "provenance": { "$ref": "#/$defs/MemoryProvenance" },
+        "memoryRevision": { "$ref": "#/$defs/MemoryRevision" },
+        "isManual": { "type": "boolean" }
       },
       "required": [
-        "memoryId", "sessionId", "category", "content", "evidenceText", "sourceTurnId",
-        "importance", "confidence", "isPinned", "state", "supersededByMemoryId", "createdAtUtc",
-        "updatedAtUtc", "lastAccessedAtUtc", "accessCount", "provenance", "memoryRevision", "isManual"
+        "memoryId",
+        "sessionId",
+        "category",
+        "content",
+        "importance",
+        "confidence",
+        "isPinned",
+        "state",
+        "createdAtUtc",
+        "updatedAtUtc",
+        "accessCount",
+        "provenance",
+        "memoryRevision",
+        "isManual"
       ],
       "additionalProperties": false
-    },
-    "NullableStoredMemoryRecord": {
-      "oneOf": [
-        { "type": "null" },
-        { "$ref": "#/$defs/StoredMemoryRecord" }
-      ]
-    },
-    "StoredMemoryRecordList": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/StoredMemoryRecord" },
-      "minItems": 0,
-      "maxItems": 100000
-    },
-    "NullableStoredMemoryRecordList": {
-      "oneOf": [
-        { "type": "null" },
-        { "$ref": "#/$defs/StoredMemoryRecordList" }
-      ]
-    },
-    "StoredMemoryEvidenceRecord": {
-      "type": "object",
-      "properties": {
-        "evidenceId": { "$ref": "#/$defs/Uuid" },
-        "memoryId": { "$ref": "#/$defs/Uuid" },
-        "sessionId": { "$ref": "#/$defs/Uuid" },
-        "sourceTurnId": { "$ref": "#/$defs/NullableUuid" },
-        "evidenceText": { "$ref": "#/$defs/NullableText" },
-        "createdAtUtc": { "$ref": "#/$defs/UtcDateTime" },
-        "contributionId": { "$ref": "#/$defs/NullableText" }
-      },
-      "required": [
-        "evidenceId", "memoryId", "sessionId", "sourceTurnId", "evidenceText", "createdAtUtc", "contributionId"
-      ],
-      "additionalProperties": false
-    },
-    "StoredMemoryEvidenceRecordList": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/StoredMemoryEvidenceRecord" },
-      "minItems": 0,
-      "maxItems": 100000
-    },
-    "NullableStoredMemoryEvidenceRecordList": {
-      "oneOf": [
-        { "type": "null" },
-        { "$ref": "#/$defs/StoredMemoryEvidenceRecordList" }
-      ]
-    },
-    "MemoryCorrectionResult": {
-      "type": "object",
-      "properties": {
-        "correctedMemory": { "$ref": "#/$defs/StoredMemoryRecord" },
-        "updatedSourceMemory": { "$ref": "#/$defs/StoredMemoryRecord" },
-        "createdNewMemory": { "$ref": "#/$defs/Boolean" }
-      },
-      "required": ["correctedMemory", "updatedSourceMemory", "createdNewMemory"],
-      "additionalProperties": false
-    },
-    "NullableMemoryCorrectionResult": {
-      "oneOf": [
-        { "type": "null" },
-        { "$ref": "#/$defs/MemoryCorrectionResult" }
-      ]
     },
     "SemanticEmbeddingContext": {
       "type": "object",
       "properties": {
-        "statusLabel": { "$ref": "#/$defs/Text" },
-        "statusText": { "$ref": "#/$defs/Text" },
-        "isReady": { "$ref": "#/$defs/Boolean" },
-        "providerId": { "$ref": "#/$defs/NullableText" },
-        "modelId": { "$ref": "#/$defs/NullableText" },
-        "providerDisplayName": { "$ref": "#/$defs/NullableText" },
-        "configurationFingerprint": { "$ref": "#/$defs/NullableText" }
+        "statusLabel": { "$ref": "#/$defs/StatusText" },
+        "statusText": { "$ref": "#/$defs/StatusText" },
+        "isReady": { "type": "boolean" },
+        "providerId": { "$ref": "#/$defs/ProviderId" },
+        "modelId": { "$ref": "#/$defs/ModelId" },
+        "providerDisplayName": { "$ref": "#/$defs/StatusText" },
+        "configurationFingerprint": { "$ref": "#/$defs/ConfigurationFingerprint" }
       },
-      "required": [
-        "statusLabel", "statusText", "isReady", "providerId", "modelId", "providerDisplayName", "configurationFingerprint"
-      ],
+      "required": ["statusLabel", "statusText", "isReady"],
       "additionalProperties": false
-    },
-    "NullableSemanticEmbeddingContext": {
-      "oneOf": [
-        { "type": "null" },
-        { "$ref": "#/$defs/SemanticEmbeddingContext" }
-      ]
-    },
-    "SemanticMemoryStatusRecord": {
-      "type": "object",
-      "properties": {
-        "statusText": { "$ref": "#/$defs/Text" },
-        "canReindex": { "$ref": "#/$defs/Boolean" }
-      },
-      "required": ["statusText", "canReindex"],
-      "additionalProperties": false
-    },
-    "SemanticMemorySessionStateRecord": {
-      "type": "object",
-      "properties": {
-        "context": { "$ref": "#/$defs/SemanticEmbeddingContext" },
-        "status": { "$ref": "#/$defs/SemanticMemoryStatusRecord" }
-      },
-      "required": ["context", "status"],
-      "additionalProperties": false
-    },
-    "NullableSemanticMemorySessionStateRecord": {
-      "oneOf": [
-        { "type": "null" },
-        { "$ref": "#/$defs/SemanticMemorySessionStateRecord" }
-      ]
-    },
-    "SemanticMemoryReindexResult": {
-      "type": "object",
-      "properties": {
-        "message": { "$ref": "#/$defs/Text" },
-        "indexedMemoryCount": { "$ref": "#/$defs/NonNegativeInt32" }
-      },
-      "required": ["message", "indexedMemoryCount"],
-      "additionalProperties": false
-    },
-    "NullableSemanticMemoryReindexResult": {
-      "oneOf": [
-        { "type": "null" },
-        { "$ref": "#/$defs/SemanticMemoryReindexResult" }
-      ]
-    },
-    "SemanticMemoryWorkerStatusRecord": {
-      "type": "object",
-      "properties": {
-        "statusText": { "$ref": "#/$defs/Text" },
-        "isRunning": { "$ref": "#/$defs/Boolean" },
-        "pendingItemCount": { "$ref": "#/$defs/NonNegativeInt32" },
-        "processedItemCount": { "$ref": "#/$defs/NonNegativeInt64" },
-        "lastSuccessfulRunAtUtc": { "$ref": "#/$defs/NullableUtcDateTime" },
-        "lastFailureAtUtc": { "$ref": "#/$defs/NullableUtcDateTime" },
-        "lastFailureMessage": { "$ref": "#/$defs/NullableText" },
-        "hasFailure": { "$ref": "#/$defs/Boolean" }
-      },
-      "required": [
-        "statusText", "isRunning", "pendingItemCount", "processedItemCount", "lastSuccessfulRunAtUtc",
-        "lastFailureAtUtc", "lastFailureMessage", "hasFailure"
-      ],
-      "additionalProperties": false
-    },
-    "NullableSemanticMemoryWorkerStatusRecord": {
-      "oneOf": [
-        { "type": "null" },
-        { "$ref": "#/$defs/SemanticMemoryWorkerStatusRecord" }
-      ]
-    },
-    "SemanticMemoryMetricsSnapshot": {
-      "type": "object",
-      "properties": {
-        "promotionCandidateCount": { "$ref": "#/$defs/NonNegativeInt64" },
-        "promotionWriteCount": { "$ref": "#/$defs/NonNegativeInt64" },
-        "recallRequestCount": { "$ref": "#/$defs/NonNegativeInt64" },
-        "recallEntryCount": { "$ref": "#/$defs/NonNegativeInt64" },
-        "correctionCount": { "$ref": "#/$defs/NonNegativeInt64" },
-        "workerFailureCount": { "$ref": "#/$defs/NonNegativeInt64" }
-      },
-      "required": [
-        "promotionCandidateCount", "promotionWriteCount", "recallRequestCount", "recallEntryCount",
-        "correctionCount", "workerFailureCount"
-      ],
-      "additionalProperties": false
-    },
-    "NullableSemanticMemoryMetricsSnapshot": {
-      "oneOf": [
-        { "type": "null" },
-        { "$ref": "#/$defs/SemanticMemoryMetricsSnapshot" }
-      ]
-    },
-    "MemorySemanticIndexStatusRecord": {
-      "type": "object",
-      "properties": {
-        "statusLabel": { "$ref": "#/$defs/Text" },
-        "statusText": { "$ref": "#/$defs/Text" },
-        "indexState": { "$ref": "#/$defs/NullableSemanticMemoryEntryIndexState" },
-        "providerDisplayName": { "$ref": "#/$defs/NullableText" },
-        "modelId": { "$ref": "#/$defs/NullableText" }
-      },
-      "required": ["statusLabel", "statusText", "indexState", "providerDisplayName", "modelId"],
-      "additionalProperties": false
-    },
-    "NullableMemorySemanticIndexStatusRecord": {
-      "oneOf": [
-        { "type": "null" },
-        { "$ref": "#/$defs/MemorySemanticIndexStatusRecord" }
-      ]
-    },
-    "AgentSessionRecord": {
-      "type": "object",
-      "properties": {
-        "sessionId": { "$ref": "#/$defs/Uuid" },
-        "title": { "$ref": "#/$defs/Text" },
-        "state": { "$ref": "#/$defs/AgentSessionState" },
-        "createdAtUtc": { "$ref": "#/$defs/UtcDateTime" },
-        "updatedAtUtc": { "$ref": "#/$defs/UtcDateTime" },
-        "parentSessionId": { "$ref": "#/$defs/NullableUuid" },
-        "rootSessionId": { "$ref": "#/$defs/NullableUuid" },
-        "parentRunId": { "$ref": "#/$defs/NullableUuid" },
-        "parentRunRevision": { "$ref": "#/$defs/NullableSafeInt64" },
-        "parentToolCallId": { "$ref": "#/$defs/NullableText" },
-        "taskId": { "$ref": "#/$defs/NullableText" },
-        "profileId": { "$ref": "#/$defs/NullableText" },
-        "behaviorLoopId": { "$ref": "#/$defs/NullableText" },
-        "agentKind": { "$ref": "#/$defs/NullableText" },
-        "workspaceId": { "$ref": "#/$defs/NullableText" }
-      },
-      "required": [
-        "sessionId", "title", "state", "createdAtUtc", "updatedAtUtc", "parentSessionId", "rootSessionId",
-        "parentRunId", "parentRunRevision", "parentToolCallId", "taskId", "profileId", "behaviorLoopId", "agentKind", "workspaceId"
-      ],
-      "additionalProperties": false
-    },
-    "AgentSessionRecordList": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/AgentSessionRecord" },
-      "minItems": 0,
-      "maxItems": 100000
-    },
-    "NullableAgentSessionRecordList": {
-      "oneOf": [
-        { "type": "null" },
-        { "$ref": "#/$defs/AgentSessionRecordList" }
-      ]
-    },
-    "AgentSessionContextCheckpointRecord": {
-      "type": "object",
-      "properties": {
-        "contextCheckpointId": { "$ref": "#/$defs/Uuid" },
-        "sessionId": { "$ref": "#/$defs/Uuid" },
-        "firstOmittedTurnId": { "$ref": "#/$defs/NullableUuid" },
-        "lastOmittedTurnId": { "$ref": "#/$defs/NullableUuid" },
-        "omittedTurnCount": { "$ref": "#/$defs/NonNegativeInt32" },
-        "summaryText": { "$ref": "#/$defs/Text" },
-        "detailsJson": { "$ref": "#/$defs/NullableText" },
-        "createdAtUtc": { "$ref": "#/$defs/UtcDateTime" }
-      },
-      "required": [
-        "contextCheckpointId", "sessionId", "firstOmittedTurnId", "lastOmittedTurnId", "omittedTurnCount",
-        "summaryText", "detailsJson", "createdAtUtc"
-      ],
-      "additionalProperties": false
-    },
-    "NullableAgentSessionContextCheckpointRecord": {
-      "oneOf": [
-        { "type": "null" },
-        { "$ref": "#/$defs/AgentSessionContextCheckpointRecord" }
-      ]
-    },
-    "AgentWorkingSummaryRecord": {
-      "type": "object",
-      "properties": {
-        "sessionId": { "$ref": "#/$defs/Uuid" },
-        "summaryText": { "$ref": "#/$defs/Text" },
-        "updatedAtUtc": { "$ref": "#/$defs/UtcDateTime" }
-      },
-      "required": ["sessionId", "summaryText", "updatedAtUtc"],
-      "additionalProperties": false
-    },
-    "NullableAgentWorkingSummaryRecord": {
-      "oneOf": [
-        { "type": "null" },
-        { "$ref": "#/$defs/AgentWorkingSummaryRecord" }
-      ]
     },
     "MemoryQuery": {
       "type": "object",
       "properties": {
         "kind": { "$ref": "#/$defs/MemoryQueryKind" },
-        "sessionId": { "$ref": "#/$defs/NullableUuid" },
-        "memoryId": { "$ref": "#/$defs/NullableUuid" },
-        "searchText": { "$ref": "#/$defs/NullableText" },
-        "includeInactive": { "$ref": "#/$defs/Boolean" },
-        "profileId": { "$ref": "#/$defs/NullableText" },
-        "memory": { "$ref": "#/$defs/NullableStoredMemoryRecord" },
-        "semanticContext": { "$ref": "#/$defs/NullableSemanticEmbeddingContext" }
+        "sessionId": { "$ref": "#/$defs/MemoryId" },
+        "memoryId": { "$ref": "#/$defs/MemoryId" },
+        "searchText": { "$ref": "#/$defs/SearchText" },
+        "includeInactive": { "type": "boolean" },
+        "profileId": { "$ref": "#/$defs/ProfileId" },
+        "memory": { "$ref": "#/$defs/StoredMemory" },
+        "semanticContext": { "$ref": "#/$defs/SemanticEmbeddingContext" }
       },
-      "required": [
-        "kind", "sessionId", "memoryId", "searchText", "includeInactive", "profileId", "memory", "semanticContext"
-      ],
+      "required": ["kind", "includeInactive"],
       "additionalProperties": false
     },
     "MemoryCommand": {
       "type": "object",
       "properties": {
         "kind": { "$ref": "#/$defs/MemoryCommandKind" },
-        "memoryId": { "$ref": "#/$defs/Uuid" },
-        "category": { "$ref": "#/$defs/NullableText" },
-        "content": { "$ref": "#/$defs/NullableText" },
-        "note": { "$ref": "#/$defs/NullableText" },
-        "isPinned": { "$ref": "#/$defs/Boolean" },
-        "profileId": { "$ref": "#/$defs/NullableText" }
+        "memoryId": { "$ref": "#/$defs/MemoryId" },
+        "category": { "$ref": "#/$defs/MemoryCategory" },
+        "content": { "$ref": "#/$defs/MemoryContent" },
+        "note": { "$ref": "#/$defs/CorrectionNote" },
+        "isPinned": { "type": "boolean" },
+        "profileId": { "$ref": "#/$defs/ProfileId" }
       },
-      "required": ["kind", "memoryId", "category", "content", "note", "isPinned", "profileId"],
+      "required": ["kind", "memoryId", "isPinned"],
       "additionalProperties": false
     },
-    "MemoryProjection": {
+    "ContentReference": {
+      "type": "object",
+      "logicalType": "content-reference"
+    },
+    "MemoryProjectionContent": {
       "type": "object",
       "properties": {
-        "sessions": { "$ref": "#/$defs/NullableAgentSessionRecordList" },
-        "checkpoint": { "$ref": "#/$defs/NullableAgentSessionContextCheckpointRecord" },
-        "workingSummary": { "$ref": "#/$defs/NullableAgentWorkingSummaryRecord" },
-        "memories": { "$ref": "#/$defs/NullableStoredMemoryRecordList" },
-        "evidence": { "$ref": "#/$defs/NullableStoredMemoryEvidenceRecordList" },
-        "memory": { "$ref": "#/$defs/NullableStoredMemoryRecord" },
-        "supersedingMemory": { "$ref": "#/$defs/NullableStoredMemoryRecord" },
-        "supersededMemories": { "$ref": "#/$defs/NullableStoredMemoryRecordList" },
-        "correctionLineage": { "$ref": "#/$defs/NullableStoredMemoryRecordList" },
-        "correction": { "$ref": "#/$defs/NullableMemoryCorrectionResult" },
-        "indexStatus": { "$ref": "#/$defs/NullableMemorySemanticIndexStatusRecord" },
-        "semanticState": { "$ref": "#/$defs/NullableSemanticMemorySessionStateRecord" },
-        "reindexResult": { "$ref": "#/$defs/NullableSemanticMemoryReindexResult" },
-        "workerStatus": { "$ref": "#/$defs/NullableSemanticMemoryWorkerStatusRecord" },
-        "metrics": { "$ref": "#/$defs/NullableSemanticMemoryMetricsSnapshot" }
+        "content": { "$ref": "#/$defs/ContentReference" }
       },
-      "required": [
-        "sessions", "checkpoint", "workingSummary", "memories", "evidence", "memory", "supersedingMemory",
-        "supersededMemories", "correctionLineage", "correction", "indexStatus", "semanticState", "reindexResult",
-        "workerStatus", "metrics"
-      ],
+      "required": ["content"],
       "additionalProperties": false
     },
     "MemoryChangeSubscription": {
@@ -499,13 +242,19 @@
       "required": [],
       "additionalProperties": false
     },
+    "MemoryChangeKind": {
+      "type": "string",
+      "minLength": 6,
+      "maxLength": 7,
+      "enum": ["session", "worker"]
+    },
     "MemoryChanged": {
       "type": "object",
       "properties": {
         "kind": { "$ref": "#/$defs/MemoryChangeKind" },
-        "sessionId": { "$ref": "#/$defs/NullableUuid" }
+        "sessionId": { "$ref": "#/$defs/MemoryId" }
       },
-      "required": ["kind", "sessionId"],
+      "required": ["kind"],
       "additionalProperties": false
     }
   }

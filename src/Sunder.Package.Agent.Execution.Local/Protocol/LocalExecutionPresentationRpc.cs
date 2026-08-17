@@ -62,7 +62,13 @@ public static class LocalExecutionPresentationRpc
     internal static Wire.LocalExecutionOperationRequest ToWire(LocalExecutionOperationRequest value)
         => new()
         {
-            Kind = (long)value.Kind,
+            Kind = value.Kind switch
+            {
+                LocalExecutionOperationKind.GetSettings => Wire.LocalOperation.GetSettings,
+                LocalExecutionOperationKind.SaveSettings => Wire.LocalOperation.SaveSettings,
+                LocalExecutionOperationKind.SaveShells => Wire.LocalOperation.SaveShells,
+                _ => throw new InvalidDataException("The local execution operation is invalid."),
+            },
             TimeoutSeconds = value.TimeoutSeconds,
             Shells = value.Shells?.Select(ToWire).ToArray(),
             ExpectedShellCatalogRevision = value.ExpectedShellCatalogRevision,
@@ -70,7 +76,13 @@ public static class LocalExecutionPresentationRpc
 
     private static LocalExecutionOperationRequest FromWire(Wire.LocalExecutionOperationRequest value)
         => new(
-            (LocalExecutionOperationKind)checked((int)value.Kind),
+            value.Kind switch
+            {
+                Wire.LocalOperation.GetSettings => LocalExecutionOperationKind.GetSettings,
+                Wire.LocalOperation.SaveSettings => LocalExecutionOperationKind.SaveSettings,
+                Wire.LocalOperation.SaveShells => LocalExecutionOperationKind.SaveShells,
+                _ => throw new InvalidDataException("The local execution operation is invalid."),
+            },
             value.TimeoutSeconds,
             value.Shells?.Select(FromWire).ToArray(),
             value.ExpectedShellCatalogRevision);

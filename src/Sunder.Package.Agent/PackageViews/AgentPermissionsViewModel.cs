@@ -6,6 +6,7 @@ using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Notifications;
 
 namespace Sunder.Package.Agent.PackageViews;
 
@@ -17,6 +18,7 @@ public sealed partial class AgentPermissionsViewModel : ObservableObject,
     private readonly IAgentGlobalPermissionGateway? _globalPermissionGateway;
     private readonly IAgentRuntimeAvailability? _runtimeAvailability;
     private readonly PresentationTaskScope _tasks = new();
+    private readonly PresentationOperationObserver _operations;
     private readonly CancellationToken _lifetimeToken;
     private readonly IPresentationDispatcher _uiDispatcher;
     private readonly Task _initialization;
@@ -27,18 +29,32 @@ public sealed partial class AgentPermissionsViewModel : ObservableObject,
     internal static IReadOnlyCollection<string> OwnedConfigurationKeys { get; } = [];
 
     public AgentPermissionsViewModel(IAgentPermissionGateway permissionService)
-        : this(permissionService, PresentationDispatcher.Capture())
+        : this(permissionService, PresentationDispatcher.Capture(), operationObserver: null)
+    {
+    }
+
+    public AgentPermissionsViewModel(
+        IAgentPermissionGateway permissionService,
+        IPackageContext packageContext,
+        IPackageNotificationService notifications)
+        : this(
+            permissionService,
+            PresentationDispatcher.Capture(),
+            new PresentationOperationObserver(packageContext, notifications, "Agent permissions"))
     {
     }
 
     internal AgentPermissionsViewModel(
         IAgentPermissionGateway permissionService,
-        IPresentationDispatcher uiDispatcher)
+        IPresentationDispatcher uiDispatcher,
+        PresentationOperationObserver? operationObserver = null)
     {
         _permissionService = permissionService;
         _globalPermissionGateway = permissionService as IAgentGlobalPermissionGateway;
         _runtimeAvailability = permissionService as IAgentRuntimeAvailability;
         _uiDispatcher = uiDispatcher;
+        _operations = operationObserver
+            ?? PresentationOperationObserver.CreateUnreported("Agent permissions");
         _lifetimeToken = _tasks.CancellationToken;
         if (_runtimeAvailability is not null)
         {
@@ -78,7 +94,15 @@ public sealed partial class AgentPermissionsViewModel : ObservableObject,
     }
 
     [RelayCommand(CanExecute = nameof(CanMutatePermissions))]
-    private async Task SaveAsync()
+    private Task SaveAsync()
+        => _operations.RunAsync(
+            new PresentationOperation(
+                "agent-permissions.save",
+                "Permission defaults could not be saved. The authoritative settings were reloaded."),
+            SaveCoreAsync,
+            ReconcilePermissionsAsync);
+
+    private async Task SaveCoreAsync(CancellationToken cancellationToken)
     {
         PermissionOverrideChange[]? changes = null;
         await _uiDispatcher.InvokeAsync(() =>
@@ -102,7 +126,6 @@ public sealed partial class AgentPermissionsViewModel : ObservableObject,
             return;
         }
 
-        var cancellationToken = _lifetimeToken;
         try
         {
             foreach (var change in changes)
@@ -147,12 +170,6 @@ public sealed partial class AgentPermissionsViewModel : ObservableObject,
             _ = await ReloadAsync(cancellationToken, "Permission defaults saved.")
                 .ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-        }
-        catch (ObjectDisposedException) when (_disposed)
-        {
-        }
         finally
         {
             await _uiDispatcher.InvokeAsync(() =>
@@ -166,7 +183,15 @@ public sealed partial class AgentPermissionsViewModel : ObservableObject,
     }
 
     [RelayCommand(CanExecute = nameof(CanMutatePermissions))]
-    private async Task ResetToPackageDefaultsAsync()
+    private Task ResetToPackageDefaultsAsync()
+        => _operations.RunAsync(
+            new PresentationOperation(
+                "agent-permissions.reset",
+                "Permission defaults could not be reset. The authoritative settings were reloaded."),
+            ResetToPackageDefaultsCoreAsync,
+            ReconcilePermissionsAsync);
+
+    private async Task ResetToPackageDefaultsCoreAsync(CancellationToken cancellationToken)
     {
         (string ActionId, string BoundaryId)[]? overrides = null;
         await _uiDispatcher.InvokeAsync(() =>
@@ -186,7 +211,6 @@ public sealed partial class AgentPermissionsViewModel : ObservableObject,
             return;
         }
 
-        var cancellationToken = _lifetimeToken;
         try
         {
             foreach (var (actionId, boundaryId) in overrides)
@@ -209,12 +233,6 @@ public sealed partial class AgentPermissionsViewModel : ObservableObject,
             _ = await ReloadAsync(cancellationToken, "Permission defaults restored.")
                 .ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-        }
-        catch (ObjectDisposedException) when (_disposed)
-        {
-        }
         finally
         {
             await _uiDispatcher.InvokeAsync(() =>
@@ -228,6 +246,11 @@ public sealed partial class AgentPermissionsViewModel : ObservableObject,
     }
 
     private bool CanMutatePermissions() => !_disposed && !IsBusy;
+
+    private async Task ReconcilePermissionsAsync(CancellationToken cancellationToken)
+    {
+        _ = await ReloadAsync(cancellationToken).ConfigureAwait(false);
+    }
 
     private Task<bool> ReloadAsync(
         CancellationToken cancellationToken,
@@ -387,6 +410,7 @@ public sealed partial class AgentPermissionsViewModel : ObservableObject,
         }
         _disposed = true;
         Interlocked.Increment(ref _reloadGeneration);
+        _operations.Dispose();
         _tasks.Dispose();
         if (_runtimeAvailability is not null)
         {

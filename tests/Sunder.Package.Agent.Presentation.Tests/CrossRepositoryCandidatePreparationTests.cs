@@ -207,6 +207,20 @@ public sealed class CrossRepositoryCandidatePreparationTests
                 WebJson,
                 cancellationToken)
                 ?? throw new InvalidOperationException("The RPC invocation request was empty.");
+            if (invocation.MethodId == "transport-profile")
+            {
+                return Json(new RuntimeRpcAppInvokeResponse(
+                    JsonSerializer.SerializeToElement(new
+                    {
+                        RequestValueBytes = 8 * 1024 * 1024,
+                        ResponseValueBytes = 8 * 1024 * 1024,
+                        EventValueBytes = 8 * 1024 * 1024,
+                        ContentReferenceBytes = 64 * 1024 * 1024,
+                        RuntimeReported = false,
+                    }, WebJson),
+                    Error: null));
+            }
+
             if (invocation.MethodId == "chat-snapshot")
             {
                 Interlocked.Increment(ref _chatSnapshotRequestCount);

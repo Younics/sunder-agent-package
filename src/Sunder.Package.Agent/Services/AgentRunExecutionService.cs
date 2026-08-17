@@ -93,7 +93,6 @@ internal sealed class AgentRunExecutionService(
         }
         catch (Exception ex)
         {
-            host?.TryCompleteOpenAssistantTurn();
             return await HandleFailureAsync(started, ex).ConfigureAwait(false);
         }
         finally
@@ -129,7 +128,7 @@ internal sealed class AgentRunExecutionService(
             plan.ModelModeOption);
     }
 
-    private async Task<AgentRunCheckpointRecord> HandleFailureAsync(
+    internal async Task<AgentRunCheckpointRecord> HandleFailureAsync(
         AgentRunStarted started,
         Exception exception)
     {
@@ -142,12 +141,25 @@ internal sealed class AgentRunExecutionService(
         }
 
         AgentTurnRecord assistantTurn;
+        var presentation = AgentFailurePresentationPolicy.Create(exception);
         try
         {
-            assistantTurn = _sessionService.AppendTextTurn(
-                plan.RunHandle.DurableLease!,
-                AgentMessageRole.Assistant,
-                $"### Agent run failed\n\n{exception.Message}");
+            var openAssistantTurn = _sessionService.ListTurns(plan.RunKey.SessionId)
+                .LastOrDefault(turn =>
+                    turn.RunId == plan.RunKey.RunId
+                    && turn.RunRevision == plan.RunKey.RunRevision
+                    && turn.Role == AgentMessageRole.Assistant
+                    && turn.Kind == AgentTurnKind.Message
+                    && turn.IsStreaming);
+            assistantTurn = openAssistantTurn is null
+                ? _sessionService.AppendTextTurn(
+                    plan.RunHandle.DurableLease!,
+                    AgentMessageRole.Assistant,
+                    presentation.Markdown)
+                : _sessionService.UpdateTextTurn(
+                    plan.RunHandle.DurableLease!,
+                    openAssistantTurn.TurnId,
+                    presentation.Markdown);
             assistantTurn = _sessionService.CompleteTextTurn(
                 plan.RunHandle.DurableLease!,
                 assistantTurn.TurnId);
@@ -156,34 +168,35 @@ internal sealed class AgentRunExecutionService(
         {
             return GetTerminalCheckpoint(plan) ?? started.RunningCheckpoint;
         }
-        var failedCheckpoint = _sessionService.TryTransitionRun(
-                                   plan.RunHandle.DurableLease!,
-                                   AgentRunStatus.Failed,
-                                   exception.Message)?.Checkpoint
-                                ?? GetTerminalCheckpoint(plan)
-                               ?? started.RunningCheckpoint;
+        var terminalCheckpoint = _sessionService.TryTransitionRun(
+                                     plan.RunHandle.DurableLease!,
+                                     presentation.Status,
+                                     presentation.CheckpointSummary)?.Checkpoint
+                                 ?? GetTerminalCheckpoint(plan)
+                                 ?? started.RunningCheckpoint;
         _runEventLogger.LogRunEvent(
-            PackageLogLevel.Error,
+            presentation.IsInterrupted ? PackageLogLevel.Warning : PackageLogLevel.Error,
             plan.RunKey.SessionId,
             plan.RunKey.RunId,
             plan.RunKey.RunRevision,
-            "run.failed",
-            exception.Message,
+            presentation.IsInterrupted ? "run.interrupted" : "run.failed",
+            presentation.CheckpointSummary,
             ElapsedMilliseconds(plan),
             exception: exception);
         await _memoryCoordinator.PublishLifecycleEventAsync(
-            AgentLifecycleEventKind.RunFailed,
+            presentation.LifecycleEventKind,
             plan.Session,
             plan.Profile,
             plan.RunKey.RunId,
             plan.RunKey.RunRevision,
-            AgentRunStatus.Failed,
+            presentation.Status,
             plan.StartedAtUtc,
             plan.UserMessage,
             triggerTurn: assistantTurn,
-            checkpoint: failedCheckpoint,
+            checkpoint: terminalCheckpoint,
+            isInterrupted: presentation.IsInterrupted,
             cancellationToken: CancellationToken.None).ConfigureAwait(false);
-        return failedCheckpoint;
+        return terminalCheckpoint;
     }
 
     private AgentBehaviorLoopResult ResolveStoppedOrInterruptedRunResult(

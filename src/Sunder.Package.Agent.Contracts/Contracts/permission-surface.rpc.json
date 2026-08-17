@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "descriptorVersion": 2,
+  "schemaProfile": "sunder.rpc.values.v1",
   "contractId": "sunder.agent.permission.surface",
   "version": "1.0.0",
   "errors": {},
@@ -12,7 +13,7 @@
           "idempotency": "idempotent",
           "errors": [],
           "requestSchema": {
-            "$ref": "#/$defs/AgentRpcEmpty"
+            "$ref": "#/$defs/Unit"
           },
           "responseSchema": {
             "$ref": "#/$defs/PermissionSurfaceSnapshot"
@@ -22,41 +23,36 @@
     }
   },
   "$defs": {
-    "AgentRpcEmpty": {
+    "Unit": {
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
-    "String": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 1000000
-    },
     "AgentPermissionDecision": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 2,
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 5,
       "enum": [
-        0,
-        1,
-        2
+        "allow",
+        "ask",
+        "deny"
       ]
     },
     "AgentPermissionBoundaryDescriptor": {
       "type": "object",
       "properties": {
         "boundaryId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "defaultDecision": {
           "$ref": "#/$defs/AgentPermissionDecision"
         },
         "description": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         },
         "displayName": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         }
       },
       "required": [
@@ -67,28 +63,28 @@
       ],
       "additionalProperties": false
     },
-    "ListOfAgentPermissionBoundaryDescriptor": {
+    "AgentPermissionBoundaryDescriptorCollection": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentPermissionBoundaryDescriptor"
       },
       "minItems": 0,
-      "maxItems": 1000000
+      "maxItems": 4096
     },
     "AgentPermissionActionDescriptor": {
       "type": "object",
       "properties": {
         "actionId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "boundaries": {
-          "$ref": "#/$defs/ListOfAgentPermissionBoundaryDescriptor"
+          "$ref": "#/$defs/AgentPermissionBoundaryDescriptorCollection"
         },
         "description": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         },
         "displayName": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         }
       },
       "required": [
@@ -99,25 +95,25 @@
       ],
       "additionalProperties": false
     },
-    "ListOfAgentPermissionActionDescriptor": {
+    "AgentPermissionActionDescriptorCollection": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentPermissionActionDescriptor"
       },
       "minItems": 0,
-      "maxItems": 1000000
+      "maxItems": 256
     },
     "PermissionSurfaceSnapshot": {
       "type": "object",
       "properties": {
         "actions": {
-          "$ref": "#/$defs/ListOfAgentPermissionActionDescriptor"
+          "$ref": "#/$defs/AgentPermissionActionDescriptorCollection"
         },
         "displayName": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         },
         "surfaceId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         }
       },
       "required": [
@@ -126,6 +122,16 @@
         "surfaceId"
       ],
       "additionalProperties": false
+    },
+    "Identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "DisplayText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 8192
     }
   }
 }

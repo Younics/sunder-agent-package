@@ -5,6 +5,7 @@ using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Notifications;
 
 namespace Sunder.Package.Agent.Builder;
 
@@ -12,11 +13,13 @@ public partial class BuilderView : UserControl, IDisposable, IPackageViewWarmupT
 {
     private readonly AdaptiveMasterDetail _adaptiveLayout;
     private readonly PresentationTaskScope _tasks = new();
+    private PresentationOperationObserver _operations;
     private BuilderViewModel? _viewModel;
     private bool _disposed;
 
     public BuilderView()
     {
+        _operations = PresentationOperationObserver.CreateUnreported("Package Builder view");
         InitializeComponent();
         _adaptiveLayout = new AdaptiveMasterDetail(
             this,
@@ -40,6 +43,19 @@ public partial class BuilderView : UserControl, IDisposable, IPackageViewWarmupT
         DataContext = viewModel;
     }
 
+    public BuilderView(
+        BuilderViewModel viewModel,
+        IPackageContext packageContext,
+        IPackageNotificationService notifications)
+        : this(viewModel)
+    {
+        _operations.Dispose();
+        _operations = new PresentationOperationObserver(
+            packageContext,
+            notifications,
+            "Package Builder view");
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -48,6 +64,7 @@ public partial class BuilderView : UserControl, IDisposable, IPackageViewWarmupT
         }
 
         _disposed = true;
+        _operations.Dispose();
         _tasks.Dispose();
         _adaptiveLayout.Dispose();
         DataContext = null;
@@ -68,20 +85,23 @@ public partial class BuilderView : UserControl, IDisposable, IPackageViewWarmupT
         CancellationToken cancellationToken = default)
         => WarmupAsync(cancellationToken);
 
-    private async void OnRefreshSetupClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    private void OnRefreshSetupClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (DataContext is BuilderViewModel viewModel)
         {
-            await viewModel.RefreshSetupAsync();
+            Submit("refresh-setup", viewModel.RefreshSetupAsync);
         }
     }
 
-    private async void OnCreateProjectClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    private void OnCreateProjectClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (DataContext is BuilderViewModel viewModel)
         {
-            await viewModel.CreateProjectAsync();
-            FocusPackageDisplayName();
+            Submit("create-project", async () =>
+            {
+                await viewModel.CreateProjectAsync();
+                FocusPackageDisplayName();
+            });
         }
     }
 
@@ -100,7 +120,7 @@ public partial class BuilderView : UserControl, IDisposable, IPackageViewWarmupT
         }
     }
 
-    private async void OnPickProjectFolderClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    private void OnPickProjectFolderClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         var topLevel = TopLevel.GetTopLevel(this);
         if (topLevel?.StorageProvider is null || DataContext is not BuilderViewModel viewModel)
@@ -108,57 +128,67 @@ public partial class BuilderView : UserControl, IDisposable, IPackageViewWarmupT
             return;
         }
 
-        var folders = await topLevel.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
-        {
-            Title = "Select package project folder",
-            AllowMultiple = false,
-        });
+        _operations.Submit(
+            ViewOperation("pick-project-folder"),
+            async cancellationToken =>
+            {
+                var folders = await topLevel.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+                {
+                    Title = "Select package project folder",
+                    AllowMultiple = false,
+                });
+                cancellationToken.ThrowIfCancellationRequested();
+                if (_disposed || !ReferenceEquals(DataContext, viewModel))
+                {
+                    return;
+                }
 
-        var folder = folders.FirstOrDefault();
-        if (folder is not null)
-        {
-            viewModel.ApplySelectedFolder(folder.Path.LocalPath);
-            FocusPackageDisplayName();
-        }
+                var folder = folders.FirstOrDefault();
+                if (folder is not null)
+                {
+                    viewModel.ApplySelectedFolder(folder.Path.LocalPath);
+                    FocusPackageDisplayName();
+                }
+            });
     }
 
-    private async void OnDeleteProjectClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    private void OnDeleteProjectClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (DataContext is BuilderViewModel viewModel)
         {
-            await viewModel.DeleteSelectedProjectAsync();
+            Submit("delete-project", viewModel.DeleteSelectedProjectAsync);
         }
     }
 
-    private async void OnInitializeProjectClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    private void OnInitializeProjectClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (DataContext is BuilderViewModel viewModel)
         {
-            await viewModel.InitializeSelectedProjectAsync();
+            Submit("initialize-project", viewModel.InitializeSelectedProjectAsync);
         }
     }
 
-    private async void OnBuildProjectClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    private void OnBuildProjectClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (DataContext is BuilderViewModel viewModel)
         {
-            await viewModel.BuildSelectedProjectAsync();
+            Submit("build-project", viewModel.BuildSelectedProjectAsync);
         }
     }
 
-    private async void OnEnsureSetupClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    private void OnEnsureSetupClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (DataContext is BuilderViewModel viewModel)
         {
-            await viewModel.EnsureSelectedProjectSetupAsync();
+            Submit("ensure-setup", viewModel.EnsureSelectedProjectSetupAsync);
         }
     }
 
-    private async void OnPublishProjectClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    private void OnPublishProjectClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (DataContext is BuilderViewModel viewModel)
         {
-            await viewModel.PublishSelectedProjectAsync();
+            Submit("publish-project", viewModel.PublishSelectedProjectAsync);
         }
     }
 
@@ -174,4 +204,14 @@ public partial class BuilderView : UserControl, IDisposable, IPackageViewWarmupT
                 () => PackageDisplayNameTextBox.Focus(),
                 DispatcherPriority.Background));
     }
+
+    private void Submit(string operationName, Func<Task> action)
+        => _operations.Submit(
+            ViewOperation(operationName),
+            _ => action());
+
+    private static PresentationOperation ViewOperation(string operationName)
+        => new(
+            $"builder-view.{operationName}",
+            "The Package Builder operation could not be completed.");
 }

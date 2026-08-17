@@ -220,9 +220,8 @@ public sealed class AgentRpcContentScopeTests
     }
 
     private static JsonElement ResponseEvent()
-        => JsonSerializer.SerializeToElement(
-            new AgentChatStreamEvent(
-                AgentChatStreamEvent.UpdateKind,
+        => JsonSerializer.SerializeToElement<AgentChatStreamEvent>(
+            new AgentChatUpdateEvent(
                 ContentItems: [new AgentChatContent("text", Text: "received")]),
             JsonOptions);
 }

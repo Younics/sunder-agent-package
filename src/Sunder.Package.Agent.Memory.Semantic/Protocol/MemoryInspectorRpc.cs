@@ -1,5 +1,8 @@
 using System.Globalization;
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Memory.Semantic.Services;
 using Sunder.Sdk.Rpc;
@@ -10,6 +13,15 @@ namespace Sunder.Package.Agent.Memory.Semantic.Runtime;
 public static class MemoryInspectorRpc
 {
     private const string OperationFailedCode = "memory.semantic.operation-failed";
+    private const string JsonMediaType = "application/json";
+    internal const int MaximumProjectionBytes = 16 * 1024 * 1024;
+    private static readonly JsonSerializerOptions ProjectionJson = new(JsonSerializerDefaults.Web)
+    {
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        PropertyNameCaseInsensitive = false,
+        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
+        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.KebabCaseLower) },
+    };
 
     public static ISunderRpcServiceHandler CreateHandler(IMemoryInspectorRpcService service)
         => new Wire.SunderAgentMemorySemanticInspectorRpcHandler(new ProviderAdapter(service));
@@ -17,21 +29,22 @@ public static class MemoryInspectorRpc
     public static MemoryInspectorRpcClient CreateClient(
         ISunderRpcCallScope scope,
         SunderRpcEndpointReference endpoint)
-        => new(new Wire.MemoryInspectorClient(scope, endpoint));
+        => new(scope, new Wire.MemoryInspectorClient(scope, endpoint));
 
     private sealed class ProviderAdapter(IMemoryInspectorRpcService service) : Wire.IMemoryInspectorProvider
     {
-        public async ValueTask<Wire.MemoryProjection> QueryAsync(
+        public async ValueTask<Wire.MemoryProjectionContent> QueryAsync(
             SunderRpcInvocationContext context,
             Wire.MemoryQuery request,
             CancellationToken cancellationToken = default)
         {
             try
             {
-                return MemoryInspectorRpcMapper.ToWire(await service.QueryAsync(
+                var projection = await service.QueryAsync(
                     context,
                     MemoryInspectorRpcMapper.FromWire(request),
-                    cancellationToken).ConfigureAwait(false));
+                    cancellationToken).ConfigureAwait(false);
+                return await WriteProjectionAsync(context, projection, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception exception) when (ShouldMap(exception))
             {
@@ -39,17 +52,18 @@ public static class MemoryInspectorRpc
             }
         }
 
-        public async ValueTask<Wire.MemoryProjection> CommandAsync(
+        public async ValueTask<Wire.MemoryProjectionContent> CommandAsync(
             SunderRpcInvocationContext context,
             Wire.MemoryCommand request,
             CancellationToken cancellationToken = default)
         {
             try
             {
-                return MemoryInspectorRpcMapper.ToWire(await service.CommandAsync(
+                var projection = await service.CommandAsync(
                     context,
                     MemoryInspectorRpcMapper.FromWire(request),
-                    cancellationToken).ConfigureAwait(false));
+                    cancellationToken).ConfigureAwait(false);
+                return await WriteProjectionAsync(context, projection, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception exception) when (ShouldMap(exception))
             {
@@ -66,15 +80,13 @@ public static class MemoryInspectorRpc
                 context,
                 new MemoryChangeSubscription(),
                 cancellationToken).GetAsyncEnumerator(cancellationToken);
-            while (await MoveNextAsync(enumerator, cancellationToken).ConfigureAwait(false))
+            while (await MoveNextAsync(enumerator).ConfigureAwait(false))
             {
                 yield return MemoryInspectorRpcMapper.ToWire(enumerator.Current);
             }
         }
 
-        private static async ValueTask<bool> MoveNextAsync<T>(
-            IAsyncEnumerator<T> enumerator,
-            CancellationToken cancellationToken)
+        private static async ValueTask<bool> MoveNextAsync<T>(IAsyncEnumerator<T> enumerator)
         {
             try
             {
@@ -99,27 +111,114 @@ public static class MemoryInspectorRpc
         {
             message = message[..2_048];
         }
-
         return new SunderRpcException(new SunderRpcError(
             SunderRpcErrorKind.Domain,
             OperationFailedCode,
             message));
     }
+
+    private static async ValueTask<Wire.MemoryProjectionContent> WriteProjectionAsync(
+        SunderRpcInvocationContext context,
+        MemoryProjection projection,
+        CancellationToken cancellationToken)
+    {
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(projection, ProjectionJson);
+        if (bytes.Length > MaximumProjectionBytes)
+        {
+            throw new MemoryInspectorOperationException(
+                "The semantic memory projection exceeds its 16 MiB content limit.");
+        }
+
+        await using var stream = new MemoryStream(bytes, writable: false);
+        var reference = await context.RegisterContentAsync(
+            stream,
+            new SunderRpcContentRegistrationOptions(
+                JsonMediaType,
+                "memory-projection.json",
+                bytes.LongLength,
+                Repeatability: SunderRpcContentRepeatability.SingleUse,
+                MaximumUses: 1),
+            cancellationToken).ConfigureAwait(false);
+        ValidateReference(reference, context.DeadlineUtc);
+        var digest = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+        if (reference.Length != bytes.LongLength
+            || !string.Equals(reference.Sha256, digest, StringComparison.Ordinal))
+        {
+            throw new InvalidDataException("The Host returned inconsistent memory content metadata.");
+        }
+        return new Wire.MemoryProjectionContent { Content = reference };
+    }
+
+    internal static async ValueTask<MemoryProjection> ReadProjectionAsync(
+        ISunderRpcCallScope scope,
+        Wire.MemoryProjectionContent projection,
+        CancellationToken cancellationToken)
+    {
+        var reference = projection.Content;
+        ValidateReference(reference, scope.DeadlineUtc);
+        await using var stream = await scope.OpenContentAsync(reference, cancellationToken).ConfigureAwait(false);
+        using var content = new MemoryStream(checked((int)reference.Length));
+        var buffer = new byte[64 * 1024];
+        while (true)
+        {
+            var read = await stream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+            if (read == 0)
+            {
+                break;
+            }
+            if (content.Length + read > reference.Length || content.Length + read > MaximumProjectionBytes)
+            {
+                throw new InvalidDataException("The memory projection exceeds its authenticated length.");
+            }
+            content.Write(buffer, 0, read);
+        }
+
+        var bytes = content.ToArray();
+        var digest = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+        if (bytes.LongLength != reference.Length
+            || !string.Equals(reference.Sha256, digest, StringComparison.Ordinal))
+        {
+            throw new InvalidDataException("The memory projection digest or length is invalid.");
+        }
+        return JsonSerializer.Deserialize<MemoryProjection>(bytes, ProjectionJson)
+               ?? throw new InvalidDataException("The semantic memory projection is empty.");
+    }
+
+    private static void ValidateReference(SunderRpcContentReference reference, DateTimeOffset deadlineUtc)
+    {
+        if (reference.Length < 0
+            || reference.Length > MaximumProjectionBytes
+            || !string.Equals(reference.MediaType, JsonMediaType, StringComparison.OrdinalIgnoreCase)
+            || reference.Repeatability != SunderRpcContentRepeatability.SingleUse
+            || reference.ExpiresAtUtc <= DateTimeOffset.UtcNow
+            || reference.ExpiresAtUtc > deadlineUtc)
+        {
+            throw new InvalidDataException("The semantic memory content reference is invalid.");
+        }
+    }
 }
 
-public sealed class MemoryInspectorRpcClient(Wire.MemoryInspectorClient client)
+public sealed class MemoryInspectorRpcClient(
+    ISunderRpcCallScope scope,
+    Wire.MemoryInspectorClient client)
 {
     public async ValueTask<MemoryProjection> QueryAsync(
         MemoryQuery request,
         CancellationToken cancellationToken = default)
-        => MemoryInspectorRpcMapper.FromWire(
-            await client.QueryAsync(MemoryInspectorRpcMapper.ToWire(request), cancellationToken).ConfigureAwait(false));
+        => await MemoryInspectorRpc.ReadProjectionAsync(
+            scope,
+            await client.QueryAsync(MemoryInspectorRpcMapper.ToWire(request), cancellationToken)
+                .ConfigureAwait(false),
+            cancellationToken).ConfigureAwait(false);
 
     public async ValueTask<MemoryProjection> CommandAsync(
         MemoryCommand request,
         CancellationToken cancellationToken = default)
-        => MemoryInspectorRpcMapper.FromWire(
-            await client.CommandAsync(MemoryInspectorRpcMapper.ToWire(request), cancellationToken).ConfigureAwait(false));
+        => await MemoryInspectorRpc.ReadProjectionAsync(
+            scope,
+            await client.CommandAsync(MemoryInspectorRpcMapper.ToWire(request), cancellationToken)
+                .ConfigureAwait(false),
+            cancellationToken).ConfigureAwait(false);
 
     public async IAsyncEnumerable<MemoryChanged> ChangesAsync(
         MemoryChangeSubscription request,
@@ -136,10 +235,10 @@ public sealed class MemoryInspectorRpcClient(Wire.MemoryInspectorClient client)
 
 internal static class MemoryInspectorRpcMapper
 {
-    public static Wire.MemoryQuery ToWire(MemoryQuery value)
+    internal static Wire.MemoryQuery ToWire(MemoryQuery value)
         => new()
         {
-            Kind = (long)value.Kind,
+            Kind = ToWire(value.Kind),
             SessionId = value.SessionId,
             MemoryId = value.MemoryId,
             SearchText = value.SearchText,
@@ -149,9 +248,9 @@ internal static class MemoryInspectorRpcMapper
             SemanticContext = value.SemanticContext is null ? null : ToWire(value.SemanticContext),
         };
 
-    public static MemoryQuery FromWire(Wire.MemoryQuery value)
+    internal static MemoryQuery FromWire(Wire.MemoryQuery value)
         => new(
-            EnumValue<MemoryQueryKind>(value.Kind, nameof(value.Kind)),
+            FromWire(value.Kind),
             value.SessionId,
             value.MemoryId,
             value.SearchText,
@@ -160,10 +259,10 @@ internal static class MemoryInspectorRpcMapper
             value.Memory is null ? null : FromWire(value.Memory),
             value.SemanticContext is null ? null : FromWire(value.SemanticContext));
 
-    public static Wire.MemoryCommand ToWire(MemoryCommand value)
+    internal static Wire.MemoryCommand ToWire(MemoryCommand value)
         => new()
         {
-            Kind = (long)value.Kind,
+            Kind = ToWire(value.Kind),
             MemoryId = value.MemoryId,
             Category = value.Category,
             Content = value.Content,
@@ -172,9 +271,9 @@ internal static class MemoryInspectorRpcMapper
             ProfileId = value.ProfileId,
         };
 
-    public static MemoryCommand FromWire(Wire.MemoryCommand value)
+    internal static MemoryCommand FromWire(Wire.MemoryCommand value)
         => new(
-            EnumValue<MemoryCommandKind>(value.Kind, nameof(value.Kind)),
+            FromWire(value.Kind),
             value.MemoryId,
             value.Category,
             value.Content,
@@ -182,55 +281,23 @@ internal static class MemoryInspectorRpcMapper
             value.IsPinned,
             value.ProfileId);
 
-    public static Wire.MemoryProjection ToWire(MemoryProjection value)
+    internal static Wire.MemoryChanged ToWire(MemoryChanged value)
         => new()
         {
-            Sessions = value.Sessions?.Select(ToWire).ToArray(),
-            Checkpoint = value.Checkpoint is null ? null : ToWire(value.Checkpoint),
-            WorkingSummary = value.WorkingSummary is null ? null : ToWire(value.WorkingSummary),
-            Memories = value.Memories?.Select(ToWire).ToArray(),
-            Evidence = value.Evidence?.Select(ToWire).ToArray(),
-            Memory = value.Memory is null ? null : ToWire(value.Memory),
-            SupersedingMemory = value.SupersedingMemory is null ? null : ToWire(value.SupersedingMemory),
-            SupersededMemories = value.SupersededMemories?.Select(ToWire).ToArray(),
-            CorrectionLineage = value.CorrectionLineage?.Select(ToWire).ToArray(),
-            Correction = value.Correction is null ? null : ToWire(value.Correction),
-            IndexStatus = value.IndexStatus is null ? null : ToWire(value.IndexStatus),
-            SemanticState = value.SemanticState is null ? null : ToWire(value.SemanticState),
-            ReindexResult = value.ReindexResult is null ? null : ToWire(value.ReindexResult),
-            WorkerStatus = value.WorkerStatus is null ? null : ToWire(value.WorkerStatus),
-            Metrics = value.Metrics is null ? null : ToWire(value.Metrics),
-        };
-
-    public static MemoryProjection FromWire(Wire.MemoryProjection value)
-        => new(
-            value.Sessions?.Select(FromWire).ToArray(),
-            value.Checkpoint is null ? null : FromWire(value.Checkpoint),
-            value.WorkingSummary is null ? null : FromWire(value.WorkingSummary),
-            value.Memories?.Select(FromWire).ToArray(),
-            value.Evidence?.Select(FromWire).ToArray(),
-            value.Memory is null ? null : FromWire(value.Memory),
-            value.SupersedingMemory is null ? null : FromWire(value.SupersedingMemory),
-            value.SupersededMemories?.Select(FromWire).ToArray(),
-            value.CorrectionLineage?.Select(FromWire).ToArray(),
-            value.Correction is null ? null : FromWire(value.Correction),
-            value.IndexStatus is null ? null : FromWire(value.IndexStatus),
-            value.SemanticState is null ? null : FromWire(value.SemanticState),
-            value.ReindexResult is null ? null : FromWire(value.ReindexResult),
-            value.WorkerStatus is null ? null : FromWire(value.WorkerStatus),
-            value.Metrics is null ? null : FromWire(value.Metrics));
-
-    public static Wire.MemoryChanged ToWire(MemoryChanged value)
-        => new()
-        {
-            Kind = (long)value.Kind,
+            Kind = value.Kind == MemoryChangeKind.Session
+                ? Wire.MemoryChangeKind.Session
+                : Wire.MemoryChangeKind.Worker,
             SessionId = value.SessionId,
         };
 
-    public static MemoryChanged FromWire(Wire.MemoryChanged value)
-        => new(EnumValue<MemoryChangeKind>(value.Kind, nameof(value.Kind)), value.SessionId);
+    internal static MemoryChanged FromWire(Wire.MemoryChanged value)
+        => new(
+            value.Kind == Wire.MemoryChangeKind.Session
+                ? MemoryChangeKind.Session
+                : MemoryChangeKind.Worker,
+            value.SessionId);
 
-    private static Wire.StoredMemoryRecord ToWire(StoredMemoryRecord value)
+    private static Wire.StoredMemory ToWire(StoredMemoryRecord value)
         => new()
         {
             MemoryId = value.MemoryId,
@@ -242,18 +309,32 @@ internal static class MemoryInspectorRpcMapper
             Importance = value.Importance,
             Confidence = value.Confidence,
             IsPinned = value.IsPinned,
-            State = value.State,
+            State = value.State switch
+            {
+                MemoryRecordStates.Active => Wire.MemoryState.Active,
+                MemoryRecordStates.Contested => Wire.MemoryState.Contested,
+                MemoryRecordStates.Forgotten => Wire.MemoryState.Forgotten,
+                MemoryRecordStates.Superseded => Wire.MemoryState.Superseded,
+                _ => throw new InvalidDataException("The memory state is invalid."),
+            },
             SupersededByMemoryId = value.SupersededByMemoryId,
             CreatedAtUtc = Format(value.CreatedAtUtc),
             UpdatedAtUtc = Format(value.UpdatedAtUtc),
-            LastAccessedAtUtc = Format(value.LastAccessedAtUtc),
+            LastAccessedAtUtc = value.LastAccessedAtUtc is { } accessed ? Format(accessed) : null,
             AccessCount = value.AccessCount,
-            Provenance = (long)value.Provenance,
+            Provenance = value.Provenance switch
+            {
+                AgentMemoryProvenance.Unknown => Wire.MemoryProvenance.Unknown,
+                AgentMemoryProvenance.User => Wire.MemoryProvenance.User,
+                AgentMemoryProvenance.Assistant => Wire.MemoryProvenance.Assistant,
+                AgentMemoryProvenance.Tool => Wire.MemoryProvenance.Tool,
+                _ => throw new InvalidDataException("The memory provenance is invalid."),
+            },
             MemoryRevision = value.MemoryRevision,
             IsManual = value.IsManual,
         };
 
-    private static StoredMemoryRecord FromWire(Wire.StoredMemoryRecord value)
+    private static StoredMemoryRecord FromWire(Wire.StoredMemory value)
         => new(
             value.MemoryId,
             value.SessionId,
@@ -261,58 +342,34 @@ internal static class MemoryInspectorRpcMapper
             value.Content,
             value.EvidenceText,
             value.SourceTurnId,
-            checked((float)value.Importance),
-            checked((float)value.Confidence),
+            value.Importance,
+            value.Confidence,
             value.IsPinned,
-            value.State,
+            value.State switch
+            {
+                Wire.MemoryState.Active => MemoryRecordStates.Active,
+                Wire.MemoryState.Contested => MemoryRecordStates.Contested,
+                Wire.MemoryState.Forgotten => MemoryRecordStates.Forgotten,
+                Wire.MemoryState.Superseded => MemoryRecordStates.Superseded,
+                _ => throw new InvalidDataException("The memory state is invalid."),
+            },
             value.SupersededByMemoryId,
             Parse(value.CreatedAtUtc),
             Parse(value.UpdatedAtUtc),
-            ParseNullable(value.LastAccessedAtUtc),
+            value.LastAccessedAtUtc is { } accessed ? Parse(accessed) : null,
             checked((int)value.AccessCount),
-            EnumValue<AgentMemoryProvenance>(value.Provenance, nameof(value.Provenance)))
+            value.Provenance switch
+            {
+                Wire.MemoryProvenance.Unknown => AgentMemoryProvenance.Unknown,
+                Wire.MemoryProvenance.User => AgentMemoryProvenance.User,
+                Wire.MemoryProvenance.Assistant => AgentMemoryProvenance.Assistant,
+                Wire.MemoryProvenance.Tool => AgentMemoryProvenance.Tool,
+                _ => throw new InvalidDataException("The memory provenance is invalid."),
+            })
         {
             MemoryRevision = value.MemoryRevision,
             IsManual = value.IsManual,
         };
-
-    private static Wire.StoredMemoryEvidenceRecord ToWire(StoredMemoryEvidenceRecord value)
-        => new()
-        {
-            EvidenceId = value.EvidenceId,
-            MemoryId = value.MemoryId,
-            SessionId = value.SessionId,
-            SourceTurnId = value.SourceTurnId,
-            EvidenceText = value.EvidenceText,
-            CreatedAtUtc = Format(value.CreatedAtUtc),
-            ContributionId = value.ContributionId,
-        };
-
-    private static StoredMemoryEvidenceRecord FromWire(Wire.StoredMemoryEvidenceRecord value)
-        => new(
-            value.EvidenceId,
-            value.MemoryId,
-            value.SessionId,
-            value.SourceTurnId,
-            value.EvidenceText,
-            Parse(value.CreatedAtUtc))
-        {
-            ContributionId = value.ContributionId,
-        };
-
-    private static Wire.MemoryCorrectionResult ToWire(MemoryCorrectionResult value)
-        => new()
-        {
-            CorrectedMemory = ToWire(value.CorrectedMemory),
-            UpdatedSourceMemory = ToWire(value.UpdatedSourceMemory),
-            CreatedNewMemory = value.CreatedNewMemory,
-        };
-
-    private static MemoryCorrectionResult FromWire(Wire.MemoryCorrectionResult value)
-        => new(
-            FromWire(value.CorrectedMemory),
-            FromWire(value.UpdatedSourceMemory),
-            value.CreatedNewMemory);
 
     private static Wire.SemanticEmbeddingContext ToWire(SemanticEmbeddingContext value)
         => new()
@@ -336,185 +393,69 @@ internal static class MemoryInspectorRpcMapper
             value.ProviderDisplayName,
             value.ConfigurationFingerprint);
 
-    private static Wire.AgentSessionRecord ToWire(AgentSessionRecord value)
-        => new()
+    private static Wire.MemoryQueryKind ToWire(MemoryQueryKind value)
+        => value switch
         {
-            SessionId = value.SessionId,
-            Title = value.Title,
-            State = (long)value.State,
-            CreatedAtUtc = Format(value.CreatedAtUtc),
-            UpdatedAtUtc = Format(value.UpdatedAtUtc),
-            ParentSessionId = value.ParentSessionId,
-            RootSessionId = value.RootSessionId,
-            ParentRunId = value.ParentRunId,
-            ParentRunRevision = value.ParentRunRevision,
-            ParentToolCallId = value.ParentToolCallId,
-            TaskId = value.TaskId,
-            ProfileId = value.ProfileId,
-            BehaviorLoopId = value.BehaviorLoopId,
-            AgentKind = value.AgentKind,
-            WorkspaceId = value.WorkspaceId,
+            MemoryQueryKind.Sessions => Wire.MemoryQueryKind.Sessions,
+            MemoryQueryKind.SessionCheckpoint => Wire.MemoryQueryKind.SessionCheckpoint,
+            MemoryQueryKind.WorkingSummary => Wire.MemoryQueryKind.WorkingSummary,
+            MemoryQueryKind.Memories => Wire.MemoryQueryKind.Memories,
+            MemoryQueryKind.Details => Wire.MemoryQueryKind.Details,
+            MemoryQueryKind.SemanticState => Wire.MemoryQueryKind.SemanticState,
+            MemoryQueryKind.SemanticIndexStatus => Wire.MemoryQueryKind.SemanticIndexStatus,
+            MemoryQueryKind.WorkerStatus => Wire.MemoryQueryKind.WorkerStatus,
+            MemoryQueryKind.Metrics => Wire.MemoryQueryKind.Metrics,
+            _ => throw new InvalidDataException("The memory query kind is invalid."),
         };
 
-    private static AgentSessionRecord FromWire(Wire.AgentSessionRecord value)
-        => new(
-            value.SessionId,
-            value.Title,
-            EnumValue<AgentSessionState>(value.State, nameof(value.State)),
-            Parse(value.CreatedAtUtc),
-            Parse(value.UpdatedAtUtc),
-            value.ParentSessionId,
-            value.RootSessionId,
-            value.ParentRunId,
-            value.ParentRunRevision,
-            value.ParentToolCallId,
-            value.TaskId,
-            value.ProfileId,
-            value.BehaviorLoopId,
-            value.AgentKind,
-            value.WorkspaceId);
-
-    private static Wire.AgentSessionContextCheckpointRecord ToWire(AgentSessionContextCheckpointRecord value)
-        => new()
+    private static MemoryQueryKind FromWire(Wire.MemoryQueryKind value)
+        => value switch
         {
-            ContextCheckpointId = value.ContextCheckpointId,
-            SessionId = value.SessionId,
-            FirstOmittedTurnId = value.FirstOmittedTurnId,
-            LastOmittedTurnId = value.LastOmittedTurnId,
-            OmittedTurnCount = value.OmittedTurnCount,
-            SummaryText = value.SummaryText,
-            DetailsJson = value.DetailsJson,
-            CreatedAtUtc = Format(value.CreatedAtUtc),
+            Wire.MemoryQueryKind.Sessions => MemoryQueryKind.Sessions,
+            Wire.MemoryQueryKind.SessionCheckpoint => MemoryQueryKind.SessionCheckpoint,
+            Wire.MemoryQueryKind.WorkingSummary => MemoryQueryKind.WorkingSummary,
+            Wire.MemoryQueryKind.Memories => MemoryQueryKind.Memories,
+            Wire.MemoryQueryKind.Details => MemoryQueryKind.Details,
+            Wire.MemoryQueryKind.SemanticState => MemoryQueryKind.SemanticState,
+            Wire.MemoryQueryKind.SemanticIndexStatus => MemoryQueryKind.SemanticIndexStatus,
+            Wire.MemoryQueryKind.WorkerStatus => MemoryQueryKind.WorkerStatus,
+            Wire.MemoryQueryKind.Metrics => MemoryQueryKind.Metrics,
+            _ => throw new InvalidDataException("The memory query kind is invalid."),
         };
 
-    private static AgentSessionContextCheckpointRecord FromWire(Wire.AgentSessionContextCheckpointRecord value)
-        => new(
-            value.ContextCheckpointId,
-            value.SessionId,
-            value.FirstOmittedTurnId,
-            value.LastOmittedTurnId,
-            checked((int)value.OmittedTurnCount),
-            value.SummaryText,
-            value.DetailsJson,
-            Parse(value.CreatedAtUtc));
-
-    private static Wire.AgentWorkingSummaryRecord ToWire(AgentWorkingSummaryRecord value)
-        => new()
+    private static Wire.MemoryCommandKind ToWire(MemoryCommandKind value)
+        => value switch
         {
-            SessionId = value.SessionId,
-            SummaryText = value.SummaryText,
-            UpdatedAtUtc = Format(value.UpdatedAtUtc),
+            MemoryCommandKind.Update => Wire.MemoryCommandKind.Update,
+            MemoryCommandKind.Pin => Wire.MemoryCommandKind.Pin,
+            MemoryCommandKind.Contest => Wire.MemoryCommandKind.Contest,
+            MemoryCommandKind.Forget => Wire.MemoryCommandKind.Forget,
+            MemoryCommandKind.Supersede => Wire.MemoryCommandKind.Supersede,
+            MemoryCommandKind.Correct => Wire.MemoryCommandKind.Correct,
+            MemoryCommandKind.Reindex => Wire.MemoryCommandKind.Reindex,
+            _ => throw new InvalidDataException("The memory command kind is invalid."),
         };
 
-    private static AgentWorkingSummaryRecord FromWire(Wire.AgentWorkingSummaryRecord value)
-        => new(value.SessionId, value.SummaryText, Parse(value.UpdatedAtUtc));
-
-    private static Wire.SemanticMemoryStatusRecord ToWire(SemanticMemoryStatusRecord value)
-        => new() { StatusText = value.StatusText, CanReindex = value.CanReindex };
-
-    private static SemanticMemoryStatusRecord FromWire(Wire.SemanticMemoryStatusRecord value)
-        => new(value.StatusText, value.CanReindex);
-
-    private static Wire.SemanticMemorySessionStateRecord ToWire(SemanticMemorySessionStateRecord value)
-        => new() { Context = ToWire(value.Context), Status = ToWire(value.Status) };
-
-    private static SemanticMemorySessionStateRecord FromWire(Wire.SemanticMemorySessionStateRecord value)
-        => new(FromWire(value.Context), FromWire(value.Status));
-
-    private static Wire.SemanticMemoryReindexResult ToWire(SemanticMemoryReindexResult value)
-        => new() { Message = value.Message, IndexedMemoryCount = value.IndexedMemoryCount };
-
-    private static SemanticMemoryReindexResult FromWire(Wire.SemanticMemoryReindexResult value)
-        => new(value.Message, checked((int)value.IndexedMemoryCount));
-
-    private static Wire.SemanticMemoryWorkerStatusRecord ToWire(SemanticMemoryWorkerStatusRecord value)
-        => new()
+    private static MemoryCommandKind FromWire(Wire.MemoryCommandKind value)
+        => value switch
         {
-            StatusText = value.StatusText,
-            IsRunning = value.IsRunning,
-            PendingItemCount = value.PendingItemCount,
-            ProcessedItemCount = value.ProcessedItemCount,
-            LastSuccessfulRunAtUtc = Format(value.LastSuccessfulRunAtUtc),
-            LastFailureAtUtc = Format(value.LastFailureAtUtc),
-            LastFailureMessage = value.LastFailureMessage,
-            HasFailure = value.HasFailure,
+            Wire.MemoryCommandKind.Update => MemoryCommandKind.Update,
+            Wire.MemoryCommandKind.Pin => MemoryCommandKind.Pin,
+            Wire.MemoryCommandKind.Contest => MemoryCommandKind.Contest,
+            Wire.MemoryCommandKind.Forget => MemoryCommandKind.Forget,
+            Wire.MemoryCommandKind.Supersede => MemoryCommandKind.Supersede,
+            Wire.MemoryCommandKind.Correct => MemoryCommandKind.Correct,
+            Wire.MemoryCommandKind.Reindex => MemoryCommandKind.Reindex,
+            _ => throw new InvalidDataException("The memory command kind is invalid."),
         };
 
-    private static SemanticMemoryWorkerStatusRecord FromWire(Wire.SemanticMemoryWorkerStatusRecord value)
-        => new(
-            value.StatusText,
-            value.IsRunning,
-            checked((int)value.PendingItemCount),
-            value.ProcessedItemCount,
-            ParseNullable(value.LastSuccessfulRunAtUtc),
-            ParseNullable(value.LastFailureAtUtc),
-            value.LastFailureMessage,
-            value.HasFailure);
-
-    private static Wire.SemanticMemoryMetricsSnapshot ToWire(SemanticMemoryMetricsSnapshot value)
-        => new()
-        {
-            PromotionCandidateCount = value.PromotionCandidateCount,
-            PromotionWriteCount = value.PromotionWriteCount,
-            RecallRequestCount = value.RecallRequestCount,
-            RecallEntryCount = value.RecallEntryCount,
-            CorrectionCount = value.CorrectionCount,
-            WorkerFailureCount = value.WorkerFailureCount,
-        };
-
-    private static SemanticMemoryMetricsSnapshot FromWire(Wire.SemanticMemoryMetricsSnapshot value)
-        => new(
-            value.PromotionCandidateCount,
-            value.PromotionWriteCount,
-            value.RecallRequestCount,
-            value.RecallEntryCount,
-            value.CorrectionCount,
-            value.WorkerFailureCount);
-
-    private static Wire.MemorySemanticIndexStatusRecord ToWire(MemorySemanticIndexStatusRecord value)
-        => new()
-        {
-            StatusLabel = value.StatusLabel,
-            StatusText = value.StatusText,
-            IndexState = value.IndexState is null ? null : (long)value.IndexState.Value,
-            ProviderDisplayName = value.ProviderDisplayName,
-            ModelId = value.ModelId,
-        };
-
-    private static MemorySemanticIndexStatusRecord FromWire(Wire.MemorySemanticIndexStatusRecord value)
-        => new(
-            value.StatusLabel,
-            value.StatusText,
-            value.IndexState is null
-                ? null
-                : EnumValue<SemanticMemoryEntryIndexState>(value.IndexState.Value, nameof(value.IndexState)),
-            value.ProviderDisplayName,
-            value.ModelId);
-
-    private static TEnum EnumValue<TEnum>(long value, string fieldName)
-        where TEnum : struct, Enum
-    {
-        if (value is < int.MinValue or > int.MaxValue)
-        {
-            throw new InvalidOperationException($"RPC field '{fieldName}' is outside the supported enum range.");
-        }
-        var result = (TEnum)Enum.ToObject(typeof(TEnum), checked((int)value));
-        return Enum.IsDefined(result)
-            ? result
-            : throw new InvalidOperationException($"RPC field '{fieldName}' has an unknown value.");
-    }
-
-    private static string Format(DateTimeOffset value)
-        => value.ToUniversalTime().ToString(
+    private static SunderRpcOffsetDateTime Format(DateTimeOffset value)
+        => new(value.ToUniversalTime().ToString(
             "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF'Z'",
-            CultureInfo.InvariantCulture);
+            CultureInfo.InvariantCulture));
 
-    private static string? Format(DateTimeOffset? value)
-        => value is null ? null : Format(value.Value);
-
-    private static DateTimeOffset Parse(string value)
-        => DateTimeOffset.Parse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
-
-    private static DateTimeOffset? ParseNullable(string? value)
-        => value is null ? null : Parse(value);
+    private static DateTimeOffset Parse(SunderRpcOffsetDateTime value)
+        => value.TryGetDateTimeOffset(out var parsed)
+            ? parsed.ToUniversalTime()
+            : throw new InvalidDataException("The memory timestamp exceeds .NET precision.");
 }

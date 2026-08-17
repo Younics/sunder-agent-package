@@ -4,6 +4,7 @@ internal sealed class PresentationTaskScope : IDisposable
 {
     private readonly object _syncRoot = new();
     private readonly CancellationTokenSource _lifetime = new();
+    private readonly CancellationToken _cancellationToken;
     private readonly HashSet<Task> _operations = [];
     private readonly Func<Exception, Task>? _failureHandler;
     private bool _disposed;
@@ -11,14 +12,15 @@ internal sealed class PresentationTaskScope : IDisposable
     public PresentationTaskScope(Func<Exception, Task>? failureHandler = null)
     {
         _failureHandler = failureHandler;
+        _cancellationToken = _lifetime.Token;
     }
 
-    public CancellationToken CancellationToken => _lifetime.Token;
+    public CancellationToken CancellationToken => _cancellationToken;
 
     public void Run(Func<CancellationToken, Task> operation)
     {
         ArgumentNullException.ThrowIfNull(operation);
-        Task task;
+        CancellationToken cancellationToken;
         lock (_syncRoot)
         {
             if (_disposed)
@@ -26,19 +28,25 @@ internal sealed class PresentationTaskScope : IDisposable
                 return;
             }
 
-            try
-            {
-                task = operation(_lifetime.Token);
-            }
-            catch (Exception ex)
-            {
-                task = Task.FromException(ex);
-            }
+            cancellationToken = _cancellationToken;
+        }
 
+        Task task;
+        try
+        {
+            task = operation(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            task = Task.FromException(ex);
+        }
+
+        lock (_syncRoot)
+        {
             _operations.Add(task);
         }
 
-        _ = ObserveAsync(task);
+        OnTaskCompletedAsync(task, cancellationToken);
     }
 
     public void Run(Task operation)
@@ -63,18 +71,26 @@ internal sealed class PresentationTaskScope : IDisposable
         _lifetime.Dispose();
     }
 
-    private async Task ObserveAsync(Task task)
+    private async void OnTaskCompletedAsync(Task task, CancellationToken cancellationToken)
     {
         try
         {
             await task.ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
         }
         catch (Exception ex)
         {
-            await ReportFailureAsync(ex).ConfigureAwait(false);
+            if (PresentationExceptionPolicy.IsFatal(ex))
+            {
+                throw;
+            }
+
+            if (!cancellationToken.IsCancellationRequested)
+            {
+                await ReportFailureAsync(ex).ConfigureAwait(false);
+            }
         }
         finally
         {
@@ -87,9 +103,18 @@ internal sealed class PresentationTaskScope : IDisposable
 
     private async Task ReportFailureAsync(Exception exception)
     {
-        if (!_lifetime.IsCancellationRequested && _failureHandler is not null)
+        if (_failureHandler is null)
+        {
+            throw exception;
+        }
+
+        try
         {
             await _failureHandler(exception).ConfigureAwait(false);
+        }
+        catch (Exception handlerException) when (!PresentationExceptionPolicy.IsFatal(handlerException))
+        {
+            // The handler failure is observed here so failure reporting cannot recurse.
         }
     }
 }

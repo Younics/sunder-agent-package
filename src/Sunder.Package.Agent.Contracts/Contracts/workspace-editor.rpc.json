@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "descriptorVersion": 2,
+  "schemaProfile": "sunder.rpc.values.v1",
   "contractId": "sunder.agent.workspace.editor",
   "version": "1.0.0",
   "errors": {},
@@ -12,7 +13,7 @@
           "idempotency": "idempotent",
           "errors": [],
           "requestSchema": {
-            "$ref": "#/$defs/AgentRpcEmpty"
+            "$ref": "#/$defs/Unit"
           },
           "responseSchema": {
             "$ref": "#/$defs/AgentRpcIdentity"
@@ -26,7 +27,7 @@
             "$ref": "#/$defs/AgentWorkspaceEditorContext"
           },
           "responseSchema": {
-            "$ref": "#/$defs/Boolean"
+            "$ref": "#/$defs/Flag"
           }
         },
         "get-sections": {
@@ -37,7 +38,7 @@
             "$ref": "#/$defs/AgentWorkspaceEditorContext"
           },
           "responseSchema": {
-            "$ref": "#/$defs/ListOfAgentEditorSection"
+            "$ref": "#/$defs/AgentEditorSectionCollection"
           }
         },
         "save-section": {
@@ -55,25 +56,25 @@
     }
   },
   "$defs": {
-    "AgentRpcEmpty": {
+    "Unit": {
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
-    "String": {
+    "TextValue": {
       "type": "string",
       "minLength": 0,
-      "maxLength": 1000000
+      "maxLength": 65536
     },
     "AgentRpcIdentity": {
       "type": "object",
       "properties": {
         "displayName": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         },
         "id": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         }
       },
       "required": [
@@ -82,35 +83,30 @@
       ],
       "additionalProperties": false
     },
-    "DateTimeOffset": {
+    "Timestamp": {
       "type": "string",
-      "logicalType": "utc-date-time"
-    },
-    "Int32": {
-      "type": "integer",
-      "minimum": -2147483648,
-      "maximum": 2147483647
+      "format": "date-time"
     },
     "AgentWorkspaceDocumentRecord": {
       "type": "object",
       "properties": {
         "createdAtUtc": {
-          "$ref": "#/$defs/DateTimeOffset"
+          "$ref": "#/$defs/Timestamp"
         },
         "documentId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "filePath": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/PathText"
         },
         "sortOrder": {
-          "$ref": "#/$defs/Int32"
+          "$ref": "#/$defs/SortOrder"
         },
         "updatedAtUtc": {
-          "$ref": "#/$defs/DateTimeOffset"
+          "$ref": "#/$defs/Timestamp"
         },
         "workspaceId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         }
       },
       "required": [
@@ -123,40 +119,40 @@
       ],
       "additionalProperties": false
     },
-    "ListOfAgentWorkspaceDocumentRecord": {
+    "AgentWorkspaceDocumentRecordCollection": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentWorkspaceDocumentRecord"
       },
       "minItems": 0,
-      "maxItems": 1000000
+      "maxItems": 10000
     },
-    "Boolean": {
+    "Flag": {
       "type": "boolean"
     },
     "AgentWorkspacePathRecord": {
       "type": "object",
       "properties": {
         "createdAtUtc": {
-          "$ref": "#/$defs/DateTimeOffset"
+          "$ref": "#/$defs/Timestamp"
         },
         "hostPath": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/PathText"
         },
         "isDefault": {
-          "$ref": "#/$defs/Boolean"
+          "$ref": "#/$defs/Flag"
         },
         "pathId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "sortOrder": {
-          "$ref": "#/$defs/Int32"
+          "$ref": "#/$defs/SortOrder"
         },
         "updatedAtUtc": {
-          "$ref": "#/$defs/DateTimeOffset"
+          "$ref": "#/$defs/Timestamp"
         },
         "workspaceId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         }
       },
       "required": [
@@ -170,37 +166,37 @@
       ],
       "additionalProperties": false
     },
-    "ListOfAgentWorkspacePathRecord": {
+    "AgentWorkspacePathRecordCollection": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentWorkspacePathRecord"
       },
       "minItems": 0,
-      "maxItems": 1000000
+      "maxItems": 10000
     },
     "AgentWorkspaceRecord": {
       "type": "object",
       "properties": {
         "createdAtUtc": {
-          "$ref": "#/$defs/DateTimeOffset"
+          "$ref": "#/$defs/Timestamp"
         },
         "description": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         },
         "displayName": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         },
         "documents": {
-          "$ref": "#/$defs/ListOfAgentWorkspaceDocumentRecord"
+          "$ref": "#/$defs/AgentWorkspaceDocumentRecordCollection"
         },
         "paths": {
-          "$ref": "#/$defs/ListOfAgentWorkspacePathRecord"
+          "$ref": "#/$defs/AgentWorkspacePathRecordCollection"
         },
         "updatedAtUtc": {
-          "$ref": "#/$defs/DateTimeOffset"
+          "$ref": "#/$defs/Timestamp"
         },
         "workspaceId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         }
       },
       "required": [
@@ -217,10 +213,10 @@
       "type": "object",
       "properties": {
         "configurationId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "targetId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "workspace": {
           "$ref": "#/$defs/AgentWorkspaceRecord"
@@ -234,54 +230,54 @@
       "additionalProperties": false
     },
     "AgentEditorActionKind": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 2,
+      "type": "string",
+      "minLength": 13,
+      "maxLength": 21,
       "enum": [
-        0,
-        2
+        "open-package-settings",
+        "refresh-field"
       ]
     },
-    "NullableString": {
+    "TextValueOrNull": {
       "oneOf": [
         {
           "type": "null"
         },
         {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/TextValue"
         }
       ]
     },
-    "MapOfStringToNullableString": {
+    "EditorActionParameters": {
       "type": "object",
       "additionalProperties": {
-        "$ref": "#/$defs/NullableString"
+        "$ref": "#/$defs/TextValueOrNull"
       },
       "propertyNames": {
         "type": "string",
-        "minLength": 0,
-        "maxLength": 1000000
+        "minLength": 1,
+        "maxLength": 128
       },
       "minProperties": 0,
-      "maxProperties": 1000000
+      "maxProperties": 256
     },
     "AgentEditorAction": {
       "type": "object",
       "properties": {
         "actionId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "kind": {
           "$ref": "#/$defs/AgentEditorActionKind"
         },
         "label": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         },
         "packageId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "parameters": {
-          "$ref": "#/$defs/MapOfStringToNullableString"
+          "$ref": "#/$defs/EditorActionParameters"
         }
       },
       "required": [
@@ -291,28 +287,28 @@
       ],
       "additionalProperties": false
     },
-    "ListOfAgentEditorAction": {
+    "AgentEditorActionCollection": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentEditorAction"
       },
       "minItems": 0,
-      "maxItems": 1000000
+      "maxItems": 256
     },
     "AgentEditorListItem": {
       "type": "object",
       "properties": {
         "isDefault": {
-          "$ref": "#/$defs/Boolean"
+          "$ref": "#/$defs/Flag"
         },
         "itemId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "secondaryValue": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/TextValue"
         },
         "value": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/TextValue"
         }
       },
       "required": [
@@ -322,35 +318,35 @@
       ],
       "additionalProperties": false
     },
-    "ListOfAgentEditorListItem": {
+    "AgentEditorListItemCollection": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentEditorListItem"
       },
       "minItems": 0,
-      "maxItems": 1000000
+      "maxItems": 256
     },
     "AgentEditorFieldKind": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 2,
+      "type": "string",
+      "minLength": 4,
+      "maxLength": 9,
       "enum": [
-        0,
-        1,
-        2
+        "text",
+        "select",
+        "path-list"
       ]
     },
     "AgentEditorOption": {
       "type": "object",
       "properties": {
         "description": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         },
         "label": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         },
         "value": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/TextValue"
         }
       },
       "required": [
@@ -359,61 +355,61 @@
       ],
       "additionalProperties": false
     },
-    "ListOfAgentEditorOption": {
+    "AgentEditorOptionCollection": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentEditorOption"
       },
       "minItems": 0,
-      "maxItems": 1000000
+      "maxItems": 256
     },
     "AgentEditorField": {
       "type": "object",
       "properties": {
         "actions": {
-          "$ref": "#/$defs/ListOfAgentEditorAction"
+          "$ref": "#/$defs/AgentEditorActionCollection"
         },
         "addItemLabel": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         },
         "defaultNewItemValue": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/TextValue"
         },
         "defaultNewSecondaryItemValue": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/TextValue"
         },
         "description": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         },
         "fieldId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "itemValueLabel": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         },
         "items": {
-          "$ref": "#/$defs/ListOfAgentEditorListItem"
+          "$ref": "#/$defs/AgentEditorListItemCollection"
         },
         "kind": {
           "$ref": "#/$defs/AgentEditorFieldKind"
         },
         "label": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         },
         "options": {
-          "$ref": "#/$defs/ListOfAgentEditorOption"
+          "$ref": "#/$defs/AgentEditorOptionCollection"
         },
         "secondaryItemValueLabel": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         },
         "useFolderPicker": {
-          "$ref": "#/$defs/Boolean"
+          "$ref": "#/$defs/Flag"
         },
         "useSecondaryFolderPicker": {
-          "$ref": "#/$defs/Boolean"
+          "$ref": "#/$defs/Flag"
         },
         "value": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/TextValue"
         }
       },
       "required": [
@@ -425,28 +421,28 @@
       ],
       "additionalProperties": false
     },
-    "ListOfAgentEditorField": {
+    "AgentEditorFieldCollection": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentEditorField"
       },
       "minItems": 0,
-      "maxItems": 1000000
+      "maxItems": 256
     },
     "AgentEditorSection": {
       "type": "object",
       "properties": {
         "description": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         },
         "fields": {
-          "$ref": "#/$defs/ListOfAgentEditorField"
+          "$ref": "#/$defs/AgentEditorFieldCollection"
         },
         "sectionId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "title": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         }
       },
       "required": [
@@ -456,48 +452,48 @@
       ],
       "additionalProperties": false
     },
-    "ListOfAgentEditorSection": {
+    "AgentEditorSectionCollection": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentEditorSection"
       },
       "minItems": 0,
-      "maxItems": 1000000
+      "maxItems": 256
     },
     "AgentEditorFieldValue": {
       "type": "object",
       "properties": {
         "items": {
-          "$ref": "#/$defs/ListOfAgentEditorListItem"
+          "$ref": "#/$defs/AgentEditorListItemCollection"
         },
         "value": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/TextValue"
         }
       },
       "required": [],
       "additionalProperties": false
     },
-    "MapOfStringToAgentEditorFieldValue": {
+    "EditorFieldValues": {
       "type": "object",
       "additionalProperties": {
         "$ref": "#/$defs/AgentEditorFieldValue"
       },
       "propertyNames": {
         "type": "string",
-        "minLength": 0,
-        "maxLength": 1000000
+        "minLength": 1,
+        "maxLength": 128
       },
       "minProperties": 0,
-      "maxProperties": 1000000
+      "maxProperties": 256
     },
     "AgentEditorSaveRequest": {
       "type": "object",
       "properties": {
         "fields": {
-          "$ref": "#/$defs/MapOfStringToAgentEditorFieldValue"
+          "$ref": "#/$defs/EditorFieldValues"
         },
         "sectionId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         }
       },
       "required": [
@@ -526,10 +522,10 @@
       "type": "object",
       "properties": {
         "message": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         },
         "success": {
-          "$ref": "#/$defs/Boolean"
+          "$ref": "#/$defs/Flag"
         }
       },
       "required": [
@@ -537,6 +533,26 @@
         "success"
       ],
       "additionalProperties": false
+    },
+    "Identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "PathText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 4096
+    },
+    "DisplayText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 8192
+    },
+    "SortOrder": {
+      "type": "integer",
+      "minimum": -100000,
+      "maximum": 100000
     }
   }
 }

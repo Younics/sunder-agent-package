@@ -1,6 +1,5 @@
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Contracts.Services;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Rpc;
 
@@ -9,14 +8,15 @@ namespace Sunder.Package.Agent.Subagents.Services;
 internal sealed class SubagentEditorCapabilityCatalog : IDisposable
 {
     private readonly AgentRpcCatalog _rpcCatalog;
-    private readonly AgentProfileSelectableCapabilityChangeObserver _changeObserver;
+    private readonly object _subscriptionGate = new();
+    private readonly List<ProviderSubscription> _providerSubscriptions = [];
     private bool _disposed;
 
     public SubagentEditorCapabilityCatalog(AgentRpcCatalog rpcCatalog)
     {
         _rpcCatalog = rpcCatalog;
-        _changeObserver = new AgentProfileSelectableCapabilityChangeObserver(rpcCatalog);
-        _changeObserver.Changed += OnChanged;
+        _rpcCatalog.Changed += OnCatalogChanged;
+        RefreshProviderSubscriptions();
     }
 
     public event Action? Changed;
@@ -67,7 +67,7 @@ internal sealed class SubagentEditorCapabilityCatalog : IDisposable
     {
         try
         {
-            _changeObserver.RefreshProviderSubscriptions();
+            RefreshProviderSubscriptions();
         }
         catch (SunderRpcException exception) when (exception.Error.Kind == SunderRpcErrorKind.Cancelled)
         {
@@ -110,17 +110,105 @@ internal sealed class SubagentEditorCapabilityCatalog : IDisposable
             .ToArray();
     }
 
-    private void OnChanged() => Changed?.Invoke();
-
-    public void Dispose()
+    private void OnCatalogChanged(object? sender, AgentRpcCatalogChangedEventArgs e)
     {
-        if (_disposed)
+        if (!e.IncludesContract(AgentRpcContractIds.ChatProvider)
+            && !e.IncludesContract(AgentRpcContractIds.ToolSource)
+            && !e.IncludesContract(AgentRpcContractIds.SelectableCapabilityProvider)
+            && !e.IncludesContract(AgentRpcContractIds.RuntimeCatalog))
         {
             return;
         }
 
-        _disposed = true;
-        _changeObserver.Changed -= OnChanged;
-        _changeObserver.Dispose();
+        if (e.IncludesContract(AgentRpcContractIds.SelectableCapabilityProvider))
+        {
+            RefreshProviderSubscriptions();
+        }
+        Changed?.Invoke();
+    }
+
+    private void RefreshProviderSubscriptions()
+    {
+        lock (_subscriptionGate)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            var currentSubscriptions = new HashSet<ProviderSubscription>();
+            foreach (var reference in _rpcCatalog.GetServiceReferences(
+                         AgentRpcServices.SelectableCapabilityProviders))
+            {
+                if (!reference.TryAcquire(out var lease))
+                {
+                    continue;
+                }
+
+                if (lease.Service is not IAgentProfileSelectableCapabilityChangeNotifier notifier
+                    || lease.RetirementToken.IsCancellationRequested)
+                {
+                    lease.Dispose();
+                    continue;
+                }
+
+                var existing = _providerSubscriptions.FirstOrDefault(subscription =>
+                    ReferenceEquals(subscription.Notifier, notifier));
+                if (existing is not null)
+                {
+                    currentSubscriptions.Add(existing);
+                    lease.Dispose();
+                    continue;
+                }
+
+                var added = new ProviderSubscription(lease, notifier);
+                notifier.SelectableCapabilitiesChanged += OnSelectableCapabilitiesChanged;
+                _providerSubscriptions.Add(added);
+                currentSubscriptions.Add(added);
+            }
+
+            foreach (var subscription in _providerSubscriptions
+                         .Where(subscription => !currentSubscriptions.Contains(subscription))
+                         .ToArray())
+            {
+                subscription.Notifier.SelectableCapabilitiesChanged -= OnSelectableCapabilitiesChanged;
+                _providerSubscriptions.Remove(subscription);
+                subscription.Dispose();
+            }
+        }
+    }
+
+    private void OnSelectableCapabilitiesChanged()
+        => Changed?.Invoke();
+
+    public void Dispose()
+    {
+        lock (_subscriptionGate)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _disposed = true;
+            _rpcCatalog.Changed -= OnCatalogChanged;
+            foreach (var subscription in _providerSubscriptions)
+            {
+                subscription.Notifier.SelectableCapabilitiesChanged -= OnSelectableCapabilitiesChanged;
+                subscription.Dispose();
+            }
+            _providerSubscriptions.Clear();
+        }
+    }
+
+    private sealed class ProviderSubscription(
+        AgentRpcLease<IAgentProfileSelectableCapabilityProvider> lease,
+        IAgentProfileSelectableCapabilityChangeNotifier notifier) : IDisposable
+    {
+        private AgentRpcLease<IAgentProfileSelectableCapabilityProvider>? _lease = lease;
+
+        internal IAgentProfileSelectableCapabilityChangeNotifier Notifier { get; } = notifier;
+
+        public void Dispose() => Interlocked.Exchange(ref _lease, null)?.Dispose();
     }
 }

@@ -37,7 +37,7 @@
   <ItemGroup>
     <SunderContractBundle Include="..\Shared\Contracts\mcp-management.rpc.json"
                           ContractId="sunder.package.agent.mcp.management"
-                          Version="2.0.0"
+                           Version="2.0.0"
                           DescriptorPath="contracts/mcp-management.rpc.json"
                           Exposure="package" />
     <SunderRpcProvider Include="mcp.management"

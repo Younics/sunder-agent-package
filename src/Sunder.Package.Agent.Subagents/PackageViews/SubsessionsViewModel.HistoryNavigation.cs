@@ -20,6 +20,25 @@ public sealed partial class SubsessionsViewModel
         PackageViewNavigationContext context,
         CancellationToken cancellationToken = default)
     {
+        var prepared = TryGetSessionId(context.Parameters) is null
+                       && TryGetNavigationAnchor(context.Parameters) is null;
+        await _operations.RunAsync(
+            SubsessionPreparationOperation,
+            async operationCancellation =>
+            {
+                prepared = await PrepareNavigationCoreAsync(
+                    context,
+                    operationCancellation).ConfigureAwait(false);
+            },
+            ReconcileSubsessionLoadFailureAsync,
+            cancellationToken).ConfigureAwait(false);
+        return prepared;
+    }
+
+    private async Task<bool> PrepareNavigationCoreAsync(
+        PackageViewNavigationContext context,
+        CancellationToken cancellationToken)
+    {
         var request = _requests.Begin(NavigationChannel, cancellationToken);
         try
         {
@@ -52,26 +71,10 @@ public sealed partial class SubsessionsViewModel
         {
             throw new InvalidOperationException("The navigation anchor does not match the selected child session.");
         }
-        try
-        {
-            await EnsureInitializedAsync(
-                sessionId,
-                cancellationToken,
-                suppressTranscriptLoad: navigationAnchor is not null);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            await RunOnUiThreadAsync(() =>
-            {
-                EnsureCurrentNavigation(navigation);
-                SetLoadFailure(ex.Message);
-            }, cancellationToken).ConfigureAwait(false);
-            return sessionId is null && navigationAnchor is null;
-        }
+        await EnsureInitializedAsync(
+            sessionId,
+            cancellationToken,
+            suppressTranscriptLoad: navigationAnchor is not null);
         EnsureCurrentNavigation(navigation);
         var navigationAlreadyApplied = false;
         await RunOnUiThreadAsync(() =>

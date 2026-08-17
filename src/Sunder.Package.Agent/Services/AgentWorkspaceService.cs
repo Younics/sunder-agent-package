@@ -54,7 +54,7 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
             now);
 
         _store.SaveWorkspace(workspace);
-        WorkspacesChanged?.Invoke();
+        NotifyWorkspacesChanged();
         return workspace;
     }
 
@@ -66,7 +66,7 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
         lock (GetExecutionContextSyncRoot(workspaceId))
         {
             var existing = _store.GetWorkspace(workspaceId)
-                ?? throw new InvalidOperationException($"Workspace '{workspaceId}' was not found.");
+                ?? throw new AgentWorkspaceOperationException($"Workspace '{workspaceId}' was not found.");
 
             var next = existing with
             {
@@ -77,19 +77,19 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
 
             _store.SaveWorkspace(next);
         }
-        WorkspacesChanged?.Invoke();
+        NotifyWorkspacesChanged();
     }
 
     public void SaveWorkspacePaths(string workspaceId, IReadOnlyList<AgentWorkspacePathRecord> paths)
     {
         SaveWorkspacePathsCore(workspaceId, paths);
-        WorkspacesChanged?.Invoke();
+        NotifyWorkspacesChanged();
     }
 
     public void SaveWorkspaceDocuments(string workspaceId, IReadOnlyList<AgentWorkspaceDocumentRecord> documents)
     {
         SaveWorkspaceDocumentsCore(workspaceId, documents);
-        WorkspacesChanged?.Invoke();
+        NotifyWorkspacesChanged();
     }
 
     public void SaveWorkspaceAggregate(
@@ -103,7 +103,7 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
         lock (GetExecutionContextSyncRoot(workspaceId))
         {
             var existing = _store.GetWorkspace(workspaceId)
-                ?? throw new InvalidOperationException($"Workspace '{workspaceId}' was not found.");
+                ?? throw new AgentWorkspaceOperationException($"Workspace '{workspaceId}' was not found.");
             var now = DateTimeOffset.UtcNow;
             var workspace = existing with
             {
@@ -141,7 +141,7 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
                 NormalizeDocumentRecords(workspaceId, documents),
                 binding);
         }
-        WorkspacesChanged?.Invoke();
+        NotifyWorkspacesChanged();
     }
 
     public void DeleteWorkspace(string workspaceId)
@@ -153,7 +153,7 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
                 ?? AgentSessionService.SnapshotSessionDataCleaners(_rpcCatalog);
             deletedSessionIds = _store.DeleteWorkspaceWithSessions(workspaceId, cleaners);
         }
-        WorkspacesChanged?.Invoke();
+        NotifyWorkspacesChanged();
         _sessionService?.CompleteSessionDeletion(deletedSessionIds);
     }
 
@@ -165,7 +165,7 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
     {
         if (string.IsNullOrWhiteSpace(workspace.WorkspaceId))
         {
-            throw new InvalidOperationException("Workspace id cannot be empty.");
+            throw new AgentWorkspaceOperationException("Workspace id cannot be empty.");
         }
 
         var workspaceId = workspace.WorkspaceId.Trim();
@@ -214,11 +214,11 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
                 binding);
         }
 
-        WorkspacesChanged?.Invoke();
+        NotifyWorkspacesChanged();
     }
 
     public void NotifyWorkspacesImported()
-        => WorkspacesChanged?.Invoke();
+        => NotifyWorkspacesChanged();
 
     public IReadOnlyList<AgentWorkspaceBindingRecord> ListBindings(string workspaceId)
         => _store.ListWorkspaceBindings(workspaceId);
@@ -254,8 +254,29 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
 
             _store.SaveWorkspaceBinding(binding);
         }
-        WorkspacesChanged?.Invoke();
+        NotifyWorkspacesChanged();
         return binding;
+    }
+
+    private void NotifyWorkspacesChanged()
+    {
+        var handlers = WorkspacesChanged;
+        if (handlers is null)
+        {
+            return;
+        }
+
+        foreach (Action handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                handler();
+            }
+            catch (Exception exception) when (!AgentServiceExceptionPolicy.IsFatal(exception))
+            {
+                // Listeners cannot invalidate an already committed workspace mutation.
+            }
+        }
     }
 
     public static string BuildPrimaryBindingId(string workspaceId, string role = AgentWorkspaceBindingRoles.PrimaryExecutionTarget)
@@ -404,7 +425,7 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
                 continue;
             }
 
-            var hostPath = Path.GetFullPath(ExpandPath(path.HostPath.Trim()));
+            var hostPath = GetFullWorkspacePath(path.HostPath, "path");
             if (normalized.Any(item => comparer.Equals(item.HostPath, hostPath)))
             {
                 continue;
@@ -453,7 +474,7 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
                 continue;
             }
 
-            var filePath = Path.GetFullPath(ExpandPath(document.FilePath.Trim()));
+            var filePath = GetFullWorkspacePath(document.FilePath, "document path");
             if (normalized.Any(item => comparer.Equals(item.FilePath, filePath)))
             {
                 continue;
@@ -490,8 +511,32 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
             : Environment.ExpandEnvironmentVariables(path);
     }
 
+    private static string GetFullWorkspacePath(string path, string description)
+    {
+        try
+        {
+            return Path.GetFullPath(ExpandPath(path.Trim()));
+        }
+        catch (ArgumentException exception)
+        {
+            throw new AgentWorkspaceOperationException($"The workspace {description} is invalid.", exception);
+        }
+        catch (NotSupportedException exception)
+        {
+            throw new AgentWorkspaceOperationException($"The workspace {description} is invalid.", exception);
+        }
+        catch (PathTooLongException exception)
+        {
+            throw new AgentWorkspaceOperationException($"The workspace {description} is too long.", exception);
+        }
+    }
+
     private static StringComparer GetPathStringComparer()
         => OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
             ? StringComparer.OrdinalIgnoreCase
             : StringComparer.Ordinal;
 }
+
+internal sealed class AgentWorkspaceOperationException(
+    string message,
+    Exception? innerException = null) : InvalidOperationException(message, innerException);

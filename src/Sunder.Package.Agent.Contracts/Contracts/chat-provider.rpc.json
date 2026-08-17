@@ -1,13 +1,10 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "descriptorVersion": 2,
+  "schemaProfile": "sunder.rpc.values.v1",
   "contractId": "sunder.agent.chat.provider",
   "version": "1.0.0",
-  "errors": {
-    "agent.chat.option-not-representable": {
-      "description": "A numeric chat option cannot be represented losslessly by the provider-facing Microsoft.Extensions.AI ChatOptions binary32 field."
-    }
-  },
+  "errors": {},
   "services": {
     "chat-provider": {
       "methods": {
@@ -16,7 +13,7 @@
           "idempotency": "idempotent",
           "errors": [],
           "requestSchema": {
-            "$ref": "#/$defs/AgentRpcEmpty"
+            "$ref": "#/$defs/Unit"
           },
           "responseSchema": {
             "$ref": "#/$defs/AgentProviderDescriptor"
@@ -27,10 +24,10 @@
           "idempotency": "idempotent",
           "errors": [],
           "requestSchema": {
-            "$ref": "#/$defs/AgentRpcEmpty"
+            "$ref": "#/$defs/Unit"
           },
           "responseSchema": {
-            "$ref": "#/$defs/AgentModelDescriptorList"
+            "$ref": "#/$defs/ChatModels"
           }
         },
         "get-readiness": {
@@ -38,7 +35,7 @@
           "idempotency": "idempotent",
           "errors": [],
           "requestSchema": {
-            "$ref": "#/$defs/AgentRpcEmpty"
+            "$ref": "#/$defs/Unit"
           },
           "responseSchema": {
             "$ref": "#/$defs/AgentProviderReadiness"
@@ -60,18 +57,16 @@
           "idempotency": "idempotent",
           "errors": [],
           "requestSchema": {
-            "$ref": "#/$defs/AgentRpcEmpty"
+            "$ref": "#/$defs/Unit"
           },
           "responseSchema": {
-            "$ref": "#/$defs/AgentRpcOptionalString"
+            "$ref": "#/$defs/UtilityModelResolution"
           }
         },
         "stream-chat": {
           "kind": "server-stream",
           "idempotency": "none",
-          "errors": [
-            "agent.chat.option-not-representable"
-          ],
+          "errors": [],
           "requestSchema": {
             "$ref": "#/$defs/AgentChatStreamRequest"
           },
@@ -83,16 +78,16 @@
     }
   },
   "$defs": {
-    "AgentRpcEmpty": {
+    "Unit": {
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
-    "Text": {
+    "TextValue": {
       "type": "string",
       "minLength": 0,
-      "maxLength": 1000000
+      "maxLength": 65536
     },
     "ShortText": {
       "type": "string",
@@ -101,62 +96,50 @@
     },
     "Timestamp": {
       "type": "string",
-      "logicalType": "utc-date-time"
+      "format": "date-time"
     },
-    "Date": {
+    "CalendarDate": {
       "type": "string",
-      "minLength": 10,
-      "maxLength": 10
-    },
-    "Int32": {
-      "type": "integer",
-      "minimum": -2147483648,
-      "maximum": 2147483647
-    },
-    "NonNegativeInt32": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 2147483647
+      "format": "date"
     },
     "SafeInteger": {
       "type": "integer",
       "minimum": -9007199254740991,
       "maximum": 9007199254740991
     },
-    "OptionNumber": {
+    "ChatOptionValue": {
       "type": "number",
-      "minimum": -1000000,
-      "maximum": 1000000,
-      "description": "A finite binary64 wire value produced by losslessly widening a finite IEEE 754 binary32 chat option; other values fail with agent.chat.option-not-representable."
+      "format": "float32",
+      "description": "A finite IEEE 754 binary32 Microsoft.Extensions.AI chat option."
     },
     "AgentAuthMode": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 1,
+      "type": "string",
+      "minLength": 7,
+      "maxLength": 15,
       "enum": [
-        0,
-        1
+        "api-key",
+        "codex-connected"
       ]
     },
-    "AgentAuthModeList": {
+    "SupportedAuthModes": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentAuthMode"
       },
       "minItems": 0,
-      "maxItems": 16
+      "maxItems": 4096
     },
     "AgentProviderDescriptor": {
       "type": "object",
       "properties": {
         "providerId": {
-          "$ref": "#/$defs/ShortText"
+          "$ref": "#/$defs/Identifier"
         },
         "displayName": {
-          "$ref": "#/$defs/ShortText"
+          "$ref": "#/$defs/DisplayText"
         },
         "supportedAuthModes": {
-          "$ref": "#/$defs/AgentAuthModeList"
+          "$ref": "#/$defs/SupportedAuthModes"
         },
         "supportsStreaming": {
           "type": "boolean"
@@ -165,7 +148,7 @@
           "type": "boolean"
         },
         "packageId": {
-          "$ref": "#/$defs/ShortText"
+          "$ref": "#/$defs/Identifier"
         }
       },
       "required": [
@@ -178,28 +161,28 @@
       "additionalProperties": false
     },
     "AgentReasoningEffort": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 4,
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 10,
       "enum": [
-        0,
-        1,
-        2,
-        3,
-        4
+        "none",
+        "low",
+        "medium",
+        "high",
+        "extra-high"
       ]
     },
     "AgentModelVariantDescriptor": {
       "type": "object",
       "properties": {
         "variantId": {
-          "$ref": "#/$defs/ShortText"
+          "$ref": "#/$defs/Identifier"
         },
         "displayName": {
-          "$ref": "#/$defs/ShortText"
+          "$ref": "#/$defs/DisplayText"
         },
         "description": {
-          "$ref": "#/$defs/Text"
+          "$ref": "#/$defs/DisplayText"
         },
         "reasoningEffort": {
           "$ref": "#/$defs/AgentReasoningEffort"
@@ -211,25 +194,25 @@
       ],
       "additionalProperties": false
     },
-    "AgentModelVariantDescriptorList": {
+    "ModelVariants": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentModelVariantDescriptor"
       },
       "minItems": 0,
-      "maxItems": 256
+      "maxItems": 10000
     },
     "AgentModelSpeedOptionDescriptor": {
       "type": "object",
       "properties": {
         "speedOptionId": {
-          "$ref": "#/$defs/ShortText"
+          "$ref": "#/$defs/Identifier"
         },
         "displayName": {
-          "$ref": "#/$defs/ShortText"
+          "$ref": "#/$defs/DisplayText"
         },
         "description": {
-          "$ref": "#/$defs/Text"
+          "$ref": "#/$defs/DisplayText"
         }
       },
       "required": [
@@ -238,25 +221,25 @@
       ],
       "additionalProperties": false
     },
-    "AgentModelSpeedOptionDescriptorList": {
+    "ModelSpeedOptions": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentModelSpeedOptionDescriptor"
       },
       "minItems": 0,
-      "maxItems": 256
+      "maxItems": 10000
     },
     "AgentModelModeOptionDescriptor": {
       "type": "object",
       "properties": {
         "modeOptionId": {
-          "$ref": "#/$defs/ShortText"
+          "$ref": "#/$defs/Identifier"
         },
         "displayName": {
-          "$ref": "#/$defs/ShortText"
+          "$ref": "#/$defs/DisplayText"
         },
         "description": {
-          "$ref": "#/$defs/Text"
+          "$ref": "#/$defs/DisplayText"
         },
         "disablesReasoning": {
           "type": "boolean"
@@ -269,43 +252,43 @@
       ],
       "additionalProperties": false
     },
-    "AgentModelModeOptionDescriptorList": {
+    "ModelModeOptions": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentModelModeOptionDescriptor"
       },
       "minItems": 0,
-      "maxItems": 256
+      "maxItems": 10000
     },
     "AgentModelDescriptor": {
       "type": "object",
       "properties": {
         "modelId": {
-          "$ref": "#/$defs/ShortText"
+          "$ref": "#/$defs/Identifier"
         },
         "displayName": {
-          "$ref": "#/$defs/ShortText"
+          "$ref": "#/$defs/DisplayText"
         },
         "contextWindow": {
-          "$ref": "#/$defs/NonNegativeInt32"
+          "$ref": "#/$defs/TokenCount"
         },
         "maxOutputTokens": {
-          "$ref": "#/$defs/NonNegativeInt32"
+          "$ref": "#/$defs/TokenCount"
         },
         "isRecommended": {
           "type": "boolean"
         },
         "variants": {
-          "$ref": "#/$defs/AgentModelVariantDescriptorList"
+          "$ref": "#/$defs/ModelVariants"
         },
         "speedOptions": {
-          "$ref": "#/$defs/AgentModelSpeedOptionDescriptorList"
+          "$ref": "#/$defs/ModelSpeedOptions"
         },
         "modeOptions": {
-          "$ref": "#/$defs/AgentModelModeOptionDescriptorList"
+          "$ref": "#/$defs/ModelModeOptions"
         },
         "releaseDate": {
-          "$ref": "#/$defs/Date"
+          "$ref": "#/$defs/CalendarDate"
         }
       },
       "required": [
@@ -317,7 +300,7 @@
       ],
       "additionalProperties": false
     },
-    "AgentModelDescriptorList": {
+    "ChatModels": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentModelDescriptor"
@@ -326,26 +309,26 @@
       "maxItems": 10000
     },
     "AgentProviderReadinessStatus": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 2,
+      "type": "string",
+      "minLength": 5,
+      "maxLength": 19,
       "enum": [
-        0,
-        1,
-        2
+        "ready",
+        "needs-configuration",
+        "failed"
       ]
     },
     "AgentProviderReadiness": {
       "type": "object",
       "properties": {
         "providerId": {
-          "$ref": "#/$defs/ShortText"
+          "$ref": "#/$defs/Identifier"
         },
         "status": {
           "$ref": "#/$defs/AgentProviderReadinessStatus"
         },
         "message": {
-          "$ref": "#/$defs/Text"
+          "$ref": "#/$defs/DisplayText"
         }
       },
       "required": [
@@ -359,7 +342,7 @@
       "type": "object",
       "properties": {
         "modelId": {
-          "$ref": "#/$defs/ShortText"
+          "$ref": "#/$defs/Identifier"
         }
       },
       "required": [],
@@ -378,7 +361,7 @@
           "type": "boolean"
         },
         "summary": {
-          "$ref": "#/$defs/Text"
+          "$ref": "#/$defs/DisplayText"
         },
         "supportsImageInput": {
           "type": "boolean"
@@ -393,10 +376,10 @@
           "type": "boolean"
         },
         "contextWindowTokens": {
-          "$ref": "#/$defs/NonNegativeInt32"
+          "$ref": "#/$defs/TokenCount"
         },
         "maxOutputTokens": {
-          "$ref": "#/$defs/NonNegativeInt32"
+          "$ref": "#/$defs/TokenCount"
         }
       },
       "required": [
@@ -411,31 +394,17 @@
       ],
       "additionalProperties": false
     },
-    "AgentRpcOptionalString": {
-      "type": "object",
-      "properties": {
-        "hasValue": {
-          "type": "boolean"
+    "UtilityModelResolution": {
+      "oneOf": [
+        {
+          "type": "null"
         },
-        "value": {
+        {
           "$ref": "#/$defs/ShortText"
         }
-      },
-      "required": [
-        "hasValue"
-      ],
-      "additionalProperties": false
-    },
-    "SunderRpcContentRepeatability": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 1,
-      "enum": [
-        0,
-        1
       ]
     },
-    "SunderRpcContentReference": {
+    "ContentReference": {
       "type": "object",
       "logicalType": "content-reference"
     },
@@ -443,16 +412,16 @@
       "type": "object",
       "properties": {
         "role": {
-          "$ref": "#/$defs/ShortText"
+          "$ref": "#/$defs/Identifier"
         },
         "messageId": {
-          "$ref": "#/$defs/ShortText"
+          "$ref": "#/$defs/Identifier"
         },
         "authorName": {
-          "$ref": "#/$defs/ShortText"
+          "$ref": "#/$defs/TextValue"
         },
         "contents": {
-          "$ref": "#/$defs/AgentChatContentList"
+          "$ref": "#/$defs/ChatContents"
         }
       },
       "required": [
@@ -461,25 +430,25 @@
       ],
       "additionalProperties": false
     },
-    "AgentChatMessageList": {
+    "ChatMessages": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentChatMessage"
       },
       "minItems": 0,
-      "maxItems": 10000
+      "maxItems": 4096
     },
     "AgentChatTool": {
       "type": "object",
       "properties": {
         "name": {
-          "$ref": "#/$defs/ShortText"
+          "$ref": "#/$defs/TextValue"
         },
         "description": {
-          "$ref": "#/$defs/Text"
+          "$ref": "#/$defs/DisplayText"
         },
         "jsonSchema": {
-          "$ref": "#/$defs/Text"
+          "$ref": "#/$defs/JSONObject"
         }
       },
       "required": [
@@ -488,56 +457,43 @@
       ],
       "additionalProperties": false
     },
-    "AgentChatToolList": {
+    "ChatTools": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentChatTool"
       },
       "minItems": 0,
-      "maxItems": 10000
-    },
-    "StringMap": {
-      "type": "object",
-      "additionalProperties": {
-        "$ref": "#/$defs/Text"
-      },
-      "propertyNames": {
-        "type": "string",
-        "minLength": 0,
-        "maxLength": 2048
-      },
-      "minProperties": 0,
-      "maxProperties": 10000
+      "maxItems": 4096
     },
     "AgentChatOptions": {
       "type": "object",
       "properties": {
         "instructions": {
-          "$ref": "#/$defs/Text"
+          "$ref": "#/$defs/ContentText"
         },
         "conversationId": {
-          "$ref": "#/$defs/ShortText"
+          "$ref": "#/$defs/Identifier"
         },
         "modelId": {
-          "$ref": "#/$defs/ShortText"
+          "$ref": "#/$defs/Identifier"
         },
         "temperature": {
-          "$ref": "#/$defs/OptionNumber"
+          "$ref": "#/$defs/ChatOptionValue"
         },
         "maxOutputTokens": {
-          "$ref": "#/$defs/NonNegativeInt32"
+          "$ref": "#/$defs/TokenCount"
         },
         "topP": {
-          "$ref": "#/$defs/OptionNumber"
+          "$ref": "#/$defs/ChatOptionValue"
         },
         "topK": {
-          "$ref": "#/$defs/Int32"
+          "$ref": "#/$defs/TopK"
         },
         "frequencyPenalty": {
-          "$ref": "#/$defs/OptionNumber"
+          "$ref": "#/$defs/ChatOptionValue"
         },
         "presencePenalty": {
-          "$ref": "#/$defs/OptionNumber"
+          "$ref": "#/$defs/ChatOptionValue"
         },
         "seed": {
           "$ref": "#/$defs/SafeInteger"
@@ -546,16 +502,16 @@
           "type": "boolean"
         },
         "reasoningEffort": {
-          "$ref": "#/$defs/ShortText"
+          "$ref": "#/$defs/ChatReasoningEffort"
         },
         "tools": {
-          "$ref": "#/$defs/AgentChatToolList"
+          "$ref": "#/$defs/ChatTools"
         },
         "additionalProperties": {
-          "$ref": "#/$defs/StringMap"
+          "$ref": "#/$defs/JsonValues"
         },
         "continuationHandle": {
-          "$ref": "#/$defs/Text"
+          "$ref": "#/$defs/InlineContinuationBytes"
         }
       },
       "required": [
@@ -567,13 +523,13 @@
       "type": "object",
       "properties": {
         "providerId": {
-          "$ref": "#/$defs/ShortText"
+          "$ref": "#/$defs/Identifier"
         },
         "modelId": {
-          "$ref": "#/$defs/ShortText"
+          "$ref": "#/$defs/Identifier"
         },
         "messages": {
-          "$ref": "#/$defs/AgentChatMessageList"
+          "$ref": "#/$defs/ChatMessages"
         },
         "options": {
           "$ref": "#/$defs/AgentChatOptions"
@@ -591,19 +547,19 @@
       "type": "object",
       "properties": {
         "inputTokens": {
-          "$ref": "#/$defs/SafeInteger"
+          "$ref": "#/$defs/TokenCount"
         },
         "outputTokens": {
-          "$ref": "#/$defs/SafeInteger"
+          "$ref": "#/$defs/TokenCount"
         },
         "totalTokens": {
-          "$ref": "#/$defs/SafeInteger"
+          "$ref": "#/$defs/TokenCount"
         },
         "cachedInputTokens": {
-          "$ref": "#/$defs/SafeInteger"
+          "$ref": "#/$defs/TokenCount"
         },
         "reasoningTokens": {
-          "$ref": "#/$defs/SafeInteger"
+          "$ref": "#/$defs/TokenCount"
         }
       },
       "required": [],
@@ -627,40 +583,40 @@
           ]
         },
         "text": {
-          "$ref": "#/$defs/Text"
+          "$ref": "#/$defs/ContentText"
         },
         "protectedData": {
-          "$ref": "#/$defs/Text"
+          "$ref": "#/$defs/ContentText"
         },
         "callId": {
-          "$ref": "#/$defs/ShortText"
+          "$ref": "#/$defs/Identifier"
         },
         "name": {
-          "$ref": "#/$defs/ShortText"
+          "$ref": "#/$defs/TextValue"
         },
         "json": {
-          "$ref": "#/$defs/Text"
+          "$ref": "#/$defs/JSON"
         },
         "informationalOnly": {
           "type": "boolean"
         },
         "mediaType": {
-          "$ref": "#/$defs/ShortText"
+          "$ref": "#/$defs/MediaType"
         },
         "contentUri": {
-          "$ref": "#/$defs/Text"
+          "$ref": "#/$defs/AbsoluteUri"
         },
         "contentReference": {
-          "$ref": "#/$defs/SunderRpcContentReference"
+          "$ref": "#/$defs/ContentReference"
         },
         "usage": {
           "$ref": "#/$defs/AgentChatUsage"
         },
         "errorCode": {
-          "$ref": "#/$defs/ShortText"
+          "$ref": "#/$defs/TextValue"
         },
         "errorMessage": {
-          "$ref": "#/$defs/Text"
+          "$ref": "#/$defs/DisplayText"
         }
       },
       "required": [
@@ -669,70 +625,174 @@
       ],
       "additionalProperties": false
     },
-    "AgentChatContentList": {
+    "ChatContents": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentChatContent"
       },
       "minItems": 0,
-      "maxItems": 10000
+      "maxItems": 4096
     },
     "AgentChatStreamEvent": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/AgentChatUpdateEvent"
+        },
+        {
+          "$ref": "#/$defs/AgentChatErrorEvent"
+        }
+      ]
+    },
+    "Identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "MediaType": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "DisplayText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 8192
+    },
+    "ContentText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 900000
+    },
+    "AbsoluteUri": {
+      "type": "string",
+      "format": "uri"
+    },
+    "InlineContinuationBytes": {
+      "type": "string",
+      "contentEncoding": "base64",
+      "maxDecodedBytes": 65536
+    },
+    "JSON": {},
+    "JSONObject": {
+      "type": "object",
+      "maxProperties": 256
+    },
+    "TopK": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100000
+    },
+    "TokenCount": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2147483647
+    },
+    "JsonValues": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/JSON"
+      },
+      "propertyNames": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "minProperties": 0,
+      "maxProperties": 256
+    },
+    "AgentChatUpdateEvent": {
       "type": "object",
       "properties": {
         "kind": {
           "type": "string",
-          "minLength": 5,
+          "minLength": 6,
           "maxLength": 6,
-          "enum": [
-            "update",
-            "error"
-          ]
+          "const": "update"
         },
         "role": {
-          "$ref": "#/$defs/ShortText"
+          "$ref": "#/$defs/Identifier"
         },
         "responseId": {
-          "$ref": "#/$defs/ShortText"
+          "$ref": "#/$defs/Identifier"
         },
         "messageId": {
-          "$ref": "#/$defs/ShortText"
+          "$ref": "#/$defs/Identifier"
         },
         "conversationId": {
-          "$ref": "#/$defs/ShortText"
+          "$ref": "#/$defs/Identifier"
         },
         "modelId": {
-          "$ref": "#/$defs/ShortText"
+          "$ref": "#/$defs/Identifier"
         },
         "finishReason": {
-          "$ref": "#/$defs/ShortText"
+          "$ref": "#/$defs/DisplayText"
         },
         "createdAt": {
           "$ref": "#/$defs/Timestamp"
         },
         "contentItems": {
-          "$ref": "#/$defs/AgentChatContentList"
+          "$ref": "#/$defs/ChatContents"
         },
         "continuationHandle": {
-          "$ref": "#/$defs/Text"
-        },
-        "errorCode": {
-          "$ref": "#/$defs/ShortText"
-        },
-        "errorMessage": {
-          "$ref": "#/$defs/Text"
-        },
-        "errorContent": {
-          "$ref": "#/$defs/Text"
-        },
-        "errorFailureKind": {
-          "$ref": "#/$defs/ShortText"
+          "$ref": "#/$defs/InlineContinuationBytes"
         }
       },
       "required": [
         "kind"
       ],
       "additionalProperties": false
+    },
+    "AgentChatErrorEvent": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 5,
+          "const": "error"
+        },
+        "errorCode": {
+          "$ref": "#/$defs/TextValue"
+        },
+        "errorMessage": {
+          "$ref": "#/$defs/DisplayText"
+        },
+        "errorContent": {
+          "$ref": "#/$defs/ContentText"
+        },
+        "errorFailureKind": {
+          "$ref": "#/$defs/AgentChatProviderFailureKind"
+        }
+      },
+      "required": [
+        "kind",
+        "errorCode",
+        "errorMessage",
+        "errorContent",
+        "errorFailureKind"
+      ],
+      "additionalProperties": false
+    },
+    "ChatReasoningEffort": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 10,
+      "enum": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "extra-high"
+      ]
+    },
+    "AgentChatProviderFailureKind": {
+      "type": "string",
+      "minLength": 7,
+      "maxLength": 23,
+      "enum": [
+        "unknown",
+        "context-window-exceeded"
+      ]
     }
   }
 }

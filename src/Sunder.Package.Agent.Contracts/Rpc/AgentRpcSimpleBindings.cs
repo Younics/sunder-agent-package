@@ -120,7 +120,7 @@ public static class AgentEmbeddingProviderRpc
             .AddUnary<StringRequest, string>(Service, "space-identity", async (_, request, token) => provider is IAgentEmbeddingSpaceIdentityProvider identity
                 ? await identity.GetEmbeddingSpaceIdentityAsync(request.Value, token).ConfigureAwait(false)
                 : string.Empty)
-            .AddUnary<EmbeddingRequest, AgentRpcOptional<AgentEmbeddingGenerationResult>>(Service, "generate", async (_, request, token) => new(true, await provider.GenerateEmbeddingAsync(request.ModelId, request.Text, token).ConfigureAwait(false)))
+            .AddNullableUnary<EmbeddingRequest, AgentEmbeddingGenerationResult>(Service, "generate", async (_, request, token) => await provider.GenerateEmbeddingAsync(request.ModelId, request.Text, token).ConfigureAwait(false))
             .AddUnary<EmbeddingBatchRequest, IReadOnlyList<AgentEmbeddingGenerationResult?>>(Service, "generate-batch", (_, request, token) => provider.GenerateEmbeddingsAsync(request.ModelId, request.Texts, token))
             .Build();
 
@@ -144,7 +144,7 @@ public sealed class AgentEmbeddingProviderRpcClient(ISunderRpcClient client, Sun
         => AgentRpcServiceHandler.InvokeAsync<StringRequest, string>(client, endpoint, AgentEmbeddingProviderRpc.ServiceId, "space-identity", new(modelId), cancellationToken);
 
     public async ValueTask<AgentEmbeddingGenerationResult?> GenerateEmbeddingAsync(string modelId, string text, CancellationToken cancellationToken = default)
-        => (await AgentRpcServiceHandler.InvokeAsync<EmbeddingRequest, AgentRpcOptional<AgentEmbeddingGenerationResult>>(client, endpoint, AgentEmbeddingProviderRpc.ServiceId, "generate", new(modelId, text), cancellationToken).ConfigureAwait(false)).Value;
+        => await AgentRpcServiceHandler.InvokeNullableAsync<EmbeddingRequest, AgentEmbeddingGenerationResult>(client, endpoint, AgentEmbeddingProviderRpc.ServiceId, "generate", new(modelId, text), cancellationToken).ConfigureAwait(false);
 
     public ValueTask<IReadOnlyList<AgentEmbeddingGenerationResult?>> GenerateEmbeddingsAsync(string modelId, IReadOnlyList<string> texts, CancellationToken cancellationToken = default)
         => AgentRpcServiceHandler.InvokeAsync<EmbeddingBatchRequest, IReadOnlyList<AgentEmbeddingGenerationResult?>>(client, endpoint, AgentEmbeddingProviderRpc.ServiceId, "generate-batch", new(modelId, texts), cancellationToken);
@@ -250,9 +250,9 @@ public static class AgentPromptContextContributorRpc
                 contributor.ContributorId,
                 contributor.DisplayName,
                 (contributor as IAgentPromptContextAcknowledgmentSink)?.AcknowledgmentSinkId)))
-            .AddUnary<PromptContextRequestWire, AgentRpcOptional<AgentPromptContextContribution>>(ServiceId, "contribute", async (_, request, token) => new(true, await contributor.ContributeContextAsync(
+            .AddNullableUnary<PromptContextRequestWire, AgentPromptContextContribution>(ServiceId, "contribute", async (_, request, token) => await contributor.ContributeContextAsync(
                 request.ToRequest(rpcCatalog),
-                token).ConfigureAwait(false)))
+                token).ConfigureAwait(false))
             .AddUnary<AgentPromptContextReceipt, AgentRpcEmpty>(ServiceId, "acknowledge", async (_, request, token) =>
             {
                 if (contributor is IAgentPromptContextAcknowledgmentSink sink)
@@ -273,13 +273,13 @@ public sealed class AgentPromptContextContributorRpcClient(ISunderRpcClient clie
     public string AcknowledgmentSinkId => Description.AcknowledgmentSinkId ?? Description.ContributorId;
 
     public async ValueTask<AgentPromptContextContribution?> ContributeContextAsync(AgentPromptContextRequest request, CancellationToken cancellationToken = default)
-        => (await AgentRpcServiceHandler.InvokeAsync<PromptContextRequestWire, AgentRpcOptional<AgentPromptContextContribution>>(
+        => await AgentRpcServiceHandler.InvokeNullableAsync<PromptContextRequestWire, AgentPromptContextContribution>(
             client,
             endpoint,
             AgentPromptContextContributorRpc.ServiceId,
             "contribute",
             PromptContextRequestWire.FromRequest(request),
-            cancellationToken).ConfigureAwait(false)).Value;
+            cancellationToken).ConfigureAwait(false);
 
     public async ValueTask AcknowledgePromptContextAsync(AgentPromptContextReceipt receipt, CancellationToken cancellationToken = default)
         => _ = await AgentRpcServiceHandler.InvokeAsync<AgentPromptContextReceipt, AgentRpcEmpty>(client, endpoint, AgentPromptContextContributorRpc.ServiceId, "acknowledge", receipt, cancellationToken).ConfigureAwait(false);
@@ -530,7 +530,6 @@ public sealed class AgentWorkspaceEditorRpcClient(ISunderRpcClient client, Sunde
 }
 
 public sealed record AgentRpcIdentity(string Id, string DisplayName);
-public sealed record AgentRpcOptional<T>(bool HasValue, T? Value);
 public sealed record AgentRpcChange(long Revision);
 public sealed record EmbeddingRequest(string ModelId, string Text);
 public sealed record EmbeddingBatchRequest(string ModelId, IReadOnlyList<string> Texts);

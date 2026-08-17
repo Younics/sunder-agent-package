@@ -94,7 +94,15 @@ public sealed partial class AgentChatViewModel
     }
 
     [RelayCommand]
-    private async Task OpenChildSessionAsync(AgentChildSessionLinkViewModel? childSession)
+    private Task OpenChildSessionAsync(AgentChildSessionLinkViewModel? childSession)
+        => RunOperationAsync(
+            OpenChildSessionOperation,
+            cancellationToken => OpenChildSessionCoreAsync(childSession, cancellationToken),
+            cancellationToken => ReconcileChatSnapshotAsync(cancellationToken));
+
+    private async Task OpenChildSessionCoreAsync(
+        AgentChildSessionLinkViewModel? childSession,
+        CancellationToken cancellationToken)
     {
         if (childSession is null)
         {
@@ -119,7 +127,8 @@ public sealed partial class AgentChatViewModel
             new Dictionary<string, string?>
             {
                 [SubsessionNavigationSessionIdKey] = childSession.SessionId.ToString("D"),
-            }
+            },
+            cancellationToken
         ).ConfigureAwait(false);
         if (!opened)
         {

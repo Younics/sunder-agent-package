@@ -50,6 +50,21 @@ public sealed class AgentActiveRunRegistry
         }
     }
 
+    internal AgentActiveRunHandle? RemoveIfOlderThan(Guid sessionId, long runRevision)
+    {
+        lock (_syncRoot)
+        {
+            if (!_activeRuns.TryGetValue(sessionId, out var activeRun)
+                || activeRun.RunRevision >= runRevision)
+            {
+                return null;
+            }
+
+            _activeRuns.Remove(sessionId);
+            return activeRun;
+        }
+    }
+
     public bool IsCurrent(Guid sessionId, Guid runId, long runRevision)
     {
         lock (_syncRoot)

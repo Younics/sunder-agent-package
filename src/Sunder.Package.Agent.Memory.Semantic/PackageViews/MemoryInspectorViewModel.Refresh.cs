@@ -219,7 +219,10 @@ public sealed partial class MemoryInspectorViewModel
     }
 
     private void OnSessionChanged(Guid sessionId)
-        => _tasks.Run(cancellationToken => HandleSessionChangedAsync(sessionId, cancellationToken));
+        => _operations.Submit(
+            MemoryRefreshOperation,
+            cancellationToken => HandleSessionChangedAsync(sessionId, cancellationToken),
+            ReconcileMemoryAsync);
 
     private async Task HandleSessionChangedAsync(Guid sessionId, CancellationToken cancellationToken)
     {
@@ -250,7 +253,10 @@ public sealed partial class MemoryInspectorViewModel
     }
 
     private void OnSemanticWorkerStatusChanged()
-        => _tasks.Run(HandleSemanticWorkerStatusChangedAsync);
+        => _operations.Submit(
+            MemoryRefreshOperation,
+            HandleSemanticWorkerStatusChangedAsync,
+            ReconcileMemoryAsync);
 
     private async Task HandleSemanticWorkerStatusChangedAsync(CancellationToken cancellationToken)
     {

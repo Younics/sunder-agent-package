@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "descriptorVersion": 2,
+  "schemaProfile": "sunder.rpc.values.v1",
   "contractId": "sunder.agent.durable.lifecycle.observer",
   "version": "1.0.0",
   "errors": {},
@@ -12,7 +13,7 @@
           "idempotency": "idempotent",
           "errors": [],
           "requestSchema": {
-            "$ref": "#/$defs/AgentRpcEmpty"
+            "$ref": "#/$defs/Unit"
           },
           "responseSchema": {
             "$ref": "#/$defs/AgentRpcIdentity"
@@ -26,32 +27,32 @@
             "$ref": "#/$defs/AgentDurableLifecycleEventEnvelope"
           },
           "responseSchema": {
-            "$ref": "#/$defs/AgentRpcEmpty"
+            "$ref": "#/$defs/Unit"
           }
         }
       }
     }
   },
   "$defs": {
-    "AgentRpcEmpty": {
+    "Unit": {
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
-    "String": {
+    "TextValue": {
       "type": "string",
       "minLength": 0,
-      "maxLength": 1000000
+      "maxLength": 65536
     },
     "AgentRpcIdentity": {
       "type": "object",
       "properties": {
         "displayName": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         },
         "id": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         }
       },
       "required": [
@@ -61,68 +62,63 @@
       "additionalProperties": false
     },
     "AgentLifecycleEventKind": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 8,
+      "type": "string",
+      "minLength": 10,
+      "maxLength": 24,
       "enum": [
-        0,
-        1,
-        2,
-        3,
-        4,
-        5,
-        6,
-        7,
-        8
+        "user-turn-added",
+        "assistant-turn-completed",
+        "tool-result-recorded",
+        "run-interrupted",
+        "run-stopped",
+        "run-failed",
+        "transcript-rolled-back",
+        "session-deleted",
+        "workspace-deleted"
       ]
     },
-    "DateTimeOffset": {
+    "Timestamp": {
       "type": "string",
-      "logicalType": "utc-date-time"
+      "format": "date-time"
     },
-    "Guid": {
+    "EntityId": {
       "type": "string",
-      "logicalType": "uuid"
-    },
-    "Int64": {
-      "type": "integer",
-      "minimum": -9007199254740991,
-      "maximum": 9007199254740991
+      "format": "uuid"
     },
     "AgentRunStatus": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 6,
+      "type": "string",
+      "minLength": 4,
+      "maxLength": 20,
       "enum": [
-        0,
-        1,
-        2,
-        3,
-        4,
-        5,
-        6
+        "idle",
+        "running",
+        "interrupted",
+        "stopped",
+        "completed",
+        "failed",
+        "waiting-for-approval"
       ]
     },
     "AgentRunCheckpointRecord": {
       "type": "object",
       "properties": {
         "checkpointId": {
-          "$ref": "#/$defs/Guid"
+          "$ref": "#/$defs/EntityId"
         },
         "createdAtUtc": {
-          "$ref": "#/$defs/DateTimeOffset"
+          "$ref": "#/$defs/Timestamp"
         },
         "runRevision": {
-          "$ref": "#/$defs/Int64"
+          "$ref": "#/$defs/Revision"
         },
         "sessionId": {
-          "$ref": "#/$defs/Guid"
+          "$ref": "#/$defs/EntityId"
         },
         "status": {
           "$ref": "#/$defs/AgentRunStatus"
         },
         "summary": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         }
       },
       "required": [
@@ -134,35 +130,25 @@
       ],
       "additionalProperties": false
     },
-    "Boolean": {
+    "Flag": {
       "type": "boolean"
     },
-    "Int32": {
-      "type": "integer",
-      "minimum": -2147483648,
-      "maximum": 2147483647
-    },
-    "ListOfGuid": {
+    "EntityIds": {
       "type": "array",
       "items": {
-        "$ref": "#/$defs/Guid"
+        "$ref": "#/$defs/EntityId"
       },
       "minItems": 0,
-      "maxItems": 1000000
-    },
-    "Nullable": {
-      "type": "integer",
-      "minimum": -2147483648,
-      "maximum": 2147483647
+      "maxItems": 10000
     },
     "AgentMemoryConsistencyBarrier": {
       "type": "object",
       "properties": {
         "eventId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "payloadHash": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Sha256Text"
         }
       },
       "required": [
@@ -171,136 +157,117 @@
       ],
       "additionalProperties": false
     },
-    "ListOfAgentMemoryConsistencyBarrier": {
+    "AgentMemoryConsistencyBarrierCollection": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentMemoryConsistencyBarrier"
       },
       "minItems": 0,
-      "maxItems": 1000000
+      "maxItems": 4096
     },
     "AgentTurnItemKind": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 3,
-      "enum": [
-        0,
-        1,
-        2,
-        3
-      ]
-    },
-    "Nullable2": {
       "type": "string",
-      "logicalType": "uuid"
+      "minLength": 4,
+      "maxLength": 11,
+      "enum": [
+        "text",
+        "tool-call",
+        "tool-result",
+        "attachment"
+      ]
     },
     "AgentToolExecutionStatus": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 4,
+      "type": "string",
+      "minLength": 6,
+      "maxLength": 9,
       "enum": [
-        0,
-        1,
-        2,
-        3,
-        4
+        "prepared",
+        "started",
+        "completed",
+        "failed",
+        "ambiguous"
       ]
-    },
-    "Nullable3": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 4,
-      "enum": [
-        0,
-        1,
-        2,
-        3,
-        4
-      ]
-    },
-    "Nullable4": {
-      "type": "boolean"
     },
     "AgentTurnItemRecord": {
       "type": "object",
       "properties": {
         "argumentsJson": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/JsonText"
         },
         "backendId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "callId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "errorCode": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/TextValue"
         },
         "isError": {
-          "$ref": "#/$defs/Boolean"
+          "$ref": "#/$defs/Flag"
         },
         "isToolHeaderProjection": {
-          "$ref": "#/$defs/Boolean"
+          "$ref": "#/$defs/Flag"
         },
         "itemId": {
-          "$ref": "#/$defs/Guid"
+          "$ref": "#/$defs/EntityId"
         },
         "kind": {
           "$ref": "#/$defs/AgentTurnItemKind"
         },
         "presentationPayloadJson": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/JsonText"
         },
         "resultSummary": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         },
         "sequenceNumber": {
-          "$ref": "#/$defs/Int32"
+          "$ref": "#/$defs/CollectionIndex"
         },
         "sourcesJson": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/JsonText"
         },
         "structuredPayloadJson": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/JsonText"
         },
         "textContent": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/ContentText"
         },
         "toolDetailRevision": {
-          "$ref": "#/$defs/Int64"
+          "$ref": "#/$defs/Revision"
         },
         "toolErrorSummary": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         },
         "toolExecutionId": {
-          "$ref": "#/$defs/Nullable2"
+          "$ref": "#/$defs/EntityId"
         },
         "toolExecutionStatus": {
-          "$ref": "#/$defs/Nullable3"
+          "$ref": "#/$defs/AgentToolExecutionStatus"
         },
         "toolHasDetails": {
-          "$ref": "#/$defs/Nullable4"
+          "$ref": "#/$defs/Flag"
         },
         "toolHeaderHint": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         },
         "toolId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "toolOwnerPackageId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "toolSchemaId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "toolSchemaVersion": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/VersionText"
         },
         "turnId": {
-          "$ref": "#/$defs/Guid"
+          "$ref": "#/$defs/EntityId"
         },
         "wasTruncated": {
-          "$ref": "#/$defs/Boolean"
+          "$ref": "#/$defs/Flag"
         }
       },
       "required": [
@@ -315,54 +282,49 @@
       ],
       "additionalProperties": false
     },
-    "ListOfAgentTurnItemRecord": {
+    "AgentTurnItemRecordCollection": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentTurnItemRecord"
       },
       "minItems": 0,
-      "maxItems": 1000000
+      "maxItems": 1000
     },
     "AgentTurnKind": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 2,
+      "type": "string",
+      "minLength": 7,
+      "maxLength": 11,
       "enum": [
-        0,
-        1,
-        2
+        "message",
+        "tool-call",
+        "tool-result"
       ]
     },
     "AgentMessageRole": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 3,
+      "type": "string",
+      "minLength": 4,
+      "maxLength": 9,
       "enum": [
-        0,
-        1,
-        2,
-        3
+        "system",
+        "user",
+        "assistant",
+        "tool"
       ]
-    },
-    "Nullable5": {
-      "type": "integer",
-      "minimum": -9007199254740991,
-      "maximum": 9007199254740991
     },
     "AgentTurnRecord": {
       "type": "object",
       "properties": {
         "contentRevision": {
-          "$ref": "#/$defs/Int64"
+          "$ref": "#/$defs/Revision"
         },
         "createdAtUtc": {
-          "$ref": "#/$defs/DateTimeOffset"
+          "$ref": "#/$defs/Timestamp"
         },
         "isStreaming": {
-          "$ref": "#/$defs/Boolean"
+          "$ref": "#/$defs/Flag"
         },
         "items": {
-          "$ref": "#/$defs/ListOfAgentTurnItemRecord"
+          "$ref": "#/$defs/AgentTurnItemRecordCollection"
         },
         "kind": {
           "$ref": "#/$defs/AgentTurnKind"
@@ -371,19 +333,19 @@
           "$ref": "#/$defs/AgentMessageRole"
         },
         "runId": {
-          "$ref": "#/$defs/Nullable2"
+          "$ref": "#/$defs/EntityId"
         },
         "runRevision": {
-          "$ref": "#/$defs/Nullable5"
+          "$ref": "#/$defs/Revision"
         },
         "sessionId": {
-          "$ref": "#/$defs/Guid"
+          "$ref": "#/$defs/EntityId"
         },
         "turnId": {
-          "$ref": "#/$defs/Guid"
+          "$ref": "#/$defs/EntityId"
         },
         "updatedAtUtc": {
-          "$ref": "#/$defs/DateTimeOffset"
+          "$ref": "#/$defs/Timestamp"
         }
       },
       "required": [
@@ -399,28 +361,28 @@
       ],
       "additionalProperties": false
     },
-    "ListOfAgentTurnRecord": {
+    "AgentTurnRecordCollection": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentTurnRecord"
       },
       "minItems": 0,
-      "maxItems": 1000000
+      "maxItems": 1000
     },
     "AgentRunContextRecord": {
       "type": "object",
       "properties": {
         "isInterrupted": {
-          "$ref": "#/$defs/Boolean"
+          "$ref": "#/$defs/Flag"
         },
         "revision": {
-          "$ref": "#/$defs/Int64"
+          "$ref": "#/$defs/Revision"
         },
         "runId": {
-          "$ref": "#/$defs/Guid"
+          "$ref": "#/$defs/EntityId"
         },
         "startedAtUtc": {
-          "$ref": "#/$defs/DateTimeOffset"
+          "$ref": "#/$defs/Timestamp"
         },
         "status": {
           "$ref": "#/$defs/AgentRunStatus"
@@ -436,37 +398,37 @@
       "additionalProperties": false
     },
     "AgentSessionState": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 5,
+      "type": "string",
+      "minLength": 6,
+      "maxLength": 11,
       "enum": [
-        0,
-        1,
-        2,
-        3,
-        5
+        "active",
+        "interrupted",
+        "stopped",
+        "completed",
+        "failed"
       ]
     },
     "AgentSessionContextRecord": {
       "type": "object",
       "properties": {
         "profileDisplayName": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         },
         "profileId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "sessionId": {
-          "$ref": "#/$defs/Guid"
+          "$ref": "#/$defs/EntityId"
         },
         "sessionState": {
           "$ref": "#/$defs/AgentSessionState"
         },
         "sessionTitle": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         },
         "workingSummary": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         }
       },
       "required": [
@@ -485,43 +447,43 @@
           "$ref": "#/$defs/AgentRunCheckpointRecord"
         },
         "contentErased": {
-          "$ref": "#/$defs/Boolean"
+          "$ref": "#/$defs/Flag"
         },
         "deletedChildSessionCount": {
-          "$ref": "#/$defs/Int32"
+          "$ref": "#/$defs/Count"
         },
         "deletedChildSessionIds": {
-          "$ref": "#/$defs/ListOfGuid"
+          "$ref": "#/$defs/EntityIds"
         },
         "deletedSessionCount": {
-          "$ref": "#/$defs/Int32"
+          "$ref": "#/$defs/Count"
         },
         "deletedSessionIds": {
-          "$ref": "#/$defs/ListOfGuid"
+          "$ref": "#/$defs/EntityIds"
         },
         "deletedTurnCount": {
-          "$ref": "#/$defs/Int32"
+          "$ref": "#/$defs/Count"
         },
         "deletedTurnIds": {
-          "$ref": "#/$defs/ListOfGuid"
+          "$ref": "#/$defs/EntityIds"
         },
         "deletionBatchId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "deletionChunkCount": {
-          "$ref": "#/$defs/Nullable"
+          "$ref": "#/$defs/Count"
         },
         "deletionChunkIndex": {
-          "$ref": "#/$defs/Nullable"
+          "$ref": "#/$defs/CollectionIndex"
         },
         "deletionChunkReceipts": {
-          "$ref": "#/$defs/ListOfAgentMemoryConsistencyBarrier"
+          "$ref": "#/$defs/AgentMemoryConsistencyBarrierCollection"
         },
         "recentLiveBufferTurns": {
-          "$ref": "#/$defs/ListOfAgentTurnRecord"
+          "$ref": "#/$defs/AgentTurnRecordCollection"
         },
         "rootSessionId": {
-          "$ref": "#/$defs/Nullable2"
+          "$ref": "#/$defs/EntityId"
         },
         "run": {
           "$ref": "#/$defs/AgentRunContextRecord"
@@ -530,25 +492,25 @@
           "$ref": "#/$defs/AgentSessionContextRecord"
         },
         "sessionId": {
-          "$ref": "#/$defs/Nullable2"
+          "$ref": "#/$defs/EntityId"
         },
         "triggerTurn": {
           "$ref": "#/$defs/AgentTurnRecord"
         },
         "turns": {
-          "$ref": "#/$defs/ListOfAgentTurnRecord"
+          "$ref": "#/$defs/AgentTurnRecordCollection"
         },
         "userMessage": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/ContentText"
         },
         "workingSummary": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         },
         "workspaceId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "workspaceIncarnationId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         }
       },
       "required": [
@@ -569,34 +531,34 @@
       "type": "object",
       "properties": {
         "eventId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "kind": {
           "$ref": "#/$defs/AgentLifecycleEventKind"
         },
         "occurredAtUtc": {
-          "$ref": "#/$defs/DateTimeOffset"
+          "$ref": "#/$defs/Timestamp"
         },
         "orderingKey": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/TextValue"
         },
         "originalPayloadHash": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Sha256Text"
         },
         "payload": {
           "$ref": "#/$defs/AgentDurableLifecycleEventPayload"
         },
         "payloadHash": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Sha256Text"
         },
         "payloadJson": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/JsonText"
         },
         "sequence": {
-          "$ref": "#/$defs/Int64"
+          "$ref": "#/$defs/Revision"
         },
         "sourceKey": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/TextValue"
         }
       },
       "required": [
@@ -611,6 +573,52 @@
         "sourceKey"
       ],
       "additionalProperties": false
+    },
+    "Identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "VersionText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "DisplayText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 8192
+    },
+    "ContentText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 900000
+    },
+    "JsonText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 900000,
+      "description": "Bounded opaque JSON text that may be malformed, truncated, or interpreted by an extension-owned schema."
+    },
+    "Sha256Text": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "CollectionIndex": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100000
+    },
+    "Revision": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "Count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
     }
   }
 }

@@ -21,6 +21,11 @@ internal sealed record AgentOwnerRpcStream<TRequest, TEvent>(
 
 internal interface IAgentOwnerClient
 {
+    AgentTransportProfile TransportProfile => AgentTransportProfile.StandardFallback;
+
+    ValueTask<AgentTransportProfile> GetTransportProfileAsync(CancellationToken cancellationToken)
+        => ValueTask.FromResult(TransportProfile);
+
     ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
         AgentOwnerRpcOperation<TRequest, TResponse> operation,
         TRequest request,
@@ -34,10 +39,31 @@ internal interface IAgentOwnerClient
         CancellationToken cancellationToken)
         where TRequest : class
         where TEvent : class;
+
+    ValueTask<AgentAttachmentUploadHandle> UploadAttachmentAsync(
+        AgentAttachmentUploadRequest upload,
+        CancellationToken cancellationToken)
+        => ValueTask.FromException<AgentAttachmentUploadHandle>(
+            new NotSupportedException("This Agent owner client does not support call-scoped attachment content."));
+
+    ValueTask<byte[]> DownloadAttachmentAsync(
+        AgentAttachmentMetadata metadata,
+        CancellationToken cancellationToken)
+        => ValueTask.FromException<byte[]>(
+            new NotSupportedException("This Agent owner client does not support call-scoped attachment content."));
+
+    ValueTask DiscardAttachmentAsync(
+        AgentAttachmentUploadHandle handle,
+        CancellationToken cancellationToken)
+        => ValueTask.CompletedTask;
 }
 
 internal interface IAgentOwnerRuntimeProvider
 {
+    ValueTask<AgentTransportProfile> NegotiateTransportProfileAsync(
+        AgentTransportProfileRequest request,
+        CancellationToken cancellationToken);
+
     ValueTask<AgentChatSnapshotProjection> GetChatSnapshotAsync(
         AgentChatSnapshotRequest request,
         CancellationToken cancellationToken);
@@ -78,8 +104,18 @@ internal interface IAgentOwnerRuntimeProvider
         AgentPermissionCommand request,
         CancellationToken cancellationToken);
 
-    ValueTask<AgentAttachmentTransferResult> TransferAttachmentAsync(
-        AgentAttachmentTransferRequest request,
+    ValueTask<AgentAttachmentContentUploadResult> UploadAttachmentAsync(
+        SunderRpcInvocationContext context,
+        AgentAttachmentContentUploadRequest request,
+        CancellationToken cancellationToken);
+
+    ValueTask<AgentAttachmentContentDownloadResult> DownloadAttachmentAsync(
+        SunderRpcInvocationContext context,
+        AgentAttachmentContentDownloadRequest request,
+        CancellationToken cancellationToken);
+
+    ValueTask<AgentAttachmentContentDiscardResult> DiscardAttachmentAsync(
+        AgentAttachmentContentDiscardRequest request,
         CancellationToken cancellationToken);
 
     ValueTask<HistorySearchResponse> SearchHistoryAsync(
@@ -98,7 +134,7 @@ internal interface IAgentOwnerRuntimeProvider
         AgentTranscriptAroundTurnRequest request,
         CancellationToken cancellationToken);
 
-    ValueTask<AgentTranscriptToolDetailResponse> GetTranscriptToolDetailAsync(
+    ValueTask<AgentTranscriptToolDetailResult> GetTranscriptToolDetailAsync(
         AgentTranscriptToolDetailRequest request,
         CancellationToken cancellationToken);
 
@@ -230,12 +266,26 @@ internal static class AgentOwnerRuntimeRpc
 
     private sealed class ProviderAdapter(IAgentOwnerRuntimeProvider provider) : Wire.IAgentRuntimeProvider
     {
-        public ValueTask<Wire.AgentAttachmentTransferResult> AttachmentTransferAsync(
+        public ValueTask<Wire.AgentAttachmentContentDownloadResult> AttachmentDownloadAsync(
             SunderRpcInvocationContext context,
-            Wire.AgentAttachmentTransferRequest request,
+            Wire.AgentAttachmentContentDownloadRequest request,
             CancellationToken cancellationToken = default)
-            => InvokeAsync<AgentAttachmentTransferRequest, AgentAttachmentTransferResult, Wire.AgentAttachmentTransferResult>(
-                request, provider.TransferAttachmentAsync, cancellationToken);
+            => InvokeWithContextAsync<AgentAttachmentContentDownloadRequest, AgentAttachmentContentDownloadResult, Wire.AgentAttachmentContentDownloadResult>(
+                context, request, provider.DownloadAttachmentAsync, cancellationToken);
+
+        public ValueTask<Wire.AgentAttachmentContentDiscardResult> AttachmentDiscardAsync(
+            SunderRpcInvocationContext context,
+            Wire.AgentAttachmentContentDiscardRequest request,
+            CancellationToken cancellationToken = default)
+            => InvokeAsync<AgentAttachmentContentDiscardRequest, AgentAttachmentContentDiscardResult, Wire.AgentAttachmentContentDiscardResult>(
+                request, provider.DiscardAttachmentAsync, cancellationToken);
+
+        public ValueTask<Wire.AgentAttachmentContentUploadResult> AttachmentUploadAsync(
+            SunderRpcInvocationContext context,
+            Wire.AgentAttachmentContentUploadRequest request,
+            CancellationToken cancellationToken = default)
+            => InvokeWithContextAsync<AgentAttachmentContentUploadRequest, AgentAttachmentContentUploadResult, Wire.AgentAttachmentContentUploadResult>(
+                context, request, provider.UploadAttachmentAsync, cancellationToken);
 
         public ValueTask<Wire.AgentCatalogProjection> CatalogAsync(
             SunderRpcInvocationContext context,
@@ -342,12 +392,19 @@ internal static class AgentOwnerRuntimeRpc
             => InvokeAsync<AgentTranscriptPageRequest, AgentTranscriptPage, Wire.AgentTranscriptPage>(
                 request, provider.GetTranscriptPageAsync, cancellationToken);
 
-        public ValueTask<Wire.AgentTranscriptToolDetailResponse> TranscriptToolDetailAsync(
+        public ValueTask<Wire.AgentTranscriptToolDetailResult> TranscriptToolDetailAsync(
             SunderRpcInvocationContext context,
             Wire.AgentTranscriptToolDetailRequest request,
             CancellationToken cancellationToken = default)
-            => InvokeAsync<AgentTranscriptToolDetailRequest, AgentTranscriptToolDetailResponse, Wire.AgentTranscriptToolDetailResponse>(
+            => InvokeAsync<AgentTranscriptToolDetailRequest, AgentTranscriptToolDetailResult, Wire.AgentTranscriptToolDetailResult>(
                 request, provider.GetTranscriptToolDetailAsync, cancellationToken);
+
+        public ValueTask<Wire.AgentTransportProfile> TransportProfileAsync(
+            SunderRpcInvocationContext context,
+            Wire.AgentTransportProfileRequest request,
+            CancellationToken cancellationToken = default)
+            => InvokeAsync<AgentTransportProfileRequest, AgentTransportProfile, Wire.AgentTransportProfile>(
+                request, provider.NegotiateTransportProfileAsync, cancellationToken);
 
         public ValueTask<Wire.AgentWorkspaceCommandResult> WorkspaceCommandAsync(
             SunderRpcInvocationContext context,
@@ -367,6 +424,29 @@ internal static class AgentOwnerRuntimeRpc
             try
             {
                 var response = await invoke(
+                    Convert<TRequest>(wireRequest),
+                    cancellationToken).ConfigureAwait(false);
+                return Convert<TWireResponse>(response);
+            }
+            catch (Exception exception) when (ShouldMap(exception))
+            {
+                throw Map((AgentOwnerOperationException)exception);
+            }
+        }
+
+        private static async ValueTask<TWireResponse> InvokeWithContextAsync<TRequest, TResponse, TWireResponse>(
+            SunderRpcInvocationContext context,
+            object wireRequest,
+            Func<SunderRpcInvocationContext, TRequest, CancellationToken, ValueTask<TResponse>> invoke,
+            CancellationToken cancellationToken)
+            where TRequest : class
+            where TResponse : class
+            where TWireResponse : class
+        {
+            try
+            {
+                var response = await invoke(
+                    context,
                     Convert<TRequest>(wireRequest),
                     cancellationToken).ConfigureAwait(false);
                 return Convert<TWireResponse>(response);

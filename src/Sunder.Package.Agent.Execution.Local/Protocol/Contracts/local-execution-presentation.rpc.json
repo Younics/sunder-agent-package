@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "descriptorVersion": 2,
+  "schemaProfile": "sunder.rpc.values.v1",
   "contractId": "sunder.package.agent.execution.local.presentation",
   "version": "2.0.0",
   "errors": {},
@@ -11,26 +12,22 @@
           "kind": "unary",
           "idempotency": "none",
           "errors": [],
-          "requestSchema": {
-            "$ref": "#/$defs/LocalExecutionOperationRequest"
-          },
-          "responseSchema": {
-            "$ref": "#/$defs/LocalExecutionOperationResponse"
-          }
+          "requestSchema": { "$ref": "#/$defs/LocalExecutionOperationRequest" },
+          "responseSchema": { "$ref": "#/$defs/LocalExecutionOperationResponse" }
         }
       }
     }
   },
   "$defs": {
-    "OperationKind": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 2,
-      "enum": [0, 1, 2]
-    },
-    "Timeout": {
+    "LocalOperation": {
       "type": "string",
-      "minLength": 1,
+      "minLength": 11,
+      "maxLength": 13,
+      "enum": ["get-settings", "save-settings", "save-shells"]
+    },
+    "TimeoutText": {
+      "type": "string",
+      "minLength": 0,
       "maxLength": 16
     },
     "ShellId": {
@@ -43,27 +40,27 @@
       "minLength": 0,
       "maxLength": 256
     },
-    "Path": {
+    "ExecutablePath": {
       "type": "string",
       "minLength": 0,
       "maxLength": 1024
     },
-    "SyntaxKind": {
+    "ShellSyntax": {
       "type": "string",
       "minLength": 1,
       "maxLength": 128
     },
-    "Message": {
+    "OperationMessage": {
       "type": "string",
       "minLength": 1,
       "maxLength": 1024
     },
-    "Token": {
+    "DiagnosticCode": {
       "type": "string",
       "minLength": 1,
       "maxLength": 128
     },
-    "Revision": {
+    "CatalogRevision": {
       "type": "integer",
       "minimum": 0,
       "maximum": 9007199254740991
@@ -73,14 +70,14 @@
       "properties": {
         "shellId": { "$ref": "#/$defs/ShellId" },
         "displayName": { "$ref": "#/$defs/DisplayName" },
-        "executablePath": { "$ref": "#/$defs/Path" },
-        "syntaxKind": { "$ref": "#/$defs/SyntaxKind" },
+        "executablePath": { "$ref": "#/$defs/ExecutablePath" },
+        "syntaxKind": { "$ref": "#/$defs/ShellSyntax" },
         "isDetected": { "type": "boolean" }
       },
       "required": ["shellId", "displayName", "executablePath", "syntaxKind", "isDetected"],
       "additionalProperties": false
     },
-    "ShellList": {
+    "ShellCatalog": {
       "type": "array",
       "items": { "$ref": "#/$defs/LocalShellDefinition" },
       "minItems": 0,
@@ -89,10 +86,10 @@
     "LocalExecutionOperationError": {
       "type": "object",
       "properties": {
-        "code": { "$ref": "#/$defs/Token" },
-        "message": { "$ref": "#/$defs/Message" },
+        "code": { "$ref": "#/$defs/DiagnosticCode" },
+        "message": { "$ref": "#/$defs/OperationMessage" },
         "isTransient": { "type": "boolean" },
-        "correlationId": { "$ref": "#/$defs/Token" }
+        "correlationId": { "$ref": "#/$defs/DiagnosticCode" }
       },
       "required": ["code", "message", "isTransient"],
       "additionalProperties": false
@@ -100,10 +97,10 @@
     "LocalExecutionOperationRequest": {
       "type": "object",
       "properties": {
-        "kind": { "$ref": "#/$defs/OperationKind" },
-        "timeoutSeconds": { "$ref": "#/$defs/Timeout" },
-        "shells": { "$ref": "#/$defs/ShellList" },
-        "expectedShellCatalogRevision": { "$ref": "#/$defs/Revision" }
+        "kind": { "$ref": "#/$defs/LocalOperation" },
+        "timeoutSeconds": { "$ref": "#/$defs/TimeoutText" },
+        "shells": { "$ref": "#/$defs/ShellCatalog" },
+        "expectedShellCatalogRevision": { "$ref": "#/$defs/CatalogRevision" }
       },
       "required": ["kind"],
       "additionalProperties": false
@@ -111,11 +108,11 @@
     "LocalExecutionOperationResponse": {
       "type": "object",
       "properties": {
-        "timeoutSeconds": { "$ref": "#/$defs/Timeout" },
-        "detectedShells": { "$ref": "#/$defs/ShellList" },
-        "customShells": { "$ref": "#/$defs/ShellList" },
-        "shellCatalogRevision": { "$ref": "#/$defs/Revision" },
-        "message": { "$ref": "#/$defs/Message" },
+        "timeoutSeconds": { "$ref": "#/$defs/TimeoutText" },
+        "detectedShells": { "$ref": "#/$defs/ShellCatalog" },
+        "customShells": { "$ref": "#/$defs/ShellCatalog" },
+        "shellCatalogRevision": { "$ref": "#/$defs/CatalogRevision" },
+        "message": { "$ref": "#/$defs/OperationMessage" },
         "success": { "type": "boolean" },
         "error": { "$ref": "#/$defs/LocalExecutionOperationError" }
       },

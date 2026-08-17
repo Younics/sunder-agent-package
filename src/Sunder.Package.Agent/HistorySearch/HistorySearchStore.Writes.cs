@@ -86,7 +86,7 @@ internal sealed partial class HistorySearchStore
                     """);
             }
             CommitMutation(connection, transaction);
-            CheckpointTruncate(connection);
+            ScheduleCheckpointTruncate();
             return (next, staleText);
         }
     }
@@ -225,7 +225,7 @@ internal sealed partial class HistorySearchStore
             }
             SetSemanticReadyFromInvariants(connection, transaction);
             CommitMutation(connection, transaction);
-            CheckpointTruncate(connection);
+            ScheduleCheckpointTruncate();
             return changed;
         }
     }
@@ -607,7 +607,7 @@ internal sealed partial class HistorySearchStore
                 WHERE Id = 1;
                 """);
             CommitMutation(connection, transaction);
-            CheckpointTruncate(connection);
+            ScheduleCheckpointTruncate();
             return next;
         }
     }

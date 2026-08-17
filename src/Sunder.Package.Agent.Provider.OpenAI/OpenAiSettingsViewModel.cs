@@ -5,6 +5,7 @@ using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Callbacks;
+using Sunder.Sdk.Notifications;
 
 namespace Sunder.Package.Agent.Provider.OpenAI;
 
@@ -16,11 +17,30 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject,
     private readonly OpenAiAuthPresentationService _authPresentation;
     private readonly PackageCallbackFlowRunner _callbackFlow;
     private readonly PresentationTaskScope _tasks = new();
+    private readonly PresentationOperationObserver _operations;
+    private readonly IPresentationDispatcher _uiDispatcher;
     private readonly object _initializationSyncRoot = new();
     private Task? _initialization;
     private int _authorizationActive;
     private bool _disposed;
     private long _statusGeneration;
+    private long _authModeIntentRevision;
+
+    private static readonly PresentationOperation SaveSettingsOperation = new(
+        "openai.save-settings",
+        "OpenAI settings could not be saved. Current authentication state was refreshed.");
+    private static readonly PresentationOperation SaveAuthModeOperation = new(
+        "openai.save-auth-mode",
+        "The OpenAI authentication mode could not be saved. Authentication state was refreshed.");
+    private static readonly PresentationOperation AuthorizeOperation = new(
+        "openai.authorize",
+        "OpenAI authorization could not be completed. Authentication state was refreshed.");
+    private static readonly PresentationOperation DisconnectOperation = new(
+        "openai.disconnect",
+        "The OpenAI account could not be disconnected. Authentication state was refreshed.");
+    private static readonly PresentationOperation RefreshAuthOperation = new(
+        "openai.refresh-auth",
+        "OpenAI authentication state could not be refreshed.");
 
     internal static IReadOnlyCollection<string> OwnedConfigurationKeys { get; } =
         [OpenAiAuthMode.ConfigurationKey, OpenAiProviderConfiguration.ApiKeySecretKey, OpenAiProviderConfiguration.UtilityModelKey];
@@ -53,10 +73,28 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject,
         OpenAiAuthPresentationService authPresentation,
         PackageCallbackFlowRunner callbackFlow,
         IProviderCredentialOwnerClient credentials)
+        : this(
+            packageContext,
+            authPresentation,
+            callbackFlow,
+            credentials,
+            PresentationOperationObserver.CreateUnreported("OpenAI settings"))
+    {
+    }
+
+    internal OpenAiSettingsViewModel(
+        IPackageContext packageContext,
+        OpenAiAuthPresentationService authPresentation,
+        PackageCallbackFlowRunner callbackFlow,
+        IProviderCredentialOwnerClient credentials,
+        PresentationOperationObserver operationObserver,
+        IPresentationDispatcher? uiDispatcher = null)
     {
         _packageContext = packageContext;
         _authPresentation = authPresentation;
         _callbackFlow = callbackFlow;
+        _operations = operationObserver;
+        _uiDispatcher = uiDispatcher ?? PresentationDispatcher.Capture();
         _selectedAuthMode = ResolveAuthModeOption(OpenAiAuthMode.CodexConnected);
         ApiKeySettings = new ApiKeySettingsState(
             credentials,
@@ -107,7 +145,7 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject,
         SelectedAuthMode = ResolveAuthModeOption(configuredMode);
         await ApiKeySettings.RefreshCredentialStatusAsync(cancellationToken);
         await UtilityModelSettings.InitializeAsync(cancellationToken);
-        await RefreshStatusAsync(cancellationToken);
+        await RefreshStatusCoreAsync(cancellationToken);
     }
 
     public ObservableCollection<OpenAiAuthModeOption> AuthModes { get; } =
@@ -183,33 +221,56 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject,
 
     partial void OnSelectedAuthModeChanged(OpenAiAuthModeOption? value)
     {
+        Interlocked.Increment(ref _authModeIntentRevision);
         OnPropertyChanged(nameof(CanAuthorize));
         AuthorizeCommand.NotifyCanExecuteChanged();
-        _tasks.Run(RefreshStatusAsync);
+        _operations.Submit(
+            RefreshAuthOperation,
+            RefreshStatusCoreAsync,
+            ReconcileAuthStatusAsync);
     }
 
     [RelayCommand]
-    private async Task SaveAsync()
+    private Task SaveAsync()
+        => _operations.RunAsync(
+            SaveSettingsOperation,
+            SaveCoreAsync,
+            ReconcileAuthStatusAsync);
+
+    private async Task SaveCoreAsync(CancellationToken cancellationToken)
     {
-        await SaveAuthModeValueAsync();
+        await SaveAuthModeValueAsync(
+            SelectedAuthMode?.ModeId ?? OpenAiAuthMode.CodexConnected,
+            cancellationToken);
         await ApiKeySettings.SaveCredentialAsync();
         await UtilityModelSettings.SaveUtilityModelAsync();
-        await RefreshStatusAsync();
+        await RefreshStatusCoreAsync(cancellationToken);
     }
 
     [RelayCommand]
-    private async Task SaveAuthModeAsync()
+    private Task SaveAuthModeAsync()
+        => _operations.RunAsync(
+            SaveAuthModeOperation,
+            SaveAuthModeCoreAsync,
+            ReconcileAuthStatusAsync);
+
+    private async Task SaveAuthModeCoreAsync(CancellationToken cancellationToken)
     {
         if (IsBusy)
         {
             return;
         }
 
+        var mode = SelectedAuthMode?.ModeId ?? OpenAiAuthMode.CodexConnected;
+        var intentRevision = Volatile.Read(ref _authModeIntentRevision);
         IsBusy = true;
         try
         {
-            await SaveAuthModeValueAsync();
-            await RefreshStatusAsync();
+            await SaveAuthModeValueAsync(mode, cancellationToken);
+            if (intentRevision == Volatile.Read(ref _authModeIntentRevision))
+            {
+                await RefreshStatusCoreAsync(cancellationToken);
+            }
         }
         finally
         {
@@ -218,7 +279,14 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject,
     }
 
     [RelayCommand(CanExecute = nameof(CanAuthorize), AllowConcurrentExecutions = false)]
-    private async Task AuthorizeAsync(CancellationToken cancellationToken)
+    private Task AuthorizeAsync(CancellationToken cancellationToken)
+        => _operations.RunAsync(
+            AuthorizeOperation,
+            AuthorizeCoreAsync,
+            ReconcileAuthorizationAsync,
+            cancellationToken);
+
+    private async Task AuthorizeCoreAsync(CancellationToken cancellationToken)
     {
         if (!CanAuthorize || Interlocked.CompareExchange(ref _authorizationActive, 1, 0) != 0)
         {
@@ -241,12 +309,21 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject,
                 OpenAiAuthMode.ConfigurationKey,
                 OpenAiAuthMode.CodexConnected,
                 lifetime.Token);
-            await _callbackFlow.RunAsync(
-                PackageCallbackHandlerIds.Authentication,
-                null,
-                "OpenAI ChatGPT authorization",
-                lifetime.Token);
-            await RefreshStatusAsync(lifetime.Token);
+            try
+            {
+                await _callbackFlow.RunAsync(
+                    PackageCallbackHandlerIds.Authentication,
+                    null,
+                    "OpenAI ChatGPT authorization",
+                    lifetime.Token);
+            }
+            catch (InvalidOperationException exception) when (!PresentationExceptionPolicy.IsFatal(exception))
+            {
+                throw new PresentationOperationException(
+                    "OpenAI authorization did not complete.",
+                    exception);
+            }
+            await RefreshStatusCoreAsync(lifetime.Token);
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested)
         {
@@ -257,17 +334,6 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject,
                 IsCodexStatusError = true;
                 CodexStatusLabel = "Authorization canceled";
                 CodexStatusDetail = "Authorization was canceled before it completed. Click Authorize to try again.";
-            }
-        }
-        catch (Exception ex)
-        {
-            if (!_disposed)
-            {
-                Interlocked.Increment(ref _statusGeneration);
-                IsCodexConnected = false;
-                IsCodexStatusError = true;
-                CodexStatusLabel = "Authorization failed";
-                CodexStatusDetail = ex.Message;
             }
         }
         finally
@@ -282,10 +348,16 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject,
     }
 
     [RelayCommand]
-    private async Task DisconnectAsync()
+    private Task DisconnectAsync()
+        => _operations.RunAsync(
+            DisconnectOperation,
+            DisconnectCoreAsync,
+            ReconcileAuthStatusAsync);
+
+    private async Task DisconnectCoreAsync(CancellationToken cancellationToken)
     {
         var disconnectGeneration = Interlocked.Increment(ref _statusGeneration);
-        await _authPresentation.DisconnectAsync();
+        await _authPresentation.DisconnectAsync(cancellationToken);
         if (disconnectGeneration != Volatile.Read(ref _statusGeneration))
         {
             return;
@@ -299,26 +371,21 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject,
     }
 
     [RelayCommand]
-    private async Task RefreshStatusAsync(CancellationToken cancellationToken = default)
+    private Task RefreshStatusAsync(CancellationToken cancellationToken = default)
+        => _operations.RunAsync(
+            RefreshAuthOperation,
+            RefreshStatusCoreAsync,
+            ReconcileAuthStatusAsync,
+            cancellationToken);
+
+    private async Task RefreshStatusCoreAsync(CancellationToken cancellationToken = default)
     {
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _tasks.CancellationToken);
         cancellationToken = lifetime.Token;
         var statusGeneration = Interlocked.Increment(ref _statusGeneration);
         var authMode = SelectedAuthMode?.ModeId
             ?? await OpenAiAuthMode.GetSelectedAsync(_packageContext.Settings, cancellationToken);
-        OpenAiAuthOperationResult status;
-        try
-        {
-            status = await _authPresentation.GetStatusAsync(cancellationToken);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            status = new OpenAiAuthOperationResult(false, false, null, ex.Message);
-        }
+        var status = await _authPresentation.GetStatusAsync(cancellationToken);
 
         if (statusGeneration != Volatile.Read(ref _statusGeneration))
         {
@@ -356,6 +423,56 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject,
         await ApiKeySettings.RefreshCredentialStatusAsync(cancellationToken);
     }
 
+    private Task ReconcileAuthStatusAsync(CancellationToken cancellationToken)
+        => InvokeOnUiThreadAsync(() => ReconcileAuthStatusCoreAsync(cancellationToken));
+
+    private async Task ReconcileAuthStatusCoreAsync(CancellationToken cancellationToken)
+    {
+        if (!_disposed)
+        {
+            Interlocked.Increment(ref _statusGeneration);
+            IsCodexConnected = false;
+            IsCodexStatusError = true;
+            CodexStatusLabel = "Authentication unavailable";
+            CodexStatusDetail = "OpenAI authentication state could not be confirmed. Try again.";
+        }
+
+        await RefreshStatusCoreAsync(cancellationToken);
+    }
+
+    private Task ReconcileAuthorizationAsync(
+        Exception exception,
+        CancellationToken cancellationToken)
+        => InvokeOnUiThreadAsync(() => ReconcileAuthorizationCoreAsync(exception, cancellationToken));
+
+    private async Task ReconcileAuthorizationCoreAsync(
+        Exception exception,
+        CancellationToken cancellationToken)
+    {
+        var failure = exception.InnerException ?? exception;
+        try
+        {
+            await RefreshStatusCoreAsync(cancellationToken);
+        }
+        finally
+        {
+            if (!_disposed && !IsCodexConnected)
+            {
+                Interlocked.Increment(ref _statusGeneration);
+                IsCodexStatusError = true;
+                CodexStatusLabel = "Authorization failed";
+                CodexStatusDetail = failure.Message;
+            }
+        }
+    }
+
+    private async Task InvokeOnUiThreadAsync(Func<Task> action)
+    {
+        Task operation = Task.CompletedTask;
+        await _uiDispatcher.InvokeAsync(() => operation = action()).ConfigureAwait(false);
+        await operation.ConfigureAwait(false);
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -365,15 +482,18 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject,
 
         _disposed = true;
         Interlocked.Increment(ref _statusGeneration);
+        _operations.Dispose();
         _tasks.Dispose();
         ApiKeySettings.Dispose();
         UtilityModelSettings.Dispose();
     }
 
-    private Task SaveAuthModeValueAsync(CancellationToken cancellationToken = default)
+    private Task SaveAuthModeValueAsync(
+        string mode,
+        CancellationToken cancellationToken = default)
         => _packageContext.Settings.SetValueAsync(
             OpenAiAuthMode.ConfigurationKey,
-            SelectedAuthMode?.ModeId ?? OpenAiAuthMode.CodexConnected,
+            mode,
             cancellationToken);
 
     private ApiKeyStatus ResolveApiKeyStatus(bool hasCredential)

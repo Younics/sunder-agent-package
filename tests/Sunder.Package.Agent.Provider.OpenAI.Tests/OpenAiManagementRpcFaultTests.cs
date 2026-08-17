@@ -24,7 +24,7 @@ public sealed class OpenAiManagementRpcFaultTests
             new ProviderCredentialAccessor(secrets, "openai.api-key"));
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            provider.GetCredentialStatusAsync(null!, new EmptyRequest()).AsTask());
+            provider.GetCredentialStatusAsync(null!, new ManagementQuery()).AsTask());
 
         Assert.Equal(UnexpectedMessage, exception.Message);
         Assert.IsNotType<SunderRpcException>(exception);
@@ -42,7 +42,7 @@ public sealed class OpenAiManagementRpcFaultTests
             new ProviderCredentialAccessor(secrets, "openai.api-key"));
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            provider.GetAuthStatusAsync(null!, new EmptyRequest()).AsTask());
+            provider.GetAuthStatusAsync(null!, new ManagementQuery()).AsTask());
 
         Assert.Equal(UnexpectedMessage, exception.Message);
         Assert.IsNotType<SunderRpcException>(exception);

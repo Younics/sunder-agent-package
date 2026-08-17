@@ -20,6 +20,7 @@ public sealed partial class AgentLocalStore
     internal async Task<AgentChatSnapshotProjection> ReadChatSnapshotAsync(
         long revision,
         AgentChatSnapshotRequest request,
+        int? maximumBytes = null,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -158,7 +159,7 @@ public sealed partial class AgentLocalStore
                 turns.Select(SanitizeTurn).ToArray(),
                 hasMoreTurns),
             permissions);
-        return AgentChatSnapshotPayload.Fit(snapshot);
+        return AgentChatSnapshotPayload.Fit(snapshot, maximumBytes);
     }
 
     private static IReadOnlyList<AgentWorkspaceRecord> ListChatWorkspaceRecords(
@@ -464,8 +465,6 @@ public sealed partial class AgentLocalStore
 
 internal static class AgentChatSnapshotPayload
 {
-    internal const int RuntimeMaximumBytes = AgentRuntimePayloadLimits.RuntimeMaximumResponseBytes;
-    internal const int MaximumSerializedBytes = RuntimeMaximumBytes - (64 * 1024);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     internal static int GetSerializedByteCount(AgentChatSnapshotProjection snapshot)
@@ -477,8 +476,12 @@ internal static class AgentChatSnapshotPayload
                JsonOptions)
            ?? throw new InvalidOperationException("Agent Chat snapshot JSON could not be deserialized.");
 
-    internal static AgentChatSnapshotProjection Fit(AgentChatSnapshotProjection snapshot)
+    internal static AgentChatSnapshotProjection Fit(
+        AgentChatSnapshotProjection snapshot,
+        int? maximumBytes = null)
     {
+        maximumBytes ??= AgentRuntimePayloadLimits.GetResponsePayloadBytes(
+            AgentRuntimePayloadLimits.StandardFallbackProfile);
         if (snapshot.InitialTranscript.Turns.FirstOrDefault() is { } oldestTurn)
         {
             snapshot = snapshot with
@@ -493,14 +496,14 @@ internal static class AgentChatSnapshotPayload
 
         var initialTranscriptProjected = false;
         var serializedBytes = GetSerializedByteCount(snapshot);
-        while (serializedBytes > MaximumSerializedBytes)
+        while (serializedBytes > maximumBytes.Value)
         {
             if (snapshot.InitialTranscript.Turns.Count > 1)
             {
                 var turnCount = snapshot.InitialTranscript.Turns.Count;
                 var removeCount = Math.Clamp(
                     (int)Math.Ceiling(
-                        turnCount * (serializedBytes - MaximumSerializedBytes) / (double)serializedBytes),
+                        turnCount * (serializedBytes - maximumBytes.Value) / (double)serializedBytes),
                     1,
                     turnCount - 1);
                 var retainedTurns = snapshot.InitialTranscript.Turns.Skip(removeCount).ToArray();
@@ -539,7 +542,7 @@ internal static class AgentChatSnapshotPayload
                         },
                     };
                     serializedBytes = GetSerializedByteCount(snapshot);
-                    if (serializedBytes <= MaximumSerializedBytes)
+                    if (serializedBytes <= maximumBytes.Value)
                     {
                         return snapshot;
                     }

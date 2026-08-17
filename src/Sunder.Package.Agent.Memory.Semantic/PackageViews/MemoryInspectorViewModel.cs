@@ -15,7 +15,7 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
 
     private readonly IMemoryInspectorGateway _memoryInspectorService;
     private readonly IPresentationDispatcher _uiDispatcher;
-    private readonly PresentationTaskScope _tasks;
+    private readonly PresentationOperationObserver _operations;
     private readonly CancellationTokenSource _lifetime = new();
     private readonly AsyncOnce _initialization = new();
     private readonly LatestRequestCoordinator _requests = new();
@@ -33,25 +33,22 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
     private int _busyOperationCount;
     private long _sessionSelectionRevision;
     private long _memorySelectionRevision;
+    private long _pinIntentRevision;
 
     internal MemoryInspectorViewModel(IMemoryInspectorGateway memoryInspectorService)
-        : this(memoryInspectorService, PresentationDispatcher.Capture())
+        : this(memoryInspectorService, PresentationDispatcher.Capture(), operationObserver: null)
     {
     }
 
     internal MemoryInspectorViewModel(
         IMemoryInspectorGateway memoryInspectorService,
-        IPresentationDispatcher uiDispatcher)
+        IPresentationDispatcher uiDispatcher,
+        PresentationOperationObserver? operationObserver = null)
     {
         _memoryInspectorService = memoryInspectorService;
         _uiDispatcher = uiDispatcher;
-        _tasks = new PresentationTaskScope(exception => _uiDispatcher.InvokeAsync(() =>
-        {
-            if (!_disposed)
-            {
-                StatusText = exception.Message;
-            }
-        }));
+        _operations = operationObserver
+            ?? PresentationOperationObserver.CreateUnreported("Semantic Memory");
         _memoryInspectorService.SessionChanged += OnSessionChanged;
         _memoryInspectorService.SemanticWorkerStatusChanged += OnSemanticWorkerStatusChanged;
     }
@@ -157,7 +154,11 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
         }
 
         _sessionSelectionRevision++;
-        _tasks.Run(StartSessionLoadAsync(value, preferredMemoryId: null));
+        _operations.Submit(
+            MemoryRefreshOperation,
+            cancellationToken => StartSessionLoadAsync(value, preferredMemoryId: null)
+                .WaitAsync(cancellationToken),
+            ReconcileMemoryAsync);
     }
 
     partial void OnSelectedMemoryChanged(MemoryListItemViewModel? value)
@@ -179,7 +180,11 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
 
     partial void OnSearchTextChanged(string value)
     {
-        _tasks.Run(StartSessionLoadAsync(SelectedSession, SelectedMemory?.MemoryId));
+        _operations.Submit(
+            MemoryRefreshOperation,
+            cancellationToken => StartSessionLoadAsync(SelectedSession, SelectedMemory?.MemoryId)
+                .WaitAsync(cancellationToken),
+            ReconcileMemoryAsync);
     }
 
     partial void OnWorkingSummaryTextChanged(string value)
@@ -189,17 +194,28 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
 
     partial void OnIncludeInactiveChanged(bool value)
     {
-        _tasks.Run(StartSessionLoadAsync(SelectedSession, SelectedMemory?.MemoryId));
+        _operations.Submit(
+            MemoryRefreshOperation,
+            cancellationToken => StartSessionLoadAsync(SelectedSession, SelectedMemory?.MemoryId)
+                .WaitAsync(cancellationToken),
+            ReconcileMemoryAsync);
     }
 
     [RelayCommand]
-    private async Task RefreshAsync()
-    {
-        await StartSessionRefresh(cancellationToken: _lifetime.Token);
-    }
+    private Task RefreshAsync()
+        => _operations.RunAsync(
+            MemoryRefreshOperation,
+            cancellationToken => StartSessionRefresh(cancellationToken: cancellationToken),
+            ReconcileMemoryAsync);
 
     [RelayCommand]
-    private async Task ReindexSemanticIndexAsync()
+    private Task ReindexSemanticIndexAsync()
+        => _operations.RunAsync(
+            MemoryReindexOperation,
+            ReindexSemanticIndexCoreAsync,
+            ReconcileMemoryAsync);
+
+    private async Task ReindexSemanticIndexCoreAsync(CancellationToken cancellationToken)
     {
         if (SelectedSession is null)
         {
@@ -210,7 +226,9 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
         BeginBusy();
         try
         {
-            var result = await _memoryInspectorService.ReindexSessionAsync(SelectedSession.SessionId);
+            var result = await _memoryInspectorService.ReindexSessionAsync(
+                SelectedSession.SessionId,
+                cancellationToken: cancellationToken);
             StatusText = result.Message;
             await StartSessionLoadAsync(SelectedSession, SelectedMemory?.MemoryId);
         }
@@ -221,7 +239,13 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
     }
 
     [RelayCommand]
-    private async Task SaveMemoryAsync()
+    private Task SaveMemoryAsync()
+        => _operations.RunAsync(
+            MemorySaveOperation,
+            SaveMemoryCoreAsync,
+            ReconcileMemoryAsync);
+
+    private async Task SaveMemoryCoreAsync(CancellationToken cancellationToken)
     {
         if (SelectedMemory is null)
         {
@@ -237,80 +261,108 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
             return;
         }
 
-        try
-        {
-            await _memoryInspectorService.UpdateMemoryAsync(
-                SelectedMemory.MemoryId,
-                category,
-                content,
-                "Corrected in memory inspector.",
-                _lifetime.Token);
-            StatusText = "Memory saved.";
-            await StartSessionLoadAsync(SelectedSession, SelectedMemory.MemoryId);
-        }
-        catch (Exception ex)
-        {
-            StatusText = ex.Message;
-        }
+        var memoryId = SelectedMemory.MemoryId;
+        await _memoryInspectorService.UpdateMemoryAsync(
+            memoryId,
+            category,
+            content,
+            "Corrected in memory inspector.",
+            cancellationToken);
+        StatusText = "Memory saved.";
+        await StartSessionLoadAsync(SelectedSession, memoryId);
     }
 
     [RelayCommand]
-    private async Task TogglePinnedAsync()
+    private Task TogglePinnedAsync()
+        => _operations.RunAsync(
+            MemoryPinOperation,
+            TogglePinnedCoreAsync,
+            ReconcileMemoryAsync);
+
+    private async Task TogglePinnedCoreAsync(CancellationToken cancellationToken)
     {
         if (SelectedMemory is null)
         {
             return;
         }
 
-        await _memoryInspectorService.SetPinnedAsync(
-            SelectedMemory.MemoryId,
-            !SelectedMemory.IsPinned,
-            _lifetime.Token);
-        StatusText = SelectedMemory.IsPinned ? "Memory unpinned." : "Memory pinned.";
-        await StartSessionLoadAsync(SelectedSession, SelectedMemory.MemoryId);
+        var memoryId = SelectedMemory.MemoryId;
+        var target = !SelectedMemory.IsPinned;
+        var intentRevision = Interlocked.Increment(ref _pinIntentRevision);
+        await _memoryInspectorService.SetPinnedAsync(memoryId, target, cancellationToken);
+        if (intentRevision == Volatile.Read(ref _pinIntentRevision))
+        {
+            StatusText = target ? "Memory pinned." : "Memory unpinned.";
+        }
+        await StartSessionLoadAsync(SelectedSession, memoryId);
     }
 
     [RelayCommand]
-    private async Task ContestMemoryAsync()
+    private Task ContestMemoryAsync()
+        => _operations.RunAsync(
+            MemoryContestOperation,
+            ContestMemoryCoreAsync,
+            ReconcileMemoryAsync);
+
+    private async Task ContestMemoryCoreAsync(CancellationToken cancellationToken)
     {
         if (SelectedMemory is null)
         {
             return;
         }
 
-        await _memoryInspectorService.ContestMemoryAsync(SelectedMemory.MemoryId, _lifetime.Token);
+        var memoryId = SelectedMemory.MemoryId;
+        await _memoryInspectorService.ContestMemoryAsync(memoryId, cancellationToken);
         StatusText = "Memory marked as contested.";
-        await StartSessionLoadAsync(SelectedSession, SelectedMemory.MemoryId);
+        await StartSessionLoadAsync(SelectedSession, memoryId);
     }
 
     [RelayCommand]
-    private async Task ForgetMemoryAsync()
+    private Task ForgetMemoryAsync()
+        => _operations.RunAsync(
+            MemoryForgetOperation,
+            ForgetMemoryCoreAsync,
+            ReconcileMemoryAsync);
+
+    private async Task ForgetMemoryCoreAsync(CancellationToken cancellationToken)
     {
         if (SelectedMemory is null)
         {
             return;
         }
 
-        await _memoryInspectorService.ForgetMemoryAsync(SelectedMemory.MemoryId, _lifetime.Token);
+        await _memoryInspectorService.ForgetMemoryAsync(SelectedMemory.MemoryId, cancellationToken);
         StatusText = "Memory forgotten.";
         await StartSessionLoadAsync(SelectedSession, preferredMemoryId: null);
     }
 
     [RelayCommand]
-    private async Task SupersedeMemoryAsync()
+    private Task SupersedeMemoryAsync()
+        => _operations.RunAsync(
+            MemorySupersedeOperation,
+            SupersedeMemoryCoreAsync,
+            ReconcileMemoryAsync);
+
+    private async Task SupersedeMemoryCoreAsync(CancellationToken cancellationToken)
     {
         if (SelectedMemory is null)
         {
             return;
         }
 
-        await _memoryInspectorService.SupersedeMemoryAsync(SelectedMemory.MemoryId, _lifetime.Token);
+        await _memoryInspectorService.SupersedeMemoryAsync(SelectedMemory.MemoryId, cancellationToken);
         StatusText = "Memory superseded.";
         await StartSessionLoadAsync(SelectedSession, preferredMemoryId: null);
     }
 
     [RelayCommand]
-    private async Task CreateCorrectionAsync()
+    private Task CreateCorrectionAsync()
+        => _operations.RunAsync(
+            MemoryCorrectionOperation,
+            CreateCorrectionCoreAsync,
+            ReconcileMemoryAsync);
+
+    private async Task CreateCorrectionCoreAsync(CancellationToken cancellationToken)
     {
         if (SelectedMemory is null)
         {
@@ -326,22 +378,15 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
             return;
         }
 
-        try
-        {
-            var result = await _memoryInspectorService.CreateCorrectedMemoryAsync(
-                SelectedMemory.MemoryId,
-                category,
-                content,
-                _lifetime.Token);
-            StatusText = result.CreatedNewMemory
-                ? "Created corrected memory and linked the original as superseded."
-                : "Applied correction to the existing memory.";
-            await StartSessionLoadAsync(SelectedSession, result.CorrectedMemory.MemoryId);
-        }
-        catch (Exception ex)
-        {
-            StatusText = ex.Message;
-        }
+        var result = await _memoryInspectorService.CreateCorrectedMemoryAsync(
+            SelectedMemory.MemoryId,
+            category,
+            content,
+            cancellationToken);
+        StatusText = result.CreatedNewMemory
+            ? "Created corrected memory and linked the original as superseded."
+            : "Applied correction to the existing memory.";
+        await StartSessionLoadAsync(SelectedSession, result.CorrectedMemory.MemoryId);
     }
 
     public void Dispose()
@@ -362,7 +407,7 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
         _memoryInspectorService.SemanticWorkerStatusChanged -= OnSemanticWorkerStatusChanged;
         _sessionLoadCancellation?.Dispose();
         _sessionLoadCancellation = null;
-        _tasks.Dispose();
+        _operations.Dispose();
         _lifetime.Dispose();
     }
 

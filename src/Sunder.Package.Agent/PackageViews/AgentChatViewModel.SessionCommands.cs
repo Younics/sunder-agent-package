@@ -7,7 +7,13 @@ namespace Sunder.Package.Agent.PackageViews;
 public sealed partial class AgentChatViewModel
 {
     [RelayCommand(CanExecute = nameof(CanCreateSession))]
-    private async Task CreateSessionAsync()
+    private Task CreateSessionAsync()
+        => RunOperationAsync(
+            CreateSessionOperation,
+            CreateSessionCoreAsync,
+            cancellationToken => ReconcileChatSnapshotAsync(cancellationToken));
+
+    private async Task CreateSessionCoreAsync(CancellationToken cancellationToken)
     {
         var profile = SelectedProfile;
         var workspace = SelectedWorkspace;
@@ -41,7 +47,7 @@ public sealed partial class AgentChatViewModel
                 profile.ProfileId,
                 profile.BehaviorLoopId,
                 workspaceId,
-                _lifetimeCancellation.Token).ConfigureAwait(false)).Session;
+                cancellationToken).ConfigureAwait(false)).Session;
         await InvokeOnUiThreadAsync(() =>
         {
             if (!string.Equals(session.WorkspaceId, workspaceId, StringComparison.OrdinalIgnoreCase))
@@ -71,7 +77,15 @@ public sealed partial class AgentChatViewModel
     }
 
     [RelayCommand]
-    private async Task SaveSessionRenameAsync(AgentSessionListItemViewModel? session)
+    private Task SaveSessionRenameAsync(AgentSessionListItemViewModel? session)
+        => RunOperationAsync(
+            RenameSessionOperation,
+            cancellationToken => SaveSessionRenameCoreAsync(session, cancellationToken),
+            cancellationToken => ReconcileChatSnapshotAsync(cancellationToken));
+
+    private async Task SaveSessionRenameCoreAsync(
+        AgentSessionListItemViewModel? session,
+        CancellationToken cancellationToken)
     {
         if (session is null)
         {
@@ -93,7 +107,7 @@ public sealed partial class AgentChatViewModel
         {
             _ = await _chatSessionCommandGateway.UpdateSessionAsync(
                 updated,
-                _lifetimeCancellation.Token).ConfigureAwait(false);
+                cancellationToken).ConfigureAwait(false);
         }
         await InvokeOnUiThreadAsync(() =>
         {
@@ -110,14 +124,22 @@ public sealed partial class AgentChatViewModel
         => session?.CancelRename();
 
     [RelayCommand]
-    private async Task DeleteSessionAsync(AgentSessionListItemViewModel? session)
+    private Task DeleteSessionAsync(AgentSessionListItemViewModel? session)
+        => RunOperationAsync(
+            DeleteSessionOperation,
+            cancellationToken => DeleteSessionCoreAsync(session, cancellationToken),
+            cancellationToken => ReconcileChatSnapshotAsync(cancellationToken));
+
+    private async Task DeleteSessionCoreAsync(
+        AgentSessionListItemViewModel? session,
+        CancellationToken cancellationToken)
     {
         if (session is null)
         {
             return;
         }
 
-        session.CancelRename();
+        var finalSessionDeletion = CaptureFinalSessionDeletionAuthority(session.SessionId);
         if (_chatSessionCommandGateway is null)
         {
             _sessionService.DeleteSession(session.SessionId);
@@ -126,13 +148,18 @@ public sealed partial class AgentChatViewModel
         {
             await _chatSessionCommandGateway.DeleteSessionAsync(
                 session.SessionId,
-                _lifetimeCancellation.Token).ConfigureAwait(false);
+                cancellationToken).ConfigureAwait(false);
         }
-        await InvokeOnUiThreadAsync(() =>
-            ScheduleChatSnapshotRequest(
-                SelectedProfile?.ProfileId,
-                SelectedWorkspace?.WorkspaceId,
-                preferredSessionId: null)).ConfigureAwait(false);
+
+        session.CancelRename();
+        if (finalSessionDeletion is { } authority)
+        {
+            await ApplySuccessfulFinalSessionDeletionAsync(
+                authority,
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        await ReconcileChatSnapshotAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private bool CanCreateSession()

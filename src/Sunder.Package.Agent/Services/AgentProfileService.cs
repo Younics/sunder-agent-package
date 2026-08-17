@@ -96,7 +96,7 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
         );
 
         _store.SaveProfile(record);
-        ProfileChanged?.Invoke(record.ProfileId);
+        NotifyProfileChanged(record.ProfileId);
         return record;
     }
 
@@ -115,7 +115,8 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
         string? behaviorLoopSettingsJson = null,
         string? chatModelSettingsJson = null)
     {
-        var existing = _store.GetProfile(profileId) ?? throw new InvalidOperationException($"Profile '{profileId}' was not found.");
+        var existing = _store.GetProfile(profileId)
+                       ?? throw new AgentProfileOperationException($"Profile '{profileId}' was not found.");
         var now = DateTimeOffset.UtcNow;
         var existingChatBinding = FindModelBinding(existing, AgentModelCapabilityKinds.Chat);
         var existingEmbeddingBinding = FindModelBinding(existing, AgentModelCapabilityKinds.Embedding);
@@ -147,7 +148,7 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
             BehaviorLoopSourceId = behaviorLoopSourceId is null ? existing.BehaviorLoopSourceId : NormalizeNullable(behaviorLoopSourceId),
             BehaviorLoopSettingsJson = behaviorLoopSettingsJson is null ? existing.BehaviorLoopSettingsJson : NormalizeNullable(behaviorLoopSettingsJson),
         });
-        ProfileChanged?.Invoke(profileId);
+        NotifyProfileChanged(profileId);
     }
 
     public IReadOnlyList<AgentBehaviorLoopDescriptor> ListBehaviorLoopDescriptors()
@@ -172,26 +173,26 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
     public void DeleteProfile(string profileId)
     {
         _store.DeleteProfile(profileId);
-        ProfileChanged?.Invoke(profileId);
+        NotifyProfileChanged(profileId);
     }
 
     public void SaveRuntimeProfile(AgentProfileRecord profile)
     {
         _store.SaveProfile(profile with { IsInternal = true });
-        ProfileChanged?.Invoke(profile.ProfileId);
+        NotifyProfileChanged(profile.ProfileId);
     }
 
     public void ImportProfile(AgentProfileRecord profile)
     {
         _store.SaveProfile(profile with { IsInternal = false });
-        ProfileChanged?.Invoke(profile.ProfileId);
+        NotifyProfileChanged(profile.ProfileId);
     }
 
     public void NotifyProfileImported(string profileId)
     {
         if (!string.IsNullOrWhiteSpace(profileId))
         {
-            ProfileChanged?.Invoke(profileId);
+            NotifyProfileChanged(profileId);
         }
     }
 
@@ -284,7 +285,44 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
 
     private void OnSelectableCapabilitiesChanged()
     {
-        SelectableCapabilitiesChanged?.Invoke();
+        var handlers = SelectableCapabilitiesChanged;
+        if (handlers is null)
+        {
+            return;
+        }
+
+        foreach (Action handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                handler();
+            }
+            catch (Exception exception) when (!AgentServiceExceptionPolicy.IsFatal(exception))
+            {
+                // Capability listeners are independent refresh hints.
+            }
+        }
+    }
+
+    private void NotifyProfileChanged(string profileId)
+    {
+        var handlers = ProfileChanged;
+        if (handlers is null)
+        {
+            return;
+        }
+
+        foreach (Action<string> handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                handler(profileId);
+            }
+            catch (Exception exception) when (!AgentServiceExceptionPolicy.IsFatal(exception))
+            {
+                // Listeners cannot invalidate an already committed profile mutation.
+            }
+        }
     }
 
     public void Dispose()
@@ -509,3 +547,5 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
     private static string? NormalizeNullable(string? value)
         => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }
+
+internal sealed class AgentProfileOperationException(string message) : InvalidOperationException(message);

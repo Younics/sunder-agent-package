@@ -52,12 +52,14 @@ internal sealed class RegressionTestPackageScope : IDisposable
     }
 }
 
-internal class RegressionTestExtensionCatalog : AgentRpcCatalog
+internal partial class RegressionTestExtensionCatalog : AgentRpcCatalog
 {
     private readonly RegressionTestRpcClient _client;
 
-    public RegressionTestExtensionCatalog()
-        : this(new RegressionTestRpcClient(new RegressionTestRpcState(), "sunder.package.agent"))
+    public RegressionTestExtensionCatalog(bool workerStyleProviderBoundary = false)
+        : this(new RegressionTestRpcClient(
+            new RegressionTestRpcState(workerStyleProviderBoundary),
+            "sunder.package.agent"))
     {
     }
 
@@ -184,11 +186,16 @@ internal class RegressionTestExtensionCatalog : AgentRpcCatalog
     }
 }
 
-internal sealed class RegressionTestRpcClient(RegressionTestRpcState state, string callerPackageId) : ISunderRpcClient
+internal sealed class RegressionTestRpcClient(
+    RegressionTestRpcState state,
+    string callerPackageId,
+    SunderRpcResourceProfile? resourceProfile = null) : ISunderRpcClient
 {
     public RegressionTestRpcState State { get; } = state;
 
-    public RegressionTestRpcClient ForCaller(string packageId) => new(State, packageId);
+    public SunderRpcResourceProfile? ResourceProfile { get; } = resourceProfile;
+
+    public RegressionTestRpcClient ForCaller(string packageId) => new(State, packageId, ResourceProfile);
 
     public ValueTask<ISunderRpcCallScope> CreateCallScopeAsync(
         SunderRpcCallOptions? options = null,
@@ -415,6 +422,7 @@ internal sealed class RegressionTestRpcCallScope(
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(options);
         ThrowIfUnavailable(cancellationToken);
+        state.ThrowNextResponseContentRegistrationFailure();
         await using var destination = new MemoryStream();
         await source.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
         return StoreContent(_responseContent, endpoint: null, destination.ToArray(), options);
@@ -568,7 +576,7 @@ internal sealed class RegressionTestInvocationAuthority(
     private void ThrowIfRevoked() => _revocation.Token.ThrowIfCancellationRequested();
 }
 
-internal sealed class RegressionTestRpcState : IDisposable
+internal sealed class RegressionTestRpcState(bool workerStyleProviderBoundary = false) : IDisposable
 {
     private readonly object _gate = new();
     private readonly Dictionary<string, Entry> _entries = new(StringComparer.Ordinal);
@@ -583,6 +591,7 @@ internal sealed class RegressionTestRpcState : IDisposable
     private Exception? _lastInvocationFailure;
     private SunderRpcEndpointReference? _lastInvariantViolationEndpoint;
     private string? _lastInvariantViolationPackageId;
+    private Exception? _nextResponseContentRegistrationFailure;
 
     public int DiscoveryCount => Volatile.Read(ref _discoveryCount);
 
@@ -595,6 +604,27 @@ internal sealed class RegressionTestRpcState : IDisposable
         => Volatile.Read(ref _lastInvariantViolationPackageId);
 
     public int InvariantViolationReportCount => Volatile.Read(ref _invariantViolationReportCount);
+
+    public void FailNextResponseContentRegistration(Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+        if (Interlocked.CompareExchange(
+                ref _nextResponseContentRegistrationFailure,
+                exception,
+                null) is not null)
+        {
+            throw new InvalidOperationException(
+                "A response-content registration failure is already pending.");
+        }
+    }
+
+    internal void ThrowNextResponseContentRegistrationFailure()
+    {
+        if (Interlocked.Exchange(ref _nextResponseContentRegistrationFailure, null) is { } exception)
+        {
+            throw exception;
+        }
+    }
 
     public void Add(
         string packageId,
@@ -824,7 +854,9 @@ internal sealed class RegressionTestRpcState : IDisposable
         catch (Exception exception)
         {
             Volatile.Write(ref _lastInvocationFailure, exception);
-            throw;
+            var projected = ProjectProviderFailure(entry, serviceId, methodId, exception);
+            if (ReferenceEquals(projected, exception)) throw;
+            throw projected;
         }
         finally
         {
@@ -848,13 +880,20 @@ internal sealed class RegressionTestRpcState : IDisposable
         try
         {
             ValidatePayload(entry, serviceId, methodId, request, output: false);
-            await foreach (var item in entry.Handler.InvokeServerStreamAsync(
-                               context,
-                               serviceId,
-                               methodId,
-                               request,
-                               invocation.Token).WithCancellation(invocation.Token).ConfigureAwait(false))
+            await using var enumerator = entry.Handler.InvokeServerStreamAsync(
+                    context,
+                    serviceId,
+                    methodId,
+                    request,
+                    invocation.Token)
+                .GetAsyncEnumerator(invocation.Token);
+            while (await MoveNextProviderStreamAsync(
+                       entry,
+                       serviceId,
+                       methodId,
+                       enumerator).ConfigureAwait(false))
             {
+                var item = enumerator.Current;
                 ValidatePayload(entry, serviceId, methodId, item, output: true);
                 yield return item;
             }
@@ -863,6 +902,32 @@ internal sealed class RegressionTestRpcState : IDisposable
         {
             context.Revoke();
             Release(entry);
+        }
+    }
+
+    private async ValueTask<bool> MoveNextProviderStreamAsync(
+        Entry entry,
+        string serviceId,
+        string methodId,
+        IAsyncEnumerator<JsonElement> enumerator)
+    {
+        try
+        {
+            return await enumerator.MoveNextAsync().ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (entry.Retirement.IsCancellationRequested)
+        {
+            var exception = new SunderRpcException(new SunderRpcError(
+                SunderRpcErrorKind.StaleEndpoint,
+                "test.rpc.stale-endpoint",
+                "The test RPC provider activation is stale."));
+            Volatile.Write(ref _lastInvocationFailure, exception);
+            throw exception;
+        }
+        catch (Exception exception)
+        {
+            Volatile.Write(ref _lastInvocationFailure, exception);
+            throw ProjectProviderFailure(entry, serviceId, methodId, exception);
         }
     }
 
@@ -916,6 +981,31 @@ internal sealed class RegressionTestRpcState : IDisposable
     {
         _events.Add(item);
         foreach (var watcher in _watchers.ToArray()) watcher.TryWrite(item);
+    }
+
+    private Exception ProjectProviderFailure(
+        Entry entry,
+        string serviceId,
+        string methodId,
+        Exception exception)
+    {
+        if (!workerStyleProviderBoundary
+            || exception is SunderRpcException
+            {
+                IsHostAuthenticated: false,
+                Error.Kind: SunderRpcErrorKind.Domain,
+            } rpcException
+            && entry.Descriptor.FindService(serviceId)?.FindMethod(methodId)?.Errors.Contains(
+                rpcException.Error.Code,
+                StringComparer.Ordinal) == true)
+        {
+            return exception;
+        }
+
+        return new SunderRpcException(new SunderRpcError(
+            SunderRpcErrorKind.ProviderFaulted,
+            "rpc.provider.handler-fault",
+            "The process provider handler failed."));
     }
 
     private static SunderRpcInvocationContext CreateContext(

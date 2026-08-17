@@ -27,7 +27,7 @@ public sealed partial class AgentSessionService
             {
                 handler(sessionId);
             }
-            catch
+            catch (Exception exception) when (!AgentServiceExceptionPolicy.IsFatal(exception))
             {
                 // UI or extension listeners must not break persisted agent state changes.
             }
@@ -56,7 +56,7 @@ public sealed partial class AgentSessionService
                 {
                     handler(sessionId, turn);
                 }
-                catch
+                catch (Exception exception) when (!AgentServiceExceptionPolicy.IsFatal(exception))
                 {
                     // UI or extension listeners must not break persisted agent turn changes.
                 }
@@ -88,7 +88,7 @@ public sealed partial class AgentSessionService
             {
                 handler(mutation);
             }
-            catch
+            catch (Exception exception) when (!AgentServiceExceptionPolicy.IsFatal(exception))
             {
                 // UI or extension listeners must not break persisted agent turn changes.
             }
@@ -245,7 +245,7 @@ public sealed partial class AgentSessionService
             {
                 notification();
             }
-            catch
+            catch (Exception exception) when (!AgentServiceExceptionPolicy.IsFatal(exception))
             {
                 // Notification dispatch must not break already committed state changes.
             }
@@ -284,7 +284,7 @@ public sealed partial class AgentSessionService
             {
                 notification();
             }
-            catch
+            catch (Exception exception) when (!AgentServiceExceptionPolicy.IsFatal(exception))
             {
                 // Notification dispatch must not break already committed state changes.
             }
@@ -308,7 +308,7 @@ public sealed partial class AgentSessionService
             {
                 handler(sessionId);
             }
-            catch
+            catch (Exception exception) when (!AgentServiceExceptionPolicy.IsFatal(exception))
             {
                 // UI or extension listeners must not break persisted agent state changes.
             }
@@ -334,7 +334,7 @@ public sealed partial class AgentSessionService
             {
                 handler(sessionId, activity);
             }
-            catch
+            catch (Exception exception) when (!AgentServiceExceptionPolicy.IsFatal(exception))
             {
                 // Live activity listeners must not break agent execution.
             }

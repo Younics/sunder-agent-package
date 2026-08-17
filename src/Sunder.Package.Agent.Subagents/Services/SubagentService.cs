@@ -1,6 +1,7 @@
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Subagents.Models;
 using Sunder.Package.Agent.Subagents.Runtime;
+using System.Runtime.InteropServices;
 
 namespace Sunder.Package.Agent.Subagents.Services;
 
@@ -31,7 +32,7 @@ public sealed class SubagentService(SubagentStore store)
             now,
             now);
         _store.Save(record);
-        SubagentsChanged?.Invoke();
+        NotifySubagentsChanged();
         return record;
     }
 
@@ -66,14 +67,14 @@ public sealed class SubagentService(SubagentStore store)
             UpdatedAtUtc = DateTimeOffset.UtcNow,
         };
         _store.Save(saved);
-        SubagentsChanged?.Invoke();
+        NotifySubagentsChanged();
         return saved;
     }
 
     public void DeleteSubagent(string subagentId)
     {
         _store.Delete(subagentId);
-        SubagentsChanged?.Invoke();
+        NotifySubagentsChanged();
     }
 
     public SubagentRecord ImportSubagent(SubagentRecord record)
@@ -95,12 +96,52 @@ public sealed class SubagentService(SubagentStore store)
         })
             .ToArray();
         _store.SaveMany(saved);
-        SubagentsChanged?.Invoke();
+        NotifySubagentsChanged();
         return saved;
     }
 
     public void NotifySubagentsImported()
-        => SubagentsChanged?.Invoke();
+        => NotifySubagentsChanged();
+
+    private void NotifySubagentsChanged()
+    {
+        var handlers = SubagentsChanged;
+        if (handlers is null)
+        {
+            return;
+        }
+
+        foreach (Action handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                handler();
+            }
+            catch (Exception exception) when (!IsFatal(exception))
+            {
+                // A listener cannot invalidate an already persisted Subagent mutation.
+            }
+        }
+    }
+
+    private static bool IsFatal(Exception exception)
+    {
+        if (exception is OutOfMemoryException
+            or StackOverflowException
+            or AccessViolationException
+            or SEHException)
+        {
+            return true;
+        }
+
+        if (exception is AggregateException aggregate
+            && aggregate.InnerExceptions.Any(IsFatal))
+        {
+            return true;
+        }
+
+        return exception.InnerException is { } inner && IsFatal(inner);
+    }
 
     private static string? Normalize(string? value)
         => string.IsNullOrWhiteSpace(value) ? null : value.Trim();

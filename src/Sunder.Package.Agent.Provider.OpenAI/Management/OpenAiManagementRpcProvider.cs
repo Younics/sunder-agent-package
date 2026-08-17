@@ -12,19 +12,19 @@ internal sealed class OpenAiManagementRpcProvider(
 {
     public async ValueTask<AuthStatus> GetAuthStatusAsync(
         SunderRpcInvocationContext context,
-        EmptyRequest request,
+        ManagementQuery request,
         CancellationToken cancellationToken = default)
         => ToWire(await auth.GetStatusAsync(cancellationToken));
 
     public async ValueTask<AuthStatus> DisconnectAuthAsync(
         SunderRpcInvocationContext context,
-        EmptyRequest request,
+        ManagementQuery request,
         CancellationToken cancellationToken = default)
         => ToWire(await auth.DisconnectAsync(cancellationToken));
 
     public async ValueTask<CredentialStatus> GetCredentialStatusAsync(
         SunderRpcInvocationContext context,
-        EmptyRequest request,
+        ManagementQuery request,
         CancellationToken cancellationToken = default)
         => new()
         {
@@ -46,7 +46,7 @@ internal sealed class OpenAiManagementRpcProvider(
 
     public async ValueTask<CredentialStatus> ClearCredentialAsync(
         SunderRpcInvocationContext context,
-        EmptyRequest request,
+        ManagementQuery request,
         CancellationToken cancellationToken = default)
     {
         await credentials.DeleteCredentialAsync(cancellationToken);
@@ -58,7 +58,11 @@ internal sealed class OpenAiManagementRpcProvider(
         {
             IsConnected = result.IsConnected,
             HasCachedSession = result.HasCachedSession,
-            ExpiresAtUtc = result.ExpiresAtUtc?.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture),
+            ExpiresAtUtc = result.ExpiresAtUtc is { } expiry
+                ? new SunderRpcOffsetDateTime(expiry.ToUniversalTime().ToString(
+                    "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF'Z'",
+                    CultureInfo.InvariantCulture))
+                : null,
             ErrorMessage = Bound(result.ErrorMessage),
         };
 

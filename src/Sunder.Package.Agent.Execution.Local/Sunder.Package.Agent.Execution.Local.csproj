@@ -37,7 +37,7 @@
   <ItemGroup>
     <SunderContractBundle Include="Protocol\Contracts\local-execution-presentation.rpc.json"
                           ContractId="sunder.package.agent.execution.local.presentation"
-                          Version="2.0.0"
+                           Version="2.0.0"
                           DescriptorPath="contracts/local-execution-presentation.rpc.json"
                           Exposure="package" />
     <SunderRpcProvider Include="local.presentation"

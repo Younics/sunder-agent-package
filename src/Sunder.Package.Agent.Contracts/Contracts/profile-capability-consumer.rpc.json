@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "descriptorVersion": 2,
+  "schemaProfile": "sunder.rpc.values.v1",
   "contractId": "sunder.agent.profile.capability.consumer",
   "version": "1.0.0",
   "errors": {},
@@ -12,7 +13,7 @@
           "idempotency": "idempotent",
           "errors": [],
           "requestSchema": {
-            "$ref": "#/$defs/AgentRpcEmpty"
+            "$ref": "#/$defs/Unit"
           },
           "responseSchema": {
             "$ref": "#/$defs/ProfileCapabilityConsumerSnapshot"
@@ -22,28 +23,28 @@
     }
   },
   "$defs": {
-    "AgentRpcEmpty": {
+    "Unit": {
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
-    "String": {
+    "TextValue": {
       "type": "string",
       "minLength": 0,
-      "maxLength": 1000000
+      "maxLength": 65536
     },
     "AgentProfileCapabilityConsumerDescriptor": {
       "type": "object",
       "properties": {
         "capabilityKind": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/TextValue"
         },
         "description": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         },
         "displayName": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         }
       },
       "required": [
@@ -53,25 +54,25 @@
       ],
       "additionalProperties": false
     },
-    "ListOfAgentProfileCapabilityConsumerDescriptor": {
+    "AgentProfileCapabilityConsumerDescriptorCollection": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentProfileCapabilityConsumerDescriptor"
       },
       "minItems": 0,
-      "maxItems": 1000000
+      "maxItems": 10000
     },
     "ProfileCapabilityConsumerSnapshot": {
       "type": "object",
       "properties": {
         "capabilities": {
-          "$ref": "#/$defs/ListOfAgentProfileCapabilityConsumerDescriptor"
+          "$ref": "#/$defs/AgentProfileCapabilityConsumerDescriptorCollection"
         },
         "consumerId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "displayName": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         }
       },
       "required": [
@@ -80,6 +81,16 @@
         "displayName"
       ],
       "additionalProperties": false
+    },
+    "Identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "DisplayText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 8192
     }
   }
 }

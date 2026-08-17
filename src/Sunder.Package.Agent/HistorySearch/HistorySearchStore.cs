@@ -2,18 +2,25 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Logging;
+using Sunder.Package.Agent.Shared.Storage;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.HistorySearch;
 
-internal sealed partial class HistorySearchStore
+internal sealed partial class HistorySearchStore : IDisposable, IAsyncDisposable
 {
     private readonly object _writeLock = new();
     private readonly object _recoveryLock = new();
+    private readonly SqliteWalCheckpointMaintenance _walCheckpointMaintenance;
 
     internal HistorySearchStore(IPackageContext packageContext)
     {
         DatabasePath = packageContext.Storage.RoleLocalWorkspace.GetLocalPath("agent/history-search.db");
+        _walCheckpointMaintenance = new SqliteWalCheckpointMaintenance(
+            DatabasePath,
+            "History projection store",
+            packageContext.Logging.LoggerFactory.CreateLogger<HistorySearchStore>());
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(DatabasePath)!);
@@ -25,12 +32,32 @@ internal sealed partial class HistorySearchStore
             IsAvailable = false;
             FailureCode = "projection-store-unavailable";
         }
+        finally
+        {
+            _walCheckpointMaintenance.ScheduleCheckpoint();
+        }
     }
 
     internal string DatabasePath { get; }
     internal bool IsAvailable { get; private set; }
     internal bool WasRecovered { get; private set; }
     internal string? FailureCode { get; private set; }
+
+    internal int WalCheckpointAttemptCount => _walCheckpointMaintenance.AttemptCount;
+
+    internal Task<bool> WaitForWalCheckpointAttemptAfterAsync(
+        int attemptCount,
+        CancellationToken cancellationToken = default)
+        => _walCheckpointMaintenance.WaitForAttemptAfterAsync(attemptCount, cancellationToken);
+
+    internal Task WaitForWalCheckpointIdleAsync(CancellationToken cancellationToken = default)
+        => _walCheckpointMaintenance.WaitForIdleAsync(cancellationToken);
+
+    internal void RetryWalCheckpoint() => _walCheckpointMaintenance.ScheduleCheckpoint();
+
+    public ValueTask DisposeAsync() => _walCheckpointMaintenance.DisposeAsync();
+
+    public void Dispose() => _walCheckpointMaintenance.Dispose();
 
     internal HistoryProjectionConfiguration GetConfiguration()
     {

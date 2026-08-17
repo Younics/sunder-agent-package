@@ -322,7 +322,13 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         IsRollbackPending || !string.IsNullOrEmpty(DraftMessage) || PendingAttachments.Count > 0;
 
     [RelayCommand(CanExecute = nameof(CanSendMessage), AllowConcurrentExecutions = true)]
-    private async Task SendMessageAsync()
+    private Task SendMessageAsync()
+        => RunOperationAsync(
+            SendMessageOperation,
+            SendMessageCoreAsync,
+            cancellationToken => ReconcileChatSnapshotAsync(cancellationToken));
+
+    private async Task SendMessageCoreAsync(CancellationToken cancellationToken)
     {
         var selectedSession = SelectedSession;
         if (selectedSession is null)
@@ -384,7 +390,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
                 sessionId,
                 AgentTranscriptPageDirection.Recent,
                 500),
-            _lifetimeCancellation.Token).ConfigureAwait(false);
+            cancellationToken).ConfigureAwait(false);
         AgentComposerSubmission? submission = null;
         await InvokeOnUiThreadAsync(() =>
         {
@@ -416,7 +422,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         {
             var readiness = await _profileService.GetChatProviderReadinessAsync(
                 chatBinding.ProviderId,
-                _lifetimeCancellation.Token
+                cancellationToken
             ).ConfigureAwait(false);
             if (readiness is null)
             {
@@ -448,7 +454,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
                         workspaceId,
                         attachments,
                         submission.UserTurnId,
-                        _lifetimeCancellation.Token
+                        cancellationToken
                     ).ConfigureAwait(false);
                 }
                 else
@@ -460,7 +466,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
                         message,
                         workspaceId,
                         attachments,
-                        _lifetimeCancellation.Token
+                        cancellationToken
                     ).ConfigureAwait(false);
                 }
             }
@@ -475,7 +481,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
                         workspaceId,
                         attachments,
                         submission.UserTurnId,
-                        _lifetimeCancellation.Token
+                        cancellationToken
                     ).ConfigureAwait(false);
                 }
                 else
@@ -486,7 +492,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
                         message,
                         workspaceId,
                         attachments,
-                        _lifetimeCancellation.Token
+                        cancellationToken
                     ).ConfigureAwait(false);
                 }
             }
@@ -540,7 +546,13 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         && (!string.IsNullOrWhiteSpace(DraftMessage) || PendingAttachments.Count > 0);
 
     [RelayCommand]
-    private async Task StopRunAsync()
+    private Task StopRunAsync()
+        => RunOperationAsync(
+            StopRunOperation,
+            StopRunCoreAsync,
+            cancellationToken => ReconcileChatSnapshotAsync(cancellationToken));
+
+    private async Task StopRunCoreAsync(CancellationToken cancellationToken)
     {
         var selectedSession = SelectedSession;
         if (selectedSession is null)
@@ -549,7 +561,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         }
 
         var sessionId = selectedSession.SessionId;
-        var checkpoint = await _runCoordinator.StopAsync(sessionId, _lifetimeCancellation.Token)
+        var checkpoint = await _runCoordinator.StopAsync(sessionId, cancellationToken)
             .ConfigureAwait(false);
         await InvokeOnUiThreadAsync(() =>
         {
@@ -634,6 +646,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
         _timeline.Dispose();
         _activityTicker.Dispose();
         DisposeAttachmentPreviewImage();
+        _operations.Dispose();
         _backgroundTasks.Dispose();
         _initialization.Dispose();
         _lifetimeCancellation.Dispose();

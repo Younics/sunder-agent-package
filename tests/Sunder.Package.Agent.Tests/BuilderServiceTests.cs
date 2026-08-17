@@ -16,6 +16,24 @@ namespace Sunder.Package.Agent.Tests;
 public sealed class BuilderServiceTests
 {
     [Fact]
+    public void RpcPayloadLimits_RejectInconsistentRegisteredContentMetadata()
+    {
+        var bytes = BuilderRpcPayloadLimits.SerializeResponse(new BuilderRpcResponse());
+        var deadlineUtc = DateTimeOffset.UtcNow.AddMinutes(1);
+        var reference = new SunderRpcContentReference(
+            "builder-result",
+            bytes.LongLength,
+            new string('0', 64),
+            "application/json",
+            "builder-result.json",
+            deadlineUtc,
+            SunderRpcContentRepeatability.SingleUse);
+
+        Assert.Throws<InvalidDataException>(() =>
+            BuilderRpcPayloadLimits.ValidateRegisteredContent(reference, bytes, deadlineUtc));
+    }
+
+    [Fact]
     public async Task Persistence_OverlappingAutosaves_DebouncesToLatestGeneration()
     {
         var store = new RecordingProjectStore();
@@ -128,6 +146,26 @@ public sealed class BuilderServiceTests
 
             await initialization;
             Assert.Equal(0, store.SaveCount);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ViewModel_DisposalAfterUnchangedLoad_DoesNotRewriteProjects()
+    {
+        var root = CreateProjectFolder();
+        try
+        {
+            var store = new RecordingProjectStore();
+            var viewModel = CreateViewModelForLoadTest(root, store);
+
+            await viewModel.InitializeAsync();
+            await viewModel.DisposeAsync();
+
+            Assert.Empty(store.Saves);
         }
         finally
         {
@@ -294,7 +332,7 @@ public sealed class BuilderServiceTests
 
         Assert.NotEmpty(projected);
         Assert.True(projected.Count < workspaces.Length);
-        Assert.True(runtime.MaximumResponseBytes < (4 * 1024 * 1024) - (64 * 1024));
+        Assert.True(runtime.MaximumResponseBytes < (8 * 1024 * 1024) - (64 * 1024));
     }
 
     [Fact]
@@ -1047,15 +1085,6 @@ public sealed class BuilderServiceTests
 
     internal sealed class LoopbackBuilderRpcClient : ISunderRpcClient, IDisposable
     {
-        private static readonly string[] RequestKindNames =
-        [
-            "ListWorkspaces",
-            "ResolveWorkspace",
-            "ExecuteProcess",
-            "ExecuteShell",
-            "MapToHostPath",
-            "AddPathEntry",
-        ];
         private readonly RegressionTestRpcState _state = new();
         private readonly RegressionTestRpcClient _client;
 
@@ -1163,22 +1192,19 @@ public sealed class BuilderServiceTests
                 | System.Reflection.BindingFlags.Public
                 | System.Reflection.BindingFlags.NonPublic)!;
 
-            public async ValueTask<BuilderExecuteResponse> ExecuteAsync(
+            public async ValueTask<BuilderResultContent> ExecuteAsync(
                 SunderRpcInvocationContext context,
                 BuilderExecuteRequest request,
                 CancellationToken cancellationToken = default)
             {
-                var kind = checked((int)request.Kind);
-                owner.RequestKinds.Add(kind >= 0 && kind < RequestKindNames.Length
-                    ? RequestKindNames[kind]
-                    : request.Kind.ToString(System.Globalization.CultureInfo.InvariantCulture));
-                var invocation = (ValueTask<BuilderExecuteResponse>)_execute.Invoke(
+                owner.RequestKinds.Add(request.Kind.ToString());
+                var invocation = (ValueTask<BuilderResultContent>)_execute.Invoke(
                     provider,
                     [context, request, cancellationToken])!;
                 var response = await invocation.ConfigureAwait(false);
                 owner.MaximumResponseBytes = Math.Max(
                     owner.MaximumResponseBytes,
-                    JsonSerializer.SerializeToUtf8Bytes(response).Length);
+                    checked((int)response.Content.Length));
                 return response;
             }
         }

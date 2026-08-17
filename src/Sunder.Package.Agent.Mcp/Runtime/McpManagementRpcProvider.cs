@@ -1,6 +1,4 @@
 using System.Runtime.CompilerServices;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using System.Threading.Channels;
 using Sunder.Package.Agent.Mcp.Protocol.Generated;
 using Sunder.Package.Agent.Mcp.Services;
@@ -13,26 +11,23 @@ internal sealed class McpManagementRpcProvider(
     McpRuntimeHandler operations,
     McpRuntimeChangeStream changes) : IManagementProvider
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
-    {
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-        PropertyNameCaseInsensitive = false,
-        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
-    };
-
-    public async ValueTask<Payload> QueryAsync(
+    public async ValueTask<ManagementContent> QueryAsync(
         SunderRpcInvocationContext context,
-        Payload request,
+        ManagementContent request,
         CancellationToken cancellationToken = default)
     {
         try
         {
-            var query = Deserialize<McpQuery>(McpManagementPayload.Join(request.Chunks));
+            var query = await McpManagementPayload.ReadRequestAsync<McpQuery>(
+                context,
+                request,
+                cancellationToken);
             var result = await operations.HandleAsync(query, cancellationToken);
-            return new Payload
-            {
-                Chunks = McpManagementPayload.Split(JsonSerializer.Serialize(result, JsonOptions)),
-            };
+            return await McpManagementPayload.RegisterResponseAsync(
+                context,
+                result,
+                "mcp-projection.json",
+                cancellationToken);
         }
         catch (Exception exception) when (ShouldMap(exception))
         {
@@ -40,19 +35,23 @@ internal sealed class McpManagementRpcProvider(
         }
     }
 
-    public async ValueTask<Payload> CommandAsync(
+    public async ValueTask<ManagementContent> CommandAsync(
         SunderRpcInvocationContext context,
-        Payload request,
+        ManagementContent request,
         CancellationToken cancellationToken = default)
     {
         try
         {
-            var command = Deserialize<McpCommand>(McpManagementPayload.Join(request.Chunks));
+            var command = await McpManagementPayload.ReadRequestAsync<McpCommand>(
+                context,
+                request,
+                cancellationToken);
             var result = await operations.HandleAsync(command, cancellationToken);
-            return new Payload
-            {
-                Chunks = McpManagementPayload.Split(JsonSerializer.Serialize(result, JsonOptions)),
-            };
+            return await McpManagementPayload.RegisterResponseAsync(
+                context,
+                result,
+                "mcp-projection.json",
+                cancellationToken);
         }
         catch (Exception exception) when (ShouldMap(exception))
         {
@@ -60,33 +59,19 @@ internal sealed class McpManagementRpcProvider(
         }
     }
 
-    public async IAsyncEnumerable<Change> ChangesAsync(
+    public async IAsyncEnumerable<ManagementChange> ChangesAsync(
         SunderRpcInvocationContext context,
-        EmptyRequest request,
+        ChangeSubscription request,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         await foreach (var change in changes.WatchAsync(cancellationToken))
         {
-            yield return new Change
+            yield return new ManagementChange
             {
-                Kind = change.Kind == McpChangeKind.Servers ? "servers" : "status",
+                Kind = change.Kind == McpChangeKind.Servers
+                    ? ManagementChangeKind.Servers
+                    : ManagementChangeKind.Status,
             };
-        }
-    }
-
-    private static T Deserialize<T>(string payload)
-    {
-        try
-        {
-            return JsonSerializer.Deserialize<T>(payload, JsonOptions)
-                   ?? throw new McpManagementOperationException(
-                       "The MCP management request payload is invalid.");
-        }
-        catch (JsonException exception)
-        {
-            throw new McpManagementOperationException(
-                "The MCP management request payload is invalid.",
-                exception);
         }
     }
 

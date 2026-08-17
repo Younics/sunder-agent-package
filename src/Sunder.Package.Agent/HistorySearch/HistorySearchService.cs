@@ -15,8 +15,11 @@ internal sealed partial class HistorySearchService(
 {
     internal async Task<HistorySearchResponse> SearchAsync(
         HistorySearchRequest request,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        int? maximumBytes = null)
     {
+        maximumBytes ??= Runtime.AgentRuntimePayloadLimits.GetResponsePayloadBytes(
+            Runtime.AgentRuntimePayloadLimits.StandardFallbackProfile);
         request = NormalizeRequest(request);
         try
         {
@@ -25,7 +28,8 @@ internal sealed partial class HistorySearchService(
                     allowGenerationRestart: true,
                     allowMutationRetry: true,
                     restarted: false,
-                    cancellationToken)
+                    cancellationToken,
+                    maximumBytes.Value)
                 .ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -59,8 +63,11 @@ internal sealed partial class HistorySearchService(
 
     internal async Task<HistorySearchState> GetStateAsync(
         HistorySearchStateRequest request,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        int? maximumBytes = null)
     {
+        maximumBytes ??= Runtime.AgentRuntimePayloadLimits.GetResponsePayloadBytes(
+            Runtime.AgentRuntimePayloadLimits.StandardFallbackProfile);
         try
         {
             var configuration = ReadProjection(projection.GetConfiguration);
@@ -80,7 +87,8 @@ internal sealed partial class HistorySearchService(
             return SanitizeState(FitState(
                 result,
                 request.Continuation,
-                filterOptions.InsertionHighWaterMark));
+                filterOptions.InsertionHighWaterMark,
+                maximumBytes.Value));
         }
         catch (OperationCanceledException)
         {
@@ -154,7 +162,8 @@ internal sealed partial class HistorySearchService(
         bool allowGenerationRestart,
         bool allowMutationRetry,
         bool restarted,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        int maximumBytes)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (!projection.IsAvailable || ReadProjection(projection.TryPinActiveProjection) is not { } pin)
@@ -169,7 +178,11 @@ internal sealed partial class HistorySearchService(
         var configuration = ReadProjection(projection.GetConfiguration);
         if (configuration.Revision != pin.ConfigurationRevision)
         {
-            return await RestartForGenerationChangeAsync(request, allowGenerationRestart, cancellationToken)
+            return await RestartForGenerationChangeAsync(
+                    request,
+                    allowGenerationRestart,
+                    cancellationToken,
+                    maximumBytes)
                 .ConfigureAwait(false);
         }
         using var searchLease = semanticFence.Begin(configuration.Revision, cancellationToken);
@@ -197,7 +210,11 @@ internal sealed partial class HistorySearchService(
             fused.Select(static item => item.DocumentId).ToArray()));
         if (!ReadProjection(() => projection.IsPinCurrent(pin)))
         {
-            return await RestartForGenerationChangeAsync(request, allowGenerationRestart, cancellationToken)
+            return await RestartForGenerationChangeAsync(
+                    request,
+                    allowGenerationRestart,
+                    cancellationToken,
+                    maximumBytes)
                 .ConfigureAwait(false);
         }
 
@@ -240,11 +257,16 @@ internal sealed partial class HistorySearchService(
                 allowGenerationRestart,
                 allowMutationRetry: false,
                 restarted,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                maximumBytes).ConfigureAwait(false);
         }
         if (!ReadProjection(() => projection.IsPinCurrent(pin)))
         {
-            return await RestartForGenerationChangeAsync(request, allowGenerationRestart, cancellationToken)
+            return await RestartForGenerationChangeAsync(
+                    request,
+                    allowGenerationRestart,
+                    cancellationToken,
+                    maximumBytes)
                 .ConfigureAwait(false);
         }
 
@@ -278,7 +300,7 @@ internal sealed partial class HistorySearchService(
                 : null;
             var response = new HistorySearchResponse(trial, next, partial, status, restarted);
             if (Runtime.AgentRuntimePayloadLimits.GetSerializedByteCount(response)
-                > Runtime.AgentRuntimePayloadLimits.MaximumOperationResponseBytes)
+                > maximumBytes)
             {
                 partial = true;
                 break;
@@ -297,7 +319,7 @@ internal sealed partial class HistorySearchService(
         searchLease.ThrowIfCurrent();
         var final = new HistorySearchResponse(results, nextContinuation, partial, status, restarted);
         if (Runtime.AgentRuntimePayloadLimits.GetSerializedByteCount(final)
-            > Runtime.AgentRuntimePayloadLimits.MaximumOperationResponseBytes)
+            > maximumBytes)
         {
             throw new InvalidOperationException("History response metadata exceeds the Runtime transport limit.");
         }
@@ -307,7 +329,8 @@ internal sealed partial class HistorySearchService(
     private async Task<HistorySearchResponse> RestartForGenerationChangeAsync(
         HistorySearchRequest request,
         bool allowGenerationRestart,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        int maximumBytes)
     {
         if (!allowGenerationRestart)
         {
@@ -323,7 +346,8 @@ internal sealed partial class HistorySearchService(
             allowGenerationRestart: false,
             allowMutationRetry: true,
             restarted: true,
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken,
+            maximumBytes).ConfigureAwait(false);
     }
 
     private async Task<(IReadOnlyList<HistorySemanticCandidate> Candidates, bool IsPartial)> SearchSemanticAsync(
@@ -476,15 +500,16 @@ internal sealed partial class HistorySearchService(
     private static HistorySearchState FitState(
         HistorySearchState value,
         string? previousContinuation,
-        long? insertionHighWaterMark)
+        long? insertionHighWaterMark,
+        int maximumBytes)
     {
         if (Runtime.AgentRuntimePayloadLimits.GetSerializedByteCount(value)
-            <= Runtime.AgentRuntimePayloadLimits.MaximumOperationResponseBytes)
+            <= maximumBytes)
         {
             return value;
         }
         var sessions = value.Sessions.ToList();
-        while (sessions.Count > 0)
+        while (sessions.Count > 1)
         {
             sessions.RemoveAt(sessions.Count - 1);
             var continuation = sessions.Count > 0 && insertionHighWaterMark is { } highWaterMark
@@ -492,7 +517,7 @@ internal sealed partial class HistorySearchService(
                 : previousContinuation;
             var reduced = value with { Sessions = sessions.ToArray(), Continuation = continuation };
             if (Runtime.AgentRuntimePayloadLimits.GetSerializedByteCount(reduced)
-                <= Runtime.AgentRuntimePayloadLimits.MaximumOperationResponseBytes)
+                <= maximumBytes)
             {
                 return reduced;
             }

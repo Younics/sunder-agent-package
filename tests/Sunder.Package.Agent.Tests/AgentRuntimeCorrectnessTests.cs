@@ -14,6 +14,7 @@ using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Storage;
 using Xunit;
 using CorePresentation = AgentCore::Sunder.Package.Agent.Shared.PackageViews;
+using AgentAppRuntimePayloadLimits = AgentCore::Sunder.Package.Agent.Runtime.AgentRuntimePayloadLimits;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -773,6 +774,57 @@ public sealed class AgentRuntimeCorrectnessTests
     }
 
     [Fact]
+    public async Task ChatViewModel_RapidPermissionTogglesCommitLatestIntentLast()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var runtime = CreateSnapshotRuntime(scope.Context);
+        using var profiles = runtime.Profiles;
+        var profile = await profiles.CreateProfileAsync("Serialized permission profile");
+        var workspace = runtime.Workspaces.CreateWorkspace("Serialized permission workspace");
+        var session = runtime.Sessions.CreateSession(
+            "Serialized permission session",
+            profileId: profile.ProfileId,
+            workspaceId: workspace.WorkspaceId);
+        var permissions = new DelayedPermissionMutationGateway(session.SessionId);
+        using var viewModel = new AgentChatViewModel(
+            profiles,
+            runtime.Workspaces,
+            runtime.Sessions,
+            permissions,
+            NoOpRunGateway.Instance);
+        await viewModel.InitializeAsync();
+
+        viewModel.IsUnrestrictedModeEnabled = true;
+        await permissions.FirstMutationStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        viewModel.IsUnrestrictedModeEnabled = false;
+        await Task.Delay(25);
+
+        Assert.False(permissions.SecondMutationStarted.Task.IsCompleted);
+        permissions.ReleaseFirstMutation.TrySetResult();
+        await permissions.SecondMutationCompleted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await WaitUntilAsync(() => !viewModel.IsUnrestrictedModeEnabled);
+
+        Assert.False(permissions.AuthoritativeValue);
+        Assert.Equal([true, false], permissions.CommittedValues.ToArray());
+    }
+
+    [Fact]
+    public async Task PermissionHandler_UnknownCommandIsRejected()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var runtime = CreateSnapshotRuntime(scope.Context);
+        using var profiles = runtime.Profiles;
+        using var catalog = new RegressionTestExtensionCatalog();
+        var permissions = new AgentPermissionService(runtime.Store, catalog);
+        var handler = new AgentPermissionCommandHandler(permissions, runtime.Changes);
+
+        var exception = await Assert.ThrowsAsync<AgentOwnerOperationException>(() => handler.HandleAsync(
+            new AgentPermissionCommand((AgentPermissionCommandKind)int.MaxValue)).AsTask());
+
+        Assert.Equal("Unknown permission command.", exception.Message);
+    }
+
+    [Fact]
     public async Task Gateway_ResnapshotReusesActivatedChatRequestWithoutDashboardFallback()
     {
         var initial = CreateChatSnapshot(revision: 31);
@@ -949,10 +1001,11 @@ public sealed class AgentRuntimeCorrectnessTests
         });
         Assert.True(
             AgentChatSnapshotPayload.GetSerializedByteCount(snapshot)
-            <= AgentChatSnapshotPayload.MaximumSerializedBytes);
+            <= AgentAppRuntimePayloadLimits.GetResponsePayloadBytes(
+                AgentAppRuntimePayloadLimits.StandardFallbackProfile));
         Assert.True(
             AgentChatSnapshotPayload.GetSerializedByteCount(snapshot)
-            < AgentChatSnapshotPayload.RuntimeMaximumBytes);
+            < AgentAppRuntimePayloadLimits.StandardFallbackProfile.ResponseValueBytes);
         Assert.Equal(snapshot.SelectedSession?.Session.SessionId, roundTrip.SelectedSession?.Session.SessionId);
         Assert.Equal(snapshot.InitialTranscript.Turns.Count, roundTrip.InitialTranscript.Turns.Count);
     }
@@ -974,9 +1027,17 @@ public sealed class AgentRuntimeCorrectnessTests
             session.SessionId,
             AgentMessageRole.Assistant,
             new string('x', 6 * 1024 * 1024));
+        var transportBudgets = new AgentRuntimeTransportBudgetState();
+        _ = transportBudgets.Negotiate(new AgentTransportProfileRequest(
+            1024 * 1024,
+            1024 * 1024,
+            1024 * 1024,
+            64 * 1024 * 1024,
+            RuntimeReported: true));
         var handler = new AgentChatSnapshotHandler(
             runtime.Store,
-            changes);
+            changes,
+            transportBudgets);
 
         var snapshot = await handler.HandleAsync(new AgentChatSnapshotRequest(
             InitialTranscriptLimit: 1,
@@ -995,7 +1056,7 @@ public sealed class AgentRuntimeCorrectnessTests
             StringComparison.Ordinal);
         Assert.True(
             AgentChatSnapshotPayload.GetSerializedByteCount(snapshot)
-            <= AgentChatSnapshotPayload.MaximumSerializedBytes);
+            <= AgentAppRuntimePayloadLimits.GetResponsePayloadBytes(transportBudgets.Current));
         var roundTrip = AgentChatSnapshotPayload.RoundTrip(snapshot);
         Assert.Equal(turn.TurnId, roundTrip.InitialTranscript.Continuation?.TurnId);
     }
@@ -1485,6 +1546,83 @@ public sealed class AgentRuntimeCorrectnessTests
     }
 
     [Fact]
+    public async Task ChangeHub_SlowSubscriberIsByteBoundedAndReset()
+    {
+        var budgets = CreateMinimumTransportBudgets();
+        using var runtime = ChangeHubRuntime.Create(budgets);
+        var workspace = runtime.Workspaces.CreateWorkspace("byte-bounded-subscriber");
+        var session = runtime.Sessions.CreateSession(
+            "byte-bounded-subscriber",
+            workspaceId: workspace.WorkspaceId);
+        await using var subscription = runtime.Hub.SubscribeAsync(
+            new AgentChangeSubscription(runtime.Hub.Revision, SupportsTurnMutations: true)).GetAsyncEnumerator();
+        Assert.True(await subscription.MoveNextAsync());
+        Assert.Equal(AgentRuntimeChangeKind.Connected, subscription.Current.Kind);
+
+        for (var index = 0; index < 3; index++)
+        {
+            runtime.Sessions.AppendTextTurn(
+                session.SessionId,
+                AgentMessageRole.Assistant,
+                new string((char)('a' + index), 750_000));
+        }
+
+        var deliveredChanges = 0;
+        AgentRuntimeChange? terminal = null;
+        while (await subscription.MoveNextAsync())
+        {
+            terminal = subscription.Current;
+            if (terminal.Kind == AgentRuntimeChangeKind.TurnMutation)
+            {
+                deliveredChanges++;
+            }
+        }
+
+        Assert.Equal(2, deliveredChanges);
+        Assert.Equal(AgentRuntimeChangeKind.ResnapshotRequired, terminal?.Kind);
+        Assert.Equal(runtime.Hub.Revision, terminal?.Revision);
+    }
+
+    [Fact]
+    public async Task ChangeHub_ReplayIsByteBoundedAndRequiresResnapshot()
+    {
+        var budgets = CreateMinimumTransportBudgets();
+        using var runtime = ChangeHubRuntime.Create(budgets);
+        var workspace = runtime.Workspaces.CreateWorkspace("byte-bounded-replay");
+        var session = runtime.Sessions.CreateSession(
+            "byte-bounded-replay",
+            workspaceId: workspace.WorkspaceId);
+        var beforeLargeChanges = runtime.Hub.Revision;
+
+        for (var index = 0; index < 6; index++)
+        {
+            runtime.Sessions.AppendTextTurn(
+                session.SessionId,
+                AgentMessageRole.Assistant,
+                new string((char)('a' + index), 750_000));
+        }
+
+        await using var subscription = runtime.Hub.SubscribeAsync(
+            new AgentChangeSubscription(beforeLargeChanges)).GetAsyncEnumerator();
+
+        Assert.True(await subscription.MoveNextAsync());
+        Assert.Equal(AgentRuntimeChangeKind.ResnapshotRequired, subscription.Current.Kind);
+        Assert.Equal(runtime.Hub.Revision, subscription.Current.Revision);
+    }
+
+    private static AgentRuntimeTransportBudgetState CreateMinimumTransportBudgets()
+    {
+        var budgets = new AgentRuntimeTransportBudgetState();
+        _ = budgets.Negotiate(new AgentTransportProfileRequest(
+            AgentAppRuntimePayloadLimits.MinimumValueBytes,
+            AgentAppRuntimePayloadLimits.MinimumValueBytes,
+            AgentAppRuntimePayloadLimits.MinimumValueBytes,
+            AgentAppRuntimePayloadLimits.MinimumContentReferenceBytes,
+            RuntimeReported: true));
+        return budgets;
+    }
+
+    [Fact]
     public async Task Gateway_UnavailableThenAvailableRecoversAndInitializes()
     {
         var client = new ToggleRuntimeClient(isAvailable: false);
@@ -1784,6 +1922,164 @@ public sealed class AgentRuntimeCorrectnessTests
             new AgentRuntimeChangeHub(profiles, workspaces, sessions));
     }
 
+    [Fact]
+    public async Task ChatDeleteCommand_ExpectedGatewayFailureDoesNotEscapeICommandExecute()
+    {
+        var snapshot = CreateChatSnapshot(revision: 90);
+        var client = new SessionMutationOwnerClient(
+            snapshot,
+            SessionMutationMode.ExpectedPrecommitFailure);
+        using var gateway = new AgentAppRuntimeGateway(client);
+        using var viewModel = new AgentChatViewModel(
+            gateway,
+            gateway,
+            gateway,
+            gateway,
+            gateway);
+        await viewModel.InitializeAsync();
+        var deleted = Assert.IsType<AgentSessionListItemViewModel>(viewModel.SelectedSession);
+        var context = new CapturingSynchronizationContext();
+        var previous = SynchronizationContext.Current;
+        try
+        {
+            SynchronizationContext.SetSynchronizationContext(context);
+            viewModel.DeleteSessionCommand.Execute(deleted);
+            await client.ReconciliationCompleted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            await Task.Delay(25);
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(previous);
+        }
+
+        Assert.Empty(context.Exceptions);
+        Assert.Same(deleted, viewModel.SelectedSession);
+        Assert.Single(viewModel.Sessions);
+    }
+
+    [Theory]
+    [InlineData(SessionMutationMode.UnknownFailure)]
+    [InlineData(SessionMutationMode.WrappedFatalFailure)]
+    public async Task ChatDeleteCommand_UnknownAndWrappedFatalGatewayFailuresRemainObservable(
+        SessionMutationMode mode)
+    {
+        var snapshot = CreateChatSnapshot(revision: 91);
+        var client = new SessionMutationOwnerClient(snapshot, mode);
+        using var gateway = new AgentAppRuntimeGateway(client);
+        using var viewModel = new AgentChatViewModel(
+            gateway,
+            gateway,
+            gateway,
+            gateway,
+            gateway);
+        await viewModel.InitializeAsync();
+
+        var failure = await Assert.ThrowsAnyAsync<Exception>(() =>
+            viewModel.DeleteSessionCommand.ExecuteAsync(viewModel.SelectedSession));
+
+        if (mode == SessionMutationMode.UnknownFailure)
+        {
+            Assert.IsType<InvalidOperationException>(failure);
+        }
+        else
+        {
+            Assert.IsType<Exception>(failure);
+            Assert.IsType<OutOfMemoryException>(failure.InnerException);
+        }
+        Assert.Single(viewModel.Sessions);
+    }
+
+    [Fact]
+    public async Task ChatDeleteCommand_FinalSessionSuccessAndAmbiguousSnapshotConvergeToExplicitEmptyState()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var snapshot = CreateChatSnapshotWithChildLink(revision: 92);
+        var sessionId = snapshot.SelectedSession!.Session.SessionId;
+        snapshot = snapshot with
+        {
+            Permissions = snapshot.Permissions with
+            {
+                SessionState = new AgentSessionPermissionState(sessionId, true),
+            },
+        };
+        var client = new SessionMutationOwnerClient(
+            snapshot,
+            SessionMutationMode.SuccessWithAmbiguousSnapshot);
+        using var gateway = new AgentAppRuntimeGateway(client);
+        var selections = new AgentChatSelectionStateService(scope.Context);
+        using var viewModel = new AgentChatViewModel(
+            gateway,
+            gateway,
+            gateway,
+            gateway,
+            gateway,
+            selections);
+        await viewModel.InitializeAsync();
+        viewModel.DraftMessage = "unsent draft";
+        Assert.NotEmpty(viewModel.Messages);
+        Assert.True(viewModel.IsUnrestrictedModeEnabled);
+
+        await viewModel.DeleteSessionCommand.ExecuteAsync(viewModel.SelectedSession);
+        await client.ReconciliationCompleted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Empty(viewModel.Sessions);
+        Assert.Null(viewModel.SelectedSession);
+        Assert.Null(viewModel.DisplayedSession);
+        Assert.Empty(viewModel.Messages);
+        Assert.Empty(viewModel.DraftMessage);
+        Assert.Empty(viewModel.PendingAttachments);
+        Assert.Empty(viewModel.PendingPermissionRequests);
+        Assert.False(viewModel.IsUnrestrictedModeEnabled);
+        Assert.Null(await selections.GetSelectedSessionIdAsync(
+            snapshot.SelectedWorkspace!.WorkspaceId));
+        Assert.Null(await selections.GetSelectedSessionIdAsync());
+    }
+
+    [Fact]
+    public async Task ChatDeleteCommand_LateFinalSessionCompletionDoesNotClearNewWorkspaceAuthority()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var snapshots = CreateWorkspaceSelectionSnapshots();
+        var secondWorkspace = Assert.IsType<AgentWorkspaceRecord>(snapshots.Second.SelectedWorkspace);
+        var secondSession = Assert.IsType<AgentSessionSnapshot>(snapshots.Second.SelectedSession);
+        var client = new BlockingWorkspaceSwitchDeleteOwnerClient(snapshots.First, snapshots.Second);
+        using var gateway = new AgentAppRuntimeGateway(client);
+        var selections = new AgentChatSelectionStateService(scope.Context);
+        using var viewModel = new AgentChatViewModel(
+            gateway,
+            gateway,
+            gateway,
+            gateway,
+            gateway,
+            selections);
+        await viewModel.InitializeAsync();
+        var deletedSession = Assert.IsType<AgentSessionListItemViewModel>(viewModel.SelectedSession);
+
+        var deletion = viewModel.DeleteSessionCommand.ExecuteAsync(deletedSession);
+        await client.DeleteStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        viewModel.SelectedWorkspace = viewModel.Workspaces.Single(workspace =>
+            workspace.WorkspaceId == secondWorkspace.WorkspaceId);
+        await client.SecondSnapshotServed.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await WaitUntilAsync(() => viewModel.SelectedSession?.SessionId
+                                   == secondSession.Session.SessionId);
+        var pendingAttachment = CreatePendingAttachment("new-workspace.txt");
+        viewModel.PendingAttachments.Add(pendingAttachment);
+
+        client.ReleaseDelete.TrySetResult();
+        await deletion.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Equal(
+            secondWorkspace.WorkspaceId,
+            viewModel.SelectedWorkspace?.WorkspaceId);
+        Assert.Equal(
+            secondSession.Session.SessionId,
+            viewModel.SelectedSession?.SessionId);
+        Assert.Same(pendingAttachment, Assert.Single(viewModel.PendingAttachments));
+        Assert.Equal(
+            secondSession.Session.SessionId,
+            await selections.GetSelectedSessionIdAsync(secondWorkspace.WorkspaceId));
+    }
+
     private static AgentWorkspacePathRecord CreateWorkspacePath(
         string workspaceId,
         string name)
@@ -1913,6 +2209,189 @@ public sealed class AgentRuntimeCorrectnessTests
         AgentProfileService Profiles,
         AgentRuntimeChangeHub Changes);
 
+    public enum SessionMutationMode
+    {
+        ExpectedPrecommitFailure,
+        UnknownFailure,
+        WrappedFatalFailure,
+        SuccessWithAmbiguousSnapshot,
+    }
+
+    private sealed class SessionMutationOwnerClient(
+        AgentChatSnapshotProjection initialSnapshot,
+        SessionMutationMode mode) : IAgentOwnerClient
+    {
+        private int _snapshotCount;
+
+        public TaskCompletionSource ReconciliationCompleted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
+            AgentOwnerRpcOperation<TRequest, TResponse> operation,
+            TRequest request,
+            CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TResponse : class
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (operation.Is(AgentRuntimeOperations.ChatSnapshot))
+            {
+                var count = Interlocked.Increment(ref _snapshotCount);
+                if (mode == SessionMutationMode.SuccessWithAmbiguousSnapshot && count == 2)
+                {
+                    throw new SunderRpcException(new SunderRpcError(
+                        SunderRpcErrorKind.Unavailable,
+                        "test.snapshot-ambiguous",
+                        "Injected ambiguous snapshot response."));
+                }
+
+                var snapshot = mode == SessionMutationMode.SuccessWithAmbiguousSnapshot && count >= 3
+                    ? Empty(initialSnapshot)
+                    : initialSnapshot;
+                if (count >= 2 && mode != SessionMutationMode.SuccessWithAmbiguousSnapshot
+                    || count >= 3)
+                {
+                    ReconciliationCompleted.TrySetResult();
+                }
+                return ValueTask.FromResult((TResponse)(object)snapshot);
+            }
+
+            if (operation.Is(AgentRuntimeOperations.SessionCommands))
+            {
+                switch (mode)
+                {
+                    case SessionMutationMode.ExpectedPrecommitFailure:
+                        throw new SunderRpcException(new SunderRpcError(
+                            SunderRpcErrorKind.Domain,
+                            "test.delete-rejected",
+                            "Injected delete rejection."));
+                    case SessionMutationMode.UnknownFailure:
+                        throw new InvalidOperationException("Injected invariant failure.");
+                    case SessionMutationMode.WrappedFatalFailure:
+                        throw new Exception(
+                            "Injected wrapped fatal failure.",
+                            new OutOfMemoryException("Injected fatal failure."));
+                    case SessionMutationMode.SuccessWithAmbiguousSnapshot:
+                        return ValueTask.FromResult((TResponse)(object)new AgentSessionCommandResult(
+                            initialSnapshot.Revision + 1,
+                            Session: null));
+                    default:
+                        throw new ArgumentOutOfRangeException();
+                }
+            }
+
+            throw new NotSupportedException(operation.Describe());
+        }
+
+        public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
+            AgentOwnerRpcStream<TRequest, TEvent> stream,
+            TRequest request,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TEvent : class
+        {
+            yield return (TEvent)(object)new AgentRuntimeChange(
+                initialSnapshot.Revision,
+                AgentRuntimeChangeKind.Connected,
+                RuntimeInstanceId: initialSnapshot.RuntimeInstanceId);
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        }
+
+        private static AgentChatSnapshotProjection Empty(AgentChatSnapshotProjection snapshot)
+            => snapshot with
+            {
+                Revision = snapshot.Revision + 2,
+                SelectedSession = null,
+                WorkspaceSessions = [],
+                InitialTranscript = new AgentTranscriptPage(snapshot.Revision + 2, [], false),
+                Permissions = new AgentChatPermissionProjection(
+                    snapshot.Revision + 2,
+                    SessionState: null,
+                    PendingRequests: []),
+            };
+    }
+
+    private sealed class BlockingWorkspaceSwitchDeleteOwnerClient(
+        AgentChatSnapshotProjection first,
+        AgentChatSnapshotProjection second) : IAgentOwnerClient
+    {
+        public TaskCompletionSource DeleteStarted { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource ReleaseDelete { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource SecondSnapshotServed { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
+            AgentOwnerRpcOperation<TRequest, TResponse> operation,
+            TRequest request,
+            CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TResponse : class
+        {
+            if (operation.Is(AgentRuntimeOperations.ChatSnapshot))
+            {
+                var snapshotRequest = Assert.IsType<AgentChatSnapshotRequest>(request);
+                if (string.Equals(
+                        snapshotRequest.PreferredWorkspaceId,
+                        second.SelectedWorkspace!.WorkspaceId,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    SecondSnapshotServed.TrySetResult();
+                    return (TResponse)(object)second;
+                }
+                return (TResponse)(object)first;
+            }
+
+            if (operation.Is(AgentRuntimeOperations.SessionCommands))
+            {
+                DeleteStarted.TrySetResult();
+                await ReleaseDelete.Task.WaitAsync(cancellationToken);
+                return (TResponse)(object)new AgentSessionCommandResult(
+                    first.Revision + 1,
+                    Session: null);
+            }
+
+            throw new NotSupportedException(operation.Describe());
+        }
+
+        public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
+            AgentOwnerRpcStream<TRequest, TEvent> stream,
+            TRequest request,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TEvent : class
+        {
+            yield return (TEvent)(object)new AgentRuntimeChange(
+                first.Revision,
+                AgentRuntimeChangeKind.Connected,
+                RuntimeInstanceId: first.RuntimeInstanceId);
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        }
+    }
+
+    private sealed class CapturingSynchronizationContext : SynchronizationContext
+    {
+        public ConcurrentQueue<Exception> Exceptions { get; } = [];
+
+        public override void Post(SendOrPostCallback callback, object? state)
+        {
+            ThreadPool.QueueUserWorkItem(_ =>
+            {
+                try
+                {
+                    callback(state);
+                }
+                catch (Exception exception)
+                {
+                    Exceptions.Enqueue(exception);
+                }
+            });
+        }
+    }
+
     private sealed class RacingPermissionGateway(
         Guid sessionId,
         long readRevision = 1,
@@ -1982,6 +2461,102 @@ public sealed class AgentRuntimeCorrectnessTests
         }
 
         public void ReleaseRead() => _releaseRead.TrySetResult();
+    }
+
+    private sealed class DelayedPermissionMutationGateway(Guid sessionId) :
+        IAgentPermissionGateway,
+        IAgentChatPermissionCommandGateway
+    {
+        private readonly object _syncRoot = new();
+        private readonly ConcurrentQueue<bool> _committedValues = new();
+        private bool _authoritativeValue;
+        private long _revision = 1;
+        private int _mutationCount;
+
+        public TaskCompletionSource FirstMutationStarted { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource ReleaseFirstMutation { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource SecondMutationStarted { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource SecondMutationCompleted { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public bool AuthoritativeValue
+        {
+            get
+            {
+                lock (_syncRoot) return _authoritativeValue;
+            }
+        }
+
+        public IReadOnlyCollection<bool> CommittedValues => _committedValues.ToArray();
+
+        public AgentSessionPermissionState GetSessionState(Guid requestedSessionId)
+            => new(requestedSessionId, AuthoritativeValue);
+
+        public void SetSessionUnrestrictedMode(Guid requestedSessionId, bool isEnabled)
+        {
+            lock (_syncRoot) _authoritativeValue = isEnabled;
+        }
+
+        public IReadOnlyList<AgentPermissionActionDescriptor> ListActions() => [];
+        public IReadOnlyList<AgentPermissionOverride> ListOverrides() => [];
+        public void SaveOverride(string actionId, string boundaryId, AgentPermissionDecision decision) { }
+        public void DeleteOverride(string actionId, string boundaryId) { }
+        public IReadOnlyList<AgentPendingPermissionRequestRecord> ListPendingRequestsForSessionTree(
+            Guid requestedSessionId) => [];
+
+        public Task<AgentChatPermissionProjection> LoadSessionPermissionsAsync(
+            Guid requestedSessionId,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            lock (_syncRoot)
+            {
+                return Task.FromResult(new AgentChatPermissionProjection(
+                    _revision,
+                    new AgentSessionPermissionState(requestedSessionId, _authoritativeValue),
+                    []));
+            }
+        }
+
+        public async Task<AgentChatPermissionProjection> SetSessionUnrestrictedModeAsync(
+            Guid requestedSessionId,
+            bool isEnabled,
+            CancellationToken cancellationToken = default)
+        {
+            Assert.Equal(sessionId, requestedSessionId);
+            var mutation = Interlocked.Increment(ref _mutationCount);
+            if (mutation == 1)
+            {
+                FirstMutationStarted.TrySetResult();
+                await ReleaseFirstMutation.Task.WaitAsync(cancellationToken);
+            }
+            else
+            {
+                SecondMutationStarted.TrySetResult();
+            }
+
+            AgentChatPermissionProjection projection;
+            lock (_syncRoot)
+            {
+                _authoritativeValue = isEnabled;
+                _committedValues.Enqueue(isEnabled);
+                projection = new AgentChatPermissionProjection(
+                    ++_revision,
+                    new AgentSessionPermissionState(sessionId, _authoritativeValue),
+                    []);
+            }
+            if (mutation == 2)
+            {
+                SecondMutationCompleted.TrySetResult();
+            }
+            return projection;
+        }
     }
 
     private sealed class NoOpRunGateway : IAgentRunGateway
@@ -2054,7 +2629,8 @@ public sealed class AgentRuntimeCorrectnessTests
         public AgentWorkspaceService Workspaces { get; }
         public AgentRuntimeChangeHub Hub { get; }
 
-        public static ChangeHubRuntime Create()
+        public static ChangeHubRuntime Create(
+            AgentRuntimeTransportBudgetState? transportBudgets = null)
         {
             var scope = RegressionTestPackageScope.Create();
             var catalog = new RegressionTestExtensionCatalog();
@@ -2072,7 +2648,7 @@ public sealed class AgentRuntimeCorrectnessTests
                 scope,
                 sessions,
                 workspaces,
-                new AgentRuntimeChangeHub(profiles, workspaces, sessions));
+                new AgentRuntimeChangeHub(profiles, workspaces, sessions, transportBudgets));
         }
 
         public void Dispose()

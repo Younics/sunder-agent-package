@@ -5,6 +5,8 @@ using Avalonia.Input;
 using Avalonia.Platform.Storage;
 using AvaloniaEdit.TextMate;
 using Sunder.Package.Agent.Shared.Presentation;
+using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Notifications;
 using TextMateSharp.Grammars;
 
 namespace Sunder.Package.Agent.Mcp;
@@ -12,6 +14,7 @@ namespace Sunder.Package.Agent.Mcp;
 public partial class AgentMcpSettingsView : UserControl, IDisposable
 {
     private readonly AdaptiveMasterDetail _adaptiveLayout;
+    private PresentationOperationObserver _operations;
     private AgentMcpSettingsViewModel? _viewModel;
     private AgentMcpSettingsViewModel? _ownedViewModel;
     private bool _syncingEditor;
@@ -20,6 +23,7 @@ public partial class AgentMcpSettingsView : UserControl, IDisposable
 
     public AgentMcpSettingsView()
     {
+        _operations = PresentationOperationObserver.CreateUnreported("MCP config picker");
         InitializeComponent();
         DataContextChanged += OnDataContextChanged;
         AttachedToVisualTree += OnAttachedToVisualTree;
@@ -45,6 +49,17 @@ public partial class AgentMcpSettingsView : UserControl, IDisposable
     {
         _ownedViewModel = viewModel;
         DataContext = viewModel;
+    }
+
+    internal void ConfigureOperationObserver(
+        IPackageContext packageContext,
+        IPackageNotificationService notifications)
+    {
+        _operations.Dispose();
+        _operations = new PresentationOperationObserver(
+            packageContext,
+            notifications,
+            "MCP config picker");
     }
 
     private void ConfigureEditor()
@@ -94,6 +109,7 @@ public partial class AgentMcpSettingsView : UserControl, IDisposable
         }
 
         _disposed = true;
+        _operations.Dispose();
         _adaptiveLayout.Dispose();
         DataContextChanged -= OnDataContextChanged;
         AttachedToVisualTree -= OnAttachedToVisualTree;
@@ -120,7 +136,7 @@ public partial class AgentMcpSettingsView : UserControl, IDisposable
         viewModel?.ActivateServer(server);
     }
 
-    private async void OnImportConfigFileClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    private void OnImportConfigFileClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         var viewModel = _viewModel ?? DataContext as AgentMcpSettingsViewModel;
         if (viewModel is null)
@@ -134,24 +150,36 @@ public partial class AgentMcpSettingsView : UserControl, IDisposable
             return;
         }
 
-        var files = await topLevel.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
-        {
-            Title = "Select MCP Config File",
-            AllowMultiple = false,
-            FileTypeFilter =
-            [
-                new FilePickerFileType("MCP config files")
+        _operations.Submit(
+            new PresentationOperation(
+                "mcp.pick-config-file",
+                "The MCP configuration file could not be selected or imported."),
+            async cancellationToken =>
+            {
+                var files = await topLevel.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
                 {
-                    Patterns = ["*.json", "*.jsonc"],
-                },
-            ],
-        });
+                    Title = "Select MCP Config File",
+                    AllowMultiple = false,
+                    FileTypeFilter =
+                    [
+                        new FilePickerFileType("MCP config files")
+                        {
+                            Patterns = ["*.json", "*.jsonc"],
+                        },
+                    ],
+                });
+                cancellationToken.ThrowIfCancellationRequested();
+                if (_disposed || !ReferenceEquals(DataContext, viewModel))
+                {
+                    return;
+                }
 
-        var file = files.FirstOrDefault();
-        if (file is not null)
-        {
-            await viewModel.ImportConfigurationFileAsync(file.Path.LocalPath);
-        }
+                var file = files.FirstOrDefault();
+                if (file is not null)
+                {
+                    await viewModel.ImportConfigurationFileAsync(file.Path.LocalPath);
+                }
+            });
     }
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)

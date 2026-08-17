@@ -4,6 +4,8 @@ using System.Net.Sockets;
 using Polly;
 using Polly.Retry;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Services;
+using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Services.BehaviorLoops;
 
@@ -49,6 +51,12 @@ internal static class AgentProviderResilience
 
     public static bool IsTransient(Exception exception, CancellationToken cancellationToken = default)
     {
+        if (AgentFailurePresentationPolicy.IsStreamQueueLimit(exception)
+            || ContainsUnsafeRpcFailure(exception))
+        {
+            return false;
+        }
+
         if (exception is OperationCanceledException && cancellationToken.IsCancellationRequested)
         {
             return false;
@@ -94,7 +102,35 @@ internal static class AgentProviderResilience
         return IsTransientByTypeName(exception)
                 || IsTransientMessage(exception.Message)
                 || (exception is AgentChatProviderException chatProviderException && IsTransientMessage(chatProviderException.Content))
-                || (exception.InnerException is not null && IsTransient(exception.InnerException, cancellationToken));
+                 || (exception.InnerException is not null && IsTransient(exception.InnerException, cancellationToken));
+    }
+
+    private static bool ContainsUnsafeRpcFailure(Exception exception)
+    {
+        var pending = new Stack<Exception>();
+        pending.Push(exception);
+        while (pending.TryPop(out var current))
+        {
+            if (current is SunderRpcException rpcException
+                && rpcException.Error.RetrySafety == SunderRpcRetrySafety.Unsafe)
+            {
+                return true;
+            }
+
+            if (current is AggregateException aggregate)
+            {
+                for (var index = aggregate.InnerExceptions.Count - 1; index >= 0; index--)
+                {
+                    pending.Push(aggregate.InnerExceptions[index]);
+                }
+            }
+            else if (current.InnerException is not null)
+            {
+                pending.Push(current.InnerException);
+            }
+        }
+
+        return false;
     }
 
     private static TimeSpan GetDelay(int attemptNumber)

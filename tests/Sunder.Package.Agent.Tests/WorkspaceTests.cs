@@ -403,7 +403,7 @@ public sealed class WorkspaceTests
         var store = new AgentLocalStore(scope.Context);
         var sessionService = new AgentSessionService(store);
 
-        var exception = Assert.Throws<InvalidOperationException>(() => sessionService.CreateSession("Root Session"));
+        var exception = Assert.Throws<AgentSessionOperationException>(() => sessionService.CreateSession("Root Session"));
 
         Assert.Equal("Root sessions must be created with an explicit workspace id.", exception.Message);
     }
@@ -415,7 +415,7 @@ public sealed class WorkspaceTests
         var store = new AgentLocalStore(scope.Context);
         var sessionService = new AgentSessionService(store);
 
-        var exception = Assert.Throws<InvalidOperationException>(() => sessionService.CreateSession(
+        var exception = Assert.Throws<AgentSessionOperationException>(() => sessionService.CreateSession(
             "Root Session",
             workspaceId: AgentWorkspaceService.UnassignedSessionsWorkspaceId));
 
@@ -451,7 +451,7 @@ public sealed class WorkspaceTests
         store.SaveWorkspace(otherWorkspace);
         var parent = sessionService.CreateSession("Parent Session", workspaceId: parentWorkspace.WorkspaceId);
 
-        var exception = Assert.Throws<InvalidOperationException>(() => sessionService.CreateSession(
+        var exception = Assert.Throws<AgentSessionOperationException>(() => sessionService.CreateSession(
             "Child Session",
             parentSessionId: parent.SessionId,
             workspaceId: otherWorkspace.WorkspaceId));
@@ -469,7 +469,7 @@ public sealed class WorkspaceTests
         store.SaveWorkspace(workspace);
         var session = sessionService.CreateSession("Workspace Session", workspaceId: workspace.WorkspaceId);
 
-        var exception = Assert.Throws<InvalidOperationException>(() => sessionService.UpdateSession(session with
+        var exception = Assert.Throws<AgentSessionOperationException>(() => sessionService.UpdateSession(session with
         {
             WorkspaceId = " ",
         }));
@@ -488,7 +488,7 @@ public sealed class WorkspaceTests
         store.SaveWorkspace(workspace);
         var session = sessionService.CreateSession("Workspace Session", workspaceId: workspace.WorkspaceId);
 
-        var exception = Assert.Throws<InvalidOperationException>(() => sessionService.UpdateSession(session with
+        var exception = Assert.Throws<AgentSessionOperationException>(() => sessionService.UpdateSession(session with
         {
             WorkspaceId = AgentWorkspaceService.UnassignedSessionsWorkspaceId,
         }));
@@ -510,7 +510,7 @@ public sealed class WorkspaceTests
         store.SaveWorkspace(secondWorkspace);
         var session = sessionService.CreateSession("Workspace Session", workspaceId: firstWorkspace.WorkspaceId);
 
-        var exception = Assert.Throws<InvalidOperationException>(() => sessionService.UpdateSession(session with
+        var exception = Assert.Throws<AgentSessionOperationException>(() => sessionService.UpdateSession(session with
         {
             WorkspaceId = secondWorkspace.WorkspaceId,
         }));
@@ -2946,7 +2946,10 @@ public sealed class WorkspaceTests
         var activeRunRegistry = new AgentActiveRunRegistry();
         var runEventLogger = new AgentRunEventLogger(scope.Context);
         var providerResolver = new AgentRunProviderResolver(profileService, catalog);
-        var behaviorLoopResolver = new AgentBehaviorLoopResolver(catalog, catalog.BehaviorLoops);
+        var behaviorLoopResolver = new AgentBehaviorLoopResolver(
+            catalog,
+            catalog.BehaviorLoops,
+            behaviorLoop);
         var stopCoordinator = new AgentRunStopCoordinator(sessionService, permissionService, memoryCoordinator, activeRunRegistry, profileService);
         var behaviorLoopHostFactory = new AgentBehaviorLoopHostFactory(sessionService, toolService, permissionService, memoryCoordinator, runEventLogger, activeRunRegistry, behaviorLoop);
         var runPreparationService = new AgentRunPreparationService(sessionService, profileService, workspaceService, runAttachmentStore, runEventLogger, providerResolver);

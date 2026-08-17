@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.Services.BehaviorLoops;
 using Sunder.Sdk.Logging;
 using Xunit;
@@ -25,7 +26,7 @@ public sealed class AgentStreamingTurnWriterTests
             context,
             new AgentAssistantTurnState(),
             Stopwatch.StartNew());
-        var chatClient = new CadenceChatClient(() => host.PersistedContents.Count);
+        var chatClient = new CadenceChatClient();
 
         var writeTask = writer.WriteAttemptAsync(
             state,
@@ -34,13 +35,19 @@ public sealed class AgentStreamingTurnWriterTests
             new ChatOptions(),
             CancellationToken.None);
         await chatClient.FirstDeltaConsumed.WaitAsync(AsyncTimeout);
+        await host.WaitForPersistenceCountAsync(1).WaitAsync(AsyncTimeout);
+        await timeProvider.WaitForTimestampReadCountAsync(1).WaitAsync(AsyncTimeout);
         Assert.Equal(["first"], host.PersistedContents);
 
         timeProvider.Advance(TimeSpan.FromMilliseconds(75));
-        chatClient.ReleaseRemainingUpdates();
-        await chatClient.ImmediateThirdDeltaConsumed.WaitAsync(AsyncTimeout);
+        chatClient.ReleaseSecondUpdate();
+        await chatClient.SecondDeltaConsumed.WaitAsync(AsyncTimeout);
+        await host.WaitForPersistenceCountAsync(2).WaitAsync(AsyncTimeout);
+        await timeProvider.WaitForTimestampReadCountAsync(3).WaitAsync(AsyncTimeout);
+        Assert.Equal(["first", "first second"], host.PersistedContents);
 
-        Assert.Equal(2, chatClient.PersistenceCountAfterImmediateThirdDelta);
+        chatClient.ReleaseThirdUpdate();
+        await chatClient.ThirdDeltaConsumed.WaitAsync(AsyncTimeout);
         Assert.Equal(["first", "first second"], host.PersistedContents);
 
         chatClient.CompleteResponse();
@@ -49,6 +56,7 @@ public sealed class AgentStreamingTurnWriterTests
 
         Assert.Equal(["first", "first second", "first second third"], host.PersistedContents);
         Assert.Equal("first second third", result.Text);
+        Assert.Equal(0, host.IsCurrentRunCallCount);
     }
 
     [Fact]
@@ -70,13 +78,17 @@ public sealed class AgentStreamingTurnWriterTests
             [],
             new ChatOptions(),
             CancellationToken.None);
+        await chatClient.FirstDeltaConsumed.WaitAsync(AsyncTimeout);
+        await host.WaitForPersistenceCountAsync(1).WaitAsync(AsyncTimeout);
+        await timeProvider.WaitForTimestampReadCountAsync(1).WaitAsync(AsyncTimeout);
+        chatClient.ReleaseSecondUpdate();
         await chatClient.UpdatesConsumed.WaitAsync(AsyncTimeout);
+        await timeProvider.WaitForTimerCreationCountAsync(1).WaitAsync(AsyncTimeout);
 
         Assert.Equal(["first"], host.PersistedContents);
-        var timestampReadCount = timeProvider.TimestampReadCount;
         timeProvider.Advance(TimeSpan.FromMilliseconds(50));
         timeProvider.FireTimers();
-        await timeProvider.WaitForTimestampReadCountAsync(timestampReadCount + 2).WaitAsync(AsyncTimeout);
+        await host.WaitForPersistenceCountAsync(2).WaitAsync(AsyncTimeout);
 
         Assert.Equal(["first", "first second"], host.PersistedContents);
         chatClient.Release();
@@ -86,7 +98,7 @@ public sealed class AgentStreamingTurnWriterTests
     }
 
     [Fact]
-    public async Task WriteAttemptAsync_PeriodicFlushHonorsIntervalFromLastPersistence()
+    public async Task WriteAttemptAsync_FlushPumpHonorsIntervalFromLastPersistence()
     {
         var timeProvider = new ManualTimeProvider();
         var host = new RecordingBehaviorLoopRuntime();
@@ -96,7 +108,7 @@ public sealed class AgentStreamingTurnWriterTests
             CreateContext(),
             new AgentAssistantTurnState(),
             Stopwatch.StartNew());
-        var chatClient = new CadenceChatClient(() => host.PersistedContents.Count);
+        var chatClient = new CadenceChatClient();
 
         var writeTask = writer.WriteAttemptAsync(
             state,
@@ -105,31 +117,168 @@ public sealed class AgentStreamingTurnWriterTests
             new ChatOptions(),
             CancellationToken.None);
         await chatClient.FirstDeltaConsumed.WaitAsync(AsyncTimeout);
+        await host.WaitForPersistenceCountAsync(1).WaitAsync(AsyncTimeout);
+        await timeProvider.WaitForTimestampReadCountAsync(1).WaitAsync(AsyncTimeout);
         timeProvider.Advance(TimeSpan.FromMilliseconds(75));
-        chatClient.ReleaseRemainingUpdates();
-        await chatClient.ImmediateThirdDeltaConsumed.WaitAsync(AsyncTimeout);
+        chatClient.ReleaseSecondUpdate();
+        await chatClient.SecondDeltaConsumed.WaitAsync(AsyncTimeout);
+        await host.WaitForPersistenceCountAsync(2).WaitAsync(AsyncTimeout);
+        await timeProvider.WaitForTimestampReadCountAsync(3).WaitAsync(AsyncTimeout);
 
         Assert.Equal(["first", "first second"], host.PersistedContents);
-        var timestampReadCount = timeProvider.TimestampReadCount;
+        chatClient.ReleaseThirdUpdate();
+        await chatClient.ThirdDeltaConsumed.WaitAsync(AsyncTimeout);
+        await timeProvider.WaitForTimerCreationCountAsync(1).WaitAsync(AsyncTimeout);
+
+        timeProvider.Advance(TimeSpan.FromMilliseconds(25));
+        Assert.Equal(["first", "first second"], host.PersistedContents);
+
         timeProvider.Advance(TimeSpan.FromMilliseconds(25));
         timeProvider.FireTimers();
-        await timeProvider.WaitForTimestampReadCountAsync(timestampReadCount + 1).WaitAsync(AsyncTimeout);
-        Assert.Equal(["first", "first second"], host.PersistedContents);
-
-        // The second same-time tick is a barrier proving the first evaluation completed.
-        timeProvider.FireTimers();
-        await timeProvider.WaitForTimestampReadCountAsync(timestampReadCount + 2).WaitAsync(AsyncTimeout);
-        Assert.Equal(["first", "first second"], host.PersistedContents);
-
-        timeProvider.Advance(TimeSpan.FromMilliseconds(50));
-        timeProvider.FireTimers();
-        await timeProvider.WaitForTimestampReadCountAsync(timestampReadCount + 4).WaitAsync(AsyncTimeout);
+        await host.WaitForPersistenceCountAsync(3).WaitAsync(AsyncTimeout);
         Assert.Equal(["first", "first second", "first second third"], host.PersistedContents);
 
         chatClient.CompleteResponse();
         await writeTask.WaitAsync(AsyncTimeout);
         writer.CompleteCycle(state);
         Assert.Equal(["first", "first second", "first second third"], host.PersistedContents);
+    }
+
+    [Fact]
+    public async Task WriteAttemptAsync_ConsumesBurstWhilePersistenceIsBlockedAndAwaitsFinalDurability()
+    {
+        const int updateCount = 256;
+        var host = new BlockingBehaviorLoopRuntime(blockSecondPersistence: true);
+        var writer = new AgentStreamingTurnWriter(new AgentLoopTerminalHandler());
+        var state = writer.BeginCycle(
+            host,
+            CreateContext(),
+            new AgentAssistantTurnState(),
+            Stopwatch.StartNew());
+        var chatClient = new BurstChatClient(updateCount, host.FirstPersistenceStarted);
+
+        var writeTask = writer.WriteAttemptAsync(
+            state,
+            chatClient,
+            [],
+            new ChatOptions(),
+            CancellationToken.None);
+        await host.FirstPersistenceStarted.WaitAsync(AsyncTimeout);
+        await chatClient.AllUpdatesConsumed.WaitAsync(AsyncTimeout);
+
+        Assert.Equal(updateCount, chatClient.ConsumedUpdateCount);
+        Assert.False(writeTask.IsCompleted);
+        Assert.Empty(host.PersistedContents);
+        Assert.False(host.WritesOverlapped);
+
+        host.ReleaseFirstPersistence();
+        await host.SecondPersistenceStarted.WaitAsync(AsyncTimeout);
+
+        Assert.False(writeTask.IsCompleted);
+        Assert.Equal(["x"], host.PersistedContents);
+        Assert.False(host.WritesOverlapped);
+
+        host.ReleaseSecondPersistence();
+        await writeTask.WaitAsync(AsyncTimeout);
+
+        Assert.Equal(2, host.PersistenceCallCount);
+        Assert.Equal(new string('x', updateCount), host.PersistedContents[^1]);
+        Assert.False(host.WritesOverlapped);
+        Assert.Equal(0, host.IsCurrentRunCallCount);
+        Assert.Equal(new string('x', updateCount), writer.CompleteCycle(state).Text);
+    }
+
+    [Fact]
+    public async Task WriteAttemptAsync_CancellationAwaitsAlreadyRunningPersistence()
+    {
+        var host = new BlockingBehaviorLoopRuntime();
+        var writer = new AgentStreamingTurnWriter(new AgentLoopTerminalHandler());
+        var state = writer.BeginCycle(
+            host,
+            CreateContext(),
+            new AgentAssistantTurnState(),
+            Stopwatch.StartNew());
+        var chatClient = new CancellationPausingChatClient();
+        using var cancellation = new CancellationTokenSource();
+
+        var writeTask = writer.WriteAttemptAsync(
+            state,
+            chatClient,
+            [],
+            new ChatOptions(),
+            cancellation.Token);
+        await host.FirstPersistenceStarted.WaitAsync(AsyncTimeout);
+
+        cancellation.Cancel();
+        await chatClient.CancellationObserved.WaitAsync(AsyncTimeout);
+        Assert.False(writeTask.IsCompleted);
+
+        host.ReleaseFirstPersistence();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            async () => await writeTask.WaitAsync(AsyncTimeout));
+
+        Assert.Equal(["first"], host.PersistedContents);
+        Assert.Equal(1, host.PersistenceCallCount);
+        Assert.False(host.WritesOverlapped);
+    }
+
+    [Fact]
+    public async Task WriteAttemptAsync_PropagatesDurableWriteRejectionOverProviderFailure()
+    {
+        var host = new BlockingBehaviorLoopRuntime(rejectFirstPersistence: true);
+        var writer = new AgentStreamingTurnWriter(new AgentLoopTerminalHandler());
+        var state = writer.BeginCycle(
+            host,
+            CreateContext(),
+            new AgentAssistantTurnState(),
+            Stopwatch.StartNew());
+        var chatClient = new FailingChatClient(host.FirstPersistenceStarted);
+
+        var writeTask = writer.WriteAttemptAsync(
+            state,
+            chatClient,
+            [],
+            new ChatOptions(),
+            CancellationToken.None);
+        await host.FirstPersistenceStarted.WaitAsync(AsyncTimeout);
+        await chatClient.ProviderFailureThrown.WaitAsync(AsyncTimeout);
+        Assert.False(writeTask.IsCompleted);
+
+        host.ReleaseFirstPersistence();
+        await Assert.ThrowsAsync<AgentRunTranscriptWriteRejectedException>(
+            async () => await writeTask.WaitAsync(AsyncTimeout));
+
+        Assert.Empty(host.PersistedContents);
+        Assert.Equal(1, host.PersistenceCallCount);
+        Assert.False(host.WritesOverlapped);
+    }
+
+    [Fact]
+    public async Task WriteAttemptAsync_PropagatesFlushFailureWhileProviderIsPaused()
+    {
+        var host = new BlockingBehaviorLoopRuntime(rejectFirstPersistence: true);
+        var writer = new AgentStreamingTurnWriter(new AgentLoopTerminalHandler());
+        var state = writer.BeginCycle(
+            host,
+            CreateContext(),
+            new AgentAssistantTurnState(),
+            Stopwatch.StartNew());
+        var chatClient = new CancellationPausingChatClient();
+
+        var writeTask = writer.WriteAttemptAsync(
+            state,
+            chatClient,
+            [],
+            new ChatOptions(),
+            CancellationToken.None);
+        await host.FirstPersistenceStarted.WaitAsync(AsyncTimeout);
+
+        host.ReleaseFirstPersistence();
+
+        await chatClient.CancellationObserved.WaitAsync(AsyncTimeout);
+        await Assert.ThrowsAsync<AgentRunTranscriptWriteRejectedException>(
+            async () => await writeTask.WaitAsync(AsyncTimeout));
+        Assert.Equal(1, host.PersistenceCallCount);
     }
 
     [Fact]
@@ -338,22 +487,26 @@ public sealed class AgentStreamingTurnWriterTests
             Guid.NewGuid());
     }
 
-    private sealed class CadenceChatClient(Func<int> getPersistenceCount) : IChatClient
+    private sealed class CadenceChatClient : IChatClient
     {
         private readonly TaskCompletionSource _completeResponse = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _firstDeltaConsumed = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        private readonly TaskCompletionSource _immediateThirdDeltaConsumed = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        private readonly TaskCompletionSource _releaseRemainingUpdates = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _releaseSecondUpdate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _releaseThirdUpdate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _secondDeltaConsumed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _thirdDeltaConsumed = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public ChatClientMetadata Metadata { get; } = new("Cadence test");
 
-        public int PersistenceCountAfterImmediateThirdDelta { get; private set; }
-
         public Task FirstDeltaConsumed => _firstDeltaConsumed.Task;
 
-        public Task ImmediateThirdDeltaConsumed => _immediateThirdDeltaConsumed.Task;
+        public Task SecondDeltaConsumed => _secondDeltaConsumed.Task;
 
-        public void ReleaseRemainingUpdates() => _releaseRemainingUpdates.TrySetResult();
+        public Task ThirdDeltaConsumed => _thirdDeltaConsumed.Task;
+
+        public void ReleaseSecondUpdate() => _releaseSecondUpdate.TrySetResult();
+
+        public void ReleaseThirdUpdate() => _releaseThirdUpdate.TrySetResult();
 
         public void CompleteResponse() => _completeResponse.TrySetResult();
 
@@ -381,11 +534,12 @@ public sealed class AgentStreamingTurnWriterTests
         {
             yield return new ChatResponseUpdate(ChatRole.Assistant, "first");
             _firstDeltaConsumed.TrySetResult();
-            await _releaseRemainingUpdates.Task.WaitAsync(cancellationToken);
+            await _releaseSecondUpdate.Task.WaitAsync(cancellationToken);
             yield return new ChatResponseUpdate(ChatRole.Assistant, " second");
+            _secondDeltaConsumed.TrySetResult();
+            await _releaseThirdUpdate.Task.WaitAsync(cancellationToken);
             yield return new ChatResponseUpdate(ChatRole.Assistant, " third");
-            PersistenceCountAfterImmediateThirdDelta = getPersistenceCount();
-            _immediateThirdDeltaConsumed.TrySetResult();
+            _thirdDeltaConsumed.TrySetResult();
             await _completeResponse.Task.WaitAsync(cancellationToken);
         }
 
@@ -399,12 +553,52 @@ public sealed class AgentStreamingTurnWriterTests
         }
     }
 
-    private sealed class RecordingBehaviorLoopRuntime : IAgentBehaviorLoopRuntime
+    private class RecordingBehaviorLoopRuntime : IAgentBehaviorLoopRuntime
     {
-        public List<string> PersistedContents { get; } = [];
+        private readonly object _persistenceSync = new();
+        private readonly List<string> _persistedContents = [];
+        private TaskCompletionSource _persistenceChanged = CreateCompletion();
+        private int _isCurrentRunCallCount;
+
+        public IReadOnlyList<string> PersistedContents
+        {
+            get
+            {
+                lock (_persistenceSync)
+                {
+                    return [.. _persistedContents];
+                }
+            }
+        }
+
         public Queue<IChatClient> ChatClients { get; } = new();
 
-        public bool IsCurrentRun() => true;
+        public int IsCurrentRunCallCount => Volatile.Read(ref _isCurrentRunCallCount);
+
+        public bool IsCurrentRun()
+        {
+            Interlocked.Increment(ref _isCurrentRunCallCount);
+            return true;
+        }
+
+        public async Task WaitForPersistenceCountAsync(int targetCount)
+        {
+            while (true)
+            {
+                Task changed;
+                lock (_persistenceSync)
+                {
+                    if (_persistedContents.Count >= targetCount)
+                    {
+                        return;
+                    }
+
+                    changed = _persistenceChanged.Task;
+                }
+
+                await changed;
+            }
+        }
 
         public IReadOnlyList<AgentTurnRecord> ListTurns() => [];
 
@@ -438,11 +632,19 @@ public sealed class AgentStreamingTurnWriterTests
         {
         }
 
-        public AgentTurnRecord UpsertAssistantTurn(
+        public virtual AgentTurnRecord UpsertAssistantTurn(
             AgentTurnRecord? assistantTurn,
             string content)
         {
-            PersistedContents.Add(content);
+            TaskCompletionSource persistenceChanged;
+            lock (_persistenceSync)
+            {
+                _persistedContents.Add(content);
+                persistenceChanged = _persistenceChanged;
+                _persistenceChanged = CreateCompletion();
+            }
+            persistenceChanged.TrySetResult();
+
             var now = DateTimeOffset.UtcNow;
             return new AgentTurnRecord(
                 assistantTurn?.TurnId ?? Guid.NewGuid(),
@@ -474,16 +676,91 @@ public sealed class AgentStreamingTurnWriterTests
             AgentTurnRecord? assistantTurn,
             CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
+
+        private static TaskCompletionSource CreateCompletion()
+            => new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
+    private sealed class BlockingBehaviorLoopRuntime(
+        bool blockSecondPersistence = false,
+        bool rejectFirstPersistence = false) : RecordingBehaviorLoopRuntime
+    {
+        private readonly TaskCompletionSource _firstPersistenceStarted = CreateSignal();
+        private readonly TaskCompletionSource _releaseFirstPersistence = CreateSignal();
+        private readonly TaskCompletionSource _secondPersistenceStarted = CreateSignal();
+        private readonly TaskCompletionSource _releaseSecondPersistence = CreateSignal();
+        private int _activeWrites;
+        private int _persistenceCallCount;
+        private int _writesOverlapped;
+
+        public Task FirstPersistenceStarted => _firstPersistenceStarted.Task;
+
+        public Task SecondPersistenceStarted => _secondPersistenceStarted.Task;
+
+        public int PersistenceCallCount => Volatile.Read(ref _persistenceCallCount);
+
+        public bool WritesOverlapped => Volatile.Read(ref _writesOverlapped) != 0;
+
+        public void ReleaseFirstPersistence() => _releaseFirstPersistence.TrySetResult();
+
+        public void ReleaseSecondPersistence() => _releaseSecondPersistence.TrySetResult();
+
+        public override AgentTurnRecord UpsertAssistantTurn(
+            AgentTurnRecord? assistantTurn,
+            string content)
+        {
+            if (Interlocked.Increment(ref _activeWrites) != 1)
+            {
+                Interlocked.Exchange(ref _writesOverlapped, 1);
+            }
+
+            var callCount = Interlocked.Increment(ref _persistenceCallCount);
+            try
+            {
+                if (callCount == 1)
+                {
+                    _firstPersistenceStarted.TrySetResult();
+                    _releaseFirstPersistence.Task.GetAwaiter().GetResult();
+                    if (rejectFirstPersistence)
+                    {
+                        throw new AgentRunTranscriptWriteRejectedException();
+                    }
+                }
+                else if (callCount == 2)
+                {
+                    _secondPersistenceStarted.TrySetResult();
+                    if (blockSecondPersistence)
+                    {
+                        _releaseSecondPersistence.Task.GetAwaiter().GetResult();
+                    }
+                }
+
+                return base.UpsertAssistantTurn(assistantTurn, content);
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _activeWrites);
+            }
+        }
+
+        private static TaskCompletionSource CreateSignal()
+            => new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
     private sealed class PausingChatClient : IChatClient
     {
         private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _releaseSecondUpdate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _firstDeltaConsumed = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _updatesConsumed = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public ChatClientMetadata Metadata { get; } = new("Pausing test");
 
+        public Task FirstDeltaConsumed => _firstDeltaConsumed.Task;
+
         public Task UpdatesConsumed => _updatesConsumed.Task;
+
+        public void ReleaseSecondUpdate() => _releaseSecondUpdate.TrySetResult();
 
         public void Release() => _release.TrySetResult();
 
@@ -499,9 +776,127 @@ public sealed class AgentStreamingTurnWriterTests
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             yield return new ChatResponseUpdate(ChatRole.Assistant, "first");
+            _firstDeltaConsumed.TrySetResult();
+            await _releaseSecondUpdate.Task.WaitAsync(cancellationToken);
             yield return new ChatResponseUpdate(ChatRole.Assistant, " second");
             _updatesConsumed.TrySetResult();
             await _release.Task.WaitAsync(cancellationToken);
+        }
+
+        public object? GetService(Type serviceType, object? serviceKey = null)
+            => serviceKey is null && serviceType.IsInstanceOfType(this) ? this : null;
+
+        public void Dispose()
+        {
+        }
+    }
+
+    private sealed class BurstChatClient(int updateCount, Task firstPersistenceStarted) : IChatClient
+    {
+        private readonly TaskCompletionSource _allUpdatesConsumed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _consumedUpdateCount;
+
+        public ChatClientMetadata Metadata { get; } = new("Burst test");
+
+        public Task AllUpdatesConsumed => _allUpdatesConsumed.Task;
+
+        public int ConsumedUpdateCount => Volatile.Read(ref _consumedUpdateCount);
+
+        public Task<ChatResponse> GetResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            for (var index = 0; index < updateCount; index++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                yield return new ChatResponseUpdate(ChatRole.Assistant, "x");
+                Interlocked.Increment(ref _consumedUpdateCount);
+                if (index == 0)
+                {
+                    await firstPersistenceStarted.WaitAsync(cancellationToken);
+                }
+            }
+
+            _allUpdatesConsumed.TrySetResult();
+        }
+
+        public object? GetService(Type serviceType, object? serviceKey = null)
+            => serviceKey is null && serviceType.IsInstanceOfType(this) ? this : null;
+
+        public void Dispose()
+        {
+        }
+    }
+
+    private sealed class CancellationPausingChatClient : IChatClient
+    {
+        private readonly TaskCompletionSource _cancellationObserved = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public ChatClientMetadata Metadata { get; } = new("Cancellation test");
+
+        public Task CancellationObserved => _cancellationObserved.Task;
+
+        public Task<ChatResponse> GetResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            yield return new ChatResponseUpdate(ChatRole.Assistant, "first");
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                _cancellationObserved.TrySetResult();
+                throw;
+            }
+        }
+
+        public object? GetService(Type serviceType, object? serviceKey = null)
+            => serviceKey is null && serviceType.IsInstanceOfType(this) ? this : null;
+
+        public void Dispose()
+        {
+        }
+    }
+
+    private sealed class FailingChatClient(Task firstPersistenceStarted) : IChatClient
+    {
+        private readonly TaskCompletionSource _providerFailureThrown = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public ChatClientMetadata Metadata { get; } = new("Failing test");
+
+        public Task ProviderFailureThrown => _providerFailureThrown.Task;
+
+        public Task<ChatResponse> GetResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            yield return new ChatResponseUpdate(ChatRole.Assistant, "first");
+            await firstPersistenceStarted.WaitAsync(cancellationToken);
+            _providerFailureThrown.TrySetResult();
+            throw new InvalidOperationException("Provider stream failed.");
         }
 
         public object? GetService(Type serviceType, object? serviceKey = null)
@@ -617,7 +1012,9 @@ public sealed class AgentStreamingTurnWriterTests
     {
         private readonly object _syncRoot = new();
         private readonly HashSet<ManualTimer> _timers = [];
+        private readonly List<TimerCreationWaiter> _timerCreationWaiters = [];
         private readonly List<TimestampWaiter> _timestampWaiters = [];
+        private int _timerCreationCount;
         private long _timestamp;
         private int _timestampReadCount;
 
@@ -682,9 +1079,31 @@ public sealed class AgentStreamingTurnWriterTests
             TimeSpan period)
         {
             var timer = new ManualTimer(this, callback, state);
+            List<TaskCompletionSource>? completions = null;
             lock (_syncRoot)
             {
                 _timers.Add(timer);
+                _timerCreationCount++;
+                for (var index = _timerCreationWaiters.Count - 1; index >= 0; index--)
+                {
+                    var waiter = _timerCreationWaiters[index];
+                    if (waiter.TargetCount > _timerCreationCount)
+                    {
+                        continue;
+                    }
+
+                    completions ??= [];
+                    completions.Add(waiter.Completion);
+                    _timerCreationWaiters.RemoveAt(index);
+                }
+            }
+
+            if (completions is not null)
+            {
+                foreach (var completion in completions)
+                {
+                    completion.TrySetResult();
+                }
             }
             return timer;
         }
@@ -731,6 +1150,21 @@ public sealed class AgentStreamingTurnWriterTests
             }
         }
 
+        public Task WaitForTimerCreationCountAsync(int targetCount)
+        {
+            lock (_syncRoot)
+            {
+                if (_timerCreationCount >= targetCount)
+                {
+                    return Task.CompletedTask;
+                }
+
+                var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                _timerCreationWaiters.Add(new TimerCreationWaiter(targetCount, completion));
+                return completion.Task;
+            }
+        }
+
         private void Remove(ManualTimer timer)
         {
             lock (_syncRoot)
@@ -740,6 +1174,8 @@ public sealed class AgentStreamingTurnWriterTests
         }
 
         private sealed record TimestampWaiter(int TargetCount, TaskCompletionSource Completion);
+
+        private sealed record TimerCreationWaiter(int TargetCount, TaskCompletionSource Completion);
 
         private sealed class ManualTimer(
             ManualTimeProvider owner,

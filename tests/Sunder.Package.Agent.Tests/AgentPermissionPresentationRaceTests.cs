@@ -102,6 +102,26 @@ public sealed class AgentPermissionPresentationRaceTests
         Assert.Equal(AgentPermissionDecision.Allow, permissionOverride.Decision);
     }
 
+    [Fact]
+    public async Task PartialSaveFailureReloadsAuthoritativePermissionState()
+    {
+        var gateway = new PartialMutationPermissionGateway();
+        using var viewModel = new AgentPermissionsViewModel(gateway, InlineDispatcher.Instance);
+        await viewModel.PrepareNavigationAsync(NavigationContext());
+        Assert.Equal(2, viewModel.Rows.Count);
+        foreach (var row in viewModel.Rows)
+        {
+            row.SelectedDecision = AgentPermissionDecision.Allow;
+        }
+
+        await viewModel.SaveCommand.ExecuteAsync(null);
+
+        Assert.False(viewModel.IsBusy);
+        Assert.Equal(AgentPermissionDecision.Allow, viewModel.Rows[0].SelectedDecision);
+        Assert.Equal(AgentPermissionDecision.Ask, viewModel.Rows[1].SelectedDecision);
+        Assert.True(gateway.LoadCount >= 2);
+    }
+
     private const string ActionId = "test.mutate";
     private const string BoundaryId = "test-boundary";
 
@@ -296,6 +316,73 @@ public sealed class AgentPermissionPresentationRaceTests
 
         public void RaiseConnected()
             => ConnectionStateChanged?.Invoke(AgentRuntimeConnectionState.Connected);
+    }
+
+    private sealed class PartialMutationPermissionGateway : GlobalPermissionGateway
+    {
+        private readonly Dictionary<string, AgentPermissionDecision> _decisions =
+            new(StringComparer.Ordinal);
+        private int _saveCount;
+        private long _revision = 1;
+
+        public int LoadCount { get; private set; }
+
+        public override Task<AgentPermissionProjection> LoadGlobalPermissionsAsync(
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            LoadCount++;
+            var boundaries = new[] { "first", "second" };
+            return Task.FromResult(new AgentPermissionProjection(
+                _revision,
+                SessionState: null,
+                [new AgentPermissionActionDescriptor(
+                    ActionId,
+                    "Mutate test state",
+                    "Mutates deterministic test state.",
+                    boundaries.Select(boundary => new AgentPermissionBoundaryDescriptor(
+                        boundary,
+                        boundary,
+                        "Requires approval.",
+                        AgentPermissionDecision.Ask)).ToArray())],
+                boundaries
+                    .Where(_decisions.ContainsKey)
+                    .Select(boundary => new AgentPermissionOverride(
+                        ActionId,
+                        boundary,
+                        _decisions[boundary],
+                        DateTimeOffset.UtcNow))
+                    .ToArray(),
+                PendingRequests: []));
+        }
+
+        public override Task SaveOverrideAsync(
+            string actionId,
+            string boundaryId,
+            AgentPermissionDecision decision,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (Interlocked.Increment(ref _saveCount) == 2)
+            {
+                throw new IOException("Injected partial permission save failure.");
+            }
+
+            _decisions[boundaryId] = decision;
+            _revision++;
+            return Task.CompletedTask;
+        }
+
+        public override Task DeleteOverrideAsync(
+            string actionId,
+            string boundaryId,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            _decisions.Remove(boundaryId);
+            _revision++;
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class RacingPermissionOwnerClient : IAgentOwnerClient

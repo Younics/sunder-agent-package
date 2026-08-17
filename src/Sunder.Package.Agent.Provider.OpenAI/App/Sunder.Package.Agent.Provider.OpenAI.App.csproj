@@ -31,12 +31,12 @@
                       Link="Provider.Shared\ProviderSettingsStyles.axaml" />
     <SunderContractBundle Include="..\Shared\Contracts\openai-management.rpc.json"
                           ContractId="sunder.package.agent.provider.openai.management"
-                          Version="2.0.0"
+                           Version="2.0.0"
                           DescriptorPath="contracts/openai-management.rpc.json"
                           Exposure="package" />
     <SunderUsesContract Include="sunder.package.agent.provider.openai.management"
                         Role="app"
-                        ContractVersion="2.0.0"
+                         ContractVersion="2.0.0"
                         Required="true"
                         Actions="discover;invoke" />
   </ItemGroup>

@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "descriptorVersion": 2,
+  "schemaProfile": "sunder.rpc.values.v1",
   "contractId": "sunder.agent.embedding.provider",
   "version": "1.0.0",
   "errors": {},
@@ -12,7 +13,7 @@
           "idempotency": "idempotent",
           "errors": [],
           "requestSchema": {
-            "$ref": "#/$defs/AgentRpcEmpty"
+            "$ref": "#/$defs/Unit"
           },
           "responseSchema": {
             "$ref": "#/$defs/AgentEmbeddingProviderDescriptor"
@@ -23,10 +24,10 @@
           "idempotency": "idempotent",
           "errors": [],
           "requestSchema": {
-            "$ref": "#/$defs/AgentRpcEmpty"
+            "$ref": "#/$defs/Unit"
           },
           "responseSchema": {
-            "$ref": "#/$defs/ListOfAgentEmbeddingModelDescriptor"
+            "$ref": "#/$defs/AgentEmbeddingModelDescriptorCollection"
           }
         },
         "get-readiness": {
@@ -34,7 +35,7 @@
           "idempotency": "idempotent",
           "errors": [],
           "requestSchema": {
-            "$ref": "#/$defs/AgentRpcEmpty"
+            "$ref": "#/$defs/Unit"
           },
           "responseSchema": {
             "$ref": "#/$defs/AgentEmbeddingProviderReadiness"
@@ -48,7 +49,7 @@
             "$ref": "#/$defs/StringRequest"
           },
           "responseSchema": {
-            "$ref": "#/$defs/String"
+            "$ref": "#/$defs/TextValue"
           }
         },
         "generate": {
@@ -59,7 +60,7 @@
             "$ref": "#/$defs/EmbeddingRequest"
           },
           "responseSchema": {
-            "$ref": "#/$defs/AgentRpcOptionalOfAgentEmbeddingGenerationResult"
+            "$ref": "#/$defs/EmbeddingGenerationResult"
           }
         },
         "generate-batch": {
@@ -70,55 +71,55 @@
             "$ref": "#/$defs/EmbeddingBatchRequest"
           },
           "responseSchema": {
-            "$ref": "#/$defs/ListOfNullableAgentEmbeddingGenerationResult"
+            "$ref": "#/$defs/EmbeddingBatchResults"
           }
         }
       }
     }
   },
   "$defs": {
-    "AgentRpcEmpty": {
+    "Unit": {
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
-    "String": {
+    "TextValue": {
       "type": "string",
       "minLength": 0,
-      "maxLength": 1000000
+      "maxLength": 65536
     },
     "AgentAuthMode": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 1,
+      "type": "string",
+      "minLength": 7,
+      "maxLength": 15,
       "enum": [
-        0,
-        1
+        "api-key",
+        "codex-connected"
       ]
     },
-    "ListOfAgentAuthMode": {
+    "AgentAuthModeCollection": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentAuthMode"
       },
       "minItems": 0,
-      "maxItems": 1000000
+      "maxItems": 4096
     },
     "AgentEmbeddingProviderDescriptor": {
       "type": "object",
       "properties": {
         "displayName": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         },
         "packageId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "providerId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "supportedAuthModes": {
-          "$ref": "#/$defs/ListOfAgentAuthMode"
+          "$ref": "#/$defs/AgentAuthModeCollection"
         }
       },
       "required": [
@@ -128,33 +129,23 @@
       ],
       "additionalProperties": false
     },
-    "Int32": {
-      "type": "integer",
-      "minimum": -2147483648,
-      "maximum": 2147483647
-    },
-    "Nullable": {
-      "type": "integer",
-      "minimum": -2147483648,
-      "maximum": 2147483647
-    },
-    "Boolean": {
+    "Flag": {
       "type": "boolean"
     },
     "AgentEmbeddingModelDescriptor": {
       "type": "object",
       "properties": {
         "dimensions": {
-          "$ref": "#/$defs/Nullable"
+          "$ref": "#/$defs/EmbeddingDimensions"
         },
         "displayName": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         },
         "isRecommended": {
-          "$ref": "#/$defs/Boolean"
+          "$ref": "#/$defs/Flag"
         },
         "modelId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         }
       },
       "required": [
@@ -164,32 +155,32 @@
       ],
       "additionalProperties": false
     },
-    "ListOfAgentEmbeddingModelDescriptor": {
+    "AgentEmbeddingModelDescriptorCollection": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentEmbeddingModelDescriptor"
       },
       "minItems": 0,
-      "maxItems": 1000000
+      "maxItems": 10000
     },
     "AgentProviderReadinessStatus": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 2,
+      "type": "string",
+      "minLength": 5,
+      "maxLength": 19,
       "enum": [
-        0,
-        1,
-        2
+        "ready",
+        "needs-configuration",
+        "failed"
       ]
     },
     "AgentEmbeddingProviderReadiness": {
       "type": "object",
       "properties": {
         "message": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/DisplayText"
         },
         "providerId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "status": {
           "$ref": "#/$defs/AgentProviderReadinessStatus"
@@ -206,7 +197,7 @@
       "type": "object",
       "properties": {
         "value": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/TextValue"
         }
       },
       "required": [
@@ -218,10 +209,10 @@
       "type": "object",
       "properties": {
         "modelId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "text": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/TextValue"
         }
       },
       "required": [
@@ -230,30 +221,29 @@
       ],
       "additionalProperties": false
     },
-    "Single": {
+    "EmbeddingValue": {
       "type": "number",
-      "minimum": -9007199254740991,
-      "maximum": 9007199254740991
+      "format": "float64"
     },
-    "ListOfSingle": {
+    "EmbeddingVector": {
       "type": "array",
       "items": {
-        "$ref": "#/$defs/Single"
+        "$ref": "#/$defs/EmbeddingValue"
       },
       "minItems": 0,
-      "maxItems": 1000000
+      "maxItems": 32768
     },
     "AgentEmbeddingGenerationResult": {
       "type": "object",
       "properties": {
         "dimensions": {
-          "$ref": "#/$defs/Int32"
+          "$ref": "#/$defs/EmbeddingDimensions"
         },
         "modelId": {
-          "$ref": "#/$defs/String"
+          "$ref": "#/$defs/Identifier"
         },
         "values": {
-          "$ref": "#/$defs/ListOfSingle"
+          "$ref": "#/$defs/EmbeddingVector"
         }
       },
       "required": [
@@ -263,46 +253,7 @@
       ],
       "additionalProperties": false
     },
-    "AgentRpcOptionalOfAgentEmbeddingGenerationResult": {
-      "type": "object",
-      "properties": {
-        "hasValue": {
-          "$ref": "#/$defs/Boolean"
-        },
-        "value": {
-          "$ref": "#/$defs/AgentEmbeddingGenerationResult"
-        }
-      },
-      "required": [
-        "hasValue"
-      ],
-      "additionalProperties": false
-    },
-    "ListOfString": {
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/String"
-      },
-      "minItems": 0,
-      "maxItems": 1000000
-    },
-    "EmbeddingBatchRequest": {
-      "type": "object",
-      "properties": {
-        "modelId": {
-          "$ref": "#/$defs/String"
-        },
-        "texts": {
-          "$ref": "#/$defs/ListOfString"
-        }
-      },
-      "required": [
-        "modelId",
-        "texts"
-      ],
-      "additionalProperties": false
-    },
-    "NullableAgentEmbeddingGenerationResult": {
+    "EmbeddingGenerationResult": {
       "oneOf": [
         {
           "type": "null"
@@ -312,13 +263,62 @@
         }
       ]
     },
-    "ListOfNullableAgentEmbeddingGenerationResult": {
+    "TextValues": {
       "type": "array",
       "items": {
-        "$ref": "#/$defs/NullableAgentEmbeddingGenerationResult"
+        "$ref": "#/$defs/TextValue"
       },
       "minItems": 0,
-      "maxItems": 1000000
+      "maxItems": 4096
+    },
+    "EmbeddingBatchRequest": {
+      "type": "object",
+      "properties": {
+        "modelId": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "texts": {
+          "$ref": "#/$defs/TextValues"
+        }
+      },
+      "required": [
+        "modelId",
+        "texts"
+      ],
+      "additionalProperties": false
+    },
+    "EmbeddingGenerationResultOrNull": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/AgentEmbeddingGenerationResult"
+        }
+      ]
+    },
+    "EmbeddingBatchResults": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/EmbeddingGenerationResultOrNull"
+      },
+      "minItems": 0,
+      "maxItems": 256
+    },
+    "Identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "DisplayText": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 8192
+    },
+    "EmbeddingDimensions": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 32768
     }
   }
 }

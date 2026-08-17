@@ -2,15 +2,19 @@ using System.Text.Json;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Data.Sqlite;
+using Sunder.Package.Agent.Shared.Storage;
 
 namespace Sunder.Package.Agent.Memory.Semantic;
 
-internal sealed partial class EmbeddingRepository(string databasePath)
+internal sealed partial class EmbeddingRepository(
+    string databasePath,
+    SqliteWalCheckpointMaintenance walCheckpointMaintenance)
 {
     private const string SelectColumns =
         "e.MemoryId, e.SessionId, e.ProviderId, e.ModelId, e.CanonicalTextHash, e.Dimensions, e.VectorJson, e.CreatedAtUtc, e.UpdatedAtUtc, e.MemoryRevision";
 
     private readonly string _databasePath = databasePath;
+    private readonly SqliteWalCheckpointMaintenance _walCheckpointMaintenance = walCheckpointMaintenance;
 
     public StoredMemoryEmbeddingRecord? Get(Guid memoryId)
     {
@@ -260,7 +264,7 @@ internal sealed partial class EmbeddingRepository(string databasePath)
         transaction.Commit();
         if (removed > 0)
         {
-            MemoryDatabase.TruncateWal(connection);
+            _walCheckpointMaintenance.ScheduleCheckpoint();
         }
         return removed;
     }
@@ -414,7 +418,7 @@ internal sealed partial class EmbeddingRepository(string databasePath)
         }
 
         transaction.Commit();
-        MemoryDatabase.TruncateWal(connection);
+        _walCheckpointMaintenance.ScheduleCheckpoint();
     }
 
     public void AbortGeneration(string generationId)
@@ -438,7 +442,7 @@ internal sealed partial class EmbeddingRepository(string databasePath)
         }
 
         transaction.Commit();
-        MemoryDatabase.TruncateWal(connection);
+        _walCheckpointMaintenance.ScheduleCheckpoint();
     }
 
     public void DeleteSession(Guid sessionId)
@@ -447,7 +451,7 @@ internal sealed partial class EmbeddingRepository(string databasePath)
         using var transaction = MemoryDatabase.BeginImmediateTransaction(connection);
         DeleteSession(connection, transaction, sessionId);
         transaction.Commit();
-        MemoryDatabase.TruncateWal(connection);
+        _walCheckpointMaintenance.ScheduleCheckpoint();
     }
 
     internal static void DeleteSession(SqliteConnection connection, SqliteTransaction transaction, Guid sessionId)

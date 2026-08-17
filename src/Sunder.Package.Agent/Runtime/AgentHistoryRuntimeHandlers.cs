@@ -5,20 +5,36 @@ using Sunder.Package.Agent.Storage;
 
 namespace Sunder.Package.Agent.Runtime;
 
-internal sealed class AgentHistorySearchHandler(HistorySearchService search)
+internal sealed class AgentHistorySearchHandler(
+    HistorySearchService search,
+    AgentRuntimeTransportBudgetState? transportBudgets = null)
 {
+    private readonly AgentRuntimeTransportBudgetState _transportBudgets =
+        transportBudgets ?? new AgentRuntimeTransportBudgetState();
+
     public async ValueTask<HistorySearchResponse> HandleAsync(
         HistorySearchRequest request,
         CancellationToken cancellationToken = default)
-        => await search.SearchAsync(request, cancellationToken).ConfigureAwait(false);
+        => await search.SearchAsync(
+            request,
+            cancellationToken,
+            AgentRuntimePayloadLimits.GetResponsePayloadBytes(_transportBudgets.Current)).ConfigureAwait(false);
 }
 
-internal sealed class AgentHistoryStateHandler(HistorySearchService search)
+internal sealed class AgentHistoryStateHandler(
+    HistorySearchService search,
+    AgentRuntimeTransportBudgetState? transportBudgets = null)
 {
+    private readonly AgentRuntimeTransportBudgetState _transportBudgets =
+        transportBudgets ?? new AgentRuntimeTransportBudgetState();
+
     public async ValueTask<HistorySearchState> HandleAsync(
         HistorySearchStateRequest request,
         CancellationToken cancellationToken = default)
-        => await search.GetStateAsync(request, cancellationToken).ConfigureAwait(false);
+        => await search.GetStateAsync(
+            request,
+            cancellationToken,
+            AgentRuntimePayloadLimits.GetResponsePayloadBytes(_transportBudgets.Current)).ConfigureAwait(false);
 }
 
 internal sealed class AgentHistoryCommandHandler(HistorySearchService search)
@@ -31,8 +47,12 @@ internal sealed class AgentHistoryCommandHandler(HistorySearchService search)
 
 internal sealed class AgentTranscriptAroundTurnHandler(
     AgentLocalStore store,
-    AgentRuntimeChangeHub changes)
+    AgentRuntimeChangeHub changes,
+    AgentRuntimeTransportBudgetState? transportBudgets = null)
 {
+    private readonly AgentRuntimeTransportBudgetState _transportBudgets =
+        transportBudgets ?? new AgentRuntimeTransportBudgetState();
+
     public ValueTask<AgentTranscriptAroundTurnPage> HandleAsync(
         AgentTranscriptAroundTurnRequest request,
         CancellationToken cancellationToken = default)
@@ -51,7 +71,10 @@ internal sealed class AgentTranscriptAroundTurnHandler(
             Math.Clamp(request.BeforeLimit, 0, HistorySearchLimits.AroundTurnSideLimit),
             Math.Clamp(request.AfterLimit, 0, HistorySearchLimits.AroundTurnSideLimit),
             changes.Revision);
-        return ValueTask.FromResult(AgentRuntimePayloadLimits.FitAroundTurnPage(page, request.ItemId));
+        return ValueTask.FromResult(AgentRuntimePayloadLimits.FitAroundTurnPage(
+            page,
+            request.ItemId,
+            AgentRuntimePayloadLimits.GetResponsePayloadBytes(_transportBudgets.Current)));
     }
 }
 

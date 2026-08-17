@@ -28,7 +28,7 @@ public static class AgentExecutionTargetRpc
         var descriptor = WithFacets(target);
         return AgentRpcServiceHandler.Create()
             .AddUnary<AgentRpcEmpty, AgentExecutionTargetDescriptor>(ServiceId, "describe", (_, _, _) => ValueTask.FromResult(descriptor))
-            .AddUnary<AgentExecutionTargetContextWire, AgentRpcOptional<string>>(ServiceId, "configuration-generation", async (_, request, token) => new(true, await target.GetConfigurationGenerationAsync(request.ToContext(), token).ConfigureAwait(false)))
+            .AddNullableUnary<AgentExecutionTargetContextWire, string>(ServiceId, "configuration-generation", async (_, request, token) => await target.GetConfigurationGenerationAsync(request.ToContext(), token).ConfigureAwait(false))
             .AddUnary<AgentExecutionTargetContextWire, AgentExecutionTargetReadiness>(ServiceId, "readiness", (_, request, token) => target.GetReadinessAsync(request.ToContext(), token))
             .AddUnary<AgentExecutionTargetContextWire, AgentExecutionShellDescriptor>(ServiceId, "shell", (_, request, token) => target.GetShellAsync(request.ToContext(), token))
             .AddUnary<ExecutionPathRequest, AgentResolvedResourceWire>(ServiceId, "resolve-file", async (_, request, token) => AgentResolvedResourceWire.FromResource(
@@ -155,7 +155,7 @@ public sealed class AgentExecutionTargetRpcClient :
         return Interlocked.CompareExchange(ref _descriptor, descriptor, null) ?? descriptor;
     }
     public async ValueTask<string?> GetConfigurationGenerationAsync(AgentExecutionTargetContext context, CancellationToken cancellationToken = default)
-        => (await InvokeAsync<AgentExecutionTargetContextWire, AgentRpcOptional<string>>("configuration-generation", AgentExecutionTargetContextWire.FromContext(context), cancellationToken).ConfigureAwait(false)).Value;
+        => await AgentRpcServiceHandler.InvokeNullableAsync<AgentExecutionTargetContextWire, string>(_client, _endpoint, AgentExecutionTargetRpc.ServiceId, "configuration-generation", AgentExecutionTargetContextWire.FromContext(context), cancellationToken).ConfigureAwait(false);
     public ValueTask<AgentExecutionTargetReadiness> GetReadinessAsync(AgentExecutionTargetContext context, CancellationToken cancellationToken = default) => InvokeAsync<AgentExecutionTargetContextWire, AgentExecutionTargetReadiness>("readiness", AgentExecutionTargetContextWire.FromContext(context), cancellationToken);
     public ValueTask<AgentExecutionShellDescriptor> GetShellAsync(AgentExecutionTargetContext context, CancellationToken cancellationToken = default) => InvokeAsync<AgentExecutionTargetContextWire, AgentExecutionShellDescriptor>("shell", AgentExecutionTargetContextWire.FromContext(context), cancellationToken);
     public async ValueTask<AgentResolvedResource> ResolveFileResourceAsync(AgentExecutionTargetContext context, string path, CancellationToken cancellationToken = default)

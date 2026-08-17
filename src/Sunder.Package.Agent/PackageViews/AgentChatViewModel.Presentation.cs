@@ -34,7 +34,8 @@ public sealed partial class AgentChatViewModel
             activityQuietDelay,
             warmupService,
             shellViewService,
-            attachmentService)
+            attachmentService,
+            operationObserver: null)
     {
     }
 
@@ -50,7 +51,8 @@ public sealed partial class AgentChatViewModel
         TimeSpan? activityQuietDelay = null,
         IAgentExecutionGateway? warmupService = null,
         IPackageShellViewService? shellViewService = null,
-        IAgentAttachmentGateway? attachmentService = null)
+        IAgentAttachmentGateway? attachmentService = null,
+        PresentationOperationObserver? operationObserver = null)
     {
         _activityTicker.SetEnabled(false);
         _profileService = profileService;
@@ -67,6 +69,8 @@ public sealed partial class AgentChatViewModel
         _toolPresentationService = toolPresentationService ?? new AgentToolPresentationService();
         _shellViewService = shellViewService;
         _uiDispatcher = uiDispatcher;
+        _operations = operationObserver
+            ?? PresentationOperationObserver.CreateUnreported("Agent Chat");
         _permissionPanel = new AgentPermissionPanelState(permissionService, runCoordinator, uiDispatcher);
         _runtimeAvailability = profileService as IAgentRuntimeAvailability;
         _runtimeFailureClassifier = profileService as IAgentRuntimeFailureClassifier;

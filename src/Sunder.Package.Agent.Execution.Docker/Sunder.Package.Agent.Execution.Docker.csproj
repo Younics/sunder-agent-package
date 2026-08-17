@@ -40,7 +40,7 @@
     <SunderSdkCapability Include="docker-environment.v1" />
     <SunderContractBundle Include="Protocol\Contracts\docker-execution-presentation.rpc.json"
                           ContractId="sunder.package.agent.execution.docker.presentation"
-                          Version="2.0.0"
+                           Version="2.0.0"
                           DescriptorPath="contracts/docker-execution-presentation.rpc.json"
                           Exposure="package" />
     <SunderRpcProvider Include="docker.presentation"

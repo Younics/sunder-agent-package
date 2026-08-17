@@ -25,7 +25,7 @@ internal sealed class AgentAttachmentTransferService : IDisposable
         }
     }
 
-    internal AgentAttachmentTransferResult BeginUpload(AgentAttachmentUploadDescriptor descriptor)
+    private AgentAttachmentUploadHandle BeginUpload(AgentAttachmentUploadDescriptor descriptor)
     {
         ValidateDescriptor(descriptor);
         lock (_syncRoot)
@@ -34,7 +34,7 @@ internal sealed class AgentAttachmentTransferService : IDisposable
             RemoveExpiredUploads();
             if (_uploads.Count >= MaximumPendingTransfers)
             {
-                throw new InvalidOperationException("Too many attachment uploads are pending.");
+                throw new AgentAttachmentTransferOperationException("Too many attachment uploads are pending.");
             }
 
             var transferId = Guid.NewGuid().ToString("N");
@@ -44,89 +44,82 @@ internal sealed class AgentAttachmentTransferService : IDisposable
             }
 
             _uploads.Add(transferId, new PendingUpload(descriptor, path, DateTimeOffset.UtcNow));
-            return new AgentAttachmentTransferResult(
-                transferId,
-                TotalBytes: descriptor.SizeBytes);
+            return new AgentAttachmentUploadHandle(transferId);
         }
     }
 
-    internal AgentAttachmentTransferResult WriteUploadChunk(
-        string transferId,
-        int offset,
-        byte[] content)
+    internal async ValueTask<AgentAttachmentUploadHandle> ReceiveUploadAsync(
+        AgentAttachmentUploadDescriptor descriptor,
+        Stream content,
+        CancellationToken cancellationToken = default)
     {
-        if (content.Length is <= 0 or > AgentRuntimePayloadLimits.AttachmentUploadChunkBytes)
-        {
-            throw new InvalidOperationException("Attachment upload chunk size is invalid.");
-        }
-
+        ArgumentNullException.ThrowIfNull(content);
+        var started = BeginUpload(descriptor);
+        var transferId = started.TransferId;
+        string path;
         lock (_syncRoot)
         {
-            var upload = GetUpload(transferId);
-            if (upload.IsComplete || offset != upload.ReceivedBytes)
-            {
-                throw new InvalidOperationException("Attachment upload chunks must be written once and in order.");
-            }
+            path = GetUpload(transferId).Path;
+        }
 
-            if ((long)offset + content.Length > upload.Descriptor.SizeBytes)
+        try
+        {
+            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            var buffer = new byte[64 * 1024];
+            var received = 0;
+            await using (var destination = new FileStream(
+                             path,
+                             FileMode.Open,
+                             FileAccess.Write,
+                             FileShare.None,
+                             bufferSize: buffer.Length,
+                             FileOptions.Asynchronous | FileOptions.WriteThrough))
             {
-                throw new InvalidOperationException("Attachment upload exceeds its declared size.");
-            }
-
-            using (var stream = new FileStream(
-                       upload.Path,
-                       FileMode.Open,
-                       FileAccess.Write,
-                       FileShare.None))
-            {
-                if (stream.Length != offset)
+                while (true)
                 {
-                    throw new InvalidOperationException("Attachment upload storage length is inconsistent.");
+                    var read = await content.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+                    if (read == 0)
+                    {
+                        break;
+                    }
+                    if (received > descriptor.SizeBytes - read)
+                    {
+                        throw new AgentAttachmentTransferOperationException(
+                            "Attachment content exceeds its declared size.");
+                    }
+                    await destination.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
+                    hash.AppendData(buffer, 0, read);
+                    received += read;
                 }
-                stream.Position = offset;
-                stream.Write(content);
-                stream.Flush(flushToDisk: true);
+                await destination.FlushAsync(cancellationToken).ConfigureAwait(false);
+                destination.Flush(flushToDisk: true);
             }
 
-            upload.ReceivedBytes += content.Length;
-            upload.UpdatedAtUtc = DateTimeOffset.UtcNow;
-            return new AgentAttachmentTransferResult(
-                transferId,
-                upload.ReceivedBytes,
-                upload.Descriptor.SizeBytes,
-                IsComplete: false);
-        }
-    }
+            var actualHash = Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
+            if (received != descriptor.SizeBytes
+                || !string.Equals(actualHash, descriptor.Sha256, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new AgentAttachmentTransferOperationException(
+                    "Attachment content does not match its declared length and digest.");
+            }
 
-    internal AgentAttachmentTransferResult CompleteUpload(string transferId)
-    {
-        lock (_syncRoot)
+            lock (_syncRoot)
+            {
+                var upload = GetUpload(transferId);
+                upload.ReceivedBytes = received;
+                upload.IsComplete = true;
+                upload.UpdatedAtUtc = DateTimeOffset.UtcNow;
+            }
+            return new AgentAttachmentUploadHandle(transferId);
+        }
+        catch
         {
-            var upload = GetUpload(transferId);
-            if (upload.ReceivedBytes != upload.Descriptor.SizeBytes)
-            {
-                throw new InvalidOperationException("Attachment upload is incomplete.");
-            }
-
-            using var stream = File.OpenRead(upload.Path);
-            var actualHash = Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
-            if (!string.Equals(actualHash, upload.Descriptor.Sha256, StringComparison.OrdinalIgnoreCase))
-            {
-                RemoveUpload(transferId, upload);
-                throw new InvalidDataException("Attachment upload content hash does not match its descriptor.");
-            }
-
-            upload.IsComplete = true;
-            upload.UpdatedAtUtc = DateTimeOffset.UtcNow;
-            return new AgentAttachmentTransferResult(
-                transferId,
-                upload.ReceivedBytes,
-                upload.Descriptor.SizeBytes,
-                IsComplete: true);
+            AbortUpload(transferId);
+            throw;
         }
     }
 
-    internal void AbortUpload(string transferId)
+    private void AbortUpload(string transferId)
     {
         lock (_syncRoot)
         {
@@ -134,6 +127,20 @@ internal sealed class AgentAttachmentTransferService : IDisposable
             {
                 TryDelete(upload.Path);
             }
+        }
+    }
+
+    internal bool DiscardUpload(AgentAttachmentUploadHandle handle)
+    {
+        ArgumentNullException.ThrowIfNull(handle);
+        lock (_syncRoot)
+        {
+            if (!_uploads.Remove(handle.TransferId, out var upload))
+            {
+                return false;
+            }
+            TryDelete(upload.Path);
+            return true;
         }
     }
 
@@ -146,7 +153,7 @@ internal sealed class AgentAttachmentTransferService : IDisposable
         }
         if (handles.Count > AgentAttachmentService.MaxAttachmentsPerMessage)
         {
-            throw new InvalidOperationException(
+            throw new AgentAttachmentTransferOperationException(
                 $"A message can include at most {AgentAttachmentService.MaxAttachmentsPerMessage} attachments.");
         }
 
@@ -156,7 +163,7 @@ internal sealed class AgentAttachmentTransferService : IDisposable
             ThrowIfDisposed();
             if (handles.Select(handle => handle.TransferId).Distinct(StringComparer.Ordinal).Count() != handles.Count)
             {
-                throw new InvalidOperationException("An attachment upload handle was repeated.");
+                throw new AgentAttachmentTransferOperationException("An attachment upload handle was repeated.");
             }
 
             uploads = handles.Select(handle =>
@@ -164,7 +171,7 @@ internal sealed class AgentAttachmentTransferService : IDisposable
                 var upload = GetUpload(handle.TransferId);
                 if (!upload.IsComplete)
                 {
-                    throw new InvalidOperationException("Attachment upload is not complete.");
+                    throw new AgentAttachmentTransferOperationException("Attachment upload is not complete.");
                 }
                 return upload;
             }).ToArray();
@@ -201,7 +208,7 @@ internal sealed class AgentAttachmentTransferService : IDisposable
         }
         if (handles.Count > AgentAttachmentService.MaxAttachmentsPerMessage)
         {
-            throw new InvalidOperationException(
+            throw new AgentAttachmentTransferOperationException(
                 $"A message can include at most {AgentAttachmentService.MaxAttachmentsPerMessage} attachments.");
         }
 
@@ -211,7 +218,7 @@ internal sealed class AgentAttachmentTransferService : IDisposable
             RemoveExpiredUploads();
             if (handles.Select(handle => handle.TransferId).Distinct(StringComparer.Ordinal).Count() != handles.Count)
             {
-                throw new InvalidOperationException("An attachment upload handle was repeated.");
+                throw new AgentAttachmentTransferOperationException("An attachment upload handle was repeated.");
             }
 
             var uploads = new List<AgentCompletedAttachmentUpload>(handles.Count);
@@ -223,11 +230,12 @@ internal sealed class AgentAttachmentTransferService : IDisposable
                     var upload = GetUpload(handle.TransferId);
                     if (!upload.IsComplete)
                     {
-                        throw new InvalidOperationException("Attachment upload is not complete.");
+                        throw new AgentAttachmentTransferOperationException("Attachment upload is not complete.");
                     }
                     if (upload.IsAdopting)
                     {
-                        throw new InvalidOperationException("Attachment upload is already being adopted.");
+                        throw new AgentAttachmentTransferOperationException(
+                            "Attachment upload is already being adopted.");
                     }
 
                     upload.IsAdopting = true;
@@ -314,13 +322,14 @@ internal sealed class AgentAttachmentTransferService : IDisposable
         if (string.IsNullOrWhiteSpace(transferId)
             || !_uploads.TryGetValue(transferId, out var upload))
         {
-            throw new InvalidOperationException("Attachment upload handle is invalid or expired.");
+            throw new AgentAttachmentTransferOperationException(
+                "Attachment upload handle is invalid or expired.");
         }
 
         if (DateTimeOffset.UtcNow - upload.UpdatedAtUtc > TransferLifetime)
         {
             RemoveUpload(transferId, upload);
-            throw new InvalidOperationException("Attachment upload handle has expired.");
+            throw new AgentAttachmentTransferOperationException("Attachment upload handle has expired.");
         }
 
         return upload;
@@ -345,21 +354,21 @@ internal sealed class AgentAttachmentTransferService : IDisposable
     {
         if (string.IsNullOrWhiteSpace(descriptor.FileName) || descriptor.FileName.Length > 1024)
         {
-            throw new InvalidOperationException("Attachment file name is invalid.");
+            throw new AgentAttachmentTransferOperationException("Attachment file name is invalid.");
         }
         if (descriptor.MediaType?.Length > 256)
         {
-            throw new InvalidOperationException("Attachment media type is too long.");
+            throw new AgentAttachmentTransferOperationException("Attachment media type is too long.");
         }
         if (descriptor.SizeBytes is <= 0 or > (int)AgentAttachmentService.MaxAttachmentBytes)
         {
-            throw new InvalidOperationException("Attachment size is invalid.");
+            throw new AgentAttachmentTransferOperationException("Attachment size is invalid.");
         }
         if (string.IsNullOrWhiteSpace(descriptor.Sha256)
             || descriptor.Sha256.Length != 64
             || !descriptor.Sha256.All(Uri.IsHexDigit))
         {
-            throw new InvalidOperationException("Attachment content hash is invalid.");
+            throw new AgentAttachmentTransferOperationException("Attachment content hash is invalid.");
         }
     }
 
@@ -400,3 +409,6 @@ internal sealed record AgentCompletedAttachmentUpload(
 internal sealed record AgentAttachmentTransferAdoption(
     IReadOnlyList<AgentAttachmentUploadHandle> Handles,
     IReadOnlyList<AgentCompletedAttachmentUpload> Uploads);
+
+internal sealed class AgentAttachmentTransferOperationException(string message)
+    : InvalidOperationException(message);

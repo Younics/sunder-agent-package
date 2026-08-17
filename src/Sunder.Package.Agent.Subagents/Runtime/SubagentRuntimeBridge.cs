@@ -333,38 +333,121 @@ internal sealed class SubagentAppRuntimeGateway :
                         RequireResnapshot();
                         continue;
                     }
-                    Interlocked.Exchange(ref _changeRevision, change.Revision);
-                    switch (change.Kind)
+                    try
                     {
-                        case SubagentChangeKind.Subagents: SubagentsChanged?.Invoke(); break;
-                        case SubagentChangeKind.Catalog:
-                            UpdateProviders(await InvokeAsync(
-                                new(SubagentQueryKind.Management),
-                                cancellationToken).ConfigureAwait(false));
-                            CatalogChanged?.Invoke();
-                            break;
-                        case SubagentChangeKind.Session when change.SessionId is { } sessionId:
-                            InvalidateRuntimeSnapshot();
-                            SessionChanged?.Invoke(sessionId);
-                            break;
-                        case SubagentChangeKind.Turn when change.SessionId is { } sessionId && change.Turn is { } turn: TurnChanged?.Invoke(sessionId, turn); break;
-                        case SubagentChangeKind.Profile:
-                            InvalidateRuntimeSnapshot();
-                            break;
+                        await ProcessChangeAsync(change, cancellationToken).ConfigureAwait(false);
                     }
+                    catch (Exception exception) when (!PresentationExceptionPolicy.IsFatal(exception))
+                    {
+                        RequireResnapshot();
+                        throw;
+                    }
+                    Interlocked.Exchange(ref _changeRevision, change.Revision);
                 }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
-            catch { }
+            catch (Exception exception) when (!PresentationExceptionPolicy.IsFatal(exception)) { }
             try { await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false); }
             catch (OperationCanceledException) { return; }
+        }
+    }
+
+    private async Task ProcessChangeAsync(
+        SubagentChanged change,
+        CancellationToken cancellationToken)
+    {
+        switch (change.Kind)
+        {
+            case SubagentChangeKind.Subagents:
+                Dispatch(SubagentsChanged);
+                break;
+            case SubagentChangeKind.Catalog:
+                UpdateProviders(await InvokeAsync(
+                    new(SubagentQueryKind.Management),
+                    cancellationToken).ConfigureAwait(false));
+                Dispatch(CatalogChanged);
+                break;
+            case SubagentChangeKind.Session when change.SessionId is { } sessionId:
+                InvalidateRuntimeSnapshot();
+                Dispatch(SessionChanged, sessionId);
+                break;
+            case SubagentChangeKind.Turn when change.SessionId is { } turnSessionId
+                                                   && change.Turn is { } turn:
+                Dispatch(TurnChanged, turnSessionId, turn);
+                break;
+            case SubagentChangeKind.Profile:
+                InvalidateRuntimeSnapshot();
+                break;
         }
     }
 
     private void RequireResnapshot()
     {
         InvalidateRuntimeSnapshot();
-        ResnapshotRequired?.Invoke();
+        Dispatch(ResnapshotRequired);
+    }
+
+    private static void Dispatch(Action? handlers)
+    {
+        if (handlers is null)
+        {
+            return;
+        }
+
+        foreach (Action handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                handler();
+            }
+            catch (Exception exception) when (!PresentationExceptionPolicy.IsFatal(exception))
+            {
+                // Change listeners are independent presentation refresh hints.
+            }
+        }
+    }
+
+    private static void Dispatch<T>(Action<T>? handlers, T value)
+    {
+        if (handlers is null)
+        {
+            return;
+        }
+
+        foreach (Action<T> handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                handler(value);
+            }
+            catch (Exception exception) when (!PresentationExceptionPolicy.IsFatal(exception))
+            {
+                // Change listeners are independent presentation refresh hints.
+            }
+        }
+    }
+
+    private static void Dispatch<TFirst, TSecond>(
+        Action<TFirst, TSecond>? handlers,
+        TFirst first,
+        TSecond second)
+    {
+        if (handlers is null)
+        {
+            return;
+        }
+
+        foreach (Action<TFirst, TSecond> handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                handler(first, second);
+            }
+            catch (Exception exception) when (!PresentationExceptionPolicy.IsFatal(exception))
+            {
+                // Change listeners are independent presentation refresh hints.
+            }
+        }
     }
 
     public void Dispose()

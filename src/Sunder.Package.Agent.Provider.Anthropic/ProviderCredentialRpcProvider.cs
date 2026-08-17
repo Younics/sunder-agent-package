@@ -25,7 +25,7 @@ internal sealed class ProviderCredentialRpcProvider(ProviderCredentialAccessor c
     {
         switch (request.Kind)
         {
-            case 0:
+            case CredentialOperation.Set:
                 if (string.IsNullOrWhiteSpace(request.Credential))
                 {
                     throw Domain(
@@ -34,7 +34,7 @@ internal sealed class ProviderCredentialRpcProvider(ProviderCredentialAccessor c
                 }
                 await credentials.SetCredentialAsync(request.Credential, cancellationToken).ConfigureAwait(false);
                 break;
-            case 1:
+            case CredentialOperation.Clear:
                 if (request.Credential is not null)
                 {
                     throw Domain(

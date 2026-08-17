@@ -16,7 +16,11 @@ public sealed class AgentRpcServiceHandler : ISunderRpcServiceHandler
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         PropertyNameCaseInsensitive = false,
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
-        Converters = { new AgentRpcUtcDateTimeJsonConverter(), new SunderRpcV2JsonConverterFactory() },
+        Converters =
+        {
+            new SunderRpcV2JsonConverterFactory(),
+            new JsonStringEnumConverter(JsonNamingPolicy.KebabCaseLower, allowIntegerValues: false),
+        },
     };
     private readonly IReadOnlyDictionary<(string ServiceId, string MethodId), UnaryHandler> _unary;
     private readonly IReadOnlyDictionary<(string ServiceId, string MethodId), StreamHandler> _streams;
@@ -77,6 +81,27 @@ public sealed class AgentRpcServiceHandler : ISunderRpcServiceHandler
             return this;
         }
 
+        public Builder AddNullableUnary<TRequest, TResponse>(
+            string serviceId,
+            string methodId,
+            Func<SunderRpcInvocationContext, TRequest, CancellationToken, ValueTask<TResponse?>> handler)
+            where TRequest : notnull
+            where TResponse : class
+        {
+            ArgumentNullException.ThrowIfNull(handler);
+            if (!_unary.TryAdd((serviceId, methodId), async (context, request, cancellationToken) =>
+                JsonSerializer.SerializeToElement<TResponse?>(
+                    await handler(
+                        context,
+                        Deserialize<TRequest>(request),
+                        cancellationToken).ConfigureAwait(false),
+                    JsonOptions)))
+            {
+                throw new InvalidOperationException($"Duplicate Agent RPC unary method '{serviceId}/{methodId}'.");
+            }
+            return this;
+        }
+
         public Builder AddStream<TRequest, TEvent>(
             string serviceId,
             string methodId,
@@ -119,6 +144,31 @@ public sealed class AgentRpcServiceHandler : ISunderRpcServiceHandler
             "The Agent RPC response deserialized to null.");
     }
 
+    public static async ValueTask<TResponse?> InvokeNullableAsync<TRequest, TResponse>(
+        ISunderRpcClient client,
+        SunderRpcEndpointReference endpoint,
+        string serviceId,
+        string methodId,
+        TRequest request,
+        CancellationToken cancellationToken = default)
+        where TRequest : notnull
+        where TResponse : class
+    {
+        var response = await client.InvokeAsync(
+                endpoint,
+                serviceId,
+                methodId,
+                JsonSerializer.SerializeToElement(request, JsonOptions),
+                cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+        return response.ValueKind == JsonValueKind.Null
+            ? null
+            : response.Deserialize<TResponse>(JsonOptions)
+              ?? throw Protocol(
+                  "agent.rpc.response.null",
+                  "The Agent RPC response deserialized to null.");
+    }
+
     public static async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
         ISunderRpcClient client,
         SunderRpcEndpointReference endpoint,
@@ -148,6 +198,18 @@ public sealed class AgentRpcServiceHandler : ISunderRpcServiceHandler
 
     public static string Serialize<T>(T value)
         => JsonSerializer.Serialize(value, JsonOptions);
+
+    internal static SunderRpcOffsetDateTime ToWireTimestamp(DateTimeOffset value)
+        => new(value.ToUniversalTime().ToString(
+            "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF'Z'",
+            CultureInfo.InvariantCulture));
+
+    internal static DateTimeOffset FromWireTimestamp(SunderRpcOffsetDateTime value)
+        => value.TryGetDateTimeOffset(out var result)
+            ? result
+            : throw Protocol(
+                "agent.rpc.timestamp-not-representable",
+                "The exact RPC date-time cannot be represented by DateTimeOffset.");
 
     private static T Deserialize<T>(JsonElement value)
         => Deserialize<T>(
@@ -189,97 +251,6 @@ public sealed class AgentRpcServiceHandler : ISunderRpcServiceHandler
 
     private static SunderRpcException Protocol(string code, string message)
         => new(new SunderRpcError(SunderRpcErrorKind.Protocol, code, message));
-
-    private sealed class AgentRpcUtcDateTimeJsonConverter : JsonConverter<DateTimeOffset>
-    {
-        public override DateTimeOffset Read(
-            ref Utf8JsonReader reader,
-            Type typeToConvert,
-            JsonSerializerOptions options)
-        {
-            var value = reader.TokenType == JsonTokenType.String ? reader.GetString() : null;
-            return value is not null && TryParse(value, out var result)
-                ? result
-                : throw new JsonException("An Agent RPC UTC date-time must use canonical V2 text.");
-        }
-
-        public override void Write(
-            Utf8JsonWriter writer,
-            DateTimeOffset value,
-            JsonSerializerOptions options)
-            => writer.WriteStringValue(value.ToUniversalTime().ToString(
-                "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF'Z'",
-                CultureInfo.InvariantCulture));
-
-        private static bool TryParse(string value, out DateTimeOffset result)
-        {
-            result = default;
-            if (value.Length < 20
-                || value[4] != '-'
-                || value[7] != '-'
-                || value[10] != 'T'
-                || value[13] != ':'
-                || value[16] != ':'
-                || !TryReadDigits(value, 0, 4, out var year)
-                || !TryReadDigits(value, 5, 2, out var month)
-                || !TryReadDigits(value, 8, 2, out var day)
-                || !TryReadDigits(value, 11, 2, out var hour)
-                || !TryReadDigits(value, 14, 2, out var minute)
-                || !TryReadDigits(value, 17, 2, out var second)
-                || year is < 1 or > 9999
-                || month is < 1 or > 12
-                || day < 1
-                || day > DateTime.DaysInMonth(year, month)
-                || hour > 23
-                || minute > 59
-                || second > 59)
-            {
-                return false;
-            }
-
-            var ticks = 0L;
-            if (value.Length == 20)
-            {
-                if (value[19] != 'Z') return false;
-            }
-            else
-            {
-                var fractionLength = value.Length - 21;
-                if (fractionLength is < 1 or > 9
-                    || value[19] != '.'
-                    || value[^1] != 'Z'
-                    || value[^2] == '0')
-                {
-                    return false;
-                }
-
-                // DateTimeOffset is tick-based; retain the representable prefix of valid nanosecond text.
-                var tickDigits = Math.Min(fractionLength, 7);
-                for (var index = 0; index < fractionLength; index++)
-                {
-                    var digit = value[20 + index];
-                    if (digit is not (>= '0' and <= '9')) return false;
-                    if (index < tickDigits) ticks = ticks * 10 + digit - '0';
-                }
-                for (var index = tickDigits; index < 7; index++) ticks *= 10;
-            }
-
-            result = new DateTimeOffset(year, month, day, hour, minute, second, TimeSpan.Zero)
-                .AddTicks(ticks);
-            return true;
-        }
-
-        private static bool TryReadDigits(string value, int offset, int length, out int result)
-        {
-            result = 0;
-            for (var index = offset; index < offset + length; index++)
-            {
-                if (value[index] is not (>= '0' and <= '9')) return false;
-                result = result * 10 + value[index] - '0';
-            }
-            return true;
-        }
-    }
 
     private delegate ValueTask<JsonElement> UnaryHandler(
         SunderRpcInvocationContext context,

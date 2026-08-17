@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text.Json;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.Runtime;
@@ -60,9 +61,17 @@ internal sealed class AgentUserTurnAdmissionService(
             }
             return result;
         }
-        catch
+        catch (Exception exception)
         {
-            _attachmentStore.Cleanup(stored);
+            var durability = ResolveFailureDurability(sessionId, userTurnId, stored, exception);
+            if (durability == AdmissionFailureDurability.NotCommitted)
+            {
+                _attachmentStore.Cleanup(stored);
+            }
+            else if (durability == AdmissionFailureDurability.Committed)
+            {
+                TryCancelSupersededProcessRun(sessionId, userTurnId);
+            }
             throw;
         }
     }
@@ -81,7 +90,8 @@ internal sealed class AgentUserTurnAdmissionService(
         ValidateSessionBeforeAdoption(sessionId);
         var adoption = transferService.BeginAdoption(handles);
         IReadOnlyList<AgentStoredAttachment> stored = [];
-        var committed = false;
+        AgentUserTurnAdmissionResult? result = null;
+        var admissionAttempted = false;
         try
         {
             stored = await _attachmentStore
@@ -94,7 +104,8 @@ internal sealed class AgentUserTurnAdmissionService(
                     upload.Descriptor.SizeBytes,
                     upload.Descriptor.Sha256))
                 .ToArray();
-            var result = await AdmitStoredAsync(
+            admissionAttempted = true;
+            result = await AdmitStoredAsync(
                 sessionId,
                 profileId,
                 userMessage,
@@ -104,7 +115,6 @@ internal sealed class AgentUserTurnAdmissionService(
                 userTurnId,
                 rollbackAnchorTurnId,
                 cancellationToken).ConfigureAwait(false);
-            committed = true;
             transferService.CompleteAdoption(adoption);
             if (result.IsExisting)
             {
@@ -112,10 +122,26 @@ internal sealed class AgentUserTurnAdmissionService(
             }
             return result;
         }
-        catch
+        catch (Exception exception)
         {
-            _attachmentStore.Cleanup(stored);
-            if (!committed)
+            var durability = !admissionAttempted
+                ? AdmissionFailureDurability.NotCommitted
+                : result is null
+                ? ResolveFailureDurability(sessionId, userTurnId, stored, exception)
+                : result.IsExisting
+                    ? AdmissionFailureDurability.NotCommitted
+                    : AdmissionFailureDurability.Committed;
+            if (durability == AdmissionFailureDurability.NotCommitted)
+            {
+                _attachmentStore.Cleanup(stored);
+                transferService.ReleaseAdoption(adoption);
+            }
+            else if (durability == AdmissionFailureDurability.Committed)
+            {
+                TryCancelSupersededProcessRun(sessionId, userTurnId);
+                TryCompleteAdoption(transferService, adoption);
+            }
+            else
             {
                 transferService.ReleaseAdoption(adoption);
             }
@@ -144,7 +170,7 @@ internal sealed class AgentUserTurnAdmissionService(
     {
         if (userTurnId == Guid.Empty)
         {
-            throw new ArgumentException("User turn id cannot be empty.", nameof(userTurnId));
+            throw new AgentUserTurnAdmissionException("User turn id cannot be empty.");
         }
 
         profileId = Require(profileId, "Profile id");
@@ -176,10 +202,16 @@ internal sealed class AgentUserTurnAdmissionService(
         using (await _transitionGate.EnterAsync(sessionId, cancellationToken).ConfigureAwait(false))
         {
             var session = _sessionService.GetSession(sessionId)
-                ?? throw new InvalidOperationException($"Session '{sessionId}' was deleted before admission.");
+                ?? throw new AgentUserTurnAdmissionException($"Session '{sessionId}' was deleted before admission.");
             if (_deletionFence.IsFenced(session))
             {
-                throw new InvalidOperationException("The session is being deleted and cannot admit a new run.");
+                throw new AgentUserTurnAdmissionException("The session is being deleted and cannot admit a new run.");
+            }
+            if (_sessionService.Store.GetRunByUserTurnId(userTurnId) is null
+                && !string.Equals(session.WorkspaceId, workspaceId, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new AgentUserTurnAdmissionException(
+                    "The selected session belongs to a different workspace.");
             }
 
             cancellationToken.ThrowIfCancellationRequested();
@@ -196,19 +228,17 @@ internal sealed class AgentUserTurnAdmissionService(
     private void ValidateSessionBeforeAdoption(Guid sessionId)
     {
         var session = _sessionService.GetSession(sessionId)
-            ?? throw new InvalidOperationException($"Session '{sessionId}' was not found.");
+            ?? throw new AgentUserTurnAdmissionException($"Session '{sessionId}' was not found.");
         if (_deletionFence.IsFenced(session))
         {
-            throw new InvalidOperationException("The session is being deleted and cannot admit a new run.");
+            throw new AgentUserTurnAdmissionException("The session is being deleted and cannot admit a new run.");
         }
     }
 
     private void CancelSupersededProcessRun(Guid sessionId, AgentDurableRunKey admittedRun)
     {
-        var active = _activeRunRegistry.Remove(sessionId);
-        if (active is null
-            || active.RunId == admittedRun.RunId
-               && active.RunRevision == admittedRun.RunRevision)
+        var active = _activeRunRegistry.RemoveIfOlderThan(sessionId, admittedRun.RunRevision);
+        if (active is null)
         {
             return;
         }
@@ -223,8 +253,129 @@ internal sealed class AgentUserTurnAdmissionService(
         }
     }
 
+    private void TryCancelSupersededProcessRun(Guid sessionId, Guid userTurnId)
+    {
+        try
+        {
+            var committedRun = _sessionService.Store.GetRunByUserTurnId(userTurnId);
+            if (committedRun?.Key.SessionId == sessionId)
+            {
+                CancelSupersededProcessRun(sessionId, committedRun.Key);
+            }
+        }
+        catch
+        {
+            // Preserve the post-commit failure; startup recovery remains authoritative.
+        }
+    }
+
+    private AdmissionFailureDurability ResolveFailureDurability(
+        Guid sessionId,
+        Guid userTurnId,
+        IReadOnlyList<AgentStoredAttachment> storedAttachments,
+        Exception exception)
+    {
+        if (exception is AgentUserTurnConflictException)
+        {
+            return AdmissionFailureDurability.NotCommitted;
+        }
+
+        try
+        {
+            var run = _sessionService.Store.GetRunByUserTurnId(userTurnId);
+            if (run?.Key.SessionId != sessionId)
+            {
+                return AdmissionFailureDurability.NotCommitted;
+            }
+            if (storedAttachments.Count == 0)
+            {
+                return AdmissionFailureDurability.Committed;
+            }
+
+            var turn = _sessionService.Store.GetTurn(userTurnId);
+            if (turn is null)
+            {
+                return AdmissionFailureDurability.NotCommitted;
+            }
+            return TryReferencesExactAttachments(turn, storedAttachments, out var referencesExactAttachments)
+                ? referencesExactAttachments
+                    ? AdmissionFailureDurability.Committed
+                    : AdmissionFailureDurability.NotCommitted
+                : AdmissionFailureDurability.Unknown;
+        }
+        catch
+        {
+            return AdmissionFailureDurability.Unknown;
+        }
+    }
+
+    private static bool TryReferencesExactAttachments(
+        AgentTurnRecord turn,
+        IReadOnlyList<AgentStoredAttachment> storedAttachments,
+        out bool referencesExactAttachments)
+    {
+        var durableAttachments = new List<AgentAttachmentMetadata>(storedAttachments.Count);
+        foreach (var item in turn.Items.Where(item => item.Kind == AgentTurnItemKind.Attachment))
+        {
+            if (string.IsNullOrWhiteSpace(item.StructuredPayloadJson))
+            {
+                referencesExactAttachments = false;
+                return false;
+            }
+
+            try
+            {
+                var metadata = JsonSerializer.Deserialize<AgentAttachmentMetadata>(item.StructuredPayloadJson);
+                if (metadata is null)
+                {
+                    referencesExactAttachments = false;
+                    return false;
+                }
+                durableAttachments.Add(metadata);
+            }
+            catch (JsonException)
+            {
+                referencesExactAttachments = false;
+                return false;
+            }
+        }
+
+        referencesExactAttachments = durableAttachments.Count == storedAttachments.Count
+            && durableAttachments.Zip(storedAttachments).All(pair =>
+                pair.First.AttachmentId == pair.Second.Metadata.AttachmentId
+                && string.Equals(
+                    pair.First.StorageRelativePath,
+                    pair.Second.Metadata.StorageRelativePath,
+                    StringComparison.Ordinal));
+        return true;
+    }
+
+    private static void TryCompleteAdoption(
+        AgentAttachmentTransferService transferService,
+        AgentAttachmentTransferAdoption adoption)
+    {
+        try
+        {
+            transferService.CompleteAdoption(adoption);
+        }
+        catch
+        {
+            // The durable attachment copy is authoritative after a committed admission.
+        }
+    }
+
     private static string Require(string? value, string name)
         => string.IsNullOrWhiteSpace(value)
-            ? throw new InvalidOperationException($"{name} is required.")
+            ? throw new AgentUserTurnAdmissionException($"{name} is required.")
             : value.Trim();
+
+    private enum AdmissionFailureDurability
+    {
+        Unknown = 0,
+        NotCommitted = 1,
+        Committed = 2,
+    }
 }
+
+internal sealed class AgentUserTurnAdmissionException(string message)
+    : InvalidOperationException(message);

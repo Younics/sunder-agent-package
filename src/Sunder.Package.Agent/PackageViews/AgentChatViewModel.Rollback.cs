@@ -8,7 +8,15 @@ namespace Sunder.Package.Agent.PackageViews;
 public sealed partial class AgentChatViewModel
 {
     [RelayCommand]
-    private async Task StartRollbackFromMessageAsync(AgentTextTranscriptRowViewModel? message)
+    private Task StartRollbackFromMessageAsync(AgentTextTranscriptRowViewModel? message)
+        => RunOperationAsync(
+            RollbackOperation,
+            cancellationToken => StartRollbackFromMessageCoreAsync(message, cancellationToken),
+            cancellationToken => ReconcileChatSnapshotAsync(cancellationToken));
+
+    private async Task StartRollbackFromMessageCoreAsync(
+        AgentTextTranscriptRowViewModel? message,
+        CancellationToken cancellationToken)
     {
         var selectedSession = SelectedSession;
         if (selectedSession is null || message?.IsUser != true)
@@ -19,11 +27,12 @@ public sealed partial class AgentChatViewModel
         var turn = _transcriptPageGateway is null
             ? _sessionService.GetTurn(message.RowId)
             : (await _transcriptPageGateway.LoadTranscriptPageAsync(
-                    new Runtime.AgentTranscriptPageRequest(
+                     new Runtime.AgentTranscriptPageRequest(
                         selectedSession.SessionId,
                         Runtime.AgentTranscriptPageDirection.Turn,
                         1,
-                        AnchorTurnId: message.RowId))
+                         AnchorTurnId: message.RowId),
+                    cancellationToken)
                 .ConfigureAwait(false)).Turns.FirstOrDefault();
         if (turn is null || turn.SessionId != selectedSession.SessionId)
         {

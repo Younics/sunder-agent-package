@@ -47,6 +47,23 @@ public sealed class AgentActiveRunRegistryOrderingTests
         olderRun.CancellationTokenSource.Dispose();
     }
 
+    [Fact]
+    public void RemoveIfOlderThan_PreservesCurrentAndNewerRuns()
+    {
+        var registry = new AgentActiveRunRegistry();
+        var sessionId = Guid.NewGuid();
+        var current = CreateHandle(revision: 2);
+        Assert.True(registry.Activate(sessionId, current).IsAccepted);
+
+        Assert.Null(registry.RemoveIfOlderThan(sessionId, runRevision: 2));
+        Assert.Null(registry.RemoveIfOlderThan(sessionId, runRevision: 1));
+        Assert.True(registry.IsCurrent(sessionId, current.RunId, current.RunRevision));
+
+        Assert.Same(current, registry.RemoveIfOlderThan(sessionId, runRevision: 3));
+        Assert.False(registry.IsActive(sessionId));
+        current.CancellationTokenSource.Dispose();
+    }
+
     private static AgentActiveRunHandle CreateHandle(long revision)
         => new(
             Guid.NewGuid(),

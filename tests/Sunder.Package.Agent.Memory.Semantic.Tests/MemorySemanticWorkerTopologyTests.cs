@@ -169,6 +169,29 @@ public sealed class MemorySemanticWorkerTopologyTests
     }
 
     [Fact]
+    public async Task AppGateway_TransfersLargeMemoryProjectionThroughContentReference()
+    {
+        var content = new string('m', (1024 * 1024) + 64 * 1024);
+        using var state = new RegressionTestRpcState();
+        var service = new RecordingInspectorService(content);
+        state.Add(
+            "sunder.package.agent.memory.semantic",
+            MemorySemanticProtocol.Inspector,
+            service,
+            MemoryInspectorRpc.CreateHandler(service),
+            new NoOpDisposable(),
+            MemorySemanticProtocol.ProviderId);
+        using var gateway = new MemoryAppRuntimeGateway(new RegressionTestRpcClient(
+            state,
+            "sunder.package.agent.memory.semantic"));
+
+        var memory = Assert.Single(await gateway.ListMemoriesAsync(service.Memory.SessionId));
+
+        Assert.Equal(content, memory.Content);
+        Assert.Equal("sunder.rpc.values.v1", MemorySemanticProtocol.Inspector.SchemaProfile);
+    }
+
+    [Fact]
     public void AggregateManifest_IsSixRidAppExactRidWorkerOwnerScopedAndLoadsPackagedSqlite()
     {
         var manifestPath = Path.Combine(
@@ -259,27 +282,32 @@ public sealed class MemorySemanticWorkerTopologyTests
 
     private sealed class RecordingInspectorService : IMemoryInspectorRpcService
     {
-        public StoredMemoryRecord Memory { get; } = new(
-            Guid.NewGuid(),
-            Guid.NewGuid(),
-            "fact",
-            "Durable semantic memory.",
-            "evidence",
-            Guid.NewGuid(),
-            0.8f,
-            0.9f,
-            true,
-            MemoryRecordStates.Active,
-            null,
-            DateTimeOffset.UtcNow.AddMinutes(-2),
-            DateTimeOffset.UtcNow.AddMinutes(-1),
-            DateTimeOffset.UtcNow,
-            3,
-            AgentMemoryProvenance.User)
+        public RecordingInspectorService(string content = "Durable semantic memory.")
         {
-            MemoryRevision = 7,
-            IsManual = false,
-        };
+            Memory = new StoredMemoryRecord(
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                "fact",
+                content,
+                "evidence",
+                Guid.NewGuid(),
+                0.8f,
+                0.9f,
+                true,
+                MemoryRecordStates.Active,
+                null,
+                DateTimeOffset.UtcNow.AddMinutes(-2),
+                DateTimeOffset.UtcNow.AddMinutes(-1),
+                DateTimeOffset.UtcNow,
+                3,
+                AgentMemoryProvenance.User)
+            {
+                MemoryRevision = 7,
+                IsManual = false,
+            };
+        }
+
+        public StoredMemoryRecord Memory { get; }
 
         public MemoryQuery? LastQuery { get; private set; }
 

@@ -48,6 +48,7 @@ public partial class AgentChatView : UserControl,
     private readonly TranscriptViewBehavior _transcriptBehavior;
     private readonly InlineRenameFocusCoordinator<AgentSessionListItemViewModel> _renameFocus;
     private readonly PresentationTaskScope _tasks;
+    private PresentationOperationObserver _operations;
     private readonly AdaptiveEditorStateCache<AgentChatEditorState> _editorStateCache = new();
     private readonly Dictionary<string, double> _workspacePathTextWidths = new(StringComparer.Ordinal);
     private readonly object _workspacePathLayoutSyncRoot = new();
@@ -66,6 +67,7 @@ public partial class AgentChatView : UserControl,
     public AgentChatView()
     {
         _tasks = new PresentationTaskScope();
+        _operations = PresentationOperationObserver.CreateUnreported("Agent Chat view");
         InitializeComponent();
         ConfigureComposerDropTarget(ExpandedComposerDropTarget);
         ConfigureComposerDropTarget(ExpandedComposerTextBox);
@@ -127,8 +129,7 @@ public partial class AgentChatView : UserControl,
         IPackageNotificationService notificationService)
         : this()
     {
-        _notificationService = notificationService;
-        var viewModel = new AgentChatViewModel(
+        AttachRuntimeViewModel(
             profileService,
             workspaceService,
             sessionService,
@@ -136,9 +137,77 @@ public partial class AgentChatView : UserControl,
             runCoordinator,
             selectionState,
             toolPresentationService,
+            warmupService,
+            shellViewService,
+            attachmentService,
+            notificationService,
+            PresentationOperationObserver.CreateUnreported("Agent Chat view"),
+            PresentationOperationObserver.CreateUnreported("Agent Chat"));
+    }
+
+    public AgentChatView(
+        IAgentProfileGateway profileService,
+        IAgentWorkspaceGateway workspaceService,
+        IAgentSessionGateway sessionService,
+        IAgentPermissionGateway permissionService,
+        IAgentRunGateway runCoordinator,
+        AgentChatSelectionStateService selectionState,
+        AgentToolPresentationService toolPresentationService,
+        IAgentExecutionGateway warmupService,
+        IPackageShellViewService shellViewService,
+        IAgentAttachmentGateway attachmentService,
+        IPackageNotificationService notificationService,
+        IPackageContext packageContext)
+        : this()
+    {
+        AttachRuntimeViewModel(
+            profileService,
+            workspaceService,
+            sessionService,
+            permissionService,
+            runCoordinator,
+            selectionState,
+            toolPresentationService,
+            warmupService,
+            shellViewService,
+            attachmentService,
+            notificationService,
+            new PresentationOperationObserver(packageContext, notificationService, "Agent Chat view"),
+            new PresentationOperationObserver(packageContext, notificationService, "Agent Chat"));
+    }
+
+    private void AttachRuntimeViewModel(
+        IAgentProfileGateway profileService,
+        IAgentWorkspaceGateway workspaceService,
+        IAgentSessionGateway sessionService,
+        IAgentPermissionGateway permissionService,
+        IAgentRunGateway runCoordinator,
+        AgentChatSelectionStateService selectionState,
+        AgentToolPresentationService toolPresentationService,
+        IAgentExecutionGateway warmupService,
+        IPackageShellViewService shellViewService,
+        IAgentAttachmentGateway attachmentService,
+        IPackageNotificationService notificationService,
+        PresentationOperationObserver viewOperations,
+        PresentationOperationObserver viewModelOperations)
+    {
+        _notificationService = notificationService;
+        _operations.Dispose();
+        _operations = viewOperations;
+        var viewModel = new AgentChatViewModel(
+            profileService,
+            workspaceService,
+            sessionService,
+            permissionService,
+            runCoordinator,
+            PresentationDispatcher.Capture(),
+            selectionState,
+            toolPresentationService,
+            activityQuietDelay: null,
             warmupService: warmupService,
             shellViewService: shellViewService,
-            attachmentService: attachmentService);
+            attachmentService: attachmentService,
+            operationObserver: viewModelOperations);
         if (sessionService is IAgentTranscriptAnchorGateway transcriptAnchorGateway)
         {
             viewModel.SetTranscriptAnchorGateway(transcriptAnchorGateway);
@@ -169,6 +238,7 @@ public partial class AgentChatView : UserControl,
         SizeChanged -= OnSizeChanged;
         _transcriptBehavior.Dispose();
         _renameFocus.Dispose();
+        _operations.Dispose();
         _tasks.Dispose();
         if (_viewModel is not null)
         {
@@ -294,7 +364,11 @@ public partial class AgentChatView : UserControl,
             severity));
 
     private void OnAttachFilesClick(object? sender, RoutedEventArgs e)
-        => _tasks.Run(OnAttachFilesAsync);
+        => _operations.Submit(
+            new PresentationOperation(
+                "agent-chat.pick-attachments",
+                "The attachment picker could not be opened."),
+            OnAttachFilesAsync);
 
     private async Task OnAttachFilesAsync(CancellationToken cancellationToken)
     {

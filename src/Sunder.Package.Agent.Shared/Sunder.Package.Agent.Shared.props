@@ -10,6 +10,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)Threading\*.cs"
              Link="Threading\%(Filename)%(Extension)" />
     <Compile Include="$(MSBuildThisFileDirectory)Storage\*.cs"
+             Exclude="$(MSBuildThisFileDirectory)Storage\SqliteWalCheckpointMaintenance.cs"
              Link="Storage\%(Filename)%(Extension)" />
     <Compile Include="$(MSBuildThisFileDirectory)PackageViews\SunderComboBox.cs"
              Link="PackageViews\SunderComboBox.cs" />

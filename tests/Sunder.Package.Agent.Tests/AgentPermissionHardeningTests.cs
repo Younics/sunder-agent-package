@@ -797,7 +797,10 @@ internal sealed class PermissionHardeningRuntime : IAsyncDisposable
                 activeRunRegistry,
                 defaultBehaviorLoop);
             catalog.AddBehaviorLoop(defaultBehaviorLoop);
-            var behaviorLoopResolver = new AgentBehaviorLoopResolver(catalog, catalog.BehaviorLoops);
+            var behaviorLoopResolver = new AgentBehaviorLoopResolver(
+                catalog,
+                catalog.BehaviorLoops,
+                defaultBehaviorLoop);
             var providerResolver = new AgentRunProviderResolver(profileService, catalog);
             var childRunSessionService = new AgentChildRunSessionService(sessionService, profileService);
             var parentRunContinuationService = new AgentParentRunContinuationService(

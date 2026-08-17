@@ -36,12 +36,12 @@
   <ItemGroup>
     <SunderContractBundle Include="..\Protocol\Contracts\subagents-owner.rpc.json"
                           ContractId="sunder.package.agent.subagents.owner"
-                          Version="2.0.0"
+                           Version="2.0.0"
                           DescriptorPath="contracts/subagents-owner.rpc.json"
                           Exposure="package" />
     <SunderUsesContract Include="sunder.package.agent.subagents.owner"
                         Role="app"
-                        ContractVersion="2.0.0"
+                         ContractVersion="2.0.0"
                         Required="true"
                         Actions="discover;invoke;subscribe" />
   </ItemGroup>

@@ -103,6 +103,20 @@ public sealed class PackageModuleCompositionTests
 
     }
 
+    [Theory]
+    [MemberData(nameof(AppPackageNames))]
+    public void AppPackageModule_DoesNotRegisterHostOwnedPackageContext(string packageName)
+    {
+        using var packageScope = RegressionTestPackageScope.Create();
+        var services = new ServiceCollection();
+
+        CreateAppPackageModule(packageName).ConfigureAppServices(services, packageScope.Context);
+
+        Assert.DoesNotContain(
+            services,
+            descriptor => descriptor.ServiceType == typeof(IPackageContext));
+    }
+
     [Fact]
     public void ExactContributionBaseline_CoversEveryRuntimePackage()
     {

@@ -5,6 +5,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Services;
+using Sunder.Package.Agent.Shared.Presentation;
 
 namespace Sunder.Package.Agent.PackageViews;
 
@@ -147,7 +148,15 @@ public sealed partial class AgentChatViewModel
     }
 
     [RelayCommand]
-    private async Task OpenTranscriptAttachmentPreviewAsync(AgentTranscriptAttachmentViewModel? attachment)
+    private Task OpenTranscriptAttachmentPreviewAsync(AgentTranscriptAttachmentViewModel? attachment)
+        => RunOperationAsync(
+            AttachmentPreviewOperation,
+            cancellationToken => OpenTranscriptAttachmentPreviewCoreAsync(attachment, cancellationToken),
+            _ => InvokeOnUiThreadAsync(CloseAttachmentPreview));
+
+    private async Task OpenTranscriptAttachmentPreviewCoreAsync(
+        AgentTranscriptAttachmentViewModel? attachment,
+        CancellationToken cancellationToken)
     {
         if (attachment?.IsPreviewable != true)
         {
@@ -160,17 +169,22 @@ public sealed partial class AgentChatViewModel
             return;
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
+        byte[] content;
         try
         {
-            var content = await _attachmentService.ReadAttachmentBytesAsync(attachment.Metadata)
-                .ConfigureAwait(false);
-            await InvokeOnUiThreadAsync(() => ShowAttachmentPreviewImage(attachment.FileName, content))
+            content = await _attachmentService.ReadAttachmentBytesAsync(attachment.Metadata)
+                .WaitAsync(cancellationToken)
                 .ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+        catch (InvalidOperationException exception) when (!PresentationExceptionPolicy.IsFatal(exception))
         {
-            await InvokeOnUiThreadAsync(() => SetGlobalStatus(ex.Message)).ConfigureAwait(false);
+            throw new PresentationOperationException(
+                "The attachment content could not be read.",
+                exception);
         }
+        await InvokeOnUiThreadAsync(() => ShowAttachmentPreviewImage(attachment.FileName, content))
+            .ConfigureAwait(false);
     }
 
     [RelayCommand]

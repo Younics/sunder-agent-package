@@ -7,6 +7,7 @@ using Avalonia.VisualTree;
 using Sunder.Package.Agent.Shared.PackageViews;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Notifications;
 
 namespace Sunder.Package.Agent.Subagents.PackageViews;
 
@@ -18,6 +19,7 @@ public partial class SubsessionsView : UserControl,
 {
     private readonly AdaptiveMasterDetail _adaptiveLayout;
     private readonly TranscriptViewBehavior _transcriptBehavior;
+    private PresentationOperationObserver _operations;
     private SubsessionsViewModel? _viewModel;
     private CancellationTokenSource? _navigationCancellation;
     private CancellationTokenSource? _toolExpansionCancellation;
@@ -28,6 +30,7 @@ public partial class SubsessionsView : UserControl,
 
     public SubsessionsView()
     {
+        _operations = PresentationOperationObserver.CreateUnreported("Subsessions view");
         InitializeComponent();
         _adaptiveLayout = new AdaptiveMasterDetail(
             this,
@@ -84,6 +87,19 @@ public partial class SubsessionsView : UserControl,
         DataContext = viewModel;
     }
 
+    public SubsessionsView(
+        SubsessionsViewModel viewModel,
+        IPackageContext packageContext,
+        IPackageNotificationService notifications)
+        : this(viewModel)
+    {
+        _operations.Dispose();
+        _operations = new PresentationOperationObserver(
+            packageContext,
+            notifications,
+            "Subsessions view");
+    }
+
     private SubsessionsViewModel? ViewModel => _viewModel ?? DataContext as SubsessionsViewModel;
 
     public void Dispose()
@@ -98,6 +114,7 @@ public partial class SubsessionsView : UserControl,
         _navigationCancellation?.Dispose();
         _navigationCancellation = null;
         CancelPendingToolExpansion();
+        _operations.Dispose();
         ToolDetailPreparationPortal.Dispose();
         _adaptiveLayout.Dispose();
         _transcriptBehavior.Dispose();
@@ -340,9 +357,18 @@ public partial class SubsessionsView : UserControl,
         }
     }
 
-    private async void OnToolStepHeaderClick(object? sender, RoutedEventArgs e)
+    private void OnToolStepHeaderClick(object? sender, RoutedEventArgs e)
     {
         e.Handled = true;
+        _operations.Submit(
+            new PresentationOperation(
+                "subsessions.expand-tool-details",
+                "The tool details could not be opened."),
+            _ => OnToolStepHeaderClickAsync(sender));
+    }
+
+    private async Task OnToolStepHeaderClickAsync(object? sender)
+    {
         if (sender is not Control header
             || header.DataContext is not SubsessionToolInvocationRowViewModel toolRow)
         {
@@ -491,7 +517,8 @@ public partial class SubsessionsView : UserControl,
                 toolRow.CollapseDetails();
             }
         }
-        catch (Exception exception)
+        catch (Exception exception) when (
+            PresentationExceptionPolicy.IsExpectedOperationFailure(exception))
         {
             _transcriptBehavior.CancelViewportMutationPreparation(viewportMutationGeneration);
             if (IsCurrentToolExpansion(header, toolRow, scope, detailHost, request))
@@ -502,6 +529,7 @@ public partial class SubsessionsView : UserControl,
             {
                 toolRow.CollapseDetails();
             }
+            throw;
         }
         finally
         {

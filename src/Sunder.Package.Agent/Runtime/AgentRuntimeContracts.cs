@@ -2,12 +2,16 @@ using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.HistorySearch;
+using Sunder.Sdk.Rpc;
 using Wire = Sunder.Package.Agent.OwnerProtocol.Generated;
 
 namespace Sunder.Package.Agent.Runtime;
 
 internal static class AgentRuntimeOperations
 {
+    public static readonly AgentOwnerRpcOperation<AgentTransportProfileRequest, AgentTransportProfile> TransportProfile =
+        AgentOwnerRuntimeRpc.CreateOperation<AgentTransportProfileRequest, AgentTransportProfile, Wire.AgentTransportProfileRequest, Wire.AgentTransportProfile>(
+            static (client, request, token) => client.TransportProfileAsync(request, token));
     public static readonly AgentOwnerRpcOperation<AgentChatSnapshotRequest, AgentChatSnapshotProjection> ChatSnapshot =
         AgentOwnerRuntimeRpc.CreateOperation<AgentChatSnapshotRequest, AgentChatSnapshotProjection, Wire.AgentChatSnapshotRequest, Wire.AgentChatSnapshotProjection>(
             static (client, request, token) => client.ChatSnapshotAsync(request, token));
@@ -38,9 +42,15 @@ internal static class AgentRuntimeOperations
     public static readonly AgentOwnerRpcOperation<AgentPermissionCommand, AgentPermissionProjection> Permissions =
         AgentOwnerRuntimeRpc.CreateOperation<AgentPermissionCommand, AgentPermissionProjection, Wire.AgentPermissionCommand, Wire.AgentPermissionProjection>(
             static (client, request, token) => client.PermissionCommandAsync(request, token));
-    public static readonly AgentOwnerRpcOperation<AgentAttachmentTransferRequest, AgentAttachmentTransferResult> AttachmentTransfers =
-        AgentOwnerRuntimeRpc.CreateOperation<AgentAttachmentTransferRequest, AgentAttachmentTransferResult, Wire.AgentAttachmentTransferRequest, Wire.AgentAttachmentTransferResult>(
-            static (client, request, token) => client.AttachmentTransferAsync(request, token));
+    public static readonly AgentOwnerRpcOperation<AgentAttachmentContentUploadRequest, AgentAttachmentContentUploadResult> AttachmentUploads =
+        AgentOwnerRuntimeRpc.CreateOperation<AgentAttachmentContentUploadRequest, AgentAttachmentContentUploadResult, Wire.AgentAttachmentContentUploadRequest, Wire.AgentAttachmentContentUploadResult>(
+            static (client, request, token) => client.AttachmentUploadAsync(request, token));
+    public static readonly AgentOwnerRpcOperation<AgentAttachmentContentDownloadRequest, AgentAttachmentContentDownloadResult> AttachmentDownloads =
+        AgentOwnerRuntimeRpc.CreateOperation<AgentAttachmentContentDownloadRequest, AgentAttachmentContentDownloadResult, Wire.AgentAttachmentContentDownloadRequest, Wire.AgentAttachmentContentDownloadResult>(
+            static (client, request, token) => client.AttachmentDownloadAsync(request, token));
+    public static readonly AgentOwnerRpcOperation<AgentAttachmentContentDiscardRequest, AgentAttachmentContentDiscardResult> AttachmentDiscards =
+        AgentOwnerRuntimeRpc.CreateOperation<AgentAttachmentContentDiscardRequest, AgentAttachmentContentDiscardResult, Wire.AgentAttachmentContentDiscardRequest, Wire.AgentAttachmentContentDiscardResult>(
+            static (client, request, token) => client.AttachmentDiscardAsync(request, token));
     public static readonly AgentOwnerRpcStream<AgentChangeSubscription, AgentRuntimeChange> Changes =
         AgentOwnerRuntimeRpc.CreateStream<AgentChangeSubscription, AgentRuntimeChange, Wire.AgentChangeSubscription, Wire.AgentRuntimeChange>(
             static (client, request, token) => client.ChangesAsync(request, token));
@@ -56,12 +66,34 @@ internal static class AgentRuntimeOperations
     public static readonly AgentOwnerRpcOperation<AgentTranscriptAroundTurnRequest, AgentTranscriptAroundTurnPage> TranscriptAround =
         AgentOwnerRuntimeRpc.CreateOperation<AgentTranscriptAroundTurnRequest, AgentTranscriptAroundTurnPage, Wire.AgentTranscriptAroundTurnRequest, Wire.AgentTranscriptAroundTurnPage>(
             static (client, request, token) => client.TranscriptAroundAsync(request, token));
-    public static readonly AgentOwnerRpcOperation<AgentTranscriptToolDetailRequest, AgentTranscriptToolDetailResponse> TranscriptToolDetail =
-        AgentOwnerRuntimeRpc.CreateOperation<AgentTranscriptToolDetailRequest, AgentTranscriptToolDetailResponse, Wire.AgentTranscriptToolDetailRequest, Wire.AgentTranscriptToolDetailResponse>(
+    public static readonly AgentOwnerRpcOperation<AgentTranscriptToolDetailRequest, AgentTranscriptToolDetailResult> TranscriptToolDetail =
+        AgentOwnerRuntimeRpc.CreateOperation<AgentTranscriptToolDetailRequest, AgentTranscriptToolDetailResult, Wire.AgentTranscriptToolDetailRequest, Wire.AgentTranscriptToolDetailResult>(
             static (client, request, token) => client.TranscriptToolDetailAsync(request, token));
     public static readonly AgentOwnerRpcStream<HistorySearchStatusSubscription, HistorySearchStatus> HistoryStatus =
         AgentOwnerRuntimeRpc.CreateStream<HistorySearchStatusSubscription, HistorySearchStatus, Wire.HistorySearchStatusSubscription, Wire.HistorySearchStatus>(
             static (client, request, token) => client.HistoryStatusAsync(request, token));
+}
+
+internal sealed record AgentTransportProfileRequest(
+    int RequestValueBytes,
+    int ResponseValueBytes,
+    int EventValueBytes,
+    int ContentReferenceBytes,
+    bool RuntimeReported);
+
+internal sealed record AgentTransportProfile(
+    int RequestValueBytes,
+    int ResponseValueBytes,
+    int EventValueBytes,
+    int ContentReferenceBytes,
+    bool RuntimeReported)
+{
+    internal static AgentTransportProfile StandardFallback { get; } = new(
+        8 * 1024 * 1024,
+        8 * 1024 * 1024,
+        8 * 1024 * 1024,
+        64 * 1024 * 1024,
+        RuntimeReported: false);
 }
 
 internal sealed record AgentChatSnapshotRequest(
@@ -125,7 +157,9 @@ internal sealed record AgentTranscriptPage(
     IReadOnlyList<AgentTurnRecord> Turns,
     bool HasMore,
     TranscriptPageCursor? Continuation = null);
-internal sealed record AgentTranscriptToolDetailResponse(AgentTranscriptToolDetailRecord? Detail);
+internal sealed record AgentTranscriptToolDetailResult(
+    bool Found,
+    AgentTranscriptToolDetailRecord? Detail);
 
 internal interface IAgentTranscriptPageGateway
 {
@@ -373,34 +407,20 @@ internal interface IAgentGlobalPermissionGateway
         CancellationToken cancellationToken = default);
 }
 
-internal enum AgentAttachmentTransferKind
-{
-    BeginUpload,
-    WriteUploadChunk,
-    CompleteUpload,
-    AbortUpload,
-    ReadDownloadChunk,
-}
-
 internal sealed record AgentAttachmentUploadDescriptor(
     string FileName,
     string? MediaType,
     int SizeBytes,
     string Sha256);
 internal sealed record AgentAttachmentUploadHandle(string TransferId);
-internal sealed record AgentAttachmentTransferRequest(
-    AgentAttachmentTransferKind Kind,
-    string? TransferId = null,
-    AgentAttachmentUploadDescriptor? Upload = null,
-    int Offset = 0,
-    byte[]? Content = null,
-    AgentAttachmentMetadata? Metadata = null);
-internal sealed record AgentAttachmentTransferResult(
-    string? TransferId = null,
-    int NextOffset = 0,
-    int TotalBytes = 0,
-    byte[]? Content = null,
-    bool IsComplete = false);
+internal sealed record AgentAttachmentContentUploadRequest(
+    AgentAttachmentUploadDescriptor Upload,
+    SunderRpcContentReference Content);
+internal sealed record AgentAttachmentContentUploadResult(AgentAttachmentUploadHandle Handle);
+internal sealed record AgentAttachmentContentDownloadRequest(AgentAttachmentMetadata Metadata);
+internal sealed record AgentAttachmentContentDownloadResult(SunderRpcContentReference Content);
+internal sealed record AgentAttachmentContentDiscardRequest(AgentAttachmentUploadHandle Handle);
+internal sealed record AgentAttachmentContentDiscardResult(bool Discarded);
 
 internal sealed record AgentChangeSubscription(
     long AfterRevision = 0,

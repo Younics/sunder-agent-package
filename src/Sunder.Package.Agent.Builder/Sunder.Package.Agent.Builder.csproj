@@ -33,7 +33,7 @@
                          Kind="worker" />
     <SunderContractBundle Include="Protocol\Contracts\builder-runtime.rpc.json"
                           ContractId="sunder.package.agent.builder.runtime"
-                          Version="2.0.0"
+                           Version="2.0.0"
                           DescriptorPath="contracts/builder-runtime.rpc.json"
                           Exposure="package" />
     <SunderRpcProvider Include="builder.runtime"

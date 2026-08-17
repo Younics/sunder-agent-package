@@ -265,10 +265,9 @@ public sealed class AgentUserTurnAdmissionTests
             "text/plain",
             bytes.Length,
             Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant());
-        var started = transfers.BeginUpload(descriptor);
-        transfers.WriteUploadChunk(started.TransferId!, 0, bytes);
-        transfers.CompleteUpload(started.TransferId!);
-        var handle = new AgentAttachmentUploadHandle(started.TransferId!);
+        var handle = await transfers.ReceiveUploadAsync(
+            descriptor,
+            new MemoryStream(bytes, writable: false));
         var userTurnId = Guid.NewGuid();
 
         var admission = await fixture.Admission.AdmitTransferredAsync(
@@ -283,7 +282,7 @@ public sealed class AgentUserTurnAdmissionTests
             CancellationToken.None);
         var metadata = ReadAttachmentMetadata(admission.UserTurn!);
 
-        Assert.Throws<InvalidOperationException>(() => transfers.BeginAdoption([handle]));
+        Assert.Throws<AgentAttachmentTransferOperationException>(() => transfers.BeginAdoption([handle]));
         var reopenedAttachments = new AgentAttachmentService(fixture.Scope.Context);
         Assert.Equal(bytes, await reopenedAttachments.ReadAttachmentBytesAsync(metadata));
     }
@@ -307,14 +306,12 @@ public sealed class AgentUserTurnAdmissionTests
             CancellationToken.None);
         using var transfers = new AgentAttachmentTransferService(fixture.Scope.Context);
         var bytes = Encoding.UTF8.GetBytes("other");
-        var started = transfers.BeginUpload(new AgentAttachmentUploadDescriptor(
+        var handle = await transfers.ReceiveUploadAsync(new AgentAttachmentUploadDescriptor(
             "transfer.txt",
             "text/plain",
             bytes.Length,
-            Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant()));
-        transfers.WriteUploadChunk(started.TransferId!, 0, bytes);
-        transfers.CompleteUpload(started.TransferId!);
-        var handle = new AgentAttachmentUploadHandle(started.TransferId!);
+            Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant()),
+            new MemoryStream(bytes, writable: false));
 
         await Assert.ThrowsAsync<AgentUserTurnConflictException>(() =>
             fixture.Admission.AdmitTransferredAsync(
@@ -331,6 +328,60 @@ public sealed class AgentUserTurnAdmissionTests
         var retryable = transfers.BeginAdoption([handle]);
         transfers.ReleaseAdoption(retryable);
         Assert.Equal(1, CountAttachmentFiles(fixture.Scope.Context));
+    }
+
+    [Fact]
+    public async Task CanceledIdempotentTransferredRetry_CleansUnreferencedCopyAndRetainsHandle()
+    {
+        using var fixture = AdmissionFixture.Create();
+        var userTurnId = Guid.NewGuid();
+        var bytes = Encoding.UTF8.GetBytes("same durable transferred bytes");
+        var upload = new AgentAttachmentUploadRequest("retry.txt", "text/plain", bytes);
+        await fixture.Admission.AdmitAsync(
+            fixture.Session.SessionId,
+            fixture.ProfileId,
+            "idempotent transferred retry",
+            fixture.Workspace.WorkspaceId,
+            [upload],
+            userTurnId,
+            rollbackAnchorTurnId: null,
+            CancellationToken.None);
+        using var transfers = new AgentAttachmentTransferService(fixture.Scope.Context);
+        var handle = await transfers.ReceiveUploadAsync(new AgentAttachmentUploadDescriptor(
+            upload.FileName,
+            upload.MediaType,
+            bytes.Length,
+            Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant()),
+            new MemoryStream(bytes, writable: false));
+        using var gate = await fixture.TransitionGate.EnterAsync(fixture.Session.SessionId);
+        using var cancellation = new CancellationTokenSource();
+
+        var retry = fixture.Admission.AdmitTransferredAsync(
+            fixture.Session.SessionId,
+            fixture.ProfileId,
+            "idempotent transferred retry",
+            fixture.Workspace.WorkspaceId,
+            [handle],
+            transfers,
+            userTurnId,
+            rollbackAnchorTurnId: null,
+            cancellation.Token);
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+        while (CountAttachmentFiles(fixture.Scope.Context) < 2)
+        {
+            Assert.True(DateTimeOffset.UtcNow < deadline, "The retry attachment copy was not stored.");
+            await Task.Delay(10);
+        }
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => retry);
+
+        Assert.Equal(1, CountAttachmentFiles(fixture.Scope.Context));
+        var retryable = transfers.BeginAdoption([handle]);
+        transfers.ReleaseAdoption(retryable);
+        var durable = ReadAttachmentMetadata(fixture.Store.GetTurn(userTurnId)!);
+        Assert.Equal(bytes, await new AgentAttachmentService(fixture.Scope.Context)
+            .ReadAttachmentBytesAsync(durable));
     }
 
     [Fact]
@@ -425,7 +476,8 @@ public sealed class AgentUserTurnAdmissionTests
             AgentSessionService sessions,
             AgentWorkspaceRecord workspace,
             AgentSessionRecord session,
-            AgentUserTurnAdmissionService admission)
+            AgentUserTurnAdmissionService admission,
+            AgentSessionTransitionGate transitionGate)
         {
             Scope = scope;
             Store = store;
@@ -433,6 +485,7 @@ public sealed class AgentUserTurnAdmissionTests
             Workspace = workspace;
             Session = session;
             Admission = admission;
+            TransitionGate = transitionGate;
         }
 
         internal string ProfileId { get; } = "profile.test";
@@ -443,6 +496,7 @@ public sealed class AgentUserTurnAdmissionTests
         internal AgentWorkspaceRecord Workspace { get; }
         internal AgentSessionRecord Session { get; }
         internal AgentUserTurnAdmissionService Admission { get; }
+        internal AgentSessionTransitionGate TransitionGate { get; }
 
         internal static AdmissionFixture Create()
         {
@@ -456,13 +510,21 @@ public sealed class AgentUserTurnAdmissionTests
                 profileId: "profile.test",
                 workspaceId: workspace.WorkspaceId);
             var attachmentService = new AgentAttachmentService(scope.Context);
+            var transitionGate = new AgentSessionTransitionGate();
             var admission = new AgentUserTurnAdmissionService(
                 sessions,
                 new AgentRunAttachmentStore(attachmentService),
                 new AgentActiveRunRegistry(),
-                new AgentSessionTransitionGate(),
+                transitionGate,
                 new AgentSessionDeletionFence());
-            return new AdmissionFixture(scope, store, sessions, workspace, session, admission);
+            return new AdmissionFixture(
+                scope,
+                store,
+                sessions,
+                workspace,
+                session,
+                admission,
+                transitionGate);
         }
 
         internal Task<AgentUserTurnAdmissionResult> AdmitAsync(

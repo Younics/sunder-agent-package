@@ -23,6 +23,8 @@
                       PrivateAssets="all" />
     <Compile Include="..\Sunder.Package.Agent.Shared\Threading\ReferenceCountedKeyedLock.cs"
              Link="Threading\ReferenceCountedKeyedLock.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Shared\Storage\SqliteWalCheckpointMaintenance.cs"
+             Link="Storage\SqliteWalCheckpointMaintenance.cs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -40,7 +42,7 @@
   <ItemGroup>
     <SunderContractBundle Include="Protocol\Contracts\memory-inspector.rpc.json"
                           ContractId="sunder.agent.memory.semantic.inspector"
-                          Version="2.0.0"
+                           Version="2.0.0"
                           DescriptorPath="contracts/memory-inspector.rpc.json"
                           Exposure="package" />
     <SunderRpcProvider Include="semantic.memory.inspector"

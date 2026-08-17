@@ -3,14 +3,24 @@ using Avalonia.Controls.Templates;
 using Avalonia.Interactivity;
 using Avalonia.VisualTree;
 using Sunder.Package.Agent.Shared.PackageViews;
+using Sunder.Package.Agent.Shared.Presentation;
 
 namespace Sunder.Package.Agent.PackageViews;
 
 public partial class AgentChatView
 {
-    private async void OnToolStepHeaderClick(object? sender, RoutedEventArgs e)
+    private void OnToolStepHeaderClick(object? sender, RoutedEventArgs e)
     {
         e.Handled = true;
+        _operations.Submit(
+            new PresentationOperation(
+                "agent-chat.expand-tool-details",
+                "The tool details could not be opened."),
+            _ => OnToolStepHeaderClickAsync(sender));
+    }
+
+    private async Task OnToolStepHeaderClickAsync(object? sender)
+    {
         if (sender is not Control header
             || header.DataContext is not AgentToolInvocationRowViewModel toolRow)
         {
@@ -159,7 +169,8 @@ public partial class AgentChatView
                 toolRow.CollapseDetails();
             }
         }
-        catch (Exception exception)
+        catch (Exception exception) when (
+            PresentationExceptionPolicy.IsExpectedOperationFailure(exception))
         {
             _transcriptBehavior.CancelViewportMutationPreparation(viewportMutationGeneration);
             if (IsCurrentToolExpansion(header, toolRow, scope, detailHost, request))
@@ -170,6 +181,7 @@ public partial class AgentChatView
             {
                 toolRow.CollapseDetails();
             }
+            throw;
         }
         finally
         {

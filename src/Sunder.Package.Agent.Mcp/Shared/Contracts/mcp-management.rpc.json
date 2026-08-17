@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "descriptorVersion": 2,
+  "schemaProfile": "sunder.rpc.values.v1",
   "contractId": "sunder.package.agent.mcp.management",
   "version": "2.0.0",
   "errors": {
@@ -14,91 +15,58 @@
         "query": {
           "kind": "unary",
           "idempotency": "idempotent",
-          "errors": [
-            "mcp.management.failed"
-          ],
-          "requestSchema": {
-            "$ref": "#/$defs/Payload"
-          },
-          "responseSchema": {
-            "$ref": "#/$defs/Payload"
-          }
+          "errors": ["mcp.management.failed"],
+          "requestSchema": { "$ref": "#/$defs/ManagementContent" },
+          "responseSchema": { "$ref": "#/$defs/ManagementContent" }
         },
         "command": {
           "kind": "unary",
           "idempotency": "none",
-          "errors": [
-            "mcp.management.failed"
-          ],
-          "requestSchema": {
-            "$ref": "#/$defs/Payload"
-          },
-          "responseSchema": {
-            "$ref": "#/$defs/Payload"
-          }
+          "errors": ["mcp.management.failed"],
+          "requestSchema": { "$ref": "#/$defs/ManagementContent" },
+          "responseSchema": { "$ref": "#/$defs/ManagementContent" }
         },
         "changes": {
           "kind": "server-stream",
           "idempotency": "idempotent",
           "errors": [],
-          "requestSchema": {
-            "$ref": "#/$defs/EmptyRequest"
-          },
-          "eventSchema": {
-            "$ref": "#/$defs/Change"
-          }
+          "requestSchema": { "$ref": "#/$defs/ChangeSubscription" },
+          "eventSchema": { "$ref": "#/$defs/ManagementChange" }
         }
       }
     }
   },
   "$defs": {
-    "PayloadChunk": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 1000000
+    "ContentReference": {
+      "type": "object",
+      "logicalType": "content-reference"
     },
-    "Payload": {
+    "ManagementContent": {
       "type": "object",
       "properties": {
-        "chunks": {
-          "type": "array",
-          "minItems": 1,
-          "maxItems": 4,
-          "items": {
-            "$ref": "#/$defs/PayloadChunk"
-          }
-        }
+        "content": { "$ref": "#/$defs/ContentReference" }
       },
-      "required": [
-        "chunks"
-      ],
+      "required": ["content"],
       "additionalProperties": false
     },
-    "EmptyRequest": {
+    "ChangeSubscription": {
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
-    "ChangeKind": {
+    "ManagementChangeKind": {
       "type": "string",
       "minLength": 6,
       "maxLength": 7,
-      "enum": [
-        "servers",
-        "status"
-      ]
+      "enum": ["servers", "status"]
     },
-    "Change": {
+    "ManagementChange": {
       "type": "object",
       "properties": {
-        "kind": {
-          "$ref": "#/$defs/ChangeKind"
-        }
+        "kind": { "$ref": "#/$defs/ManagementChangeKind" }
       },
-      "required": [
-        "kind"
-      ],
+      "required": ["kind"],
       "additionalProperties": false
     }
   }

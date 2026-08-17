@@ -57,6 +57,9 @@ internal sealed partial class HistorySearchStore
         }
     }
 
+    private void ScheduleCheckpointTruncate()
+        => _walCheckpointMaintenance.ScheduleCheckpoint();
+
     private void RecreateDerivedDatabase(long configurationRevision, bool manuallyCleared)
     {
         EnsureCommittedRuntimeEpochCurrent();

@@ -11,6 +11,7 @@ namespace Sunder.Package.Agent.Services.BehaviorLoops;
 public sealed class DefaultAgentBehaviorLoop : IAgentBehaviorLoop
 {
     public const string LoopId = AgentBehaviorLoopIds.Default;
+    internal const string BuiltInSourceId = "sunder.package.agent";
     private const int MaxRequestCompactionPasses = 3;
 
     private readonly AgentPromptPreparationPipeline _promptPreparationPipeline;
@@ -52,7 +53,8 @@ public sealed class DefaultAgentBehaviorLoop : IAgentBehaviorLoop
     public AgentBehaviorLoopDescriptor Descriptor { get; } = new(
         LoopId,
         "Default",
-        "Framework-backed provider/tool loop used by the base Agent runtime.");
+        "Framework-backed provider/tool loop used by the base Agent runtime.",
+        SourceId: BuiltInSourceId);
 
     public async ValueTask<AgentBehaviorLoopResult> RunAsync(
         AgentBehaviorLoopContext context,
@@ -297,6 +299,16 @@ public sealed class DefaultAgentBehaviorLoop : IAgentBehaviorLoop
         }
         catch (AgentChatProviderException ex)
         {
+            if (AgentFailurePresentationPolicy.IsStreamQueueLimit(ex))
+            {
+                return await _terminalHandler.HandleFailureAsync(
+                    host,
+                    context,
+                    assistantTurnState,
+                    ex,
+                    loopStopwatch.ElapsedMilliseconds);
+            }
+
             if (_providerCycleRunner.IsTransientFailure(ex, cancellationToken))
             {
                 return await _terminalHandler.HandleProviderInterruptedAsync(

@@ -1,6 +1,4 @@
 using System.Runtime.CompilerServices;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using Sunder.Package.Agent.Mcp.Protocol.Generated;
 using Sunder.Package.Agent.Mcp.Services;
 using Sunder.Package.Agent.Shared.Presentation;
@@ -12,23 +10,23 @@ namespace Sunder.Package.Agent.Mcp.Runtime;
 
 internal sealed class McpOwnerManagementRpcClient(ISunderRpcClient rpc) : IMcpOwnerManagementClient
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
-    {
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-        PropertyNameCaseInsensitive = false,
-        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
-    };
-
     public async ValueTask<McpProjection> QueryAsync(
         McpQuery query,
         CancellationToken cancellationToken = default)
     {
         await using var scope = await rpc.CreateCallScopeAsync(cancellationToken: cancellationToken);
-        var client = new ManagementClient(scope, await ResolveProviderAsync(scope, cancellationToken));
-        var response = await client.QueryAsync(
-            new Payload { Chunks = McpManagementPayload.Split(JsonSerializer.Serialize(query, JsonOptions)) },
+        var endpoint = await ResolveProviderAsync(scope, cancellationToken);
+        var request = await McpManagementPayload.RegisterRequestAsync(
+            scope,
+            endpoint,
+            query,
+            "mcp-query.json",
             cancellationToken);
-        return Deserialize<McpProjection>(McpManagementPayload.Join(response.Chunks));
+        var response = await new ManagementClient(scope, endpoint).QueryAsync(request, cancellationToken);
+        return await McpManagementPayload.ReadResponseAsync<McpProjection>(
+            scope,
+            response,
+            cancellationToken);
     }
 
     public async ValueTask<McpProjection> CommandAsync(
@@ -36,11 +34,18 @@ internal sealed class McpOwnerManagementRpcClient(ISunderRpcClient rpc) : IMcpOw
         CancellationToken cancellationToken = default)
     {
         await using var scope = await rpc.CreateCallScopeAsync(cancellationToken: cancellationToken);
-        var client = new ManagementClient(scope, await ResolveProviderAsync(scope, cancellationToken));
-        var response = await client.CommandAsync(
-            new Payload { Chunks = McpManagementPayload.Split(JsonSerializer.Serialize(command, JsonOptions)) },
+        var endpoint = await ResolveProviderAsync(scope, cancellationToken);
+        var request = await McpManagementPayload.RegisterRequestAsync(
+            scope,
+            endpoint,
+            command,
+            "mcp-command.json",
             cancellationToken);
-        return Deserialize<McpProjection>(McpManagementPayload.Join(response.Chunks));
+        var response = await new ManagementClient(scope, endpoint).CommandAsync(request, cancellationToken);
+        return await McpManagementPayload.ReadResponseAsync<McpProjection>(
+            scope,
+            response,
+            cancellationToken);
     }
 
     public async IAsyncEnumerable<McpChanged> WatchChangesAsync(
@@ -49,13 +54,13 @@ internal sealed class McpOwnerManagementRpcClient(ISunderRpcClient rpc) : IMcpOw
         await using var scope = await rpc.CreateCallScopeAsync(cancellationToken: cancellationToken);
         var client = new ManagementClient(scope, await ResolveProviderAsync(scope, cancellationToken));
         await foreach (var change in client.ChangesAsync(
-                           new EmptyRequest(),
+                           new ChangeSubscription(),
                            cancellationToken).WithCancellation(cancellationToken))
         {
             yield return new McpChanged(change.Kind switch
             {
-                "servers" => McpChangeKind.Servers,
-                "status" => McpChangeKind.Status,
+                ManagementChangeKind.Servers => McpChangeKind.Servers,
+                ManagementChangeKind.Status => McpChangeKind.Status,
                 _ => throw new InvalidDataException("The MCP Runtime returned an unknown change kind."),
             });
         }
@@ -76,10 +81,6 @@ internal sealed class McpOwnerManagementRpcClient(ISunderRpcClient rpc) : IMcpOw
         return provider?.Endpoint
             ?? throw new InvalidOperationException("The MCP Runtime management provider is unavailable.");
     }
-
-    private static T Deserialize<T>(string payload)
-        => JsonSerializer.Deserialize<T>(payload, JsonOptions)
-           ?? throw new InvalidDataException("The MCP Runtime returned an empty management response.");
 }
 
 internal sealed class McpAppRuntimeGateway : IMcpManagementGateway, IDisposable

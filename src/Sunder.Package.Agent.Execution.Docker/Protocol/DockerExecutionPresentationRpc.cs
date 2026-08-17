@@ -1,4 +1,6 @@
-using System.Globalization;
+using System.Security.Cryptography;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Rpc;
 using Wire = Sunder.Package.Agent.Execution.Docker.Protocol.Generated;
@@ -18,6 +20,15 @@ public static class DockerExecutionPresentationRpc
     public const string ContractVersion = "2.0.0";
     public const string ProviderId = "docker.presentation";
     public const string ServiceId = "presentation";
+    internal const int MaximumImageCatalogBytes = 8 * 1024 * 1024;
+    private const string JsonMediaType = "application/json";
+    private static readonly JsonSerializerOptions CatalogJson = new(JsonSerializerDefaults.Web)
+    {
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        PropertyNameCaseInsensitive = false,
+        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
+        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.KebabCaseLower) },
+    };
 
     private const string DescriptorResourceName =
         "Sunder.Package.Agent.Execution.Docker.Protocol.Contracts.docker-execution-presentation.rpc.json";
@@ -57,13 +68,27 @@ public static class DockerExecutionPresentationRpc
             SunderRpcInvocationContext context,
             Wire.DockerExecutionOperationRequest request,
             CancellationToken cancellationToken = default)
-            => ToWire(await client.ExecuteAsync(FromWire(request), cancellationToken).ConfigureAwait(false));
+            => await ToWireAsync(
+                context,
+                await client.ExecuteAsync(FromWire(request), cancellationToken).ConfigureAwait(false),
+                cancellationToken).ConfigureAwait(false);
     }
 
     internal static Wire.DockerExecutionOperationRequest ToWire(DockerExecutionOperationRequest value)
         => new()
         {
-            Kind = (long)value.Kind,
+            Kind = value.Kind switch
+            {
+                DockerExecutionOperationKind.GetSettings => Wire.DockerOperation.GetSettings,
+                DockerExecutionOperationKind.SaveSettings => Wire.DockerOperation.SaveSettings,
+                DockerExecutionOperationKind.AddImage => Wire.DockerOperation.AddImage,
+                DockerExecutionOperationKind.DeleteImage => Wire.DockerOperation.DeleteImage,
+                DockerExecutionOperationKind.RefreshImage => Wire.DockerOperation.RefreshImage,
+                DockerExecutionOperationKind.RefreshImages => Wire.DockerOperation.RefreshImages,
+                DockerExecutionOperationKind.PullImage => Wire.DockerOperation.PullImage,
+                DockerExecutionOperationKind.TestDocker => Wire.DockerOperation.TestDocker,
+                _ => throw new InvalidDataException("The Docker execution operation is invalid."),
+            },
             TimeoutSeconds = value.TimeoutSeconds,
             DockerCliPath = value.DockerCliPath,
             ImageReference = value.ImageReference,
@@ -71,17 +96,59 @@ public static class DockerExecutionPresentationRpc
 
     private static DockerExecutionOperationRequest FromWire(Wire.DockerExecutionOperationRequest value)
         => new(
-            (DockerExecutionOperationKind)checked((int)value.Kind),
+            value.Kind switch
+            {
+                Wire.DockerOperation.GetSettings => DockerExecutionOperationKind.GetSettings,
+                Wire.DockerOperation.SaveSettings => DockerExecutionOperationKind.SaveSettings,
+                Wire.DockerOperation.AddImage => DockerExecutionOperationKind.AddImage,
+                Wire.DockerOperation.DeleteImage => DockerExecutionOperationKind.DeleteImage,
+                Wire.DockerOperation.RefreshImage => DockerExecutionOperationKind.RefreshImage,
+                Wire.DockerOperation.RefreshImages => DockerExecutionOperationKind.RefreshImages,
+                Wire.DockerOperation.PullImage => DockerExecutionOperationKind.PullImage,
+                Wire.DockerOperation.TestDocker => DockerExecutionOperationKind.TestDocker,
+                _ => throw new InvalidDataException("The Docker execution operation is invalid."),
+            },
             value.TimeoutSeconds,
             value.DockerCliPath,
             value.ImageReference);
 
-    private static Wire.DockerExecutionOperationResponse ToWire(DockerExecutionOperationResponse value)
-        => new()
+    private static async ValueTask<Wire.DockerExecutionOperationResponse> ToWireAsync(
+        SunderRpcInvocationContext context,
+        DockerExecutionOperationResponse value,
+        CancellationToken cancellationToken)
+    {
+        SunderRpcContentReference? imageCatalog = null;
+        if (value.Images is not null)
+        {
+            var bytes = JsonSerializer.SerializeToUtf8Bytes(value.Images, CatalogJson);
+            if (bytes.Length > MaximumImageCatalogBytes)
+            {
+                throw new InvalidDataException("The Docker image catalog exceeds its 8 MiB content limit.");
+            }
+            await using var stream = new MemoryStream(bytes, writable: false);
+            imageCatalog = await context.RegisterContentAsync(
+                stream,
+                new SunderRpcContentRegistrationOptions(
+                    JsonMediaType,
+                    "docker-image-catalog.json",
+                    bytes.LongLength,
+                    Repeatability: SunderRpcContentRepeatability.SingleUse,
+                    MaximumUses: 1),
+                cancellationToken).ConfigureAwait(false);
+            ValidateReference(imageCatalog, context.DeadlineUtc);
+            var digest = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+            if (imageCatalog.Length != bytes.LongLength
+                || !string.Equals(imageCatalog.Sha256, digest, StringComparison.Ordinal))
+            {
+                throw new InvalidDataException("The Host returned inconsistent Docker catalog metadata.");
+            }
+        }
+
+        return new Wire.DockerExecutionOperationResponse
         {
             TimeoutSeconds = value.TimeoutSeconds,
             DockerCliPath = value.DockerCliPath,
-            Images = value.Images?.Select(ToWire).ToArray(),
+            ImageCatalog = imageCatalog,
             Success = value.Success,
             Message = value.Message,
             CatalogRevision = value.CatalogRevision,
@@ -93,12 +160,49 @@ public static class DockerExecutionPresentationRpc
                 CorrelationId = value.Error.CorrelationId,
             },
         };
+    }
 
-    internal static DockerExecutionOperationResponse FromWire(Wire.DockerExecutionOperationResponse value)
-        => new(
+    internal static async ValueTask<DockerExecutionOperationResponse> FromWireAsync(
+        ISunderRpcCallScope scope,
+        Wire.DockerExecutionOperationResponse value,
+        CancellationToken cancellationToken)
+    {
+        IReadOnlyList<DockerImageDefinition>? images = null;
+        if (value.ImageCatalog is { } reference)
+        {
+            ValidateReference(reference, scope.DeadlineUtc);
+            await using var stream = await scope.OpenContentAsync(reference, cancellationToken).ConfigureAwait(false);
+            using var content = new MemoryStream(checked((int)reference.Length));
+            var buffer = new byte[64 * 1024];
+            while (true)
+            {
+                var read = await stream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+                if (read == 0)
+                {
+                    break;
+                }
+                if (content.Length + read > reference.Length || content.Length + read > MaximumImageCatalogBytes)
+                {
+                    throw new InvalidDataException("The Docker image catalog exceeds its authenticated length.");
+                }
+                content.Write(buffer, 0, read);
+            }
+
+            var bytes = content.ToArray();
+            var digest = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+            if (bytes.LongLength != reference.Length
+                || !string.Equals(reference.Sha256, digest, StringComparison.Ordinal))
+            {
+                throw new InvalidDataException("The Docker image catalog digest or length is invalid.");
+            }
+            images = JsonSerializer.Deserialize<IReadOnlyList<DockerImageDefinition>>(bytes, CatalogJson)
+                     ?? throw new InvalidDataException("The Docker image catalog is empty.");
+        }
+
+        return new DockerExecutionOperationResponse(
             value.TimeoutSeconds,
             value.DockerCliPath,
-            value.Images?.Select(FromWire).ToArray(),
+            images,
             value.Success,
             value.Message,
             value.CatalogRevision,
@@ -107,24 +211,20 @@ public static class DockerExecutionPresentationRpc
                 value.Error.Message,
                 value.Error.IsTransient,
                 value.Error.CorrelationId));
+    }
 
-    private static Wire.DockerImageDefinition ToWire(DockerImageDefinition value)
-        => new()
+    private static void ValidateReference(SunderRpcContentReference reference, DateTimeOffset deadlineUtc)
+    {
+        if (reference.Length < 0
+            || reference.Length > MaximumImageCatalogBytes
+            || !string.Equals(reference.MediaType, JsonMediaType, StringComparison.OrdinalIgnoreCase)
+            || reference.Repeatability != SunderRpcContentRepeatability.SingleUse
+            || reference.ExpiresAtUtc <= DateTimeOffset.UtcNow
+            || reference.ExpiresAtUtc > deadlineUtc)
         {
-            ImageReference = value.ImageReference,
-            Status = (long)value.Status,
-            LastPulledAtUtc = value.LastPulledAtUtc?.ToString("O", CultureInfo.InvariantCulture),
-            LastMessage = value.LastMessage,
-        };
-
-    private static DockerImageDefinition FromWire(Wire.DockerImageDefinition value)
-        => new(
-            value.ImageReference,
-            (DockerImageStatus)checked((int)value.Status),
-            value.LastPulledAtUtc is null
-                ? null
-                : DateTimeOffset.Parse(value.LastPulledAtUtc, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
-            value.LastMessage);
+            throw new InvalidDataException("The Docker image catalog content reference is invalid.");
+        }
+    }
 }
 
 public sealed class DockerExecutionPresentationRpcClient(ISunderRpcClient client)
@@ -158,7 +258,10 @@ public sealed class DockerExecutionPresentationRpcClient(ISunderRpcClient client
         var response = await new Wire.PresentationClient(scope, providers[0].Endpoint)
             .ExecuteAsync(DockerExecutionPresentationRpc.ToWire(request), cancellationToken)
             .ConfigureAwait(false);
-        return DockerExecutionPresentationRpc.FromWire(response);
+        return await DockerExecutionPresentationRpc.FromWireAsync(
+            scope,
+            response,
+            cancellationToken).ConfigureAwait(false);
     }
 }
 

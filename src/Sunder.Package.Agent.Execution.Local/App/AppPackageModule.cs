@@ -1,7 +1,9 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Avalonia;
+using Sunder.Sdk.Notifications;
 using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Execution.Local;
@@ -15,6 +17,11 @@ public sealed class AppPackageModule : ISunderAppPackageModule
                 provider.GetRequiredService<ISunderRpcClient>()));
         services.AddTransient(provider => new LocalExecutionSettingsViewModel(
             provider.GetRequiredService<ILocalExecutionPresentationClient>()));
+        services.AddTransient(provider => new LocalExecutionSettingsView(
+            provider.GetRequiredService<LocalExecutionSettingsViewModel>(),
+            context,
+            provider.GetService<IPackageNotificationService>()
+                ?? NullPackageNotificationService.Instance));
     }
 
     public void RegisterAppContributions(

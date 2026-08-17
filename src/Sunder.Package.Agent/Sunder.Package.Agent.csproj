@@ -27,6 +27,8 @@
              Link="Composition\PackageServiceCollectionExtensions.cs" />
     <Compile Include="..\Sunder.Package.Agent.Shared\Threading\ReferenceCountedKeyedLock.cs"
              Link="Threading\ReferenceCountedKeyedLock.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Shared\Storage\SqliteWalCheckpointMaintenance.cs"
+             Link="Storage\SqliteWalCheckpointMaintenance.cs" />
     <Compile Include="..\Sunder.Package.Agent.Shared\PackageViews\TranscriptTurnTransportProjection.cs"
              Link="PackageViews\TranscriptTurnTransportProjection.cs" />
   </ItemGroup>

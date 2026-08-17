@@ -25,7 +25,8 @@ public sealed partial class SubsessionsViewModel
             checkpointReader,
             transcriptReader,
             changeNotifications,
-            PresentationDispatcher.Capture())
+            PresentationDispatcher.Capture(),
+            operationObserver: null)
     {
     }
 
@@ -34,30 +35,29 @@ public sealed partial class SubsessionsViewModel
         ISubsessionCheckpointReader checkpointReader,
         ISubsessionTranscriptPageReader transcriptReader,
         ISubsessionChangeNotifications changeNotifications,
-        IPresentationDispatcher uiDispatcher)
-        : this(null, uiDispatcher)
+        IPresentationDispatcher uiDispatcher,
+        PresentationOperationObserver? operationObserver = null)
+        : this(null, uiDispatcher, operationObserver)
     {
         SetRuntimePorts(sessionReader, checkpointReader, transcriptReader, changeNotifications);
     }
 
-    public async Task InitializeAsync(CancellationToken cancellationToken = default)
-    {
-        try
-        {
-            await EnsureInitializedAsync(null, cancellationToken);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            await RunOnUiThreadAsync(() => SetLoadFailure(ex.Message), CancellationToken.None);
-        }
-    }
+    public Task InitializeAsync(CancellationToken cancellationToken = default)
+        => _operations.RunAsync(
+            SubsessionRefreshOperation,
+            token => EnsureInitializedAsync(null, token),
+            ReconcileSubsessionLoadFailureAsync,
+            cancellationToken);
 
     [RelayCommand]
-    private async Task RetryLoadAsync(CancellationToken cancellationToken)
+    private Task RetryLoadAsync(CancellationToken cancellationToken)
+        => _operations.RunAsync(
+            SubsessionRefreshOperation,
+            RetryLoadCoreAsync,
+            ReconcileSubsessionLoadFailureAsync,
+            cancellationToken);
+
+    private async Task RetryLoadCoreAsync(CancellationToken cancellationToken)
     {
         Guid? selectedSessionId = null;
         await RunOnUiThreadAsync(() =>
@@ -65,18 +65,7 @@ public sealed partial class SubsessionsViewModel
             selectedSessionId = SelectedSubsession?.SessionId;
             StatusText = "Retrying Agent Runtime...";
         }, cancellationToken);
-        try
-        {
-            await InitializeCoreAsync(selectedSessionId, suppressTranscriptLoad: false, cancellationToken);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            await RunOnUiThreadAsync(() => SetLoadFailure(ex.Message), CancellationToken.None);
-        }
+        await InitializeCoreAsync(selectedSessionId, suppressTranscriptLoad: false, cancellationToken);
     }
 
     private Task EnsureInitializedAsync(
@@ -108,7 +97,20 @@ public sealed partial class SubsessionsViewModel
     {
         if (_changeNotifications is ISubagentPresentationInitialization initialization)
         {
-            await initialization.InitializeAsync(cancellationToken);
+            try
+            {
+                await initialization.InitializeAsync(cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception exception) when (IsExpectedSubsessionRuntimeFailure(exception))
+            {
+                throw new PresentationOperationException(
+                    "Subsessions could not initialize the Agent Runtime presentation.",
+                    exception);
+            }
         }
 
         await ReloadSubsessionsAsync(
@@ -150,6 +152,7 @@ public sealed partial class SubsessionsViewModel
         _runtimeRefresh.Dispose();
         _listDetail.Dispose();
         _requests.Dispose();
+        _operations.Dispose();
         _tasks.Dispose();
     }
 }

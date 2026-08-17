@@ -15,11 +15,14 @@ public sealed partial class MemoryInspectorViewModel
         }
 
         var semanticContext = _selectedSessionSemanticContext;
-        _tasks.Run(cancellationToken => LoadSelectionDetailsAsync(
-            selection,
-            semanticContext,
-            version,
-            cancellationToken));
+        _operations.Submit(
+            MemoryRefreshOperation,
+            cancellationToken => LoadSelectionDetailsAsync(
+                selection,
+                semanticContext,
+                version,
+                cancellationToken),
+            ReconcileMemoryAsync);
     }
 
     private async Task LoadSelectionDetailsAsync(

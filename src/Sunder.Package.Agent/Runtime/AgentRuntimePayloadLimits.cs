@@ -7,17 +7,15 @@ namespace Sunder.Package.Agent.Runtime;
 
 internal static class AgentRuntimePayloadLimits
 {
-    // These mirror Core's default RPC transport limits.
-    internal const int RuntimeMaximumRequestBytes = 1024 * 1024;
-    internal const int RuntimeMaximumResponseBytes = 4 * 1024 * 1024;
-    internal const int RuntimeMaximumEventBytes = 1024 * 1024;
+    internal const int StandardValueBytes = 8 * 1024 * 1024;
+    internal const int StandardContentReferenceBytes = 64 * 1024 * 1024;
+    internal const int EnvelopeReserveBytes = 64 * 1024;
+    internal const int MinimumValueBytes = 1024 * 1024;
+    internal const int MaximumValueBytes = 32 * 1024 * 1024;
+    internal const int MinimumContentReferenceBytes = 1024 * 1024;
+    internal const int MaximumContentReferenceBytes = 256 * 1024 * 1024;
 
-    internal const int MaximumOperationRequestBytes = RuntimeMaximumRequestBytes - (32 * 1024);
-    internal const int MaximumOperationResponseBytes = RuntimeMaximumResponseBytes - (64 * 1024);
-    internal const int MaximumStreamEventBytes = RuntimeMaximumEventBytes - (32 * 1024);
-    internal const int AttachmentUploadChunkBytes = 512 * 1024;
-    internal const int AttachmentDownloadChunkBytes = 512 * 1024;
-    internal const int MaximumRunMessageCharacters = 256 * 1024;
+    internal static AgentTransportProfile StandardFallbackProfile => AgentTransportProfile.StandardFallback;
 
     internal const int MaximumProjectedTurnItems = 32;
     internal const int InitialProjectedTurnCharacterBudget = 512 * 1024;
@@ -26,11 +24,35 @@ internal static class AgentRuntimePayloadLimits
     internal static int GetSerializedByteCount<T>(T value)
         => JsonSerializer.SerializeToUtf8Bytes(value, JsonOptions).Length;
 
-    internal static void EnsureRunCommandFits(AgentRunCommand command)
+    internal static int GetRequestPayloadBytes(AgentTransportProfile profile)
+        => GetDirectPayloadBytes(profile.RequestValueBytes);
+
+    internal static int GetResponsePayloadBytes(AgentTransportProfile profile)
+        => GetDirectPayloadBytes(profile.ResponseValueBytes);
+
+    internal static int GetEventPayloadBytes(AgentTransportProfile profile)
+        => GetDirectPayloadBytes(profile.EventValueBytes);
+
+    internal static long GetStreamQueueBytes(AgentTransportProfile profile)
+        => checked((long)profile.EventValueBytes * 2);
+
+    internal static long GetReplayQueueBytes(AgentTransportProfile profile)
+        => checked((long)profile.EventValueBytes * 4);
+
+    internal static void EnsureRequestFits<T>(T value, AgentTransportProfile profile)
     {
-        if (GetSerializedByteCount(command) > MaximumOperationRequestBytes)
+        if (GetSerializedByteCount(value) > GetRequestPayloadBytes(profile))
         {
-            throw new InvalidOperationException("Agent run request exceeds the Runtime transport limit.");
+            throw new InvalidOperationException("Agent request exceeds the negotiated Runtime value limit.");
+        }
+    }
+
+    internal static void EnsureResponseFits<T>(T value, AgentTransportProfile profile)
+    {
+        if (GetSerializedByteCount(value) > GetResponsePayloadBytes(profile))
+        {
+            throw new AgentOwnerOperationException(
+                "Agent response cannot be represented within the negotiated Runtime value limit.");
         }
     }
 
@@ -38,14 +60,15 @@ internal static class AgentRuntimePayloadLimits
         AgentTranscriptPage page,
         AgentTranscriptPageDirection direction,
         Guid? preferredItemId = null,
-        int maximumBytes = MaximumOperationResponseBytes)
+        int? maximumBytes = null)
     {
+        maximumBytes ??= GetResponsePayloadBytes(StandardFallbackProfile);
         page = page with
         {
             Turns = page.Turns.Select(TranscriptTurnTransportProjection.ProjectToolHeaders).ToArray(),
             Continuation = page.Continuation ?? ResolveContinuation(page.Turns, direction),
         };
-        if (GetSerializedByteCount(page) <= maximumBytes)
+        if (GetSerializedByteCount(page) <= maximumBytes.Value)
         {
             return page;
         }
@@ -68,7 +91,7 @@ internal static class AgentRuntimePayloadLimits
                 HasMore = true,
                 Continuation = ResolveContinuation(turns, direction),
             };
-            if (GetSerializedByteCount(reduced) <= maximumBytes)
+            if (GetSerializedByteCount(reduced) <= maximumBytes.Value)
             {
                 return reduced;
             }
@@ -89,7 +112,7 @@ internal static class AgentRuntimePayloadLimits
                     HasMore = true,
                     Continuation = TranscriptPageCursor.FromTurn(turns[0]),
                 };
-                if (GetSerializedByteCount(projected) <= maximumBytes)
+                if (GetSerializedByteCount(projected) <= maximumBytes.Value)
                 {
                     return projected;
                 }
@@ -108,19 +131,21 @@ internal static class AgentRuntimePayloadLimits
 
     internal static AgentTranscriptAroundTurnPage FitAroundTurnPage(
         AgentTranscriptAroundTurnPage page,
-        Guid? preferredItemId = null)
+        Guid? preferredItemId = null,
+        int? maximumBytes = null)
     {
+        maximumBytes ??= GetResponsePayloadBytes(StandardFallbackProfile);
         page = page with
         {
             Turns = page.Turns.Select(TranscriptTurnTransportProjection.ProjectToolHeaders).ToArray(),
         };
-        if (GetSerializedByteCount(page) <= MaximumOperationResponseBytes)
+        if (GetSerializedByteCount(page) <= maximumBytes.Value)
         {
             return page;
         }
 
         var turns = page.Turns.ToList();
-        while (turns.Count > 1 && GetSerializedByteCount(page with { Turns = turns }) > MaximumOperationResponseBytes)
+        while (turns.Count > 1 && GetSerializedByteCount(page with { Turns = turns }) > maximumBytes.Value)
         {
             var anchorIndex = turns.FindIndex(turn => turn.TurnId == page.AnchorTurnId);
             if (anchorIndex < 0)
@@ -146,7 +171,7 @@ internal static class AgentRuntimePayloadLimits
         }
 
         var reduced = page with { Turns = turns };
-        if (GetSerializedByteCount(reduced) <= MaximumOperationResponseBytes)
+        if (GetSerializedByteCount(reduced) <= maximumBytes.Value)
         {
             return reduced;
         }
@@ -158,7 +183,8 @@ internal static class AgentRuntimePayloadLimits
         var projected = FitTranscriptPage(
             new AgentTranscriptPage(page.Revision, [anchor], HasMore: true),
             AgentTranscriptPageDirection.Turn,
-            preferredItemId);
+            preferredItemId,
+            maximumBytes);
         return page with
         {
             Turns = projected.Turns,
@@ -206,9 +232,10 @@ internal static class AgentRuntimePayloadLimits
 
     internal static AgentTranscriptToolDetailRecord FitToolDetail(
         AgentTranscriptToolDetailRecord detail,
-        int maximumBytes = MaximumOperationResponseBytes)
+        int? maximumBytes = null)
     {
-        if (GetSerializedByteCount(new AgentTranscriptToolDetailResponse(detail)) <= maximumBytes)
+        maximumBytes ??= GetResponsePayloadBytes(StandardFallbackProfile);
+        if (GetSerializedByteCount(new AgentTranscriptToolDetailResult(Found: true, detail)) <= maximumBytes.Value)
         {
             return detail;
         }
@@ -219,23 +246,23 @@ internal static class AgentRuntimePayloadLimits
             StructuredPayloadJson = null,
             WasTransportTruncated = true,
         };
-        if (GetSerializedByteCount(new AgentTranscriptToolDetailResponse(detail)) <= maximumBytes)
+        if (GetSerializedByteCount(new AgentTranscriptToolDetailResult(Found: true, detail)) <= maximumBytes.Value)
         {
             return detail;
         }
 
         detail = detail with { PresentationPayloadJson = null };
-        if (GetSerializedByteCount(new AgentTranscriptToolDetailResponse(detail)) <= maximumBytes)
+        if (GetSerializedByteCount(new AgentTranscriptToolDetailResult(Found: true, detail)) <= maximumBytes.Value)
         {
             return detail;
         }
 
         detail = detail with
         {
-            OutputText = TruncateNullable(detail.OutputText, maximumBytes / 4),
+            OutputText = TruncateNullable(detail.OutputText, maximumBytes.Value / 4),
             ResultSummary = TruncateNullable(detail.ResultSummary, 2048),
         };
-        if (GetSerializedByteCount(new AgentTranscriptToolDetailResponse(detail)) <= maximumBytes)
+        if (GetSerializedByteCount(new AgentTranscriptToolDetailResult(Found: true, detail)) <= maximumBytes.Value)
         {
             return detail;
         }
@@ -245,7 +272,7 @@ internal static class AgentRuntimePayloadLimits
             ArgumentsJson = null,
             OutputText = TruncateNullable(detail.OutputText, 64 * 1024),
         };
-        if (GetSerializedByteCount(new AgentTranscriptToolDetailResponse(detail)) <= maximumBytes)
+        if (GetSerializedByteCount(new AgentTranscriptToolDetailResult(Found: true, detail)) <= maximumBytes.Value)
         {
             return detail;
         }
@@ -253,18 +280,22 @@ internal static class AgentRuntimePayloadLimits
         throw new InvalidOperationException("Tool detail metadata exceeds the Runtime response limit.");
     }
 
-    internal static bool FitsStreamEvent(AgentRuntimeChange change)
-        => GetSerializedByteCount(change) <= MaximumStreamEventBytes;
+    internal static bool FitsStreamEvent(AgentRuntimeChange change, int maximumBytes)
+        => GetSerializedByteCount(change) <= maximumBytes;
 
     internal static AgentRuntimeChange ReplaceWithResnapshotIfOversized(
         AgentRuntimeChange change,
+        int maximumBytes,
         params AgentRuntimeChange[] subscriberProjections)
-        => subscriberProjections.All(FitsStreamEvent)
+        => subscriberProjections.All(projection => FitsStreamEvent(projection, maximumBytes))
             ? change
             : new AgentRuntimeChange(
                 change.Revision,
                 AgentRuntimeChangeKind.ResnapshotRequired,
                 RuntimeInstanceId: change.RuntimeInstanceId);
+
+    private static int GetDirectPayloadBytes(int valueBytes)
+        => Math.Max(1, checked(valueBytes - EnvelopeReserveBytes));
 
     private static TranscriptPageCursor? ResolveContinuation(
         IReadOnlyList<AgentTurnRecord> turns,

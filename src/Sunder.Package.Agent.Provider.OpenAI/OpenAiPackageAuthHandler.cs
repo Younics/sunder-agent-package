@@ -1,5 +1,6 @@
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Authentication;
+using Sunder.Sdk.Callbacks;
 
 namespace Sunder.Package.Agent.Provider.OpenAI;
 
@@ -86,6 +87,15 @@ public sealed class OpenAiPackageAuthHandler(
                 CanAuthorize: true,
                 CanDisconnect: false);
         }
+    }
+
+    public Task CancelCallbackAsync(
+        PackageCallbackCancellationContext context,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        _codexConnectedAuthStrategy.CancelAuthorization(context.CallbackSessionId);
+        return Task.CompletedTask;
     }
 
     public async Task<PackageAuthStatus> DisconnectAsync(CancellationToken cancellationToken = default)

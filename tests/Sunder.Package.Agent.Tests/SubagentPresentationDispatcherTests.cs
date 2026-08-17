@@ -7,6 +7,7 @@ using Sunder.Package.Agent.Subagents.PackageViews;
 using Sunder.Package.Agent.Subagents.Runtime;
 using Xunit;
 using SubagentPresentationDispatcher = SubagentsPackage::Sunder.Package.Agent.Shared.Presentation.IPresentationDispatcher;
+using SubagentAdaptiveDetailPhase = SubagentsPackage::Sunder.Package.Agent.Shared.Presentation.AdaptiveDetailPhase;
 using SubagentProviderCatalogOption = SubagentsPackage::Sunder.Package.Agent.Shared.Presentation.ProviderCatalogOption;
 using SubagentProviderModelCatalogResult = SubagentsPackage::Sunder.Package.Agent.Shared.Presentation.ProviderModelCatalogResult;
 
@@ -275,6 +276,7 @@ public sealed class SubagentPresentationDispatcherTests
             Assert.Equal("created", viewModel.SelectedSubagent?.SubagentId);
             if (failHydration)
             {
+                Assert.Equal(SubagentAdaptiveDetailPhase.Error, viewModel.DetailPhase);
                 Assert.Equal(SubagentStatusKind.Error, viewModel.StatusKind);
                 Assert.Equal("Create hydration failed.", viewModel.StatusText);
             }

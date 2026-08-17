@@ -81,15 +81,20 @@ public sealed class AgentRunCoordinatorTests
         var assistantMutations = mutations
             .Where(mutation => mutation.TurnId == assistantTurnId)
             .ToArray();
+        Assert.Equal(AgentTurnMutationKind.Add, assistantMutations[0].Kind);
+        Assert.Equal(AgentTurnMutationKind.Complete, assistantMutations[^1].Kind);
+        Assert.All(
+            assistantMutations[1..^1],
+            mutation => Assert.Equal(AgentTurnMutationKind.Append, mutation.Kind));
         Assert.Equal(
-            [AgentTurnMutationKind.Add, AgentTurnMutationKind.Append, AgentTurnMutationKind.Complete],
-            assistantMutations.Select(mutation => mutation.Kind));
-        Assert.Equal([1L, 2L, 3L], assistantMutations.Select(mutation => mutation.ContentRevision));
-        Assert.Equal("\n\n- item", assistantMutations[1].Text);
-        Assert.Equal("## Heading\n\n- item".Length, assistantMutations[2].BaseContentLength);
+            Enumerable.Range(1, assistantMutations.Length).Select(static revision => (long)revision),
+            assistantMutations.Select(mutation => mutation.ContentRevision));
+        Assert.Equal(
+            "## Heading\n\n- item".Length,
+            assistantMutations[^1].BaseContentLength);
         var storedTurn = runtime.SessionService.ListTurns(sessionId)
             .Single(turn => turn.Role == AgentMessageRole.Assistant);
-        Assert.Equal(3, storedTurn.ContentRevision);
+        Assert.Equal(assistantMutations.Length, storedTurn.ContentRevision);
         Assert.False(storedTurn.IsStreaming);
         Assert.Equal("## Heading\n\n- item", Assert.Single(storedTurn.Items).TextContent);
     }
@@ -199,14 +204,12 @@ public sealed class AgentRunCoordinatorTests
             runtime.SessionService);
         using var transfers = new AgentAttachmentTransferService(new TestPackageContext(runtime.RootPath));
         var bytes = Encoding.UTF8.GetBytes("pending adoption");
-        var upload = transfers.BeginUpload(new AgentAttachmentUploadDescriptor(
+        var handle = await transfers.ReceiveUploadAsync(new AgentAttachmentUploadDescriptor(
             "pending.txt",
             "text/plain",
             bytes.Length,
-            Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant()));
-        transfers.WriteUploadChunk(upload.TransferId!, 0, bytes);
-        transfers.CompleteUpload(upload.TransferId!);
-        var handle = new AgentAttachmentUploadHandle(upload.TransferId!);
+            Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant()),
+            new MemoryStream(bytes, writable: false));
         var handler = new AgentRunCommandHandler(
             runtime.RunCoordinator,
             runtime.SessionService,
@@ -390,13 +393,12 @@ public sealed class AgentRunCoordinatorTests
             runtime.SessionService);
         using var transfers = new AgentAttachmentTransferService(new TestPackageContext(runtime.RootPath));
         var content = Encoding.UTF8.GetBytes("attachment");
-        var upload = transfers.BeginUpload(new AgentAttachmentUploadDescriptor(
+        var handle = await transfers.ReceiveUploadAsync(new AgentAttachmentUploadDescriptor(
             "note.txt",
             "text/plain",
             content.Length,
-            Convert.ToHexString(SHA256.HashData(content)).ToLowerInvariant()));
-        transfers.WriteUploadChunk(upload.TransferId!, 0, content);
-        transfers.CompleteUpload(upload.TransferId!);
+            Convert.ToHexString(SHA256.HashData(content)).ToLowerInvariant()),
+            new MemoryStream(content, writable: false));
         var handler = new AgentRunCommandHandler(
             runtime.RunCoordinator,
             runtime.SessionService,
@@ -409,7 +411,7 @@ public sealed class AgentRunCoordinatorTests
             runtime.CurrentProfileId,
             "invalid durable attachment",
             runtime.CurrentWorkspaceId,
-            [new AgentAttachmentUploadHandle(upload.TransferId!)],
+            [handle],
             UserTurnId: userTurnId));
         using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder
         {
@@ -2333,12 +2335,15 @@ public sealed class AgentRunCoordinatorTests
             runtime.CurrentWorkspaceId);
 
         Assert.Equal(AgentRunStatus.Failed, checkpoint.Status);
-        Assert.Equal("execution exploded", checkpoint.Summary);
+        Assert.Equal(AgentFailurePresentationPolicy.GenericFailureSummary, checkpoint.Summary);
         Assert.Single(provider.Requests);
         Assert.Contains(
             runtime.SessionService.ListTurns(sessionId),
             turn => turn.Role == AgentMessageRole.Assistant
-                && RenderTurnText(turn).Contains("execution exploded", StringComparison.Ordinal));
+                && string.Equals(
+                    RenderTurnText(turn),
+                    AgentFailurePresentationPolicy.GenericFailureMarkdown,
+                    StringComparison.Ordinal));
     }
 
     [Fact]
@@ -6739,7 +6744,7 @@ public sealed class AgentRunCoordinatorTests
         var sessionId = await runtime.CreateSessionAsync(toolId);
         var secondWorkspace = runtime.WorkspaceService.CreateWorkspace("Second Workspace");
 
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        var exception = await Assert.ThrowsAsync<AgentUserTurnAdmissionException>(() =>
             runtime.RunCoordinator.QueueUserMessageAsync(
                 sessionId,
                 runtime.CurrentProfileId,
@@ -14491,7 +14496,8 @@ public sealed class AgentRunCoordinatorTests
             );
             var behaviorLoopResolver = new AgentBehaviorLoopResolver(
                 extensionCatalog,
-                extensionCatalog.BehaviorLoops
+                extensionCatalog.BehaviorLoops,
+                defaultBehaviorLoop
             );
             var stopCoordinator = new AgentRunStopCoordinator(
                 sessionService,

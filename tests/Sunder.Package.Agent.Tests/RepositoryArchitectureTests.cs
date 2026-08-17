@@ -148,7 +148,6 @@ public sealed partial class RepositoryArchitectureTests
 
         Assert.Equal(
             [
-                "agent.chat.option-not-representable",
                 "agent.execution.facet-unavailable",
                 "agent.run-control.capability-unavailable",
                 "agent.run-control.default-loop-unavailable",
@@ -185,24 +184,24 @@ public sealed partial class RepositoryArchitectureTests
             .ToArray();
         var expectedIdentities = new Dictionary<string, (string DescriptorSha256, string AbiSha256)>(StringComparer.Ordinal)
         {
-            ["sunder.agent.behavior.loop"] = ("a59b9f5c69b610ac74387f779e7624f768d5ad769fed21b6318bb5c4d355c26d", "ae2778dcd1f15aba946296b257cda0088a7a78b0e33ac02bb59a29c9d5d85a3e"),
-            ["sunder.agent.chat.provider"] = ("60baacad95b6e1fdaa98471bd922a5ae096f76e9f4cc521c6e90da99f9e92c38", "c676ca29e51b87c50b88f5bc332f0248500a5deae04ec56007e1d997f3e56b0d"),
-            ["sunder.agent.child.run.executor"] = ("2a1f2be2c637a944cec2c2a51d74d6329027fd2618ef1152dce6eac11f33e0be", "aa97c4ace5c518c179b04491ed60cb8a19f5aa42298dd83dea6b062ad813c93a"),
-            ["sunder.agent.durable.lifecycle.observer"] = ("e4e95dd636d52fa95cfad072a6538e642ef0fea016ca38b2d9112ceb7edec4ea", "2e6349363ea9be84742391736ce183e5d82b252d5fe84f603e4553971510091c"),
-            ["sunder.agent.embedding.provider"] = ("a7c209b05f30e5948c5ab468a8c48e77596da746ec8d4884224a96523544f2db", "ccd09867b80d9930f77fa218a3f5795d6f526e8cf68fa0319c4e0c9d8ad462ed"),
-            ["sunder.agent.execution.target"] = ("bf02924316c7c1821698b4e704727024a699465a18ca44791197ff914d382a10", "790498cadd6c8cd72627000ec8dcc53a99075e73fe0bfcd81cc564089c0a5d1e"),
-            ["sunder.agent.permission.surface"] = ("45c4159e1c5583255c6514a70c0fd2d93ee0998355d25e7d5f368b215c65adb3", "c99a79188268b47a264825b189a099f21e33218e5128854050e98dbf9e858a01"),
-            ["sunder.agent.profile.capability.consumer"] = ("7df99ab4e60717958cb93df05c6969bb38eadba210c70d8c05f2ea3467d86d31", "3eb7a4a5f3b1ba3cda247e2ff6f0c412372775922cffd8bcb11da2b47df3fb01"),
-            ["sunder.agent.prompt.context.contributor"] = ("82bbdcf62f0f41abe6f9198780d9079ebf2378ffa4babea1bb79f236bbe1c93d", "2250afb3fe2790dadd1729dcbefea22236f2dd39efc2643b50958e67b5f56fbb"),
-            ["sunder.agent.run.control"] = ("7328d27e38017eb4c93c47a83439c80252ac248a27241a9d7d69cd530f7e66b2", "dfe0e0393f2679f1ad1764e02990f7fa791e923a525e7c0d44b276a1334b0678"),
-            ["sunder.agent.runtime.catalog"] = ("35eb402780fc906436a8bd42e3ceb280b1a1b1e15d0d72e838e6149cb908d785", "7d87d46307a134dcf73198714e872441cd6de8e244ec0db7f91c5b9dbeb6f12d"),
-            ["sunder.agent.selectable.capability.provider"] = ("209b51f15f3bded33f2cfcbd0c66d5e6f34730189237cb01b95c6225177dbe9c", "af2e673333f63f21df8cd3021038415768311e51abb2db802be6dc21c0b10acb"),
-            ["sunder.agent.session.cleaner"] = ("d594e3e9c421359b83ab376f6ce0c4a1179425a47cf58d9ad1ca542713e3928f", "cff0db58986b3289fed6a5064b9137c8a4cb6fc6c98cf8f19451f4f8fe0c9902"),
-            ["sunder.agent.system.prompt.contributor"] = ("2c5a6803d11571525fbe3d857d854c50a0b0ddd054a21e197daa90ecadda12f6", "66ea76798e76d7fa42e11790b392ce388386ed2a7cafd81f29ca5f51ba4ce7ea"),
-            ["sunder.agent.tool.source"] = ("64461366daa9a30248363bac6e839d9a4cd4189a6174543e5dc53c6576eabafe", "43340a8ffecaf48a158eb6fe51a1d0da4c14dbdd3ee54b11e2b6aaa0e19e355b"),
-            ["sunder.agent.workspace.editor"] = ("6930eb83a6d273525427d55159d247385703cc0c781b52c59c6df83a0126c3f9", "1ba5e3ba7a87644edac5f7c32825d147abd1894201dd6c11659dc7ccc1d2a487"),
-            ["sunder.agent.workspace.execution.resolver"] = ("e2f10f19528d5e401e299eb4b7669f2026c8d3356b5b0f114024d9999e64cc1f", "3da28f1ff95f633f41ece72c2f161f305c059893322aae4e7c8cc1b0cce056b0"),
-            ["sunder.agent.workspace.path.migrator"] = ("ea153d15e7bef4700efcd0c7fe64741195d2bc216cc7a3b2cc895c61e18289d0", "cc89ecad6fb96beeac5809d5b1202ce94979dc71b2d155374f6eb9635b28d648"),
+            ["sunder.agent.behavior.loop"] = ("b3bb6ae12fd7b6df17492f6c86dacd6a16ae0508278b83684d177a918accad81", "fb941fddaff6e9a2d295c9479f311ba81b85fdc9c6f3358784035ae78a3cc58f"),
+            ["sunder.agent.chat.provider"] = ("10f9d934fc4f085d0817060167a2ff0c175626c16ed6179bb00905175c92b49f", "1a1539cecfba92358039568f97334381ac22c4577776548e82efab390fedd093"),
+            ["sunder.agent.child.run.executor"] = ("95e4886769a491ba335229acd7bd5e8a94429766cdca5e02293c915f4dc6afd5", "fd91322d3b209b22575d025cf4710cb9697d086479a7d9247ba4bb38e5938151"),
+            ["sunder.agent.durable.lifecycle.observer"] = ("21ac91d33e7dc5778880a213e9df664bb4291cb99a9b64cfc8084af081d9f420", "4a2505665f7f87314822d0de20ec3ac2e3b32d4efe01d3e4c8cab4d9f7d24434"),
+            ["sunder.agent.embedding.provider"] = ("53a4e89d4e99a870c43c3f5e1b9895378dd58feb783ae550ef31604cd2625166", "c6877ec486db1a8352543bc4498f7d744b0aeca28454b72b0462d2abf7b2e81d"),
+            ["sunder.agent.execution.target"] = ("d8a64a0189c4734585b3896e3b56da9b351424f2c286d33b81736859e933bc92", "614bfbb5334fee7db4110e9dc934cba5c39a79b20269933e1055e6ff355cc623"),
+            ["sunder.agent.permission.surface"] = ("513b0259c352ee31ab812017641c30cc8e8a04d6c0a1b99afc7e57883251e8cf", "ec1af15a55859d28241ddb26c7a4d203a01afc9985469a2f19a09fb041923e18"),
+            ["sunder.agent.profile.capability.consumer"] = ("20687b7fba6ef13446a5b7edcc68b7ac7951dc3c5e7d0d8d2188e6a05db1f8dc", "8121dad8fca38cb5767ddb9abdf8625cb77ca9de7018e448c4e58868660888bc"),
+            ["sunder.agent.prompt.context.contributor"] = ("d601d7b5c78412876784c09eeffc01383a54d4277ed950ea27375cf1e10c6011", "f34e547f9da827d7616dc21810fec48de39a7666f1dcb0630b9a548d805fb9b1"),
+            ["sunder.agent.run.control"] = ("0e38f4e55841a0edd8f574d3a4ab0ce8773cc446a018a6636c0a837f4e091444", "075a6a7f25a14c0d5b0990192ca7fa201d005c3970debb12fcfe37124b3da380"),
+            ["sunder.agent.runtime.catalog"] = ("4df34077ad427baf2cca871b52f5f75db3410e4b7e8278670c0e50640622dd32", "0ed1b2ee8c8c84aec30a3a6f4c92098f8897be3a8466bd3d8a6bbc4d94d06c11"),
+            ["sunder.agent.selectable.capability.provider"] = ("2abac46760320eed1118874c1a8ff1198da828a85a258688b06c66c6513e9925", "1926370506cef435802b186b8f8758cdc4d7d515dc3cd76484282790302d090a"),
+            ["sunder.agent.session.cleaner"] = ("e6efc2d0ff62e95f2f8708ebc3aee8e5bedb6968a6c1822008e81e091967578f", "d25899355daff3d9fee0644bd80def5a7bbf30e399cae3e76d99be91e59ffa78"),
+            ["sunder.agent.system.prompt.contributor"] = ("5303115e275806e0873408aa5fa30271622b78761784ffa8b40456c1aab9ad81", "e1fb4f322d36ae37ca8a78491aad5b9d97096161d6dccea269d804e31ca0428d"),
+            ["sunder.agent.tool.source"] = ("498a07f0fc3ecbae6d901e557d1c7d3c8567a87ce0116f9d5847ac0a3fbcead7", "5a3e0a71e923b59569865279f511dd7ea68a22f65956b011476b42f99634de3b"),
+            ["sunder.agent.workspace.editor"] = ("c2cfd8560a69a3b409220b1dec9aca1abcf87da504b913dc26f0a19b4bb524fb", "5d08378e0e89a9d9071b470acc5aa1969eace6d828273b08d0e13159163d834a"),
+            ["sunder.agent.workspace.execution.resolver"] = ("11acc48d4d5721482f851b2fcc57640f1a2d1796759debdf8517ec3954803812", "2ec6c20806a3682b8e4a549b361395b002e50b33d263277e4b3a4a22941a445d"),
+            ["sunder.agent.workspace.path.migrator"] = ("78c88c37d0fb79cf698e7d8dac83908dc8847bc458f5f70a1f0bc4fbe3676d97", "c07831a1d6b604bb4bbf695beb15ba2ab50a3973ee934d9c0c96fc4be3148b73"),
         };
         Assert.Equal(18, descriptors.Length);
         Assert.Equal(descriptors.Length, expectedIdentities.Count);
@@ -260,132 +259,86 @@ public sealed partial class RepositoryArchitectureTests
     }
 
     [Fact]
-    public void AgentRpcLogicalTypesAndBinary64Schemas_AreExplicit()
+    public void AgentRpcValueSchemas_UseExplicitV2Semantics()
     {
         var contractsRoot = Path.Combine(
             AgentPackageRepositoryInventory.RepositoryRoot.FullName,
             "src",
             "Sunder.Package.Agent.Contracts",
             "Contracts");
-        var logicalDefinitions = new List<(string Name, string Type, string LogicalType)>();
-        var numberDefinitions = new List<string>();
+        var numberDefinitions = new List<(string Name, string Format)>();
         foreach (var path in Directory.EnumerateFiles(contractsRoot, "*.rpc.json", SearchOption.TopDirectoryOnly))
         {
             using var document = JsonDocument.Parse(File.ReadAllBytes(path));
             var contractName = Path.GetFileNameWithoutExtension(Path.GetFileNameWithoutExtension(path));
+            Assert.Equal("sunder.rpc.values.v1", document.RootElement.GetProperty("schemaProfile").GetString());
+            Assert.DoesNotContain("\"hasValue\"", document.RootElement.GetRawText(), StringComparison.Ordinal);
             foreach (var definition in document.RootElement.GetProperty("$defs").EnumerateObject())
             {
-                if (!definition.Value.TryGetProperty("type", out var typeElement))
-                {
-                    continue;
-                }
-                var type = typeElement.GetString()!;
+                Assert.DoesNotMatch("^(String|Guid|DateTimeOffset|Int32|Int64|Single|Nullable[0-9]*|ListOf.*)$", definition.Name);
                 if (definition.Value.TryGetProperty("logicalType", out var logicalType))
                 {
-                    logicalDefinitions.Add(($"{contractName}:{definition.Name}", type, logicalType.GetString()!));
+                    Assert.Equal("content-reference", logicalType.GetString());
                 }
-                if (type == "number")
+                if (definition.Value.TryGetProperty("type", out var typeElement)
+                    && typeElement.GetString() == "number")
                 {
-                    numberDefinitions.Add($"{contractName}:{definition.Name}");
+                    numberDefinitions.Add((
+                        $"{contractName}:{definition.Name}",
+                        definition.Value.GetProperty("format").GetString()!));
                 }
             }
         }
 
-        string[] expectedUtcDateTimes =
-        [
-            "behavior-loop:DateTimeOffset",
-            "chat-provider:Timestamp",
-            "child-run-executor:DateTimeOffset",
-            "durable-lifecycle-observer:DateTimeOffset",
-            "execution-target:DateTimeOffset",
-            "prompt-context-contributor:DateTimeOffset",
-            "run-control:DateTimeOffset",
-            "run-control:Nullable8",
-            "runtime-catalog:DateTimeOffset",
-            "selectable-capability-provider:DateTimeOffset",
-            "system-prompt-contributor:DateTimeOffset",
-            "tool-source:DateTimeOffset",
-            "workspace-editor:DateTimeOffset",
-            "workspace-execution-resolver:DateTimeOffset",
-            "workspace-path-migrator:DateTimeOffset",
-        ];
-        string[] expectedUuids =
-        [
-            "behavior-loop:Guid",
-            "behavior-loop:Nullable3",
-            "child-run-executor:Guid",
-            "durable-lifecycle-observer:Guid",
-            "durable-lifecycle-observer:Nullable2",
-            "execution-target:Guid",
-            "execution-target:Nullable",
-            "prompt-context-contributor:Guid",
-            "prompt-context-contributor:Nullable",
-            "run-control:Guid",
-            "run-control:Nullable",
-            "runtime-catalog:Guid",
-            "runtime-catalog:Nullable",
-            "session-cleaner:Guid",
-            "system-prompt-contributor:Guid",
-            "system-prompt-contributor:Nullable2",
-            "tool-source:Guid",
-            "tool-source:Nullable",
-            "workspace-execution-resolver:Guid",
-        ];
         Assert.Equal(
-            expectedUtcDateTimes,
-            logicalDefinitions.Where(static item => item.LogicalType == "utc-date-time")
-                .Select(static item => item.Name)
-                .Order(StringComparer.Ordinal));
-        Assert.Equal(
-            expectedUuids,
-            logicalDefinitions.Where(static item => item.LogicalType == "uuid")
-                .Select(static item => item.Name)
-                .Order(StringComparer.Ordinal));
-        Assert.All(
-            logicalDefinitions.Where(static item => item.LogicalType is "utc-date-time" or "uuid"),
-            static item => Assert.Equal("string", item.Type));
-        Assert.Equal(
-            [
-                "chat-provider:OptionNumber",
-                "embedding-provider:Single",
-                "run-control:Nullable7",
-                "run-control:Single",
-            ],
-            numberDefinitions.Order(StringComparer.Ordinal));
+            new[]
+            {
+                ("chat-provider:ChatOptionValue", "float32"),
+                ("embedding-provider:EmbeddingValue", "float64"),
+                ("run-control:ChatOptionValue", "float32"),
+            },
+            numberDefinitions.OrderBy(static item => item.Name, StringComparer.Ordinal));
 
         using (var chatDescriptor = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(
                    contractsRoot,
                    "chat-provider.rpc.json"))))
         {
-            const string optionError = "agent.chat.option-not-representable";
-            var chatRoot = chatDescriptor.RootElement;
-            var chatDefinitions = chatRoot.GetProperty("$defs");
-            var date = chatDefinitions.GetProperty("Date");
-            Assert.Equal(10, date.GetProperty("minLength").GetInt32());
-            Assert.Equal(10, date.GetProperty("maxLength").GetInt32());
-            Assert.Contains(optionError, chatDefinitions.GetProperty("OptionNumber").GetProperty("description").GetString(), StringComparison.Ordinal);
-            Assert.True(chatRoot.GetProperty("errors").TryGetProperty(optionError, out _));
+            var chatDefinitions = chatDescriptor.RootElement.GetProperty("$defs");
+            Assert.Equal("float32", chatDefinitions.GetProperty("ChatOptionValue").GetProperty("format").GetString());
+            Assert.Equal("base64", chatDefinitions.GetProperty("InlineContinuationBytes").GetProperty("contentEncoding").GetString());
+            Assert.Equal("uri", chatDefinitions.GetProperty("AbsoluteUri").GetProperty("format").GetString());
+            Assert.Empty(chatDefinitions.GetProperty("JSON").EnumerateObject());
             Assert.Equal(
-                [optionError],
-                chatRoot.GetProperty("services")
-                    .GetProperty("chat-provider")
-                    .GetProperty("methods")
-                    .GetProperty("stream-chat")
-                    .GetProperty("errors")
+                ["null", "$ref"],
+                chatDefinitions.GetProperty("UtilityModelResolution")
+                    .GetProperty("oneOf")
                     .EnumerateArray()
-                    .Select(static error => error.GetString()));
+                    .Select(static branch => branch.TryGetProperty("type", out var type) ? type.GetString() : "$ref"));
             Assert.Equal(
-                "#/$defs/Date",
+                "#/$defs/CalendarDate",
                 chatDefinitions.GetProperty("AgentModelDescriptor")
                     .GetProperty("properties")
                     .GetProperty("releaseDate")
                     .GetProperty("$ref")
                     .GetString());
             Assert.Equal(
-                "#/$defs/Timestamp",
+                ["#/$defs/AgentChatUpdateEvent", "#/$defs/AgentChatErrorEvent"],
                 chatDefinitions.GetProperty("AgentChatStreamEvent")
+                    .GetProperty("oneOf")
+                    .EnumerateArray()
+                    .Select(static branch => branch.GetProperty("$ref").GetString()));
+            Assert.Equal(
+                "#/$defs/Timestamp",
+                chatDefinitions.GetProperty("AgentChatUpdateEvent")
                     .GetProperty("properties")
                     .GetProperty("createdAt")
+                    .GetProperty("$ref")
+                    .GetString());
+            Assert.Equal(
+                "#/$defs/AgentChatProviderFailureKind",
+                chatDefinitions.GetProperty("AgentChatErrorEvent")
+                    .GetProperty("properties")
+                    .GetProperty("errorFailureKind")
                     .GetProperty("$ref")
                     .GetString());
         }
@@ -398,18 +351,25 @@ public sealed partial class RepositoryArchitectureTests
                    "Contracts",
                    "agent-owner-runtime.rpc.json"))))
         {
-            var ownerDefinitions = ownerDescriptor.RootElement.GetProperty("$defs");
-            var date = ownerDefinitions.GetProperty("Date");
+            var ownerRoot = ownerDescriptor.RootElement;
+            Assert.Equal("sunder.rpc.values.v1", ownerRoot.GetProperty("schemaProfile").GetString());
+            Assert.Equal("2.0.0", ownerRoot.GetProperty("version").GetString());
+            var ownerDefinitions = ownerRoot.GetProperty("$defs");
+            var date = ownerDefinitions.GetProperty("ModelReleaseDate");
             Assert.Equal("string", date.GetProperty("type").GetString());
-            Assert.Equal(10, date.GetProperty("minLength").GetInt32());
-            Assert.Equal(10, date.GetProperty("maxLength").GetInt32());
+            Assert.Equal("date", date.GetProperty("format").GetString());
             Assert.Equal(
-                "#/$defs/Date",
+                "#/$defs/ModelReleaseDate",
                 ownerDefinitions.GetProperty("AgentModelDescriptor")
                     .GetProperty("properties")
                     .GetProperty("releaseDate")
                     .GetProperty("$ref")
                     .GetString());
+            Assert.Equal(
+                "content-reference",
+                ownerDefinitions.GetProperty("ContentReference").GetProperty("logicalType").GetString());
+            Assert.True(ownerDefinitions.TryGetProperty("JsonText", out _));
+            Assert.False(ownerDefinitions.TryGetProperty("AgentAttachmentTransferRequest", out _));
             Assert.False(ownerDefinitions.TryGetProperty("DateOnly", out _));
             Assert.False(ownerDefinitions.TryGetProperty("DayOfWeek", out _));
         }
@@ -418,19 +378,9 @@ public sealed partial class RepositoryArchitectureTests
                    contractsRoot,
                    "run-control.rpc.json"))))
         {
-            const string optionError = "agent.chat.option-not-representable";
-            var runControlRoot = runControlDescriptor.RootElement;
-            Assert.Contains(optionError, runControlRoot.GetProperty("$defs").GetProperty("Nullable7").GetProperty("description").GetString(), StringComparison.Ordinal);
-            Assert.True(runControlRoot.GetProperty("errors").TryGetProperty(optionError, out _));
-            Assert.Equal(
-                [optionError],
-                runControlRoot.GetProperty("services")
-                    .GetProperty("run-control")
-                    .GetProperty("methods")
-                    .GetProperty("stream-chat")
-                    .GetProperty("errors")
-                    .EnumerateArray()
-                    .Select(static error => error.GetString()));
+            var definitions = runControlDescriptor.RootElement.GetProperty("$defs");
+            Assert.Equal("float32", definitions.GetProperty("ChatOptionValue").GetProperty("format").GetString());
+            Assert.Equal(2, definitions.GetProperty("AgentChatStreamEvent").GetProperty("oneOf").GetArrayLength());
         }
 
         var assembly = typeof(Sunder.Package.Agent.Contracts.Models.AgentEmbeddingGenerationResult).Assembly;
@@ -443,17 +393,24 @@ public sealed partial class RepositoryArchitectureTests
             assembly.GetType("Sunder.Package.Agent.Protocol.Generated.EmbeddingProvider.AgentEmbeddingGenerationResult")!
                 .GetProperty("Values")!.PropertyType);
         Assert.Equal(
-            typeof(double?),
+            typeof(float?),
             assembly.GetType("Sunder.Package.Agent.Protocol.Generated.ChatProvider.AgentChatOptions")!
                 .GetProperty("Temperature")!.PropertyType);
         Assert.Equal(
-            typeof(Guid?),
-            assembly.GetType("Sunder.Package.Agent.Protocol.Generated.RunControl.AgentSessionRecord")!
-                .GetProperty("ParentRunId")!.PropertyType);
+            typeof(byte[]),
+            assembly.GetType("Sunder.Package.Agent.Protocol.Generated.ChatProvider.AgentChatOptions")!
+                .GetProperty("ContinuationHandle")!.PropertyType);
         Assert.Equal(
-            typeof(string),
+            typeof(SunderRpcOffsetDateTime),
             assembly.GetType("Sunder.Package.Agent.Protocol.Generated.RunControl.AgentTurnRecord")!
                 .GetProperty("UpdatedAtUtc")!.PropertyType);
+        Assert.Equal(
+            typeof(SunderRpcOffsetDateTime?),
+            typeof(AgentChatUpdateEvent).GetProperty(nameof(AgentChatUpdateEvent.CreatedAt))!.PropertyType);
+        Assert.Equal(
+            typeof(SunderRpcOptional<JsonElement>),
+            typeof(AgentChatContent).GetProperty(nameof(AgentChatContent.Json))!.PropertyType);
+        Assert.Null(assembly.GetType("Sunder.Package.Agent.Protocol.AgentRpcOptional`1"));
     }
 
     [Fact]
@@ -847,6 +804,102 @@ public sealed partial class RepositoryArchitectureTests
         Assert.DoesNotContain("SaveWorkspaceEditor", executionSource, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void AppAsyncEntryPoints_UseReviewedPresentationBoundaries()
+    {
+        var sourceRoot = Path.Combine(AgentPackageRepositoryInventory.RepositoryRoot.FullName, "src");
+        var sourceFiles = Directory.EnumerateFiles(sourceRoot, "*.cs", SearchOption.AllDirectories)
+            .Where(AgentPackageRepositoryInventory.IsSourceFile)
+            .ToArray();
+        var asyncVoidMethods = sourceFiles
+            .SelectMany(path => AsyncVoidMethodPattern().Matches(File.ReadAllText(path))
+                .Select(match => $"{NormalizePath(Path.GetRelativePath(sourceRoot, path))}::{match.Groups["method"].Value}"))
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        Assert.Equal(
+            ["Sunder.Package.Agent.Shared/Presentation/PresentationTaskScope.cs::OnTaskCompletedAsync"],
+            asyncVoidMethods.Select(static value => value.Replace('\\', '/')));
+
+        var unreviewedCommands = new List<string>();
+        foreach (var path in sourceFiles)
+        {
+            var source = File.ReadAllText(path);
+            var matches = AsyncRelayCommandPattern().Matches(source).ToArray();
+            for (var index = 0; index < matches.Length; index++)
+            {
+                var match = matches[index];
+                var end = index + 1 < matches.Length ? matches[index + 1].Index : source.Length;
+                var implementation = source[match.Index..end];
+                var id = $"{Path.GetRelativePath(sourceRoot, path).Replace('\\', '/')}::{match.Groups["method"].Value}";
+                if (implementation.Contains("_operations.RunAsync", StringComparison.Ordinal)
+                    || implementation.Contains("RunOperationAsync", StringComparison.Ordinal)
+                    || implementation.Contains("RunPresentationOperationAsync", StringComparison.Ordinal)
+                    || implementation.Contains("_presentationOperations.RunAsync", StringComparison.Ordinal)
+                    || ExplicitLocalAsyncRelayCommandBoundaries.Contains(id))
+                {
+                    continue;
+                }
+
+                unreviewedCommands.Add(id);
+            }
+        }
+
+        Assert.True(
+            unreviewedCommands.Count == 0,
+            "Async RelayCommand operations must use PresentationOperationObserver or a reviewed local boundary:"
+            + Environment.NewLine
+            + string.Join(Environment.NewLine, unreviewedCommands.Order(StringComparer.Ordinal)));
+    }
+
+    private static readonly IReadOnlySet<string> ExplicitLocalAsyncRelayCommandBoundaries =
+        new HashSet<string>(StringComparer.Ordinal)
+        {
+            "Sunder.Package.Agent.Execution.Docker/App/DockerExecutionSettingsViewModel.Commands.cs::RetryInitializationAsync",
+            "Sunder.Package.Agent.Execution.Local/App/LocalExecutionSettingsViewModel.cs::DeleteSelectedShellAsync",
+            "Sunder.Package.Agent.Execution.Local/App/LocalExecutionSettingsViewModel.cs::RetryInitializationAsync",
+            "Sunder.Package.Agent.Execution.Local/App/LocalExecutionSettingsViewModel.cs::SaveExecutionSettingsAsync",
+            "Sunder.Package.Agent.Execution.Local/App/LocalExecutionSettingsViewModel.cs::SaveShellsAsync",
+            "Sunder.Package.Agent.Mcp/McpSettingsOperationsViewModel.cs::AuthorizeMcpServerAsync",
+            "Sunder.Package.Agent.Mcp/McpSettingsOperationsViewModel.cs::DeleteAsync",
+            "Sunder.Package.Agent.Mcp/McpSettingsOperationsViewModel.cs::DisconnectMcpServerAsync",
+            "Sunder.Package.Agent.Mcp/McpSettingsOperationsViewModel.cs::DisconnectMcpServerOAuthAsync",
+            "Sunder.Package.Agent.Mcp/McpSettingsOperationsViewModel.cs::DiscoverToolsAsync",
+            "Sunder.Package.Agent.Mcp/McpSettingsOperationsViewModel.cs::ImportCommonConfigurationsAsync",
+            "Sunder.Package.Agent.Mcp/McpSettingsOperationsViewModel.cs::ReconnectMcpServerAsync",
+            "Sunder.Package.Agent.Mcp/McpSettingsOperationsViewModel.cs::SaveAsync",
+            "Sunder.Package.Agent.Provider.Anthropic/App/AnthropicSettingsViewModel.cs::SaveSettingsAsync",
+            "Sunder.Package.Agent.Provider.Gemini/App/GeminiSettingsViewModel.cs::SaveSettingsAsync",
+            "Sunder.Package.Agent.Provider.LMStudio/App/LMStudioSettingsViewModel.cs::RetryInitializationAsync",
+            "Sunder.Package.Agent.Provider.LMStudio/App/LMStudioSettingsViewModel.cs::SaveConnectionAsync",
+            "Sunder.Package.Agent.Provider.LMStudio/App/LMStudioSettingsViewModel.cs::SaveSettingsAsync",
+            "Sunder.Package.Agent.Provider.LMStudio/App/LMStudioSettingsViewModel.cs::SaveUtilityModelAsync",
+            "Sunder.Package.Agent.Provider.Shared/ApiKeySettingsState.cs::ClearCredentialAsync",
+            "Sunder.Package.Agent.Provider.Shared/ApiKeySettingsState.cs::SaveCredentialAsync",
+            "Sunder.Package.Agent.Provider.Shared/UtilityModelSettingsState.cs::SaveUtilityModelAsync",
+            "Sunder.Package.Agent.Skills/PackageViews/SkillSettingsViewModel.cs::DeleteSelectedSkillAsync",
+            "Sunder.Package.Agent.Skills/PackageViews/SkillSettingsViewModel.cs::ImportCommonSkillFoldersAsync",
+            "Sunder.Package.Agent.Skills/PackageViews/SkillSettingsViewModel.cs::ImportGitHubAsync",
+            "Sunder.Package.Agent.Subagents/PackageViews/SubagentsViewModel.Operations.cs::CreateSubagentAsync",
+            "Sunder.Package.Agent.Subagents/PackageViews/SubagentsViewModel.Operations.cs::DeleteSubagentAsync",
+            "Sunder.Package.Agent.Subagents/PackageViews/SubagentsViewModel.Operations.cs::OpenSelectedChatProviderSettingsAsync",
+            "Sunder.Package.Agent.Subagents/PackageViews/SubagentsViewModel.Operations.cs::ReloadSubagentChatProvidersAsync",
+            "Sunder.Package.Agent.Subagents/PackageViews/SubagentsViewModel.Operations.cs::SaveSubagentAsync",
+            "Sunder.Package.Agent/PackageViews/AgentHistorySearchViewModel.Search.cs::ClearQueryAsync",
+            "Sunder.Package.Agent/PackageViews/AgentHistorySearchViewModel.Search.cs::EscapeAsync",
+            "Sunder.Package.Agent/PackageViews/AgentHistorySearchViewModel.Search.cs::LoadMoreAsync",
+            "Sunder.Package.Agent/PackageViews/AgentHistorySearchViewModel.Search.cs::OpenResultAsync",
+            "Sunder.Package.Agent/PackageViews/AgentHistorySearchViewModel.Search.cs::SearchNowAsync",
+            "Sunder.Package.Agent/PackageViews/AgentProfilesViewModel.Operations.cs::CreateProfileAsync",
+            "Sunder.Package.Agent/PackageViews/AgentProfilesViewModel.Operations.cs::DeleteProfileAsync",
+            "Sunder.Package.Agent/PackageViews/AgentProfilesViewModel.Operations.cs::OpenSelectedChatProviderSettingsAsync",
+            "Sunder.Package.Agent/PackageViews/AgentProfilesViewModel.Operations.cs::OpenSelectedEmbeddingProviderSettingsAsync",
+            "Sunder.Package.Agent/PackageViews/AgentProfilesViewModel.Operations.cs::ReloadProfileProvidersAsync",
+            "Sunder.Package.Agent/PackageViews/AgentProfilesViewModel.Operations.cs::SaveProfileAsync",
+            "Sunder.Package.Agent/PackageViews/AgentWorkspacesViewModel.Save.cs::SaveWorkspace",
+            "Sunder.Package.Agent/PackageViews/AgentWorkspacesViewModel.cs::CreateWorkspaceAsync",
+            "Sunder.Package.Agent/PackageViews/AgentWorkspacesViewModel.cs::DeleteWorkspaceAsync",
+        };
+
     private static string GetSingleProperty(XDocument document, string propertyName)
         => Assert.Single(document.Descendants(propertyName)).Value;
 
@@ -865,4 +918,10 @@ public sealed partial class RepositoryArchitectureTests
 
     [GeneratedRegex("SunderRpcErrorKind\\.Domain,\\s*\"(?<code>[a-z0-9.-]+)\"", RegexOptions.CultureInvariant)]
     private static partial Regex DomainErrorPattern();
+
+    [GeneratedRegex(@"\basync\s+void\s+(?<method>[A-Za-z_][A-Za-z0-9_]*)\s*\(", RegexOptions.CultureInvariant)]
+    private static partial Regex AsyncVoidMethodPattern();
+
+    [GeneratedRegex(@"\[RelayCommand(?:\([^\]]*\))?\]\s*(?:private|public|internal)\s+(?:static\s+)?(?:async\s+)?(?:Task|ValueTask)(?:<[^;{]+>)?\s+(?<method>[A-Za-z_][A-Za-z0-9_]*)\s*\(", RegexOptions.CultureInvariant)]
+    private static partial Regex AsyncRelayCommandPattern();
 }
