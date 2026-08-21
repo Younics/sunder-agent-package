@@ -1,0 +1,65 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AssemblyName>Sunder.Package.Agent.Provider.OpenAI</AssemblyName>
+    <RootNamespace>Sunder.Package.Agent.Provider.OpenAI</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <SunderPackageFamilyId>sunder.package.agent.provider.openai</SunderPackageFamilyId>
+    <SunderPackageRole>worker</SunderPackageRole>
+    <SunderPackagePrimaryProject>true</SunderPackagePrimaryProject>
+    <SunderPackageAppProject>App\Sunder.Package.Agent.Provider.OpenAI.App.csproj</SunderPackageAppProject>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <OutputType>Exe</OutputType>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">$(NETCoreSdkRuntimeIdentifier)</RuntimeIdentifier>
+    <RuntimeIdentifiers>win-x64;win-arm64;linux-x64;linux-arm64;osx-x64;osx-arm64</RuntimeIdentifiers>
+    <SelfContained>true</SelfContained>
+    <UseAppHost>true</UseAppHost>
+    <PublishSingleFile>false</PublishSingleFile>
+    <SunderPackageAssetsDirectory>$(MSBuildProjectDirectory)\Assets</SunderPackageAssetsDirectory>
+    <SunderGeneratedPackageManifest>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\obj\$(Configuration)\$(TargetFramework)\$(RuntimeIdentifier)\sunder-package.json'))</SunderGeneratedPackageManifest>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="OpenAI" />
+    <ProjectReference Include="Shared\Sunder.Package.Agent.Provider.OpenAI.Shared.csproj" />
+    <ProjectReference Include="..\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
+    <Compile Include="Worker\**\*.cs"
+             Exclude="Worker\bin\**;Worker\obj\**" />
+    <Compile Include="OpenAiExceptionMapper.cs" />
+    <Compile Include="OpenAiModelOptionsChatClient.cs" />
+    <Compile Include="OpenAiPackageAuthHandler.cs" />
+    <Compile Include="OpenAiErrorDiagnosticExtractor.cs" />
+    <Compile Include="OpenAiAgentProvider.cs" />
+    <Compile Include="OpenAiCodexChatClient.cs" />
+    <Compile Include="OpenAiEmbeddingProvider.cs" />
+    <Compile Include="CodexHttpClientFactory.cs" />
+    <Compile Include="PackageMetadata.cs" />
+    <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="Management\OpenAiManagementRpcProvider.cs" />
+    <Compile Include="Auth\*.cs" />
+    <Compile Include="Transport\*.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Provider.Shared\*.cs"
+             Exclude="..\Sunder.Package.Agent.Provider.Shared\ApiKeySettingsState.cs;..\Sunder.Package.Agent.Provider.Shared\ApiKeyUtilitySettingsState.cs;..\Sunder.Package.Agent.Provider.Shared\ProviderConfigurationSections.cs;..\Sunder.Package.Agent.Provider.Shared\ProviderCredentialSettingsRuntime.cs;..\Sunder.Package.Agent.Provider.Shared\ProviderModelCatalog.cs;..\Sunder.Package.Agent.Provider.Shared\ProviderModelId.cs;..\Sunder.Package.Agent.Provider.Shared\ProviderUtilityModelSelection.cs;..\Sunder.Package.Agent.Provider.Shared\UtilityModelSettingsState.cs"
+             Link="Provider.Shared\%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <SunderContractBundle Include="Shared\Contracts\openai-management.rpc.json"
+                          ContractId="sunder.package.agent.provider.openai.management"
+                            Version="1.0.0"
+                          DescriptorPath="contracts/openai-management.rpc.json"
+                          Exposure="package" />
+    <SunderRpcProvider Include="openai.management"
+                       ContractId="sunder.package.agent.provider.openai.management"
+                        ContractVersion="1.0.0"
+                       Role="runtime"
+                       Audience="owner" />
+    <SunderPackageTarget Include="runtime/$(RuntimeIdentifier)"
+                         Role="runtime"
+                         Rid="$(RuntimeIdentifier)"
+                         Kind="worker" />
+  </ItemGroup>
+
+</Project>

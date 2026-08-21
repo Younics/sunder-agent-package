@@ -16,7 +16,7 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject,
     private readonly IPackageContext _packageContext;
     private readonly OpenAiAuthPresentationService _authPresentation;
     private readonly PackageCallbackFlowRunner _callbackFlow;
-    private readonly PresentationTaskScope _tasks = new();
+    private readonly CancellationTokenSource _lifetimeCancellation = new();
     private readonly PresentationOperationObserver _operations;
     private readonly IPresentationDispatcher _uiDispatcher;
     private readonly object _initializationSyncRoot = new();
@@ -115,7 +115,7 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject,
         lock (_initializationSyncRoot)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            initialization = _initialization ??= InitializeCoreAsync(_tasks.CancellationToken);
+            initialization = _initialization ??= InitializeCoreAsync(_lifetimeCancellation.Token);
         }
 
         return cancellationToken.CanBeCanceled
@@ -295,7 +295,7 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject,
 
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken,
-            _tasks.CancellationToken);
+            _lifetimeCancellation.Token);
         Interlocked.Increment(ref _statusGeneration);
         IsBusy = true;
         IsAuthorizing = true;
@@ -380,7 +380,9 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject,
 
     private async Task RefreshStatusCoreAsync(CancellationToken cancellationToken = default)
     {
-        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _tasks.CancellationToken);
+        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            _lifetimeCancellation.Token);
         cancellationToken = lifetime.Token;
         var statusGeneration = Interlocked.Increment(ref _statusGeneration);
         var authMode = SelectedAuthMode?.ModeId
@@ -483,7 +485,8 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject,
         _disposed = true;
         Interlocked.Increment(ref _statusGeneration);
         _operations.Dispose();
-        _tasks.Dispose();
+        _lifetimeCancellation.Cancel();
+        _lifetimeCancellation.Dispose();
         ApiKeySettings.Dispose();
         UtilityModelSettings.Dispose();
     }

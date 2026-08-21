@@ -7,13 +7,7 @@ namespace Sunder.Package.Agent.Runtime;
 
 internal static class AgentRuntimePayloadLimits
 {
-    internal const int StandardValueBytes = 8 * 1024 * 1024;
-    internal const int StandardContentReferenceBytes = 64 * 1024 * 1024;
     internal const int EnvelopeReserveBytes = 64 * 1024;
-    internal const int MinimumValueBytes = 1024 * 1024;
-    internal const int MaximumValueBytes = 32 * 1024 * 1024;
-    internal const int MinimumContentReferenceBytes = 1024 * 1024;
-    internal const int MaximumContentReferenceBytes = 256 * 1024 * 1024;
 
     internal static AgentTransportProfile StandardFallbackProfile => AgentTransportProfile.StandardFallback;
 
@@ -200,25 +194,6 @@ internal static class AgentRuntimePayloadLimits
             // duplicates dashboard data and can make one stream frame unbounded.
             Profile = null,
             Workspace = null,
-            Session = change.Session is null
-                ? null
-                : change.Session with
-                {
-                    Session = change.Session.Session with
-                    {
-                        Title = Truncate(change.Session.Session.Title, 512),
-                        AgentKind = TruncateNullable(change.Session.Session.AgentKind, 128),
-                    },
-                    Checkpoint = change.Session.Checkpoint is null
-                        ? null
-                        : change.Session.Checkpoint with
-                        {
-                            Summary = TruncateNullable(change.Session.Checkpoint.Summary, 2048),
-                        },
-                },
-            RunActivity = change.RunActivity is null
-                ? null
-                : change.RunActivity with { Text = Truncate(change.RunActivity.Text, 16 * 1024) },
             Turn = change.Turn is null
                 ? null
                 : TranscriptTurnTransportProjection.ProjectToolHeaders(change.Turn),
@@ -310,9 +285,6 @@ internal static class AgentRuntimePayloadLimits
             : TranscriptPageCursor.FromTurn(continuationTurn);
     }
 
-    private static string Truncate(string value, int maximumCharacters)
-        => value.Length <= maximumCharacters ? value : value[..maximumCharacters];
-
     private static string? TruncateNullable(string? value, int maximumCharacters)
-        => value is null ? null : Truncate(value, maximumCharacters);
+        => value is null || value.Length <= maximumCharacters ? value : value[..maximumCharacters];
 }

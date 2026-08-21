@@ -6,13 +6,23 @@ internal sealed record RuntimePackageProject(
     string Name,
     string ProjectPath,
     string MetadataPath,
-    string AggregateProjectPath,
     string? AppProjectPath,
     IReadOnlyList<string> ProtocolProjectPaths)
 {
     public string DirectoryPath => Path.GetDirectoryName(ProjectPath)!;
 
     public string PackageDirectoryPath => Path.GetDirectoryName(MetadataPath)!;
+
+    public string ProgramPath
+    {
+        get
+        {
+            var rootProgram = Path.Combine(DirectoryPath, "Program.cs");
+            return File.Exists(rootProgram)
+                ? rootProgram
+                : Path.Combine(DirectoryPath, "Worker", "Program.cs");
+        }
+    }
 
     public string? FamilyId => GetProperty("SunderPackageFamilyId");
 
@@ -29,7 +39,6 @@ internal sealed record RuntimePackageProject(
         ProjectPath,
         .. AppProjectPath is null ? [] : new[] { AppProjectPath },
         .. ProtocolProjectPaths,
-        AggregateProjectPath,
     ];
 
     private string? GetProperty(string name)
@@ -92,7 +101,6 @@ internal static class AgentPackageRepositoryInventory
                     .SingleOrDefault()))
             .ToArray();
         var worker = projects.Single(static project => string.Equals(project.Role, "worker", StringComparison.Ordinal));
-        var aggregate = projects.Single(static project => string.Equals(project.Role, "aggregate", StringComparison.Ordinal));
         var app = projects.SingleOrDefault(static project => string.Equals(project.Role, "app", StringComparison.Ordinal));
         var protocols = projects
             .Where(static project => string.Equals(project.Role, "protocol", StringComparison.Ordinal))
@@ -108,7 +116,6 @@ internal static class AgentPackageRepositoryInventory
             name,
             worker.Path,
             metadataPath,
-            aggregate.Path,
             app?.Path,
             protocols);
     }

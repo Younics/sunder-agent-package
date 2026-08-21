@@ -59,6 +59,10 @@ internal static class McpWorkerConfiguration
                 AgentRpcContractIds.ToolSource,
                 AgentToolSourceRpc.CreateHandler(toolSource)),
             Register(
+                "mcp.tools.observed",
+                AgentRpcContractIds.ObservedToolExecution,
+                AgentObservedToolExecutionRpc.CreateHandler(toolSource)),
+            Register(
                 "mcp.selectable.capabilities",
                 AgentRpcContractIds.SelectableCapabilityProvider,
                 AgentSelectableCapabilityProviderRpc.CreateHandler(toolSource)),

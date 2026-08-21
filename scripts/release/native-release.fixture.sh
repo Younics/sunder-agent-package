@@ -28,7 +28,7 @@ while IFS= read -r lock_path; do
   cp "$lock_path" "$fixture_root/$relative_path"
 done < <(find "$repository_root/src" "$repository_root/tests" -name packages.release.lock.json -type f -print)
 
-worker_lock_relative="$(jq -r '.packages[] | select(.workerProjectPath != null) | .workerProjectPath' "$fixture_root/packages.json" | sed -n '1p')"
+worker_lock_relative="$(jq -r '.packages[] | select(.artifactType == "sunderpkg") | .projectPath' "$fixture_root/packages.json" | sed -n '1p')"
 worker_lock="$fixture_root/$(dirname "$worker_lock_relative")/packages.release.lock.json"
 jq '.dependencies["net10.0"]["Sunder.Sdk.Worker"].resolved = "1.1.1"' "$worker_lock" > "$worker_lock.changed"
 mv "$worker_lock.changed" "$worker_lock"

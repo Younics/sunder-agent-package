@@ -657,6 +657,12 @@ public sealed class SkillPackageTests
             remove { }
         }
 
+        public event Action? ResetRequired
+        {
+            add { }
+            remove { }
+        }
+
         public IReadOnlyList<AgentSessionRecord> ListSessions() => [];
 
         public IReadOnlyList<AgentSessionRecord> ListSessionsForProfile(string profileId) => [];

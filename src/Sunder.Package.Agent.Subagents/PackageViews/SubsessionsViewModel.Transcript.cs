@@ -102,9 +102,8 @@ public sealed partial class SubsessionsViewModel
         }
 
         var ticket = _timeline.BeginInitialLoad(sessionId.Value, forceReplacement);
-        var operation = LoadTranscriptAsync(ticket);
+        var operation = _tasks.Track(_ => LoadTranscriptAsync(ticket));
         Volatile.Write(ref _transcriptLoadOperation, operation);
-        _tasks.Run(operation);
     }
 
     private async Task LoadTranscriptAsync(TranscriptLoadTicket ticket)

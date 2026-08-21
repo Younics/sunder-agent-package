@@ -57,4 +57,7 @@ public sealed record AgentToolExecutionContext(
     /// <remarks>Target-backed tools must propagate this value to <see cref="AgentExecutionTargetContext.ExpectedConfigurationGeneration"/>.</remarks>
     [JsonIgnore]
     public string? ExecutionTargetConfigurationGeneration { get; init; }
+
+    [JsonIgnore]
+    internal Action? DispatchStarted { get; init; }
 }

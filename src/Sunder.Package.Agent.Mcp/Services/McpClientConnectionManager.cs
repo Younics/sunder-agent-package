@@ -725,7 +725,7 @@ public sealed partial class McpClientConnectionManager : IAsyncDisposable
 
                 _activeLeaseCount++;
                 Touch();
-                lease = new McpClientInvocationLease(Connection.Client, ReleaseLease);
+                lease = new McpClientInvocationLease(Connection, ReleaseLease);
                 return true;
             }
         }

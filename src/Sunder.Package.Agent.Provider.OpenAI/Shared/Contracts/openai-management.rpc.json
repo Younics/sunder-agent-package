@@ -3,7 +3,7 @@
   "descriptorVersion": 2,
   "schemaProfile": "sunder.rpc.values.v1",
   "contractId": "sunder.package.agent.provider.openai.management",
-  "version": "2.0.0",
+  "version": "1.0.0",
   "errors": {
     "openai.management.failed": {
       "description": "The OpenAI management request failed."
@@ -15,37 +15,67 @@
         "get-auth-status": {
           "kind": "unary",
           "idempotency": "idempotent",
-          "errors": ["openai.management.failed"],
-          "requestSchema": { "$ref": "#/$defs/ManagementQuery" },
-          "responseSchema": { "$ref": "#/$defs/AuthStatus" }
+          "errors": [
+            "openai.management.failed"
+          ],
+          "requestSchema": {
+            "$ref": "#/$defs/ManagementQuery"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AuthStatus"
+          }
         },
         "disconnect-auth": {
           "kind": "unary",
           "idempotency": "idempotent",
-          "errors": ["openai.management.failed"],
-          "requestSchema": { "$ref": "#/$defs/ManagementQuery" },
-          "responseSchema": { "$ref": "#/$defs/AuthStatus" }
+          "errors": [
+            "openai.management.failed"
+          ],
+          "requestSchema": {
+            "$ref": "#/$defs/ManagementQuery"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/AuthStatus"
+          }
         },
         "get-credential-status": {
           "kind": "unary",
           "idempotency": "idempotent",
-          "errors": ["openai.management.failed"],
-          "requestSchema": { "$ref": "#/$defs/ManagementQuery" },
-          "responseSchema": { "$ref": "#/$defs/CredentialStatus" }
+          "errors": [
+            "openai.management.failed"
+          ],
+          "requestSchema": {
+            "$ref": "#/$defs/ManagementQuery"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/CredentialStatus"
+          }
         },
         "set-credential": {
           "kind": "unary",
           "idempotency": "idempotent",
-          "errors": ["openai.management.failed"],
-          "requestSchema": { "$ref": "#/$defs/CredentialRequest" },
-          "responseSchema": { "$ref": "#/$defs/CredentialStatus" }
+          "errors": [
+            "openai.management.failed"
+          ],
+          "requestSchema": {
+            "$ref": "#/$defs/CredentialRequest"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/CredentialStatus"
+          }
         },
         "clear-credential": {
           "kind": "unary",
           "idempotency": "idempotent",
-          "errors": ["openai.management.failed"],
-          "requestSchema": { "$ref": "#/$defs/ManagementQuery" },
-          "responseSchema": { "$ref": "#/$defs/CredentialStatus" }
+          "errors": [
+            "openai.management.failed"
+          ],
+          "requestSchema": {
+            "$ref": "#/$defs/ManagementQuery"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/CredentialStatus"
+          }
         }
       }
     }
@@ -59,39 +89,57 @@
     },
     "StatusMessage": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 512
+      "minLength": 1
     },
     "AuthStatus": {
       "type": "object",
       "properties": {
-        "isConnected": { "type": "boolean" },
-        "hasCachedSession": { "type": "boolean" },
-        "expiresAtUtc": { "type": "string", "format": "date-time" },
-        "errorMessage": { "$ref": "#/$defs/StatusMessage" }
+        "isConnected": {
+          "type": "boolean"
+        },
+        "hasCachedSession": {
+          "type": "boolean"
+        },
+        "expiresAtUtc": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "errorMessage": {
+          "$ref": "#/$defs/StatusMessage"
+        }
       },
-      "required": ["isConnected", "hasCachedSession"],
+      "required": [
+        "isConnected",
+        "hasCachedSession"
+      ],
       "additionalProperties": false
     },
     "ApiKey": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 16384
+      "minLength": 1
     },
     "CredentialRequest": {
       "type": "object",
       "properties": {
-        "credential": { "$ref": "#/$defs/ApiKey" }
+        "credential": {
+          "$ref": "#/$defs/ApiKey"
+        }
       },
-      "required": ["credential"],
+      "required": [
+        "credential"
+      ],
       "additionalProperties": false
     },
     "CredentialStatus": {
       "type": "object",
       "properties": {
-        "hasStoredCredential": { "type": "boolean" }
+        "hasStoredCredential": {
+          "type": "boolean"
+        }
       },
-      "required": ["hasStoredCredential"],
+      "required": [
+        "hasStoredCredential"
+      ],
       "additionalProperties": false
     }
   }

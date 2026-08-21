@@ -3,7 +3,7 @@
   "descriptorVersion": 2,
   "schemaProfile": "sunder.rpc.values.v1",
   "contractId": "sunder.package.agent.subagents.owner",
-  "version": "2.0.0",
+  "version": "1.0.0",
   "errors": {
     "subagents.owner.operation-failed": {
       "description": "The requested Subagents operation could not be completed."
@@ -15,23 +15,41 @@
         "query": {
           "kind": "unary",
           "idempotency": "idempotent",
-          "errors": ["subagents.owner.operation-failed"],
-          "requestSchema": { "$ref": "#/$defs/OwnerContent" },
-          "responseSchema": { "$ref": "#/$defs/OwnerContent" }
+          "errors": [
+            "subagents.owner.operation-failed"
+          ],
+          "requestSchema": {
+            "$ref": "#/$defs/OwnerContent"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/OwnerContent"
+          }
         },
         "command": {
           "kind": "unary",
           "idempotency": "none",
-          "errors": ["subagents.owner.operation-failed"],
-          "requestSchema": { "$ref": "#/$defs/OwnerContent" },
-          "responseSchema": { "$ref": "#/$defs/OwnerContent" }
+          "errors": [
+            "subagents.owner.operation-failed"
+          ],
+          "requestSchema": {
+            "$ref": "#/$defs/OwnerContent"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/OwnerContent"
+          }
         },
         "changes": {
           "kind": "server-stream",
           "idempotency": "idempotent",
-          "errors": ["subagents.owner.operation-failed"],
-          "requestSchema": { "$ref": "#/$defs/ChangeSubscription" },
-          "eventSchema": { "$ref": "#/$defs/OwnerContent" }
+          "errors": [
+            "subagents.owner.operation-failed"
+          ],
+          "requestSchema": {
+            "$ref": "#/$defs/ChangeSubscription"
+          },
+          "eventSchema": {
+            "$ref": "#/$defs/OwnerContent"
+          }
         }
       }
     }
@@ -43,23 +61,30 @@
     },
     "ChangeRevision": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 9007199254740991
+      "minimum": 0
     },
     "OwnerContent": {
       "type": "object",
       "properties": {
-        "content": { "$ref": "#/$defs/ContentReference" }
+        "content": {
+          "$ref": "#/$defs/ContentReference"
+        }
       },
-      "required": ["content"],
+      "required": [
+        "content"
+      ],
       "additionalProperties": false
     },
     "ChangeSubscription": {
       "type": "object",
       "properties": {
-        "afterRevision": { "$ref": "#/$defs/ChangeRevision" }
+        "afterRevision": {
+          "$ref": "#/$defs/ChangeRevision"
+        }
       },
-      "required": ["afterRevision"],
+      "required": [
+        "afterRevision"
+      ],
       "additionalProperties": false
     }
   }

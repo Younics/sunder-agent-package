@@ -3,6 +3,7 @@ using System.Text.Json;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
+using Sunder.Package.Agent.Shared.Presentation;
 
 namespace Sunder.Package.Agent.Shared.PackageViews;
 
@@ -131,7 +132,8 @@ internal sealed class TranscriptToolPresentationService(
 
             foreach (var field in PreferredHeaderFields)
             {
-                if (document.RootElement.TryGetProperty(field, out var property))
+                if (!ToolArgumentDisplay.IsSensitiveName(field)
+                    && document.RootElement.TryGetProperty(field, out var property))
                 {
                     return CompactValue(field, property);
                 }
@@ -139,7 +141,8 @@ internal sealed class TranscriptToolPresentationService(
 
             foreach (var property in document.RootElement.EnumerateObject())
             {
-                if (property.Value.ValueKind == JsonValueKind.String)
+                if (!ToolArgumentDisplay.IsSensitiveName(property.Name)
+                    && property.Value.ValueKind == JsonValueKind.String)
                 {
                     return CompactValue(property.Name, property.Value);
                 }
@@ -171,7 +174,13 @@ internal sealed class TranscriptToolPresentationService(
             return null;
         }
 
-        var normalized = value.Replace("\r\n", "\n").Trim();
+        var normalized = ToolArgumentDisplay.SanitizeInlineValue(value)
+            ?.Replace("\r\n", "\n")
+            .Trim();
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return null;
+        }
         var lines = normalized.Split('\n');
         if (lines.Length > MaxHeaderLines)
         {
@@ -190,9 +199,16 @@ internal sealed class TranscriptToolPresentationService(
             && !string.Equals(request.ArgumentsJson.Trim(), "{}", StringComparison.Ordinal))
         {
             builder.AppendLine("**Arguments**");
-            builder.AppendLine("```json");
-            builder.AppendLine(request.ArgumentsJson.Trim());
-            builder.AppendLine("```");
+            if (ToolArgumentDisplay.TryFormatRedactedJson(request.ArgumentsJson, out var formatted))
+            {
+                builder.AppendLine("```json");
+                builder.AppendLine(formatted);
+                builder.AppendLine("```");
+            }
+            else
+            {
+                builder.AppendLine("Arguments could not be displayed because the payload was invalid.");
+            }
         }
 
         if (!string.IsNullOrWhiteSpace(request.StructuredPayloadJson))

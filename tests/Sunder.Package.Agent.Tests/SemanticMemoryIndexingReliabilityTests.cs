@@ -859,6 +859,7 @@ public sealed class SemanticMemoryIndexingReliabilityTests
         public event Action<Guid>? SessionChanged { add { } remove { } }
         public event Action<Guid, AgentTurnRecord>? TurnChanged { add { } remove { } }
         public event Action<string>? ProfileChanged;
+        public event Action? ResetRequired { add { } remove { } }
 
         public IReadOnlyList<AgentSessionRecord> ListSessions() => [_session];
         public IReadOnlyList<AgentSessionRecord> ListSessionsForProfile(string profileId) => profileId == Profile.ProfileId ? [_session] : [];

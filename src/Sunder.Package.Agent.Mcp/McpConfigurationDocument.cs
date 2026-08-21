@@ -33,7 +33,6 @@ internal static class McpConfigurationDocument
             enabled = true,
             command = new[] { "npx", "-y", "@modelcontextprotocol/server-everything" },
             discoveryTimeout = 5000,
-            toolTimeout = 180000,
             env = new Dictionary<string, string>
             {
                 ["MY_API_KEY"] = "<insert-your-api-key-here>",
@@ -47,7 +46,6 @@ internal static class McpConfigurationDocument
             enabled = true,
             url = "https://my-mcp-server.com",
             discoveryTimeout = 5000,
-            toolTimeout = 180000,
             headers = new Dictionary<string, string>
             {
                 ["Authorization"] = "Bearer MY_API_KEY",
@@ -216,9 +214,9 @@ internal static class McpConfigurationDocument
                 "Local MCP configuration requires at least one command segment.");
         }
 
-        var legacyTimeoutMilliseconds = ReadOptionalPositiveInt(root, "timeout");
-        var discoveryTimeoutMilliseconds = ReadOptionalPositiveInt(root, "discoveryTimeout") ?? legacyTimeoutMilliseconds;
-        var toolTimeoutMilliseconds = ReadOptionalPositiveInt(root, "toolTimeout") ?? legacyTimeoutMilliseconds;
+        var legacyTimeoutMilliseconds = ReadOptionalInt(root, "timeout");
+        var discoveryTimeoutMilliseconds = ReadOptionalInt(root, "discoveryTimeout") ?? legacyTimeoutMilliseconds;
+        var toolTimeoutMilliseconds = ReadOptionalInt(root, "toolTimeout") ?? legacyTimeoutMilliseconds;
 
         return new ParsedEditorDocument(
             ConfiguredMcpTransportType.Stdio,
@@ -247,9 +245,9 @@ internal static class McpConfigurationDocument
                 "Remote MCP configuration requires 'url' to be an absolute URL.");
         }
 
-        var legacyTimeoutMilliseconds = ReadOptionalPositiveInt(root, "timeout");
-        var discoveryTimeoutMilliseconds = ReadOptionalPositiveInt(root, "discoveryTimeout") ?? legacyTimeoutMilliseconds;
-        var toolTimeoutMilliseconds = ReadOptionalPositiveInt(root, "toolTimeout") ?? legacyTimeoutMilliseconds;
+        var legacyTimeoutMilliseconds = ReadOptionalInt(root, "timeout");
+        var discoveryTimeoutMilliseconds = ReadOptionalInt(root, "discoveryTimeout") ?? legacyTimeoutMilliseconds;
+        var toolTimeoutMilliseconds = ReadOptionalInt(root, "toolTimeout") ?? legacyTimeoutMilliseconds;
         var oauth = ReadOAuth(root);
 
         return new ParsedEditorDocument(
@@ -370,16 +368,20 @@ internal static class McpConfigurationDocument
         };
     }
 
-    private static int? ReadOptionalPositiveInt(JsonElement root, string propertyName)
+    private static int? ReadOptionalInt(JsonElement root, string propertyName)
     {
         if (!root.TryGetProperty(propertyName, out var value))
         {
             return null;
         }
 
-        if (value.ValueKind != JsonValueKind.Number || !value.TryGetInt32(out var parsedValue) || parsedValue <= 0)
+        if (value.ValueKind != JsonValueKind.Number || !value.TryGetInt32(out var parsedValue))
         {
-            throw new McpManagementOperationException($"'{propertyName}' must be a positive integer.");
+            throw new McpManagementOperationException($"'{propertyName}' must be an integer.");
+        }
+        if (parsedValue < 0)
+        {
+            throw new McpManagementOperationException($"'{propertyName}' must be zero or a positive integer.");
         }
 
         return parsedValue;

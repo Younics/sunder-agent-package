@@ -144,7 +144,7 @@ public sealed partial class AgentChatViewModel
             ReconcileSessions([]);
             SelectedSession = null;
             SetDisplayedSession(null);
-            TrackBackgroundTask(_selectionState?.SaveSelectedSessionIdAsync((string?)null, null));
+            TrackBackgroundTask(() => _selectionState?.SaveSelectedSessionIdAsync((string?)null, null));
             RefreshSetupState();
             return;
         }
@@ -164,7 +164,8 @@ public sealed partial class AgentChatViewModel
         if (nextSession is null)
         {
             SetDisplayedSession(null);
-            TrackBackgroundTask(_selectionState?.SaveSelectedSessionIdAsync(SelectedWorkspace?.WorkspaceId, null));
+            TrackBackgroundTask(() =>
+                _selectionState?.SaveSelectedSessionIdAsync(SelectedWorkspace?.WorkspaceId, null));
             RefreshSetupState();
         }
     }

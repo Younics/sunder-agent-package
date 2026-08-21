@@ -143,6 +143,43 @@ public sealed class AgentToolExecutionLedgerTests
     }
 
     [Fact]
+    public void StartedExecution_CanCompleteAsAmbiguousDuringLiveRun()
+    {
+        using var scope = DurableRunTestScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        var (session, run, running) = CreateRunningRun(store);
+        var prepared = Assert.Single(store.TryPrepareToolExecutions(
+            run.Key,
+            running.Run.Epoch,
+            [Prepare("call-ambiguous", "mutate_remote", "{}", isReadOnly: false)])!);
+        _ = Assert.IsType<AgentToolExecutionStartResult>(store.TryStartToolExecution(
+            run.Key,
+            running.Run.Epoch,
+            prepared.Execution.ExecutionId,
+            prepared.Execution.InvocationFingerprint));
+
+        var completion = Assert.IsType<AgentToolExecutionCompletionResult>(store.TryCompleteToolExecution(
+            run.Key,
+            running.Run.Epoch,
+            prepared.Execution.ExecutionId,
+            AgentToolExecutionStatus.Ambiguous,
+            new AgentToolResult(
+                "mutate_remote",
+                "Outcome uncertain.",
+                Content: "Effects may have occurred.",
+                IsError: true,
+                ErrorCode: AgentToolResultErrorCodes.ToolOutcomeAmbiguous),
+            AgentToolResultErrorCodes.ToolOutcomeAmbiguous));
+
+        Assert.Equal(AgentToolExecutionStatus.Ambiguous, completion.Execution.Status);
+        var result = Assert.Single(
+            store.ListTurns(session.SessionId).SelectMany(turn => turn.Items),
+            item => item.Kind == AgentTurnItemKind.ToolResult);
+        Assert.Equal(AgentToolExecutionStatus.Ambiguous, result.ToolExecutionStatus);
+        Assert.Equal(AgentToolResultErrorCodes.ToolOutcomeAmbiguous, result.ErrorCode);
+    }
+
+    [Fact]
     public async Task StartedExecution_LiveHeaderMatchesAuthoritativeDetailAndExpands()
     {
         using var scope = DurableRunTestScope.Create();
@@ -455,6 +492,90 @@ public sealed class AgentToolExecutionLedgerTests
     }
 
     [Fact]
+    public void StartupRecovery_ConsumedApprovalBeforeDispatchFailsPreparedExecutionDefinitively()
+    {
+        using var scope = DurableRunTestScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        var (session, run, running) = CreateRunningRun(store);
+        var prepared = Assert.Single(store.TryPrepareToolExecutions(
+            run.Key,
+            running.Run.Epoch,
+            [Prepare("call-1", "mutate", "{}", isReadOnly: false)])!);
+        var request = CreatePermissionRequest(session, run, prepared.Execution);
+        Assert.NotNull(store.SavePendingPermissionRequestAndSuspendRun(request, running.Run.Epoch));
+        var claimed = Assert.IsType<AgentPendingPermissionRequestRecord>(
+            store.TryClaimPendingPermissionRequest(session.SessionId, request.RequestId).Request);
+        var suspendedRun = Assert.IsType<AgentDurableRunRecord>(store.GetRun(run.Key.RunId));
+        Assert.NotNull(store.ResumeClaimedPermissionRequest(claimed, suspendedRun.Epoch));
+        Assert.True(store.CommitClaimedPermissionApproval(
+            session.SessionId,
+            request.RequestId,
+            claimed.ClaimToken!));
+        Assert.Equal(
+            AgentToolExecutionStatus.Prepared,
+            store.GetToolExecution(prepared.Execution.ExecutionId)?.Status);
+        Assert.Null(store.GetPermissionRequest(session.SessionId, request.RequestId)?.ExecutionStartedAtUtc);
+
+        var recovered = new AgentLocalStore(scope.Context);
+        recovered.RecoverRuntimeState();
+
+        var execution = Assert.IsType<AgentToolExecutionRecord>(
+            recovered.GetToolExecution(prepared.Execution.ExecutionId));
+        Assert.Equal(AgentToolExecutionStatus.Failed, execution.Status);
+        Assert.Null(execution.StartedAtUtc);
+        Assert.Equal("tool-not-dispatched", execution.OutcomeCode);
+        Assert.Equal(
+            AgentPendingPermissionStatus.Failed,
+            recovered.GetPermissionRequest(session.SessionId, request.RequestId)?.Status);
+        Assert.DoesNotContain(
+            "ambiguous",
+            recovered.GetPermissionRequest(session.SessionId, request.RequestId)?.DecisionSummary ?? string.Empty,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void StartupRecovery_ApprovedDispatchRemainsAmbiguous()
+    {
+        using var scope = DurableRunTestScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        var (session, run, running) = CreateRunningRun(store);
+        var prepared = Assert.Single(store.TryPrepareToolExecutions(
+            run.Key,
+            running.Run.Epoch,
+            [Prepare("call-1", "mutate", "{}", isReadOnly: false)])!);
+        var request = CreatePermissionRequest(session, run, prepared.Execution);
+        Assert.NotNull(store.SavePendingPermissionRequestAndSuspendRun(request, running.Run.Epoch));
+        var claimed = Assert.IsType<AgentPendingPermissionRequestRecord>(
+            store.TryClaimPendingPermissionRequest(session.SessionId, request.RequestId).Request);
+        var suspendedRun = Assert.IsType<AgentDurableRunRecord>(store.GetRun(run.Key.RunId));
+        Assert.NotNull(store.ResumeClaimedPermissionRequest(claimed, suspendedRun.Epoch));
+        Assert.True(store.CommitClaimedPermissionApproval(
+            session.SessionId,
+            request.RequestId,
+            claimed.ClaimToken!));
+        var resumedRun = Assert.IsType<AgentDurableRunRecord>(store.GetRun(run.Key.RunId));
+        Assert.NotNull(store.TryStartToolExecution(
+            run.Key,
+            resumedRun.Epoch,
+            prepared.Execution.ExecutionId,
+            prepared.Execution.InvocationFingerprint));
+
+        var recovered = new AgentLocalStore(scope.Context);
+        recovered.RecoverRuntimeState();
+
+        Assert.Equal(
+            AgentToolExecutionStatus.Ambiguous,
+            recovered.GetToolExecution(prepared.Execution.ExecutionId)?.Status);
+        Assert.Equal(
+            AgentPendingPermissionStatus.Failed,
+            recovered.GetPermissionRequest(session.SessionId, request.RequestId)?.Status);
+        Assert.Contains(
+            "ambiguous",
+            recovered.GetPermissionRequest(session.SessionId, request.RequestId)?.DecisionSummary,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void LinkedPermissionCompletion_PreservesOwnerAcrossRestartAndCommitsResultTogether()
     {
         using var scope = DurableRunTestScope.Create();
@@ -476,11 +597,17 @@ public sealed class AgentToolExecutionLedgerTests
             restarted.TryClaimPendingPermissionRequest(session.SessionId, request.RequestId).Request);
         var suspendedRun = Assert.IsType<AgentDurableRunRecord>(restarted.GetRun(run.Key.RunId));
         Assert.NotNull(restarted.ResumeClaimedPermissionRequest(claimed, suspendedRun.Epoch));
-        Assert.True(restarted.MarkClaimedPermissionExecutionStarted(
+        Assert.True(restarted.CommitClaimedPermissionApproval(
             session.SessionId,
             request.RequestId,
             claimed.ClaimToken!));
         var resumedRun = Assert.IsType<AgentDurableRunRecord>(restarted.GetRun(run.Key.RunId));
+        Assert.Null(restarted.GetPermissionRequest(session.SessionId, request.RequestId)?.ExecutionStartedAtUtc);
+        Assert.NotNull(restarted.TryStartToolExecution(
+            run.Key,
+            resumedRun.Epoch,
+            prepared.Execution.ExecutionId,
+            prepared.Execution.InvocationFingerprint));
 
         var completion = restarted.TryCompleteToolExecution(
             run.Key,
@@ -523,11 +650,16 @@ public sealed class AgentToolExecutionLedgerTests
             store.TryClaimPendingPermissionRequest(session.SessionId, request.RequestId).Request);
         var suspendedRun = Assert.IsType<AgentDurableRunRecord>(store.GetRun(run.Key.RunId));
         Assert.NotNull(store.ResumeClaimedPermissionRequest(claimed, suspendedRun.Epoch));
-        Assert.True(store.MarkClaimedPermissionExecutionStarted(
+        Assert.True(store.CommitClaimedPermissionApproval(
             session.SessionId,
             request.RequestId,
             claimed.ClaimToken!));
         var resumedRun = Assert.IsType<AgentDurableRunRecord>(store.GetRun(run.Key.RunId));
+        Assert.NotNull(store.TryStartToolExecution(
+            run.Key,
+            resumedRun.Epoch,
+            prepared.Execution.ExecutionId,
+            prepared.Execution.InvocationFingerprint));
         Assert.NotNull(store.TryCompleteToolExecution(
             run.Key,
             resumedRun.Epoch,

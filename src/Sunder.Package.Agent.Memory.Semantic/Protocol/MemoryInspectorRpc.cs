@@ -284,18 +284,24 @@ internal static class MemoryInspectorRpcMapper
     internal static Wire.MemoryChanged ToWire(MemoryChanged value)
         => new()
         {
-            Kind = value.Kind == MemoryChangeKind.Session
-                ? Wire.MemoryChangeKind.Session
-                : Wire.MemoryChangeKind.Worker,
+            Kind = value.Kind switch
+            {
+                MemoryChangeKind.Session => Wire.MemoryChangeKind.Session,
+                MemoryChangeKind.Worker => Wire.MemoryChangeKind.Worker,
+                MemoryChangeKind.ResetRequired => Wire.MemoryChangeKind.ResetRequired,
+                _ => throw new InvalidDataException("The memory change kind is invalid."),
+            },
             SessionId = value.SessionId,
         };
 
     internal static MemoryChanged FromWire(Wire.MemoryChanged value)
-        => new(
-            value.Kind == Wire.MemoryChangeKind.Session
-                ? MemoryChangeKind.Session
-                : MemoryChangeKind.Worker,
-            value.SessionId);
+        => new(value.Kind switch
+        {
+            Wire.MemoryChangeKind.Session => MemoryChangeKind.Session,
+            Wire.MemoryChangeKind.Worker => MemoryChangeKind.Worker,
+            Wire.MemoryChangeKind.ResetRequired => MemoryChangeKind.ResetRequired,
+            _ => throw new InvalidDataException("The memory Runtime returned an unknown change kind."),
+        }, value.SessionId);
 
     private static Wire.StoredMemory ToWire(StoredMemoryRecord value)
         => new()

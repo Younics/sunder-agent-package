@@ -265,6 +265,12 @@ public sealed class AgentPresentationThreadAffinityTests
             remove { }
         }
 
+        public event Action? DashboardInvalidated
+        {
+            add { }
+            remove { }
+        }
+
         public IReadOnlyList<AgentProfileRecord> ListProfiles()
         {
             lock (_syncRoot)

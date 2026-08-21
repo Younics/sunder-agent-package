@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.HistorySearch;
+using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Services;
@@ -124,6 +125,32 @@ public sealed class AgentRuntimeTransportLimitTests
             negotiated);
     }
 
+    [Theory]
+    [InlineData(512 * 1024, 512 * 1024)]
+    [InlineData(64 * 1024 * 1024, 512 * 1024 * 1024)]
+    public void RuntimeTransportBudgets_AcceptRuntimeProfilesOutsideFormerAgentCeilings(
+        int valueBytes,
+        int contentBytes)
+    {
+        using var rpcState = new RegressionTestRpcState();
+        var budgets = new AgentRuntimeTransportBudgetState(new RegressionTestRpcClient(
+            rpcState,
+            "sunder.package.agent",
+            ResourceProfile(valueBytes, contentBytes)));
+
+        var negotiated = budgets.Negotiate(new AgentTransportProfileRequest(
+            valueBytes,
+            valueBytes,
+            valueBytes,
+            contentBytes,
+            RuntimeReported: true));
+
+        Assert.Equal(valueBytes, negotiated.RequestValueBytes);
+        Assert.Equal(valueBytes, negotiated.ResponseValueBytes);
+        Assert.Equal(valueBytes, negotiated.EventValueBytes);
+        Assert.Equal(contentBytes, negotiated.ContentReferenceBytes);
+    }
+
     [Fact]
     public void RuntimeTransportBudgets_UseFallbackForMissingSidesAndRequireBothReports()
     {
@@ -165,31 +192,31 @@ public sealed class AgentRuntimeTransportLimitTests
     }
 
     [Fact]
-    public void RuntimeTransportBudgets_RejectInvalidAppProposalDimensions()
+    public void RuntimeTransportBudgets_RejectNonPositiveAppProposalDimensions()
     {
         var budgets = new AgentRuntimeTransportBudgetState();
         var valid = new AgentTransportProfileRequest(
-            AgentRuntimePayloadLimits.MinimumValueBytes,
-            AgentRuntimePayloadLimits.MinimumValueBytes,
-            AgentRuntimePayloadLimits.MinimumValueBytes,
-            AgentRuntimePayloadLimits.MinimumContentReferenceBytes,
+            1,
+            1,
+            1,
+            1,
             RuntimeReported: false);
 
         Assert.Throws<AgentOwnerOperationException>(() => budgets.Negotiate(valid with
         {
-            RequestValueBytes = AgentRuntimePayloadLimits.MinimumValueBytes - 1,
+            RequestValueBytes = 0,
         }));
         Assert.Throws<AgentOwnerOperationException>(() => budgets.Negotiate(valid with
         {
-            ResponseValueBytes = AgentRuntimePayloadLimits.MaximumValueBytes + 1,
+            ResponseValueBytes = -1,
         }));
         Assert.Throws<AgentOwnerOperationException>(() => budgets.Negotiate(valid with
         {
-            EventValueBytes = AgentRuntimePayloadLimits.MinimumValueBytes - 1,
+            EventValueBytes = 0,
         }));
         Assert.Throws<AgentOwnerOperationException>(() => budgets.Negotiate(valid with
         {
-            ContentReferenceBytes = AgentRuntimePayloadLimits.MaximumContentReferenceBytes + 1,
+            ContentReferenceBytes = 0,
         }));
     }
 
@@ -254,6 +281,29 @@ public sealed class AgentRuntimeTransportLimitTests
                 expected.ContentReferenceBytes,
                 expected.RuntimeReported),
             handler.Request);
+    }
+
+    [Theory]
+    [InlineData(512 * 1024, 512 * 1024)]
+    [InlineData(64 * 1024 * 1024, 512 * 1024 * 1024)]
+    public async Task OwnerRpc_AcceptsRuntimeProfilesOutsideFormerAgentCeilings(
+        int valueBytes,
+        int contentBytes)
+    {
+        using var rpcState = new RegressionTestRpcState();
+        var expected = new AgentTransportProfile(
+            valueBytes,
+            valueBytes,
+            valueBytes,
+            contentBytes,
+            RuntimeReported: true);
+        var owner = CreateOwnerClient(
+            rpcState,
+            ResourceProfile(valueBytes, contentBytes),
+            expected,
+            out _);
+
+        Assert.Equal(expected, await owner.GetTransportProfileAsync(CancellationToken.None));
     }
 
     [Theory]
@@ -492,6 +542,41 @@ public sealed class AgentRuntimeTransportLimitTests
         Assert.True(
             SubsessionAroundTurnPayload.Size(subsessionChange)
             <= SubsessionAroundTurnPayload.MaximumEventBytes);
+    }
+
+    [Fact]
+    public void ChangeProjection_PreservesTextAndUsesResnapshotForOversizedEvents()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var title = new string('t', 513);
+        var activityText = new string('a', (16 * 1024) + 1);
+        var change = new AgentRuntimeChange(
+            8,
+            AgentRuntimeChangeKind.RunActivity,
+            SessionId: Guid.NewGuid(),
+            Session: new AgentSessionSnapshot(
+                new AgentSessionRecord(Guid.NewGuid(), title, AgentSessionState.Active, now, now),
+                null),
+            RunActivity: new AgentRunActivityUpdate(1, AgentRunActivityKind.Thinking, activityText, now),
+            RuntimeInstanceId: "runtime");
+
+        var projected = AgentRuntimePayloadLimits.ProjectChange(change);
+
+        Assert.Equal(title, projected.Session!.Session.Title);
+        Assert.Equal(activityText, projected.RunActivity!.Text);
+
+        var oversized = projected with
+        {
+            RunActivity = projected.RunActivity with { Text = new string('x', EventPayloadBytes) },
+        };
+        var bounded = AgentRuntimePayloadLimits.ReplaceWithResnapshotIfOversized(
+            oversized,
+            EventPayloadBytes,
+            oversized);
+
+        Assert.Equal(AgentRuntimeChangeKind.ResnapshotRequired, bounded.Kind);
+        Assert.Null(bounded.RunActivity);
+        Assert.Null(bounded.Session);
     }
 
     [Fact]

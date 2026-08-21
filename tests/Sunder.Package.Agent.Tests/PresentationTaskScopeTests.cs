@@ -1,6 +1,7 @@
 extern alias AgentCore;
 
 using System.Collections.Concurrent;
+using Sunder.Sdk.Rpc;
 using Xunit;
 using PresentationTaskScope = AgentCore::Sunder.Package.Agent.Shared.Presentation.PresentationTaskScope;
 
@@ -11,7 +12,7 @@ public sealed class PresentationTaskScopeTests
     [Fact]
     public async Task Run_BlockedSynchronousPrefixDoesNotBlockAnotherRun()
     {
-        var scope = new PresentationTaskScope();
+        var scope = new PresentationTaskScope(PresentationTaskScope.PropagateExpectedFailure);
         using var firstEntered = new ManualResetEventSlim();
         using var releaseFirst = new ManualResetEventSlim();
         var firstRun = Task.Run(() => scope.Run(_ =>
@@ -70,11 +71,12 @@ public sealed class PresentationTaskScopeTests
         try
         {
             Assert.True(operationEntered.Wait(TimeSpan.FromSeconds(2)));
-            dispose = Task.Run(scope.Dispose);
+            dispose = scope.DisposeAsync().AsTask();
 
-            await dispose.WaitAsync(TimeSpan.FromSeconds(2));
+            await WaitUntilAsync(() => scope.CancellationToken.IsCancellationRequested);
 
             Assert.True(scope.CancellationToken.IsCancellationRequested);
+            Assert.False(dispose.IsCompleted);
         }
         finally
         {
@@ -90,12 +92,12 @@ public sealed class PresentationTaskScopeTests
     [Fact]
     public void Run_InvokesSynchronousPrefixOnCallingThread()
     {
-        using var scope = new PresentationTaskScope();
+        using var scope = new PresentationTaskScope(PresentationTaskScope.PropagateExpectedFailure);
         var callingThreadId = Environment.CurrentManagedThreadId;
         var invocationThreadId = -1;
         var invokedBeforeReturn = false;
 
-        scope.Run(_ =>
+        var observation = scope.RunAsync(_ =>
         {
             invocationThreadId = Environment.CurrentManagedThreadId;
             invokedBeforeReturn = true;
@@ -104,13 +106,14 @@ public sealed class PresentationTaskScopeTests
 
         Assert.True(invokedBeforeReturn);
         Assert.Equal(callingThreadId, invocationThreadId);
+        Assert.True(observation.IsCompletedSuccessfully);
     }
 
     [Fact]
-    public async Task Run_ObservesSynchronousAndAsynchronousFailuresOnce()
+    public async Task Run_ObservesExpectedSynchronousAndAsynchronousFailuresOnce()
     {
-        var synchronousFailure = new InvalidOperationException("Synchronous failure.");
-        var asynchronousFailure = new InvalidOperationException("Asynchronous failure.");
+        var synchronousFailure = new IOException("Synchronous failure.");
+        var asynchronousFailure = new IOException("Asynchronous failure.");
         var observedFailures = new ConcurrentQueue<Exception>();
         var releaseHandlers = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var bothHandlersEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -119,8 +122,8 @@ public sealed class PresentationTaskScopeTests
         var handlerCompletionCount = 0;
         using var scope = new PresentationTaskScope(HandleFailureAsync);
 
-        scope.Run(_ => throw synchronousFailure);
-        scope.Run(async _ =>
+        var synchronousObservation = scope.RunAsync(_ => throw synchronousFailure);
+        var asynchronousObservation = scope.RunAsync(async _ =>
         {
             await Task.Yield();
             throw asynchronousFailure;
@@ -138,6 +141,7 @@ public sealed class PresentationTaskScopeTests
         }
 
         await bothHandlersCompleted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await Task.WhenAll(synchronousObservation, asynchronousObservation);
 
         Assert.Equal(2, Volatile.Read(ref handlerEntryCount));
         Assert.Equal(2, failures.Length);
@@ -161,55 +165,266 @@ public sealed class PresentationTaskScopeTests
     }
 
     [Fact]
+    public async Task Run_UnexpectedFailureIsPostedOnceToCapturedSynchronizationContext()
+    {
+        var context = new FailureRecordingSynchronizationContext();
+        var previous = SynchronizationContext.Current;
+        var failure = new InvalidOperationException("unhandled presentation task");
+        var scope = new PresentationTaskScope(PresentationTaskScope.PropagateExpectedFailure);
+        try
+        {
+            SynchronizationContext.SetSynchronizationContext(context);
+            scope.Run(_ => Task.FromException(failure));
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(previous);
+        }
+
+        var observed = await context.Failure.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await scope.DisposeAsync();
+
+        Assert.Same(failure, observed);
+        Assert.Equal(1, context.PostCount);
+        Assert.Single(context.Exceptions);
+    }
+
+    [Fact]
+    public async Task RunAsync_UnexpectedFailureIsReturnedWithoutPosting()
+    {
+        var context = new FailureRecordingSynchronizationContext();
+        var previous = SynchronizationContext.Current;
+        var failure = new InvalidOperationException("caller-owned presentation task");
+        var scope = new PresentationTaskScope(PresentationTaskScope.PropagateExpectedFailure);
+        Task observation;
+        try
+        {
+            SynchronizationContext.SetSynchronizationContext(context);
+            observation = scope.RunAsync(_ => Task.FromException(failure));
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(previous);
+        }
+
+        var observed = await Assert.ThrowsAsync<InvalidOperationException>(() => observation);
+        await scope.DisposeAsync();
+
+        Assert.Same(failure, observed);
+        Assert.Equal(0, context.PostCount);
+        Assert.Empty(context.Exceptions);
+    }
+
+    [Fact]
+    public async Task Run_HandledFailureIsNotPosted()
+    {
+        var context = new FailureRecordingSynchronizationContext();
+        var previous = SynchronizationContext.Current;
+        var handled = new ConcurrentQueue<Exception>();
+        var failure = new IOException("handled presentation failure");
+        var scope = new PresentationTaskScope(exception =>
+        {
+            handled.Enqueue(exception);
+            return Task.CompletedTask;
+        });
+        try
+        {
+            SynchronizationContext.SetSynchronizationContext(context);
+            scope.Run(_ => Task.FromException(failure));
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(previous);
+        }
+
+        await scope.DisposeAsync();
+
+        Assert.Same(failure, Assert.Single(handled));
+        Assert.Equal(0, context.PostCount);
+        Assert.Empty(context.Exceptions);
+    }
+
+    [Fact]
+    public async Task Run_InvalidOperationExceptionBypassesHandlerAndIsPosted()
+    {
+        var context = new FailureRecordingSynchronizationContext();
+        var previous = SynchronizationContext.Current;
+        var handlerInvocationCount = 0;
+        var failure = new InvalidOperationException("programming failure");
+        var scope = new PresentationTaskScope(_ =>
+        {
+            Interlocked.Increment(ref handlerInvocationCount);
+            return Task.CompletedTask;
+        });
+        try
+        {
+            SynchronizationContext.SetSynchronizationContext(context);
+            scope.Run(_ => Task.FromException(failure));
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(previous);
+        }
+
+        var observed = await context.Failure.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await scope.DisposeAsync();
+
+        Assert.Same(failure, observed);
+        Assert.Equal(0, Volatile.Read(ref handlerInvocationCount));
+        Assert.Equal(1, context.PostCount);
+        Assert.Single(context.Exceptions);
+    }
+
+    [Fact]
+    public async Task RunAsync_ProtocolFailureBypassesHandlerAndIsReturned()
+    {
+        var context = new FailureRecordingSynchronizationContext();
+        var previous = SynchronizationContext.Current;
+        var handlerInvocationCount = 0;
+        var failure = new SunderRpcException(
+            new SunderRpcError(SunderRpcErrorKind.Protocol, "test.protocol", "protocol failure"));
+        var scope = new PresentationTaskScope(_ =>
+        {
+            Interlocked.Increment(ref handlerInvocationCount);
+            return Task.CompletedTask;
+        });
+        Task observation;
+        try
+        {
+            SynchronizationContext.SetSynchronizationContext(context);
+            observation = scope.RunAsync(_ => Task.FromException(failure));
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(previous);
+        }
+
+        var observed = await Assert.ThrowsAsync<SunderRpcException>(() => observation);
+        await scope.DisposeAsync();
+
+        Assert.Same(failure, observed);
+        Assert.Equal(0, Volatile.Read(ref handlerInvocationCount));
+        Assert.Equal(0, context.PostCount);
+        Assert.Empty(context.Exceptions);
+    }
+
+    [Fact]
+    public async Task RunAsync_FatalFailureBypassesHandlerAndIsReturned()
+    {
+        var handlerInvocationCount = 0;
+        var failure = new OutOfMemoryException("fatal presentation failure");
+        using var scope = new PresentationTaskScope(_ =>
+        {
+            Interlocked.Increment(ref handlerInvocationCount);
+            return Task.CompletedTask;
+        });
+
+        var observed = await Assert.ThrowsAsync<OutOfMemoryException>(() =>
+            scope.RunAsync(_ => Task.FromException(failure)));
+
+        Assert.Same(failure, observed);
+        Assert.Equal(0, Volatile.Read(ref handlerInvocationCount));
+    }
+
+    [Fact]
     public void Run_AfterDisposeIsRejectedAndDisposeIsIdempotent()
     {
-        var scope = new PresentationTaskScope();
+        var scope = new PresentationTaskScope(PresentationTaskScope.PropagateExpectedFailure);
         var invocationCount = 0;
 
         scope.Dispose();
         scope.Dispose();
-        scope.Run(_ =>
+        var rejected = scope.RunAsync(_ =>
         {
             Interlocked.Increment(ref invocationCount);
             return Task.CompletedTask;
         });
 
         Assert.Equal(0, Volatile.Read(ref invocationCount));
+        Assert.True(rejected.IsCompletedSuccessfully);
     }
 
     [Fact]
-    public async Task Run_WithoutFailureHandlerForwardsFailureToSynchronizationContext()
+    public void Track_AfterDisposeDoesNotStartOperation()
     {
-        var context = new FailureRecordingSynchronizationContext();
+        var scope = new PresentationTaskScope(PresentationTaskScope.PropagateExpectedFailure);
+        var invocationCount = 0;
+        scope.Dispose();
+
+        var rejected = scope.Track(_ =>
+        {
+            Interlocked.Increment(ref invocationCount);
+            return Task.CompletedTask;
+        });
+
+        Assert.Equal(0, Volatile.Read(ref invocationCount));
+        Assert.True(rejected.IsCompletedSuccessfully);
+    }
+
+    [Fact]
+    public async Task RunAsync_WithoutSynchronizationContextReturnsObservableFailure()
+    {
         var previous = SynchronizationContext.Current;
         var failure = new InvalidOperationException("unhandled presentation task");
+        Task observation;
         try
         {
-            SynchronizationContext.SetSynchronizationContext(context);
-            using var scope = new PresentationTaskScope();
+            SynchronizationContext.SetSynchronizationContext(null);
+            using var scope = new PresentationTaskScope(PresentationTaskScope.PropagateExpectedFailure);
 
-            scope.Run(async _ =>
+            observation = scope.RunAsync(async _ =>
             {
                 await Task.Yield();
                 throw failure;
             });
-
-            var observed = await context.Failure.Task.WaitAsync(TimeSpan.FromSeconds(2));
-            Assert.Same(failure, observed);
         }
         finally
         {
             SynchronizationContext.SetSynchronizationContext(previous);
         }
+
+        var observed = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => observation.WaitAsync(TimeSpan.FromSeconds(2)));
+        Assert.Same(failure, observed);
+    }
+
+    [Fact]
+    public async Task Run_FailureHandlerFailureRemainsObservable()
+    {
+        var operationFailure = new IOException("operation failed");
+        var handlerFailure = new InvalidOperationException("failure handler failed");
+        using var scope = new PresentationTaskScope(
+            _ => Task.FromException(handlerFailure));
+
+        var observed = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            scope.RunAsync(_ => Task.FromException(operationFailure)));
+
+        Assert.Same(handlerFailure, observed);
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        while (!condition())
+        {
+            await Task.Delay(10, timeout.Token);
+        }
     }
 
     private sealed class FailureRecordingSynchronizationContext : SynchronizationContext
     {
+        private int _postCount;
+
+        public ConcurrentQueue<Exception> Exceptions { get; } = [];
+
         public TaskCompletionSource<Exception> Failure { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        public int PostCount => Volatile.Read(ref _postCount);
+
         public override void Post(SendOrPostCallback callback, object? state)
         {
+            Interlocked.Increment(ref _postCount);
             ThreadPool.QueueUserWorkItem(_ =>
             {
                 try
@@ -218,6 +433,7 @@ public sealed class PresentationTaskScopeTests
                 }
                 catch (Exception exception)
                 {
+                    Exceptions.Enqueue(exception);
                     Failure.TrySetResult(exception);
                 }
             });

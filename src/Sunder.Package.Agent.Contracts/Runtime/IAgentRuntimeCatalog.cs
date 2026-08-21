@@ -21,6 +21,9 @@ public interface IAgentRuntimeCatalog
     /// <summary>Occurs after a profile changes; the argument is the opaque profile identifier to re-query.</summary>
     event Action<string>? ProfileChanged;
 
+    /// <summary>Occurs when incremental notifications cannot represent a continuous catalog history and all cached projections must be queried again.</summary>
+    event Action? ResetRequired;
+
     /// <summary>Lists persisted session snapshots, ordered by most recent update in the base host.</summary>
     /// <returns>An immutable-by-contract snapshot collection.</returns>
     IReadOnlyList<AgentSessionRecord> ListSessions();

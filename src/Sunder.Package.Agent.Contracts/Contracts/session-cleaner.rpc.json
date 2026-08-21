@@ -74,13 +74,10 @@
     },
     "Identifier": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 256
+      "minLength": 1
     },
     "DisplayText": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 8192
+      "type": "string"
     }
   }
 }

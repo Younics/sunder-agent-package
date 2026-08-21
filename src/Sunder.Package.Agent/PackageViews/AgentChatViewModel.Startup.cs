@@ -588,6 +588,11 @@ public sealed partial class AgentChatViewModel
             {
                 ReconcileRunActivityAfterAuthoritativeReplacement(previousRunActivityTurns);
             }
+            if (applied)
+            {
+                _runActivity.RebuildActiveToolCalls(
+                    SelectRunActivityTurns(_timeline.Projector.TurnWindow.OrderedTurns()));
+            }
         }
         else
         {
@@ -630,10 +635,7 @@ public sealed partial class AgentChatViewModel
 
     private static AgentTurnRecord[] SelectRunActivityTurns(IEnumerable<AgentTurnRecord> turns)
     {
-        var orderedTurns = turns
-            .OrderBy(turn => turn.CreatedAtUtc)
-            .ThenBy(turn => turn.TurnId.ToString("D"), StringComparer.Ordinal)
-            .ToArray();
+        var orderedTurns = turns.ToArray();
         var latestUserIndex = Array.FindLastIndex(
             orderedTurns,
             turn => turn.Role == AgentMessageRole.User);

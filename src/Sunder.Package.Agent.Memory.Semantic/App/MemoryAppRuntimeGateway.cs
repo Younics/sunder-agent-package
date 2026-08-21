@@ -13,6 +13,7 @@ internal sealed class MemoryAppRuntimeGateway(ISunderRpcClient rpc) : IMemoryIns
 
     public event Action<Guid>? SessionChanged;
     public event Action? SemanticWorkerStatusChanged;
+    public event Action? ResetRequired;
 
     public Task InitializeAsync(CancellationToken cancellationToken = default)
     {
@@ -129,6 +130,10 @@ internal sealed class MemoryAppRuntimeGateway(ISunderRpcClient rpc) : IMemoryIns
                     if (change.Kind == MemoryChangeKind.Worker)
                     {
                         SemanticWorkerStatusChanged?.Invoke();
+                    }
+                    if (change.Kind == MemoryChangeKind.ResetRequired)
+                    {
+                        ResetRequired?.Invoke();
                     }
                 }
             }

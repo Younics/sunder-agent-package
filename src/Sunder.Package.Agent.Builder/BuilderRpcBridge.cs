@@ -6,8 +6,6 @@ namespace Sunder.Package.Agent.Builder;
 
 internal static class BuilderRpcExecutor
 {
-    private const int MaximumWorkspaces = 100;
-    private const int MaximumWorkspacePaths = 64;
     private const int MaximumOutputCharacters = 512 * 1024;
 
     internal static async ValueTask<BuilderRpcResponse> ExecuteAsync(
@@ -18,7 +16,7 @@ internal static class BuilderRpcExecutor
         cancellationToken.ThrowIfCancellationRequested();
         if (request.Kind == BuilderRpcOperationKind.ListWorkspaces)
         {
-            return new BuilderRpcResponse(Workspaces: ProjectWorkspaceList(resolver.ListWorkspaces()));
+            return new BuilderRpcResponse(Workspaces: resolver.ListWorkspaces());
         }
 
         var workspaceId = string.IsNullOrWhiteSpace(request.WorkspaceId)
@@ -57,7 +55,7 @@ internal static class BuilderRpcExecutor
                             .GetShellAsync(context, invocationToken)
                             .ConfigureAwait(false);
                         response = new BuilderRpcResponse(Execution: new BuilderWorkspaceExecutionProjection(
-                            ProjectWorkspace(resolution.Workspace),
+                            resolution.Workspace,
                             resolution.Binding,
                             resolution.Target,
                             resolution.Scope,
@@ -147,37 +145,6 @@ internal static class BuilderRpcExecutor
         }
     }
 
-    private static AgentWorkspaceRecord ProjectWorkspace(AgentWorkspaceRecord workspace)
-        => workspace with
-        {
-            DisplayName = Truncate(workspace.DisplayName, 256),
-            Description = TruncateNullable(workspace.Description, 1024),
-            Paths = workspace.Paths
-                .OrderBy(path => path.SortOrder)
-                .Take(MaximumWorkspacePaths)
-                .Select(path => path with { HostPath = Truncate(path.HostPath, 2048) })
-                .ToArray(),
-            Documents = [],
-        };
-
-    private static IReadOnlyList<AgentWorkspaceRecord> ProjectWorkspaceList(
-        IReadOnlyList<AgentWorkspaceRecord> workspaces)
-    {
-        var projected = new List<AgentWorkspaceRecord>(Math.Min(workspaces.Count, MaximumWorkspaces));
-        foreach (var workspace in workspaces.Take(MaximumWorkspaces))
-        {
-            projected.Add(ProjectWorkspace(workspace));
-            var response = new BuilderRpcResponse(Workspaces: projected);
-            if (BuilderRpcPayloadLimits.GetSerializedSize(response)
-                >= BuilderRpcPayloadLimits.MaximumResponseBytes - BuilderRpcPayloadLimits.ResponseSafetyBytes)
-            {
-                projected.RemoveAt(projected.Count - 1);
-                break;
-            }
-        }
-        return projected;
-    }
-
     private static BuilderProcessResult ProjectProcessResult(AgentShellCommandResult result)
     {
         var output = Truncate(result.Output, MaximumOutputCharacters);
@@ -202,6 +169,4 @@ internal static class BuilderRpcExecutor
     private static string Truncate(string value, int maximumCharacters)
         => value.Length <= maximumCharacters ? value : value[..maximumCharacters];
 
-    private static string? TruncateNullable(string? value, int maximumCharacters)
-        => value is null ? null : Truncate(value, maximumCharacters);
 }

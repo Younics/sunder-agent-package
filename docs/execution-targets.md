@@ -85,7 +85,7 @@ Never trust `AgentPermissionRequest.Path` or a previous resolution as the final 
 
 ## File Semantics
 
-- Enforce text/binary and full-read size policy. Shared local full-read limit is exposed through `AgentPayloadLimits`.
+- Enforce text/binary and full-read size policy. First-party Local limits unrestricted full reads to 4 MiB and directory listings to 10,000 entries; these package-local product safety limits are not Agent RPC limits.
 - A ranged target validates positive one-based offsets/limits, reports `StartLine`, `EndLine`, and `TotalLines`, and uses the shared stable read error codes.
 - Preserve `WasTruncated` whenever content or directory entries are bounded.
 - Writes replace complete text. If `ExpectedContentHash` is present, compare the lowercase SHA-256 of current UTF-8 text immediately before mutation and fail without writing on mismatch.

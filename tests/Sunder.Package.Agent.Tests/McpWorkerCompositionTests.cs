@@ -24,6 +24,7 @@ public sealed class McpWorkerCompositionTests
         Assert.Equal(
             [
                 "mcp.tools",
+                "mcp.tools.observed",
                 "mcp.selectable.capabilities",
                 "mcp.session.cleaner",
                 "mcp.stack",
@@ -43,6 +44,7 @@ public sealed class McpWorkerCompositionTests
         Assert.NotNull(composition.Services.GetService<McpServerStackContributor>());
         Assert.NotNull(composition.Services.GetService<McpManagementRpcProvider>());
         Assert.Null(composition.Services.GetService<AgentMcpSettingsViewModel>());
+        await options.OnActivated!(null!, CancellationToken.None);
 
         var appServices = new ServiceCollection();
         new Sunder.Package.Agent.Mcp.AppPackageModule().ConfigureAppServices(appServices, scope.Context);

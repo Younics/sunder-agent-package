@@ -32,6 +32,15 @@ public partial class AgentChatView : UserControl,
     private const double WorkspacePathChipChromeWidth = 36;
     private const double WorkspacePathOverflowChromeWidth = 18;
     private static readonly FontFamily WorkspacePathChipFontFamily = new("Menlo,Consolas,monospace");
+    private static readonly PresentationOperation ComposerSendOperation = new(
+        "agent-chat.composer-send",
+        "The message could not be sent. Agent Chat reconciled the composer and session state.");
+    private static readonly PresentationOperation ComposerPasteOperation = new(
+        "agent-chat.composer-paste",
+        "The clipboard content could not be added to the message.");
+    private static readonly PresentationOperation ComposerDropOperation = new(
+        "agent-chat.composer-drop",
+        "The dropped files could not be added to the message.");
     private static readonly FilePickerFileType SupportedAttachmentFileType = new("Supported attachments")
     {
         Patterns =
@@ -66,7 +75,7 @@ public partial class AgentChatView : UserControl,
 
     public AgentChatView()
     {
-        _tasks = new PresentationTaskScope();
+        _tasks = new PresentationTaskScope(PresentationTaskScope.IgnoreExpectedFailure);
         _operations = PresentationOperationObserver.CreateUnreported("Agent Chat view");
         InitializeComponent();
         ConfigureComposerDropTarget(ExpandedComposerDropTarget);
@@ -396,7 +405,7 @@ public partial class AgentChatView : UserControl,
             .Where(path => !string.IsNullOrWhiteSpace(path))
             .ToArray();
 
-        await _viewModel.AddAttachmentPathsAsync(paths);
+        await _viewModel.AddAttachmentPathsAsync(paths, cancellationToken);
     }
 
     private void OnSessionActionsClick(object? sender, RoutedEventArgs e)
@@ -512,7 +521,9 @@ public partial class AgentChatView : UserControl,
         if (IsPasteShortcut(e))
         {
             e.Handled = true;
-            _tasks.Run(_ => PasteClipboardContentAsync(textBox));
+            _operations.Submit(
+                ComposerPasteOperation,
+                cancellationToken => PasteClipboardContentAsync(textBox, cancellationToken));
             return;
         }
 
@@ -532,37 +543,54 @@ public partial class AgentChatView : UserControl,
             e.Handled = true;
             if (_viewModel.SendMessageCommand.CanExecute(null))
             {
-                _tasks.Run(_ => _viewModel.SendMessageCommand.ExecuteAsync(null));
+                SubmitComposerSend();
             }
         }
     }
 
-    private async Task PasteClipboardContentAsync(TextBox textBox)
+    private void SubmitComposerSend()
+    {
+        var viewModel = _viewModel;
+        if (viewModel is null || !viewModel.SendMessageCommand.CanExecute(null))
+        {
+            return;
+        }
+
+        _operations.Submit(
+            ComposerSendOperation,
+            cancellationToken => viewModel.SendMessageCommand.ExecuteAsync(null).WaitAsync(cancellationToken));
+    }
+
+    private async Task PasteClipboardContentAsync(TextBox textBox, CancellationToken cancellationToken)
     {
         var paths = await TryGetClipboardFilePathsAsync();
+        cancellationToken.ThrowIfCancellationRequested();
         if (paths.Length > 0)
         {
-            if (_viewModel is not null)
-            {
-                await _viewModel.AddAttachmentPathsAsync(paths);
-            }
-
+            await AddAttachmentPathsAsync(paths, cancellationToken);
             return;
         }
 
         var bitmapUpload = await TryGetClipboardBitmapUploadAsync();
+        cancellationToken.ThrowIfCancellationRequested();
         if (bitmapUpload is not null)
         {
             if (_viewModel is not null)
             {
-                await _viewModel.AddAttachmentUploadsAsync([bitmapUpload]);
+                await _viewModel.AddAttachmentUploadsAsync([bitmapUpload]).WaitAsync(cancellationToken);
             }
 
             return;
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         textBox.Paste();
     }
+
+    internal void SubmitPastedAttachmentPaths(IReadOnlyList<string> paths)
+        => _operations.Submit(
+            ComposerPasteOperation,
+            cancellationToken => AddAttachmentPathsAsync(paths, cancellationToken));
 
     private async Task<string[]> TryGetClipboardFilePathsAsync()
     {
@@ -678,7 +706,22 @@ public partial class AgentChatView : UserControl,
             return;
         }
 
-        _tasks.Run(_ => _viewModel.AddAttachmentPathsAsync(paths));
+        SubmitDroppedAttachmentPaths(paths);
+    }
+
+    internal void SubmitDroppedAttachmentPaths(IReadOnlyList<string> paths)
+        => _operations.Submit(
+            ComposerDropOperation,
+            cancellationToken => AddAttachmentPathsAsync(paths, cancellationToken));
+
+    private Task AddAttachmentPathsAsync(
+        IReadOnlyList<string> paths,
+        CancellationToken cancellationToken)
+    {
+        var viewModel = _viewModel;
+        return viewModel is null
+            ? Task.CompletedTask
+            : viewModel.AddAttachmentPathsAsync(paths, cancellationToken);
     }
 
     private void UpdateComposerDragState(DragEventArgs e)

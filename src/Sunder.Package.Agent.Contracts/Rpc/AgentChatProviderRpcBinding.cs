@@ -24,7 +24,7 @@ public static class AgentChatProviderRpc
 
     public static ISunderRpcServiceHandler CreateHandler(IAgentChatProvider provider)
     {
-        return AgentRpcServiceHandler.Create()
+        return AgentRpcServiceHandler.Create(AgentRpcContractDescriptors.Get(AgentRpcContractIds.ChatProvider))
             .AddUnary<AgentRpcEmpty, AgentProviderDescriptor>(ServiceId, "describe", (_, _, _) => ValueTask.FromResult(provider.Descriptor))
             .AddUnary<AgentRpcEmpty, IReadOnlyList<AgentModelDescriptor>>(ServiceId, "list-models", (_, _, token) => provider.GetAvailableModelsAsync(token))
             .AddUnary<AgentRpcEmpty, AgentProviderReadiness>(ServiceId, "get-readiness", (_, _, token) => provider.GetReadinessAsync(token))

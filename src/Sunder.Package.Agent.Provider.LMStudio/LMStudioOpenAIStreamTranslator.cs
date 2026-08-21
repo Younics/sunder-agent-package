@@ -160,7 +160,6 @@ internal sealed class LMStudioOpenAIStreamTranslator(bool allowMultipleToolCalls
     private sealed class ToolCallAccumulator
     {
         private readonly StringBuilder _arguments = new();
-        private int _argumentBytes;
         private string? _callId;
         private string? _toolId;
 
@@ -188,13 +187,6 @@ internal sealed class LMStudioOpenAIStreamTranslator(bool allowMultipleToolCalls
 
             if (!string.IsNullOrEmpty(argumentsDelta))
             {
-                _argumentBytes = checked(_argumentBytes + Encoding.UTF8.GetByteCount(argumentsDelta));
-                if (_argumentBytes > AgentPayloadLimits.MaxStreamedToolArgumentBytes)
-                {
-                    throw LMStudioExceptionMapper.MalformedToolCall(
-                        $"LM Studio streamed tool arguments exceeding the {AgentPayloadLimits.MaxStreamedToolArgumentBytes}-byte limit.");
-                }
-
                 _arguments.Append(argumentsDelta);
             }
         }

@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using System.Collections.Concurrent;
 using System.Reflection;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.HistorySearch;
 using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.PackageViews;
 using Sunder.Package.Agent.Runtime;
@@ -825,15 +826,308 @@ public sealed class AgentRuntimeCorrectnessTests
     }
 
     [Fact]
+    public async Task AgentProfilesViewModel_ChatBeforeProfiles_LoadsAndPreservesAuthoritativeAssignments()
+    {
+        var fixture = CreateProfileDashboardFixture(revision: 31);
+        var client = new ProfileDashboardRuntimeClient(
+            fixture.Snapshot,
+            fixture.Dashboard,
+            fixture.Catalog);
+        using var gateway = new AgentAppRuntimeGateway(client);
+        var snapshot = await gateway.LoadChatSnapshotAsync(new AgentChatSnapshotRequest());
+        Assert.Empty(snapshot.SelectedProfile?.SelectableCapabilityAssignments ?? []);
+        gateway.CompleteChatSnapshot(snapshot, applied: true);
+        using var viewModel = new AgentProfilesViewModel(gateway);
+
+        await viewModel.InitializeAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        await WaitUntilAsync(() => !viewModel.IsBusy
+                                   && viewModel.SelectedProfile?.ProfileId == fixture.Profile.ProfileId
+                                   && viewModel.PackageCapabilities.Count == 1);
+
+        Assert.Equal(1, client.DashboardInvocationCount);
+        Assert.Equal(fixture.Profile.Description, viewModel.Description);
+        Assert.Equal(fixture.Profile.Instructions, viewModel.Instructions);
+        Assert.True(Assert.Single(viewModel.PackageCapabilities).IsEnabled);
+        Assert.Equal(fixture.Assignment, Assert.Single(viewModel.Capabilities.Assignments));
+        Assert.Contains(client.CatalogRequests, request =>
+            request.Profile?.SelectableCapabilityAssignments?.Contains(fixture.Assignment) == true);
+
+        viewModel.DisplayName = "Updated authoritative profile";
+        await viewModel.SaveProfileCommand.ExecuteAsync(null);
+
+        var save = Assert.Single(client.ProfileCommands, command => command.Kind == AgentProfileCommandKind.Save);
+        Assert.Equal(fixture.Profile.Description, save.Description);
+        Assert.Equal(fixture.Profile.Instructions, save.Instructions);
+        Assert.Equal(fixture.Assignment, Assert.Single(save.Assignments ?? []));
+        Assert.Equal(2, client.DashboardInvocationCount);
+    }
+
+    [Fact]
+    public async Task Gateway_ProfilesBeforeChat_DoesNotReplaceAuthoritativeDashboard()
+    {
+        var fixture = CreateProfileDashboardFixture(revision: 31);
+        var client = new ProfileDashboardRuntimeClient(
+            fixture.Snapshot,
+            fixture.Dashboard,
+            fixture.Catalog);
+        using var gateway = new AgentAppRuntimeGateway(client);
+
+        var initialDashboard = await gateway.LoadDashboardAsync();
+        var snapshot = await gateway.LoadChatSnapshotAsync(new AgentChatSnapshotRequest());
+        gateway.CompleteChatSnapshot(snapshot, applied: true);
+        var dashboardAfterChat = await gateway.LoadDashboardAsync();
+
+        Assert.Equal(fixture.Assignment, Assert.Single(Assert.Single(initialDashboard.Profiles)
+            .SelectableCapabilityAssignments ?? []));
+        var profileAfterChat = Assert.Single(dashboardAfterChat.Profiles);
+        Assert.Equal(fixture.Profile.Description, profileAfterChat.Description);
+        Assert.Equal(fixture.Profile.Instructions, profileAfterChat.Instructions);
+        Assert.Equal(fixture.Assignment, Assert.Single(profileAfterChat.SelectableCapabilityAssignments ?? []));
+        Assert.Equal(2, client.DashboardInvocationCount);
+    }
+
+    [Fact]
+    public async Task Gateway_DashboardRefreshDoesNotAdvanceActiveChatChangeCursor()
+    {
+        var fixture = CreateProfileDashboardFixture(revision: 31);
+        var client = new ActiveChatDashboardCursorRuntimeClient(
+            fixture.Snapshot,
+            fixture.Dashboard with { Revision = 40 });
+        using var gateway = new AgentAppRuntimeGateway(client);
+        var profileChanged = new TaskCompletionSource<string>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        gateway.ProfileChanged += profileId => profileChanged.TrySetResult(profileId);
+        var snapshot = await gateway.LoadChatSnapshotAsync(new AgentChatSnapshotRequest());
+        gateway.CompleteChatSnapshot(snapshot, applied: true);
+        await client.SubscriptionStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        _ = await gateway.LoadDashboardAsync();
+        client.ReleaseChange();
+        var profileId = await profileChanged.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(fixture.Profile.ProfileId, profileId);
+        Assert.Equal(fixture.Snapshot.Revision, client.SubscriptionAfterRevision);
+    }
+
+    [Fact]
+    public async Task Gateway_DashboardRefreshDoesNotAdvancePendingChatHandoffCursor()
+    {
+        var fixture = CreateProfileDashboardFixture(revision: 31);
+        var client = new ActiveChatDashboardCursorRuntimeClient(
+            fixture.Snapshot,
+            fixture.Dashboard with { Revision = 40 },
+            blockSnapshot: true);
+        using var gateway = new AgentAppRuntimeGateway(client);
+        var applyChange = typeof(AgentAppRuntimeGateway).GetMethod(
+            "ApplyCurrentChange",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        _ = applyChange.Invoke(gateway, [new AgentRuntimeChange(
+            30,
+            AgentRuntimeChangeKind.Connected,
+            RuntimeInstanceId: fixture.Snapshot.RuntimeInstanceId)]);
+        var profileChanged = new TaskCompletionSource<string>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        gateway.ProfileChanged += profileId => profileChanged.TrySetResult(profileId);
+        var snapshotLoad = gateway.LoadChatSnapshotAsync(new AgentChatSnapshotRequest());
+        await client.SnapshotStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        _ = await gateway.LoadDashboardAsync();
+        client.ReleaseSnapshot();
+        var snapshot = await snapshotLoad;
+        gateway.CompleteChatSnapshot(snapshot, applied: true);
+        await client.SubscriptionStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        client.ReleaseChange();
+        var profileId = await profileChanged.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(fixture.Profile.ProfileId, profileId);
+        Assert.Equal(fixture.Snapshot.Revision, client.SubscriptionAfterRevision);
+    }
+
+    [Fact]
+    public async Task AgentProfilesViewModel_NewerChatSnapshotRefreshesAuthoritativeProfile()
+    {
+        var original = CreateProfileDashboardFixture(
+            revision: 31,
+            displayName: "Original profile");
+        var current = CreateProfileDashboardFixture(
+            revision: 32,
+            displayName: "Current profile");
+        var client = new ProfileDashboardRuntimeClient(
+            original.Snapshot,
+            original.Dashboard,
+            original.Catalog);
+        using var gateway = new AgentAppRuntimeGateway(client);
+        using var viewModel = new AgentProfilesViewModel(gateway);
+        await viewModel.InitializeAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        await WaitUntilAsync(() => viewModel.DisplayName == original.Profile.DisplayName && !viewModel.IsBusy);
+
+        client.SetState(current.Snapshot, current.Dashboard, current.Catalog);
+        var snapshot = await gateway.LoadChatSnapshotAsync(new AgentChatSnapshotRequest());
+        gateway.CompleteChatSnapshot(snapshot, applied: true);
+        await WaitUntilAsync(() => viewModel.DisplayName == current.Profile.DisplayName
+                                   && !viewModel.IsBusy
+                                   && client.DashboardInvocationCount == 2);
+
+        Assert.Equal(current.Profile.Description, viewModel.Description);
+        Assert.Equal(current.Profile.Instructions, viewModel.Instructions);
+        Assert.True(Assert.Single(viewModel.PackageCapabilities).IsEnabled);
+        Assert.Equal(current.Assignment, Assert.Single(viewModel.Capabilities.Assignments));
+    }
+
+    [Fact]
+    public async Task AgentProfilesViewModel_CatalogOnlyChatRevisionRefreshesCapabilities()
+    {
+        var fixture = CreateProfileDashboardFixture(revision: 31);
+        var updatedDescriptor = Assert.Single(fixture.Catalog.SelectableCapabilities) with
+        {
+            DisplayName = "Updated read file",
+        };
+        var updatedSnapshot = fixture.Snapshot with
+        {
+            Revision = 32,
+            InitialTranscript = fixture.Snapshot.InitialTranscript with { Revision = 32 },
+        };
+        var updatedDashboard = fixture.Dashboard with { Revision = 32 };
+        var updatedCatalog = fixture.Catalog with
+        {
+            Revision = 32,
+            SelectableCapabilities = [updatedDescriptor],
+        };
+        var client = new ProfileDashboardRuntimeClient(
+            fixture.Snapshot,
+            fixture.Dashboard,
+            fixture.Catalog);
+        using var gateway = new AgentAppRuntimeGateway(client);
+        var initialSnapshot = await gateway.LoadChatSnapshotAsync(new AgentChatSnapshotRequest());
+        gateway.CompleteChatSnapshot(initialSnapshot, applied: true);
+        using var viewModel = new AgentProfilesViewModel(gateway);
+        await viewModel.InitializeAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        await WaitUntilAsync(() => viewModel.PackageCapabilities.Count == 1
+                                   && viewModel.PackageCapabilities[0].DisplayName == "Read file");
+
+        client.SetState(updatedSnapshot, updatedDashboard, updatedCatalog);
+        var snapshot = await gateway.LoadChatSnapshotAsync(new AgentChatSnapshotRequest());
+        gateway.CompleteChatSnapshot(snapshot, applied: true);
+        await WaitUntilAsync(() => viewModel.PackageCapabilities.Count == 1
+                                   && viewModel.PackageCapabilities[0].DisplayName
+                                   == updatedDescriptor.DisplayName);
+
+        Assert.True(Assert.Single(viewModel.PackageCapabilities).IsEnabled);
+        Assert.Equal(fixture.Assignment, Assert.Single(viewModel.Capabilities.Assignments));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Gateway_DetachedDashboardLoadRetriesAfterNewerChatSnapshot(bool failDetachedLoad)
+    {
+        var stale = CreateProfileDashboardFixture(
+            revision: 30,
+            displayName: "Stale profile");
+        var current = CreateProfileDashboardFixture(
+            revision: 31,
+            displayName: "Current profile");
+        var client = new DetachedDashboardRuntimeClient(
+            current.Snapshot,
+            stale.Dashboard,
+            current.Dashboard,
+            failDetachedLoad);
+        using var gateway = new AgentAppRuntimeGateway(client);
+        var dashboardLoad = gateway.LoadDashboardAsync();
+        await client.FirstDashboardStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        var snapshot = await gateway.LoadChatSnapshotAsync(new AgentChatSnapshotRequest());
+        gateway.CompleteChatSnapshot(snapshot, applied: true);
+        client.ReleaseFirstDashboard();
+        var dashboard = await dashboardLoad.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal("Current profile", Assert.Single(dashboard.Profiles).DisplayName);
+        Assert.Equal(current.Assignment, Assert.Single(Assert.Single(dashboard.Profiles)
+            .SelectableCapabilityAssignments ?? []));
+        Assert.Equal(2, client.DashboardInvocationCount);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Gateway_DetachedCatalogLoadRetriesAfterRuntimeReplacement(bool failDetachedLoad)
+    {
+        var original = CreateProfileDashboardFixture(
+            revision: 100,
+            runtimeInstanceId: "runtime-1");
+        var replacement = CreateProfileDashboardFixture(
+            revision: 1,
+            runtimeInstanceId: "runtime-2");
+        var client = new DetachedCatalogRuntimeClient(
+            original.Snapshot,
+            replacement.Snapshot,
+            original.Catalog,
+            replacement.Catalog,
+            failDetachedLoad);
+        using var gateway = new AgentAppRuntimeGateway(client);
+        var originalSnapshot = await gateway.LoadChatSnapshotAsync(new AgentChatSnapshotRequest());
+        gateway.CompleteChatSnapshot(originalSnapshot, applied: true);
+        var catalogLoad = gateway.LoadCatalogAsync(new AgentCatalogRequest());
+        await client.FirstCatalogStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        var replacementSnapshot = await gateway.LoadChatSnapshotAsync(new AgentChatSnapshotRequest());
+        gateway.CompleteChatSnapshot(replacementSnapshot, applied: true);
+        client.ReleaseFirstCatalog();
+        var catalog = await catalogLoad.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(replacement.Catalog, catalog);
+        Assert.Equal(2, client.CatalogInvocationCount);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Gateway_RuntimeReplacementInvalidatesDashboardAtLowerRevision(
+        bool establishOriginalRuntimeIdentity)
+    {
+        var original = CreateProfileDashboardFixture(
+            revision: 100,
+            runtimeInstanceId: "runtime-1",
+            displayName: "Original runtime profile");
+        var replacement = CreateProfileDashboardFixture(
+            revision: 1,
+            runtimeInstanceId: "runtime-2",
+            displayName: "Replacement runtime profile");
+        var client = new ProfileDashboardRuntimeClient(
+            original.Snapshot,
+            original.Dashboard,
+            original.Catalog);
+        using var gateway = new AgentAppRuntimeGateway(client);
+        if (establishOriginalRuntimeIdentity)
+        {
+            var originalSnapshot = await gateway.LoadChatSnapshotAsync(new AgentChatSnapshotRequest());
+            gateway.CompleteChatSnapshot(originalSnapshot, applied: true);
+        }
+        _ = await gateway.LoadDashboardAsync();
+
+        client.SetState(replacement.Snapshot, replacement.Dashboard, replacement.Catalog);
+        var replacementSnapshot = await gateway.LoadChatSnapshotAsync(new AgentChatSnapshotRequest());
+        gateway.CompleteChatSnapshot(replacementSnapshot, applied: true);
+        var dashboard = await gateway.LoadDashboardAsync();
+
+        Assert.Equal("Replacement runtime profile", Assert.Single(dashboard.Profiles).DisplayName);
+        Assert.Equal(replacement.Assignment, Assert.Single(Assert.Single(dashboard.Profiles)
+            .SelectableCapabilityAssignments ?? []));
+        Assert.Equal(2, client.DashboardInvocationCount);
+    }
+
+    [Fact]
     public async Task Gateway_ResnapshotReusesActivatedChatRequestWithoutDashboardFallback()
     {
-        var initial = CreateChatSnapshot(revision: 31);
+        var fixture = CreateProfileDashboardFixture(revision: 31);
+        var initial = fixture.Snapshot;
         var refreshed = initial with
         {
             Revision = 32,
             InitialTranscript = initial.InitialTranscript with { Revision = 32 },
         };
-        var client = new ResnapshotChatRuntimeClient(initial, refreshed);
+        var dashboard = fixture.Dashboard with { Revision = refreshed.Revision };
+        var client = new ResnapshotChatRuntimeClient(initial, refreshed, dashboard);
         using var gateway = new AgentAppRuntimeGateway(client);
         var request = new AgentChatSnapshotRequest(
             42,
@@ -852,6 +1146,10 @@ public sealed class AgentRuntimeCorrectnessTests
         Assert.Equal(2, client.ChatSnapshotRequests.Count);
         Assert.All(client.ChatSnapshotRequests, actual => Assert.Equal(request, actual));
         Assert.Equal(0, client.DashboardInvocationCount);
+        var reloadedDashboard = await gateway.LoadDashboardAsync();
+        Assert.Equal(fixture.Assignment, Assert.Single(Assert.Single(reloadedDashboard.Profiles)
+            .SelectableCapabilityAssignments ?? []));
+        Assert.Equal(1, client.DashboardInvocationCount);
     }
 
     [Fact]
@@ -1378,7 +1676,7 @@ public sealed class AgentRuntimeCorrectnessTests
         var applySnapshot = typeof(AgentAppRuntimeGateway).GetMethod(
             "ApplyChatSnapshotCache",
             BindingFlags.Instance | BindingFlags.NonPublic)!;
-        applySnapshot.Invoke(gateway, [CreateChatSnapshot(1)]);
+        applySnapshot.Invoke(gateway, [CreateChatSnapshot(1), false]);
         var changedTurns = new List<AgentTurnRecord>();
         gateway.TurnChanged += (_, turn) => changedTurns.Add(turn);
 
@@ -1548,7 +1846,7 @@ public sealed class AgentRuntimeCorrectnessTests
     [Fact]
     public async Task ChangeHub_SlowSubscriberIsByteBoundedAndReset()
     {
-        var budgets = CreateMinimumTransportBudgets();
+        var budgets = CreateSmallTransportBudgets();
         using var runtime = ChangeHubRuntime.Create(budgets);
         var workspace = runtime.Workspaces.CreateWorkspace("byte-bounded-subscriber");
         var session = runtime.Sessions.CreateSession(
@@ -1586,7 +1884,7 @@ public sealed class AgentRuntimeCorrectnessTests
     [Fact]
     public async Task ChangeHub_ReplayIsByteBoundedAndRequiresResnapshot()
     {
-        var budgets = CreateMinimumTransportBudgets();
+        var budgets = CreateSmallTransportBudgets();
         using var runtime = ChangeHubRuntime.Create(budgets);
         var workspace = runtime.Workspaces.CreateWorkspace("byte-bounded-replay");
         var session = runtime.Sessions.CreateSession(
@@ -1610,14 +1908,15 @@ public sealed class AgentRuntimeCorrectnessTests
         Assert.Equal(runtime.Hub.Revision, subscription.Current.Revision);
     }
 
-    private static AgentRuntimeTransportBudgetState CreateMinimumTransportBudgets()
+    private static AgentRuntimeTransportBudgetState CreateSmallTransportBudgets()
     {
+        const int valueBytes = 1024 * 1024;
         var budgets = new AgentRuntimeTransportBudgetState();
         _ = budgets.Negotiate(new AgentTransportProfileRequest(
-            AgentAppRuntimePayloadLimits.MinimumValueBytes,
-            AgentAppRuntimePayloadLimits.MinimumValueBytes,
-            AgentAppRuntimePayloadLimits.MinimumValueBytes,
-            AgentAppRuntimePayloadLimits.MinimumContentReferenceBytes,
+            valueBytes,
+            valueBytes,
+            valueBytes,
+            valueBytes,
             RuntimeReported: true));
         return budgets;
     }
@@ -1671,6 +1970,143 @@ public sealed class AgentRuntimeCorrectnessTests
         await gateway.InitializeAsync().WaitAsync(TimeSpan.FromSeconds(2));
 
         Assert.Equal(2, client.DashboardInvocationCount);
+    }
+
+    [Fact]
+    public async Task Gateway_EarlyChangeEofBeforeIdentityResnapshotsReplacementBeforeConnected()
+    {
+        var original = CreateProfileDashboardFixture(
+            revision: 100,
+            runtimeInstanceId: "runtime-original",
+            displayName: "Original runtime profile");
+        var replacement = CreateProfileDashboardFixture(
+            revision: 1,
+            runtimeInstanceId: "runtime-replacement",
+            displayName: "Replacement runtime profile");
+        var client = new EarlyEofReplacementRuntimeClient(
+            original.Dashboard,
+            replacement.Dashboard,
+            replacement.Snapshot.RuntimeInstanceId!);
+        await using var gateway = new AgentAppRuntimeGateway(client);
+        var states = new ConcurrentQueue<AgentRuntimeConnectionState>();
+        gateway.ConnectionStateChanged += states.Enqueue;
+
+        await gateway.InitializeAsync();
+        await client.FirstSubscriptionEnded.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await client.ReplacementDashboardStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(AgentRuntimeConnectionState.Reconnecting, gateway.ConnectionState);
+        Assert.DoesNotContain(AgentRuntimeConnectionState.Connected, states);
+
+        client.ReleaseReplacementDashboard();
+        await client.ReplacementDashboardCompleted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await WaitUntilAsync(() => gateway.ConnectionState == AgentRuntimeConnectionState.Connected);
+
+        Assert.Equal(
+            "Replacement runtime profile",
+            Assert.Single(gateway.ListProfiles()).DisplayName);
+        Assert.Equal(2, client.DashboardInvocationCount);
+    }
+
+    [Fact]
+    public async Task Gateway_CleanHistoryEofBacksOffAndCarriesKnownRuntimeInstance()
+    {
+        var client = new CleanHistoryEofRuntimeClient();
+        await using var gateway = new AgentAppRuntimeGateway(client);
+        await gateway.InitializeAsync();
+        await WaitUntilAsync(() => gateway.ConnectionState == AgentRuntimeConnectionState.Connected);
+
+        gateway.StartObservingHistoryStatus();
+        await client.FirstHistorySubscriptionEnded.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await gateway.DisposeAsync();
+
+        Assert.Equal(1, client.HistorySubscriptionCount);
+        Assert.Equal(
+            CleanHistoryEofRuntimeClient.RuntimeInstanceId,
+            client.FirstHistorySubscription?.RuntimeInstanceId);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Gateway_CanceledSoleProjectionWaiterIsRetainedAndDrained(
+        bool loadCatalog)
+    {
+        var client = new FaultingProjectionRuntimeClient(loadCatalog);
+        var gateway = new AgentAppRuntimeGateway(client);
+        using var cancellation = new CancellationTokenSource();
+        Task projectionLoad = loadCatalog
+            ? gateway.LoadCatalogAsync(new AgentCatalogRequest(), cancellation.Token)
+            : gateway.LoadDashboardAsync(cancellation.Token);
+        await client.ProducerStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => projectionLoad);
+
+        var disposal = gateway.DisposeAsync().AsTask();
+        try
+        {
+            await WaitUntilAsync(() => gateway.ConnectionState == AgentRuntimeConnectionState.Disposed);
+            Assert.False(disposal.IsCompleted);
+        }
+        finally
+        {
+            client.ReleaseProducer();
+        }
+
+        await client.ProducerFaulted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await disposal.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(1, client.InvocationCount);
+    }
+
+    [Fact]
+    public async Task Gateway_DisposeCancelsAndDrainsChangeObservation()
+    {
+        var client = new BlockingObservationRuntimeClient();
+        var gateway = new AgentAppRuntimeGateway(client);
+        await gateway.InitializeAsync();
+        await client.ObservationBlocked.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        await gateway.DisposeAsync();
+
+        Assert.True(client.ObservationEnded.Task.IsCompletedSuccessfully);
+        Assert.Equal(AgentRuntimeConnectionState.Disposed, gateway.ConnectionState);
+    }
+
+    [Fact]
+    public async Task Gateway_DisposeCancelsAndDrainsActiveResnapshot()
+    {
+        var initial = CreateChatSnapshot(41) with { RuntimeInstanceId = "runtime-resnapshot" };
+        var client = new BlockingResnapshotRuntimeClient(initial);
+        var gateway = new AgentAppRuntimeGateway(client);
+        var reloadCount = 0;
+        gateway.ChatSnapshotReloaded += _ => Interlocked.Increment(ref reloadCount);
+        var snapshot = await gateway.LoadChatSnapshotAsync(new AgentChatSnapshotRequest());
+        gateway.CompleteChatSnapshot(snapshot, applied: true);
+        await client.ResnapshotStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        await gateway.DisposeAsync();
+
+        Assert.True(client.ResnapshotEnded.Task.IsCompletedSuccessfully);
+        Assert.Equal(0, Volatile.Read(ref reloadCount));
+        Assert.Equal(AgentRuntimeConnectionState.Disposed, gateway.ConnectionState);
+    }
+
+    [Fact]
+    public async Task Gateway_NestedProviderFailuresDoNotChangeOwnerRuntimeAvailability()
+    {
+        var client = new ProviderFaultRuntimeClient();
+        await using var gateway = new AgentAppRuntimeGateway(client);
+        await gateway.InitializeAsync();
+        await WaitUntilAsync(() => gateway.ConnectionState == AgentRuntimeConnectionState.Connected);
+
+        var providerFault = await Assert.ThrowsAsync<SunderRpcException>(
+            () => gateway.LoadCatalogAsync(new AgentCatalogRequest()));
+        var unavailablePackage = new AgentPackageUnavailableException("nested-provider");
+
+        Assert.Equal(SunderRpcErrorKind.ProviderFaulted, providerFault.Error.Kind);
+        Assert.False(gateway.IsRetryableRuntimeFailure(providerFault));
+        Assert.False(gateway.IsRetryableRuntimeFailure(unavailablePackage));
+        Assert.Equal(AgentRuntimeConnectionState.Connected, gateway.ConnectionState);
     }
 
     [Fact]
@@ -1773,6 +2209,77 @@ public sealed class AgentRuntimeCorrectnessTests
                 revision,
                 new AgentSessionPermissionState(session.SessionId, false),
                 []));
+    }
+
+    private static ProfileDashboardFixture CreateProfileDashboardFixture(
+        long revision,
+        string runtimeInstanceId = "runtime-1",
+        string displayName = "Authoritative profile")
+    {
+        var assignment = new AgentProfileSelectableCapabilityAssignmentRecord(
+            AgentProfileSelectableCapabilityKinds.Tool,
+            "read",
+            "files");
+        var now = DateTimeOffset.UtcNow;
+        var profile = new AgentProfileRecord(
+            "profile-1",
+            displayName,
+            "Authoritative description",
+            "Authoritative instructions",
+            null,
+            null,
+            null,
+            null,
+            now,
+            now,
+            SelectableCapabilityAssignments: [assignment],
+            BehaviorLoopId: "default",
+            BehaviorLoopSourceId: "agent",
+            BehaviorLoopSettingsJson: "{}");
+        var compactProfile = profile with
+        {
+            Description = null,
+            Instructions = null,
+            ModelBindings = [],
+            SelectableCapabilityAssignments = [],
+            BehaviorLoopSourceId = null,
+            BehaviorLoopSettingsJson = null,
+        };
+        var snapshot = CreateChatSnapshot(revision) with
+        {
+            Profiles = [compactProfile],
+            SelectedProfile = compactProfile,
+            RuntimeInstanceId = runtimeInstanceId,
+        };
+        var dashboard = new AgentDashboardProjection(
+            revision,
+            [profile],
+            snapshot.Workspaces,
+            snapshot.WorkspaceBindings);
+        var catalog = new AgentCatalogProjection(
+            revision,
+            [],
+            [],
+            [],
+            [],
+            [],
+            [new AgentProfileSelectableCapabilityDescriptor(
+                assignment.Kind,
+                assignment.CapabilityId,
+                assignment.SourceId,
+                "Read file",
+                "Read a file from the workspace.")],
+            HasEmbeddingConsumers: false,
+            [],
+            [],
+            ChatReadiness: null,
+            EmbeddingReadiness: null);
+        return new ProfileDashboardFixture(
+            assignment,
+            profile,
+            snapshot,
+            dashboard,
+            catalog);
     }
 
     private static (AgentChatSnapshotProjection First, AgentChatSnapshotProjection Second)
@@ -2658,6 +3165,328 @@ public sealed class AgentRuntimeCorrectnessTests
         }
     }
 
+    private sealed class EarlyEofReplacementRuntimeClient(
+        AgentDashboardProjection original,
+        AgentDashboardProjection replacement,
+        string replacementRuntimeInstanceId) : IAgentOwnerClient
+    {
+        private readonly TaskCompletionSource _originalDashboardReturned = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _releaseReplacementDashboard = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _dashboardInvocationCount;
+        private int _subscriptionCount;
+
+        public int DashboardInvocationCount => Volatile.Read(ref _dashboardInvocationCount);
+        public TaskCompletionSource FirstSubscriptionEnded { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReplacementDashboardStarted { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReplacementDashboardCompleted { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public void ReleaseReplacementDashboard() => _releaseReplacementDashboard.TrySetResult();
+
+        public async ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
+            AgentOwnerRpcOperation<TRequest, TResponse> operation,
+            TRequest request,
+            CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TResponse : class
+        {
+            if (!operation.Is(AgentRuntimeOperations.Dashboard))
+            {
+                throw new NotSupportedException(operation.Describe());
+            }
+
+            if (Interlocked.Increment(ref _dashboardInvocationCount) == 1)
+            {
+                _originalDashboardReturned.TrySetResult();
+                return (TResponse)(object)original;
+            }
+
+            ReplacementDashboardStarted.TrySetResult();
+            await _releaseReplacementDashboard.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            ReplacementDashboardCompleted.TrySetResult();
+            return (TResponse)(object)replacement;
+        }
+
+        public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
+            AgentOwnerRpcStream<TRequest, TEvent> stream,
+            TRequest request,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TEvent : class
+        {
+            if (!stream.Is(AgentRuntimeOperations.Changes))
+            {
+                throw new NotSupportedException(stream.Describe());
+            }
+
+            if (Interlocked.Increment(ref _subscriptionCount) == 1)
+            {
+                await _originalDashboardReturned.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+                FirstSubscriptionEnded.TrySetResult();
+                yield break;
+            }
+
+            yield return (TEvent)(object)new AgentRuntimeChange(
+                replacement.Revision,
+                AgentRuntimeChangeKind.Connected,
+                RuntimeInstanceId: replacementRuntimeInstanceId);
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        }
+    }
+
+    private sealed class CleanHistoryEofRuntimeClient : IAgentOwnerClient
+    {
+        internal const string RuntimeInstanceId = "runtime-history";
+        private int _historySubscriptionCount;
+
+        public int HistorySubscriptionCount => Volatile.Read(ref _historySubscriptionCount);
+        public HistorySearchStatusSubscription? FirstHistorySubscription { get; private set; }
+        public TaskCompletionSource FirstHistorySubscriptionEnded { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
+            AgentOwnerRpcOperation<TRequest, TResponse> operation,
+            TRequest request,
+            CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TResponse : class
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return operation.Is(AgentRuntimeOperations.Dashboard)
+                ? ValueTask.FromResult((TResponse)(object)new AgentDashboardProjection(7, [], [], []))
+                : ValueTask.FromException<TResponse>(new NotSupportedException(operation.Describe()));
+        }
+
+        public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
+            AgentOwnerRpcStream<TRequest, TEvent> stream,
+            TRequest request,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TEvent : class
+        {
+            if (stream.Is(AgentRuntimeOperations.Changes))
+            {
+                yield return (TEvent)(object)new AgentRuntimeChange(
+                    7,
+                    AgentRuntimeChangeKind.Connected,
+                    RuntimeInstanceId: RuntimeInstanceId);
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                yield break;
+            }
+            if (stream.Is(AgentRuntimeOperations.HistoryStatus))
+            {
+                Interlocked.Increment(ref _historySubscriptionCount);
+                FirstHistorySubscription ??= (HistorySearchStatusSubscription)(object)request;
+                FirstHistorySubscriptionEnded.TrySetResult();
+                yield break;
+            }
+
+            throw new NotSupportedException(stream.Describe());
+        }
+    }
+
+    private sealed class FaultingProjectionRuntimeClient(bool catalog) : IAgentOwnerClient
+    {
+        private readonly TaskCompletionSource _releaseProducer = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _invocationCount;
+
+        public int InvocationCount => Volatile.Read(ref _invocationCount);
+        public TaskCompletionSource ProducerStarted { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ProducerFaulted { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public void ReleaseProducer() => _releaseProducer.TrySetResult();
+
+        public async ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
+            AgentOwnerRpcOperation<TRequest, TResponse> operation,
+            TRequest request,
+            CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TResponse : class
+        {
+            var expected = catalog
+                ? operation.Is(AgentRuntimeOperations.Catalog)
+                : operation.Is(AgentRuntimeOperations.Dashboard);
+            if (!expected)
+            {
+                throw new NotSupportedException(operation.Describe());
+            }
+
+            Interlocked.Increment(ref _invocationCount);
+            ProducerStarted.TrySetResult();
+            await _releaseProducer.Task.ConfigureAwait(false);
+            ProducerFaulted.TrySetResult();
+            throw new InvalidOperationException("Injected retained projection producer failure.");
+        }
+
+        public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
+            AgentOwnerRpcStream<TRequest, TEvent> stream,
+            TRequest request,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TEvent : class
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            yield break;
+        }
+    }
+
+    private sealed class BlockingObservationRuntimeClient : IAgentOwnerClient
+    {
+        public TaskCompletionSource ObservationBlocked { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ObservationEnded { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
+            AgentOwnerRpcOperation<TRequest, TResponse> operation,
+            TRequest request,
+            CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TResponse : class
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return operation.Is(AgentRuntimeOperations.Dashboard)
+                ? ValueTask.FromResult((TResponse)(object)new AgentDashboardProjection(3, [], [], []))
+                : ValueTask.FromException<TResponse>(new NotSupportedException(operation.Describe()));
+        }
+
+        public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
+            AgentOwnerRpcStream<TRequest, TEvent> stream,
+            TRequest request,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TEvent : class
+        {
+            if (!stream.Is(AgentRuntimeOperations.Changes))
+            {
+                throw new NotSupportedException(stream.Describe());
+            }
+
+            yield return (TEvent)(object)new AgentRuntimeChange(
+                3,
+                AgentRuntimeChangeKind.Connected,
+                RuntimeInstanceId: "runtime-observation");
+            ObservationBlocked.TrySetResult();
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
+            finally
+            {
+                ObservationEnded.TrySetResult();
+            }
+        }
+    }
+
+    private sealed class BlockingResnapshotRuntimeClient(
+        AgentChatSnapshotProjection initial) : IAgentOwnerClient
+    {
+        private int _snapshotInvocationCount;
+
+        public TaskCompletionSource ResnapshotStarted { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ResnapshotEnded { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
+            AgentOwnerRpcOperation<TRequest, TResponse> operation,
+            TRequest request,
+            CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TResponse : class
+        {
+            if (!operation.Is(AgentRuntimeOperations.ChatSnapshot))
+            {
+                throw new NotSupportedException(operation.Describe());
+            }
+            if (Interlocked.Increment(ref _snapshotInvocationCount) == 1)
+            {
+                return (TResponse)(object)initial;
+            }
+
+            ResnapshotStarted.TrySetResult();
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
+                throw new InvalidOperationException("The infinite resnapshot delay completed unexpectedly.");
+            }
+            finally
+            {
+                ResnapshotEnded.TrySetResult();
+            }
+        }
+
+        public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
+            AgentOwnerRpcStream<TRequest, TEvent> stream,
+            TRequest request,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TEvent : class
+        {
+            if (!stream.Is(AgentRuntimeOperations.Changes))
+            {
+                throw new NotSupportedException(stream.Describe());
+            }
+
+            yield return (TEvent)(object)new AgentRuntimeChange(
+                initial.Revision + 1,
+                AgentRuntimeChangeKind.ResnapshotRequired,
+                RuntimeInstanceId: initial.RuntimeInstanceId);
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        }
+    }
+
+    private sealed class ProviderFaultRuntimeClient : IAgentOwnerClient
+    {
+        public ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
+            AgentOwnerRpcOperation<TRequest, TResponse> operation,
+            TRequest request,
+            CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TResponse : class
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (operation.Is(AgentRuntimeOperations.Dashboard))
+            {
+                return ValueTask.FromResult((TResponse)(object)new AgentDashboardProjection(5, [], [], []));
+            }
+            if (operation.Is(AgentRuntimeOperations.Catalog))
+            {
+                return ValueTask.FromException<TResponse>(new SunderRpcException(new SunderRpcError(
+                    SunderRpcErrorKind.ProviderFaulted,
+                    "rpc.provider.handler-fault",
+                    "The nested provider faulted.")));
+            }
+            return ValueTask.FromException<TResponse>(new NotSupportedException(operation.Describe()));
+        }
+
+        public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
+            AgentOwnerRpcStream<TRequest, TEvent> stream,
+            TRequest request,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TEvent : class
+        {
+            if (!stream.Is(AgentRuntimeOperations.Changes))
+            {
+                throw new NotSupportedException(stream.Describe());
+            }
+
+            yield return (TEvent)(object)new AgentRuntimeChange(
+                5,
+                AgentRuntimeChangeKind.Connected,
+                RuntimeInstanceId: "runtime-provider-fault");
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        }
+    }
+
     private sealed class ToggleRuntimeClient(bool isAvailable, bool blockDashboard = false)
         : IAgentOwnerClient
     {
@@ -3231,9 +4060,302 @@ public sealed class AgentRuntimeCorrectnessTests
         }
     }
 
+    private sealed class ProfileDashboardRuntimeClient(
+        AgentChatSnapshotProjection snapshot,
+        AgentDashboardProjection dashboard,
+        AgentCatalogProjection catalog)
+        : IAgentOwnerClient
+    {
+        private readonly object _sync = new();
+        private AgentChatSnapshotProjection _snapshot = snapshot;
+        private AgentDashboardProjection _dashboard = dashboard;
+        private AgentCatalogProjection _catalog = catalog;
+        private int _dashboardInvocationCount;
+
+        public bool IsAvailable => true;
+        public int DashboardInvocationCount => Volatile.Read(ref _dashboardInvocationCount);
+        public ConcurrentQueue<AgentCatalogRequest> CatalogRequests { get; } = new();
+        public ConcurrentQueue<AgentProfileCommand> ProfileCommands { get; } = new();
+
+        public void SetState(
+            AgentChatSnapshotProjection nextSnapshot,
+            AgentDashboardProjection nextDashboard,
+            AgentCatalogProjection nextCatalog)
+        {
+            lock (_sync)
+            {
+                _snapshot = nextSnapshot;
+                _dashboard = nextDashboard;
+                _catalog = nextCatalog;
+            }
+        }
+
+        public ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
+            AgentOwnerRpcOperation<TRequest, TResponse> operation,
+            TRequest request,
+            CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TResponse : class
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (operation.Is(AgentRuntimeOperations.ChatSnapshot))
+            {
+                lock (_sync)
+                {
+                    return ValueTask.FromResult((TResponse)(object)_snapshot);
+                }
+            }
+            if (operation.Is(AgentRuntimeOperations.Dashboard))
+            {
+                Interlocked.Increment(ref _dashboardInvocationCount);
+                lock (_sync)
+                {
+                    return ValueTask.FromResult((TResponse)(object)_dashboard);
+                }
+            }
+            if (operation.Is(AgentRuntimeOperations.Catalog))
+            {
+                CatalogRequests.Enqueue((AgentCatalogRequest)(object)request);
+                lock (_sync)
+                {
+                    return ValueTask.FromResult((TResponse)(object)_catalog);
+                }
+            }
+            if (operation.Is(AgentRuntimeOperations.Profiles))
+            {
+                var command = (AgentProfileCommand)(object)request;
+                ProfileCommands.Enqueue(command);
+                if (command.Kind != AgentProfileCommandKind.Save)
+                {
+                    return ValueTask.FromException<TResponse>(new NotSupportedException(command.Kind.ToString()));
+                }
+
+                lock (_sync)
+                {
+                    var current = Assert.Single(_dashboard.Profiles);
+                    var updated = current with
+                    {
+                        DisplayName = command.DisplayName ?? current.DisplayName,
+                        Description = command.Description,
+                        Instructions = command.Instructions,
+                        SelectableCapabilityAssignments = command.Assignments,
+                        UpdatedAtUtc = DateTimeOffset.UtcNow,
+                    };
+                    _dashboard = _dashboard with
+                    {
+                        Revision = _dashboard.Revision + 1,
+                        Profiles = [updated],
+                    };
+                    return ValueTask.FromResult((TResponse)(object)new AgentProfileCommandResult(
+                        _dashboard.Revision,
+                        updated));
+                }
+            }
+            return ValueTask.FromException<TResponse>(new NotSupportedException(operation.Describe()));
+        }
+
+        public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
+            AgentOwnerRpcStream<TRequest, TEvent> stream,
+            TRequest request,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TEvent : class
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            yield break;
+        }
+    }
+
+    private sealed class ActiveChatDashboardCursorRuntimeClient(
+        AgentChatSnapshotProjection snapshot,
+        AgentDashboardProjection dashboard,
+        bool blockSnapshot = false)
+        : IAgentOwnerClient
+    {
+        private readonly TaskCompletionSource _releaseChange = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _releaseSnapshot = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public bool IsAvailable => true;
+        public long SubscriptionAfterRevision { get; private set; } = -1;
+        public TaskCompletionSource SubscriptionStarted { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource SnapshotStarted { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public void ReleaseChange() => _releaseChange.TrySetResult();
+        public void ReleaseSnapshot() => _releaseSnapshot.TrySetResult();
+
+        public async ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
+            AgentOwnerRpcOperation<TRequest, TResponse> operation,
+            TRequest request,
+            CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TResponse : class
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (operation.Is(AgentRuntimeOperations.ChatSnapshot))
+            {
+                SnapshotStarted.TrySetResult();
+                if (blockSnapshot)
+                {
+                    await _releaseSnapshot.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+                }
+                return (TResponse)(object)snapshot;
+            }
+            if (operation.Is(AgentRuntimeOperations.Dashboard))
+            {
+                return (TResponse)(object)dashboard;
+            }
+            throw new NotSupportedException(operation.Describe());
+        }
+
+        public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
+            AgentOwnerRpcStream<TRequest, TEvent> stream,
+            TRequest request,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TEvent : class
+        {
+            SubscriptionAfterRevision = ((AgentChangeSubscription)(object)request).AfterRevision;
+            SubscriptionStarted.TrySetResult();
+            await _releaseChange.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            yield return (TEvent)(object)new AgentRuntimeChange(
+                snapshot.Revision + 1,
+                AgentRuntimeChangeKind.Profile,
+                ProfileId: snapshot.SelectedProfile?.ProfileId);
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        }
+    }
+
+    private sealed class DetachedDashboardRuntimeClient(
+        AgentChatSnapshotProjection snapshot,
+        AgentDashboardProjection staleDashboard,
+        AgentDashboardProjection currentDashboard,
+        bool failFirstDashboard)
+        : IAgentOwnerClient
+    {
+        private readonly TaskCompletionSource _releaseFirstDashboard = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _dashboardInvocationCount;
+
+        public bool IsAvailable => true;
+        public int DashboardInvocationCount => Volatile.Read(ref _dashboardInvocationCount);
+        public TaskCompletionSource FirstDashboardStarted { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public void ReleaseFirstDashboard() => _releaseFirstDashboard.TrySetResult();
+
+        public async ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
+            AgentOwnerRpcOperation<TRequest, TResponse> operation,
+            TRequest request,
+            CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TResponse : class
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (operation.Is(AgentRuntimeOperations.ChatSnapshot))
+            {
+                return (TResponse)(object)snapshot;
+            }
+            if (operation.Is(AgentRuntimeOperations.Dashboard))
+            {
+                if (Interlocked.Increment(ref _dashboardInvocationCount) == 1)
+                {
+                    FirstDashboardStarted.TrySetResult();
+                    await _releaseFirstDashboard.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+                    if (failFirstDashboard)
+                    {
+                        throw new InvalidOperationException("The detached dashboard failed.");
+                    }
+                    return (TResponse)(object)staleDashboard;
+                }
+                return (TResponse)(object)currentDashboard;
+            }
+            throw new NotSupportedException(operation.Describe());
+        }
+
+        public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
+            AgentOwnerRpcStream<TRequest, TEvent> stream,
+            TRequest request,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TEvent : class
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            yield break;
+        }
+    }
+
+    private sealed class DetachedCatalogRuntimeClient(
+        AgentChatSnapshotProjection originalSnapshot,
+        AgentChatSnapshotProjection replacementSnapshot,
+        AgentCatalogProjection staleCatalog,
+        AgentCatalogProjection currentCatalog,
+        bool failFirstCatalog)
+        : IAgentOwnerClient
+    {
+        private readonly TaskCompletionSource _releaseFirstCatalog = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _catalogInvocationCount;
+        private int _chatSnapshotInvocationCount;
+
+        public bool IsAvailable => true;
+        public int CatalogInvocationCount => Volatile.Read(ref _catalogInvocationCount);
+        public TaskCompletionSource FirstCatalogStarted { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public void ReleaseFirstCatalog() => _releaseFirstCatalog.TrySetResult();
+
+        public async ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
+            AgentOwnerRpcOperation<TRequest, TResponse> operation,
+            TRequest request,
+            CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TResponse : class
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (operation.Is(AgentRuntimeOperations.ChatSnapshot))
+            {
+                var invocation = Interlocked.Increment(ref _chatSnapshotInvocationCount);
+                return (TResponse)(object)(invocation == 1
+                    ? originalSnapshot
+                    : replacementSnapshot);
+            }
+            if (operation.Is(AgentRuntimeOperations.Catalog))
+            {
+                if (Interlocked.Increment(ref _catalogInvocationCount) == 1)
+                {
+                    FirstCatalogStarted.TrySetResult();
+                    await _releaseFirstCatalog.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+                    if (failFirstCatalog)
+                    {
+                        throw new InvalidOperationException("The detached catalog failed.");
+                    }
+                    return (TResponse)(object)staleCatalog;
+                }
+                return (TResponse)(object)currentCatalog;
+            }
+            throw new NotSupportedException(operation.Describe());
+        }
+
+        public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
+            AgentOwnerRpcStream<TRequest, TEvent> stream,
+            TRequest request,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+            where TRequest : class
+            where TEvent : class
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            yield break;
+        }
+    }
+
     private sealed class ResnapshotChatRuntimeClient(
         AgentChatSnapshotProjection initial,
-        AgentChatSnapshotProjection refreshed)
+        AgentChatSnapshotProjection refreshed,
+        AgentDashboardProjection dashboard)
         : IAgentOwnerClient
     {
         private int _chatSnapshotInvocationCount;
@@ -3263,7 +4385,7 @@ public sealed class AgentRuntimeCorrectnessTests
             if (operation.Is(AgentRuntimeOperations.Dashboard))
             {
                 Interlocked.Increment(ref _dashboardInvocationCount);
-                return ValueTask.FromResult((TResponse)(object)new AgentDashboardProjection(0, [], [], []));
+                return ValueTask.FromResult((TResponse)(object)dashboard);
             }
             return ValueTask.FromException<TResponse>(new NotSupportedException(operation.Describe()));
         }
@@ -3286,6 +4408,13 @@ public sealed class AgentRuntimeCorrectnessTests
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
         }
     }
+
+    private sealed record ProfileDashboardFixture(
+        AgentProfileSelectableCapabilityAssignmentRecord Assignment,
+        AgentProfileRecord Profile,
+        AgentChatSnapshotProjection Snapshot,
+        AgentDashboardProjection Dashboard,
+        AgentCatalogProjection Catalog);
 
     private sealed class StaticChatSnapshotRuntimeClient(AgentChatSnapshotProjection snapshot)
         : IAgentOwnerClient

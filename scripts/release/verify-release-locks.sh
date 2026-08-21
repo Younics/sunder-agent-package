@@ -19,8 +19,8 @@ done
 
 inventory="$repository_root/packages.json"
 [[ -f "$inventory" ]] || { printf 'Package inventory was not found: %s\n' "$inventory" >&2; exit 1; }
-worker_count="$(jq -er '[.packages[] | select(.workerProjectPath != null)] | length' "$inventory")"
-[[ "$worker_count" == 15 ]] || { printf 'Expected exactly 15 worker projects, found %s.\n' "$worker_count" >&2; exit 1; }
+primary_count="$(jq -er '[.packages[] | select(.artifactType == "sunderpkg")] | length' "$inventory")"
+[[ "$primary_count" == 15 ]] || { printf 'Expected exactly 15 primary package projects, found %s.\n' "$primary_count" >&2; exit 1; }
 
 core_packages='["Sunder.Sdk","Sunder.Sdk.Avalonia","Sunder.Sdk.Stacks","Sunder.Sdk.Worker","Sunder.Package.Build"]'
 lock_count=0
@@ -44,18 +44,18 @@ while IFS= read -r lock_path; do
 done < <(find "$repository_root/src" "$repository_root/tests" -name packages.release.lock.json -type f -print | sort)
 [[ "$lock_count" -gt 0 ]] || { printf 'No release locks were found.\n' >&2; exit 1; }
 
-while IFS=$'\t' read -r package_id worker_project; do
-  worker_directory="$(dirname "$repository_root/$worker_project")"
-  worker_lock="$worker_directory/packages.release.lock.json"
-  [[ -f "$worker_lock" ]] || { printf 'Worker %s has no release lock: %s\n' "$package_id" "$worker_lock" >&2; exit 1; }
+while IFS=$'\t' read -r package_id primary_project; do
+  primary_directory="$(dirname "$repository_root/$primary_project")"
+  primary_lock="$primary_directory/packages.release.lock.json"
+  [[ -f "$primary_lock" ]] || { printf 'Primary package project %s has no release lock: %s\n' "$package_id" "$primary_lock" >&2; exit 1; }
   jq -e --arg version "$version" '
     .dependencies["net10.0"]["Sunder.Sdk"].resolved == $version
     and .dependencies["net10.0"]["Sunder.Sdk.Worker"].resolved == $version
     and .dependencies["net10.0"]["Sunder.Package.Build"].resolved == $version
-  ' "$worker_lock" >/dev/null || {
-    printf 'Worker %s is not locked to the final Core SDK, Worker, and Build packages at %s.\n' "$package_id" "$version" >&2
+  ' "$primary_lock" >/dev/null || {
+    printf 'Primary package project %s is not locked to the final Core SDK, Worker, and Build packages at %s.\n' "$package_id" "$version" >&2
     exit 1
   }
-done < <(jq -r '.packages | map(select(.workerProjectPath != null)) | sort_by(.key)[] | [.packageId, .workerProjectPath] | @tsv' "$inventory")
+done < <(jq -r '.packages | map(select(.artifactType == "sunderpkg")) | sort_by(.key)[] | [.packageId, .projectPath] | @tsv' "$inventory")
 
-printf 'Verified %s release locks and exactly 15 workers against final Core packages %s.\n' "$lock_count" "$version"
+printf 'Verified %s release locks and exactly 15 primary package projects against final Core packages %s.\n' "$lock_count" "$version"

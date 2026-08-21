@@ -13,7 +13,7 @@ internal readonly record struct PresentationOperation(
     public string EffectiveNotificationKey => NotificationKey ?? Name;
 }
 
-internal sealed class PresentationOperationObserver : IDisposable
+internal sealed class PresentationOperationObserver : IDisposable, IAsyncDisposable
 {
     private static readonly TimeSpan NotificationDeduplicationWindow = TimeSpan.FromSeconds(2);
     private readonly object _notificationSyncRoot = new();
@@ -22,8 +22,9 @@ internal sealed class PresentationOperationObserver : IDisposable
     private readonly Func<PackageLogLevel, string, string, PresentationOperation, Exception, ValueTask>?
         _writeEvent;
     private readonly Func<PackageNotificationRequest, ValueTask>? _publishNotification;
-    private readonly PresentationTaskScope _submissions = new();
-    private bool _disposed;
+    private readonly PresentationTaskScope _submissions = new(
+        PresentationTaskScope.PropagateExpectedFailure);
+    private int _disposed;
 
     public PresentationOperationObserver(
         IPackageContext packageContext,
@@ -75,11 +76,15 @@ internal sealed class PresentationOperationObserver : IDisposable
         Func<CancellationToken, Task> action,
         Func<CancellationToken, Task>? reconcile = null,
         CancellationToken cancellationToken = default)
-        => RunCoreAsync(
+    {
+        Validate(operation);
+        ArgumentNullException.ThrowIfNull(action);
+        return _submissions.RunAsync(_ => RunCoreAsync(
             operation,
             action,
             reconcile is null ? null : (_, token) => reconcile(token),
-            cancellationToken);
+            cancellationToken));
+    }
 
     public Task RunAsync(
         PresentationOperation operation,
@@ -87,8 +92,14 @@ internal sealed class PresentationOperationObserver : IDisposable
         Func<Exception, CancellationToken, Task> reconcile,
         CancellationToken cancellationToken = default)
     {
+        Validate(operation);
+        ArgumentNullException.ThrowIfNull(action);
         ArgumentNullException.ThrowIfNull(reconcile);
-        return RunCoreAsync(operation, action, reconcile, cancellationToken);
+        return _submissions.RunAsync(_ => RunCoreAsync(
+            operation,
+            action,
+            reconcile,
+            cancellationToken));
     }
 
     private async Task RunCoreAsync(
@@ -97,13 +108,6 @@ internal sealed class PresentationOperationObserver : IDisposable
         Func<Exception, CancellationToken, Task>? reconcile,
         CancellationToken cancellationToken)
     {
-        Validate(operation);
-        ArgumentNullException.ThrowIfNull(action);
-        if (_disposed)
-        {
-            return;
-        }
-
         using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken,
             _submissions.CancellationToken);
@@ -136,6 +140,16 @@ internal sealed class PresentationOperationObserver : IDisposable
 
             await HandleExpectedFailureAsync(operation, exception, reconcile).ConfigureAwait(false);
         }
+        catch (Exception exception) when (!PresentationExceptionPolicy.IsFatal(exception))
+        {
+            await TryWriteAsync(
+                PackageLogLevel.Error,
+                "presentation.operation.unexpected_failure",
+                $"{_component} operation '{operation.Name}' failed unexpectedly.",
+                operation,
+                exception).ConfigureAwait(false);
+            throw;
+        }
     }
 
     public void Submit(
@@ -145,27 +159,39 @@ internal sealed class PresentationOperationObserver : IDisposable
     {
         Validate(operation);
         ArgumentNullException.ThrowIfNull(action);
-        if (_disposed)
-        {
-            return;
-        }
+        _submissions.Run(_ => RunCoreAsync(
+            operation,
+            action,
+            reconcile is null ? null : (_, token) => reconcile(token),
+            cancellationToken: default));
+    }
 
-        _submissions.Run(cancellationToken => RunAsync(
+    public Task SubmitAsync(
+        PresentationOperation operation,
+        Func<CancellationToken, Task> action,
+        Func<CancellationToken, Task>? reconcile = null)
+    {
+        return RunAsync(
             operation,
             action,
             reconcile,
-            cancellationToken));
+            cancellationToken: default);
     }
 
     public void Dispose()
     {
-        if (_disposed)
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
         {
             return;
         }
 
-        _disposed = true;
         _submissions.Dispose();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        Interlocked.Exchange(ref _disposed, 1);
+        await _submissions.DisposeAsync().ConfigureAwait(false);
     }
 
     private async Task HandleExpectedFailureAsync(
@@ -181,7 +207,7 @@ internal sealed class PresentationOperationObserver : IDisposable
             operation,
             exception).ConfigureAwait(false);
 
-        if (reconcile is not null && !_disposed)
+        if (reconcile is not null && !IsDisposed)
         {
             try
             {
@@ -189,17 +215,22 @@ internal sealed class PresentationOperationObserver : IDisposable
             }
             catch (Exception reconciliationException) when (!PresentationExceptionPolicy.IsFatal(reconciliationException))
             {
-                reconciliationFailed = true;
                 await TryWriteAsync(
                     PackageLogLevel.Error,
                     "presentation.operation.reconciliation_failure",
                     $"{_component} operation '{operation.Name}' could not reconcile presentation state.",
                     operation,
                     reconciliationException).ConfigureAwait(false);
+                if (!PresentationExceptionPolicy.IsExpectedOperationFailure(reconciliationException))
+                {
+                    throw;
+                }
+
+                reconciliationFailed = true;
             }
         }
 
-        if (!TryBeginNotification(operation.EffectiveNotificationKey) || _disposed)
+        if (!TryBeginNotification(operation.EffectiveNotificationKey) || IsDisposed)
         {
             return;
         }
@@ -272,6 +303,8 @@ internal sealed class PresentationOperationObserver : IDisposable
             return true;
         }
     }
+
+    private bool IsDisposed => Volatile.Read(ref _disposed) != 0;
 
     private static void Validate(PresentationOperation operation)
     {

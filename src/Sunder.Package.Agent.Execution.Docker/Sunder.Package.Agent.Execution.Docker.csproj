@@ -4,6 +4,8 @@
     <SunderPackageFamilyId>sunder.package.agent.execution.docker</SunderPackageFamilyId>
     <SunderPackageRole>worker</SunderPackageRole>
     <SunderPackageProject>true</SunderPackageProject>
+    <SunderPackagePrimaryProject>true</SunderPackagePrimaryProject>
+    <SunderPackageAppProject>App\DockerApp.csproj</SunderPackageAppProject>
     <SunderSdkWorkerReference>true</SunderSdkWorkerReference>
     <SunderSdkStacksReference>true</SunderSdkStacksReference>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
@@ -24,14 +26,12 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Remove="Aggregate\**\*" />
     <Compile Remove="App\**\*" />
     <Compile Remove="Protocol\**\*" />
     <Compile Remove="DockerExecutionSettingsView.axaml.cs" />
     <Compile Remove="DockerExecutionSettingsViewModel.cs" />
     <Compile Remove="DockerExecutionSettingsViewModel.Commands.cs" />
     <Compile Remove="DockerExecutionSettingsViewModel.Runtime.cs" />
-    <None Remove="Aggregate\**\*" />
     <None Remove="App\**\*" />
     <None Remove="Protocol\**\*" />
   </ItemGroup>
@@ -40,13 +40,13 @@
     <SunderSdkCapability Include="docker-environment.v1" />
     <SunderContractBundle Include="Protocol\Contracts\docker-execution-presentation.rpc.json"
                           ContractId="sunder.package.agent.execution.docker.presentation"
-                           Version="2.0.0"
+                            Version="1.0.0"
                           DescriptorPath="contracts/docker-execution-presentation.rpc.json"
                           Exposure="package" />
     <SunderRpcProvider Include="docker.presentation"
                        Role="runtime"
                        ContractId="sunder.package.agent.execution.docker.presentation"
-                       ContractVersion="2.0.0"
+                        ContractVersion="1.0.0"
                        Audience="owner" />
     <SunderPackageTarget Include="runtime/$(RuntimeIdentifier)"
                          Role="runtime"

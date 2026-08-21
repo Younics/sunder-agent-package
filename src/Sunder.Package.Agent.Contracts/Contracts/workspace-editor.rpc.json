@@ -63,9 +63,7 @@
       "additionalProperties": false
     },
     "TextValue": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 65536
+      "type": "string"
     },
     "AgentRpcIdentity": {
       "type": "object",
@@ -123,9 +121,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentWorkspaceDocumentRecord"
-      },
-      "minItems": 0,
-      "maxItems": 10000
+      }
     },
     "Flag": {
       "type": "boolean"
@@ -170,9 +166,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentWorkspacePathRecord"
-      },
-      "minItems": 0,
-      "maxItems": 10000
+      }
     },
     "AgentWorkspaceRecord": {
       "type": "object",
@@ -231,8 +225,6 @@
     },
     "AgentEditorActionKind": {
       "type": "string",
-      "minLength": 13,
-      "maxLength": 21,
       "enum": [
         "open-package-settings",
         "refresh-field"
@@ -255,11 +247,8 @@
       },
       "propertyNames": {
         "type": "string",
-        "minLength": 1,
-        "maxLength": 128
-      },
-      "minProperties": 0,
-      "maxProperties": 256
+        "minLength": 1
+      }
     },
     "AgentEditorAction": {
       "type": "object",
@@ -291,9 +280,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentEditorAction"
-      },
-      "minItems": 0,
-      "maxItems": 256
+      }
     },
     "AgentEditorListItem": {
       "type": "object",
@@ -322,14 +309,10 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentEditorListItem"
-      },
-      "minItems": 0,
-      "maxItems": 256
+      }
     },
     "AgentEditorFieldKind": {
       "type": "string",
-      "minLength": 4,
-      "maxLength": 9,
       "enum": [
         "text",
         "select",
@@ -359,9 +342,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentEditorOption"
-      },
-      "minItems": 0,
-      "maxItems": 256
+      }
     },
     "AgentEditorField": {
       "type": "object",
@@ -425,9 +406,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentEditorField"
-      },
-      "minItems": 0,
-      "maxItems": 256
+      }
     },
     "AgentEditorSection": {
       "type": "object",
@@ -456,9 +435,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentEditorSection"
-      },
-      "minItems": 0,
-      "maxItems": 256
+      }
     },
     "AgentEditorFieldValue": {
       "type": "object",
@@ -480,11 +457,8 @@
       },
       "propertyNames": {
         "type": "string",
-        "minLength": 1,
-        "maxLength": 128
-      },
-      "minProperties": 0,
-      "maxProperties": 256
+        "minLength": 1
+      }
     },
     "AgentEditorSaveRequest": {
       "type": "object",
@@ -536,23 +510,16 @@
     },
     "Identifier": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 256
+      "minLength": 1
     },
     "PathText": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 4096
+      "type": "string"
     },
     "DisplayText": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 8192
+      "type": "string"
     },
     "SortOrder": {
-      "type": "integer",
-      "minimum": -100000,
-      "maximum": 100000
+      "type": "integer"
     }
   }
 }

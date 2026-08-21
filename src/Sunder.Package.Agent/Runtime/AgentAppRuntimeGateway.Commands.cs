@@ -91,14 +91,20 @@ internal sealed partial class AgentAppRuntimeGateway
     public async Task<AgentPermissionProjection> LoadGlobalPermissionsAsync(
         CancellationToken cancellationToken = default)
     {
-        var generation = CaptureGlobalPermissionGeneration();
-        var projection = await InvokeAsync(
-                AgentRuntimeOperations.Permissions,
-                new AgentPermissionCommand(AgentPermissionCommandKind.Read),
-                cancellationToken)
-            .ConfigureAwait(false);
-        TryCacheGlobalPermissions(projection, generation);
-        return projection;
+        while (true)
+        {
+            var generation = CaptureGlobalPermissionGeneration();
+            var projection = await InvokeAsync(
+                    AgentRuntimeOperations.Permissions,
+                    new AgentPermissionCommand(AgentPermissionCommandKind.Read),
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (TryCacheGlobalPermissions(projection, generation))
+            {
+                return projection;
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+        }
     }
 
     public async Task SaveOverrideAsync(

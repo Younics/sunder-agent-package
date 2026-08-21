@@ -139,6 +139,9 @@ internal sealed class SubagentRuntimeChangeStream :
     private void OnProfileChanged(string profileId)
         => Publish(new(0, SubagentChangeKind.Profile, ProfileId: profileId));
 
+    private void OnRuntimeResetRequired()
+        => Publish(new(0, SubagentChangeKind.ResnapshotRequired));
+
     private void Publish(SubagentChanged change)
     {
         lock (_gate)
@@ -240,6 +243,7 @@ internal sealed class SubagentRuntimeChangeStream :
             _runtime.SessionChanged += OnSessionChanged;
             _runtime.TurnChanged += OnTurnChanged;
             _runtime.ProfileChanged += OnProfileChanged;
+            _runtime.ResetRequired += OnRuntimeResetRequired;
             generation = ++_runtimeGeneration;
         }
 
@@ -275,6 +279,7 @@ internal sealed class SubagentRuntimeChangeStream :
             runtime.SessionChanged -= OnSessionChanged;
             runtime.TurnChanged -= OnTurnChanged;
             runtime.ProfileChanged -= OnProfileChanged;
+            runtime.ResetRequired -= OnRuntimeResetRequired;
         }
         _runtime = null;
         _runtimeReference = null;

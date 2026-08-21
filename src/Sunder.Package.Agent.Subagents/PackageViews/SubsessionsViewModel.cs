@@ -28,7 +28,7 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
     private readonly ActivityTicker _activityTicker = new();
     private readonly AgentRunActivityState _runActivity;
     private readonly AsyncOnce _initialization = new();
-    private readonly PresentationTaskScope _tasks = new();
+    private readonly PresentationTaskScope _tasks;
     private readonly PresentationOperationObserver _operations;
     private readonly LatestRequestCoordinator _requests = new();
     private readonly KeyedAdaptiveListDetailState<Guid, SubsessionListItemViewModel> _listDetail;
@@ -53,6 +53,13 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         PresentationOperationObserver? operationObserver = null)
     {
         _uiDispatcher = uiDispatcher;
+        _tasks = new PresentationTaskScope(exception => _uiDispatcher.InvokeAsync(() =>
+        {
+            if (!_disposed)
+            {
+                SetLoadFailure(exception.Message);
+            }
+        }));
         _operations = operationObserver
             ?? PresentationOperationObserver.CreateUnreported("Subsessions");
         _activityTicker.SetEnabled(false);
@@ -517,7 +524,7 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
                StringComparison.OrdinalIgnoreCase);
 
     private void OnSessionChanged(Guid sessionId)
-        => _tasks.Run(_runtimeRefresh.MarkDirty());
+        => _tasks.Run(_ => _runtimeRefresh.MarkDirty());
 
     private void ApplySessionChanged(Guid sessionId)
     {

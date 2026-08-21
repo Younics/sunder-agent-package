@@ -53,12 +53,12 @@ Use canonical lowercase test package ids because owner validation is part of the
 
 ## Artifact Validation
 
-Build and publish the actual package project:
+Build and pack the canonical primary Worker project directly:
 
 ```powershell
 dotnet restore path/to/Extension.csproj
 dotnet build path/to/Extension.csproj --no-restore
-dotnet publish path/to/Extension.csproj -c Release --no-restore
+dotnet msbuild path/to/Extension.csproj -t:PackSunderPackage -p:Configuration=Release
 ```
 
 Inspect generated `sunder-dev/sunder-package.json` and the `.sunderpkg`:

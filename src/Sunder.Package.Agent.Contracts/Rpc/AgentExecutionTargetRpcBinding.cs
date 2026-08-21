@@ -26,7 +26,7 @@ public static class AgentExecutionTargetRpc
     public static ISunderRpcServiceHandler CreateHandler(IAgentExecutionTarget target)
     {
         var descriptor = WithFacets(target);
-        return AgentRpcServiceHandler.Create()
+        return AgentRpcServiceHandler.Create(AgentRpcContractDescriptors.Get(AgentRpcContractIds.ExecutionTarget))
             .AddUnary<AgentRpcEmpty, AgentExecutionTargetDescriptor>(ServiceId, "describe", (_, _, _) => ValueTask.FromResult(descriptor))
             .AddNullableUnary<AgentExecutionTargetContextWire, string>(ServiceId, "configuration-generation", async (_, request, token) => await target.GetConfigurationGenerationAsync(request.ToContext(), token).ConfigureAwait(false))
             .AddUnary<AgentExecutionTargetContextWire, AgentExecutionTargetReadiness>(ServiceId, "readiness", (_, request, token) => target.GetReadinessAsync(request.ToContext(), token))

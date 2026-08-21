@@ -261,9 +261,7 @@
       "additionalProperties": false
     },
     "TextValue": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 65536
+      "type": "string"
     },
     "Timestamp": {
       "type": "string",
@@ -275,8 +273,6 @@
     },
     "AgentSessionState": {
       "type": "string",
-      "minLength": 6,
-      "maxLength": 11,
       "enum": [
         "active",
         "interrupted",
@@ -347,9 +343,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentSessionRecord"
-      },
-      "minItems": 0,
-      "maxItems": 10000
+      }
     },
     "StringRequest": {
       "type": "object",
@@ -424,9 +418,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentWorkspaceDocumentRecord"
-      },
-      "minItems": 0,
-      "maxItems": 10000
+      }
     },
     "AgentWorkspacePathRecord": {
       "type": "object",
@@ -468,9 +460,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentWorkspacePathRecord"
-      },
-      "minItems": 0,
-      "maxItems": 10000
+      }
     },
     "AgentWorkspaceRecord": {
       "type": "object",
@@ -511,9 +501,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentWorkspaceRecord"
-      },
-      "minItems": 0,
-      "maxItems": 10000
+      }
     },
     "WorkspaceLookupResult": {
       "oneOf": [
@@ -558,9 +546,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentProfileModelBindingRecord"
-      },
-      "minItems": 0,
-      "maxItems": 10000
+      }
     },
     "AgentProfileSelectableCapabilityAssignmentRecord": {
       "type": "object",
@@ -585,9 +571,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentProfileSelectableCapabilityAssignmentRecord"
-      },
-      "minItems": 0,
-      "maxItems": 10000
+      }
     },
     "AgentProfileRecord": {
       "type": "object",
@@ -739,8 +723,6 @@
     },
     "AgentRunStatus": {
       "type": "string",
-      "minLength": 4,
-      "maxLength": 20,
       "enum": [
         "idle",
         "running",
@@ -810,8 +792,6 @@
     },
     "AgentTurnItemKind": {
       "type": "string",
-      "minLength": 4,
-      "maxLength": 11,
       "enum": [
         "text",
         "tool-call",
@@ -821,8 +801,6 @@
     },
     "AgentToolExecutionStatus": {
       "type": "string",
-      "minLength": 6,
-      "maxLength": 9,
       "enum": [
         "prepared",
         "started",
@@ -929,14 +907,10 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentTurnItemRecord"
-      },
-      "minItems": 0,
-      "maxItems": 1000
+      }
     },
     "AgentTurnKind": {
       "type": "string",
-      "minLength": 7,
-      "maxLength": 11,
       "enum": [
         "message",
         "tool-call",
@@ -945,8 +919,6 @@
     },
     "AgentMessageRole": {
       "type": "string",
-      "minLength": 4,
-      "maxLength": 9,
       "enum": [
         "system",
         "user",
@@ -1008,9 +980,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentTurnRecord"
-      },
-      "minItems": 0,
-      "maxItems": 1000
+      }
     },
     "TurnBoundaryRequest": {
       "type": "object",
@@ -1163,9 +1133,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentProfileRecord"
-      },
-      "minItems": 0,
-      "maxItems": 10000
+      }
     },
     "SessionCapabilityRequest": {
       "type": "object",
@@ -1212,6 +1180,9 @@
     "AgentRuntimeCatalogEvent": {
       "oneOf": [
         {
+          "$ref": "#/$defs/AgentRuntimeCatalogResetEvent"
+        },
+        {
           "$ref": "#/$defs/AgentSessionCatalogEvent"
         },
         {
@@ -1224,34 +1195,24 @@
     },
     "Identifier": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 256
+      "minLength": 1
     },
     "VersionText": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 256
+      "minLength": 1
     },
     "PathText": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 4096
+      "type": "string"
     },
     "DisplayText": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 8192
+      "type": "string"
     },
     "ContentText": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 900000
+      "type": "string"
     },
     "JsonText": {
       "type": "string",
-      "minLength": 0,
-      "maxLength": 900000,
-      "description": "Bounded opaque JSON text that may be malformed, truncated, or interpreted by an extension-owned schema."
+      "description": "Opaque JSON text that may be malformed, truncated, or interpreted by an extension-owned schema."
     },
     "PageSize": {
       "type": "integer",
@@ -1259,32 +1220,42 @@
       "maximum": 1000
     },
     "SortOrder": {
-      "type": "integer",
-      "minimum": -100000,
-      "maximum": 100000
+      "type": "integer"
     },
     "CollectionIndex": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 100000
+      "minimum": 0
     },
     "Revision": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 9007199254740991
+      "minimum": 0
     },
     "Count": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 9007199254740991
+      "minimum": 0
+    },
+    "AgentRuntimeCatalogResetEvent": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "reset"
+        },
+        "sequence": {
+          "$ref": "#/$defs/Revision"
+        }
+      },
+      "required": [
+        "kind",
+        "sequence"
+      ],
+      "additionalProperties": false
     },
     "AgentSessionCatalogEvent": {
       "type": "object",
       "properties": {
         "kind": {
           "type": "string",
-          "minLength": 7,
-          "maxLength": 7,
           "const": "session"
         },
         "sequence": {
@@ -1306,8 +1277,6 @@
       "properties": {
         "kind": {
           "type": "string",
-          "minLength": 4,
-          "maxLength": 4,
           "const": "turn"
         },
         "sequence": {
@@ -1333,8 +1302,6 @@
       "properties": {
         "kind": {
           "type": "string",
-          "minLength": 7,
-          "maxLength": 7,
           "const": "profile"
         },
         "sequence": {

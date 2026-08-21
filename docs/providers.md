@@ -48,7 +48,8 @@ Model `Variants`, `SpeedOptions`, and `ModeOptions` are persisted as `AgentChatM
 ### Chat Client Behavior
 
 - Implement the standard `IChatClient` metadata and streaming/non-streaming paths expected by the chosen provider library.
-- Preserve function call ids and names. Tool calls must be valid JSON objects and must respect `AgentPayloadLimits`.
+- Preserve function call ids and names. Tool calls must be valid JSON objects and must respect the depth, property-count, and case-collision policy exposed through `AgentPayloadLimits`; Runtime's RPC resource profile owns transport size.
+- The first-party OpenAI transport caps an upstream SSE line and accumulated streamed tool arguments at 1 MiB each. These package-local limits bound memory retained from external provider input and are not Agent RPC limits.
 - Do not claim native or multiple tool calling unless translated responses preserve all call/result pairs.
 - Distinguish caller cancellation from provider timeout/transient transport interruption. The default behavior loop can persist an interrupted run for resumable failures.
 - Stream `UsageContent` when upstream usage is available. Populate `TotalTokenCount` when it represents the complete context usage; otherwise populate both `InputTokenCount` and `OutputTokenCount`. The Runtime uses usage from the successful attempt to decide whether session context should be compacted.

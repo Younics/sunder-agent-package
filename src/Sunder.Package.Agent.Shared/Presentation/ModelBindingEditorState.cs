@@ -49,7 +49,7 @@ internal sealed class ModelBindingEditorState : INotifyPropertyChanged, IDisposa
     private readonly ProviderModelLoader _loader;
     private readonly ModelBindingEditorOptions _options;
     private readonly IPresentationDispatcher _dispatcher;
-    private readonly PresentationTaskScope _tasks = new();
+    private readonly PresentationTaskScope _tasks;
     private ProviderCatalogOption? _selectedProvider;
     private ProviderModelCatalogOption? _selectedModel;
     private ModelReasoningOption? _selectedReasoningOption;
@@ -72,6 +72,14 @@ internal sealed class ModelBindingEditorState : INotifyPropertyChanged, IDisposa
         _loader = loader;
         _options = options;
         _dispatcher = dispatcher ?? PresentationDispatcher.Capture();
+        _tasks = new PresentationTaskScope(exception => _dispatcher.InvokeAsync(() =>
+        {
+            if (!_disposed)
+            {
+                StatusText = $"{_options.LoadFailurePrefix}: Failed - {exception.Message}";
+                SetWarning($"{_options.LoadFailurePrefix} could not be loaded: {exception.Message}");
+            }
+        }));
         _statusText = options.NoProviderSelectedText;
     }
 

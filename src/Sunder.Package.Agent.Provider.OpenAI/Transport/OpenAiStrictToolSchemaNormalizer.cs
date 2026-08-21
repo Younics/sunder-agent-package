@@ -5,6 +5,9 @@ namespace Sunder.Package.Agent.Provider.OpenAI.Transport;
 
 internal static class OpenAiStrictToolSchemaNormalizer
 {
+    private const string SunderMcpArgumentsSchemaId = "urn:sunder:mcp:arguments:1";
+    private const string SunderMcpArgumentsSchemaMarker = "sunder:mcp-arguments:1";
+
     internal static JsonElement NormalizeFunctionParameters(string? schemaJson)
     {
         JsonNode? schemaNode = string.IsNullOrWhiteSpace(schemaJson)
@@ -16,7 +19,10 @@ internal static class OpenAiStrictToolSchemaNormalizer
             return SerializeEmptyObjectSchema();
         }
 
-        var resolvedRoot = ResolveLocalRefs(schemaObject, schemaObject, new HashSet<string>(StringComparer.Ordinal));
+        var resolvedRoot = ResolveLocalRefs(
+            schemaObject,
+            schemaObject,
+            new HashSet<(JsonObject ResourceRoot, string RefPath)>());
         if (resolvedRoot is not JsonObject resolvedSchemaObject)
         {
             return SerializeEmptyObjectSchema();
@@ -26,40 +32,50 @@ internal static class OpenAiStrictToolSchemaNormalizer
         return JsonSerializer.SerializeToElement(resolvedSchemaObject);
     }
 
-    private static JsonNode ResolveLocalRefs(JsonNode node, JsonObject documentRoot, HashSet<string> activeRefs)
+    private static JsonNode ResolveLocalRefs(
+        JsonNode node,
+        JsonObject resourceRoot,
+        HashSet<(JsonObject ResourceRoot, string RefPath)> activeRefs)
     {
         return node switch
         {
-            JsonObject obj => ResolveLocalRefsInObject(obj, documentRoot, activeRefs),
-            JsonArray array => ResolveLocalRefsInArray(array, documentRoot, activeRefs),
+            JsonObject obj => ResolveLocalRefsInObject(obj, resourceRoot, activeRefs),
+            JsonArray array => ResolveLocalRefsInArray(array, resourceRoot, activeRefs),
             _ => node.DeepClone(),
         };
     }
 
-    private static JsonNode ResolveLocalRefsInObject(JsonObject schema, JsonObject documentRoot, HashSet<string> activeRefs)
+    private static JsonNode ResolveLocalRefsInObject(
+        JsonObject schema,
+        JsonObject resourceRoot,
+        HashSet<(JsonObject ResourceRoot, string RefPath)> activeRefs)
     {
+        if (schema.ContainsKey("$id"))
+        {
+            resourceRoot = schema;
+        }
+        ValidateReference(schema, "$ref");
+        ValidateReference(schema, "$dynamicRef");
+        ValidateReference(schema, "$recursiveRef");
         if (schema.TryGetPropertyValue("$ref", out var refNode)
             && refNode is JsonValue refValue
             && refValue.TryGetValue<string>(out var refPath)
-            && IsLocalRef(refPath))
+            && IsLocalPointerRef(refPath))
         {
-            if (!activeRefs.Add(refPath))
+            var refKey = (resourceRoot, refPath);
+            if (!activeRefs.Add(refKey))
             {
                 throw new InvalidOperationException($"Cyclic local schema reference '{refPath}' is not supported.");
             }
 
             try
             {
-                var resolvedTarget = ResolveLocalRefTarget(documentRoot, refPath)
+                var resolvedTarget = ResolveLocalRefTarget(resourceRoot, refPath)
                     ?? throw new InvalidOperationException($"Local schema reference '{refPath}' could not be resolved.");
-                var resolvedNode = ResolveLocalRefs(resolvedTarget, documentRoot, activeRefs);
+                var resolvedNode = ResolveLocalRefs(resolvedTarget, resourceRoot, activeRefs);
 
-                if (resolvedNode is not JsonObject resolvedObject)
-                {
-                    return resolvedNode;
-                }
-
-                var merged = (JsonObject)resolvedObject.DeepClone();
+                var assertionSiblings = new JsonObject();
+                var resourceSiblings = new JsonObject();
                 foreach (var property in schema)
                 {
                     if (string.Equals(property.Key, "$ref", StringComparison.Ordinal))
@@ -67,16 +83,16 @@ internal static class OpenAiStrictToolSchemaNormalizer
                         continue;
                     }
 
-                    merged[property.Key] = property.Value is null
+                    var resolvedSibling = property.Value is null
                         ? null
-                        : ResolveLocalRefs(property.Value, documentRoot, activeRefs);
+                        : ResolveLocalRefs(property.Value, resourceRoot, activeRefs);
+                    (IsResourceSibling(property.Key) ? resourceSiblings : assertionSiblings)[property.Key] = resolvedSibling;
                 }
-
-                return merged;
+                return ComposeResolvedReference(resolvedNode, assertionSiblings, resourceSiblings);
             }
             finally
             {
-                activeRefs.Remove(refPath);
+                activeRefs.Remove(refKey);
             }
         }
 
@@ -85,57 +101,82 @@ internal static class OpenAiStrictToolSchemaNormalizer
         {
             clone[property.Key] = property.Value is null
                 ? null
-                : ResolveLocalRefs(property.Value, documentRoot, activeRefs);
+                : ResolveLocalRefs(property.Value, resourceRoot, activeRefs);
         }
 
         return clone;
     }
 
-    private static JsonArray ResolveLocalRefsInArray(JsonArray schemaArray, JsonObject documentRoot, HashSet<string> activeRefs)
+    private static JsonArray ResolveLocalRefsInArray(
+        JsonArray schemaArray,
+        JsonObject resourceRoot,
+        HashSet<(JsonObject ResourceRoot, string RefPath)> activeRefs)
     {
         var clone = new JsonArray();
         foreach (var item in schemaArray)
         {
-            clone.Add(item is null ? null : ResolveLocalRefs(item, documentRoot, activeRefs));
+            clone.Add(item is null ? null : ResolveLocalRefs(item, resourceRoot, activeRefs));
         }
 
         return clone;
     }
 
-    private static void NormalizeSchemaNode(JsonNode? node)
+    private static void NormalizeSchemaNode(JsonNode? node, bool preserveObjectShape = false)
     {
         switch (node)
         {
             case JsonObject obj:
-                NormalizeSchemaObject(obj);
+                NormalizeSchemaObject(obj, preserveObjectShape);
                 break;
 
             case JsonArray array:
                 foreach (var child in array)
                 {
-                    NormalizeSchemaNode(child);
+                    NormalizeSchemaNode(child, preserveObjectShape);
                 }
                 break;
         }
     }
 
-    private static void NormalizeSchemaObject(JsonObject schema)
+    private static void NormalizeSchemaObject(JsonObject schema, bool preserveObjectShape)
     {
-        schema.Remove("$defs");
-        schema.Remove("definitions");
-        schema.Remove("$schema");
+        preserveObjectShape |= IsSunderMcpArgumentsSchema(schema);
+        var hasUnresolvedReference = ContainsUnresolvedReference(schema);
+        if (!hasUnresolvedReference)
+        {
+            schema.Remove("$defs");
+            schema.Remove("definitions");
+            schema.Remove("$schema");
+            schema.Remove("$id");
+        }
+        if (preserveObjectShape
+            && schema["$comment"] is JsonValue comment
+            && comment.TryGetValue<string>(out var commentValue)
+            && string.Equals(commentValue, SunderMcpArgumentsSchemaMarker, StringComparison.Ordinal))
+        {
+            schema.Remove("$comment");
+        }
 
-        NormalizeSchemaNode(schema["items"]);
-        NormalizeSchemaNode(schema["contains"]);
-        NormalizeSchemaNode(schema["propertyNames"]);
-        NormalizeSchemaNode(schema["not"]);
-        NormalizeSchemaNode(schema["if"]);
-        NormalizeSchemaNode(schema["then"]);
-        NormalizeSchemaNode(schema["else"]);
-        NormalizeSchemaArray(schema["prefixItems"] as JsonArray);
-        NormalizeSchemaArray(schema["anyOf"] as JsonArray);
-        NormalizeSchemaArray(schema["oneOf"] as JsonArray);
-        NormalizeSchemaArray(schema["allOf"] as JsonArray);
+        NormalizeSchemaNode(schema["items"], preserveObjectShape);
+        NormalizeSchemaNode(schema["contains"], preserveObjectShape);
+        NormalizeSchemaNode(schema["propertyNames"], preserveObjectShape);
+        NormalizeSchemaNode(schema["not"], preserveObjectShape);
+        NormalizeSchemaNode(schema["if"], preserveObjectShape);
+        NormalizeSchemaNode(schema["then"], preserveObjectShape);
+        NormalizeSchemaNode(schema["else"], preserveObjectShape);
+        NormalizeSchemaArray(schema["prefixItems"] as JsonArray, preserveObjectShape);
+        NormalizeSchemaArray(schema["anyOf"] as JsonArray, preserveObjectShape);
+        NormalizeSchemaArray(schema["oneOf"] as JsonArray, preserveObjectShape);
+        NormalizeSchemaArray(schema["allOf"] as JsonArray, preserveObjectShape);
+        if (preserveObjectShape)
+        {
+            NormalizeSchemaMap(schema["properties"] as JsonObject, preserveObjectShape);
+            NormalizeSchemaMap(schema["patternProperties"] as JsonObject, preserveObjectShape);
+            NormalizeSchemaMap(schema["dependentSchemas"] as JsonObject, preserveObjectShape);
+            NormalizeSchemaNode(schema["additionalProperties"], preserveObjectShape);
+            NormalizeSchemaNode(schema["unevaluatedProperties"], preserveObjectShape);
+            return;
+        }
 
         if (!IsObjectLikeSchema(schema))
         {
@@ -168,7 +209,7 @@ internal static class OpenAiStrictToolSchemaNormalizer
         schema["additionalProperties"] = JsonValue.Create(false);
     }
 
-    private static void NormalizeSchemaArray(JsonArray? schemaArray)
+    private static void NormalizeSchemaArray(JsonArray? schemaArray, bool preserveObjectShape = false)
     {
         if (schemaArray is null)
         {
@@ -177,8 +218,103 @@ internal static class OpenAiStrictToolSchemaNormalizer
 
         foreach (var child in schemaArray)
         {
-            NormalizeSchemaNode(child);
+            NormalizeSchemaNode(child, preserveObjectShape);
         }
+    }
+
+    private static void NormalizeSchemaMap(JsonObject? schemas, bool preserveObjectShape)
+    {
+        if (schemas is null)
+        {
+            return;
+        }
+        foreach (var schema in schemas)
+        {
+            NormalizeSchemaNode(schema.Value, preserveObjectShape);
+        }
+    }
+
+    private static bool IsSunderMcpArgumentsSchema(JsonObject schema)
+        => schema["$id"] is JsonValue id
+               && id.TryGetValue<string>(out var idValue)
+               && string.Equals(idValue, SunderMcpArgumentsSchemaId, StringComparison.Ordinal)
+           || schema["$comment"] is JsonValue comment
+               && comment.TryGetValue<string>(out var commentValue)
+               && string.Equals(commentValue, SunderMcpArgumentsSchemaMarker, StringComparison.Ordinal);
+
+    private static JsonNode ComposeResolvedReference(
+        JsonNode resolvedTarget,
+        JsonObject assertionSiblings,
+        JsonObject resourceSiblings)
+    {
+        if (assertionSiblings.Count == 0
+            && resolvedTarget is JsonObject resolvedObject
+            && resourceSiblings.All(sibling => !resolvedObject.ContainsKey(sibling.Key)))
+        {
+            var merged = (JsonObject)resolvedObject.DeepClone();
+            foreach (var sibling in resourceSiblings)
+            {
+                merged[sibling.Key] = sibling.Value?.DeepClone();
+            }
+            return merged;
+        }
+
+        var composition = new JsonObject();
+        foreach (var sibling in resourceSiblings)
+        {
+            composition[sibling.Key] = sibling.Value?.DeepClone();
+        }
+        var branches = new JsonArray(resolvedTarget.DeepClone());
+        if (assertionSiblings.Count > 0)
+        {
+            branches.Add(assertionSiblings.DeepClone());
+        }
+        composition["allOf"] = branches;
+        return composition;
+    }
+
+    private static bool IsResourceSibling(string propertyName)
+        => propertyName is "$schema" or "$id" or "$anchor" or "$dynamicAnchor" or "$recursiveAnchor"
+            or "$vocabulary" or "$defs" or "definitions" or "$comment";
+
+    private static void ValidateReference(JsonObject schema, string keyword)
+    {
+        if (schema[keyword] is not JsonValue reference
+            || !reference.TryGetValue<string>(out var referenceValue))
+        {
+            return;
+        }
+        if (!referenceValue.StartsWith('#'))
+        {
+            throw new InvalidOperationException(
+                $"External JSON Schema reference '{referenceValue}' in '{keyword}' is not supported for OpenAI tool normalization.");
+        }
+        if (string.Equals(keyword, "$ref", StringComparison.Ordinal)
+            && !IsLocalPointerRef(referenceValue))
+        {
+            throw new InvalidOperationException(
+                $"Local JSON Schema reference '{referenceValue}' must use a JSON Pointer for OpenAI tool normalization.");
+        }
+    }
+
+    private static bool ContainsUnresolvedReference(JsonNode? node)
+    {
+        if (node is JsonObject obj)
+        {
+            foreach (var property in obj)
+            {
+                if (property.Key is "$ref" or "$dynamicRef" or "$recursiveRef"
+                    || ContainsUnresolvedReference(property.Value))
+                {
+                    return true;
+                }
+            }
+        }
+        else if (node is JsonArray array)
+        {
+            return array.Any(ContainsUnresolvedReference);
+        }
+        return false;
     }
 
     private static void MakePropertyNullable(JsonObject propertySchema)
@@ -273,7 +409,7 @@ internal static class OpenAiStrictToolSchemaNormalizer
         return current;
     }
 
-    private static bool IsLocalRef(string refPath) => refPath.StartsWith("#/", StringComparison.Ordinal);
+    private static bool IsLocalPointerRef(string refPath) => refPath.StartsWith("#/", StringComparison.Ordinal);
 
     private static JsonObject CreateEmptyObjectSchemaNode()
         => new()

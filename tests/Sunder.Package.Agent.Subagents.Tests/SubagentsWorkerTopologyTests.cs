@@ -35,11 +35,11 @@ public sealed class SubagentsWorkerTopologyTests
     }
 
     [Fact]
-    public void AggregateManifest_ContainsSixRidAppExactRidWorkerAndOwnerProvider()
+    public void ComposedManifest_ContainsSixRidAppExactRidWorkerAndOwnerProvider()
     {
-        var aggregateRoot = AggregateOutputRoot();
-        var manifestPath = Path.Combine(aggregateRoot, "manifest", "sunder-package.json");
-        Assert.True(File.Exists(manifestPath), $"Aggregate manifest was not found: {manifestPath}");
+        var composedRoot = ComposedOutputRoot();
+        var manifestPath = Path.Combine(composedRoot, "manifest", "sunder-package.json");
+        Assert.True(File.Exists(manifestPath), $"Composed manifest was not found: {manifestPath}");
         using var document = JsonDocument.Parse(File.ReadAllBytes(manifestPath));
         var root = document.RootElement;
         var targets = root.GetProperty("targets").EnumerateArray().ToArray();
@@ -76,7 +76,7 @@ public sealed class SubagentsWorkerTopologyTests
             contract.GetProperty("role").GetString() == "app");
         Assert.Equal(SubagentsOwnerProtocol.Descriptor.ContractId, appImport.GetProperty("contractId").GetString());
 
-        var runtimeRoot = Path.Combine(aggregateRoot, "payload", "runtime");
+        var runtimeRoot = Path.Combine(composedRoot, "payload", "runtime");
         var workerRoot = Path.Combine(runtimeRoot, RuntimeInformation.RuntimeIdentifier, "lib");
         Assert.True(File.Exists(Path.Combine(
             workerRoot,
@@ -86,7 +86,7 @@ public sealed class SubagentsWorkerTopologyTests
             static fileName => fileName?.StartsWith("Avalonia", StringComparison.OrdinalIgnoreCase) == true);
     }
 
-    private static string AggregateOutputRoot()
+    private static string ComposedOutputRoot()
     {
         var output = new DirectoryInfo(AppContext.BaseDirectory.TrimEnd(
             Path.DirectorySeparatorChar,
@@ -96,7 +96,6 @@ public sealed class SubagentsWorkerTopologyTests
             AgentPackageRepositoryInventory.RepositoryRoot.FullName,
             "src",
             "Sunder.Package.Agent.Subagents",
-            "Aggregate",
             "bin",
             configuration,
             output.Name,

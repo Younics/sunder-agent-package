@@ -58,6 +58,86 @@ public sealed class TranscriptScrollCoordinatorTests
         Assert.True(state.ShouldShow);
     }
 
+    [Fact]
+    public void RunActivityState_AuthoritativeRebuildHandlesDuplicateAndMissingCallIds()
+    {
+        using var state = new AgentRunActivityState(
+            isRunActive: () => true,
+            isFollowingLatest: () => true,
+            quietDelay: TimeSpan.Zero);
+        var sessionId = Guid.NewGuid();
+        var firstDuplicate = CreateToolActivityTurn(
+            sessionId,
+            AgentTurnItemKind.ToolCall,
+            "duplicate-call",
+            "mcp_tool");
+        var secondDuplicate = CreateToolActivityTurn(
+            sessionId,
+            AgentTurnItemKind.ToolCall,
+            "duplicate-call",
+            "mcp_tool");
+        var firstResult = CreateToolActivityTurn(
+            sessionId,
+            AgentTurnItemKind.ToolResult,
+            "duplicate-call",
+            "mcp_tool");
+
+        state.RebuildActiveToolCalls([firstDuplicate, secondDuplicate, firstResult]);
+
+        Assert.False(state.ShouldShow);
+
+        state.TrackTurn(CreateToolActivityTurn(
+            sessionId,
+            AgentTurnItemKind.ToolResult,
+            "duplicate-call",
+            "mcp_tool"), scheduleQuietTimer: false);
+
+        Assert.True(state.ShouldShow);
+
+        state.Reset();
+        state.RebuildActiveToolCalls([
+            CreateToolActivityTurn(sessionId, AgentTurnItemKind.ToolCall, null, "missing_id_tool"),
+            CreateToolActivityTurn(sessionId, AgentTurnItemKind.ToolResult, null, "missing_id_tool"),
+        ]);
+
+        Assert.True(state.ShouldShow);
+    }
+
+    [Fact]
+    public void RunActivityState_AuthoritativeRebuildMatchesResultBeforeCallAtEqualTimestamp()
+    {
+        using var state = new AgentRunActivityState(
+            isRunActive: () => true,
+            isFollowingLatest: () => true,
+            quietDelay: TimeSpan.Zero);
+        var sessionId = Guid.NewGuid();
+        var timestamp = DateTimeOffset.UtcNow;
+        var call = CreateToolActivityTurn(
+            sessionId,
+            AgentTurnItemKind.ToolCall,
+            "equal-time-call",
+            "mcp_tool") with
+        {
+            TurnId = Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff"),
+            CreatedAtUtc = timestamp,
+            UpdatedAtUtc = timestamp,
+        };
+        var result = CreateToolActivityTurn(
+            sessionId,
+            AgentTurnItemKind.ToolResult,
+            "equal-time-call",
+            "mcp_tool") with
+        {
+            TurnId = Guid.Empty,
+            CreatedAtUtc = timestamp,
+            UpdatedAtUtc = timestamp,
+        };
+
+        state.RebuildActiveToolCalls([result, call]);
+
+        Assert.True(state.ShouldShow);
+    }
+
     [AvaloniaFact]
     public async Task AnchorHost_ForwardsOnlyTailWhileFollowingAndRowsWhileReading()
     {
@@ -82,6 +162,46 @@ public sealed class TranscriptScrollCoordinatorTests
 
         Assert.Same(row, scrollViewer.CurrentAnchor);
         window.Close();
+    }
+
+    private static AgentTurnRecord CreateToolActivityTurn(
+        Guid sessionId,
+        AgentTurnItemKind kind,
+        string? callId,
+        string toolId)
+    {
+        var turnId = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+        return new AgentTurnRecord(
+            turnId,
+            sessionId,
+            kind == AgentTurnItemKind.ToolCall ? AgentMessageRole.Assistant : AgentMessageRole.Tool,
+            kind == AgentTurnItemKind.ToolCall ? AgentTurnKind.ToolCall : AgentTurnKind.ToolResult,
+            [
+                new AgentTurnItemRecord(
+                    Guid.NewGuid(),
+                    turnId,
+                    0,
+                    kind,
+                    kind == AgentTurnItemKind.ToolResult ? "result" : null,
+                    callId,
+                    toolId,
+                    kind == AgentTurnItemKind.ToolCall ? "{}" : null,
+                    null,
+                    null,
+                    null,
+                    false,
+                    false,
+                    null,
+                    null)
+                {
+                    ToolExecutionStatus = kind == AgentTurnItemKind.ToolCall
+                        ? AgentToolExecutionStatus.Started
+                        : AgentToolExecutionStatus.Completed,
+                },
+            ],
+            now,
+            now);
     }
 
     [AvaloniaFact]

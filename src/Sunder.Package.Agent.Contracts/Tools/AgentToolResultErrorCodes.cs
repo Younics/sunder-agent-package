@@ -22,6 +22,9 @@ public static class AgentToolResultErrorCodes
     /// <summary>Indicates that the host isolated an unexpected tool exception or non-caller cancellation as an error result.</summary>
     public const string ToolExecutionException = "tool-execution-exception";
 
+    /// <summary>Indicates that a dispatched invocation ended without a definitive external outcome.</summary>
+    public const string ToolOutcomeAmbiguous = "tool-outcome-ambiguous";
+
     /// <summary>Indicates that the exact package activation selected for a tool callback retired before the callback completed.</summary>
     public const string PackageUnavailable = "package-unavailable";
 }

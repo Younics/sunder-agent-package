@@ -58,7 +58,7 @@ public static class AgentBehaviorLoopRpc
     public const string ServiceId = "behavior-loop";
 
     public static ISunderRpcServiceHandler CreateHandler(IAgentBehaviorLoop loop, AgentRpcCatalog rpcCatalog)
-        => AgentRpcServiceHandler.Create()
+        => AgentRpcServiceHandler.Create(AgentRpcContractDescriptors.Get(AgentRpcContractIds.BehaviorLoop))
             .AddUnary<AgentRpcEmpty, AgentBehaviorLoopDescriptor>(ServiceId, "describe", (_, _, _) => ValueTask.FromResult(loop.Descriptor))
             .AddUnary<BehaviorLoopRunRequest, AgentBehaviorLoopResult>(ServiceId, "run", (_, request, token) =>
                 loop.RunAsync(request.Context, new AgentBehaviorLoopRuntimeRpcClient(rpcCatalog, request.InvocationId, request.RunControl), token))
@@ -107,6 +107,7 @@ public sealed class AgentBehaviorLoopRpcClient(
                     AgentBehaviorLoopRpc.ServiceId,
                     "run",
                     new(invocationId, runControl.ToHandle(), context),
+                    AgentRpcServiceHandler.CreateExtendedCallOptions(),
                     invocation.Token)
                 .ConfigureAwait(false);
         }
@@ -120,7 +121,7 @@ public static class AgentRunControlRpc
 
     public static ISunderRpcServiceHandler CreateHandler(AgentRunControlRegistry registry)
     {
-        return AgentRpcServiceHandler.Create()
+        return AgentRpcServiceHandler.Create(AgentRpcContractDescriptors.Get(AgentRpcContractIds.RunControl))
             .AddUnary<RunControlInvocation, bool>(ServiceId, "is-current", (call, request, _) => ValueTask.FromResult(Resolve(registry, call, request).IsCurrentRun()))
             .AddUnary<RunControlInvocation, IReadOnlyList<AgentTurnRecord>>(ServiceId, "list-turns", (call, request, _) => ValueTask.FromResult(Resolve(registry, call, request).ListTurns()))
             .AddUnary<RunControlRecentTurnsRequest, IReadOnlyList<AgentTurnRecord>>(ServiceId, "list-recent-turns", (call, request, _) => ValueTask.FromResult(Resolve(registry, call, request.Invocation).ListRecentTurns(request.Limit)))
@@ -341,6 +342,18 @@ public sealed class AgentRunControlRpcClient(ISunderRpcClient client, SunderRpcE
         where TResponse : notnull
         => AgentRpcServiceHandler.InvokeAsync<TRequest, TResponse>(client, endpoint, AgentRunControlRpc.ServiceId, methodId, request, cancellationToken);
 
+    internal ValueTask<TResponse> InvokeExtendedAsync<TRequest, TResponse>(string methodId, TRequest request, CancellationToken cancellationToken = default)
+        where TRequest : notnull
+        where TResponse : notnull
+        => AgentRpcServiceHandler.InvokeAsync<TRequest, TResponse>(
+            client,
+            endpoint,
+            AgentRunControlRpc.ServiceId,
+            methodId,
+            request,
+            AgentRpcServiceHandler.CreateExtendedCallOptions(),
+            cancellationToken);
+
     internal ValueTask<ISunderRpcCallScope> CreateCallScopeAsync(CancellationToken cancellationToken)
         => client.CreateCallScopeAsync(cancellationToken: cancellationToken);
 
@@ -456,13 +469,13 @@ internal sealed class AgentBehaviorLoopRuntimeRpcClient :
         => _ = await InvokeAsync<RunControlLifecycleRequest, AgentRpcEmpty>("publish-lifecycle", new(Invocation, kind, status, triggerTurn, checkpoint, isInterrupted), cancellationToken).ConfigureAwait(false);
 
     public ValueTask<AgentToolCallOutcome> InvokeToolAsync(AgentToolCallRequest toolCall, AgentTurnRecord? assistantTurn, CancellationToken cancellationToken = default)
-        => InvokeAsync<RunControlToolRequest, AgentToolCallOutcome>("invoke-tool", new(Invocation, toolCall, assistantTurn), cancellationToken);
+        => InvokeExtendedAsync<RunControlToolRequest, AgentToolCallOutcome>("invoke-tool", new(Invocation, toolCall, assistantTurn), cancellationToken);
 
     public ValueTask<IReadOnlyList<AgentToolCallOutcome>> InvokeToolsAsync(IReadOnlyList<AgentToolCallRequest> toolCalls, AgentTurnRecord? assistantTurn, CancellationToken cancellationToken = default)
-        => InvokeAsync<RunControlToolsRequest, IReadOnlyList<AgentToolCallOutcome>>("invoke-tools", new(Invocation, toolCalls, assistantTurn), cancellationToken);
+        => InvokeExtendedAsync<RunControlToolsRequest, IReadOnlyList<AgentToolCallOutcome>>("invoke-tools", new(Invocation, toolCalls, assistantTurn), cancellationToken);
 
     public ValueTask<AgentBehaviorLoopResult> RunDefaultLoopAsync(AgentBehaviorLoopContext context, CancellationToken cancellationToken = default)
-        => InvokeAsync<RunControlDefaultLoopRequest, AgentBehaviorLoopResult>("run-default", new(Invocation, context), cancellationToken);
+        => InvokeExtendedAsync<RunControlDefaultLoopRequest, AgentBehaviorLoopResult>("run-default", new(Invocation, context), cancellationToken);
 
     internal IAsyncEnumerable<AgentChatStreamEvent> StreamChatAsync(
         RunControlChatContext context,
@@ -530,6 +543,21 @@ internal sealed class AgentBehaviorLoopRuntimeRpcClient :
         using (var invocation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lease.RetirementToken))
         {
             return await lease.Service.InvokeAsync<TRequest, TResponse>(methodId, request, invocation.Token).ConfigureAwait(false);
+        }
+    }
+
+    private async ValueTask<TResponse> InvokeExtendedAsync<TRequest, TResponse>(string methodId, TRequest request, CancellationToken cancellationToken = default)
+        where TRequest : notnull
+        where TResponse : notnull
+    {
+        if (!_runControl.TryAcquire(out var lease))
+        {
+            throw new SunderRpcException(new SunderRpcError(SunderRpcErrorKind.StaleEndpoint, "agent.run-control.stale", "The Agent run-control provider activation is stale."));
+        }
+        using (lease)
+        using (var invocation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lease.RetirementToken))
+        {
+            return await lease.Service.InvokeExtendedAsync<TRequest, TResponse>(methodId, request, invocation.Token).ConfigureAwait(false);
         }
     }
 

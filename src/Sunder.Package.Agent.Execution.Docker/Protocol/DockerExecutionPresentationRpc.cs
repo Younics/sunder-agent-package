@@ -17,7 +17,7 @@ public interface IDockerExecutionPresentationClient
 public static class DockerExecutionPresentationRpc
 {
     public const string ContractId = "sunder.package.agent.execution.docker.presentation";
-    public const string ContractVersion = "2.0.0";
+    public const string ContractVersion = "1.0.0";
     public const string ProviderId = "docker.presentation";
     public const string ServiceId = "presentation";
     internal const int MaximumImageCatalogBytes = 8 * 1024 * 1024;

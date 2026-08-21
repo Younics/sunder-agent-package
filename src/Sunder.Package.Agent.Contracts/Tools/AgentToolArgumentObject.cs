@@ -1,14 +1,13 @@
 using System.Globalization;
-using System.Text;
 using System.Text.Json;
 
 namespace Sunder.Package.Agent.Contracts.Models;
 
 /// <summary>
-/// Provides bounded, case-insensitive access to a tool call's JSON object arguments.
+/// Provides parser-hardened, case-insensitive access to a tool call's JSON object arguments.
 /// </summary>
 /// <remarks>
-/// Parsing enforces the shared byte, depth, and property-count limits and rejects duplicate or
+/// Parsing enforces the shared depth and property-count limits and rejects duplicate or
 /// case-colliding property names within each object. It does not validate a tool's JSON Schema,
 /// impose value-specific limits, canonicalize paths, or redact values; callers must perform those
 /// security checks before using model-supplied arguments.
@@ -22,11 +21,11 @@ public sealed class AgentToolArgumentObject
         _root = root;
     }
 
-    /// <summary>Parses a bounded JSON object and takes an independent copy of its document root.</summary>
+    /// <summary>Parses a parser-hardened JSON object and takes an independent copy of its document root.</summary>
     /// <param name="argumentsJson">The untrusted argument JSON; blank input is treated as an empty object.</param>
     /// <param name="arguments">The parsed argument object when successful; otherwise <see langword="null" />.</param>
     /// <param name="error">A caller-safe validation message when parsing fails; otherwise <see langword="null" />.</param>
-    /// <returns><see langword="true" /> when the input is a valid bounded JSON object; otherwise <see langword="false" />.</returns>
+    /// <returns><see langword="true" /> when the input is a valid JSON object; otherwise <see langword="false" />.</returns>
     public static bool TryParse(string? argumentsJson, out AgentToolArgumentObject? arguments, out string? error)
     {
         arguments = null;
@@ -40,12 +39,6 @@ public sealed class AgentToolArgumentObject
 
         try
         {
-            if (Encoding.UTF8.GetByteCount(argumentsJson) > AgentPayloadLimits.MaxToolArgumentBytes)
-            {
-                error = $"Arguments exceed the {AgentPayloadLimits.MaxToolArgumentBytes}-byte limit.";
-                return false;
-            }
-
             using var document = JsonDocument.Parse(argumentsJson, new JsonDocumentOptions
             {
                 MaxDepth = AgentPayloadLimits.MaxToolArgumentJsonDepth,

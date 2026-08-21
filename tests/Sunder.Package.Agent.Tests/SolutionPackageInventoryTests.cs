@@ -122,7 +122,7 @@ public sealed class SolutionPackageInventoryTests
             "Every App leaf must expose the one managed module surface exercised by PackageModuleCompositionTests.");
         foreach (var worker in AgentPackageRepositoryInventory.GetRuntimePackageProjects())
         {
-            Assert.True(File.Exists(Path.Combine(worker.DirectoryPath, "Program.cs")));
+            Assert.True(File.Exists(worker.ProgramPath));
             var workerSource = string.Join('\n', Directory.EnumerateFiles(worker.DirectoryPath, "*.cs", SearchOption.TopDirectoryOnly)
                 .Select(File.ReadAllText));
             Assert.DoesNotContain(": ISunderRuntimePackageModule", workerSource, StringComparison.Ordinal);
@@ -156,13 +156,16 @@ public sealed class SolutionPackageInventoryTests
             {
                 Assert.False(string.Equals(packageProject, "true", StringComparison.OrdinalIgnoreCase));
             }
-            if (role == "aggregate")
+            if (role == "worker")
             {
                 Assert.Equal(
                     "true",
-                    Assert.Single(project.Descendants("SunderPackageAggregateProject")).Value,
+                    Assert.Single(project.Descendants("SunderPackagePrimaryProject")).Value,
                     ignoreCase: true);
             }
+            Assert.Empty(project.Descendants("SunderPackageAggregateProject"));
+            Assert.Empty(project.Descendants("SunderPackageWorkerProject"));
+            Assert.Empty(project.Descendants("SunderPackageWorkerDirectory"));
             Assert.DoesNotContain("sunder-core", projectText, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("Sunder.Package.Build", projectText, StringComparison.OrdinalIgnoreCase);
         }
@@ -273,9 +276,13 @@ public sealed class SolutionPackageInventoryTests
             .Where(static package => package.GetProperty("artifactType").GetString() == "sunderpkg")
             .ToDictionary(
                 static package => package.GetProperty("key").GetString()!,
-                static package => (
-                    Aggregate: package.GetProperty("projectPath").GetString()!,
-                    Worker: package.GetProperty("workerProjectPath").GetString()!),
+                static package =>
+                {
+                    var app = package.TryGetProperty("appProjectPath", out var appProject)
+                        ? appProject.GetString()
+                        : null;
+                    return (Project: package.GetProperty("projectPath").GetString()!, App: app);
+                },
                 StringComparer.Ordinal);
 
         Assert.Contains("- \"agent/v*\"", workflow, StringComparison.Ordinal);
@@ -290,8 +297,8 @@ public sealed class SolutionPackageInventoryTests
         Assert.Contains("-p:SunderUseSourceSdk=false -p:RestoreLockedMode=true", workflow, StringComparison.Ordinal);
         Assert.DoesNotContain("-p:SunderUseSourceSdk=true", workflow, StringComparison.Ordinal);
         Assert.DoesNotContain("for rid in win-x64 win-arm64 linux-x64 linux-arm64 osx-x64 osx-arm64", workflow, StringComparison.Ordinal);
-        Assert.Contains("dotnet restore \"$worker_project\" --force-evaluate -p:SunderUseSourceSdk=true", smokeWorkflow, StringComparison.Ordinal);
-        Assert.DoesNotContain("dotnet restore \"$worker_project\" --force-evaluate -r linux-x64", smokeWorkflow, StringComparison.Ordinal);
+        Assert.Contains("dotnet restore \"$project_path\" --force-evaluate -p:SunderUseSourceSdk=true", smokeWorkflow, StringComparison.Ordinal);
+        Assert.DoesNotContain("dotnet restore \"$project_path\" --force-evaluate -r linux-x64", smokeWorkflow, StringComparison.Ordinal);
         foreach (var rid in new[] { "win-x64", "win-arm64", "linux-x64", "linux-arm64", "osx-x64", "osx-arm64" })
         {
             Assert.Contains($"- rid: {rid}", workflow, StringComparison.Ordinal);
@@ -322,8 +329,14 @@ public sealed class SolutionPackageInventoryTests
         Assert.Contains("$(SunderPackageWorkerEntryPointRelativePath)", signingTargets, StringComparison.Ordinal);
         Assert.Contains("Get-AuthenticodeSignature", platformSigner, StringComparison.Ordinal);
         Assert.Contains("codesign --verify --strict", platformSigner, StringComparison.Ordinal);
+        Assert.Contains("-p:BuildProjectReferences=false", nativeBuilder, StringComparison.Ordinal);
+        Assert.Contains("-p:SunderPackageUsePrebuiltLeaves=true", nativeBuilder, StringComparison.Ordinal);
+        Assert.Contains("-p:SunderPackageComposeRuntimeIdentifiers=$Rid", nativeBuilder, StringComparison.Ordinal);
         Assert.Contains("-p:BuildProjectReferences=false", nativeAssembler, StringComparison.Ordinal);
-        Assert.Contains("-p:SunderAgentUniversalWorkerPackage=true", nativeAssembler, StringComparison.Ordinal);
+        Assert.Contains("-p:SunderPackageUsePrebuiltLeaves=true", nativeAssembler, StringComparison.Ordinal);
+        Assert.DoesNotContain("SunderPackageComposeRuntimeIdentifiers", nativeAssembler, StringComparison.Ordinal);
+        Assert.DoesNotContain("SunderAgentUniversalWorkerPackage", nativeBuilder, StringComparison.Ordinal);
+        Assert.DoesNotContain("SunderAgentUniversalWorkerPackage", nativeAssembler, StringComparison.Ordinal);
         Assert.Contains("native-test-evidence.json", nativeAssembler, StringComparison.Ordinal);
         Assert.Contains("Native signed leaves and Runtime lifecycle", workflow, StringComparison.Ordinal);
         Assert.Contains("CurrentRidArchives_ExerciseEveryNativeWorkerThroughRuntimeHost", nativeSmokeRunner, StringComparison.Ordinal);
@@ -378,28 +391,35 @@ public sealed class SolutionPackageInventoryTests
         Assert.Contains("existing_published_release=true", releasePublisher, StringComparison.Ordinal);
         Assert.Contains("Published release asset '%s' differs from this verified build.", releasePublisher, StringComparison.Ordinal);
         Assert.Contains(".materials == [{name: \"sunder-core-sdk\"", releasePublisher, StringComparison.Ordinal);
-        Assert.Contains("Download only the exact tested aggregate artifact", workflow, StringComparison.Ordinal);
+        Assert.Contains("Download only the exact tested fan-in artifact", workflow, StringComparison.Ordinal);
         Assert.Equal(expected.Count, releaseProjects.Count);
         foreach (var (releaseKey, package) in expected)
         {
             Assert.True(releaseProjects.TryGetValue(releaseKey, out var releaseProject));
-            Assert.Equal(NormalizeRepositoryPath(package.AggregateProjectPath), releaseProject.Aggregate);
-            Assert.Equal(NormalizeRepositoryPath(package.ProjectPath), releaseProject.Worker);
-
-            var aggregatePath = Path.GetFullPath(Path.Combine(repositoryRoot, releaseProject.Aggregate));
-            var aggregate = System.Xml.Linq.XDocument.Load(aggregatePath);
-            Assert.Contains(
-                aggregate.Descendants("SunderPackageAggregateProject"),
-                static property => string.Equals(property.Value, "true", StringComparison.OrdinalIgnoreCase));
-            Assert.Equal("aggregate", Assert.Single(aggregate.Descendants("SunderPackageRole")).Value);
-            Assert.Equal(package.FamilyId, Assert.Single(aggregate.Descendants("SunderPackageFamilyId")).Value);
-            var workerProject = Assert.Single(aggregate.Descendants("SunderPackageWorkerProject")).Value;
+            Assert.Equal(NormalizeRepositoryPath(package.ProjectPath), releaseProject.Project);
             Assert.Equal(
-                package.ProjectPath,
-                Path.GetFullPath(Path.Combine(
-                    Path.GetDirectoryName(aggregatePath)!,
-                    workerProject.Replace('\\', Path.DirectorySeparatorChar))),
-                ignoreCase: true);
+                package.AppProjectPath is null ? null : NormalizeRepositoryPath(package.AppProjectPath),
+                releaseProject.App);
+
+            var canonicalPath = Path.GetFullPath(Path.Combine(repositoryRoot, releaseProject.Project));
+            var canonical = XDocument.Load(canonicalPath);
+            Assert.Equal("worker", Assert.Single(canonical.Descendants("SunderPackageRole")).Value);
+            Assert.Equal("true", Assert.Single(canonical.Descendants("SunderPackagePrimaryProject")).Value, ignoreCase: true);
+            Assert.Equal(package.FamilyId, Assert.Single(canonical.Descendants("SunderPackageFamilyId")).Value);
+            var appProject = canonical.Descendants("SunderPackageAppProject").Select(static property => property.Value).SingleOrDefault();
+            if (package.AppProjectPath is null)
+            {
+                Assert.Null(appProject);
+            }
+            else
+            {
+                Assert.Equal(
+                    package.AppProjectPath,
+                    Path.GetFullPath(Path.Combine(
+                        Path.GetDirectoryName(canonicalPath)!,
+                        appProject!.Replace('\\', Path.DirectorySeparatorChar))),
+                    ignoreCase: true);
+            }
         }
     }
 
@@ -432,16 +452,67 @@ public sealed class SolutionPackageInventoryTests
         {
             var project = System.Xml.Linq.XDocument.Load(worker.ProjectPath);
             Assert.Equal("worker", worker.Role);
+            Assert.Equal("true", Assert.Single(project.Descendants("SunderPackagePrimaryProject")).Value, ignoreCase: true);
             Assert.Equal("Exe", Assert.Single(project.Descendants("OutputType")).Value);
             Assert.Equal("true", Assert.Single(project.Descendants("SelfContained")).Value);
             Assert.Equal("true", Assert.Single(project.Descendants("UseAppHost")).Value);
             Assert.Equal("false", Assert.Single(project.Descendants("PublishSingleFile")).Value);
-            var programPath = Path.Combine(worker.DirectoryPath, "Program.cs");
-            Assert.True(File.Exists(programPath));
-            var program = File.ReadAllText(programPath);
+            Assert.Equal(worker.Name, Path.GetFileNameWithoutExtension(worker.ProjectPath));
+            Assert.True(File.Exists(worker.ProgramPath));
+            var relativeProgramPath = Path.GetRelativePath(worker.DirectoryPath, worker.ProgramPath).Replace('\\', '/');
+            Assert.Contains(relativeProgramPath, new[] { "Program.cs", "Worker/Program.cs" });
+            var program = File.ReadAllText(worker.ProgramPath);
             Assert.Contains("SunderWorker.RunAsync", program, StringComparison.Ordinal);
             Assert.DoesNotContain("SunderWorkerV3.RunAsync", program, StringComparison.Ordinal);
+
+            var appProperty = project.Descendants("SunderPackageAppProject").Select(static property => property.Value).SingleOrDefault();
+            if (worker.AppProjectPath is null)
+            {
+                Assert.Null(appProperty);
+            }
+            else
+            {
+                Assert.Equal(
+                    worker.AppProjectPath,
+                    Path.GetFullPath(Path.Combine(worker.DirectoryPath, appProperty!.Replace('\\', Path.DirectorySeparatorChar))),
+                    ignoreCase: true);
+            }
+
+            if (relativeProgramPath == "Worker/Program.cs")
+            {
+                Assert.Equal("false", Assert.Single(project.Descendants("EnableDefaultCompileItems")).Value, ignoreCase: true);
+                Assert.Contains(project.Descendants("Compile"), static item =>
+                    string.Equals(item.Attribute("Include")?.Value, "Worker\\**\\*.cs", StringComparison.Ordinal));
+                Assert.DoesNotContain(project.Descendants("Compile"), static item =>
+                {
+                    var include = item.Attribute("Include")?.Value;
+                    return include?.StartsWith("App\\", StringComparison.OrdinalIgnoreCase) == true
+                           || include?.StartsWith("Shared\\", StringComparison.OrdinalIgnoreCase) == true;
+                });
+            }
         }
+
+        Assert.Equal(12, workers.Count(static worker => worker.AppProjectPath is not null));
+        Assert.Equal(
+            [
+                "sunder.package.agent.tools.files",
+                "sunder.package.agent.tools.shell",
+                "sunder.package.agent.tools.web",
+            ],
+            workers.Where(static worker => worker.AppProjectPath is null).Select(static worker => worker.FamilyId).Order());
+
+        var centralTargets = XDocument.Load(Path.Combine(
+            AgentPackageRepositoryInventory.RepositoryRoot.FullName,
+            "Directory.Build.targets"));
+        var appRestoreReference = Assert.Single(centralTargets.Descendants("ProjectReference"), static reference =>
+            string.Equals(reference.Attribute("Include")?.Value, "$(SunderPackageAppProject)", StringComparison.Ordinal));
+        Assert.Contains("'$(SunderPackageInnerBuild)' != 'true'", appRestoreReference.Parent?.Attribute("Condition")?.Value, StringComparison.Ordinal);
+        Assert.Equal("false", appRestoreReference.Attribute("ReferenceOutputAssembly")?.Value);
+        Assert.Equal("false", appRestoreReference.Attribute("BuildReference")?.Value);
+        Assert.Equal("all", appRestoreReference.Attribute("PrivateAssets")?.Value);
+
+        Assert.DoesNotContain(EnumerateProductionProjects(), static project =>
+            NormalizeRepositoryPath(project).Contains("/Aggregate/", StringComparison.OrdinalIgnoreCase));
 
         var protocolProject = System.Xml.Linq.XDocument.Load(Path.Combine(
             AgentPackageRepositoryInventory.RepositoryRoot.FullName,

@@ -4,6 +4,9 @@ namespace Sunder.Agent.Execution.Common;
 
 internal static class HostFileSystemLimits
 {
+    // Product limits for direct local filesystem operations, not Agent RPC transport limits.
+    public const int MaxFullFileReadBytes = 4 * 1024 * 1024;
+    public const int MaxDirectoryEntries = 10_000;
     public const int MaxTraversalDepth = 256;
     public const int MaxTraversalEntries = 100_000;
     public const long MaxTraversalNameBytes = 16L * 1024 * 1024;

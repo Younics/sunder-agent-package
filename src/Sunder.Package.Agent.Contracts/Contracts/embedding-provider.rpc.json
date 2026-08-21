@@ -85,14 +85,10 @@
       "additionalProperties": false
     },
     "TextValue": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 65536
+      "type": "string"
     },
     "AgentAuthMode": {
       "type": "string",
-      "minLength": 7,
-      "maxLength": 15,
       "enum": [
         "api-key",
         "codex-connected"
@@ -102,9 +98,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentAuthMode"
-      },
-      "minItems": 0,
-      "maxItems": 4096
+      }
     },
     "AgentEmbeddingProviderDescriptor": {
       "type": "object",
@@ -159,14 +153,10 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentEmbeddingModelDescriptor"
-      },
-      "minItems": 0,
-      "maxItems": 10000
+      }
     },
     "AgentProviderReadinessStatus": {
       "type": "string",
-      "minLength": 5,
-      "maxLength": 19,
       "enum": [
         "ready",
         "needs-configuration",
@@ -229,9 +219,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/EmbeddingValue"
-      },
-      "minItems": 0,
-      "maxItems": 32768
+      }
     },
     "AgentEmbeddingGenerationResult": {
       "type": "object",
@@ -267,9 +255,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/TextValue"
-      },
-      "minItems": 0,
-      "maxItems": 4096
+      }
     },
     "EmbeddingBatchRequest": {
       "type": "object",
@@ -301,24 +287,18 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/EmbeddingGenerationResultOrNull"
-      },
-      "minItems": 0,
-      "maxItems": 256
+      }
     },
     "Identifier": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 256
+      "minLength": 1
     },
     "DisplayText": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 8192
+      "type": "string"
     },
     "EmbeddingDimensions": {
       "type": "integer",
-      "minimum": 1,
-      "maximum": 32768
+      "minimum": 1
     }
   }
 }

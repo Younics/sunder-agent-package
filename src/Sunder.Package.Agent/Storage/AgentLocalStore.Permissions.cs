@@ -526,7 +526,7 @@ public sealed partial class AgentLocalStore
         return checkpoint;
     }
 
-    internal bool MarkClaimedPermissionExecutionStarted(
+    internal bool CommitClaimedPermissionApproval(
         Guid sessionId,
         string requestId,
         string claimToken,
@@ -536,7 +536,6 @@ public sealed partial class AgentLocalStore
         connection.Open();
         using var transaction = connection.BeginTransaction(deferred: false);
         EnsureRuntimeGenerationCurrent(connection, transaction);
-        var now = DateTimeOffset.UtcNow;
         var request = GetPermissionRequest(connection, sessionId, requestId, transaction);
         if (request?.Status != AgentPendingPermissionStatus.Claimed
             || !string.Equals(request.ClaimToken, claimToken, StringComparison.Ordinal)
@@ -551,10 +550,8 @@ public sealed partial class AgentLocalStore
             using var executionCommand = connection.CreateCommand();
             executionCommand.Transaction = transaction;
             executionCommand.CommandText = """
-                UPDATE AgentToolExecutions
-                SET Status = 'Started',
-                    StartedAtUtc = $startedAtUtc,
-                    UpdatedAtUtc = $startedAtUtc
+                SELECT 1
+                FROM AgentToolExecutions
                 WHERE ExecutionId = $executionId
                   AND SessionId = $sessionId
                   AND RunId = $runId
@@ -574,9 +571,9 @@ public sealed partial class AgentLocalStore
                         AND NOT EXISTS (
                             SELECT 1 FROM AgentRuns newer
                             WHERE newer.SessionId = $sessionId
-                              AND newer.RunRevision > $runRevision));
+                              AND newer.RunRevision > $runRevision))
+                LIMIT 1;
                 """;
-            executionCommand.Parameters.AddWithValue("$startedAtUtc", now.ToString("O"));
             executionCommand.Parameters.AddWithValue("$executionId", toolExecutionId.ToString());
             executionCommand.Parameters.AddWithValue("$sessionId", request.SessionId.ToString());
             executionCommand.Parameters.AddWithValue("$runId", request.RunId.ToString());
@@ -586,38 +583,11 @@ public sealed partial class AgentLocalStore
             executionCommand.Parameters.AddWithValue(
                 "$invocationFingerprint",
                 AgentToolInvocationFingerprint.Create(request.ToolId ?? string.Empty, request.ArgumentsJson));
-            if (executionCommand.ExecuteNonQuery() != 1)
+            if (executionCommand.ExecuteScalar() is null)
             {
                 transaction.Rollback();
                 return false;
             }
-        }
-
-        using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = """
-            UPDATE AgentPendingPermissionRequests
-            SET ExecutionStartedAtUtc = CASE
-                    WHEN ToolExecutionId IS NULL THEN $executionStartedAtUtc
-                    ELSE ExecutionStartedAtUtc
-                END,
-                ClaimLeaseExpiresAtUtc = $claimLeaseExpiresAtUtc
-            WHERE SessionId = $sessionId
-              AND RequestId = $requestId
-              AND Status = 'Claimed'
-              AND ClaimToken = $claimToken
-              AND ContinuationConsumedAtUtc IS NOT NULL
-              AND (ToolExecutionId IS NOT NULL OR ExecutionStartedAtUtc IS NULL);
-            """;
-        command.Parameters.AddWithValue("$executionStartedAtUtc", now.ToString("O"));
-        command.Parameters.AddWithValue("$claimLeaseExpiresAtUtc", now.Add(PermissionClaimLeaseDuration).ToString("O"));
-        command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
-        command.Parameters.AddWithValue("$requestId", requestId);
-        command.Parameters.AddWithValue("$claimToken", claimToken);
-        if (command.ExecuteNonQuery() != 1)
-        {
-            transaction.Rollback();
-            return false;
         }
 
         if (approval is not null)

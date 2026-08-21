@@ -68,6 +68,9 @@
     <SunderRpcBinding Include="Contracts\tool-source.rpc.json"
                       Namespace="Sunder.Package.Agent.Protocol.Generated.ToolSource"
                       OutputFile="ToolSource.g.cs" />
+    <SunderRpcBinding Include="Contracts\tool-execution-observed.rpc.json"
+                      Namespace="Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved"
+                      OutputFile="ToolExecutionObserved.g.cs" />
     <SunderRpcBinding Include="Contracts\workspace-editor.rpc.json"
                       Namespace="Sunder.Package.Agent.Protocol.Generated.WorkspaceEditor"
                       OutputFile="WorkspaceEditor.g.cs" />

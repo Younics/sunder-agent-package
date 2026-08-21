@@ -187,7 +187,9 @@ public sealed partial class AgentLocalStore
         AgentPendingPermissionRequestRecord? permissionRequest = null,
         AgentPendingPermissionStatus? permissionStatus = null)
     {
-        if (status is not (AgentToolExecutionStatus.Completed or AgentToolExecutionStatus.Failed))
+        if (status is not (AgentToolExecutionStatus.Completed
+            or AgentToolExecutionStatus.Failed
+            or AgentToolExecutionStatus.Ambiguous))
         {
             throw new ArgumentOutOfRangeException(nameof(status));
         }

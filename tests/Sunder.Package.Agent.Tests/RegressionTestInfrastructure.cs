@@ -164,6 +164,7 @@ internal partial class RegressionTestExtensionCatalog : AgentRpcCatalog
             AgentRpcContractIds.SessionCleaner when implementation is IAgentSessionDataCleaner service => AgentSessionCleanerRpc.CreateHandler(service),
             AgentRpcContractIds.SystemPromptContributor when implementation is IAgentSystemPromptContributor service => AgentSystemPromptContributorRpc.CreateHandler(service),
             AgentRpcContractIds.ToolSource when implementation is IAgentToolSource service => AgentToolSourceRpc.CreateHandler(service, providerCatalog),
+            AgentRpcContractIds.ObservedToolExecution when implementation is IAgentObservedToolExecution service => AgentObservedToolExecutionRpc.CreateHandler(service, providerCatalog),
             AgentRpcContractIds.PermissionSurface when implementation is IAgentPermissionSurface service => AgentPermissionSurfaceRpc.CreateHandler(service),
             AgentRpcContractIds.PromptContextContributor when implementation is IAgentPromptContextContributor service => AgentPromptContextContributorRpc.CreateHandler(service, providerCatalog),
             AgentRpcContractIds.DurableLifecycleObserver when implementation is IAgentDurableLifecycleObserver service => AgentDurableLifecycleObserverRpc.CreateHandler(service),

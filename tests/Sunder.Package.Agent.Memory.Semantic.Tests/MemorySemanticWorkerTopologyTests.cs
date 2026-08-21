@@ -14,7 +14,7 @@ namespace Sunder.Package.Agent.Memory.Semantic.Tests;
 public sealed class MemorySemanticWorkerTopologyTests
 {
     [Fact]
-    public void RepositoryInventory_UsesAggregateWorkerProvidersAndRoleSpecificLocks()
+    public void RepositoryInventory_UsesPrimaryWorkerProvidersAndRoleSpecificLocks()
     {
         var repositoryRoot = AgentPackageRepositoryInventory.RepositoryRoot.FullName;
         using var inventory = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(repositoryRoot, "packages.json")));
@@ -22,11 +22,12 @@ public sealed class MemorySemanticWorkerTopologyTests
             candidate.GetProperty("key").GetString() == "agent-memory-semantic");
 
         Assert.Equal(
-            "src/Sunder.Package.Agent.Memory.Semantic/Aggregate/MemorySemanticPackage.csproj",
+            "src/Sunder.Package.Agent.Memory.Semantic/Sunder.Package.Agent.Memory.Semantic.csproj",
             package.GetProperty("projectPath").GetString());
         Assert.Equal(
-            "src/Sunder.Package.Agent.Memory.Semantic/Sunder.Package.Agent.Memory.Semantic.csproj",
-            package.GetProperty("workerProjectPath").GetString());
+            "src/Sunder.Package.Agent.Memory.Semantic/App/Sunder.Package.Agent.Memory.Semantic.App.csproj",
+            package.GetProperty("appProjectPath").GetString());
+        Assert.False(package.TryGetProperty("workerProjectPath", out _));
         Assert.Equal(
             [
                 "semantic.memory.inspector",
@@ -77,7 +78,7 @@ public sealed class MemorySemanticWorkerTopologyTests
         Assert.Contains("src/Sunder.Package.Agent.Memory.Semantic/Sunder.Package.Agent.Memory.Semantic.csproj", solutionProjects);
         Assert.Contains("src/Sunder.Package.Agent.Memory.Semantic/App/Sunder.Package.Agent.Memory.Semantic.App.csproj", solutionProjects);
         Assert.Contains("src/Sunder.Package.Agent.Memory.Semantic/Protocol/Sunder.Package.Agent.Memory.Semantic.Protocol.csproj", solutionProjects);
-        Assert.Contains("src/Sunder.Package.Agent.Memory.Semantic/Aggregate/MemorySemanticPackage.csproj", solutionProjects);
+        Assert.DoesNotContain(solutionProjects, static project => project?.Contains("/Aggregate/", StringComparison.Ordinal) == true);
 
         using var workerLock = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(
             repositoryRoot,
@@ -140,8 +141,10 @@ public sealed class MemorySemanticWorkerTopologyTests
             "sunder.package.agent.memory.semantic"));
         var sessionChanged = new TaskCompletionSource<Guid>(TaskCreationOptions.RunContinuationsAsynchronously);
         var workerChanged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var resetRequired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         gateway.SessionChanged += sessionId => sessionChanged.TrySetResult(sessionId);
         gateway.SemanticWorkerStatusChanged += () => workerChanged.TrySetResult();
+        gateway.ResetRequired += () => resetRequired.TrySetResult();
 
         var memories = await gateway.ListMemoriesAsync(
             ownerService.Memory.SessionId,
@@ -166,6 +169,7 @@ public sealed class MemorySemanticWorkerTopologyTests
             ownerService.Memory.SessionId,
             await sessionChanged.Task.WaitAsync(TimeSpan.FromSeconds(5)));
         await workerChanged.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await resetRequired.Task.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
     [Fact]
@@ -192,13 +196,13 @@ public sealed class MemorySemanticWorkerTopologyTests
     }
 
     [Fact]
-    public void AggregateManifest_IsSixRidAppExactRidWorkerOwnerScopedAndLoadsPackagedSqlite()
+    public void ComposedManifest_IsSixRidAppExactRidWorkerOwnerScopedAndLoadsPackagedSqlite()
     {
         var manifestPath = Path.Combine(
-            AggregateOutputRoot(),
+            ComposedOutputRoot(),
             "manifest",
             "sunder-package.json");
-        Assert.True(File.Exists(manifestPath), $"Aggregate manifest was not found: {manifestPath}");
+        Assert.True(File.Exists(manifestPath), $"Composed manifest was not found: {manifestPath}");
         using var document = JsonDocument.Parse(File.ReadAllBytes(manifestPath));
         var root = document.RootElement;
         var targets = root.GetProperty("targets").EnumerateArray().ToArray();
@@ -233,7 +237,7 @@ public sealed class MemorySemanticWorkerTopologyTests
             appImport.GetProperty("actions").EnumerateArray().Select(static action => action.GetString()));
 
         var workerRoot = Path.Combine(
-            AggregateOutputRoot(),
+            ComposedOutputRoot(),
             "payload",
             "runtime",
             "shared",
@@ -256,7 +260,7 @@ public sealed class MemorySemanticWorkerTopologyTests
         }
     }
 
-    private static string AggregateOutputRoot()
+    private static string ComposedOutputRoot()
     {
         var output = new DirectoryInfo(AppContext.BaseDirectory.TrimEnd(
             Path.DirectorySeparatorChar,
@@ -266,7 +270,6 @@ public sealed class MemorySemanticWorkerTopologyTests
             AgentPackageRepositoryInventory.RepositoryRoot.FullName,
             "src",
             "Sunder.Package.Agent.Memory.Semantic",
-            "Aggregate",
             "bin",
             configuration,
             output.Name,
@@ -346,6 +349,7 @@ public sealed class MemorySemanticWorkerTopologyTests
         {
             yield return new MemoryChanged(MemoryChangeKind.Session, Memory.SessionId);
             yield return new MemoryChanged(MemoryChangeKind.Worker);
+            yield return new MemoryChanged(MemoryChangeKind.ResetRequired);
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
         }
     }

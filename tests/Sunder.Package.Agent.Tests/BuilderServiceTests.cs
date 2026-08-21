@@ -303,36 +303,50 @@ public sealed class BuilderServiceTests
     }
 
     [Fact]
-    public async Task RuntimeBridge_FitsWorkspaceListBelowResponseTransportLimit()
+    public async Task RuntimeBridge_ReturnsCompleteWorkspaceListWithoutSilentProjection()
     {
         var now = DateTimeOffset.UtcNow;
-        var longPath = "/" + new string('x', 2047);
-        var workspaces = Enumerable.Range(0, 100)
+        var longDisplayName = new string('n', 257);
+        var longDescription = new string('d', 1025);
+        var longPath = "/" + new string('x', 2048);
+        var workspaces = Enumerable.Range(0, 101)
             .Select(index => new AgentWorkspaceRecord(
                 $"workspace-{index}",
-                $"Workspace {index}",
-                null,
+                index == 0 ? longDisplayName : $"Workspace {index}",
+                index == 0 ? longDescription : null,
                 now,
                 now,
-                Enumerable.Range(0, 64)
+                Enumerable.Range(0, 65)
                     .Select(pathIndex => new AgentWorkspacePathRecord(
                         $"path-{index}-{pathIndex}",
                         $"workspace-{index}",
-                        longPath,
+                        index == 0 && pathIndex == 0 ? longPath : $"/workspace/{index}/{pathIndex}",
                         pathIndex == 0,
                         pathIndex,
                         now,
                         now))
-                    .ToArray()))
+                    .ToArray(),
+                [new AgentWorkspaceDocumentRecord(
+                    $"document-{index}",
+                    $"workspace-{index}",
+                    $"instructions-{index}.md",
+                    0,
+                    now,
+                    now)]))
             .ToArray();
         using var runtime = new LoopbackBuilderRpcClient(
             new ListOnlyWorkspaceExecutionResolver(workspaces));
 
         var projected = await new BuilderWorkspaceExecutionService(runtime).ListWorkspacesAsync();
 
-        Assert.NotEmpty(projected);
-        Assert.True(projected.Count < workspaces.Length);
-        Assert.True(runtime.MaximumResponseBytes < (8 * 1024 * 1024) - (64 * 1024));
+        Assert.Equal(workspaces.Length, projected.Count);
+        var first = projected[0];
+        Assert.Equal(longDisplayName, first.DisplayName);
+        Assert.Equal(longDescription, first.Description);
+        Assert.Equal(65, first.Paths.Count);
+        Assert.Equal(longPath, first.Paths[0].HostPath);
+        Assert.Single(first.Documents);
+        Assert.True(runtime.MaximumResponseBytes > 900_000);
     }
 
     [Fact]

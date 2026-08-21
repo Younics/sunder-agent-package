@@ -3,7 +3,7 @@
   "descriptorVersion": 2,
   "schemaProfile": "sunder.rpc.values.v1",
   "contractId": "sunder.package.agent.skills.owner",
-  "version": "2.0.0",
+  "version": "1.0.0",
   "errors": {
     "skills.owner.operation-failed": {
       "description": "The requested Skills operation could not be completed."
@@ -15,23 +15,41 @@
         "query": {
           "kind": "unary",
           "idempotency": "idempotent",
-          "errors": ["skills.owner.operation-failed"],
-          "requestSchema": { "$ref": "#/$defs/OwnerEmpty" },
-          "responseSchema": { "$ref": "#/$defs/OwnerContent" }
+          "errors": [
+            "skills.owner.operation-failed"
+          ],
+          "requestSchema": {
+            "$ref": "#/$defs/OwnerEmpty"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/OwnerContent"
+          }
         },
         "command": {
           "kind": "unary",
           "idempotency": "none",
-          "errors": ["skills.owner.operation-failed"],
-          "requestSchema": { "$ref": "#/$defs/OwnerContent" },
-          "responseSchema": { "$ref": "#/$defs/OwnerContent" }
+          "errors": [
+            "skills.owner.operation-failed"
+          ],
+          "requestSchema": {
+            "$ref": "#/$defs/OwnerContent"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/OwnerContent"
+          }
         },
         "changes": {
           "kind": "server-stream",
           "idempotency": "idempotent",
-          "errors": ["skills.owner.operation-failed"],
-          "requestSchema": { "$ref": "#/$defs/OwnerEmpty" },
-          "eventSchema": { "$ref": "#/$defs/OwnerEmpty" }
+          "errors": [
+            "skills.owner.operation-failed"
+          ],
+          "requestSchema": {
+            "$ref": "#/$defs/OwnerEmpty"
+          },
+          "eventSchema": {
+            "$ref": "#/$defs/OwnerEmpty"
+          }
         }
       }
     }
@@ -50,9 +68,13 @@
     "OwnerContent": {
       "type": "object",
       "properties": {
-        "content": { "$ref": "#/$defs/ContentReference" }
+        "content": {
+          "$ref": "#/$defs/ContentReference"
+        }
       },
-      "required": ["content"],
+      "required": [
+        "content"
+      ],
       "additionalProperties": false
     }
   }

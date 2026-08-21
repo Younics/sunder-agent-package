@@ -23,6 +23,8 @@ namespace Sunder.Package.Agent.Tests;
 public sealed class AgentRuntimeStartupServiceTests
 {
     private static readonly TimeSpan TestTimeout = TimeSpan.FromSeconds(15);
+    private static readonly SunderRpcContractDescriptor DeferredTestDescriptor =
+        AgentRpcContractDescriptors.Get(AgentRpcContractIds.SessionCleaner);
 
     [Fact]
     public async Task WorkerActivation_DoesNotWaitForPreActivationCatalogDiscovery()
@@ -35,7 +37,10 @@ public sealed class AgentRuntimeStartupServiceTests
         services.AddSingleton(catalog);
         new PackageModule().ConfigureRuntimeServices(services, scope.Context);
         await using var provider = services.BuildServiceProvider();
-        var deferred = new DeferredAgentRpcServiceHandler("test.deferred", _ => NoOpRpcHandler.Instance);
+        var deferred = new DeferredAgentRpcServiceHandler(
+            "test.deferred",
+            DeferredTestDescriptor,
+            _ => NoOpRpcHandler.Instance);
         var lifecycle = new AgentWorkerLifecycle(provider, [deferred]);
         lifecycle.CommitGeneration(new PackageRuntimeGeneration(Guid.NewGuid(), 1));
 
@@ -61,7 +66,7 @@ public sealed class AgentRuntimeStartupServiceTests
         new PackageModule().ConfigureRuntimeServices(services, scope.Context);
         await using var provider = services.BuildServiceProvider();
         var handlerActivated = false;
-        var deferred = new DeferredAgentRpcServiceHandler("test.deferred", _ =>
+        var deferred = new DeferredAgentRpcServiceHandler("test.deferred", DeferredTestDescriptor, _ =>
         {
             handlerActivated = true;
             return NoOpRpcHandler.Instance;
@@ -105,8 +110,11 @@ public sealed class AgentRuntimeStartupServiceTests
         services.AddSingleton(catalog);
         new PackageModule().ConfigureRuntimeServices(services, scope.Context);
         await using var provider = services.BuildServiceProvider();
-        var first = new DeferredAgentRpcServiceHandler("test.first", _ => NoOpRpcHandler.Instance);
-        var failing = new DeferredAgentRpcServiceHandler("test.failure", _ =>
+        var first = new DeferredAgentRpcServiceHandler(
+            "test.first",
+            DeferredTestDescriptor,
+            _ => NoOpRpcHandler.Instance);
+        var failing = new DeferredAgentRpcServiceHandler("test.failure", DeferredTestDescriptor, _ =>
             throw new InvalidOperationException("Injected deferred provider startup failure."));
         var lifecycle = new AgentWorkerLifecycle(provider, [first, failing]);
         lifecycle.CommitGeneration(new PackageRuntimeGeneration(Guid.NewGuid(), 1));
@@ -139,7 +147,10 @@ public sealed class AgentRuntimeStartupServiceTests
         services.AddSingleton(catalog);
         new PackageModule().ConfigureRuntimeServices(services, scope.Context);
         await using var provider = services.BuildServiceProvider();
-        var deferred = new DeferredAgentRpcServiceHandler("test.deferred", _ => NoOpRpcHandler.Instance);
+        var deferred = new DeferredAgentRpcServiceHandler(
+            "test.deferred",
+            DeferredTestDescriptor,
+            _ => NoOpRpcHandler.Instance);
         var lifecycle = new AgentWorkerLifecycle(provider, [deferred], TimeSpan.FromMilliseconds(50));
         Assert.IsAssignableFrom<ISunderWorkerLifecycleService>(lifecycle);
         lifecycle.CommitGeneration(new PackageRuntimeGeneration(Guid.NewGuid(), 1));
@@ -191,7 +202,10 @@ public sealed class AgentRuntimeStartupServiceTests
         services.AddSingleton(catalog);
         new PackageModule().ConfigureRuntimeServices(services, scope.Context);
         var provider = services.BuildServiceProvider();
-        var deferred = new DeferredAgentRpcServiceHandler("test.deferred", _ => NoOpRpcHandler.Instance);
+        var deferred = new DeferredAgentRpcServiceHandler(
+            "test.deferred",
+            DeferredTestDescriptor,
+            _ => NoOpRpcHandler.Instance);
         var lifecycle = new AgentWorkerLifecycle(provider, [deferred], TimeSpan.FromSeconds(1));
         lifecycle.CommitGeneration(new PackageRuntimeGeneration(Guid.NewGuid(), 1));
         var reportCalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1093,9 +1107,12 @@ public sealed class AgentRuntimeStartupServiceTests
             => ValueTask.CompletedTask;
     }
 
-    private sealed class NoOpRpcHandler : ISunderRpcServiceHandler
+    private sealed class NoOpRpcHandler : ISunderRpcServiceHandler, ISunderRpcDeclaredErrorMetadata
     {
         internal static NoOpRpcHandler Instance { get; } = new();
+
+        public IReadOnlyDictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>> DeclaredErrors
+            => AgentRpcServiceHandler.CreateDeclaredErrorMap(DeferredTestDescriptor);
 
         public ValueTask<JsonElement> InvokeUnaryAsync(
             SunderRpcInvocationContext context,

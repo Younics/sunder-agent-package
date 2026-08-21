@@ -300,15 +300,23 @@ public sealed partial class AgentProfilesViewModel
         }
         await _currentDetailLoad.WaitAsync(cancellationToken).ConfigureAwait(false);
         var replayPendingRefresh = false;
+        var replayPendingCapabilityRefresh = false;
         await _uiDispatcher.InvokeAsync(() =>
         {
             _isInitialized = !_disposed;
             replayPendingRefresh = _initializationRefreshPending;
+            replayPendingCapabilityRefresh = _initializationCapabilityRefreshPending;
             _initializationRefreshPending = false;
+            _initializationCapabilityRefreshPending = false;
         }).ConfigureAwait(false);
         if (replayPendingRefresh)
         {
             await _runtimeRefresh.MarkDirty().WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        if (replayPendingCapabilityRefresh)
+        {
+            await RefreshSelectedProfileCapabilitiesOnUiThreadAsync(cancellationToken)
+                .ConfigureAwait(false);
         }
     }
 

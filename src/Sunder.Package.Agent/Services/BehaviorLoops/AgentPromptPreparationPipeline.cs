@@ -652,11 +652,53 @@ internal sealed partial class AgentPromptPreparationPipeline(
     }
 
     private static string BuildToolResultContent(AgentTurnItemRecord item)
-        => !string.IsNullOrWhiteSpace(item.TextContent)
+    {
+        var outputContent = !string.IsNullOrWhiteSpace(item.TextContent)
             ? item.TextContent
             : !string.IsNullOrWhiteSpace(item.StructuredPayloadJson)
                 ? item.StructuredPayloadJson
-                : item.ResultSummary ?? string.Empty;
+                : string.Empty;
+        var status = item.ToolExecutionStatus == AgentToolExecutionStatus.Ambiguous
+            ? AgentToolExecutionStatus.Ambiguous
+            : item.ToolExecutionStatus == AgentToolExecutionStatus.Failed
+              || item.ToolExecutionStatus is null && item.IsError
+                ? AgentToolExecutionStatus.Failed
+                : AgentToolExecutionStatus.Completed;
+
+        var builder = new StringBuilder();
+        builder.Append("[Sunder execution status: ")
+            .Append(status.ToString().ToUpperInvariant())
+            .AppendLine("]");
+        builder.AppendLine(status switch
+        {
+            AgentToolExecutionStatus.Ambiguous => "Effects may have occurred. Verify current state before retrying and disclose this uncertainty with any later verification.",
+            AgentToolExecutionStatus.Failed => "Do not report this invocation as successful.",
+            _ => "The host recorded this invocation as completed.",
+        });
+
+        var untrusted = new StringBuilder();
+        if (!string.IsNullOrWhiteSpace(item.ResultSummary))
+        {
+            untrusted.Append("Summary: ").AppendLine(item.ResultSummary.Trim());
+        }
+        if (!string.IsNullOrWhiteSpace(item.ErrorCode))
+        {
+            untrusted.Append("Error code: ").AppendLine(item.ErrorCode.Trim());
+        }
+        if (!string.IsNullOrWhiteSpace(outputContent))
+        {
+            if (untrusted.Length > 0)
+            {
+                untrusted.AppendLine();
+            }
+            untrusted.Append(outputContent.Trim());
+        }
+        if (untrusted.Length > 0)
+        {
+            builder.AppendLine().AppendLine("--- Untrusted tool output ---").Append(untrusted.ToString().TrimEnd());
+        }
+        return builder.ToString().TrimEnd();
+    }
 
     private static int FindTurnIndex(IReadOnlyList<AgentTurnRecord> turns, Guid turnId)
     {

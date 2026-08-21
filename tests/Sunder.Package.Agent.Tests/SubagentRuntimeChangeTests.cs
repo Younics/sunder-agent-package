@@ -132,6 +132,31 @@ public sealed class SubagentRuntimeChangeTests
     }
 
     [Fact]
+    public async Task ChangeStream_RuntimeCatalogResetRequiresResnapshot()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        using var catalog = new RegressionTestExtensionCatalog();
+        var service = new SubagentService(new SubagentStore(scope.Context));
+        using var stream = new SubagentRuntimeChangeStream(service, catalog);
+        using var subscriptionCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await using var subscription = stream.SubscribeAsync(
+            new SubagentChangeSubscription(stream.Revision),
+            subscriptionCancellation.Token).GetAsyncEnumerator();
+        _ = await ReadUntilAsync(subscription, change => change.Kind == SubagentChangeKind.Connected);
+        var runtime = new TestRuntimeCatalog();
+        catalog.AddProvider(AgentRpcServices.RuntimeCatalogs, runtime);
+        await runtime.SessionSubscription.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        _ = await ReadUntilAsync(subscription, change => change.Kind == SubagentChangeKind.Catalog);
+
+        runtime.RaiseResetRequired();
+
+        var reset = await ReadUntilAsync(
+            subscription,
+            change => change.Kind == SubagentChangeKind.ResnapshotRequired);
+        Assert.Equal(SubagentChangeKind.ResnapshotRequired, reset.Kind);
+    }
+
+    [Fact]
     public async Task AppGateway_ReconnectsFromLastRevisionAndNewRuntimeRequiresResnapshot()
     {
         var client = new ReconnectingSubagentRuntimeClient();
@@ -579,6 +604,7 @@ public sealed class SubagentRuntimeChangeTests
     private sealed class TestRuntimeCatalog : IAgentRuntimeCatalog
     {
         private Action<Guid>? _sessionChanged;
+        private Action? _resetRequired;
 
         public TaskCompletionSource SessionSubscription { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -603,6 +629,12 @@ public sealed class SubagentRuntimeChangeTests
         {
             add { }
             remove { }
+        }
+
+        public event Action? ResetRequired
+        {
+            add => _resetRequired += value;
+            remove => _resetRequired -= value;
         }
 
         public IReadOnlyList<AgentSessionRecord> ListSessions() => [];
@@ -632,6 +664,8 @@ public sealed class SubagentRuntimeChangeTests
         public AgentProfileModelBindingRecord? GetModelBinding(string profileId, string capabilityKind) => null;
 
         public void RaiseSessionChanged(Guid sessionId) => _sessionChanged?.Invoke(sessionId);
+
+        public void RaiseResetRequired() => _resetRequired?.Invoke();
     }
 
     private sealed class MissingPageSubagentRuntimeClient : ISubagentOwnerClient

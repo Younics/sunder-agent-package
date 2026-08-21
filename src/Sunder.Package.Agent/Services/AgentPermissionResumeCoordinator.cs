@@ -619,7 +619,7 @@ public sealed class AgentPermissionResumeCoordinator(
                     return false;
                 }
 
-                return _permissionService.MarkExecutionStarted(
+                return _permissionService.CommitApprovedExecution(
                     pending,
                     approveForSession);
             }

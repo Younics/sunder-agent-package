@@ -136,7 +136,7 @@ while IFS=$'\t' read -r package_id worker_project; do
       }
     ')"
   packages_json="$(jq -cn --argjson packages "$packages_json" --argjson package "$package_json" '$packages + [$package]')"
-done < <(jq -r '.packages | map(select(.workerProjectPath != null)) | sort_by(.key)[] | [.packageId, .workerProjectPath] | @tsv' "$repository_root/packages.json")
+done < <(jq -r '.packages | map(select(.artifactType == "sunderpkg")) | sort_by(.key)[] | [.packageId, .projectPath] | @tsv' "$repository_root/packages.json")
 
 [[ "$(jq 'length' <<< "$packages_json")" == 15 ]] \
   || { printf 'Native evidence must contain exactly 15 worker leaves.\n' >&2; exit 1; }

@@ -148,7 +148,7 @@ public sealed partial class DockerExecutionSettingsViewModel
 
             selected.MarkPulling();
             NotifySelectedImageCommands();
-            _tasks.Run(_imageRefresh.MarkDirty());
+            _tasks.Run(_ => _imageRefresh.MarkDirty());
         }
         catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException)
         {
@@ -157,7 +157,7 @@ public sealed partial class DockerExecutionSettingsViewModel
                 ex,
                 "Docker image pull could not be queued. CorrelationId: {CorrelationId}",
                 correlationId);
-            _tasks.Run(_imageRefresh.MarkDirty());
+            _tasks.Run(_ => _imageRefresh.MarkDirty());
             RuntimeErrorCode = "docker.presentation.pull-queue-failed";
             RuntimeCorrelationId = correlationId;
             StatusText = FormatError(

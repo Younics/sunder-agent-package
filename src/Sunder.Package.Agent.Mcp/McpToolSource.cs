@@ -1,23 +1,29 @@
 using System.Text.Json;
-using System.Text;
 using Microsoft.Extensions.AI;
+using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Mcp.Services;
+using Sunder.Package.Agent.Shared.Presentation;
 
 namespace Sunder.Package.Agent.Mcp;
 
 public sealed class McpToolSource(
     McpServerCatalogService serverCatalogService,
     McpClientConnectionManager connectionManager,
-    McpConfigurationCoordinator? configurationCoordinator = null) : IAgentNativeToolSource, IAgentProfileSelectableCapabilityProvider, IAgentProfileSelectableCapabilityChangeNotifier
+    McpConfigurationCoordinator? configurationCoordinator = null) :
+    IAgentNativeToolSource,
+    IAgentToolDispatchAwareSource,
+    IAgentObservedToolExecution,
+    IAgentProfileSelectableCapabilityProvider,
+    IAgentProfileSelectableCapabilityChangeNotifier,
+    IAgentToolPresentationResolver
 {
     private readonly McpServerCatalogService _serverCatalogService = serverCatalogService;
     private readonly McpClientConnectionManager _connectionManager = connectionManager;
     private readonly McpConfigurationCoordinator? _configurationCoordinator = configurationCoordinator;
-
     public string SourceId => "mcp";
 
     public string DisplayName => "Model Context Protocol";
@@ -25,6 +31,9 @@ public sealed class McpToolSource(
     public string SourceKind => "mcp";
 
     public string ProviderId => SourceId;
+
+    public AgentToolPresentation? ResolveToolPresentation(AgentToolPresentationRequest request)
+        => McpToolPresentationAdapter.Resolve(request);
 
     public event Action? SelectableCapabilitiesChanged
     {
@@ -190,12 +199,38 @@ public sealed class McpToolSource(
                 ErrorCode: "mcp-session-required");
         }
 
+        if (!TryDeserializeArguments(
+                request.ArgumentsJson,
+                out var arguments,
+                out var agentTimeoutSeconds,
+                out var argumentError))
+        {
+            var invalidLabel = McpToolCardPresentation.TryParseStableToolId(
+                request.ToolId,
+                out _,
+                out var invalidToolName)
+                ? McpToolCardPresentation.HumanizeToolName(invalidToolName)
+                : "MCP Tool";
+            return new AgentToolResult(
+                request.ToolId,
+                McpToolCardPresentation.InvalidArgumentsSummary(invalidLabel),
+                Content: $"### MCP tool failed\n\n{argumentError}",
+                IsError: true,
+                ErrorCode: "mcp-arguments-invalid");
+        }
+
         var resolved = await ResolveToolAsync(request.ToolId, allowLegacyAlias: true, cancellationToken);
         if (resolved is null)
         {
+            var missingLabel = McpToolCardPresentation.TryParseStableToolId(
+                request.ToolId,
+                out _,
+                out var missingToolName)
+                ? McpToolCardPresentation.HumanizeToolName(missingToolName)
+                : "MCP Tool";
             return new AgentToolResult(
                 request.ToolId,
-                $"MCP tool '{request.ToolId}' is not configured.",
+                McpToolCardPresentation.NotConfiguredSummary(missingLabel),
                 Content: $"### MCP tool unavailable\n\nTool '{request.ToolId}' is not configured.",
                 IsError: true,
                 ErrorCode: "mcp-tool-not-found");
@@ -203,17 +238,15 @@ public sealed class McpToolSource(
 
         var server = resolved.Server;
         var canonicalToolId = McpToolIdentity.CreateStable(server.ServerId, resolved.ToolName);
+        var displayLabel = ResolveDisplayLabel(server, resolved.ToolName);
+        var backendId = $"mcp:{server.ServerId}";
 
-        if (!TryDeserializeArguments(request.ArgumentsJson, out var arguments, out var argumentError))
-        {
-            return new AgentToolResult(
-                canonicalToolId,
-                argumentError!,
-                Content: $"### MCP tool failed\n\n{argumentError}",
-                IsError: true,
-                ErrorCode: "mcp-arguments-invalid");
-        }
-
+        var serverTimeoutMilliseconds = McpTimeoutResolver.ResolveToolTimeoutMilliseconds(server);
+        var toolTimeout = McpTimeoutResolver.ResolveToolExecutionTimeout(
+            serverTimeoutMilliseconds,
+            agentTimeoutSeconds);
+        TimeoutScope? toolTimeoutScope = null;
+        var invocationAwaitingResult = false;
         try
         {
             var discoveryTimeoutMilliseconds = McpTimeoutResolver.ResolveDiscoveryTimeoutMilliseconds(server);
@@ -224,54 +257,162 @@ public sealed class McpToolSource(
                 discoveryTimeoutMilliseconds,
                 McpConnectionScope.For(context.SessionId, context.Workspace?.WorkspaceId),
                 cancellationToken);
-            var client = invocationLease?.Client;
-            if (client is null)
+            if (invocationLease?.CanInvokeTools != true)
             {
                 return new AgentToolResult(
                     canonicalToolId,
-                    $"MCP server '{server.DisplayName}' is unavailable.",
+                    McpToolCardPresentation.UnavailableSummary(displayLabel),
                     Content: $"### MCP server unavailable\n\nServer '{server.DisplayName}' could not be reached.",
                     IsError: true,
-                    ErrorCode: "mcp-server-unavailable");
+                    ErrorCode: "mcp-server-unavailable",
+                    BackendId: backendId);
             }
 
-            using var toolTimeoutScope = CreateTimeoutScope(McpTimeoutResolver.ResolveToolTimeoutMilliseconds(server), cancellationToken);
-            var result = await client.CallToolAsync(
+            context.DispatchStarted?.Invoke();
+            if (toolTimeout is { } timeout)
+            {
+                toolTimeoutScope = CreateTimeoutScope(timeout.Milliseconds, cancellationToken);
+            }
+            invocationAwaitingResult = true;
+            var result = await invocationLease.CallToolAsync(
                 resolved.ToolName,
                 arguments,
-                progress: null,
-                options: null,
-                cancellationToken: toolTimeoutScope.Token);
+                toolTimeoutScope?.Token ?? cancellationToken);
+            invocationAwaitingResult = false;
 
-            var boundedResult = SerializeResult(result.StructuredContent, result.Content);
+            var serializedResult = SerializeResult(result.StructuredContent, result.Content);
 
             return new AgentToolResult(
                 canonicalToolId,
                 result.IsError == true
-                    ? $"MCP tool '{canonicalToolId}' returned an error."
-                    : boundedResult.WasTruncated
-                        ? $"MCP tool '{canonicalToolId}' completed with a bounded, truncated result."
-                        : $"MCP tool '{canonicalToolId}' completed.",
-                Content: boundedResult.Content,
-                StructuredPayloadJson: boundedResult.StructuredPayloadJson,
-                WasTruncated: boundedResult.WasTruncated,
+                    ? McpToolCardPresentation.ToolErrorSummary(displayLabel)
+                    : McpToolCardPresentation.CompletedSummary(displayLabel, wasTruncated: false),
+                Content: serializedResult.Content,
+                StructuredPayloadJson: serializedResult.StructuredPayloadJson,
                 IsError: result.IsError == true,
                 ErrorCode: result.IsError == true ? "mcp-tool-error" : null,
-                BackendId: $"mcp:{server.ServerId}");
+                BackendId: backendId);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
         }
+        catch (Exception ex) when (invocationAwaitingResult
+                                   && ContainsCancellation(ex)
+                                   && cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException("The MCP invocation was canceled by the caller.", ex, cancellationToken);
+        }
+        catch (Exception ex) when (invocationAwaitingResult
+                                   && ContainsCancellation(ex)
+                                   && toolTimeoutScope?.DidTimeout == true)
+        {
+            return CreateTimeoutResult(canonicalToolId, displayLabel, backendId, toolTimeout!.Value);
+        }
+        catch (Exception ex) when (invocationAwaitingResult && ContainsCancellation(ex))
+        {
+            return CreateAmbiguousResult(canonicalToolId, displayLabel, backendId);
+        }
+        catch (Exception ex) when (invocationAwaitingResult && IsTransportLoss(ex))
+        {
+            return CreateAmbiguousResult(canonicalToolId, displayLabel, backendId);
+        }
+        catch (McpProtocolException ex) when (invocationAwaitingResult && IsDefinitiveProtocolRequestError(ex))
+        {
+            return new AgentToolResult(
+                canonicalToolId,
+                McpToolCardPresentation.FailureSummary(displayLabel),
+                Content: $"### MCP protocol error\n\n{ex.Message}",
+                IsError: true,
+                ErrorCode: "mcp-protocol-error",
+                BackendId: backendId);
+        }
+        catch (McpProtocolException) when (invocationAwaitingResult)
+        {
+            return CreateAmbiguousResult(canonicalToolId, displayLabel, backendId);
+        }
+        catch (Exception) when (invocationAwaitingResult)
+        {
+            return CreateAmbiguousResult(canonicalToolId, displayLabel, backendId);
+        }
         catch (Exception ex)
         {
             return new AgentToolResult(
                 canonicalToolId,
-                ex.Message,
+                McpToolCardPresentation.FailureSummary(displayLabel),
                 Content: $"### MCP tool failed\n\n{ex.Message}",
                 IsError: true,
-                ErrorCode: "mcp-tool-execution");
+                ErrorCode: "mcp-tool-execution",
+                BackendId: backendId);
         }
+        finally
+        {
+            toolTimeoutScope?.Dispose();
+        }
+    }
+
+    private static AgentToolResult CreateAmbiguousResult(
+        string toolId,
+        string displayLabel,
+        string backendId)
+        => new(
+            toolId,
+            McpToolCardPresentation.AmbiguousSummary(displayLabel),
+            Content: "### MCP tool outcome is uncertain\n\nThe request was dispatched, but no definitive response was received. External effects may have occurred. Verify current state before retrying, and disclose the uncertain outcome with any later verification.",
+            IsError: true,
+            ErrorCode: AgentToolResultErrorCodes.ToolOutcomeAmbiguous,
+            BackendId: backendId);
+
+    private static AgentToolResult CreateTimeoutResult(
+        string toolId,
+        string displayLabel,
+        string backendId,
+        McpToolExecutionTimeout timeout)
+    {
+        var timeoutSource = DescribeTimeoutSource(timeout.Source);
+        return new AgentToolResult(
+            toolId,
+            McpToolCardPresentation.TimeoutSummary(displayLabel, timeout.Milliseconds, timeoutSource),
+            Content: $"### MCP tool outcome is uncertain\n\nThe request reached the effective timeout after dispatch. The limit came from {timeoutSource}. External effects may have occurred. Verify current state before retrying, and disclose the timeout with any later verification.",
+            IsError: true,
+            ErrorCode: AgentToolResultErrorCodes.ToolOutcomeAmbiguous,
+            BackendId: backendId);
+    }
+
+    private static bool IsDefinitiveProtocolRequestError(McpProtocolException exception)
+        => exception.ErrorCode is McpErrorCode.ParseError
+            or McpErrorCode.InvalidRequest
+            or McpErrorCode.MethodNotFound
+            or McpErrorCode.InvalidParams;
+
+    private static bool ContainsCancellation(Exception exception)
+    {
+        if (exception is OperationCanceledException)
+        {
+            return true;
+        }
+        if (exception is AggregateException aggregate)
+        {
+            return aggregate.InnerExceptions.Any(ContainsCancellation);
+        }
+        return exception.InnerException is not null && ContainsCancellation(exception.InnerException);
+    }
+
+    private static bool IsTransportLoss(Exception exception)
+    {
+        if (exception is McpProtocolException)
+        {
+            return exception.InnerException is not null && IsTransportLoss(exception.InnerException);
+        }
+        if (exception is HttpRequestException or IOException or System.Net.WebSockets.WebSocketException)
+        {
+            return true;
+        }
+        if (exception is AggregateException aggregate)
+        {
+            return aggregate.InnerExceptions.Any(IsTransportLoss);
+        }
+        return exception.InnerException is not null && IsTransportLoss(exception.InnerException);
     }
 
     private async Task<ResolvedMcpTool?> ResolveToolAsync(string toolId, bool allowLegacyAlias, CancellationToken cancellationToken)
@@ -308,31 +449,49 @@ public sealed class McpToolSource(
     private Task EnsureConfigurationInitializedAsync(CancellationToken cancellationToken)
         => _configurationCoordinator?.InitializeAsync(cancellationToken) ?? Task.CompletedTask;
 
-    private static TimeoutScope CreateTimeoutScope(int? timeoutMilliseconds, CancellationToken cancellationToken)
+    private static TimeoutScope CreateTimeoutScope(int timeoutMilliseconds, CancellationToken cancellationToken)
     {
-        if (timeoutMilliseconds is not > 0)
-        {
-            return new TimeoutScope(cancellationToken, null);
-        }
-
-        var source = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        source.CancelAfter(timeoutMilliseconds.Value);
-        return new TimeoutScope(source.Token, source);
+        var timeoutSource = new CancellationTokenSource(timeoutMilliseconds);
+        var linkedSource = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            timeoutSource.Token);
+        return new TimeoutScope(linkedSource.Token, timeoutSource, linkedSource);
     }
 
     private static IReadOnlyList<AgentProfileSelectableCapabilityAssignmentRecord> GetSelectableCapabilityAssignments(AgentProfileRecord profile)
         => profile.SelectableCapabilityAssignments ?? [];
 
-    private static AgentToolDescriptor ToDescriptor(ConfiguredMcpServerRecord server, McpClientTool tool)
-        => new(
-            McpToolIdentity.CreateStable(server.ServerId, tool.Name),
-            string.IsNullOrWhiteSpace(tool.Title) ? $"{server.DisplayName}: {tool.Name}" : $"{server.DisplayName}: {tool.Title}",
-            string.IsNullOrWhiteSpace(tool.Description)
-                ? $"MCP tool '{tool.Name}' from '{server.DisplayName}'."
-                : $"[{server.DisplayName}] {tool.Description}",
+    private AgentRuntimeTool ToRuntimeTool(ConfiguredMcpServerRecord server, McpClientTool tool)
+    {
+        var converted = CreateRuntimeTool(
+            server,
+            tool.Name,
+            tool.Title,
+            tool.Description,
+            tool.JsonSchema,
+            tool.ReturnJsonSchema);
+        return converted.RuntimeTool;
+    }
+
+    internal static (AgentRuntimeTool RuntimeTool, McpToolArgumentSchemaMode ArgumentSchemaMode) CreateRuntimeTool(
+        ConfiguredMcpServerRecord server,
+        string toolName,
+        string? toolTitle,
+        string? toolDescription,
+        JsonElement argumentsJsonSchema,
+        JsonElement? returnJsonSchema)
+    {
+        var toolId = McpToolIdentity.CreateStable(server.ServerId, toolName);
+        var augmentedSchema = McpToolTimeoutMetadata.AugmentSchema(argumentsJsonSchema);
+        var descriptor = new AgentToolDescriptor(
+            toolId,
+            McpToolCardPresentation.CreateDisplayLabel(server.DisplayName, toolName, toolTitle),
+            string.IsNullOrWhiteSpace(toolDescription)
+                ? $"MCP tool '{toolName}' from '{server.DisplayName}'."
+                : $"[{server.DisplayName}] {toolDescription}",
             IsReadOnly: false,
             RequiresNetwork: server.TransportType == ConfiguredMcpTransportType.HttpSse,
-            ArgumentsJsonSchema: SerializeSchema(tool.JsonSchema),
+            ArgumentsJsonSchema: augmentedSchema.Schema.GetRawText(),
             SourceKind: "mcp",
             SourceId: server.ServerId,
             SourceDisplayName: server.DisplayName,
@@ -340,126 +499,91 @@ public sealed class McpToolSource(
             SelectionGroupId: server.ServerId,
             SelectionGroupDisplayName: server.DisplayName,
             SelectionGroupDescription: server.Description,
-            Aliases: [McpToolIdentity.CreateLegacyAlias(server.Name, tool.Name)]);
-
-    private static AgentRuntimeTool ToRuntimeTool(ConfiguredMcpServerRecord server, McpClientTool tool)
-    {
-        var descriptor = ToDescriptor(server, tool);
-        var declaration = tool
-            .WithName(descriptor.ToolId)
-            .WithDescription(descriptor.Description);
-        return new AgentRuntimeTool(descriptor, declaration);
+            Aliases: [McpToolIdentity.CreateLegacyAlias(server.Name, toolName)]);
+        return (
+            new AgentRuntimeTool(
+                descriptor,
+                AIFunctionFactory.CreateDeclaration(
+                    descriptor.ToolId,
+                    descriptor.Description,
+                    augmentedSchema.Schema,
+                    returnJsonSchema)),
+            augmentedSchema.Mode);
     }
 
-    private static string? SerializeSchema(object? schema)
-        => schema is null ? null : JsonSerializer.Serialize(schema);
+    private string ResolveDisplayLabel(ConfiguredMcpServerRecord server, string toolName)
+    {
+        var tool = _connectionManager.GetCachedTools(server)?.FirstOrDefault(item =>
+            string.Equals(item.Name, toolName, StringComparison.OrdinalIgnoreCase));
+        return McpToolCardPresentation.CreateDisplayLabel(
+            server.DisplayName,
+            toolName,
+            tool?.Title);
+    }
 
-    private static bool TryDeserializeArguments(string argumentsJson, out IReadOnlyDictionary<string, object?> arguments, out string? error)
+    private static bool TryDeserializeArguments(
+        string argumentsJson,
+        out IReadOnlyDictionary<string, object?> arguments,
+        out int? agentTimeoutSeconds,
+        out string? error)
     {
         arguments = new Dictionary<string, object?>();
+        agentTimeoutSeconds = null;
         if (!AgentToolArgumentObject.TryParse(argumentsJson, out var parsedArguments, out error))
         {
             error = $"Invalid MCP tool arguments: {error ?? "arguments were empty or invalid."}";
             return false;
         }
 
-        arguments = parsedArguments!.ToDictionary();
-        return true;
+        return McpToolTimeoutMetadata.TryExtract(
+            parsedArguments!,
+            out arguments,
+            out agentTimeoutSeconds,
+            out error);
     }
 
-    private static BoundedMcpResult SerializeResult(JsonElement? structuredContent, IList<ContentBlock>? content)
+    private static string DescribeTimeoutSource(McpToolTimeoutSource source)
+        => source switch
+        {
+            McpToolTimeoutSource.ServerConfiguration => "server configuration",
+            McpToolTimeoutSource.AgentRequest => "the agent request",
+            McpToolTimeoutSource.ServerAndAgent => "both server configuration and the agent request",
+            _ => "the effective local limit",
+        };
+
+    private static SerializedMcpResult SerializeResult(JsonElement? structuredContent, IList<ContentBlock>? content)
     {
         if (structuredContent is { ValueKind: not JsonValueKind.Undefined } structured)
         {
-            var structuredJson = TrySerializeBounded(structured, out var exceededLimit);
-            return exceededLimit
-                ? new BoundedMcpResult(
-                    $"MCP structured result exceeded the {AgentPayloadLimits.MaxMcpResultBytes}-byte limit and was omitted.",
-                    null,
-                    WasTruncated: true)
-                : new BoundedMcpResult(structuredJson, structuredJson, WasTruncated: false);
+            var structuredJson = JsonSerializer.Serialize(structured);
+            return new SerializedMcpResult(structuredJson, structuredJson);
         }
 
         if (content is not { Count: > 0 })
         {
-            return new BoundedMcpResult(null, null, WasTruncated: false);
+            return new SerializedMcpResult(null, null);
         }
 
-        var selected = content.Take(AgentPayloadLimits.MaxMcpContentItems).ToArray();
-        var contentJson = TrySerializeBounded(selected, out var exceededBytes);
-        var wasTruncated = content.Count > selected.Length || exceededBytes;
-        if (exceededBytes)
-        {
-            contentJson = $"MCP content exceeded the {AgentPayloadLimits.MaxMcpResultBytes}-byte limit and was omitted.";
-        }
-
-        return new BoundedMcpResult(contentJson, null, wasTruncated);
+        return new SerializedMcpResult(JsonSerializer.Serialize(content.ToArray()), null);
     }
 
-    private static string? TrySerializeBounded<T>(T value, out bool exceededLimit)
-    {
-        using var stream = new BoundedWriteStream(AgentPayloadLimits.MaxMcpResultBytes);
-        try
-        {
-            JsonSerializer.Serialize(stream, value);
-            exceededLimit = false;
-            return Encoding.UTF8.GetString(stream.WrittenMemory.Span);
-        }
-        catch (McpResultLimitExceededException)
-        {
-            exceededLimit = true;
-            return null;
-        }
-    }
-
-    private sealed class TimeoutScope(CancellationToken token, CancellationTokenSource? source) : IDisposable
+    private sealed class TimeoutScope(
+        CancellationToken token,
+        CancellationTokenSource? timeoutSource,
+        CancellationTokenSource? linkedSource) : IDisposable
     {
         public CancellationToken Token { get; } = token;
 
-        public void Dispose() => source?.Dispose();
+        public bool DidTimeout => timeoutSource?.IsCancellationRequested == true;
+
+        public void Dispose()
+        {
+            linkedSource?.Dispose();
+            timeoutSource?.Dispose();
+        }
     }
 
     private sealed record ResolvedMcpTool(ConfiguredMcpServerRecord Server, string ToolName, bool IsLegacyAlias);
 
-    private sealed record BoundedMcpResult(string? Content, string? StructuredPayloadJson, bool WasTruncated);
-
-    private sealed class BoundedWriteStream(int maxBytes) : Stream
-    {
-        private readonly MemoryStream _stream = new(Math.Min(maxBytes, 64 * 1024));
-
-        public ReadOnlyMemory<byte> WrittenMemory => _stream.GetBuffer().AsMemory(0, checked((int)_stream.Length));
-        public override bool CanRead => false;
-        public override bool CanSeek => false;
-        public override bool CanWrite => true;
-        public override long Length => _stream.Length;
-        public override long Position { get => _stream.Position; set => throw new NotSupportedException(); }
-        public override void Flush() { }
-        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
-        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
-        public override void SetLength(long value) => throw new NotSupportedException();
-
-        public override void Write(byte[] buffer, int offset, int count) => Write(buffer.AsSpan(offset, count));
-
-        public override void Write(ReadOnlySpan<byte> buffer)
-        {
-            if (_stream.Length + buffer.Length > maxBytes)
-            {
-                throw new McpResultLimitExceededException();
-            }
-
-            _stream.Write(buffer);
-        }
-
-        protected override void Dispose(bool disposing)
-        {
-            if (disposing)
-            {
-                _stream.Dispose();
-            }
-
-            base.Dispose(disposing);
-        }
-    }
-
-    private sealed class McpResultLimitExceededException : Exception;
+    private sealed record SerializedMcpResult(string? Content, string? StructuredPayloadJson);
 }

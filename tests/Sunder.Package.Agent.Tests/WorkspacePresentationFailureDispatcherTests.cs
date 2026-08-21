@@ -23,7 +23,7 @@ public sealed class WorkspacePresentationFailureDispatcherTests
         var workerThread = await Task.Run(() =>
         {
             var threadId = Environment.CurrentManagedThreadId;
-            context.Run(_ => Task.FromException(new InvalidOperationException("context failure")));
+            context.Run(_ => Task.FromException(new IOException("context failure")));
             return threadId;
         });
         var publicationThread = await published.Task.WaitAsync(TimeSpan.FromSeconds(2));
@@ -146,7 +146,7 @@ public sealed class WorkspacePresentationFailureDispatcherTests
 
             ReloadStarted.TrySetResult();
             await _failReload.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
-            throw new InvalidOperationException(FailureMessage);
+            throw new IOException(FailureMessage);
         }
 
         public void FailReload() => _failReload.TrySetResult();

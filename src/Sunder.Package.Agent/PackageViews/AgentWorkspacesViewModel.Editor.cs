@@ -107,8 +107,7 @@ public sealed partial class AgentWorkspacesViewModel
             return Task.CompletedTask;
         }
 
-        _currentExecutionTargetRefresh = RefreshExecutionTargetsAsync(_tasks.CancellationToken);
-        TrackOperation(_currentExecutionTargetRefresh);
+        _currentExecutionTargetRefresh = _tasks.Track(RefreshExecutionTargetsAsync);
         return _currentExecutionTargetRefresh;
     }
 
@@ -235,8 +234,7 @@ public sealed partial class AgentWorkspacesViewModel
         }
 
         var ticket = _listDetail.BeginDetailLoad(_lifetimeCancellation.Token);
-        _currentEditorSectionRefresh = RefreshEditorSectionsAsync(ticket);
-        TrackOperation(_currentEditorSectionRefresh);
+        _currentEditorSectionRefresh = _tasks.Track(_ => RefreshEditorSectionsAsync(ticket));
     }
 
     private async Task RefreshEditorSectionsAsync(AdaptiveDetailTicket<string> ticket)
@@ -432,8 +430,7 @@ public sealed partial class AgentWorkspacesViewModel
         }
 
         errorSection.SetRetrying(true);
-        _currentEditorSectionRetry = RetryEditorSectionAsync(errorSection);
-        TrackOperation(_currentEditorSectionRetry);
+        _currentEditorSectionRetry = _tasks.Track(_ => RetryEditorSectionAsync(errorSection));
     }
 
     private async Task RetryEditorSectionAsync(AgentEditorSectionViewModel errorSection)

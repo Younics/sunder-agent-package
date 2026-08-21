@@ -18,6 +18,7 @@ internal sealed class SubsessionLocalRuntimeAdapter :
     private CancellationTokenRegistration _eventRetirement;
     private Action<Guid>? _sessionChanged;
     private Action<Guid, AgentTurnRecord>? _turnChanged;
+    private Action? _resnapshotRequired;
     private int _disposed;
 
     internal SubsessionLocalRuntimeAdapter(
@@ -56,8 +57,16 @@ internal sealed class SubsessionLocalRuntimeAdapter :
 
     public event Action? ResnapshotRequired
     {
-        add { }
-        remove { }
+        add
+        {
+            lock (_eventSync)
+            {
+                ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+                EnsureEventLease();
+                _resnapshotRequired += value;
+            }
+        }
+        remove => RemoveResnapshotHandler(value);
     }
 
     public Task<SubsessionSessionCatalog> ListSessionsAsync(CancellationToken cancellationToken = default)
@@ -204,6 +213,7 @@ internal sealed class SubsessionLocalRuntimeAdapter :
         _eventLease = lease;
         lease.Service.SessionChanged += ForwardSessionChanged;
         lease.Service.TurnChanged += ForwardTurnChanged;
+        lease.Service.ResetRequired += ForwardResnapshotRequired;
         _eventRetirement = lease.RetirementToken.Register(
             static state => ((SubsessionLocalRuntimeAdapter)state!).RetireEventLease(),
             this);
@@ -220,7 +230,7 @@ internal sealed class SubsessionLocalRuntimeAdapter :
         lock (_eventSync)
         {
             _sessionChanged -= handler;
-            if (_sessionChanged is null && _turnChanged is null)
+            if (_sessionChanged is null && _turnChanged is null && _resnapshotRequired is null)
             {
                 registration = ReleaseEventLease();
             }
@@ -234,7 +244,21 @@ internal sealed class SubsessionLocalRuntimeAdapter :
         lock (_eventSync)
         {
             _turnChanged -= handler;
-            if (_sessionChanged is null && _turnChanged is null)
+            if (_sessionChanged is null && _turnChanged is null && _resnapshotRequired is null)
+            {
+                registration = ReleaseEventLease();
+            }
+        }
+        registration.Dispose();
+    }
+
+    private void RemoveResnapshotHandler(Action? handler)
+    {
+        CancellationTokenRegistration registration = default;
+        lock (_eventSync)
+        {
+            _resnapshotRequired -= handler;
+            if (_sessionChanged is null && _turnChanged is null && _resnapshotRequired is null)
             {
                 registration = ReleaseEventLease();
             }
@@ -246,6 +270,8 @@ internal sealed class SubsessionLocalRuntimeAdapter :
 
     private void ForwardTurnChanged(Guid sessionId, AgentTurnRecord turn)
         => _turnChanged?.Invoke(sessionId, turn);
+
+    private void ForwardResnapshotRequired() => _resnapshotRequired?.Invoke();
 
     private void RetireEventLease()
     {
@@ -266,6 +292,7 @@ internal sealed class SubsessionLocalRuntimeAdapter :
         _eventLease = null;
         lease.Service.SessionChanged -= ForwardSessionChanged;
         lease.Service.TurnChanged -= ForwardTurnChanged;
+        lease.Service.ResetRequired -= ForwardResnapshotRequired;
         lease.Dispose();
         var registration = _eventRetirement;
         _eventRetirement = default;
@@ -284,6 +311,7 @@ internal sealed class SubsessionLocalRuntimeAdapter :
         {
             _sessionChanged = null;
             _turnChanged = null;
+            _resnapshotRequired = null;
             registration = ReleaseEventLease();
         }
         registration.Dispose();

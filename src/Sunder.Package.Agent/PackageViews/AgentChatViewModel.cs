@@ -47,7 +47,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
     private readonly IAgentChatPermissionCommandGateway? _chatPermissionCommandGateway;
     private readonly CancellationTokenSource _lifetimeCancellation = new();
     private readonly AsyncOnce _initialization = new();
-    private readonly PresentationTaskScope _backgroundTasks = new();
+    private readonly PresentationTaskScope _backgroundTasks;
     private readonly SemaphoreSlim _selectionPersistenceGate = new(1, 1);
     private readonly SemaphoreSlim _composerReconciliationGate = new(1, 1);
     private readonly Dictionary<Guid, AgentSessionSnapshot> _snapshotSessions = [];
@@ -323,7 +323,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
 
     [RelayCommand(CanExecute = nameof(CanSendMessage), AllowConcurrentExecutions = true)]
     private Task SendMessageAsync()
-        => RunOperationAsync(
+        => _operations.SubmitAsync(
             SendMessageOperation,
             SendMessageCoreAsync,
             cancellationToken => ReconcileChatSnapshotAsync(cancellationToken));

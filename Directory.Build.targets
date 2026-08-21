@@ -9,6 +9,14 @@
              Link="Storage/CurrentPackageStorageKey.cs" />
   </ItemGroup>
 
+  <ItemGroup Condition="'$(SunderPackageRole)' == 'worker' and '$(SunderPackagePrimaryProject)' == 'true' and '$(SunderPackageAppProject)' != '' and '$(SunderPackageInnerBuild)' != 'true'">
+    <ProjectReference Include="$(SunderPackageAppProject)"
+                      ReferenceOutputAssembly="false"
+                      Private="false"
+                      BuildReference="false"
+                      PrivateAssets="all" />
+  </ItemGroup>
+
   <PropertyGroup Condition="'$(SunderPackageRole)' == 'app'">
     <SunderPackageProject Condition="'$(SunderPackageProject)' == ''">true</SunderPackageProject>
     <SunderSdkAvaloniaReference Condition="'$(SunderSdkAvaloniaReference)' == ''">true</SunderSdkAvaloniaReference>
@@ -20,39 +28,6 @@
     <SunderSdkReference Condition="'$(SunderSdkReference)' == ''">true</SunderSdkReference>
     <SunderPackageBuildReference Condition="'$(SunderPackageBuildReference)' == ''">true</SunderPackageBuildReference>
   </PropertyGroup>
-
-  <PropertyGroup Condition="'$(SunderPackageRole)' == 'aggregate'">
-    <SunderPackageAggregateProject Condition="'$(SunderPackageAggregateProject)' == ''">true</SunderPackageAggregateProject>
-    <SunderAgentUniversalWorkerPackage Condition="'$(SunderAgentUniversalWorkerPackage)' == ''">false</SunderAgentUniversalWorkerPackage>
-  </PropertyGroup>
-
-  <ItemGroup Condition="'$(SunderPackageRole)' == 'aggregate' and '$(SunderPackageWorkerProject)' != '' and '$(SunderPackageWorkerDirectory)' != '' and '$(SunderAgentUniversalWorkerPackage)' != 'true'">
-    <ProjectReference Include="$(SunderPackageWorkerProject)"
-                      ReferenceOutputAssembly="false" />
-    <SunderPackageTargetLeaf Include="$(SunderPackageWorkerDirectory)\bin\$(Configuration)\$(TargetFramework)\$(NETCoreSdkRuntimeIdentifier)\sunder-dev"
-                             DiscoveryRoot="$(SunderPackageWorkerDirectory)\bin\$(Configuration)\$(TargetFramework)\$(NETCoreSdkRuntimeIdentifier)" />
-  </ItemGroup>
-
-  <ItemGroup Condition="'$(SunderPackageRole)' == 'aggregate' and '$(SunderPackageWorkerProject)' != '' and '$(SunderPackageWorkerDirectory)' != '' and '$(SunderAgentUniversalWorkerPackage)' == 'true'">
-    <ProjectReference Include="$(SunderPackageWorkerProject)" ReferenceOutputAssembly="false" AdditionalProperties="RuntimeIdentifier=win-x64" />
-    <ProjectReference Include="$(SunderPackageWorkerProject)" ReferenceOutputAssembly="false" AdditionalProperties="RuntimeIdentifier=win-arm64" />
-    <ProjectReference Include="$(SunderPackageWorkerProject)" ReferenceOutputAssembly="false" AdditionalProperties="RuntimeIdentifier=linux-x64" />
-    <ProjectReference Include="$(SunderPackageWorkerProject)" ReferenceOutputAssembly="false" AdditionalProperties="RuntimeIdentifier=linux-arm64" />
-    <ProjectReference Include="$(SunderPackageWorkerProject)" ReferenceOutputAssembly="false" AdditionalProperties="RuntimeIdentifier=osx-x64" />
-    <ProjectReference Include="$(SunderPackageWorkerProject)" ReferenceOutputAssembly="false" AdditionalProperties="RuntimeIdentifier=osx-arm64" />
-    <SunderPackageTargetLeaf Include="$(SunderPackageWorkerDirectory)\bin\$(Configuration)\$(TargetFramework)\win-x64\sunder-dev"
-                             DiscoveryRoot="$(SunderPackageWorkerDirectory)\bin\$(Configuration)\$(TargetFramework)\win-x64" />
-    <SunderPackageTargetLeaf Include="$(SunderPackageWorkerDirectory)\bin\$(Configuration)\$(TargetFramework)\win-arm64\sunder-dev"
-                             DiscoveryRoot="$(SunderPackageWorkerDirectory)\bin\$(Configuration)\$(TargetFramework)\win-arm64" />
-    <SunderPackageTargetLeaf Include="$(SunderPackageWorkerDirectory)\bin\$(Configuration)\$(TargetFramework)\linux-x64\sunder-dev"
-                             DiscoveryRoot="$(SunderPackageWorkerDirectory)\bin\$(Configuration)\$(TargetFramework)\linux-x64" />
-    <SunderPackageTargetLeaf Include="$(SunderPackageWorkerDirectory)\bin\$(Configuration)\$(TargetFramework)\linux-arm64\sunder-dev"
-                             DiscoveryRoot="$(SunderPackageWorkerDirectory)\bin\$(Configuration)\$(TargetFramework)\linux-arm64" />
-    <SunderPackageTargetLeaf Include="$(SunderPackageWorkerDirectory)\bin\$(Configuration)\$(TargetFramework)\osx-x64\sunder-dev"
-                             DiscoveryRoot="$(SunderPackageWorkerDirectory)\bin\$(Configuration)\$(TargetFramework)\osx-x64" />
-    <SunderPackageTargetLeaf Include="$(SunderPackageWorkerDirectory)\bin\$(Configuration)\$(TargetFramework)\osx-arm64\sunder-dev"
-                             DiscoveryRoot="$(SunderPackageWorkerDirectory)\bin\$(Configuration)\$(TargetFramework)\osx-arm64" />
-  </ItemGroup>
 
   <ItemGroup Condition="('$(SunderPackageProject)' == 'true' or '$(SunderSdkReference)' == 'true') and '$(SunderUseSourceSdk)' == 'true'">
     <ProjectReference Include="$(SunderSdkProject)"
@@ -90,7 +65,7 @@
     <PackageReference Include="Sunder.Sdk.Worker" />
   </ItemGroup>
 
-  <ItemGroup Condition="('$(SunderPackageProject)' == 'true' or '$(SunderPackageAggregateProject)' == 'true' or '$(SunderPackageBuildReference)' == 'true') and '$(SunderUseSourceSdk)' == 'false'">
+  <ItemGroup Condition="('$(SunderPackageProject)' == 'true' or '$(SunderPackageBuildReference)' == 'true') and '$(SunderUseSourceSdk)' == 'false'">
     <PackageReference Include="Sunder.Package.Build" PrivateAssets="all" />
   </ItemGroup>
 
@@ -104,6 +79,7 @@
     <SunderContractBundle Include="$(MSBuildThisFileDirectory)src/Sunder.Package.Agent.Contracts/Contracts/session-cleaner.rpc.json" ContractId="sunder.agent.session.cleaner" Version="1.0.0" DescriptorPath="contracts/session-cleaner.rpc.json" Exposure="public" />
     <SunderContractBundle Include="$(MSBuildThisFileDirectory)src/Sunder.Package.Agent.Contracts/Contracts/system-prompt-contributor.rpc.json" ContractId="sunder.agent.system.prompt.contributor" Version="1.0.0" DescriptorPath="contracts/system-prompt-contributor.rpc.json" Exposure="public" />
     <SunderContractBundle Include="$(MSBuildThisFileDirectory)src/Sunder.Package.Agent.Contracts/Contracts/tool-source.rpc.json" ContractId="sunder.agent.tool.source" Version="1.0.0" DescriptorPath="contracts/tool-source.rpc.json" Exposure="public" />
+    <SunderContractBundle Include="$(MSBuildThisFileDirectory)src/Sunder.Package.Agent.Contracts/Contracts/tool-execution-observed.rpc.json" ContractId="sunder.agent.tool.execution.observed" Version="1.0.0" DescriptorPath="contracts/tool-execution-observed.rpc.json" Exposure="public" />
     <SunderContractBundle Include="$(MSBuildThisFileDirectory)src/Sunder.Package.Agent.Contracts/Contracts/permission-surface.rpc.json" ContractId="sunder.agent.permission.surface" Version="1.0.0" DescriptorPath="contracts/permission-surface.rpc.json" Exposure="public" />
     <SunderContractBundle Include="$(MSBuildThisFileDirectory)src/Sunder.Package.Agent.Contracts/Contracts/prompt-context-contributor.rpc.json" ContractId="sunder.agent.prompt.context.contributor" Version="1.0.0" DescriptorPath="contracts/prompt-context-contributor.rpc.json" Exposure="public" />
     <SunderContractBundle Include="$(MSBuildThisFileDirectory)src/Sunder.Package.Agent.Contracts/Contracts/durable-lifecycle-observer.rpc.json" ContractId="sunder.agent.durable.lifecycle.observer" Version="1.0.0" DescriptorPath="contracts/durable-lifecycle-observer.rpc.json" Exposure="public" />
@@ -123,6 +99,7 @@
     <SunderUsesContract Include="sunder.agent.session.cleaner" Role="runtime" ContractVersion="1.0.0" Required="false" Actions="discover;invoke" />
     <SunderUsesContract Include="sunder.agent.system.prompt.contributor" Role="runtime" ContractVersion="1.0.0" Required="false" Actions="discover;invoke" />
     <SunderUsesContract Include="sunder.agent.tool.source" Role="runtime" ContractVersion="1.0.0" Required="false" Actions="discover;invoke" />
+    <SunderUsesContract Include="sunder.agent.tool.execution.observed" Role="runtime" ContractVersion="1.0.0" Required="false" Actions="discover;invoke;subscribe" />
     <SunderUsesContract Include="sunder.agent.permission.surface" Role="runtime" ContractVersion="1.0.0" Required="false" Actions="discover;invoke" />
     <SunderUsesContract Include="sunder.agent.prompt.context.contributor" Role="runtime" ContractVersion="1.0.0" Required="false" Actions="discover;invoke" />
     <SunderUsesContract Include="sunder.agent.durable.lifecycle.observer" Role="runtime" ContractVersion="1.0.0" Required="false" Actions="discover;invoke" />
@@ -199,6 +176,7 @@
   <ItemGroup Condition="'$(SunderPackageFamilyId)' == 'sunder.package.agent.mcp' and '$(SunderPackageRole)' == 'worker'">
     <SunderUsesContract Include="sunder.agent.runtime.catalog" Role="runtime" ContractVersion="1.0.0" Required="false" Actions="discover;invoke;subscribe" />
     <SunderRpcProvider Include="mcp.tools" ContractId="sunder.agent.tool.source" ContractVersion="1.0.0" Role="runtime" Audience="public" />
+    <SunderRpcProvider Include="mcp.tools.observed" ContractId="sunder.agent.tool.execution.observed" ContractVersion="1.0.0" Role="runtime" Audience="public" />
     <SunderRpcProvider Include="mcp.selectable.capabilities" ContractId="sunder.agent.selectable.capability.provider" ContractVersion="1.0.0" Role="runtime" Audience="public" />
     <SunderRpcProvider Include="mcp.session.cleaner" ContractId="sunder.agent.session.cleaner" ContractVersion="1.0.0" Role="runtime" Audience="public" />
     <SunderRpcProvider Include="mcp.stack" ContractId="sunder.stack.contributor" ContractVersion="2.0.0" Role="runtime" Audience="public" />
@@ -244,20 +222,14 @@
 
   <Target Name="ValidateSunderSdkMode"
           BeforeTargets="_GenerateRestoreProjectPathWalk;CollectPackageReferences;PrepareForBuild">
-    <Error Condition="'$(SunderPackageRole)' != '' and '$(SunderPackageRole)' != 'worker' and '$(SunderPackageRole)' != 'app' and '$(SunderPackageRole)' != 'protocol' and '$(SunderPackageRole)' != 'aggregate' and '$(SunderPackageRole)' != 'test'"
-           Text="SunderPackageRole must be worker, app, protocol, aggregate, or test, but was '$(SunderPackageRole)'." />
+    <Error Condition="'$(SunderPackageRole)' != '' and '$(SunderPackageRole)' != 'worker' and '$(SunderPackageRole)' != 'app' and '$(SunderPackageRole)' != 'protocol' and '$(SunderPackageRole)' != 'test'"
+           Text="SunderPackageRole must be worker, app, protocol, or test, but was '$(SunderPackageRole)'." />
     <Error Condition="'$(SunderPackageRole)' != '' and '$(SunderPackageFamilyId)' == ''"
            Text="SunderPackageFamilyId is required when SunderPackageRole is set." />
-    <Error Condition="'$(SunderPackageRole)' == 'worker' and ('$(SunderPackageProject)' != 'true' or '$(SunderSdkWorkerReference)' != 'true')"
-           Text="A worker role must enable SunderPackageProject and SunderSdkWorkerReference." />
+    <Error Condition="'$(SunderPackageRole)' == 'worker' and ('$(SunderPackageProject)' != 'true' or '$(SunderPackagePrimaryProject)' != 'true' or '$(SunderSdkWorkerReference)' != 'true')"
+           Text="A worker role must be the primary package project and enable SunderPackageProject and SunderSdkWorkerReference." />
     <Error Condition="'$(SunderPackageRole)' == 'worker' and ('$(OutputType)' != 'Exe' or '$(SelfContained)' != 'true' or '$(UseAppHost)' != 'true' or '$(PublishSingleFile)' == 'true')"
            Text="A worker role must be an unpacked self-contained apphost executable." />
-    <Error Condition="'$(SunderPackageRole)' == 'aggregate' and ('$(SunderPackageAggregateProject)' != 'true' or '$(SunderPackageWorkerProject)' == '' or '$(SunderPackageWorkerDirectory)' == '')"
-           Text="An aggregate role must identify its Worker project and output directory." />
-    <Error Condition="'$(SunderPackageRole)' == 'aggregate' and !Exists('$(SunderPackageWorkerProject)')"
-           Text="The aggregate Worker project was not found at '$(SunderPackageWorkerProject)'." />
-    <Error Condition="'$(SunderPackageRole)' == 'aggregate' and '$(SunderAgentUniversalWorkerPackage)' != 'true' and '$(SunderAgentUniversalWorkerPackage)' != 'false'"
-           Text="SunderAgentUniversalWorkerPackage must be true or false." />
     <Error Condition="'$(SunderPackageRole)' == 'protocol' and '$(SunderPackageProject)' != 'false'"
            Text="A protocol role must not be a runtime package project." />
     <Error Condition="'$(SunderUseSourceSdk)' != 'true' and '$(SunderUseSourceSdk)' != 'false'"
@@ -270,10 +242,10 @@
            Text="SunderUseSourceSdk is true, but the Sunder Avalonia SDK project was not found at '$(SunderSdkAvaloniaProject)'." />
     <Error Condition="'$(SunderUseSourceSdk)' == 'true' and '$(SunderSdkWorkerReference)' == 'true' and !Exists('$(SunderSdkWorkerProject)')"
            Text="SunderUseSourceSdk is true, but the Sunder Worker SDK project was not found at '$(SunderSdkWorkerProject)'." />
-    <Error Condition="'$(SunderUseSourceSdk)' == 'true' and ('$(SunderPackageProject)' == 'true' or '$(SunderPackageAggregateProject)' == 'true' or '$(SunderPackageBuildReference)' == 'true') and !Exists('$(SunderPackageBuildTargets)')"
+    <Error Condition="'$(SunderUseSourceSdk)' == 'true' and ('$(SunderPackageProject)' == 'true' or '$(SunderPackageBuildReference)' == 'true') and !Exists('$(SunderPackageBuildTargets)')"
             Text="SunderUseSourceSdk is true, but the Sunder package build targets were not found at '$(SunderPackageBuildTargets)'." />
   </Target>
 
   <Import Project="$(SunderPackageBuildTargets)"
-          Condition="('$(SunderPackageProject)' == 'true' or '$(SunderPackageAggregateProject)' == 'true' or '$(SunderPackageBuildReference)' == 'true') and '$(SunderUseSourceSdk)' == 'true' and Exists('$(SunderPackageBuildTargets)')" />
+          Condition="('$(SunderPackageProject)' == 'true' or '$(SunderPackageBuildReference)' == 'true') and '$(SunderUseSourceSdk)' == 'true' and Exists('$(SunderPackageBuildTargets)')" />
 </Project>

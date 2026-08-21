@@ -217,10 +217,20 @@ public sealed class SemanticModelRuntimeResolver : IDisposable
         return fallback;
     }
 
-    internal IDisposable SubscribeToSessionChanges(Action<Guid> handler)
+    internal IDisposable SubscribeToSessionChanges(
+        Action<Guid> handler,
+        Action resetHandler)
         => SubscribeToRuntimeCatalog(
-            catalog => catalog.SessionChanged += handler,
-            catalog => catalog.SessionChanged -= handler);
+            catalog =>
+            {
+                catalog.SessionChanged += handler;
+                catalog.ResetRequired += resetHandler;
+            },
+            catalog =>
+            {
+                catalog.SessionChanged -= handler;
+                catalog.ResetRequired -= resetHandler;
+            });
 
     private IDisposable SubscribeToRuntimeCatalog(
         Action<IAgentRuntimeCatalog> subscribe,

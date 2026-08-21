@@ -10,7 +10,7 @@ public static class AgentToolSourceRpc
     public const string ServiceId = "tool-source";
 
     public static ISunderRpcServiceHandler CreateHandler(IAgentToolSource source, AgentRpcCatalog? rpcCatalog = null)
-        => AgentRpcServiceHandler.Create()
+        => AgentRpcServiceHandler.Create(AgentRpcContractDescriptors.Get(AgentRpcContractIds.ToolSource))
             .AddUnary<AgentRpcEmpty, ToolSourceDescription>(ServiceId, "describe", (_, _, _) => ValueTask.FromResult(new ToolSourceDescription(source.SourceId, source.DisplayName, source.SourceKind)))
             .AddUnary<AgentToolSourceContextWire, IReadOnlyList<AgentToolDescriptor>>(ServiceId, "list-tools", async (_, request, token) => await source.ListToolsAsync(await FromWireAsync(request, rpcCatalog, token).ConfigureAwait(false), token).ConfigureAwait(false))
             .AddNullableUnary<ToolReadinessRequest, AgentToolReadiness>(ServiceId, "get-readiness", async (_, request, token) => await source.GetReadinessAsync(request.ToolId, await FromWireAsync(request.Context, rpcCatalog, token).ConfigureAwait(false), token).ConfigureAwait(false))
@@ -37,7 +37,7 @@ public static class AgentToolSourceRpc
             ExecutionTargetConfigurationGeneration = wire.ExecutionTargetConfigurationGeneration,
         };
 
-    private static async ValueTask<AgentToolExecutionContext> FromWireAsync(
+    internal static async ValueTask<AgentToolExecutionContext> FromWireAsync(
         AgentToolExecutionContextWire wire,
         AgentRpcCatalog? rpcCatalog,
         CancellationToken cancellationToken)
@@ -49,6 +49,14 @@ public static class AgentToolSourceRpc
             ResourceOperation = wire.ResourceOperation?.ToContext(),
             ExecutionTargetConfigurationGeneration = wire.ExecutionTargetConfigurationGeneration,
         };
+
+    internal static AgentToolExecutionContextWire ToWire(AgentToolExecutionContext context)
+        => new(
+            context,
+            context.ExecutionTargetReference?.ToHandle(),
+            context.ApprovedResourceCapabilities,
+            AgentResourceOperationContextWire.FromContext(context.ResourceOperation),
+            context.ExecutionTargetConfigurationGeneration);
 
     private static ValueTask<AgentRpcReference<IAgentExecutionTarget>?> ResolveTargetAsync(
         AgentRpcProviderHandle? handle,
@@ -112,13 +120,20 @@ public sealed class AgentToolSourceRpcClient :
         => await AgentRpcServiceHandler.InvokeNullableAsync<ToolReadinessRequest, AgentToolReadiness>(_client, _endpoint, AgentToolSourceRpc.ServiceId, "get-readiness", new(toolId, ToWire(context)), cancellationToken).ConfigureAwait(false);
 
     public async ValueTask<AgentToolResult?> PreflightExecutionAsync(AgentToolExecutionContext context, AgentToolRequest request, CancellationToken cancellationToken = default)
-        => await AgentRpcServiceHandler.InvokeNullableAsync<ToolInvocationRequest, AgentToolResult>(_client, _endpoint, AgentToolSourceRpc.ServiceId, "preflight", new(ToWire(context), request), cancellationToken).ConfigureAwait(false);
+        => await AgentRpcServiceHandler.InvokeNullableAsync<ToolInvocationRequest, AgentToolResult>(_client, _endpoint, AgentToolSourceRpc.ServiceId, "preflight", new(AgentToolSourceRpc.ToWire(context), request), cancellationToken).ConfigureAwait(false);
 
     public ValueTask<AgentToolResult> ExecuteAsync(AgentToolExecutionContext context, AgentToolRequest request, CancellationToken cancellationToken = default)
-        => AgentRpcServiceHandler.InvokeAsync<ToolInvocationRequest, AgentToolResult>(_client, _endpoint, AgentToolSourceRpc.ServiceId, "execute", new(ToWire(context), request), cancellationToken);
+        => AgentRpcServiceHandler.InvokeAsync<ToolInvocationRequest, AgentToolResult>(
+            _client,
+            _endpoint,
+            AgentToolSourceRpc.ServiceId,
+            "execute",
+            new(AgentToolSourceRpc.ToWire(context), request),
+            AgentRpcServiceHandler.CreateExtendedCallOptions(),
+            cancellationToken);
 
     public async ValueTask<AgentPermissionRequest?> BuildPermissionRequestAsync(AgentToolExecutionContext context, AgentToolRequest request, CancellationToken cancellationToken = default)
-        => (await AgentRpcServiceHandler.InvokeNullableAsync<ToolInvocationRequest, AgentPermissionRequestWire>(_client, _endpoint, AgentToolSourceRpc.ServiceId, "permission", new(ToWire(context), request), cancellationToken).ConfigureAwait(false))?.ToRequest();
+        => (await AgentRpcServiceHandler.InvokeNullableAsync<ToolInvocationRequest, AgentPermissionRequestWire>(_client, _endpoint, AgentToolSourceRpc.ServiceId, "permission", new(AgentToolSourceRpc.ToWire(context), request), cancellationToken).ConfigureAwait(false))?.ToRequest();
 
     public AgentToolPresentation? ResolveToolPresentation(AgentToolPresentationRequest request)
         => AgentRpcServiceHandler.InvokeNullableAsync<AgentToolPresentationRequest, AgentToolPresentation>(_client, _endpoint, AgentToolSourceRpc.ServiceId, "presentation", request).AsTask().GetAwaiter().GetResult();
@@ -129,13 +144,6 @@ public sealed class AgentToolSourceRpcClient :
             context.ExecutionTargetReference?.ToHandle(),
             context.ExecutionTargetConfigurationGeneration);
 
-    private static AgentToolExecutionContextWire ToWire(AgentToolExecutionContext context)
-        => new(
-            context,
-            context.ExecutionTargetReference?.ToHandle(),
-            context.ApprovedResourceCapabilities,
-            AgentResourceOperationContextWire.FromContext(context.ResourceOperation),
-            context.ExecutionTargetConfigurationGeneration);
 }
 
 public sealed class AgentStaticToolSourceAdapter :
@@ -253,6 +261,7 @@ public sealed record AgentResourceOperationContextWire(
 }
 public sealed record ToolReadinessRequest(string ToolId, AgentToolSourceContextWire Context);
 public sealed record ToolInvocationRequest(AgentToolExecutionContextWire Context, AgentToolRequest Request);
+
 public sealed record AgentPermissionRequestWire(AgentPermissionRequest Request, IReadOnlyList<string> ResourceCapabilities)
 {
     public static AgentPermissionRequestWire FromRequest(AgentPermissionRequest request)

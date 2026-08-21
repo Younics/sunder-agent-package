@@ -1,6 +1,9 @@
+using System.Diagnostics;
+using System.Runtime.ExceptionServices;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
+using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Builder;
@@ -33,8 +36,48 @@ public sealed class BuilderWorkspaceExecutionService
                 new BuilderRpcRequest(BuilderRpcOperationKind.ListWorkspaces),
                 cancellationToken).AsTask(),
             CancellationToken.None);
-        var response = await invocation.WaitAsync(cancellationToken).ConfigureAwait(false);
-        return response.Workspaces ?? [];
+        try
+        {
+            var response = await invocation.WaitAsync(cancellationToken).ConfigureAwait(false);
+            return response.Workspaces ?? [];
+        }
+        catch (OperationCanceledException exception) when (
+            cancellationToken.IsCancellationRequested
+            && !PresentationExceptionPolicy.IsFatal(exception))
+        {
+            _ = ObserveDetachedInvocationAsync(invocation, cancellationToken);
+            throw;
+        }
+    }
+
+    private static async Task ObserveDetachedInvocationAsync(
+        Task invocation,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await invocation.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException exception) when (
+            cancellationToken.IsCancellationRequested
+            && !PresentationExceptionPolicy.IsFatal(exception))
+        {
+        }
+        catch (Exception exception) when (
+            PresentationExceptionPolicy.IsExpectedOperationFailure(exception))
+        {
+        }
+        catch (Exception exception) when (!PresentationExceptionPolicy.IsFatal(exception))
+        {
+            Trace.TraceError(
+                $"A detached Package Builder workspace-list operation failed: {exception}");
+        }
+        catch (Exception exception)
+        {
+            ThreadPool.QueueUserWorkItem(
+                static state => ExceptionDispatchInfo.Capture((Exception)state!).Throw(),
+                exception);
+        }
     }
 
     public async ValueTask<BuilderWorkspaceExecution> ResolveAsync(

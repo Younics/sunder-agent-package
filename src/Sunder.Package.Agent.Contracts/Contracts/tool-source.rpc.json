@@ -96,9 +96,7 @@
       "additionalProperties": false
     },
     "TextValue": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 65536
+      "type": "string"
     },
     "ToolSourceDescription": {
       "type": "object",
@@ -128,9 +126,7 @@
       "type": "boolean"
     },
     "SignedInteger": {
-      "type": "integer",
-      "minimum": -2147483648,
-      "maximum": 2147483647
+      "type": "integer"
     },
     "AgentWorkspaceBindingRecord": {
       "type": "object",
@@ -209,9 +205,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentProfileModelBindingRecord"
-      },
-      "minItems": 0,
-      "maxItems": 10000
+      }
     },
     "AgentProfileSelectableCapabilityAssignmentRecord": {
       "type": "object",
@@ -236,9 +230,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentProfileSelectableCapabilityAssignmentRecord"
-      },
-      "minItems": 0,
-      "maxItems": 10000
+      }
     },
     "AgentProfileRecord": {
       "type": "object",
@@ -341,9 +333,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentWorkspaceDocumentRecord"
-      },
-      "minItems": 0,
-      "maxItems": 10000
+      }
     },
     "AgentWorkspacePathRecord": {
       "type": "object",
@@ -385,9 +375,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentWorkspacePathRecord"
-      },
-      "minItems": 0,
-      "maxItems": 10000
+      }
     },
     "AgentWorkspaceRecord": {
       "type": "object",
@@ -535,14 +523,10 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/TextValue"
-      },
-      "minItems": 0,
-      "maxItems": 4096
+      }
     },
     "AgentToolConcurrencyMode": {
       "type": "string",
-      "minLength": 10,
-      "maxLength": 13,
       "enum": [
         "sequential",
         "parallel-safe"
@@ -550,8 +534,6 @@
     },
     "AgentToolPriority": {
       "type": "string",
-      "minLength": 3,
-      "maxLength": 6,
       "enum": [
         "low",
         "medium",
@@ -560,8 +542,6 @@
     },
     "AgentToolSelectionScope": {
       "type": "string",
-      "minLength": 4,
-      "maxLength": 5,
       "enum": [
         "tool",
         "group"
@@ -641,9 +621,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentToolDescriptor"
-      },
-      "minItems": 0,
-      "maxItems": 4096
+      }
     },
     "ToolReadinessRequest": {
       "type": "object",
@@ -663,8 +641,6 @@
     },
     "AgentToolReadinessStatus": {
       "type": "string",
-      "minLength": 5,
-      "maxLength": 6,
       "enum": [
         "ready",
         "failed"
@@ -785,9 +761,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentResourceClaim"
-      },
-      "minItems": 0,
-      "maxItems": 4096
+      }
     },
     "AgentToolExecutionContext": {
       "type": "object",
@@ -973,9 +947,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentToolSourceItem"
-      },
-      "minItems": 0,
-      "maxItems": 4096
+      }
     },
     "AgentToolResult": {
       "type": "object",
@@ -1035,8 +1007,6 @@
     },
     "AgentPermissionScopeClassificationBasis": {
       "type": "string",
-      "minLength": 5,
-      "maxLength": 27,
       "enum": [
         "unspecified",
         "opened-ancestor-identity",
@@ -1196,44 +1166,30 @@
     },
     "Identifier": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 256
+      "minLength": 1
     },
     "IdentifierOrEmpty": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 256
+      "type": "string"
     },
     "VersionText": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 256
+      "minLength": 1
     },
     "PathText": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 4096
+      "type": "string"
     },
     "CommandText": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 131072
+      "type": "string"
     },
     "DisplayText": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 8192
+      "type": "string"
     },
     "ContentText": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 900000
+      "type": "string"
     },
     "JsonText": {
       "type": "string",
-      "minLength": 0,
-      "maxLength": 900000,
-      "description": "Bounded opaque JSON text that may be malformed, truncated, or interpreted by an extension-owned schema."
+      "description": "Opaque JSON text that may be malformed, truncated, or interpreted by an extension-owned schema."
     },
     "Sha256Text": {
       "type": "string",
@@ -1241,29 +1197,23 @@
       "maxLength": 64
     },
     "SortOrder": {
-      "type": "integer",
-      "minimum": -100000,
-      "maximum": 100000
+      "type": "integer"
     },
     "CollectionIndex": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 100000
+      "minimum": 0
     },
     "ResourceOperationIndex": {
       "type": "integer",
-      "minimum": -1,
-      "maximum": 100000
+      "minimum": -1
     },
     "Revision": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 9007199254740991
+      "minimum": 0
     },
     "Count": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 9007199254740991
+      "minimum": 0
     }
   }
 }

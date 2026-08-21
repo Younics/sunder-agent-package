@@ -15,8 +15,6 @@ internal sealed partial class AgentAppRuntimeGateway
     private void StartObservingChanges(
         ChangeObservationStartReason startReason = ChangeObservationStartReason.Initial)
     {
-        CancellationTokenSource cancellation;
-        int generation;
         lock (_observationLock)
         {
             if (_disposed || _observationCancellation is not null)
@@ -24,12 +22,19 @@ internal sealed partial class AgentAppRuntimeGateway
                 return;
             }
 
-            cancellation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+            var cancellation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
             _observationCancellation = cancellation;
-            generation = ++_observationGeneration;
-        }
+            var generation = ++_observationGeneration;
 
-        _ = ObserveChangesAsync(generation, startReason, cancellation.Token);
+            var observation = Task.Run(() => ObserveChangesAsync(
+                generation,
+                startReason,
+                cancellation.Token));
+            lock (_producerTaskLock)
+            {
+                RetainProducerTaskCore(observation);
+            }
+        }
     }
 
     private void PauseObservingChanges()
@@ -61,12 +66,13 @@ internal sealed partial class AgentAppRuntimeGateway
         ChangeObservationStartReason startReason,
         CancellationToken cancellationToken)
     {
-        await Task.Yield();
         var reconnectDelay = InitialReconnectDelay;
         var nextSubscriptionReason = startReason;
+        var resnapshotPending = false;
         while (!cancellationToken.IsCancellationRequested && IsCurrentObservation(generation))
         {
             var connectedAt = Stopwatch.GetTimestamp();
+            var observedRuntimeIdentity = false;
             try
             {
                 if (nextSubscriptionReason == ChangeObservationStartReason.Initial)
@@ -86,12 +92,24 @@ internal sealed partial class AgentAppRuntimeGateway
                                    cancellationToken))
                 {
                     if (!IsCurrentObservation(generation)) return;
+                    observedRuntimeIdentity |= !string.IsNullOrWhiteSpace(change.RuntimeInstanceId);
+                    if (resnapshotPending)
+                    {
+                        await ResnapshotAsync(generation, cancellationToken).ConfigureAwait(false);
+                        resnapshotPending = false;
+                    }
                     var requiresSnapshot = ApplyChange(change, generation);
                     if (requiresSnapshot)
                     {
+                        resnapshotPending = true;
                         await ResnapshotAsync(generation, cancellationToken).ConfigureAwait(false);
+                        resnapshotPending = false;
                     }
                     SetConnectionStateIfCurrent(generation, AgentRuntimeConnectionState.Connected);
+                }
+                if (!observedRuntimeIdentity && !HasKnownRuntimeInstance())
+                {
+                    resnapshotPending = true;
                 }
                 reconnectDelay = ResetReconnectDelayAfterStableConnection(connectedAt, reconnectDelay);
                 SetConnectionStateIfCurrent(generation, AgentRuntimeConnectionState.Reconnecting);
@@ -101,6 +119,10 @@ internal sealed partial class AgentAppRuntimeGateway
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
             catch (Exception exception) when (IsRuntimeAvailabilityFailure(exception, cancellationToken))
             {
+                if (!observedRuntimeIdentity && !HasKnownRuntimeInstance())
+                {
+                    resnapshotPending = true;
+                }
                 SetConnectionStateIfCurrent(generation, AgentRuntimeConnectionState.Reconnecting);
                 reconnectDelay = ResetReconnectDelayAfterStableConnection(connectedAt, reconnectDelay);
                 if (!await DelayForReconnectAsync(reconnectDelay, cancellationToken).ConfigureAwait(false)) return;
@@ -111,6 +133,14 @@ internal sealed partial class AgentAppRuntimeGateway
                 SetConnectionStateIfCurrent(generation, AgentRuntimeConnectionState.Unavailable);
                 return;
             }
+        }
+    }
+
+    private bool HasKnownRuntimeInstance()
+    {
+        lock (_observationLock)
+        {
+            return !string.IsNullOrWhiteSpace(_runtimeInstanceId);
         }
     }
 
@@ -236,7 +266,10 @@ internal sealed partial class AgentAppRuntimeGateway
                     Raise(RunActivityChanged, activitySessionId, activity);
                 break;
             case AgentRuntimeChangeKind.Permission:
-                InvalidateGlobalPermissions(change.Revision);
+                if (InvalidateGlobalPermissions(change.Revision))
+                {
+                    Raise(GlobalPermissionsInvalidated);
+                }
                 if (change.SessionId is { } permissionSessionId)
                 {
                     Raise(SessionChanged, permissionSessionId);
@@ -274,15 +307,19 @@ internal sealed partial class AgentAppRuntimeGateway
                 }
                 lock (_observationLock)
                 {
+                    var runtimeChanged = HasRuntimeInstanceChanged(
+                        _runtimeInstanceId,
+                        snapshot.RuntimeInstanceId);
                     if (!IsCurrentObservation(generation)
-                        || snapshot.Revision < _revision)
+                        || (!runtimeChanged && snapshot.Revision < _revision))
                     {
                         return;
                     }
-                    _runtimeInstanceId = snapshot.RuntimeInstanceId;
-                    ApplyChatSnapshotCache(snapshot);
+                    AdoptRuntimeInstance(snapshot.RuntimeInstanceId);
+                    _ = ApplyChatSnapshotCache(snapshot, runtimeChanged);
                 }
                 Raise(ChatSnapshotReloaded, snapshot);
+                RaiseAuthoritativeProjectionsChanged();
                 return;
             }
 
@@ -291,13 +328,17 @@ internal sealed partial class AgentAppRuntimeGateway
             {
                 return;
             }
-            Raise(ProfileChanged, string.Empty);
-            Raise(SelectableCapabilitiesChanged);
-            Raise(WorkspacesChanged);
+            RaiseAuthoritativeProjectionsChanged();
         }
         finally
         {
             _resnapshotGate.Release();
         }
+    }
+
+    private void RaiseAuthoritativeProjectionsChanged()
+    {
+        Raise(DashboardInvalidated);
+        Raise(GlobalPermissionsInvalidated);
     }
 }

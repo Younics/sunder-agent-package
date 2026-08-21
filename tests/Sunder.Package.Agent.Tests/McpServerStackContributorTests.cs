@@ -625,6 +625,8 @@ public sealed class McpServerStackContributorTests
 
         public event Action<string>? ProfileChanged;
 
+        public event Action? ResetRequired;
+
         public IReadOnlyList<AgentSessionRecord> ListSessions() => [];
 
         public IReadOnlyList<AgentSessionRecord> ListSessionsForProfile(string profileId) => [];
@@ -665,6 +667,7 @@ public sealed class McpServerStackContributorTests
             SessionChanged?.Invoke(Guid.Empty);
             TurnChanged?.Invoke(Guid.Empty, null!);
             ProfileChanged?.Invoke(string.Empty);
+            ResetRequired?.Invoke();
         }
     }
 

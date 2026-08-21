@@ -810,6 +810,7 @@ public sealed class ExecutionTargetDependencyRetirementTests
         public event Action<Guid>? SessionChanged { add { } remove { } }
         public event Action<Guid, AgentTurnRecord>? TurnChanged { add { } remove { } }
         public event Action<string>? ProfileChanged { add { } remove { } }
+        public event Action? ResetRequired { add { } remove { } }
         public IReadOnlyList<AgentSessionRecord> ListSessions() => [];
         public IReadOnlyList<AgentSessionRecord> ListSessionsForProfile(string profileId) => [];
         public IReadOnlyList<AgentSessionRecord> ListSessionsForWorkspace(string workspaceId) => [];

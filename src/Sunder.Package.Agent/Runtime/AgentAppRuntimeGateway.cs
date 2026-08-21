@@ -56,7 +56,8 @@ internal sealed partial class AgentAppRuntimeGateway :
     IAgentGlobalPermissionGateway,
     IAgentRuntimeAvailability,
     IAgentRuntimeFailureClassifier,
-    IDisposable
+    IDisposable,
+    IAsyncDisposable
 {
     private static readonly TimeSpan InitialReconnectDelay = TimeSpan.FromMilliseconds(100);
     private static readonly TimeSpan MaximumReconnectDelay = TimeSpan.FromSeconds(2);
@@ -73,16 +74,17 @@ internal sealed partial class AgentAppRuntimeGateway :
     private Task<AgentDashboardProjection>? _dashboardLoad;
     private Task<AgentDashboardProjection>? _abandonedDashboardLoad;
     private AgentCatalogProjection? _catalogSnapshot;
+    private int _catalogGeneration;
     private string? _runtimeInstanceId;
     private AgentChatSnapshotRequest? _pendingChatSnapshotRequest;
     private AgentChatSnapshotProjection? _pendingChatSnapshot;
     private AgentChatSnapshotRequest? _activeChatSnapshotRequest;
+    private bool _chatSnapshotLoadPending;
     private long _revision;
-    private AgentRuntimeConnectionState _connectionState;
+    private volatile AgentRuntimeConnectionState _connectionState;
     private CancellationTokenSource? _observationCancellation;
     private int _observationGeneration;
     private int _chatSnapshotLoadGeneration;
-    private bool _disposed;
 
     public AgentAppRuntimeGateway(ISunderRpcClient client)
         : this(new AgentOwnerRpcClient(client))
@@ -104,6 +106,8 @@ internal sealed partial class AgentAppRuntimeGateway :
         => IsRuntimeAvailabilityFailure(exception, callerCancellationToken);
 
     public event Action<AgentRuntimeConnectionState>? ConnectionStateChanged;
+    public event Action? DashboardInvalidated;
+    public event Action? GlobalPermissionsInvalidated;
     public event Action<string>? ProfileChanged;
     public event Action? SelectableCapabilitiesChanged;
     public event Action? WorkspacesChanged;
@@ -484,105 +488,6 @@ internal sealed partial class AgentAppRuntimeGateway :
             cancellationToken).ConfigureAwait(false)).Warmup
            ?? AgentExecutionTargetWarmupResult.Skipped("Workspace has no execution target.");
 
-    public async Task<AgentDashboardProjection> LoadDashboardAsync(
-        CancellationToken cancellationToken = default)
-    {
-        Task<AgentDashboardProjection> load;
-        bool retryIfFaulted;
-        lock (_cacheLock)
-        {
-            if (_dashboard is not null)
-            {
-                return _dashboard;
-            }
-            if (_dashboardLoad is { IsFaulted: true } or { IsCanceled: true })
-            {
-                _ = _dashboardLoad.Exception;
-                _dashboardLoad = null;
-                _abandonedDashboardLoad = null;
-            }
-            load = _dashboardLoad ??= InvokeAsync(
-                    AgentRuntimeOperations.Dashboard,
-                    new AgentDashboardRequest(),
-                    _lifetime.Token)
-                .AsTask();
-            retryIfFaulted = ReferenceEquals(_abandonedDashboardLoad, load);
-        }
-
-        try
-        {
-            var dashboard = await load.WaitAsync(cancellationToken).ConfigureAwait(false);
-            lock (_cacheLock)
-            {
-                if (ReferenceEquals(_dashboardLoad, load))
-                {
-                    _dashboard = dashboard;
-                    _dashboardLoad = null;
-                    _abandonedDashboardLoad = null;
-                    _revision = Math.Max(_revision, dashboard.Revision);
-                }
-                return _dashboard ?? dashboard;
-            }
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            lock (_cacheLock)
-            {
-                if (ReferenceEquals(_dashboardLoad, load))
-                {
-                    _abandonedDashboardLoad = load;
-                }
-            }
-            throw;
-        }
-        catch
-        {
-            lock (_cacheLock)
-            {
-                if (ReferenceEquals(_dashboardLoad, load))
-                {
-                    _dashboardLoad = null;
-                }
-                if (ReferenceEquals(_abandonedDashboardLoad, load))
-                {
-                    _abandonedDashboardLoad = null;
-                }
-            }
-            if (retryIfFaulted)
-            {
-                return await LoadDashboardAsync(cancellationToken).ConfigureAwait(false);
-            }
-            throw;
-        }
-    }
-
-    public Task<AgentCatalogProjection> LoadCatalogAsync(
-        AgentCatalogRequest request,
-        CancellationToken cancellationToken = default)
-    {
-        var key = $"{request.Profile?.ProfileId}|{request.Profile?.UpdatedAtUtc.UtcTicks}|{request.ChatProviderId}|{request.EmbeddingProviderId}";
-        var lazy = _catalogs.GetOrAdd(key, _ => new Lazy<Task<AgentCatalogProjection>>(
-            () => InvokeAsync(AgentRuntimeOperations.Catalog, request, _lifetime.Token).AsTask(),
-            LazyThreadSafetyMode.ExecutionAndPublication));
-        return AwaitCatalogAsync(key, lazy, cancellationToken);
-    }
-    private async Task<AgentCatalogProjection> AwaitCatalogAsync(
-        string key,
-        Lazy<Task<AgentCatalogProjection>> lazy,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            var projection = await lazy.Value.WaitAsync(cancellationToken).ConfigureAwait(false);
-            lock (_cacheLock)
-            {
-                _catalogSnapshot = projection;
-            }
-            return projection;
-        }
-        catch { _catalogs.TryRemove(key, out _); throw; }
-    }
-
     private AgentDashboardProjection ReadDashboardSnapshot()
     {
         lock (_cacheLock)
@@ -626,12 +531,16 @@ internal sealed partial class AgentAppRuntimeGateway :
         try
         {
             var response = await _ownerClient.InvokeAsync(operation, request, cancellationToken).ConfigureAwait(false);
-            SetConnectionState(AgentRuntimeConnectionState.Connected);
+            if (!IsObservationEstablishingConnection())
+            {
+                SetConnectionState(AgentRuntimeConnectionState.Connected);
+            }
             return response;
         }
         catch (Exception exception)
         {
-            if (IsRuntimeAvailabilityFailure(exception, cancellationToken))
+            if (IsRuntimeAvailabilityFailure(exception, cancellationToken)
+                && !IsObservationEstablishingConnection())
             {
                 SetConnectionState(AgentRuntimeConnectionState.Unavailable);
             }
@@ -685,14 +594,24 @@ internal sealed partial class AgentAppRuntimeGateway :
     private static TimeSpan NextReconnectDelay(TimeSpan current)
         => TimeSpan.FromMilliseconds(Math.Min(current.TotalMilliseconds * 2, MaximumReconnectDelay.TotalMilliseconds));
 
+    private bool IsObservationEstablishingConnection()
+    {
+        lock (_observationLock)
+        {
+            return _observationCancellation is not null
+                   && _connectionState != AgentRuntimeConnectionState.Connected;
+        }
+    }
+
     private void InvalidateDashboard() { lock (_cacheLock) { _dashboard = null; _dashboardLoad = null; } }
     private void InvalidateCatalog()
     {
         lock (_cacheLock)
         {
             _catalogSnapshot = null;
+            _catalogGeneration++;
+            _catalogs.Clear();
         }
-        _catalogs.Clear();
     }
     private void InvalidateSessions()
     {
@@ -715,8 +634,9 @@ internal sealed partial class AgentAppRuntimeGateway :
             _globalPermissionRevision = -1;
             _globalPermissionGeneration++;
             _catalogSnapshot = null;
+            _catalogGeneration++;
+            _catalogs.Clear();
         }
-        _catalogs.Clear();
     }
     private void CacheSession(AgentSessionSnapshot snapshot)
     {
@@ -751,6 +671,7 @@ internal sealed partial class AgentAppRuntimeGateway :
     }
     private void SetConnectionState(AgentRuntimeConnectionState state)
     {
+        if (_disposed && state != AgentRuntimeConnectionState.Disposed) return;
         if (_connectionState == state) return;
         _connectionState = state;
         var handlers = ConnectionStateChanged;
@@ -767,14 +688,5 @@ internal sealed partial class AgentAppRuntimeGateway :
         {
             SetConnectionState(state);
         }
-    }
-    public void Dispose()
-    {
-        if (_disposed) return;
-        _disposed = true;
-        PauseObservingChanges();
-        _lifetime.Cancel();
-        _lifetime.Dispose();
-        SetConnectionState(AgentRuntimeConnectionState.Disposed);
     }
 }

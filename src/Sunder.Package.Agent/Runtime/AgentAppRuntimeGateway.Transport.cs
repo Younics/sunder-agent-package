@@ -13,6 +13,10 @@ internal sealed partial class AgentAppRuntimeGateway
         Exception exception,
         CancellationToken cancellationToken)
     {
+        if (exception is AgentPackageUnavailableException)
+        {
+            return false;
+        }
         if (exception is OperationCanceledException && cancellationToken.IsCancellationRequested)
         {
             return false;
@@ -252,14 +256,10 @@ internal sealed class AgentOwnerRpcClient : IAgentOwnerClient
         AgentTransportProfile profile,
         AgentTransportProfile proposedProfile)
     {
-        if (profile.RequestValueBytes is < AgentRuntimePayloadLimits.MinimumValueBytes
-                or > AgentRuntimePayloadLimits.MaximumValueBytes
-            || profile.ResponseValueBytes is < AgentRuntimePayloadLimits.MinimumValueBytes
-                or > AgentRuntimePayloadLimits.MaximumValueBytes
-            || profile.EventValueBytes is < AgentRuntimePayloadLimits.MinimumValueBytes
-                or > AgentRuntimePayloadLimits.MaximumValueBytes
-            || profile.ContentReferenceBytes is < AgentRuntimePayloadLimits.MinimumContentReferenceBytes
-                or > AgentRuntimePayloadLimits.MaximumContentReferenceBytes)
+        if (profile.RequestValueBytes <= 0
+            || profile.ResponseValueBytes <= 0
+            || profile.EventValueBytes <= 0
+            || profile.ContentReferenceBytes <= 0)
         {
             throw new InvalidDataException("Runtime returned an invalid Agent transport profile.");
         }

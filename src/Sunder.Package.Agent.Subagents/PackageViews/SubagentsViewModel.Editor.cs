@@ -131,5 +131,5 @@ public sealed partial class SubagentsViewModel
     private void OnSelectableCapabilitiesChanged()
         => _tasks.Run(_ => RefreshSelectedSubagentCapabilitiesAsync());
 
-    private void OnSubagentsChanged() => _tasks.Run(_runtimeRefresh.MarkDirty());
+    private void OnSubagentsChanged() => _tasks.Run(_ => _runtimeRefresh.MarkDirty());
 }

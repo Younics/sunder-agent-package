@@ -3,7 +3,7 @@
   "descriptorVersion": 2,
   "schemaProfile": "sunder.rpc.values.v1",
   "contractId": "sunder.package.agent.mcp.management",
-  "version": "2.0.0",
+  "version": "1.0.0",
   "errors": {
     "mcp.management.failed": {
       "description": "The MCP management request failed."
@@ -15,23 +15,39 @@
         "query": {
           "kind": "unary",
           "idempotency": "idempotent",
-          "errors": ["mcp.management.failed"],
-          "requestSchema": { "$ref": "#/$defs/ManagementContent" },
-          "responseSchema": { "$ref": "#/$defs/ManagementContent" }
+          "errors": [
+            "mcp.management.failed"
+          ],
+          "requestSchema": {
+            "$ref": "#/$defs/ManagementContent"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/ManagementContent"
+          }
         },
         "command": {
           "kind": "unary",
           "idempotency": "none",
-          "errors": ["mcp.management.failed"],
-          "requestSchema": { "$ref": "#/$defs/ManagementContent" },
-          "responseSchema": { "$ref": "#/$defs/ManagementContent" }
+          "errors": [
+            "mcp.management.failed"
+          ],
+          "requestSchema": {
+            "$ref": "#/$defs/ManagementContent"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/ManagementContent"
+          }
         },
         "changes": {
           "kind": "server-stream",
           "idempotency": "idempotent",
           "errors": [],
-          "requestSchema": { "$ref": "#/$defs/ChangeSubscription" },
-          "eventSchema": { "$ref": "#/$defs/ManagementChange" }
+          "requestSchema": {
+            "$ref": "#/$defs/ChangeSubscription"
+          },
+          "eventSchema": {
+            "$ref": "#/$defs/ManagementChange"
+          }
         }
       }
     }
@@ -44,9 +60,13 @@
     "ManagementContent": {
       "type": "object",
       "properties": {
-        "content": { "$ref": "#/$defs/ContentReference" }
+        "content": {
+          "$ref": "#/$defs/ContentReference"
+        }
       },
-      "required": ["content"],
+      "required": [
+        "content"
+      ],
       "additionalProperties": false
     },
     "ChangeSubscription": {
@@ -57,16 +77,21 @@
     },
     "ManagementChangeKind": {
       "type": "string",
-      "minLength": 6,
-      "maxLength": 7,
-      "enum": ["servers", "status"]
+      "enum": [
+        "servers",
+        "status"
+      ]
     },
     "ManagementChange": {
       "type": "object",
       "properties": {
-        "kind": { "$ref": "#/$defs/ManagementChangeKind" }
+        "kind": {
+          "$ref": "#/$defs/ManagementChangeKind"
+        }
       },
-      "required": ["kind"],
+      "required": [
+        "kind"
+      ],
       "additionalProperties": false
     }
   }

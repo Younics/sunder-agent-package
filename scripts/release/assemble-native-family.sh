@@ -26,7 +26,7 @@ file_size() {
   wc -c < "$1" | tr -d '[:space:]'
 }
 
-expected_package_ids="$(jq -c '[.packages[] | select(.workerProjectPath != null) | .packageId] | sort' "$repository_root/packages.json")"
+expected_package_ids="$(jq -c '[.packages[] | select(.artifactType == "sunderpkg") | .packageId] | sort' "$repository_root/packages.json")"
 native_runs='[]'
 for rid in "${rids[@]}"; do
   evidence="$native_input/native-leaf-evidence-$rid.json"
@@ -90,12 +90,9 @@ common_properties=(
   -p:ContinuousIntegrationBuild=true
   -p:RestoreLockedMode=true
 )
-mapfile -t app_projects < <(find "$repository_root/src" -name '*.csproj' -type f -print \
-  | while IFS= read -r project; do
-      grep -Fq '<SunderPackageRole>app</SunderPackageRole>' "$project" && printf '%s\n' "$project" || true
-    done \
-  | sort)
+mapfile -t app_projects < <(jq -r '.packages | map(select(.artifactType == "sunderpkg" and .appProjectPath != null)) | sort_by(.key)[] | .appProjectPath' "$repository_root/packages.json")
 for app_project in "${app_projects[@]}"; do
+  app_project="$repository_root/$app_project"
   dotnet restore "$app_project" --locked-mode --source "$NUGET_SOURCE" -p:SunderUseSourceSdk=false -p:RestoreLockedMode=true
   dotnet build "$app_project" -c Release --no-restore -m:1 "${common_properties[@]}"
 done
@@ -105,14 +102,14 @@ dotnet restore "$protocol_project" --locked-mode --source "$NUGET_SOURCE" -p:Sun
 dotnet build "$protocol_project" -c Release --no-restore -m:1 "${common_properties[@]}"
 dotnet pack "$protocol_project" -c Release --no-build --no-restore -o "$output_directory" "${common_properties[@]}"
 
-while IFS=$'\t' read -r package_id aggregate_project_relative; do
-  aggregate_project="$repository_root/$aggregate_project_relative"
+while IFS=$'\t' read -r package_id project_relative; do
+  project="$repository_root/$project_relative"
   archive="$output_directory/$package_id.$version.sunderpkg"
-  dotnet restore "$aggregate_project" --locked-mode --source "$NUGET_SOURCE" -p:SunderUseSourceSdk=false -p:RestoreLockedMode=true
-  dotnet msbuild "$aggregate_project" -t:PackSunderPackage -m:1 \
+  dotnet restore "$project" --locked-mode --source "$NUGET_SOURCE" -p:SunderUseSourceSdk=false -p:RestoreLockedMode=true
+  dotnet msbuild "$project" -t:PackSunderPackage -m:1 \
     -p:Configuration=Release \
     -p:BuildProjectReferences=false \
-    -p:SunderAgentUniversalWorkerPackage=true \
+    -p:SunderPackageUsePrebuiltLeaves=true \
     -p:SunderUseSourceSdk=false \
     -p:SunderAgentVersion="$version" \
     -p:ContinuousIntegrationBuild=true \
@@ -154,4 +151,4 @@ jq -n \
     }
   ' > "$output_directory/native-test-evidence.json"
 
-printf 'Aggregated exact signed leaves from six native jobs into 15 immutable archives.\n'
+printf 'Composed exact signed leaves from six native jobs into 15 immutable archives without rebuilding them.\n'

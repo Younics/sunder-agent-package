@@ -75,6 +75,91 @@ public sealed class AgentRpcWireCompatibilityTests
     }
 
     [Fact]
+    public async Task ToolExecutionClient_RequestsFreshExtendedDeadline()
+    {
+        var response = Parse("{\"toolId\":\"test_tool\",\"summary\":\"Completed.\"}");
+        var client = new RawRpcClient(response);
+        var source = new AgentToolSourceRpcClient(
+            client,
+            new SunderRpcEndpointReference("rpc1_tool_source"));
+        var before = DateTimeOffset.UtcNow;
+
+        _ = await source.ExecuteAsync(
+            new AgentToolExecutionContext(Guid.NewGuid()),
+            new AgentToolRequest("test_tool", "{}"));
+
+        Assert.Equal("execute", client.LastMethodId);
+        Assert.NotNull(client.LastOptions?.DeadlineUtc);
+        Assert.InRange(
+            client.LastOptions!.DeadlineUtc!.Value,
+            before.AddMinutes(34),
+            DateTimeOffset.UtcNow.AddMinutes(36));
+    }
+
+    [Fact]
+    public async Task LegacyToolSourceClient_RemainsUnaryWhenDispatchObservationIsRequested()
+    {
+        var response = Parse("{\"toolId\":\"test_tool\",\"summary\":\"Completed.\"}");
+        var client = new RawRpcClient(response);
+        var source = new AgentToolSourceRpcClient(
+            client,
+            new SunderRpcEndpointReference("rpc1_legacy_tool_source"));
+        var dispatchCount = 0;
+
+        _ = await source.ExecuteAsync(
+            new AgentToolExecutionContext(Guid.NewGuid())
+            {
+                DispatchStarted = () => dispatchCount++,
+            },
+            new AgentToolRequest("test_tool", "{}"));
+
+        Assert.Equal("execute", client.LastMethodId);
+        Assert.Equal(0, dispatchCount);
+    }
+
+    [Fact]
+    public async Task ObservedToolExecutionClient_TreatsResultAsTerminalAndDisposesStream()
+    {
+        const int formerMaximumJsonTextLength = 900_000;
+        var argumentsJson = new string('x', formerMaximumJsonTextLength + 1);
+        var toolResult = new AgentToolResult("test_tool", "Completed.", Content: "done");
+        var response = Parse(AgentRpcServiceHandler.Serialize(
+            ObservedToolInvocationEvent.Completed(toolResult)));
+        var client = new RawRpcClient(response) { BlockAfterStreamResponse = true };
+        var execution = new AgentObservedToolExecutionRpcClient(
+            client,
+            new SunderRpcEndpointReference("rpc1_observed_tool_execution"));
+        var dispatchCount = 0;
+
+        var result = await execution.ExecuteAsync(
+                new AgentToolExecutionContext(Guid.NewGuid())
+                {
+                    DispatchStarted = () => dispatchCount++,
+                },
+                new AgentToolRequest("test_tool", argumentsJson))
+            .AsTask()
+            .WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Equal("Completed.", result.Summary);
+        Assert.Equal(0, dispatchCount);
+        Assert.True(client.StreamDisposed);
+        Assert.False(client.LastRequest.TryGetProperty("payloadJson", out _));
+        Assert.Equal(
+            argumentsJson.Length,
+            client.LastRequest.GetProperty("request").GetProperty("argumentsJson").GetString()!.Length);
+        AssertSchemaValid(
+            "sunder.agent.tool.execution.observed",
+            "#/$defs/ToolInvocationRequest",
+            client.LastRequest);
+        Assert.False(response.TryGetProperty("payloadJson", out _));
+        Assert.Equal("test_tool", response.GetProperty("result").GetProperty("toolId").GetString());
+        AssertSchemaValid(
+            "sunder.agent.tool.execution.observed",
+            "#/$defs/ObservedToolInvocationEvent",
+            response);
+    }
+
+    [Fact]
     public async Task DateTimeOffsetProjection_RejectsUnrepresentableNanoseconds()
     {
         var handler = AgentRpcServiceHandler.Create()
@@ -294,6 +379,51 @@ public sealed class AgentRpcWireCompatibilityTests
         Assert.Equal("2026-01-15", model.GetProperty("releaseDate").GetString());
     }
 
+    [Fact]
+    public void OwnerDescriptor_AcceptsValuesBeyondFormerTransportCeilings()
+    {
+        var longIdentifier = new string('i', 513);
+        var longOutput = new string('x', 16_385);
+        const long maximumWireInteger = 9_007_199_254_740_991;
+        var sessionId = Guid.NewGuid();
+
+        AssertOwnerSchemaValid(
+            "#/$defs/AgentTranscriptToolDetailRecord",
+            JsonSerializer.SerializeToElement(new
+            {
+                isError = false,
+                outputText = longOutput,
+                revision = maximumWireInteger,
+                sessionId,
+                toolId = longIdentifier,
+                wasTransportTruncated = false,
+                wasTruncated = false,
+            }));
+        AssertOwnerSchemaValid(
+            "#/$defs/AgentTurnMutation",
+            JsonSerializer.SerializeToElement(new
+            {
+                baseContentLength = longOutput.Length,
+                contentRevision = maximumWireInteger,
+                kind = 0,
+                runtimeRevision = maximumWireInteger,
+                sessionId,
+                text = longOutput,
+                turnId = Guid.NewGuid(),
+                updatedAtUtc = ExactTimestampText,
+            }));
+        AssertOwnerSchemaValid(
+            "#/$defs/AgentModelDescriptor",
+            JsonSerializer.SerializeToElement(new
+            {
+                contextWindow = 2_000_001,
+                displayName = "Model",
+                isRecommended = false,
+                maxOutputTokens = 2_000_001,
+                modelId = longIdentifier,
+            }));
+    }
+
     private static void AssertProbe(WireProbe probe)
     {
         Assert.Equal(ExactTimestamp, probe.Timestamp);
@@ -322,6 +452,11 @@ public sealed class AgentRpcWireCompatibilityTests
         var descriptor = AgentRpcContractDescriptors.Get(contractId);
         Assert.True(descriptor.IsValid(schemaReference, value, out var error), error);
     }
+
+    private static void AssertOwnerSchemaValid(string schemaReference, JsonElement value)
+        => Assert.True(
+            AgentOwnerRuntimeRpc.Descriptor.IsValid(schemaReference, value, out var error),
+            error);
 
     private static async Task DrainAsync(ISunderRpcServiceHandler handler, JsonElement request)
     {
@@ -416,6 +551,11 @@ public sealed class AgentRpcWireCompatibilityTests
     private sealed class RawRpcClient(JsonElement response) : ISunderRpcClient
     {
         public JsonElement LastRequest { get; private set; }
+        public string? LastServiceId { get; private set; }
+        public string? LastMethodId { get; private set; }
+        public SunderRpcCallOptions? LastOptions { get; private set; }
+        public bool BlockAfterStreamResponse { get; init; }
+        public bool StreamDisposed { get; private set; }
 
         public ValueTask<SunderRpcProviderSnapshot?> GetProviderAsync(
             SunderRpcEndpointReference endpoint,
@@ -449,6 +589,9 @@ public sealed class AgentRpcWireCompatibilityTests
         {
             cancellationToken.ThrowIfCancellationRequested();
             LastRequest = request.Clone();
+            LastServiceId = serviceId;
+            LastMethodId = methodId;
+            LastOptions = options;
             return ValueTask.FromResult(response);
         }
 
@@ -460,10 +603,24 @@ public sealed class AgentRpcWireCompatibilityTests
             SunderRpcCallOptions? options = null,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            LastRequest = request.Clone();
-            await Task.Yield();
-            yield return response;
+            try
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                LastRequest = request.Clone();
+                LastServiceId = serviceId;
+                LastMethodId = methodId;
+                LastOptions = options;
+                await Task.Yield();
+                yield return response;
+                if (BlockAfterStreamResponse)
+                {
+                    await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                }
+            }
+            finally
+            {
+                StreamDisposed = true;
+            }
         }
     }
 }

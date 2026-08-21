@@ -7,12 +7,11 @@ namespace Sunder.Package.Agent.Protocol;
 
 public static class AgentWorkspaceExecutionResolverRpc
 {
-    private const int MaximumListPayloadCharacters = 900_000;
     public const string ServiceId = "workspace-execution-resolver";
 
     public static ISunderRpcServiceHandler CreateHandler(IAgentWorkspaceExecutionResolver resolver)
-        => AgentRpcServiceHandler.Create()
-            .AddUnary<AgentRpcEmpty, IReadOnlyList<AgentWorkspaceRecord>>(ServiceId, "list-workspaces", (_, _, _) => ValueTask.FromResult(BoundWorkspaceList(resolver.ListWorkspaces())))
+        => AgentRpcServiceHandler.Create(AgentRpcContractDescriptors.Get(AgentRpcContractIds.WorkspaceExecutionResolver))
+            .AddUnary<AgentRpcEmpty, IReadOnlyList<AgentWorkspaceRecord>>(ServiceId, "list-workspaces", (_, _, _) => ValueTask.FromResult(resolver.ListWorkspaces()))
             .AddUnary<StringRequest, AgentWorkspaceExecutionResolutionWire>(ServiceId, "resolve", async (_, request, token) =>
             {
                 var resolution = await resolver.ResolveAsync(request.Value, token).ConfigureAwait(false);
@@ -27,21 +26,6 @@ public static class AgentWorkspaceExecutionResolverRpc
             })
             .Build();
 
-    private static IReadOnlyList<AgentWorkspaceRecord> BoundWorkspaceList(IReadOnlyList<AgentWorkspaceRecord> workspaces)
-    {
-        var result = new List<AgentWorkspaceRecord>();
-        foreach (var workspace in workspaces)
-        {
-            result.Add(workspace);
-            if (AgentRpcServiceHandler.Serialize(result).Length <= MaximumListPayloadCharacters)
-            {
-                continue;
-            }
-            result.RemoveAt(result.Count - 1);
-            break;
-        }
-        return result;
-    }
 }
 
 public sealed class AgentWorkspaceExecutionResolverRpcClient(ISunderRpcClient client, SunderRpcEndpointReference endpoint) : IAgentWorkspaceExecutionResolver

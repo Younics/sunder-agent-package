@@ -58,6 +58,49 @@ public sealed class GeneratedPackageManifestTests
             Assert.Equal(releaseTitles[packageId], root.GetProperty("name").GetString());
             Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("summary").GetString()));
             Assert.Equal("assets/icon.png", root.GetProperty("icon").GetString());
+            if (packageId is "sunder.package.agent" or "sunder.package.agent.mcp")
+            {
+                var observedBundle = Assert.Single(
+                    root.GetProperty("contractBundles").EnumerateArray(),
+                    static bundle => bundle.GetProperty("contractId").GetString()
+                        == "sunder.agent.tool.execution.observed");
+                Assert.Equal("1.0.0", observedBundle.GetProperty("version").GetString());
+                Assert.Equal(
+                    "contracts/tool-execution-observed.rpc.json",
+                    observedBundle.GetProperty("descriptorPath").GetString());
+                Assert.Equal(
+                    "46ffee9ab3295a1ab3e7180418836df84c35e15638f45fb3277b2df522a28ca1",
+                    observedBundle.GetProperty("descriptorSha256").GetString());
+                Assert.Equal(
+                    "f2dcd6c794d6eb7bf81e745d3c43830ad6fd8ffbd314a16aac3e198e1707f2c6",
+                    observedBundle.GetProperty("abiSha256").GetString());
+                Assert.Equal("public", observedBundle.GetProperty("exposure").GetString());
+            }
+            if (packageId == "sunder.package.agent")
+            {
+                var observedUse = Assert.Single(
+                    root.GetProperty("usesContracts").EnumerateArray(),
+                    static use => use.GetProperty("contractId").GetString()
+                        == "sunder.agent.tool.execution.observed");
+                Assert.False(observedUse.GetProperty("required").GetBoolean());
+                Assert.Equal(
+                    ["discover", "invoke", "subscribe"],
+                    observedUse.GetProperty("actions").EnumerateArray()
+                        .Select(static action => action.GetString()!)
+                        .ToArray());
+            }
+            if (packageId == "sunder.package.agent.mcp")
+            {
+                var observedProvider = Assert.Single(
+                    root.GetProperty("provides").EnumerateArray(),
+                    static provider => provider.GetProperty("providerId").GetString() == "mcp.tools.observed");
+                Assert.Equal(
+                    "sunder.agent.tool.execution.observed",
+                    observedProvider.GetProperty("contractId").GetString());
+                Assert.Equal("1.0.0", observedProvider.GetProperty("contractVersion").GetString());
+                Assert.Equal("runtime", observedProvider.GetProperty("role").GetString());
+                Assert.Equal("public", observedProvider.GetProperty("audience").GetString());
+            }
             var dependencies = root.GetProperty("dependsOn").EnumerateArray().ToArray();
             if (packageId == "sunder.package.agent")
             {

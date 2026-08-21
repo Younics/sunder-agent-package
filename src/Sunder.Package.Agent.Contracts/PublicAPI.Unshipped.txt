@@ -1,4 +1,5 @@
 #nullable enable
+const Sunder.Package.Agent.Contracts.Models.AgentToolResultErrorCodes.ToolOutcomeAmbiguous = "tool-outcome-ambiguous" -> string!
 *REMOVED*Sunder.Package.Agent.Protocol.AgentChatContent.AgentChatContent(string! Kind, string? Text = null, string? ProtectedData = null, string? CallId = null, string? Name = null, string? Json = null, bool InformationalOnly = false, string? MediaType = null, string? ContentUri = null, Sunder.Sdk.Rpc.SunderRpcContentReference? ContentReference = null, Sunder.Package.Agent.Protocol.AgentChatUsage? Usage = null, string? ErrorCode = null, string? ErrorMessage = null) -> void
 *REMOVED*Sunder.Package.Agent.Protocol.AgentChatContent.ContentUri.get -> string?
 *REMOVED*Sunder.Package.Agent.Protocol.AgentChatContent.Deconstruct(out string! Kind, out string? Text, out string? ProtectedData, out string? CallId, out string? Name, out string? Json, out bool InformationalOnly, out string? MediaType, out string? ContentUri, out Sunder.Sdk.Rpc.SunderRpcContentReference? ContentReference, out Sunder.Package.Agent.Protocol.AgentChatUsage? Usage, out string? ErrorCode, out string? ErrorMessage) -> void
@@ -664,6 +665,9 @@
 *REMOVED*static Sunder.Package.Agent.Protocol.AgentChatStreamEvent.Error(string! code, string! message, string! content, string! failureKind) -> Sunder.Package.Agent.Protocol.AgentChatStreamEvent!
 *REMOVED*static Sunder.Package.Agent.Protocol.AgentRpcOptional<T>.operator !=(Sunder.Package.Agent.Protocol.AgentRpcOptional<T>? left, Sunder.Package.Agent.Protocol.AgentRpcOptional<T>? right) -> bool
 *REMOVED*static Sunder.Package.Agent.Protocol.AgentRpcOptional<T>.operator ==(Sunder.Package.Agent.Protocol.AgentRpcOptional<T>? left, Sunder.Package.Agent.Protocol.AgentRpcOptional<T>? right) -> bool
+const Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.SunderRpcContractIdentity_dde6789ddc616ac7554f74c899bd63919a74eeb11246402e951101272a124041.AbiSha256 = "f2dcd6c794d6eb7bf81e745d3c43830ad6fd8ffbd314a16aac3e198e1707f2c6" -> string!
+const Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.SunderRpcContractIdentity_dde6789ddc616ac7554f74c899bd63919a74eeb11246402e951101272a124041.DescriptorSha256 = "46ffee9ab3295a1ab3e7180418836df84c35e15638f45fb3277b2df522a28ca1" -> string!
+Sunder.Package.Agent.Contracts.Contracts.IAgentRuntimeCatalog.ResetRequired -> System.Action?
 Sunder.Package.Agent.Protocol.AgentChatContent.AgentChatContent(string! Kind, string? Text = null, string? ProtectedData = null, string? CallId = null, string? Name = null, Sunder.Sdk.Rpc.SunderRpcOptional<System.Text.Json.JsonElement> Json = default(Sunder.Sdk.Rpc.SunderRpcOptional<System.Text.Json.JsonElement>), bool InformationalOnly = false, string? MediaType = null, Sunder.Sdk.Rpc.SunderRpcUri? ContentUri = null, Sunder.Sdk.Rpc.SunderRpcContentReference? ContentReference = null, Sunder.Package.Agent.Protocol.AgentChatUsage? Usage = null, string? ErrorCode = null, string? ErrorMessage = null) -> void
 Sunder.Package.Agent.Protocol.AgentChatContent.ContentUri.get -> Sunder.Sdk.Rpc.SunderRpcUri?
 Sunder.Package.Agent.Protocol.AgentChatContent.Deconstruct(out string! Kind, out string? Text, out string? ProtectedData, out string? CallId, out string? Name, out Sunder.Sdk.Rpc.SunderRpcOptional<System.Text.Json.JsonElement> Json, out bool InformationalOnly, out string? MediaType, out Sunder.Sdk.Rpc.SunderRpcUri? ContentUri, out Sunder.Sdk.Rpc.SunderRpcContentReference? ContentReference, out Sunder.Package.Agent.Protocol.AgentChatUsage? Usage, out string? ErrorCode, out string? ErrorMessage) -> void
@@ -723,10 +727,12 @@ Sunder.Package.Agent.Protocol.AgentProfileCatalogEvent.Deconstruct(out long Sequ
 Sunder.Package.Agent.Protocol.AgentProfileCatalogEvent.Equals(Sunder.Package.Agent.Protocol.AgentProfileCatalogEvent? other) -> bool
 Sunder.Package.Agent.Protocol.AgentProfileCatalogEvent.ProfileId.get -> string!
 Sunder.Package.Agent.Protocol.AgentProfileCatalogEvent.ProfileId.init -> void
+Sunder.Package.Agent.Protocol.AgentRpcServiceHandler.DeclaredErrors.get -> System.Collections.Generic.IReadOnlyDictionary<string!, System.Collections.Generic.IReadOnlyDictionary<string!, System.Collections.Generic.IReadOnlyList<string!>!>!>!
 Sunder.Package.Agent.Protocol.AgentRpcServiceHandler.Builder.AddNullableUnary<TRequest, TResponse>(string! serviceId, string! methodId, System.Func<Sunder.Sdk.Rpc.SunderRpcInvocationContext!, TRequest, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<TResponse?>>! handler) -> Sunder.Package.Agent.Protocol.AgentRpcServiceHandler.Builder!
 Sunder.Package.Agent.Protocol.AgentRuntimeCatalogEvent.AgentRuntimeCatalogEvent(Sunder.Package.Agent.Protocol.AgentRuntimeCatalogEvent! original) -> void
 Sunder.Package.Agent.Protocol.AgentRuntimeCatalogEvent.AgentRuntimeCatalogEvent(long Sequence) -> void
 Sunder.Package.Agent.Protocol.AgentRuntimeCatalogEvent.Deconstruct(out long Sequence) -> void
+Sunder.Package.Agent.Protocol.AgentRuntimeCatalogRpcClient.ResetRequired -> System.Action?
 Sunder.Package.Agent.Protocol.AgentSessionCatalogEvent
 Sunder.Package.Agent.Protocol.AgentSessionCatalogEvent.AgentSessionCatalogEvent(long Sequence, System.Guid SessionId) -> void
 Sunder.Package.Agent.Protocol.AgentSessionCatalogEvent.Deconstruct(out long Sequence, out System.Guid SessionId) -> void
@@ -1204,7 +1210,13 @@ Sunder.Package.Agent.Protocol.Generated.RunControl.AgentMessageRole.Assistant = 
 Sunder.Package.Agent.Protocol.Generated.RunControl.AgentMessageRole.System = 1 -> Sunder.Package.Agent.Protocol.Generated.RunControl.AgentMessageRole
 Sunder.Package.Agent.Protocol.Generated.RunControl.AgentMessageRole.Tool = 2 -> Sunder.Package.Agent.Protocol.Generated.RunControl.AgentMessageRole
 Sunder.Package.Agent.Protocol.Generated.RunControl.AgentMessageRole.User = 3 -> Sunder.Package.Agent.Protocol.Generated.RunControl.AgentMessageRole
-Sunder.Package.Agent.Protocol.Generated.RunControl.AgentModelVariantDescriptor.ReasoningEffort.get -> Sunder.Package.Agent.Protocol.Generated.RunControl.AgentToolExecutionStatus?
+Sunder.Package.Agent.Protocol.Generated.RunControl.AgentModelVariantDescriptor.ReasoningEffort.get -> Sunder.Package.Agent.Protocol.Generated.RunControl.AgentReasoningEffort?
+Sunder.Package.Agent.Protocol.Generated.RunControl.AgentReasoningEffort
+Sunder.Package.Agent.Protocol.Generated.RunControl.AgentReasoningEffort.ExtraHigh = 0 -> Sunder.Package.Agent.Protocol.Generated.RunControl.AgentReasoningEffort
+Sunder.Package.Agent.Protocol.Generated.RunControl.AgentReasoningEffort.High = 1 -> Sunder.Package.Agent.Protocol.Generated.RunControl.AgentReasoningEffort
+Sunder.Package.Agent.Protocol.Generated.RunControl.AgentReasoningEffort.Low = 2 -> Sunder.Package.Agent.Protocol.Generated.RunControl.AgentReasoningEffort
+Sunder.Package.Agent.Protocol.Generated.RunControl.AgentReasoningEffort.Medium = 3 -> Sunder.Package.Agent.Protocol.Generated.RunControl.AgentReasoningEffort
+Sunder.Package.Agent.Protocol.Generated.RunControl.AgentReasoningEffort.None = 4 -> Sunder.Package.Agent.Protocol.Generated.RunControl.AgentReasoningEffort
 Sunder.Package.Agent.Protocol.Generated.RunControl.AgentProfileModelBindingRecord.UpdatedAtUtc.get -> Sunder.Sdk.Rpc.SunderRpcOffsetDateTime
 Sunder.Package.Agent.Protocol.Generated.RunControl.AgentProfileRecord.CreatedAtUtc.get -> Sunder.Sdk.Rpc.SunderRpcOffsetDateTime
 Sunder.Package.Agent.Protocol.Generated.RunControl.AgentProfileRecord.UpdatedAtUtc.get -> Sunder.Sdk.Rpc.SunderRpcOffsetDateTime
@@ -1357,6 +1369,12 @@ Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRunStatus.Running = 
 Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRunStatus.Stopped = 5 -> Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRunStatus
 Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRunStatus.WaitingForApproval = 6 -> Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRunStatus
 Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRuntimeCatalogEvent.AgentRuntimeCatalogEvent(Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRuntimeCatalogEvent! original) -> void
+Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRuntimeCatalogResetEvent
+Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRuntimeCatalogResetEvent.AgentRuntimeCatalogResetEvent() -> void
+Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRuntimeCatalogResetEvent.Equals(Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRuntimeCatalogResetEvent? other) -> bool
+Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRuntimeCatalogResetEvent.Kind.get -> string!
+Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRuntimeCatalogResetEvent.Sequence.get -> long
+Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRuntimeCatalogResetEvent.Sequence.init -> void
 Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentSessionCatalogEvent
 Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentSessionCatalogEvent.AgentSessionCatalogEvent() -> void
 Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentSessionCatalogEvent.Equals(Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentSessionCatalogEvent? other) -> bool
@@ -1524,6 +1542,269 @@ Sunder.Package.Agent.Protocol.Generated.SystemPromptContributor.ISystemPromptCon
 Sunder.Package.Agent.Protocol.Generated.SystemPromptContributor.SystemPromptContributorClient.DescribeAsync(Sunder.Package.Agent.Protocol.Generated.SystemPromptContributor.Unit! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Sunder.Package.Agent.Protocol.Generated.SystemPromptContributor.AgentRpcIdentity!>
 Sunder.Package.Agent.Protocol.Generated.SystemPromptContributor.Unit
 Sunder.Package.Agent.Protocol.Generated.SystemPromptContributor.Unit.Unit() -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim.ActionId.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim.ActionId.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim.AgentResourceClaim() -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim.BindingGeneration.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim.BindingGeneration.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim.BindingId.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim.BindingId.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim.CaseSensitivePath.get -> bool
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim.CaseSensitivePath.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim.ConfiguredRoot.get -> string?
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim.ConfiguredRoot.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim.ExecutionTargetOwnerPackageId.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim.ExecutionTargetOwnerPackageId.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim.LogicalPath.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim.LogicalPath.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim.NamespaceId.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim.NamespaceId.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim.ResourceIndex.get -> long
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim.ResourceIndex.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim.RootIdentityChainFingerprint.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim.RootIdentityChainFingerprint.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim.TargetExists.get -> bool
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim.TargetExists.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim.TargetIdentity.get -> string?
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim.TargetIdentity.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim.TargetIsAuthorityRoot.get -> bool
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim.TargetIsAuthorityRoot.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim.TargetKind.get -> string?
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim.TargetKind.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim.ToolCallId.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim.ToolCallId.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim.ToolOwnerPackageId.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim.ToolOwnerPackageId.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim.Version.get -> long
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim.Version.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim.WorkspaceGeneration.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim.WorkspaceGeneration.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim.WorkspaceId.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim.WorkspaceId.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceOperationContextWire
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceOperationContextWire.ActionId.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceOperationContextWire.ActionId.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceOperationContextWire.AgentResourceOperationContextWire() -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceOperationContextWire.AuthorityActivationId.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceOperationContextWire.AuthorityActivationId.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceOperationContextWire.AuthorityUseCount.get -> long
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceOperationContextWire.AuthorityUseCount.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceOperationContextWire.BindingGeneration.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceOperationContextWire.BindingGeneration.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceOperationContextWire.CanIssueOutsideAuthority.get -> bool
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceOperationContextWire.CanIssueOutsideAuthority.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceOperationContextWire.ExecutionTargetOwnerPackageId.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceOperationContextWire.ExecutionTargetOwnerPackageId.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceOperationContextWire.ResourceIndex.get -> long
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceOperationContextWire.ResourceIndex.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceOperationContextWire.RunId.get -> System.Guid
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceOperationContextWire.RunId.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceOperationContextWire.RunRevision.get -> long
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceOperationContextWire.RunRevision.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceOperationContextWire.ToolCallId.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceOperationContextWire.ToolCallId.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceOperationContextWire.ToolOwnerPackageId.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceOperationContextWire.ToolOwnerPackageId.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceOperationContextWire.WorkspaceGeneration.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceOperationContextWire.WorkspaceGeneration.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentRpcProviderHandle
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentRpcProviderHandle.AbiSha256.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentRpcProviderHandle.AbiSha256.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentRpcProviderHandle.ActivationEpoch.get -> long
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentRpcProviderHandle.ActivationEpoch.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentRpcProviderHandle.ActivationId.get -> System.Guid
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentRpcProviderHandle.ActivationId.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentRpcProviderHandle.AgentRpcProviderHandle() -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentRpcProviderHandle.ContractId.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentRpcProviderHandle.ContractId.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentRpcProviderHandle.ContractVersion.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentRpcProviderHandle.ContractVersion.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentRpcProviderHandle.DescriptorSha256.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentRpcProviderHandle.DescriptorSha256.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentRpcProviderHandle.EndpointReference.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentRpcProviderHandle.EndpointReference.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentRpcProviderHandle.PackageId.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentRpcProviderHandle.PackageId.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentRpcProviderHandle.PackageVersion.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentRpcProviderHandle.PackageVersion.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentRpcProviderHandle.ProviderId.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentRpcProviderHandle.ProviderId.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentRpcProviderHandle.SessionGeneration.get -> long
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentRpcProviderHandle.SessionGeneration.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContext
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContext.AgentToolExecutionContext() -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContext.AllowOutsideConfiguredScope.get -> bool
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContext.AllowOutsideConfiguredScope.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContext.ApprovedResourceClaims.get -> System.Collections.Generic.IReadOnlyList<Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceClaim!>!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContext.ApprovedResourceClaims.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContext.ApprovedResourceReferences.get -> System.Collections.Generic.IReadOnlyList<string!>!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContext.ApprovedResourceReferences.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContext.ExecutionBinding.get -> Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceBindingRecord?
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContext.ExecutionBinding.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContext.ProfileId.get -> string?
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContext.ProfileId.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContext.RunId.get -> System.Guid?
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContext.RunId.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContext.RunRevision.get -> long?
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContext.RunRevision.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContext.SessionId.get -> System.Guid?
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContext.SessionId.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContext.ToolCallId.get -> string?
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContext.ToolCallId.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContext.TranscriptEpoch.get -> long
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContext.TranscriptEpoch.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContext.UserTurnId.get -> System.Guid?
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContext.UserTurnId.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContext.Workspace.get -> Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceRecord?
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContext.Workspace.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContextWire
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContextWire.AgentToolExecutionContextWire() -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContextWire.ApprovedResourceCapabilities.get -> System.Collections.Generic.IReadOnlyList<string!>!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContextWire.ApprovedResourceCapabilities.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContextWire.Context.get -> Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContext!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContextWire.Context.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContextWire.ExecutionTarget.get -> Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentRpcProviderHandle?
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContextWire.ExecutionTarget.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContextWire.ExecutionTargetConfigurationGeneration.get -> string?
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContextWire.ExecutionTargetConfigurationGeneration.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContextWire.ResourceOperation.get -> Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentResourceOperationContextWire?
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContextWire.ResourceOperation.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolRequest
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolRequest.AgentToolRequest() -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolRequest.ArgumentsJson.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolRequest.ArgumentsJson.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolRequest.ToolId.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolRequest.ToolId.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolResult
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolResult.AgentToolResult() -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolResult.BackendId.get -> string?
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolResult.BackendId.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolResult.Content.get -> string?
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolResult.Content.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolResult.ErrorCode.get -> string?
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolResult.ErrorCode.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolResult.IsError.get -> bool
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolResult.IsError.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolResult.PresentationPayloadJson.get -> string?
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolResult.PresentationPayloadJson.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolResult.RequiresPromptContextRefresh.get -> bool
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolResult.RequiresPromptContextRefresh.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolResult.Sources.get -> System.Collections.Generic.IReadOnlyList<Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolSourceItem!>?
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolResult.Sources.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolResult.StructuredPayloadJson.get -> string?
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolResult.StructuredPayloadJson.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolResult.Summary.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolResult.Summary.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolResult.ToolId.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolResult.ToolId.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolResult.WasTruncated.get -> bool
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolResult.WasTruncated.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolSourceItem
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolSourceItem.AgentToolSourceItem() -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolSourceItem.Snippet.get -> string?
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolSourceItem.Snippet.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolSourceItem.Title.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolSourceItem.Title.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolSourceItem.Url.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolSourceItem.Url.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceBindingRecord
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceBindingRecord.AgentWorkspaceBindingRecord() -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceBindingRecord.BindingId.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceBindingRecord.BindingId.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceBindingRecord.ContributionId.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceBindingRecord.ContributionId.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceBindingRecord.CreatedAtUtc.get -> Sunder.Sdk.Rpc.SunderRpcOffsetDateTime
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceBindingRecord.CreatedAtUtc.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceBindingRecord.ExtensionPointId.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceBindingRecord.ExtensionPointId.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceBindingRecord.IsEnabled.get -> bool
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceBindingRecord.IsEnabled.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceBindingRecord.Role.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceBindingRecord.Role.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceBindingRecord.SortOrder.get -> long
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceBindingRecord.SortOrder.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceBindingRecord.UpdatedAtUtc.get -> Sunder.Sdk.Rpc.SunderRpcOffsetDateTime
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceBindingRecord.UpdatedAtUtc.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceBindingRecord.WorkspaceId.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceBindingRecord.WorkspaceId.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceDocumentRecord
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceDocumentRecord.AgentWorkspaceDocumentRecord() -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceDocumentRecord.CreatedAtUtc.get -> Sunder.Sdk.Rpc.SunderRpcOffsetDateTime
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceDocumentRecord.CreatedAtUtc.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceDocumentRecord.DocumentId.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceDocumentRecord.DocumentId.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceDocumentRecord.FilePath.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceDocumentRecord.FilePath.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceDocumentRecord.SortOrder.get -> long
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceDocumentRecord.SortOrder.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceDocumentRecord.UpdatedAtUtc.get -> Sunder.Sdk.Rpc.SunderRpcOffsetDateTime
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceDocumentRecord.UpdatedAtUtc.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceDocumentRecord.WorkspaceId.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceDocumentRecord.WorkspaceId.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspacePathRecord
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspacePathRecord.AgentWorkspacePathRecord() -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspacePathRecord.CreatedAtUtc.get -> Sunder.Sdk.Rpc.SunderRpcOffsetDateTime
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspacePathRecord.CreatedAtUtc.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspacePathRecord.HostPath.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspacePathRecord.HostPath.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspacePathRecord.IsDefault.get -> bool
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspacePathRecord.IsDefault.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspacePathRecord.PathId.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspacePathRecord.PathId.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspacePathRecord.SortOrder.get -> long
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspacePathRecord.SortOrder.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspacePathRecord.UpdatedAtUtc.get -> Sunder.Sdk.Rpc.SunderRpcOffsetDateTime
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspacePathRecord.UpdatedAtUtc.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspacePathRecord.WorkspaceId.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspacePathRecord.WorkspaceId.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceRecord
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceRecord.AgentWorkspaceRecord() -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceRecord.CreatedAtUtc.get -> Sunder.Sdk.Rpc.SunderRpcOffsetDateTime
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceRecord.CreatedAtUtc.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceRecord.Description.get -> string?
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceRecord.Description.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceRecord.DisplayName.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceRecord.DisplayName.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceRecord.Documents.get -> System.Collections.Generic.IReadOnlyList<Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceDocumentRecord!>!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceRecord.Documents.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceRecord.Paths.get -> System.Collections.Generic.IReadOnlyList<Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspacePathRecord!>!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceRecord.Paths.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceRecord.UpdatedAtUtc.get -> Sunder.Sdk.Rpc.SunderRpcOffsetDateTime
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceRecord.UpdatedAtUtc.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceRecord.WorkspaceId.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentWorkspaceRecord.WorkspaceId.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.IToolExecutionObservedProvider
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.IToolExecutionObservedProvider.DescribeAsync(Sunder.Sdk.Rpc.SunderRpcInvocationContext! context, Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.Unit! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.ObservedToolExecutionDescription!>
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.IToolExecutionObservedProvider.ExecuteAsync(Sunder.Sdk.Rpc.SunderRpcInvocationContext! context, Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.ToolInvocationRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.ObservedToolInvocationEvent!>!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.ObservedToolExecutionDescription
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.ObservedToolExecutionDescription.ObservedToolExecutionDescription() -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.ObservedToolExecutionDescription.SourceId.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.ObservedToolExecutionDescription.SourceId.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.ObservedToolInvocationEvent
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.ObservedToolInvocationEvent.Kind.get -> string!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.ObservedToolInvocationEvent.Kind.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.ObservedToolInvocationEvent.ObservedToolInvocationEvent() -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.ObservedToolInvocationEvent.Result.get -> Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolResult?
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.ObservedToolInvocationEvent.Result.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.SunderAgentToolExecutionObservedRpcHandler
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.SunderAgentToolExecutionObservedRpcHandler.DeclaredErrors.get -> System.Collections.Generic.IReadOnlyDictionary<string!, System.Collections.Generic.IReadOnlyDictionary<string!, System.Collections.Generic.IReadOnlyList<string!>!>!>!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.SunderAgentToolExecutionObservedRpcHandler.InvokeServerStreamAsync(Sunder.Sdk.Rpc.SunderRpcInvocationContext! context, string! serviceId, string! methodId, System.Text.Json.JsonElement request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<System.Text.Json.JsonElement>!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.SunderAgentToolExecutionObservedRpcHandler.InvokeUnaryAsync(Sunder.Sdk.Rpc.SunderRpcInvocationContext! context, string! serviceId, string! methodId, System.Text.Json.JsonElement request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Text.Json.JsonElement>
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.SunderAgentToolExecutionObservedRpcHandler.SunderAgentToolExecutionObservedRpcHandler(Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.IToolExecutionObservedProvider! service1) -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.SunderRpcContractIdentity_dde6789ddc616ac7554f74c899bd63919a74eeb11246402e951101272a124041
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.ToolExecutionObservedClient
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.ToolExecutionObservedClient.DescribeAsync(Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.Unit! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.ObservedToolExecutionDescription!>
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.ToolExecutionObservedClient.ExecuteAsync(Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.ToolInvocationRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.ObservedToolInvocationEvent!>!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.ToolExecutionObservedClient.ToolExecutionObservedClient(Sunder.Sdk.Rpc.ISunderRpcCallScope! scope, Sunder.Sdk.Rpc.SunderRpcEndpointReference! endpoint) -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.ToolInvocationRequest
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.ToolInvocationRequest.Context.get -> Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolExecutionContextWire!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.ToolInvocationRequest.Context.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.ToolInvocationRequest.Request.get -> Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.AgentToolRequest!
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.ToolInvocationRequest.Request.init -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.ToolInvocationRequest.ToolInvocationRequest() -> void
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.Unit
+Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.Unit.Unit() -> void
 Sunder.Package.Agent.Protocol.Generated.ToolSource.AgentPermissionRequest.ScopeClassificationBasis.get -> Sunder.Package.Agent.Protocol.Generated.ToolSource.AgentPermissionScopeClassificationBasis
 Sunder.Package.Agent.Protocol.Generated.ToolSource.AgentPermissionScopeClassificationBasis
 Sunder.Package.Agent.Protocol.Generated.ToolSource.AgentPermissionScopeClassificationBasis.LexicalAndOpenedIdentity = 0 -> Sunder.Package.Agent.Protocol.Generated.ToolSource.AgentPermissionScopeClassificationBasis
@@ -1632,63 +1913,67 @@ abstract Sunder.Package.Agent.Protocol.AgentRuntimeCatalogEvent.<Clone>$() -> Su
 abstract Sunder.Package.Agent.Protocol.Generated.ChatProvider.AgentChatStreamEvent.<Clone>$() -> Sunder.Package.Agent.Protocol.Generated.ChatProvider.AgentChatStreamEvent!
 abstract Sunder.Package.Agent.Protocol.Generated.RunControl.AgentChatStreamEvent.<Clone>$() -> Sunder.Package.Agent.Protocol.Generated.RunControl.AgentChatStreamEvent!
 abstract Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRuntimeCatalogEvent.<Clone>$() -> Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRuntimeCatalogEvent!
-const Sunder.Package.Agent.Protocol.Generated.BehaviorLoop.SunderRpcContractIdentity_7de85234993916ff61e0c632b0ee3f29b9eac756279143ef5d75dd9522fb9826.AbiSha256 = "fb941fddaff6e9a2d295c9479f311ba81b85fdc9c6f3358784035ae78a3cc58f" -> string!
-const Sunder.Package.Agent.Protocol.Generated.BehaviorLoop.SunderRpcContractIdentity_7de85234993916ff61e0c632b0ee3f29b9eac756279143ef5d75dd9522fb9826.DescriptorSha256 = "b3bb6ae12fd7b6df17492f6c86dacd6a16ae0508278b83684d177a918accad81" -> string!
+const Sunder.Package.Agent.Protocol.Generated.BehaviorLoop.SunderRpcContractIdentity_7de85234993916ff61e0c632b0ee3f29b9eac756279143ef5d75dd9522fb9826.AbiSha256 = "4f71677e7a8b088b447410b92ce0449d04f0646cca384ed889de5802647fb49b" -> string!
+const Sunder.Package.Agent.Protocol.Generated.BehaviorLoop.SunderRpcContractIdentity_7de85234993916ff61e0c632b0ee3f29b9eac756279143ef5d75dd9522fb9826.DescriptorSha256 = "bcb61bb6de029af4b856d5550a951602abd11538a433e5affd3f66feebc507ab" -> string!
 const Sunder.Package.Agent.Protocol.Generated.BehaviorLoop.SunderRpcContractIdentity_7de85234993916ff61e0c632b0ee3f29b9eac756279143ef5d75dd9522fb9826.SchemaProfile = "sunder.rpc.values.v1" -> string!
-const Sunder.Package.Agent.Protocol.Generated.ChatProvider.SunderRpcContractIdentity_7d760e8227b6bb0c280869759e2a3eae936f4133299835db9207b33327972826.AbiSha256 = "1a1539cecfba92358039568f97334381ac22c4577776548e82efab390fedd093" -> string!
-const Sunder.Package.Agent.Protocol.Generated.ChatProvider.SunderRpcContractIdentity_7d760e8227b6bb0c280869759e2a3eae936f4133299835db9207b33327972826.DescriptorSha256 = "10f9d934fc4f085d0817060167a2ff0c175626c16ed6179bb00905175c92b49f" -> string!
+const Sunder.Package.Agent.Protocol.Generated.ChatProvider.SunderRpcContractIdentity_7d760e8227b6bb0c280869759e2a3eae936f4133299835db9207b33327972826.AbiSha256 = "341538e233661630d93fb9cf64db6b36a08873aa6be9d218082481477a8ba34e" -> string!
+const Sunder.Package.Agent.Protocol.Generated.ChatProvider.SunderRpcContractIdentity_7d760e8227b6bb0c280869759e2a3eae936f4133299835db9207b33327972826.DescriptorSha256 = "bdd8f5eff8e065f980a4f9e9f5503962f70781128728eb3e6a103fc486865624" -> string!
 const Sunder.Package.Agent.Protocol.Generated.ChatProvider.SunderRpcContractIdentity_7d760e8227b6bb0c280869759e2a3eae936f4133299835db9207b33327972826.SchemaProfile = "sunder.rpc.values.v1" -> string!
-const Sunder.Package.Agent.Protocol.Generated.ChildRunExecutor.SunderRpcContractIdentity_59fc4fab4bc998cffce48ce326809b753333162e3020088ad6f1371e0888113a.AbiSha256 = "fd91322d3b209b22575d025cf4710cb9697d086479a7d9247ba4bb38e5938151" -> string!
-const Sunder.Package.Agent.Protocol.Generated.ChildRunExecutor.SunderRpcContractIdentity_59fc4fab4bc998cffce48ce326809b753333162e3020088ad6f1371e0888113a.DescriptorSha256 = "95e4886769a491ba335229acd7bd5e8a94429766cdca5e02293c915f4dc6afd5" -> string!
+const Sunder.Package.Agent.Protocol.Generated.ChildRunExecutor.SunderRpcContractIdentity_59fc4fab4bc998cffce48ce326809b753333162e3020088ad6f1371e0888113a.AbiSha256 = "59c0f448dca374853c04076fab85eb1ea03422871ce2cb736a378212342f89f5" -> string!
+const Sunder.Package.Agent.Protocol.Generated.ChildRunExecutor.SunderRpcContractIdentity_59fc4fab4bc998cffce48ce326809b753333162e3020088ad6f1371e0888113a.DescriptorSha256 = "bef53d0fc20949838c2984ec47511d8bffbc8816c2b0ee6076bbbe757ddae9ab" -> string!
 const Sunder.Package.Agent.Protocol.Generated.ChildRunExecutor.SunderRpcContractIdentity_59fc4fab4bc998cffce48ce326809b753333162e3020088ad6f1371e0888113a.SchemaProfile = "sunder.rpc.values.v1" -> string!
-const Sunder.Package.Agent.Protocol.Generated.DurableLifecycleObserver.SunderRpcContractIdentity_fbdcfc5f5e75af008bf68f007e8d3a918a8c762e36264fa7ac7a9f4ee8616ed3.AbiSha256 = "4a2505665f7f87314822d0de20ec3ac2e3b32d4efe01d3e4c8cab4d9f7d24434" -> string!
-const Sunder.Package.Agent.Protocol.Generated.DurableLifecycleObserver.SunderRpcContractIdentity_fbdcfc5f5e75af008bf68f007e8d3a918a8c762e36264fa7ac7a9f4ee8616ed3.DescriptorSha256 = "21ac91d33e7dc5778880a213e9df664bb4291cb99a9b64cfc8084af081d9f420" -> string!
+const Sunder.Package.Agent.Protocol.Generated.DurableLifecycleObserver.SunderRpcContractIdentity_fbdcfc5f5e75af008bf68f007e8d3a918a8c762e36264fa7ac7a9f4ee8616ed3.AbiSha256 = "5216f8788958576ad7ba2f33f64c47b27600c963d04cef3d45f3ebf371426dd1" -> string!
+const Sunder.Package.Agent.Protocol.Generated.DurableLifecycleObserver.SunderRpcContractIdentity_fbdcfc5f5e75af008bf68f007e8d3a918a8c762e36264fa7ac7a9f4ee8616ed3.DescriptorSha256 = "e9286f28b1ec32733bb070a9578afa9dba6c859f56136b2059a88673da962e19" -> string!
 const Sunder.Package.Agent.Protocol.Generated.DurableLifecycleObserver.SunderRpcContractIdentity_fbdcfc5f5e75af008bf68f007e8d3a918a8c762e36264fa7ac7a9f4ee8616ed3.SchemaProfile = "sunder.rpc.values.v1" -> string!
-const Sunder.Package.Agent.Protocol.Generated.EmbeddingProvider.SunderRpcContractIdentity_63c4981416257e6cc7d55b5a8c116d8fce4adf272bccddc6c1964fae0044bcd0.AbiSha256 = "c6877ec486db1a8352543bc4498f7d744b0aeca28454b72b0462d2abf7b2e81d" -> string!
-const Sunder.Package.Agent.Protocol.Generated.EmbeddingProvider.SunderRpcContractIdentity_63c4981416257e6cc7d55b5a8c116d8fce4adf272bccddc6c1964fae0044bcd0.DescriptorSha256 = "53a4e89d4e99a870c43c3f5e1b9895378dd58feb783ae550ef31604cd2625166" -> string!
+const Sunder.Package.Agent.Protocol.Generated.EmbeddingProvider.SunderRpcContractIdentity_63c4981416257e6cc7d55b5a8c116d8fce4adf272bccddc6c1964fae0044bcd0.AbiSha256 = "d0077e48364626c18f14257db1a5b55156c04f96d32071242aaa360b5b31b219" -> string!
+const Sunder.Package.Agent.Protocol.Generated.EmbeddingProvider.SunderRpcContractIdentity_63c4981416257e6cc7d55b5a8c116d8fce4adf272bccddc6c1964fae0044bcd0.DescriptorSha256 = "63abafb9bc36a2953338faa43d7858bfd59eda4a3f5b6f18bdb08898e7f9d7b2" -> string!
 const Sunder.Package.Agent.Protocol.Generated.EmbeddingProvider.SunderRpcContractIdentity_63c4981416257e6cc7d55b5a8c116d8fce4adf272bccddc6c1964fae0044bcd0.SchemaProfile = "sunder.rpc.values.v1" -> string!
 const Sunder.Package.Agent.Protocol.Generated.ExecutionTarget.AgentExecutionFacetUnavailableRpcError.Code = "agent.execution.facet-unavailable" -> string!
-const Sunder.Package.Agent.Protocol.Generated.ExecutionTarget.SunderRpcContractIdentity_f99294a51257d6af6012170cd244bc5b340a8d20516b8f91cb0e17a596cfc676.AbiSha256 = "614bfbb5334fee7db4110e9dc934cba5c39a79b20269933e1055e6ff355cc623" -> string!
-const Sunder.Package.Agent.Protocol.Generated.ExecutionTarget.SunderRpcContractIdentity_f99294a51257d6af6012170cd244bc5b340a8d20516b8f91cb0e17a596cfc676.DescriptorSha256 = "d8a64a0189c4734585b3896e3b56da9b351424f2c286d33b81736859e933bc92" -> string!
+const Sunder.Package.Agent.Protocol.Generated.ExecutionTarget.SunderRpcContractIdentity_f99294a51257d6af6012170cd244bc5b340a8d20516b8f91cb0e17a596cfc676.AbiSha256 = "82b37639f7e8f20991365d731902a181c027498843e8d7dc23ed927201072751" -> string!
+const Sunder.Package.Agent.Protocol.Generated.ExecutionTarget.SunderRpcContractIdentity_f99294a51257d6af6012170cd244bc5b340a8d20516b8f91cb0e17a596cfc676.DescriptorSha256 = "a295c9e5569cd543e60057bb3233cd0bcd89b884f3dba3fb78775dc6956ecba1" -> string!
 const Sunder.Package.Agent.Protocol.Generated.ExecutionTarget.SunderRpcContractIdentity_f99294a51257d6af6012170cd244bc5b340a8d20516b8f91cb0e17a596cfc676.SchemaProfile = "sunder.rpc.values.v1" -> string!
-const Sunder.Package.Agent.Protocol.Generated.PermissionSurface.SunderRpcContractIdentity_75826d4a1b1be4a1f648bc2b31084e3c1dad8cbcc18c0a89f4b30b83b3ccbf38.AbiSha256 = "ec1af15a55859d28241ddb26c7a4d203a01afc9985469a2f19a09fb041923e18" -> string!
-const Sunder.Package.Agent.Protocol.Generated.PermissionSurface.SunderRpcContractIdentity_75826d4a1b1be4a1f648bc2b31084e3c1dad8cbcc18c0a89f4b30b83b3ccbf38.DescriptorSha256 = "513b0259c352ee31ab812017641c30cc8e8a04d6c0a1b99afc7e57883251e8cf" -> string!
+const Sunder.Package.Agent.Protocol.Generated.PermissionSurface.SunderRpcContractIdentity_75826d4a1b1be4a1f648bc2b31084e3c1dad8cbcc18c0a89f4b30b83b3ccbf38.AbiSha256 = "09a75027b87d575cc5e0a4c0e8edfd7bbc774f1e5f4604e9792d7cd5f5fa4124" -> string!
+const Sunder.Package.Agent.Protocol.Generated.PermissionSurface.SunderRpcContractIdentity_75826d4a1b1be4a1f648bc2b31084e3c1dad8cbcc18c0a89f4b30b83b3ccbf38.DescriptorSha256 = "72a4c7157104973dfb519277df976dfc26f7ec8d65d3d721f2fe8c925d30dbbb" -> string!
 const Sunder.Package.Agent.Protocol.Generated.PermissionSurface.SunderRpcContractIdentity_75826d4a1b1be4a1f648bc2b31084e3c1dad8cbcc18c0a89f4b30b83b3ccbf38.SchemaProfile = "sunder.rpc.values.v1" -> string!
-const Sunder.Package.Agent.Protocol.Generated.ProfileCapabilityConsumer.SunderRpcContractIdentity_60ad21146fc383ba2d08795e8900307230d05d59c8520bfd19e877b70f8085f1.AbiSha256 = "8121dad8fca38cb5767ddb9abdf8625cb77ca9de7018e448c4e58868660888bc" -> string!
-const Sunder.Package.Agent.Protocol.Generated.ProfileCapabilityConsumer.SunderRpcContractIdentity_60ad21146fc383ba2d08795e8900307230d05d59c8520bfd19e877b70f8085f1.DescriptorSha256 = "20687b7fba6ef13446a5b7edcc68b7ac7951dc3c5e7d0d8d2188e6a05db1f8dc" -> string!
+const Sunder.Package.Agent.Protocol.Generated.ProfileCapabilityConsumer.SunderRpcContractIdentity_60ad21146fc383ba2d08795e8900307230d05d59c8520bfd19e877b70f8085f1.AbiSha256 = "43c3030f02509aff1839f6beb74c6fbe878d0c33952e5f5b01f749f644ea4f42" -> string!
+const Sunder.Package.Agent.Protocol.Generated.ProfileCapabilityConsumer.SunderRpcContractIdentity_60ad21146fc383ba2d08795e8900307230d05d59c8520bfd19e877b70f8085f1.DescriptorSha256 = "780b517c4d076be1ce99ec7c9cae1b0ad94c231f420d5f6fbd1756a924123951" -> string!
 const Sunder.Package.Agent.Protocol.Generated.ProfileCapabilityConsumer.SunderRpcContractIdentity_60ad21146fc383ba2d08795e8900307230d05d59c8520bfd19e877b70f8085f1.SchemaProfile = "sunder.rpc.values.v1" -> string!
-const Sunder.Package.Agent.Protocol.Generated.PromptContextContributor.SunderRpcContractIdentity_c6e845e12c721604892ca0e0e6deacf56e3958b8190b10c08ff6170f77d76043.AbiSha256 = "f34e547f9da827d7616dc21810fec48de39a7666f1dcb0630b9a548d805fb9b1" -> string!
-const Sunder.Package.Agent.Protocol.Generated.PromptContextContributor.SunderRpcContractIdentity_c6e845e12c721604892ca0e0e6deacf56e3958b8190b10c08ff6170f77d76043.DescriptorSha256 = "d601d7b5c78412876784c09eeffc01383a54d4277ed950ea27375cf1e10c6011" -> string!
+const Sunder.Package.Agent.Protocol.Generated.PromptContextContributor.SunderRpcContractIdentity_c6e845e12c721604892ca0e0e6deacf56e3958b8190b10c08ff6170f77d76043.AbiSha256 = "b15d15a739c10b90ca84aef9a17d2024deed79caed784d53c4c76f65aa3f30e3" -> string!
+const Sunder.Package.Agent.Protocol.Generated.PromptContextContributor.SunderRpcContractIdentity_c6e845e12c721604892ca0e0e6deacf56e3958b8190b10c08ff6170f77d76043.DescriptorSha256 = "a650e09f417087d50deae61a47a8f4fcf5d196387845998b25ca8935d5fe9d1d" -> string!
 const Sunder.Package.Agent.Protocol.Generated.PromptContextContributor.SunderRpcContractIdentity_c6e845e12c721604892ca0e0e6deacf56e3958b8190b10c08ff6170f77d76043.SchemaProfile = "sunder.rpc.values.v1" -> string!
 const Sunder.Package.Agent.Protocol.Generated.RunControl.AgentRunControlCapabilityUnavailableRpcError.Code = "agent.run-control.capability-unavailable" -> string!
 const Sunder.Package.Agent.Protocol.Generated.RunControl.AgentRunControlDefaultLoopUnavailableRpcError.Code = "agent.run-control.default-loop-unavailable" -> string!
 const Sunder.Package.Agent.Protocol.Generated.RunControl.AgentRunControlPromptContextAcknowledgmentUnavailableRpcError.Code = "agent.run-control.prompt-context-acknowledgment-unavailable" -> string!
-const Sunder.Package.Agent.Protocol.Generated.RunControl.SunderRpcContractIdentity_a68b896b020aa4d71021ad866b4e99258d86638db5a8b27d53a440d0261369f7.AbiSha256 = "075a6a7f25a14c0d5b0990192ca7fa201d005c3970debb12fcfe37124b3da380" -> string!
-const Sunder.Package.Agent.Protocol.Generated.RunControl.SunderRpcContractIdentity_a68b896b020aa4d71021ad866b4e99258d86638db5a8b27d53a440d0261369f7.DescriptorSha256 = "0e38f4e55841a0edd8f574d3a4ab0ce8773cc446a018a6636c0a837f4e091444" -> string!
+const Sunder.Package.Agent.Protocol.Generated.RunControl.SunderRpcContractIdentity_a68b896b020aa4d71021ad866b4e99258d86638db5a8b27d53a440d0261369f7.AbiSha256 = "83ac422ed68e585446e91bffd609f9d21e1bf08b14c984e3067752c1686f336f" -> string!
+const Sunder.Package.Agent.Protocol.Generated.RunControl.SunderRpcContractIdentity_a68b896b020aa4d71021ad866b4e99258d86638db5a8b27d53a440d0261369f7.DescriptorSha256 = "43162c5e13f6a787e314fe58db219709782a8078b3de45315a721026f401e5b2" -> string!
 const Sunder.Package.Agent.Protocol.Generated.RunControl.SunderRpcContractIdentity_a68b896b020aa4d71021ad866b4e99258d86638db5a8b27d53a440d0261369f7.SchemaProfile = "sunder.rpc.values.v1" -> string!
-const Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.SunderRpcContractIdentity_690783ef5d5990cb8d8f554ad0caef3b04f832df100abe7a2d4265357446e1eb.AbiSha256 = "0ed1b2ee8c8c84aec30a3a6f4c92098f8897be3a8466bd3d8a6bbc4d94d06c11" -> string!
-const Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.SunderRpcContractIdentity_690783ef5d5990cb8d8f554ad0caef3b04f832df100abe7a2d4265357446e1eb.DescriptorSha256 = "4df34077ad427baf2cca871b52f5f75db3410e4b7e8278670c0e50640622dd32" -> string!
+const Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.SunderRpcContractIdentity_690783ef5d5990cb8d8f554ad0caef3b04f832df100abe7a2d4265357446e1eb.AbiSha256 = "612f5fdc7a614b0428df76c9757f90c1f0bbae63805454868c1b4bd31303deae" -> string!
+const Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.SunderRpcContractIdentity_690783ef5d5990cb8d8f554ad0caef3b04f832df100abe7a2d4265357446e1eb.DescriptorSha256 = "2547cdf3471c37aa18425d72bc3b6283e90f340d759d7984b8521290a5114d18" -> string!
 const Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.SunderRpcContractIdentity_690783ef5d5990cb8d8f554ad0caef3b04f832df100abe7a2d4265357446e1eb.SchemaProfile = "sunder.rpc.values.v1" -> string!
-const Sunder.Package.Agent.Protocol.Generated.SelectableCapabilityProvider.SunderRpcContractIdentity_e94502bc9b5f43d450fe474f07a9063e90c096346bdd826e1df78f15776ec94c.AbiSha256 = "1926370506cef435802b186b8f8758cdc4d7d515dc3cd76484282790302d090a" -> string!
-const Sunder.Package.Agent.Protocol.Generated.SelectableCapabilityProvider.SunderRpcContractIdentity_e94502bc9b5f43d450fe474f07a9063e90c096346bdd826e1df78f15776ec94c.DescriptorSha256 = "2abac46760320eed1118874c1a8ff1198da828a85a258688b06c66c6513e9925" -> string!
+const Sunder.Package.Agent.Protocol.Generated.SelectableCapabilityProvider.SunderRpcContractIdentity_e94502bc9b5f43d450fe474f07a9063e90c096346bdd826e1df78f15776ec94c.AbiSha256 = "e7b5e55e4d2d9b43575a908d2beb2bbacd30165e6fecbeb4d33ddfdecde28728" -> string!
+const Sunder.Package.Agent.Protocol.Generated.SelectableCapabilityProvider.SunderRpcContractIdentity_e94502bc9b5f43d450fe474f07a9063e90c096346bdd826e1df78f15776ec94c.DescriptorSha256 = "4ec0d6d4826e37c29ca1f9bbef7a1387abca3138f2c94f46bd3258c4b474974e" -> string!
 const Sunder.Package.Agent.Protocol.Generated.SelectableCapabilityProvider.SunderRpcContractIdentity_e94502bc9b5f43d450fe474f07a9063e90c096346bdd826e1df78f15776ec94c.SchemaProfile = "sunder.rpc.values.v1" -> string!
-const Sunder.Package.Agent.Protocol.Generated.SessionCleaner.SunderRpcContractIdentity_44e80345f57ae0e760d80441d555a1da38aeb21cf5ac7feda52e542dde8f3ece.AbiSha256 = "d25899355daff3d9fee0644bd80def5a7bbf30e399cae3e76d99be91e59ffa78" -> string!
-const Sunder.Package.Agent.Protocol.Generated.SessionCleaner.SunderRpcContractIdentity_44e80345f57ae0e760d80441d555a1da38aeb21cf5ac7feda52e542dde8f3ece.DescriptorSha256 = "e6efc2d0ff62e95f2f8708ebc3aee8e5bedb6968a6c1822008e81e091967578f" -> string!
+const Sunder.Package.Agent.Protocol.Generated.SessionCleaner.SunderRpcContractIdentity_44e80345f57ae0e760d80441d555a1da38aeb21cf5ac7feda52e542dde8f3ece.AbiSha256 = "57b3e279fdce9501364e025312a5afb0057658c1770ea728e85aabb3532b0b86" -> string!
+const Sunder.Package.Agent.Protocol.Generated.SessionCleaner.SunderRpcContractIdentity_44e80345f57ae0e760d80441d555a1da38aeb21cf5ac7feda52e542dde8f3ece.DescriptorSha256 = "0bbe9bfbbfcb60c2778351e778882212663fe66c0c10f8d177b5e62c54ad4acf" -> string!
 const Sunder.Package.Agent.Protocol.Generated.SessionCleaner.SunderRpcContractIdentity_44e80345f57ae0e760d80441d555a1da38aeb21cf5ac7feda52e542dde8f3ece.SchemaProfile = "sunder.rpc.values.v1" -> string!
-const Sunder.Package.Agent.Protocol.Generated.SystemPromptContributor.SunderRpcContractIdentity_3c8af31067e48c3189f706b329e63fa9e5bc3659641b3da45b4774d71dfbe16a.AbiSha256 = "e1fb4f322d36ae37ca8a78491aad5b9d97096161d6dccea269d804e31ca0428d" -> string!
-const Sunder.Package.Agent.Protocol.Generated.SystemPromptContributor.SunderRpcContractIdentity_3c8af31067e48c3189f706b329e63fa9e5bc3659641b3da45b4774d71dfbe16a.DescriptorSha256 = "5303115e275806e0873408aa5fa30271622b78761784ffa8b40456c1aab9ad81" -> string!
+const Sunder.Package.Agent.Protocol.Generated.SystemPromptContributor.SunderRpcContractIdentity_3c8af31067e48c3189f706b329e63fa9e5bc3659641b3da45b4774d71dfbe16a.AbiSha256 = "247f4447ea25d72573b95cdbb07b499501a88af19331287f159f73520b996a02" -> string!
+const Sunder.Package.Agent.Protocol.Generated.SystemPromptContributor.SunderRpcContractIdentity_3c8af31067e48c3189f706b329e63fa9e5bc3659641b3da45b4774d71dfbe16a.DescriptorSha256 = "3fb579f2cb7afb984d04e7b356cc399a15514a7d5a4b6896b456f2ff5854f2ae" -> string!
 const Sunder.Package.Agent.Protocol.Generated.SystemPromptContributor.SunderRpcContractIdentity_3c8af31067e48c3189f706b329e63fa9e5bc3659641b3da45b4774d71dfbe16a.SchemaProfile = "sunder.rpc.values.v1" -> string!
-const Sunder.Package.Agent.Protocol.Generated.ToolSource.SunderRpcContractIdentity_6c76b7c037f57b36c5255bc87feb40a7d1b1f6995f6cc4c442b661ecd8ebf08a.AbiSha256 = "5a3e0a71e923b59569865279f511dd7ea68a22f65956b011476b42f99634de3b" -> string!
-const Sunder.Package.Agent.Protocol.Generated.ToolSource.SunderRpcContractIdentity_6c76b7c037f57b36c5255bc87feb40a7d1b1f6995f6cc4c442b661ecd8ebf08a.DescriptorSha256 = "498a07f0fc3ecbae6d901e557d1c7d3c8567a87ce0116f9d5847ac0a3fbcead7" -> string!
+const Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.SunderRpcContractIdentity_dde6789ddc616ac7554f74c899bd63919a74eeb11246402e951101272a124041.ContractId = "sunder.agent.tool.execution.observed" -> string!
+const Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.SunderRpcContractIdentity_dde6789ddc616ac7554f74c899bd63919a74eeb11246402e951101272a124041.ContractVersion = "1.0.0" -> string!
+const Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.SunderRpcContractIdentity_dde6789ddc616ac7554f74c899bd63919a74eeb11246402e951101272a124041.DescriptorVersion = 2 -> int
+const Sunder.Package.Agent.Protocol.Generated.ToolExecutionObserved.SunderRpcContractIdentity_dde6789ddc616ac7554f74c899bd63919a74eeb11246402e951101272a124041.SchemaProfile = "sunder.rpc.values.v1" -> string!
+const Sunder.Package.Agent.Protocol.Generated.ToolSource.SunderRpcContractIdentity_6c76b7c037f57b36c5255bc87feb40a7d1b1f6995f6cc4c442b661ecd8ebf08a.AbiSha256 = "a9963324b18e0d018b92165d3107e7d481508cd079a7a6624bef5a66c0aeea77" -> string!
+const Sunder.Package.Agent.Protocol.Generated.ToolSource.SunderRpcContractIdentity_6c76b7c037f57b36c5255bc87feb40a7d1b1f6995f6cc4c442b661ecd8ebf08a.DescriptorSha256 = "3a4f9aabca0731c35e443493ca04ccb0ee35fc8caf71489e182fadcae18e50c9" -> string!
 const Sunder.Package.Agent.Protocol.Generated.ToolSource.SunderRpcContractIdentity_6c76b7c037f57b36c5255bc87feb40a7d1b1f6995f6cc4c442b661ecd8ebf08a.SchemaProfile = "sunder.rpc.values.v1" -> string!
-const Sunder.Package.Agent.Protocol.Generated.WorkspaceEditor.SunderRpcContractIdentity_cbc1f9148a277246dda8750b2fa2cfc79072ffcf166345ab6442c18452568957.AbiSha256 = "5d08378e0e89a9d9071b470acc5aa1969eace6d828273b08d0e13159163d834a" -> string!
-const Sunder.Package.Agent.Protocol.Generated.WorkspaceEditor.SunderRpcContractIdentity_cbc1f9148a277246dda8750b2fa2cfc79072ffcf166345ab6442c18452568957.DescriptorSha256 = "c2cfd8560a69a3b409220b1dec9aca1abcf87da504b913dc26f0a19b4bb524fb" -> string!
+const Sunder.Package.Agent.Protocol.Generated.WorkspaceEditor.SunderRpcContractIdentity_cbc1f9148a277246dda8750b2fa2cfc79072ffcf166345ab6442c18452568957.AbiSha256 = "29829aba4c7dc593e8e7bea181731e6e46d25a967d5f9e73466c700fcb5930f5" -> string!
+const Sunder.Package.Agent.Protocol.Generated.WorkspaceEditor.SunderRpcContractIdentity_cbc1f9148a277246dda8750b2fa2cfc79072ffcf166345ab6442c18452568957.DescriptorSha256 = "e14f547a65c1fbe61c17eabcefce0af0568113769862f1e02c6d6f6fe6b481db" -> string!
 const Sunder.Package.Agent.Protocol.Generated.WorkspaceEditor.SunderRpcContractIdentity_cbc1f9148a277246dda8750b2fa2cfc79072ffcf166345ab6442c18452568957.SchemaProfile = "sunder.rpc.values.v1" -> string!
-const Sunder.Package.Agent.Protocol.Generated.WorkspaceExecutionResolver.SunderRpcContractIdentity_32122419c836eb00bd91610b1a20cae8f421ad8541a441f35b4d797b74afda7c.AbiSha256 = "2ec6c20806a3682b8e4a549b361395b002e50b33d263277e4b3a4a22941a445d" -> string!
-const Sunder.Package.Agent.Protocol.Generated.WorkspaceExecutionResolver.SunderRpcContractIdentity_32122419c836eb00bd91610b1a20cae8f421ad8541a441f35b4d797b74afda7c.DescriptorSha256 = "11acc48d4d5721482f851b2fcc57640f1a2d1796759debdf8517ec3954803812" -> string!
+const Sunder.Package.Agent.Protocol.Generated.WorkspaceExecutionResolver.SunderRpcContractIdentity_32122419c836eb00bd91610b1a20cae8f421ad8541a441f35b4d797b74afda7c.AbiSha256 = "d51e3e05eb2898865064c07fa358a4ae59dbfc03a9f145a9ee4c20d85dd639ea" -> string!
+const Sunder.Package.Agent.Protocol.Generated.WorkspaceExecutionResolver.SunderRpcContractIdentity_32122419c836eb00bd91610b1a20cae8f421ad8541a441f35b4d797b74afda7c.DescriptorSha256 = "e961cbdf4d6213f20fa97e709401f778c2e4e614bab61c06ebc02ee55486eecd" -> string!
 const Sunder.Package.Agent.Protocol.Generated.WorkspaceExecutionResolver.SunderRpcContractIdentity_32122419c836eb00bd91610b1a20cae8f421ad8541a441f35b4d797b74afda7c.SchemaProfile = "sunder.rpc.values.v1" -> string!
-const Sunder.Package.Agent.Protocol.Generated.WorkspacePathMigrator.SunderRpcContractIdentity_0c39a17b0486b35b0402eb48b46038f0929abc79d6619f30c3dced09496ff021.AbiSha256 = "c07831a1d6b604bb4bbf695beb15ba2ab50a3973ee934d9c0c96fc4be3148b73" -> string!
-const Sunder.Package.Agent.Protocol.Generated.WorkspacePathMigrator.SunderRpcContractIdentity_0c39a17b0486b35b0402eb48b46038f0929abc79d6619f30c3dced09496ff021.DescriptorSha256 = "78c88c37d0fb79cf698e7d8dac83908dc8847bc458f5f70a1f0bc4fbe3676d97" -> string!
+const Sunder.Package.Agent.Protocol.Generated.WorkspacePathMigrator.SunderRpcContractIdentity_0c39a17b0486b35b0402eb48b46038f0929abc79d6619f30c3dced09496ff021.AbiSha256 = "f9fbc6cec25514330b65a749012f06f7f6bc624d745d1824650e20d122ddc39d" -> string!
+const Sunder.Package.Agent.Protocol.Generated.WorkspacePathMigrator.SunderRpcContractIdentity_0c39a17b0486b35b0402eb48b46038f0929abc79d6619f30c3dced09496ff021.DescriptorSha256 = "448c58b625f7f2408e6b9dcdb167dca8c9cdd6dbcaeff0482ffb0067189bf417" -> string!
 const Sunder.Package.Agent.Protocol.Generated.WorkspacePathMigrator.SunderRpcContractIdentity_0c39a17b0486b35b0402eb48b46038f0929abc79d6619f30c3dced09496ff021.SchemaProfile = "sunder.rpc.values.v1" -> string!
 override Sunder.Package.Agent.Protocol.AgentChatErrorEvent.<Clone>$() -> Sunder.Package.Agent.Protocol.AgentChatErrorEvent!
 override Sunder.Package.Agent.Protocol.AgentChatErrorEvent.Equals(object? obj) -> bool
@@ -1739,6 +2024,10 @@ override Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentProfileCata
 override Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRuntimeCatalogEvent.Equals(object? obj) -> bool
 override Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRuntimeCatalogEvent.GetHashCode() -> int
 override Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRuntimeCatalogEvent.ToString() -> string!
+override Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRuntimeCatalogResetEvent.<Clone>$() -> Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRuntimeCatalogResetEvent!
+override Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRuntimeCatalogResetEvent.Equals(object? obj) -> bool
+override Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRuntimeCatalogResetEvent.GetHashCode() -> int
+override Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRuntimeCatalogResetEvent.ToString() -> string!
 override Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentSessionCatalogEvent.<Clone>$() -> Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentSessionCatalogEvent!
 override Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentSessionCatalogEvent.Equals(object? obj) -> bool
 override Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentSessionCatalogEvent.GetHashCode() -> int
@@ -1757,6 +2046,7 @@ override sealed Sunder.Package.Agent.Protocol.Generated.ChatProvider.AgentChatUp
 override sealed Sunder.Package.Agent.Protocol.Generated.RunControl.AgentChatErrorEvent.Equals(Sunder.Package.Agent.Protocol.Generated.RunControl.AgentChatStreamEvent? other) -> bool
 override sealed Sunder.Package.Agent.Protocol.Generated.RunControl.AgentChatUpdateEvent.Equals(Sunder.Package.Agent.Protocol.Generated.RunControl.AgentChatStreamEvent? other) -> bool
 override sealed Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentProfileCatalogEvent.Equals(Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRuntimeCatalogEvent? other) -> bool
+override sealed Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRuntimeCatalogResetEvent.Equals(Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRuntimeCatalogEvent? other) -> bool
 override sealed Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentSessionCatalogEvent.Equals(Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRuntimeCatalogEvent? other) -> bool
 override sealed Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentTurnCatalogEvent.Equals(Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRuntimeCatalogEvent? other) -> bool
 static Sunder.Package.Agent.Protocol.AgentChatErrorEvent.operator !=(Sunder.Package.Agent.Protocol.AgentChatErrorEvent? left, Sunder.Package.Agent.Protocol.AgentChatErrorEvent? right) -> bool
@@ -1791,6 +2081,8 @@ static Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentProfileCatalo
 static Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentProfileCatalogEvent.operator ==(Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentProfileCatalogEvent? left, Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentProfileCatalogEvent? right) -> bool
 static Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRuntimeCatalogEvent.operator !=(Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRuntimeCatalogEvent? left, Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRuntimeCatalogEvent? right) -> bool
 static Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRuntimeCatalogEvent.operator ==(Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRuntimeCatalogEvent? left, Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRuntimeCatalogEvent? right) -> bool
+static Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRuntimeCatalogResetEvent.operator !=(Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRuntimeCatalogResetEvent? left, Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRuntimeCatalogResetEvent? right) -> bool
+static Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRuntimeCatalogResetEvent.operator ==(Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRuntimeCatalogResetEvent? left, Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentRuntimeCatalogResetEvent? right) -> bool
 static Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentSessionCatalogEvent.operator !=(Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentSessionCatalogEvent? left, Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentSessionCatalogEvent? right) -> bool
 static Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentSessionCatalogEvent.operator ==(Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentSessionCatalogEvent? left, Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentSessionCatalogEvent? right) -> bool
 static Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentTurnCatalogEvent.operator !=(Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentTurnCatalogEvent? left, Sunder.Package.Agent.Protocol.Generated.RuntimeCatalog.AgentTurnCatalogEvent? right) -> bool

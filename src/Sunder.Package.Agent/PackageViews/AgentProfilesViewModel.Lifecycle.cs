@@ -22,6 +22,10 @@ public sealed partial class AgentProfilesViewModel
         _operation.Dispose();
         _profileService.ProfileChanged -= OnProfileChanged;
         _profileService.SelectableCapabilitiesChanged -= OnSelectableCapabilitiesChanged;
+        if (_dashboardLoader is not null)
+        {
+            _dashboardLoader.DashboardInvalidated -= OnDashboardInvalidated;
+        }
         if (_runtimeAvailability is not null)
         {
             _runtimeAvailability.ConnectionStateChanged -= OnRuntimeConnectionStateChanged;

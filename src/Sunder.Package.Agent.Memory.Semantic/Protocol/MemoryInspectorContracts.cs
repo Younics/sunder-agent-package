@@ -11,6 +11,7 @@ public interface IMemoryInspectorGateway
 
     event Action<Guid>? SessionChanged;
     event Action? SemanticWorkerStatusChanged;
+    event Action? ResetRequired;
     Task<IReadOnlyList<AgentSessionRecord>> ListSessionsAsync(CancellationToken cancellationToken = default);
     Task<AgentSessionContextCheckpointRecord?> GetSessionContextCheckpointAsync(Guid sessionId, CancellationToken cancellationToken = default);
     Task<AgentWorkingSummaryRecord?> GetWorkingSummaryAsync(Guid sessionId, CancellationToken cancellationToken = default);
@@ -120,6 +121,7 @@ public enum MemoryChangeKind
 {
     Session,
     Worker,
+    ResetRequired,
 }
 
 public sealed record MemoryChanged(MemoryChangeKind Kind, Guid? SessionId = null);

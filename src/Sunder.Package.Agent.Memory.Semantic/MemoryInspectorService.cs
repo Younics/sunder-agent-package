@@ -23,6 +23,7 @@ public sealed class MemoryInspectorService(
     private readonly SemanticMemoryMetricsService _metricsService = metricsService;
     private readonly object _sessionChangedSync = new();
     private Action<Guid>? _sessionChanged;
+    private Action? _resetRequired;
     private IDisposable? _sessionChangedSubscription;
     private bool _disposed;
 
@@ -34,7 +35,7 @@ public sealed class MemoryInspectorService(
             {
                 ObjectDisposedException.ThrowIf(_disposed, this);
                 _sessionChanged += value;
-                _sessionChangedSubscription ??= _modelRuntimeResolver.SubscribeToSessionChanges(OnRuntimeSessionChanged);
+                EnsureSessionChangedSubscription();
             }
         }
         remove
@@ -42,7 +43,32 @@ public sealed class MemoryInspectorService(
             lock (_sessionChangedSync)
             {
                 _sessionChanged -= value;
-                if (_sessionChanged is null)
+                if (_sessionChanged is null && _resetRequired is null)
+                {
+                    _sessionChangedSubscription?.Dispose();
+                    _sessionChangedSubscription = null;
+                }
+            }
+        }
+    }
+
+    public event Action? ResetRequired
+    {
+        add
+        {
+            lock (_sessionChangedSync)
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                _resetRequired += value;
+                EnsureSessionChangedSubscription();
+            }
+        }
+        remove
+        {
+            lock (_sessionChangedSync)
+            {
+                _resetRequired -= value;
+                if (_sessionChanged is null && _resetRequired is null)
                 {
                     _sessionChangedSubscription?.Dispose();
                     _sessionChangedSubscription = null;
@@ -403,6 +429,7 @@ public sealed class MemoryInspectorService(
 
             _disposed = true;
             _sessionChanged = null;
+            _resetRequired = null;
             _sessionChangedSubscription?.Dispose();
             _sessionChangedSubscription = null;
         }
@@ -435,6 +462,21 @@ public sealed class MemoryInspectorService(
         }
         handlers?.Invoke(sessionId);
     }
+
+    private void OnRuntimeResetRequired()
+    {
+        Action? handlers;
+        lock (_sessionChangedSync)
+        {
+            handlers = _resetRequired;
+        }
+        handlers?.Invoke();
+    }
+
+    private void EnsureSessionChangedSubscription()
+        => _sessionChangedSubscription ??= _modelRuntimeResolver.SubscribeToSessionChanges(
+            OnRuntimeSessionChanged,
+            OnRuntimeResetRequired);
 
     private sealed record SessionProfileResolution(bool SessionExists, string? ProfileId);
 

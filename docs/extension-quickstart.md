@@ -4,7 +4,7 @@ This quickstart creates a headless Runtime package with one fixed, read-only Age
 
 ## 1. Create The Project
 
-Start with `dotnet new sunder-package`. The template creates an aggregate package, a self-contained Worker project, and a non-packable package-local Protocol project for protocols owned by your package. Add the Agent Protocol reference and provider declaration to the Worker project:
+Start with `dotnet new sunder-package`. The template creates a root, unsuffixed canonical Worker/package project with `SunderPackagePrimaryProject=true`, a non-packable package-local Protocol project, and an optional App project. The App is selected through `SunderPackageAppProject` as a build-only input. Add the Agent Protocol reference and provider declaration to the canonical Worker project:
 
 ```xml
 <ItemGroup>
@@ -84,10 +84,10 @@ The provider id must match the `SunderRpcProvider` item. The Host stamps ownersh
 ```powershell
 dotnet restore
 dotnet build
-dotnet publish -c Release
+dotnet msbuild path/to/Acme.Package.csproj -t:PackSunderPackage -p:Configuration=Release
 ```
 
-Build emits a current-RID `sunder-dev`; publish emits a native worker leaf that an aggregate project combines with the other exact-RID leaves into a versioned `.sunderpkg`. Confirm the generated manifest contains the Agent 2.x runtime dependency, the `sunder.agent.tool.source` contract bundle, and the `acme.tools` Runtime provider.
+A normal build emits the exact current-RID Worker leaf and composes the canonical non-RID `bin/<configuration>/<tfm>/sunder-dev`. `PackSunderPackage` runs directly on the same primary Worker project, builds all configured RIDs, includes the optional App, and emits one universal versioned `.sunderpkg`. Confirm the generated manifest contains the Agent 2.x runtime dependency, the `sunder.agent.tool.source` contract bundle, and the `acme.tools` Runtime provider.
 
 ## 5. Choose Another Contract
 

@@ -165,9 +165,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentWorkspaceDocumentRecord"
-      },
-      "minItems": 0,
-      "maxItems": 10000
+      }
     },
     "AgentWorkspacePathRecord": {
       "type": "object",
@@ -209,9 +207,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentWorkspacePathRecord"
-      },
-      "minItems": 0,
-      "maxItems": 10000
+      }
     },
     "AgentWorkspaceRecord": {
       "type": "object",
@@ -288,29 +284,20 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentWorkspacePathMigrationItem"
-      },
-      "minItems": 0,
-      "maxItems": 10000
+      }
     },
     "Identifier": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 256
+      "minLength": 1
     },
     "PathText": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 4096
+      "type": "string"
     },
     "DisplayText": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 8192
+      "type": "string"
     },
     "SortOrder": {
-      "type": "integer",
-      "minimum": -100000,
-      "maximum": 100000
+      "type": "integer"
     }
   }
 }

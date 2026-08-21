@@ -69,6 +69,13 @@ public sealed partial class AgentChatViewModel
         _toolPresentationService = toolPresentationService ?? new AgentToolPresentationService();
         _shellViewService = shellViewService;
         _uiDispatcher = uiDispatcher;
+        _backgroundTasks = new PresentationTaskScope(exception => _uiDispatcher.InvokeAsync(() =>
+        {
+            if (!_disposed)
+            {
+                SetGlobalStatus(exception.Message);
+            }
+        }));
         _operations = operationObserver
             ?? PresentationOperationObserver.CreateUnreported("Agent Chat");
         _permissionPanel = new AgentPermissionPanelState(permissionService, runCoordinator, uiDispatcher);
@@ -141,11 +148,9 @@ public sealed partial class AgentChatViewModel
 
     private Task InvokeOnUiThreadAsync(Action action) => _uiDispatcher.InvokeAsync(action);
 
-    private void TrackBackgroundTask(Task? task)
+    private void TrackBackgroundTask(Func<Task?> operation)
     {
-        if (task is not null)
-        {
-            _backgroundTasks.Run(task);
-        }
+        ArgumentNullException.ThrowIfNull(operation);
+        _backgroundTasks.Run(_ => operation() ?? Task.CompletedTask);
     }
 }

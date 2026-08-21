@@ -3,7 +3,7 @@
   "descriptorVersion": 2,
   "schemaProfile": "sunder.rpc.values.v1",
   "contractId": "sunder.agent.owner.runtime",
-  "version": "2.0.0",
+  "version": "1.0.0",
   "errors": {
     "agent.owner.operation-failed": {
       "description": "The requested Agent operation could not be completed.",
@@ -304,17 +304,13 @@
           "maximum": 500
         },
         "preferredProfileId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "preferredSessionId": {
           "$ref": "#/$defs/Uuid"
         },
         "preferredWorkspaceId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         }
       },
       "required": [
@@ -336,19 +332,14 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/AgentProfileRecord"
-          },
-          "minItems": 0,
-          "maxItems": 256
+          }
         },
         "revision": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
+          "minimum": 0
         },
         "runtimeInstanceId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "selectedProfile": {
           "$ref": "#/$defs/AgentProfileRecord"
@@ -363,25 +354,19 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/AgentWorkspaceBindingRecord"
-          },
-          "minItems": 0,
-          "maxItems": 256
+          }
         },
         "workspaceSessions": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AgentSessionSnapshot"
-          },
-          "minItems": 0,
-          "maxItems": 256
+          }
         },
         "workspaces": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AgentWorkspaceRecord"
-          },
-          "minItems": 0,
-          "maxItems": 256
+          }
         }
       },
       "required": [
@@ -406,16 +391,13 @@
         },
         "revision": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
+          "minimum": 0
         },
         "turns": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AgentTurnRecord"
-          },
-          "minItems": 0,
-          "maxItems": 500
+          }
         }
       },
       "required": [
@@ -432,14 +414,11 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/AgentPendingPermissionRequestRecord"
-          },
-          "minItems": 0,
-          "maxItems": 256
+          }
         },
         "revision": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
+          "minimum": 0
         },
         "sessionState": {
           "$ref": "#/$defs/AgentSessionPermissionState"
@@ -455,55 +434,37 @@
       "type": "object",
       "properties": {
         "behaviorLoopId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "behaviorLoopSettingsJson": {
           "$ref": "#/$defs/JsonText"
         },
         "behaviorLoopSourceId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "chatModelId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "chatProviderId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "createdAtUtc": {
           "$ref": "#/$defs/Timestamp"
         },
         "description": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 8192
+          "type": "string"
         },
         "displayName": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 1024
+          "type": "string"
         },
         "embeddingModelId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "embeddingProviderId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "instructions": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 524288
+          "type": "string"
         },
         "isInternal": {
           "type": "boolean"
@@ -512,22 +473,16 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/AgentProfileModelBindingRecord"
-          },
-          "minItems": 0,
-          "maxItems": 256
+          }
         },
         "profileId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "selectableCapabilityAssignments": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AgentProfileSelectableCapabilityAssignmentRecord"
-          },
-          "minItems": 0,
-          "maxItems": 256
+          }
         },
         "updatedAtUtc": {
           "$ref": "#/$defs/Timestamp"
@@ -564,38 +519,28 @@
           "$ref": "#/$defs/Timestamp"
         },
         "description": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 8192
+          "type": "string"
         },
         "displayName": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 1024
+          "type": "string"
         },
         "documents": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AgentWorkspaceDocumentRecord"
-          },
-          "minItems": 0,
-          "maxItems": 256
+          }
         },
         "paths": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AgentWorkspacePathRecord"
-          },
-          "minItems": 0,
-          "maxItems": 256
+          }
         },
         "updatedAtUtc": {
           "$ref": "#/$defs/Timestamp"
         },
         "workspaceId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         }
       },
       "required": [
@@ -612,43 +557,31 @@
       "type": "object",
       "properties": {
         "bindingId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "contributionId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "createdAtUtc": {
           "$ref": "#/$defs/Timestamp"
         },
         "extensionPointId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "isEnabled": {
           "type": "boolean"
         },
         "role": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 16384
+          "type": "string"
         },
         "sortOrder": {
-          "type": "integer",
-          "minimum": -32768,
-          "maximum": 32767
+          "type": "integer"
         },
         "updatedAtUtc": {
           "$ref": "#/$defs/Timestamp"
         },
         "workspaceId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         }
       },
       "required": [
@@ -685,8 +618,7 @@
       "properties": {
         "contentRevision": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
+          "minimum": 0
         },
         "createdAtUtc": {
           "$ref": "#/$defs/Timestamp"
@@ -698,9 +630,7 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/AgentTurnItemRecord"
-          },
-          "minItems": 0,
-          "maxItems": 64
+          }
         },
         "kind": {
           "$ref": "#/$defs/AgentTurnKind"
@@ -713,8 +643,7 @@
         },
         "runRevision": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
+          "minimum": 0
         },
         "sessionId": {
           "$ref": "#/$defs/Uuid"
@@ -743,51 +672,37 @@
       "type": "object",
       "properties": {
         "actionId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "argumentsJson": {
           "$ref": "#/$defs/JsonText"
         },
         "bindingId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "boundaryId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "callId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "claimLeaseExpiresAtUtc": {
           "$ref": "#/$defs/Timestamp"
         },
         "claimToken": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 4096
+          "type": "string"
         },
         "claimedAtUtc": {
           "$ref": "#/$defs/Timestamp"
         },
         "command": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 8192
+          "type": "string"
         },
         "continuationConsumedAtUtc": {
           "$ref": "#/$defs/Timestamp"
         },
         "continuationToken": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 4096
+          "type": "string"
         },
         "createdAtUtc": {
           "$ref": "#/$defs/Timestamp"
@@ -796,14 +711,10 @@
           "$ref": "#/$defs/Timestamp"
         },
         "decisionSummary": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 8192
+          "type": "string"
         },
         "executionFingerprint": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 4096
+          "type": "string"
         },
         "executionSnapshotJson": {
           "$ref": "#/$defs/JsonText"
@@ -818,42 +729,29 @@
           "$ref": "#/$defs/Uuid"
         },
         "path": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 8192
+          "type": "string"
         },
         "profileId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "requestId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "resourceClaimSetVersion": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 2147483647
+          "minimum": 0
         },
         "resourceClaims": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AgentResourceClaim"
-          },
-          "minItems": 0,
-          "maxItems": 128
+          }
         },
         "resourceDisplayName": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 1024
+          "type": "string"
         },
         "resourceReference": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "rootSessionId": {
           "$ref": "#/$defs/Uuid"
@@ -863,8 +761,7 @@
         },
         "runRevision": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
+          "minimum": 0
         },
         "sessionId": {
           "$ref": "#/$defs/Uuid"
@@ -873,30 +770,22 @@
           "$ref": "#/$defs/AgentPendingPermissionStatus"
         },
         "summary": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 8192
+          "type": "string"
         },
         "toolExecutionId": {
           "$ref": "#/$defs/Uuid"
         },
         "toolId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "userMessage": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 524288
+          "type": "string"
         },
         "userTurnId": {
           "$ref": "#/$defs/Uuid"
         },
         "workspaceId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         }
       },
       "required": [
@@ -941,24 +830,16 @@
       "type": "object",
       "properties": {
         "capabilityKind": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 16384
+          "type": "string"
         },
         "modelId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "profileId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "providerId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "settingsJson": {
           "$ref": "#/$defs/JsonText"
@@ -978,19 +859,13 @@
       "type": "object",
       "properties": {
         "capabilityId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "kind": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 16384
+          "type": "string"
         },
         "sourceId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         }
       },
       "required": [
@@ -1010,8 +885,7 @@
         },
         "runRevision": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
+          "minimum": 0
         },
         "sessionId": {
           "$ref": "#/$defs/Uuid"
@@ -1020,9 +894,7 @@
           "$ref": "#/$defs/AgentRunStatus"
         },
         "summary": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 8192
+          "type": "string"
         }
       },
       "required": [
@@ -1038,14 +910,10 @@
       "type": "object",
       "properties": {
         "agentKind": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 16384
+          "type": "string"
         },
         "behaviorLoopId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "createdAtUtc": {
           "$ref": "#/$defs/Timestamp"
@@ -1055,21 +923,16 @@
         },
         "parentRunRevision": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
+          "minimum": 0
         },
         "parentSessionId": {
           "$ref": "#/$defs/Uuid"
         },
         "parentToolCallId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "profileId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "rootSessionId": {
           "$ref": "#/$defs/Uuid"
@@ -1081,22 +944,16 @@
           "$ref": "#/$defs/AgentSessionState"
         },
         "taskId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "title": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 1024
+          "type": "string"
         },
         "updatedAtUtc": {
           "$ref": "#/$defs/Timestamp"
         },
         "workspaceId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         }
       },
       "required": [
@@ -1115,27 +972,19 @@
           "$ref": "#/$defs/Timestamp"
         },
         "documentId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "filePath": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 8192
+          "type": "string"
         },
         "sortOrder": {
-          "type": "integer",
-          "minimum": -32768,
-          "maximum": 32767
+          "type": "integer"
         },
         "updatedAtUtc": {
           "$ref": "#/$defs/Timestamp"
         },
         "workspaceId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         }
       },
       "required": [
@@ -1155,30 +1004,22 @@
           "$ref": "#/$defs/Timestamp"
         },
         "hostPath": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 8192
+          "type": "string"
         },
         "isDefault": {
           "type": "boolean"
         },
         "pathId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 8192
+          "type": "string"
         },
         "sortOrder": {
-          "type": "integer",
-          "minimum": -32768,
-          "maximum": 32767
+          "type": "integer"
         },
         "updatedAtUtc": {
           "$ref": "#/$defs/Timestamp"
         },
         "workspaceId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         }
       },
       "required": [
@@ -1199,19 +1040,13 @@
           "$ref": "#/$defs/JsonText"
         },
         "backendId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "callId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "errorCode": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 16384
+          "type": "string"
         },
         "isError": {
           "type": "boolean"
@@ -1229,14 +1064,11 @@
           "$ref": "#/$defs/JsonText"
         },
         "resultSummary": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 8192
+          "type": "string"
         },
         "sequenceNumber": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 2147483647
+          "minimum": 0
         },
         "sourcesJson": {
           "$ref": "#/$defs/JsonText"
@@ -1245,19 +1077,14 @@
           "$ref": "#/$defs/JsonText"
         },
         "textContent": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 524288
+          "type": "string"
         },
         "toolDetailRevision": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
+          "minimum": 0
         },
         "toolErrorSummary": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 8192
+          "type": "string"
         },
         "toolExecutionId": {
           "$ref": "#/$defs/Uuid"
@@ -1269,29 +1096,19 @@
           "type": "boolean"
         },
         "toolHeaderHint": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 16384
+          "type": "string"
         },
         "toolId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "toolOwnerPackageId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "toolSchemaId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "toolSchemaVersion": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 16384
+          "type": "string"
         },
         "turnId": {
           "$ref": "#/$defs/Uuid"
@@ -1314,8 +1131,6 @@
     },
     "AgentTurnKind": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 2,
       "enum": [
         0,
         1,
@@ -1324,8 +1139,6 @@
     },
     "AgentMessageRole": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 3,
       "enum": [
         0,
         1,
@@ -1337,93 +1150,63 @@
       "type": "object",
       "properties": {
         "actionId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "bindingGeneration": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "bindingId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "caseSensitivePath": {
           "type": "boolean"
         },
         "configuredRoot": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 16384
+          "type": "string"
         },
         "executionTargetOwnerPackageId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "logicalPath": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 8192
+          "type": "string"
         },
         "namespaceId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "resourceIndex": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 2147483647
+          "minimum": 0
         },
         "rootIdentityChainFingerprint": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 4096
+          "type": "string"
         },
         "targetExists": {
           "type": "boolean"
         },
         "targetIdentity": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 16384
+          "type": "string"
         },
         "targetIsAuthorityRoot": {
           "type": "boolean"
         },
         "targetKind": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 16384
+          "type": "string"
         },
         "toolCallId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "toolOwnerPackageId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "version": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 2147483647
+          "minimum": 0
         },
         "workspaceGeneration": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "workspaceId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         }
       },
       "required": [
@@ -1448,8 +1231,6 @@
     },
     "AgentPendingPermissionStatus": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 5,
       "enum": [
         0,
         1,
@@ -1461,8 +1242,6 @@
     },
     "AgentRunStatus": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 6,
       "enum": [
         0,
         1,
@@ -1475,8 +1254,6 @@
     },
     "AgentSessionState": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 5,
       "enum": [
         0,
         1,
@@ -1487,8 +1264,6 @@
     },
     "AgentTurnItemKind": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 3,
       "enum": [
         0,
         1,
@@ -1498,8 +1273,6 @@
     },
     "AgentToolExecutionStatus": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 4,
       "enum": [
         0,
         1,
@@ -1521,30 +1294,23 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/AgentProfileRecord"
-          },
-          "minItems": 0,
-          "maxItems": 256
+          }
         },
         "revision": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
+          "minimum": 0
         },
         "workspaceBindings": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AgentWorkspaceBindingRecord"
-          },
-          "minItems": 0,
-          "maxItems": 256
+          }
         },
         "workspaces": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AgentWorkspaceRecord"
-          },
-          "minItems": 0,
-          "maxItems": 256
+          }
         }
       },
       "required": [
@@ -1585,8 +1351,6 @@
     },
     "AgentTranscriptPageDirection": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 3,
       "enum": [
         0,
         1,
@@ -1598,14 +1362,10 @@
       "type": "object",
       "properties": {
         "chatProviderId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "embeddingProviderId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "profile": {
           "$ref": "#/$defs/AgentProfileRecord"
@@ -1621,25 +1381,19 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/AgentBehaviorLoopDescriptor"
-          },
-          "minItems": 0,
-          "maxItems": 256
+          }
         },
         "chatModels": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AgentModelDescriptor"
-          },
-          "minItems": 0,
-          "maxItems": 512
+          }
         },
         "chatProviders": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AgentProviderDescriptor"
-          },
-          "minItems": 0,
-          "maxItems": 512
+          }
         },
         "chatReadiness": {
           "$ref": "#/$defs/AgentProviderReadiness"
@@ -1648,17 +1402,13 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/AgentEmbeddingModelDescriptor"
-          },
-          "minItems": 0,
-          "maxItems": 512
+          }
         },
         "embeddingProviders": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AgentEmbeddingProviderDescriptor"
-          },
-          "minItems": 0,
-          "maxItems": 512
+          }
         },
         "embeddingReadiness": {
           "$ref": "#/$defs/AgentEmbeddingProviderReadiness"
@@ -1667,9 +1417,7 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/AgentExecutionTargetDescriptor"
-          },
-          "minItems": 0,
-          "maxItems": 256
+          }
         },
         "hasEmbeddingConsumers": {
           "type": "boolean"
@@ -1678,22 +1426,17 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/AgentToolCatalogEntry"
-          },
-          "minItems": 0,
-          "maxItems": 512
+          }
         },
         "revision": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
+          "minimum": 0
         },
         "selectableCapabilities": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AgentProfileSelectableCapabilityDescriptor"
-          },
-          "minItems": 0,
-          "maxItems": 512
+          }
         }
       },
       "required": [
@@ -1714,37 +1457,25 @@
       "type": "object",
       "properties": {
         "description": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 8192
+          "type": "string"
         },
         "displayName": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 1024
+          "type": "string"
         },
         "featureKinds": {
           "type": "array",
           "items": {
-            "type": "string",
-            "minLength": 0,
-            "maxLength": 16384
-          },
-          "minItems": 0,
-          "maxItems": 256
+            "type": "string"
+          }
         },
         "loopId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "settingsSchemaJson": {
           "$ref": "#/$defs/JsonText"
         },
         "sourceId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         }
       },
       "required": [
@@ -1759,34 +1490,26 @@
       "properties": {
         "contextWindow": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 2000000
+          "minimum": 0
         },
         "displayName": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 1024
+          "type": "string"
         },
         "isRecommended": {
           "type": "boolean"
         },
         "maxOutputTokens": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 2000000
+          "minimum": 0
         },
         "modeOptions": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AgentModelModeOptionDescriptor"
-          },
-          "minItems": 0,
-          "maxItems": 256
+          }
         },
         "modelId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "releaseDate": {
           "$ref": "#/$defs/ModelReleaseDate"
@@ -1795,17 +1518,13 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/AgentModelSpeedOptionDescriptor"
-          },
-          "minItems": 0,
-          "maxItems": 256
+          }
         },
         "variants": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AgentModelVariantDescriptor"
-          },
-          "minItems": 0,
-          "maxItems": 256
+          }
         }
       },
       "required": [
@@ -1821,27 +1540,19 @@
       "type": "object",
       "properties": {
         "displayName": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 1024
+          "type": "string"
         },
         "packageId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "providerId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "supportedAuthModes": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AgentAuthMode"
-          },
-          "minItems": 0,
-          "maxItems": 256
+          }
         },
         "supportsInterruptibleRuns": {
           "type": "boolean"
@@ -1863,14 +1574,10 @@
       "type": "object",
       "properties": {
         "message": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 8192
+          "type": "string"
         },
         "providerId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "status": {
           "$ref": "#/$defs/AgentProviderReadinessStatus"
@@ -1888,21 +1595,16 @@
       "properties": {
         "dimensions": {
           "type": "integer",
-          "minimum": 1,
-          "maximum": 8192
+          "minimum": 1
         },
         "displayName": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 1024
+          "type": "string"
         },
         "isRecommended": {
           "type": "boolean"
         },
         "modelId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         }
       },
       "required": [
@@ -1916,27 +1618,19 @@
       "type": "object",
       "properties": {
         "displayName": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 1024
+          "type": "string"
         },
         "packageId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "providerId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "supportedAuthModes": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AgentAuthMode"
-          },
-          "minItems": 0,
-          "maxItems": 256
+          }
         }
       },
       "required": [
@@ -1950,14 +1644,10 @@
       "type": "object",
       "properties": {
         "message": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 8192
+          "type": "string"
         },
         "providerId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "status": {
           "$ref": "#/$defs/AgentProviderReadinessStatus"
@@ -1974,24 +1664,16 @@
       "type": "object",
       "properties": {
         "description": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 8192
+          "type": "string"
         },
         "displayName": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 1024
+          "type": "string"
         },
         "facets": {
           "type": "array",
           "items": {
-            "type": "string",
-            "minLength": 0,
-            "maxLength": 16384
-          },
-          "minItems": 0,
-          "maxItems": 64
+            "type": "string"
+          }
         },
         "supportsFiles": {
           "type": "boolean"
@@ -2000,14 +1682,10 @@
           "type": "boolean"
         },
         "targetId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "targetKind": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 16384
+          "type": "string"
         }
       },
       "required": [
@@ -2040,62 +1718,40 @@
       "type": "object",
       "properties": {
         "capabilityId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "description": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 8192
+          "type": "string"
         },
         "displayName": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 1024
+          "type": "string"
         },
         "groupDescription": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 8192
+          "type": "string"
         },
         "groupDisplayName": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 1024
+          "type": "string"
         },
         "groupId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "groupSortOrder": {
-          "type": "integer",
-          "minimum": -32768,
-          "maximum": 32767
+          "type": "integer"
         },
         "isSelectable": {
           "type": "boolean"
         },
         "kind": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 16384
+          "type": "string"
         },
         "sourceDisplayName": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 1024
+          "type": "string"
         },
         "sourceId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "statusText": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 1024
+          "type": "string"
         }
       },
       "required": [
@@ -2111,22 +1767,16 @@
       "type": "object",
       "properties": {
         "description": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 8192
+          "type": "string"
         },
         "disablesReasoning": {
           "type": "boolean"
         },
         "displayName": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 1024
+          "type": "string"
         },
         "modeOptionId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         }
       },
       "required": [
@@ -2140,19 +1790,13 @@
       "type": "object",
       "properties": {
         "description": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 8192
+          "type": "string"
         },
         "displayName": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 1024
+          "type": "string"
         },
         "speedOptionId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         }
       },
       "required": [
@@ -2165,22 +1809,16 @@
       "type": "object",
       "properties": {
         "description": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 8192
+          "type": "string"
         },
         "displayName": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 1024
+          "type": "string"
         },
         "reasoningEffort": {
           "$ref": "#/$defs/AgentReasoningEffort"
         },
         "variantId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         }
       },
       "required": [
@@ -2191,8 +1829,6 @@
     },
     "AgentAuthMode": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 1,
       "enum": [
         0,
         1
@@ -2200,8 +1836,6 @@
     },
     "AgentProviderReadinessStatus": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 2,
       "enum": [
         0,
         1,
@@ -2217,12 +1851,8 @@
         "aliases": {
           "type": "array",
           "items": {
-            "type": "string",
-            "minLength": 0,
-            "maxLength": 16384
-          },
-          "minItems": 0,
-          "maxItems": 64
+            "type": "string"
+          }
         },
         "argumentsJsonSchema": {
           "$ref": "#/$defs/JsonText"
@@ -2231,14 +1861,10 @@
           "$ref": "#/$defs/AgentToolConcurrencyMode"
         },
         "description": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 8192
+          "type": "string"
         },
         "displayName": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 1024
+          "type": "string"
         },
         "isReadOnly": {
           "type": "boolean"
@@ -2250,47 +1876,31 @@
           "type": "boolean"
         },
         "runtimeInstructions": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 524288
+          "type": "string"
         },
         "selectionGroupDescription": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 8192
+          "type": "string"
         },
         "selectionGroupDisplayName": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 1024
+          "type": "string"
         },
         "selectionGroupId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "selectionScope": {
           "$ref": "#/$defs/AgentToolSelectionScope"
         },
         "sourceDisplayName": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 1024
+          "type": "string"
         },
         "sourceId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "sourceKind": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 16384
+          "type": "string"
         },
         "toolId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         }
       },
       "required": [
@@ -2309,17 +1919,13 @@
       "type": "object",
       "properties": {
         "message": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 8192
+          "type": "string"
         },
         "status": {
           "$ref": "#/$defs/AgentToolReadinessStatus"
         },
         "toolId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         }
       },
       "required": [
@@ -2331,8 +1937,6 @@
     },
     "AgentReasoningEffort": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 4,
       "enum": [
         0,
         1,
@@ -2345,19 +1949,13 @@
       "type": "object",
       "properties": {
         "capabilityId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "capabilityKind": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 16384
+          "type": "string"
         },
         "sourceId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         }
       },
       "required": [
@@ -2367,8 +1965,6 @@
     },
     "AgentToolConcurrencyMode": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 1,
       "enum": [
         0,
         1
@@ -2376,8 +1972,6 @@
     },
     "AgentToolPriority": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 2,
       "enum": [
         0,
         1,
@@ -2386,8 +1980,6 @@
     },
     "AgentToolSelectionScope": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 1,
       "enum": [
         0,
         1
@@ -2395,8 +1987,6 @@
     },
     "AgentToolReadinessStatus": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 3,
       "enum": [
         0,
         3
@@ -2409,68 +1999,46 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/AgentProfileSelectableCapabilityAssignmentRecord"
-          },
-          "minItems": 0,
-          "maxItems": 256
+          }
         },
         "behaviorLoopId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "behaviorLoopSettingsJson": {
           "$ref": "#/$defs/JsonText"
         },
         "behaviorLoopSourceId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "chatModelId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "chatModelSettingsJson": {
           "$ref": "#/$defs/JsonText"
         },
         "chatProviderId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "description": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 8192
+          "type": "string"
         },
         "displayName": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 1024
+          "type": "string"
         },
         "embeddingModelId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "embeddingProviderId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "instructions": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 524288
+          "type": "string"
         },
         "kind": {
           "$ref": "#/$defs/AgentProfileCommandKind"
         },
         "profileId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         }
       },
       "required": [
@@ -2480,8 +2048,6 @@
     },
     "AgentProfileCommandKind": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 2,
       "enum": [
         0,
         1,
@@ -2496,8 +2062,7 @@
         },
         "revision": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
+          "minimum": 0
         }
       },
       "required": [
@@ -2509,27 +2074,19 @@
       "type": "object",
       "properties": {
         "description": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 8192
+          "type": "string"
         },
         "displayName": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 1024
+          "type": "string"
         },
         "documents": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AgentWorkspaceDocumentRecord"
-          },
-          "minItems": 0,
-          "maxItems": 256
+          }
         },
         "executionTargetId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "kind": {
           "$ref": "#/$defs/AgentWorkspaceCommandKind"
@@ -2538,14 +2095,10 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/AgentWorkspacePathRecord"
-          },
-          "minItems": 0,
-          "maxItems": 256
+          }
         },
         "workspaceId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         }
       },
       "required": [
@@ -2555,8 +2108,6 @@
     },
     "AgentWorkspaceCommandKind": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 3,
       "enum": [
         0,
         1,
@@ -2569,8 +2120,7 @@
       "properties": {
         "revision": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
+          "minimum": 0
         },
         "warmup": {
           "$ref": "#/$defs/AgentExecutionTargetWarmupResult"
@@ -2588,9 +2138,7 @@
       "type": "object",
       "properties": {
         "message": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 8192
+          "type": "string"
         },
         "status": {
           "$ref": "#/$defs/AgentExecutionTargetWarmupStatus"
@@ -2604,8 +2152,6 @@
     },
     "AgentExecutionTargetWarmupStatus": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 2,
       "enum": [
         0,
         1,
@@ -2616,30 +2162,22 @@
       "type": "object",
       "properties": {
         "behaviorLoopId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "kind": {
           "$ref": "#/$defs/AgentSessionCommandKind"
         },
         "profileId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "session": {
           "$ref": "#/$defs/AgentSessionRecord"
         },
         "title": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 1024
+          "type": "string"
         },
         "workspaceId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         }
       },
       "required": [
@@ -2649,8 +2187,6 @@
     },
     "AgentSessionCommandKind": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 2,
       "enum": [
         0,
         1,
@@ -2662,8 +2198,7 @@
       "properties": {
         "revision": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
+          "minimum": 0
         },
         "session": {
           "$ref": "#/$defs/AgentSessionSnapshot"
@@ -2684,22 +2219,16 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/AgentAttachmentUploadHandle"
-          },
-          "minItems": 0,
-          "maxItems": 10
+          }
         },
         "kind": {
           "$ref": "#/$defs/AgentRunCommandKind"
         },
         "permissionRequestId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "profileId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "rollbackAnchorTurnId": {
           "$ref": "#/$defs/Uuid"
@@ -2708,17 +2237,13 @@
           "$ref": "#/$defs/Uuid"
         },
         "userMessage": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 524288
+          "type": "string"
         },
         "userTurnId": {
           "$ref": "#/$defs/Uuid"
         },
         "workspaceId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         }
       },
       "required": [
@@ -2732,9 +2257,7 @@
       "type": "object",
       "properties": {
         "transferId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         }
       },
       "required": [
@@ -2744,8 +2267,6 @@
     },
     "AgentRunCommandKind": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 4,
       "enum": [
         0,
         1,
@@ -2762,8 +2283,7 @@
         },
         "revision": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
+          "minimum": 0
         },
         "runId": {
           "$ref": "#/$defs/Uuid"
@@ -2798,8 +2318,7 @@
       "properties": {
         "revision": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
+          "minimum": 0
         },
         "status": {
           "$ref": "#/$defs/AgentRunCommandStatus"
@@ -2813,8 +2332,6 @@
     },
     "AgentRunCommandStatus": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 2,
       "enum": [
         0,
         1,
@@ -2825,14 +2342,10 @@
       "type": "object",
       "properties": {
         "actionId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "boundaryId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "decision": {
           "$ref": "#/$defs/AgentPermissionDecision"
@@ -2854,8 +2367,6 @@
     },
     "AgentPermissionDecision": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 2,
       "enum": [
         0,
         1,
@@ -2864,8 +2375,6 @@
     },
     "AgentPermissionCommandKind": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 3,
       "enum": [
         0,
         1,
@@ -2880,30 +2389,23 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/AgentPermissionActionDescriptor"
-          },
-          "minItems": 0,
-          "maxItems": 256
+          }
         },
         "overrides": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AgentPermissionOverride"
-          },
-          "minItems": 0,
-          "maxItems": 256
+          }
         },
         "pendingRequests": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AgentPendingPermissionRequestRecord"
-          },
-          "minItems": 0,
-          "maxItems": 256
+          }
         },
         "revision": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
+          "minimum": 0
         },
         "sessionState": {
           "$ref": "#/$defs/AgentSessionPermissionState"
@@ -2921,27 +2423,19 @@
       "type": "object",
       "properties": {
         "actionId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "boundaries": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AgentPermissionBoundaryDescriptor"
-          },
-          "minItems": 0,
-          "maxItems": 256
+          }
         },
         "description": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 8192
+          "type": "string"
         },
         "displayName": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 1024
+          "type": "string"
         }
       },
       "required": [
@@ -2956,14 +2450,10 @@
       "type": "object",
       "properties": {
         "actionId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "boundaryId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "decision": {
           "$ref": "#/$defs/AgentPermissionDecision"
@@ -2984,22 +2474,16 @@
       "type": "object",
       "properties": {
         "boundaryId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "defaultDecision": {
           "$ref": "#/$defs/AgentPermissionDecision"
         },
         "description": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 8192
+          "type": "string"
         },
         "displayName": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 1024
+          "type": "string"
         }
       },
       "required": [
@@ -3017,9 +2501,7 @@
           "$ref": "#/$defs/Uuid"
         },
         "fileName": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 1024
+          "type": "string"
         },
         "isText": {
           "type": "boolean"
@@ -3028,9 +2510,7 @@
           "$ref": "#/$defs/AgentAttachmentKind"
         },
         "mediaType": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 256
+          "type": "string"
         },
         "sha256": {
           "type": "string",
@@ -3039,13 +2519,10 @@
         },
         "sizeBytes": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
+          "minimum": 0
         },
         "storageRelativePath": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 8192
+          "type": "string"
         },
         "wasTruncated": {
           "type": "boolean"
@@ -3068,14 +2545,10 @@
       "type": "object",
       "properties": {
         "fileName": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 1024
+          "type": "string"
         },
         "mediaType": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 256
+          "type": "string"
         },
         "sha256": {
           "type": "string",
@@ -3084,8 +2557,7 @@
         },
         "sizeBytes": {
           "type": "integer",
-          "minimum": 1,
-          "maximum": 26214400
+          "minimum": 1
         }
       },
       "required": [
@@ -3097,8 +2569,6 @@
     },
     "AgentAttachmentKind": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 5,
       "enum": [
         0,
         1,
@@ -3115,9 +2585,7 @@
           "$ref": "#/$defs/HistoryActivityKind"
         },
         "continuation": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 4096
+          "type": "string"
         },
         "fromUtc": {
           "$ref": "#/$defs/Timestamp"
@@ -3131,14 +2599,10 @@
           "maximum": 100
         },
         "profileId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "query": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 16384
+          "type": "string"
         },
         "role": {
           "$ref": "#/$defs/HistorySearchRoleFilter"
@@ -3150,9 +2614,7 @@
           "$ref": "#/$defs/Timestamp"
         },
         "workspaceId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         }
       },
       "required": [
@@ -3166,8 +2628,6 @@
     },
     "HistoryActivityKind": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 6,
       "enum": [
         0,
         1,
@@ -3180,8 +2640,6 @@
     },
     "HistorySearchRoleFilter": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 2,
       "enum": [
         0,
         1,
@@ -3192,9 +2650,7 @@
       "type": "object",
       "properties": {
         "continuation": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 4096
+          "type": "string"
         },
         "isPartial": {
           "type": "boolean"
@@ -3206,9 +2662,7 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/HistorySearchHit"
-          },
-          "minItems": 0,
-          "maxItems": 100
+          }
         },
         "status": {
           "$ref": "#/$defs/HistorySearchStatus"
@@ -3232,14 +2686,10 @@
           "$ref": "#/$defs/HistoryAnchorKind"
         },
         "callId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "documentId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "isChildSession": {
           "type": "boolean"
@@ -3250,27 +2700,17 @@
         "matchReasons": {
           "type": "array",
           "items": {
-            "type": "string",
-            "minLength": 0,
-            "maxLength": 16384
-          },
-          "minItems": 0,
-          "maxItems": 64
+            "type": "string"
+          }
         },
         "paths": {
           "type": "array",
           "items": {
-            "type": "string",
-            "minLength": 0,
-            "maxLength": 8192
-          },
-          "minItems": 0,
-          "maxItems": 256
+            "type": "string"
+          }
         },
         "profileId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "role": {
           "$ref": "#/$defs/AgentMessageRole"
@@ -3282,24 +2722,16 @@
           "$ref": "#/$defs/Uuid"
         },
         "sessionTitle": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 1024
+          "type": "string"
         },
         "snippet": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 16384
+          "type": "string"
         },
         "symbols": {
           "type": "array",
           "items": {
-            "type": "string",
-            "minLength": 0,
-            "maxLength": 16384
-          },
-          "minItems": 0,
-          "maxItems": 64
+            "type": "string"
+          }
         },
         "timestampUtc": {
           "$ref": "#/$defs/Timestamp"
@@ -3308,14 +2740,10 @@
           "$ref": "#/$defs/Uuid"
         },
         "workspaceId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "workspaceName": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 16384
+          "type": "string"
         }
       },
       "required": [
@@ -3345,43 +2773,30 @@
         },
         "embeddedDocuments": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 2147483647
+          "minimum": 0
         },
         "embeddingGeneration": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
+          "minimum": 0
         },
         "embeddingModelId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "embeddingProviderId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "embeddingProviderPackageId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "failureCode": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 16384
+          "type": "string"
         },
         "failureMessage": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 8192
+          "type": "string"
         },
         "indexedDocuments": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 2147483647
+          "minimum": 0
         },
         "lastReconciledAtUtc": {
           "$ref": "#/$defs/Timestamp"
@@ -3391,38 +2806,30 @@
         },
         "pendingChanges": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 2147483647
+          "minimum": 0
         },
         "progressCompleted": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 2147483647
+          "minimum": 0
         },
         "progressTotal": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 2147483647
+          "minimum": 0
         },
         "projectionRevision": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
+          "minimum": 0
         },
         "revision": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
+          "minimum": 0
         },
         "runtimeInstanceId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "semanticConfigurationRevision": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
+          "minimum": 0
         },
         "semanticEnabled": {
           "type": "boolean"
@@ -3432,8 +2839,7 @@
         },
         "textGeneration": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
+          "minimum": 0
         }
       },
       "required": [
@@ -3454,8 +2860,6 @@
     },
     "HistoryAnchorKind": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 1,
       "enum": [
         0,
         1
@@ -3463,8 +2867,6 @@
     },
     "HistorySearchAvailability": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 4,
       "enum": [
         0,
         1,
@@ -3477,19 +2879,13 @@
       "type": "object",
       "properties": {
         "continuation": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 4096
+          "type": "string"
         },
         "embeddingProviderId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "embeddingProviderPackageId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "includeAdvancedFilters": {
           "type": "boolean"
@@ -3500,9 +2896,7 @@
           "maximum": 200
         },
         "workspaceId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         }
       },
       "required": [
@@ -3515,25 +2909,19 @@
       "type": "object",
       "properties": {
         "continuation": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 4096
+          "type": "string"
         },
         "embeddingModels": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/HistoryEmbeddingModelOption"
-          },
-          "minItems": 0,
-          "maxItems": 512
+          }
         },
         "embeddingProviders": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/HistoryEmbeddingProviderOption"
-          },
-          "minItems": 0,
-          "maxItems": 512
+          }
         },
         "embeddingReadiness": {
           "$ref": "#/$defs/AgentEmbeddingProviderReadiness"
@@ -3542,17 +2930,13 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/HistorySearchFilterOption"
-          },
-          "minItems": 0,
-          "maxItems": 256
+          }
         },
         "sessions": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/HistorySearchFilterOption"
-          },
-          "minItems": 0,
-          "maxItems": 256
+          }
         },
         "status": {
           "$ref": "#/$defs/HistorySearchStatus"
@@ -3561,9 +2945,7 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/HistorySearchFilterOption"
-          },
-          "minItems": 0,
-          "maxItems": 256
+          }
         }
       },
       "required": [
@@ -3581,31 +2963,22 @@
       "properties": {
         "dimensions": {
           "type": "integer",
-          "minimum": 1,
-          "maximum": 8192
+          "minimum": 1
         },
         "displayName": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 1024
+          "type": "string"
         },
         "isRecommended": {
           "type": "boolean"
         },
         "modelId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "packageId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "providerId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         }
       },
       "required": [
@@ -3621,19 +2994,13 @@
       "type": "object",
       "properties": {
         "displayName": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 1024
+          "type": "string"
         },
         "packageId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "providerId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         }
       },
       "required": [
@@ -3647,19 +3014,13 @@
       "type": "object",
       "properties": {
         "displayName": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 1024
+          "type": "string"
         },
         "id": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "parentId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         }
       },
       "required": [
@@ -3672,19 +3033,13 @@
       "type": "object",
       "properties": {
         "embeddingModelId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "embeddingProviderId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "embeddingProviderPackageId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "kind": {
           "$ref": "#/$defs/HistorySearchCommandKind"
@@ -3700,8 +3055,6 @@
     },
     "HistorySearchCommandKind": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 2,
       "enum": [
         0,
         1,
@@ -3765,16 +3118,13 @@
         },
         "revision": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
+          "minimum": 0
         },
         "turns": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AgentTurnRecord"
-          },
-          "minItems": 0,
-          "maxItems": 500
+          }
         }
       },
       "required": [
@@ -3790,9 +3140,7 @@
       "type": "object",
       "properties": {
         "callId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "itemId": {
           "$ref": "#/$defs/Uuid"
@@ -3802,8 +3150,7 @@
         },
         "runRevision": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
+          "minimum": 0
         },
         "sessionId": {
           "$ref": "#/$defs/Uuid"
@@ -3839,30 +3186,22 @@
           "$ref": "#/$defs/JsonText"
         },
         "backendId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "callId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "callItemId": {
           "$ref": "#/$defs/Uuid"
         },
         "errorCode": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 16384
+          "type": "string"
         },
         "isError": {
           "type": "boolean"
         },
         "outputText": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 16384
+          "type": "string"
         },
         "presentationPayloadJson": {
           "$ref": "#/$defs/JsonText"
@@ -3871,22 +3210,18 @@
           "$ref": "#/$defs/Uuid"
         },
         "resultSummary": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 8192
+          "type": "string"
         },
         "revision": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
+          "minimum": 0
         },
         "runId": {
           "$ref": "#/$defs/Uuid"
         },
         "runRevision": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
+          "minimum": 0
         },
         "sessionId": {
           "$ref": "#/$defs/Uuid"
@@ -3904,24 +3239,16 @@
           "$ref": "#/$defs/Uuid"
         },
         "toolId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "toolOwnerPackageId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "toolSchemaId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "toolSchemaVersion": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 16384
+          "type": "string"
         },
         "wasTransportTruncated": {
           "type": "boolean"
@@ -3945,8 +3272,7 @@
       "properties": {
         "afterRevision": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
+          "minimum": 0
         },
         "supportsTurnMutations": {
           "type": "boolean"
@@ -3968,22 +3294,17 @@
           "$ref": "#/$defs/AgentProfileRecord"
         },
         "profileId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "revision": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
+          "minimum": 0
         },
         "runActivity": {
           "$ref": "#/$defs/AgentRunActivityUpdate"
         },
         "runtimeInstanceId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         },
         "session": {
           "$ref": "#/$defs/AgentSessionSnapshot"
@@ -4001,9 +3322,7 @@
           "$ref": "#/$defs/AgentWorkspaceRecord"
         },
         "workspaceId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         }
       },
       "required": [
@@ -4014,8 +3333,6 @@
     },
     "AgentRuntimeChangeKind": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 10,
       "enum": [
         0,
         1,
@@ -4041,13 +3358,10 @@
         },
         "runRevision": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
+          "minimum": 0
         },
         "text": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 16384
+          "type": "string"
         }
       },
       "required": [
@@ -4063,29 +3377,24 @@
       "properties": {
         "baseContentLength": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 2147483647
+          "minimum": 0
         },
         "contentRevision": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
+          "minimum": 0
         },
         "kind": {
           "$ref": "#/$defs/AgentTurnMutationKind"
         },
         "runtimeRevision": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
+          "minimum": 0
         },
         "sessionId": {
           "$ref": "#/$defs/Uuid"
         },
         "text": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 16384
+          "type": "string"
         },
         "turn": {
           "$ref": "#/$defs/AgentTurnRecord"
@@ -4110,8 +3419,6 @@
     },
     "AgentRunActivityKind": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 3,
       "enum": [
         0,
         1,
@@ -4121,8 +3428,6 @@
     },
     "AgentTurnMutationKind": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 3,
       "enum": [
         0,
         1,
@@ -4135,13 +3440,10 @@
       "properties": {
         "afterRevision": {
           "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
+          "minimum": 0
         },
         "runtimeInstanceId": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 512
+          "type": "string"
         }
       },
       "required": [
@@ -4150,8 +3452,7 @@
       "additionalProperties": false
     },
     "JSONObject": {
-      "type": "object",
-      "maxProperties": 32
+      "type": "object"
     },
     "Uuid": {
       "type": "string",
@@ -4166,9 +3467,7 @@
       "format": "date"
     },
     "JsonText": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 524288
+      "type": "string"
     },
     "ContentReference": {
       "type": "object",
@@ -4178,24 +3477,16 @@
       "type": "object",
       "properties": {
         "requestValueBytes": {
-          "type": "integer",
-          "minimum": 1048576,
-          "maximum": 33554432
+          "type": "integer"
         },
         "responseValueBytes": {
-          "type": "integer",
-          "minimum": 1048576,
-          "maximum": 33554432
+          "type": "integer"
         },
         "eventValueBytes": {
-          "type": "integer",
-          "minimum": 1048576,
-          "maximum": 33554432
+          "type": "integer"
         },
         "contentReferenceBytes": {
-          "type": "integer",
-          "minimum": 1048576,
-          "maximum": 268435456
+          "type": "integer"
         },
         "runtimeReported": {
           "type": "boolean"
@@ -4214,24 +3505,16 @@
       "type": "object",
       "properties": {
         "requestValueBytes": {
-          "type": "integer",
-          "minimum": 1048576,
-          "maximum": 33554432
+          "type": "integer"
         },
         "responseValueBytes": {
-          "type": "integer",
-          "minimum": 1048576,
-          "maximum": 33554432
+          "type": "integer"
         },
         "eventValueBytes": {
-          "type": "integer",
-          "minimum": 1048576,
-          "maximum": 33554432
+          "type": "integer"
         },
         "contentReferenceBytes": {
-          "type": "integer",
-          "minimum": 1048576,
-          "maximum": 268435456
+          "type": "integer"
         },
         "runtimeReported": {
           "type": "boolean"

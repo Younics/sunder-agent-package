@@ -48,9 +48,13 @@ internal static class PresentationExceptionPolicy
         if (exception is SunderRpcException rpcException)
         {
             return rpcException.Error.Kind is SunderRpcErrorKind.Domain
+                or SunderRpcErrorKind.PermissionDenied
+                or SunderRpcErrorKind.NotFound
                 or SunderRpcErrorKind.Validation
                 or SunderRpcErrorKind.Cancelled
+                or SunderRpcErrorKind.ResourceExhausted
                 or SunderRpcErrorKind.Unavailable
+                or SunderRpcErrorKind.ProviderFaulted
                 or SunderRpcErrorKind.StaleEndpoint
                 or SunderRpcErrorKind.DeadlineExceeded;
         }

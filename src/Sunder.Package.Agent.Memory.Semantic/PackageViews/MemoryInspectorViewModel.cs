@@ -51,6 +51,7 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
             ?? PresentationOperationObserver.CreateUnreported("Semantic Memory");
         _memoryInspectorService.SessionChanged += OnSessionChanged;
         _memoryInspectorService.SemanticWorkerStatusChanged += OnSemanticWorkerStatusChanged;
+        _memoryInspectorService.ResetRequired += OnResetRequired;
     }
 
     public ObservableCollection<AgentSessionRecord> Sessions { get; } = [];
@@ -405,6 +406,7 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
         _sessionLoadCancellation?.Cancel();
         _memoryInspectorService.SessionChanged -= OnSessionChanged;
         _memoryInspectorService.SemanticWorkerStatusChanged -= OnSemanticWorkerStatusChanged;
+        _memoryInspectorService.ResetRequired -= OnResetRequired;
         _sessionLoadCancellation?.Dispose();
         _sessionLoadCancellation = null;
         _operations.Dispose();
@@ -794,6 +796,5 @@ public sealed class MemoryListItemViewModel(StoredMemoryRecord record, MemorySem
 public sealed class MemoryEvidenceItemViewModel(StoredMemoryEvidenceRecord record)
 {
     public string Text { get; } = string.IsNullOrWhiteSpace(record.EvidenceText) ? "(No evidence text)" : record.EvidenceText;
-
     public string TimestampLabel { get; } = record.CreatedAtUtc.ToLocalTime().ToString("g");
 }

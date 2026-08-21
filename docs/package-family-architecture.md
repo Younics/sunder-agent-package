@@ -51,11 +51,11 @@ It declares a runtime dependency on `sunder.package.agent`. It must not referenc
 
 `packages.json` is the first-party release/capability inventory. Samples are intentionally excluded.
 
-Every runtime family ships as a self-contained six-RID Worker V3 package. Each universal archive aggregates one exact executable target for every supported RID. Runtime starts the selected target as a supervised child process; it does not load an `ISunderRuntimePackageModule`.
+Every runtime family ships as a self-contained six-RID Worker V3 package. Each universal archive combines one exact executable target for every supported RID. Runtime starts the selected target as a supervised child process; it does not load an `ISunderRuntimePackageModule`.
 
 ## Runtime And App Roles
 
-Agent packages with UI split into Worker and App projects around a role-neutral owner Protocol project, then combine exact targets in an Aggregate project. Files, Shell, and Web are Runtime-only Worker plus Aggregate families:
+Every family has one root, unsuffixed canonical Worker/package project with `SunderPackagePrimaryProject=true`. UI-bearing families point `SunderPackageAppProject` at an optional role-isolated App project and may use a role-neutral owner Protocol project. The App is a build-only composition input, not a Worker compile or runtime reference. Files, Shell, and Web are Runtime-only primary Worker families:
 
 | Role | Owns | Must not own |
 | --- | --- | --- |
@@ -122,8 +122,8 @@ Identity and dependencies are authored as assembly attributes. `Sunder.Package.B
 1. Reads compiled metadata.
 2. Infers required SDK capabilities from module calls and attributed APIs.
 3. Generates `sunder-package.json`.
-4. Emits `sunder-dev` after build.
-5. Emits a versioned `.sunderpkg` on publish or `PackSunderPackage`.
+4. Builds the current native Worker leaf and composes canonical `bin/<configuration>/<tfm>/sunder-dev` after a normal primary-project build.
+5. Builds all configured Worker RIDs and emits one universal `.sunderpkg` when `PackSunderPackage` is invoked directly on that same canonical project.
 
 Do not maintain a source manifest or copy SDK assemblies into the package archive. Package activation/reload remains host-owned; Builder builds and publishes artifacts but does not own Runtime activation.
 

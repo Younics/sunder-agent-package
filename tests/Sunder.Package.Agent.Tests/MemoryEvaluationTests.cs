@@ -487,6 +487,12 @@ public sealed class MemoryEvaluationTests
             remove { }
         }
 
+        public event Action? ResetRequired
+        {
+            add { }
+            remove { }
+        }
+
         public IReadOnlyList<AgentSessionRecord> ListSessions() => [_session];
 
         public IReadOnlyList<AgentSessionRecord> ListSessionsForProfile(string requestedProfileId)

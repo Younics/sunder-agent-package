@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Client;
+using ModelContextProtocol.Protocol;
 
 namespace Sunder.Package.Agent.Mcp.Services;
 
@@ -18,9 +19,17 @@ internal interface IMcpClientConnection : IAsyncDisposable
 {
     McpClient? Client { get; }
 
+    bool CanInvokeTools => Client is not null;
+
     Task Completion { get; }
 
     Task<IReadOnlyList<McpClientTool>> ListToolsAsync(CancellationToken cancellationToken);
+
+    ValueTask<CallToolResult> CallToolAsync(
+        string toolName,
+        IReadOnlyDictionary<string, object?> arguments,
+        CancellationToken cancellationToken)
+        => ValueTask.FromException<CallToolResult>(new NotSupportedException("This MCP connection cannot invoke tools."));
 }
 
 internal sealed class McpClientConnectionFactory(
@@ -95,13 +104,13 @@ internal sealed class McpClientConnectionFactory(
             Name = server.DisplayName,
             Endpoint = new Uri(server.EndpointUrl),
             TransportMode = HttpTransportMode.AutoDetect,
-            ConnectionTimeout = ToSdkTimeout(timeoutMilliseconds),
+            ConnectionTimeout = ToDiscoveryTimeout(timeoutMilliseconds),
             AdditionalHeaders = headers.Count == 0 ? null : new Dictionary<string, string>(headers, StringComparer.OrdinalIgnoreCase),
             OAuth = oauthService is null
                 ? null
                 : await oauthService.CreateClientOptionsAsync(server, allowInteractive: false, cancellationToken),
         };
-        var httpClient = new HttpClient { Timeout = ToSdkTimeout(timeoutMilliseconds) };
+        var httpClient = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
         try
         {
             var transport = new HttpClientTransport(options, httpClient, loggerFactory);
@@ -116,21 +125,34 @@ internal sealed class McpClientConnectionFactory(
     }
 
     private static McpClientOptions CreateClientOptions(int? timeoutMilliseconds)
-        => new() { InitializationTimeout = ToSdkTimeout(timeoutMilliseconds) };
+        => new() { InitializationTimeout = ToDiscoveryTimeout(timeoutMilliseconds) };
 
-    private static TimeSpan ToSdkTimeout(int? timeoutMilliseconds)
+    private static TimeSpan ToDiscoveryTimeout(int? timeoutMilliseconds)
         => TimeSpan.FromMilliseconds(timeoutMilliseconds is > 0
-            ? Math.Min(timeoutMilliseconds.Value, McpTimeoutResolver.MaximumToolTimeoutMilliseconds)
+            ? Math.Min(timeoutMilliseconds.Value, McpTimeoutResolver.MaximumDiscoveryTimeoutMilliseconds)
             : McpTimeoutResolver.DefaultDiscoveryTimeoutMilliseconds);
 
     private sealed class SdkMcpClientConnection(McpClient client, HttpClient? ownedHttpClient) : IMcpClientConnection
     {
         public McpClient? Client => client;
 
+        public bool CanInvokeTools => true;
+
         public Task Completion => client.Completion;
 
         public async Task<IReadOnlyList<McpClientTool>> ListToolsAsync(CancellationToken cancellationToken)
             => (await client.ListToolsAsync(cancellationToken: cancellationToken)).ToArray();
+
+        public ValueTask<CallToolResult> CallToolAsync(
+            string toolName,
+            IReadOnlyDictionary<string, object?> arguments,
+            CancellationToken cancellationToken)
+            => client.CallToolAsync(
+                toolName,
+                arguments,
+                progress: null,
+                options: null,
+                cancellationToken: cancellationToken);
 
         public async ValueTask DisposeAsync()
         {

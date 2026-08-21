@@ -22,7 +22,7 @@ internal static class CodexResponsesStreamParser
     {
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var reader = new StreamReader(stream);
-        var lineReader = new BoundedSseLineReader(reader, AgentPayloadLimits.MaxProviderSseLineBytes);
+        var lineReader = new BoundedSseLineReader(reader, OpenAiExternalInputLimits.MaximumSseLineBytes);
         var toolCalls = new CodexStreamingToolCallCollector(options?.AllowMultipleToolCalls == true);
         var modelId = options?.ModelId ?? context.ModelId;
         var currentResponseId = responseId;
@@ -41,7 +41,7 @@ internal static class CodexResponsesStreamParser
             {
                 throw CreateTerminalException(
                     "openai-stream-line-too-large",
-                    $"OpenAI stream line exceeded the {AgentPayloadLimits.MaxProviderSseLineBytes}-byte limit.",
+                    $"OpenAI stream line exceeded the {OpenAiExternalInputLimits.MaximumSseLineBytes}-byte limit.",
                     partialTextCharacters,
                     emittedToolCalls);
             }

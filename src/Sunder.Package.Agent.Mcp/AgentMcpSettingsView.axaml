@@ -231,8 +231,8 @@
                     <StackPanel Spacing="4">
                       <TextBlock Classes="mcp-field-label"
                                  Text="Editor tools" />
-                      <TextBlock Classes="mcp-field-help"
-                                 Text="Start from a local or remote template, then format before saving. Timeout examples are optional milliseconds: discoveryTimeout controls server/tool discovery, and toolTimeout controls individual MCP tool calls. Keep, remove, or adjust them for each server." />
+                       <TextBlock Classes="mcp-field-help"
+                                   Text="Start from a local or remote template, then format before saving. Timeouts are non-negative milliseconds. discoveryTimeout uses a 15s default and 120s maximum; zero uses the default. toolTimeout optionally caps each call at 30 minutes; zero disables that local timer. Without a user or agent-requested limit, execution waits until Stop/cancellation or the global 30-minute run safety limit." />
                     </StackPanel>
                     <WrapPanel Orientation="Horizontal">
                       <Button Content="Local Template"

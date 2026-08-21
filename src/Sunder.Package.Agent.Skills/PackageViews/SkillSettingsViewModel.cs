@@ -20,7 +20,7 @@ public sealed partial class SkillSettingsViewModel : ObservableObject,
     private readonly ISkillManagementGateway _gateway;
     private readonly TimedStatusController _successStatus;
     private readonly IPresentationDispatcher _uiDispatcher;
-    private readonly PresentationTaskScope _tasks = new();
+    private readonly PresentationTaskScope _tasks;
     private readonly LatestRequestCoordinator _requests = new();
     private readonly KeyedAdaptiveListDetailState<string, InstalledSkillItemViewModel> _listDetail;
     private readonly SerializedRefreshLoop _runtimeRefresh;
@@ -36,6 +36,13 @@ public sealed partial class SkillSettingsViewModel : ObservableObject,
         _gateway = gateway;
         _uiDispatcher = PresentationDispatcher.Capture();
         _successStatus = new TimedStatusController(timeProvider, _uiDispatcher);
+        _tasks = new PresentationTaskScope(exception => _uiDispatcher.InvokeAsync(() =>
+        {
+            if (!_disposed)
+            {
+                SetStatus(exception.Message, SkillStatusKind.Error);
+            }
+        }));
         _listDetail = new KeyedAdaptiveListDetailState<string, InstalledSkillItemViewModel>(
             Skills,
             static skill => skill.SkillId,
@@ -222,7 +229,7 @@ public sealed partial class SkillSettingsViewModel : ObservableObject,
                     skill.SkillId,
                     deletedSkillId,
                     StringComparison.OrdinalIgnoreCase)).ToArray());
-            _tasks.Run(_runtimeRefresh.MarkDirty());
+            _tasks.Run(_ => _runtimeRefresh.MarkDirty());
         }
         catch (OperationCanceledException) when (mutation.CancellationToken.IsCancellationRequested)
         {
@@ -418,7 +425,7 @@ public sealed partial class SkillSettingsViewModel : ObservableObject,
     }
 
     private void OnSkillsChanged()
-        => _tasks.Run(_runtimeRefresh.MarkDirty());
+        => _tasks.Run(_ => _runtimeRefresh.MarkDirty());
 
     private void DiscardPendingSkillRefresh()
     {

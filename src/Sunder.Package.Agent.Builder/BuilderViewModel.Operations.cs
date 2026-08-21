@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Runtime.ExceptionServices;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Abstractions;
@@ -6,6 +8,8 @@ namespace Sunder.Package.Agent.Builder;
 
 public sealed partial class BuilderViewModel
 {
+    private static readonly TimeSpan InitializationCancellationDrainTimeout = TimeSpan.FromSeconds(2);
+
     public Task InitializeAsync(CancellationToken cancellationToken = default)
     {
         Task initialization;
@@ -16,7 +20,7 @@ public sealed partial class BuilderViewModel
                 return Task.CompletedTask;
             }
 
-            initialization = _initializationTask ??= InitializeAndReportAsync();
+            initialization = _initializationTask ??= _tasks.Track(_ => InitializeAndReportAsync());
         }
 
         return cancellationToken.CanBeCanceled
@@ -49,7 +53,9 @@ public sealed partial class BuilderViewModel
                         });
                         succeeded = true;
                     }
-                    catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+                    catch (OperationCanceledException exception) when (
+                        _lifetime.IsCancellationRequested
+                        && !PresentationExceptionPolicy.IsFatal(exception))
                     {
                         succeeded = true;
                     }
@@ -86,9 +92,19 @@ public sealed partial class BuilderViewModel
     }
 
     private static bool IsExpectedBuilderInitializationFailure(Exception exception)
-        => !PresentationExceptionPolicy.IsFatal(exception)
-           && (PresentationExceptionPolicy.IsExpectedOperationFailure(exception)
-               || exception is InvalidOperationException or InvalidDataException);
+    {
+        if (PresentationExceptionPolicy.IsFatal(exception))
+        {
+            return false;
+        }
+        if (exception is AggregateException aggregate)
+        {
+            return aggregate.InnerExceptions.Count > 0
+                && aggregate.InnerExceptions.All(IsExpectedBuilderInitializationFailure);
+        }
+        return PresentationExceptionPolicy.IsExpectedOperationFailure(exception)
+            || exception is InvalidOperationException or InvalidDataException;
+    }
 
     private async Task InitializeCoreAsync(CancellationToken cancellationToken)
     {
@@ -103,11 +119,28 @@ public sealed partial class BuilderViewModel
                 Task<IReadOnlyList<BuilderProjectRecord>> projectsTask;
                 try
                 {
-                    workspacesTask = _applicationService.ListWorkspacesAsync(snapshot.CancellationToken);
-                    projectsTask = _applicationService.LoadProjectsAsync(snapshot.CancellationToken);
-                    await Task.WhenAll(workspacesTask, projectsTask)
-                        .WaitAsync(snapshot.CancellationToken)
-                        .ConfigureAwait(false);
+                    workspacesTask = StartInitializationLoad(
+                        () => _applicationService.ListWorkspacesAsync(snapshot.CancellationToken));
+                    projectsTask = StartInitializationLoad(
+                        () => _applicationService.LoadProjectsAsync(snapshot.CancellationToken));
+                    var loading = Task.WhenAll(workspacesTask, projectsTask);
+                    try
+                    {
+                        await loading.WaitAsync(snapshot.CancellationToken).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException exception) when (
+                        snapshot.CancellationToken.IsCancellationRequested
+                        && !PresentationExceptionPolicy.IsFatal(exception))
+                    {
+                        await DrainCanceledInitializationAsync(loading).ConfigureAwait(false);
+                        throw;
+                    }
+                    catch (Exception exception)
+                    {
+                        var failure = GetInitializationFailure(loading, exception);
+                        ExceptionDispatchInfo.Capture(failure).Throw();
+                        throw;
+                    }
                 }
                 catch (OperationCanceledException)
                 {
@@ -119,8 +152,8 @@ public sealed partial class BuilderViewModel
                         "Package Builder initialization failed.",
                         exception);
                 }
-                var workspaces = await workspacesTask.WaitAsync(snapshot.CancellationToken).ConfigureAwait(false);
-                var projects = await projectsTask.WaitAsync(snapshot.CancellationToken).ConfigureAwait(false);
+                var workspaces = await workspacesTask.ConfigureAwait(false);
+                var projects = await projectsTask.ConfigureAwait(false);
                 snapshot.CancellationToken.ThrowIfCancellationRequested();
                 await _uiDispatcher.InvokeAsync(() =>
                 {
@@ -137,9 +170,10 @@ public sealed partial class BuilderViewModel
                     applied = true;
                 });
             }
-            catch (OperationCanceledException) when (
+            catch (OperationCanceledException exception) when (
                 snapshot.CancellationToken.IsCancellationRequested
-                && !cancellationToken.IsCancellationRequested)
+                && !cancellationToken.IsCancellationRequested
+                && !PresentationExceptionPolicy.IsFatal(exception))
             {
             }
             finally
@@ -152,6 +186,77 @@ public sealed partial class BuilderViewModel
             {
                 return;
             }
+        }
+    }
+
+    private static async Task DrainCanceledInitializationAsync(Task loading)
+    {
+        try
+        {
+            await loading.WaitAsync(InitializationCancellationDrainTimeout).ConfigureAwait(false);
+        }
+        catch (TimeoutException) when (!loading.IsCompleted)
+        {
+            _ = ObserveDetachedInitializationAsync(loading);
+        }
+        catch (Exception exception)
+        {
+            var failure = GetInitializationFailure(loading, exception);
+            if (!IsExpectedBuilderInitializationFailure(failure))
+            {
+                ExceptionDispatchInfo.Capture(failure).Throw();
+            }
+        }
+    }
+
+    private static async Task ObserveDetachedInitializationAsync(Task loading)
+    {
+        try
+        {
+            await loading.ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            var failure = GetInitializationFailure(loading, exception);
+            if (PresentationExceptionPolicy.IsExpectedOperationFailure(failure))
+            {
+                return;
+            }
+            if (!PresentationExceptionPolicy.IsFatal(failure))
+            {
+                Trace.TraceError(
+                    $"A detached Package Builder initialization load failed: {failure}");
+                return;
+            }
+
+            ThreadPool.QueueUserWorkItem(
+                static state => ExceptionDispatchInfo.Capture((Exception)state!).Throw(),
+                failure);
+        }
+    }
+
+    private static Exception GetInitializationFailure(Task loading, Exception fallback)
+    {
+        var aggregate = loading.Exception?.Flatten();
+        return aggregate?.InnerExceptions.Count switch
+        {
+            1 => aggregate.InnerExceptions[0],
+            > 1 => aggregate,
+            _ => fallback,
+        };
+    }
+
+    private static Task<T> StartInitializationLoad<T>(Func<Task<T>> load)
+    {
+        try
+        {
+            return load()
+                ?? Task.FromException<T>(new InvalidOperationException(
+                    "A Package Builder initialization load returned a null task."));
+        }
+        catch (Exception exception)
+        {
+            return Task.FromException<T>(exception);
         }
     }
 

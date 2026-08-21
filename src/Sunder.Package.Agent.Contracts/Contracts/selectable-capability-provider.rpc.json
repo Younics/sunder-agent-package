@@ -52,9 +52,7 @@
       "additionalProperties": false
     },
     "TextValue": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 65536
+      "type": "string"
     },
     "AgentRpcIdentity": {
       "type": "object",
@@ -112,9 +110,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentProfileModelBindingRecord"
-      },
-      "minItems": 0,
-      "maxItems": 10000
+      }
     },
     "AgentProfileSelectableCapabilityAssignmentRecord": {
       "type": "object",
@@ -139,9 +135,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentProfileSelectableCapabilityAssignmentRecord"
-      },
-      "minItems": 0,
-      "maxItems": 10000
+      }
     },
     "AgentProfileRecord": {
       "type": "object",
@@ -267,9 +261,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentProfileSelectableCapabilityDescriptor"
-      },
-      "minItems": 0,
-      "maxItems": 10000
+      }
     },
     "AgentRpcChange": {
       "type": "object",
@@ -285,34 +277,24 @@
     },
     "Identifier": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 256
+      "minLength": 1
     },
     "DisplayText": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 8192
+      "type": "string"
     },
     "ContentText": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 900000
+      "type": "string"
     },
     "JsonText": {
       "type": "string",
-      "minLength": 0,
-      "maxLength": 900000,
-      "description": "Bounded opaque JSON text that may be malformed, truncated, or interpreted by an extension-owned schema."
+      "description": "Opaque JSON text that may be malformed, truncated, or interpreted by an extension-owned schema."
     },
     "SortOrder": {
-      "type": "integer",
-      "minimum": -100000,
-      "maximum": 100000
+      "type": "integer"
     },
     "Revision": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 9007199254740991
+      "minimum": 0
     }
   }
 }

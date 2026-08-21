@@ -138,7 +138,7 @@ public sealed partial class ProviderArchitectureTests
             };
             if (string.Equals(vendor, "OpenAI", StringComparison.Ordinal))
             {
-                expectedReferences.Add("Sunder.Package.Agent.Provider.OpenAI.Worker");
+                expectedReferences.Add("Sunder.Package.Agent.Provider.OpenAI");
                 expectedReferences.Add("Sunder.Package.Agent.Provider.OpenAI.App");
             }
             else

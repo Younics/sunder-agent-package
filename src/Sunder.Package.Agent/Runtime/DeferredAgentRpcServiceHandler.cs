@@ -1,22 +1,30 @@
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Runtime;
 
 internal sealed class DeferredAgentRpcServiceHandler(
     string providerId,
-    Func<IServiceProvider, ISunderRpcServiceHandler> createHandler) : ISunderRpcServiceHandler
+    SunderRpcContractDescriptor descriptor,
+    Func<IServiceProvider, ISunderRpcServiceHandler> createHandler)
+    : ISunderRpcServiceHandler, ISunderRpcDeclaredErrorMetadata
 {
     private readonly object _gate = new();
     private readonly CancellationTokenSource _retirement = new();
+    private readonly IReadOnlyDictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>> _declaredErrors =
+        AgentRpcServiceHandler.CreateDeclaredErrorMap(descriptor);
     private ISunderRpcServiceHandler? _handler;
     private readonly TaskCompletionSource<ISunderRpcServiceHandler> _activated =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _retired;
 
     internal bool IsActive => Volatile.Read(ref _retired) == 0
-                              && Volatile.Read(ref _handler) is not null;
+                               && Volatile.Read(ref _handler) is not null;
+
+    public IReadOnlyDictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>> DeclaredErrors
+        => _declaredErrors;
 
     internal void Activate(IServiceProvider services)
     {
@@ -33,6 +41,12 @@ internal sealed class DeferredAgentRpcServiceHandler(
 
             var handler = createHandler(services)
                 ?? throw new InvalidOperationException($"Agent RPC provider '{providerId}' returned no handler.");
+            if (handler is not ISunderRpcDeclaredErrorMetadata metadata
+                || !DeclaredErrorsMatch(_declaredErrors, metadata.DeclaredErrors))
+            {
+                throw new InvalidOperationException(
+                    $"Agent RPC provider '{providerId}' does not implement the declared domain errors for contract '{descriptor.ContractId}'.");
+            }
             Volatile.Write(ref _handler, handler);
             _activated.TrySetResult(handler);
         }
@@ -129,5 +143,32 @@ internal sealed class DeferredAgentRpcServiceHandler(
         {
             // Retirement is already visible; provider cancellation callbacks cannot roll it back.
         }
+    }
+
+    private static bool DeclaredErrorsMatch(
+        IReadOnlyDictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>> expected,
+        IReadOnlyDictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>> actual)
+    {
+        if (expected.Count != actual.Count)
+        {
+            return false;
+        }
+        foreach (var (serviceId, expectedMethods) in expected)
+        {
+            if (!actual.TryGetValue(serviceId, out var actualMethods)
+                || expectedMethods.Count != actualMethods.Count)
+            {
+                return false;
+            }
+            foreach (var (methodId, expectedErrors) in expectedMethods)
+            {
+                if (!actualMethods.TryGetValue(methodId, out var actualErrors)
+                    || !expectedErrors.SequenceEqual(actualErrors, StringComparer.Ordinal))
+                {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 }

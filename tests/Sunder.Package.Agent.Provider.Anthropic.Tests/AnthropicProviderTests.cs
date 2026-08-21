@@ -89,6 +89,131 @@ public sealed class AnthropicProviderTests
     }
 
     [Fact]
+    public async Task StandardRequest_PreservesMcpEnvelopeRefsCombinatorsAndNullableTimeout()
+    {
+        using var schema = JsonDocument.Parse("""
+            {
+              "type": "object",
+              "properties": {
+                "__sunder_mcp_call": {
+                  "type": "object",
+                  "properties": {
+                    "__sunder_mcp_metadata_version": { "type": "string", "const": "sunder.mcp.call/1" },
+                    "arguments": {
+                      "$id": "urn:sunder:mcp:arguments:1",
+                      "$ref": "#/$defs/args",
+                      "$defs": {
+                        "args": {
+                          "oneOf": [
+                            { "type": "object", "properties": { "prompt": { "type": "string" } }, "additionalProperties": false },
+                            { "allOf": [
+                              { "type": "object", "properties": { "path": { "type": "string" } } },
+                              { "type": "object", "properties": { "depth": { "type": "integer" } } }
+                            ], "unevaluatedProperties": false }
+                          ]
+                        }
+                      }
+                    },
+                    "__sunder_expected_timeout_seconds": { "type": ["integer", "null"], "minimum": 1, "maximum": 1800 }
+                  },
+                  "required": ["__sunder_mcp_metadata_version", "arguments"],
+                  "additionalProperties": false
+                }
+              },
+              "required": ["__sunder_mcp_call"],
+              "additionalProperties": false
+            }
+            """);
+        var tool = AIFunctionFactory.CreateDeclaration("mcp_tool", "MCP tool", schema.RootElement);
+        var handler = new CapturingHandler(_ => JsonResponse(TextResponse("Accepted")));
+        var client = CreateChatClient(handler);
+
+        _ = await ReadUpdatesAsync(
+            client,
+            [new ChatMessage(ChatRole.User, "Use the MCP tool.")],
+            new ChatOptions { Tools = [tool] });
+
+        using var request = JsonDocument.Parse(Assert.Single(handler.RequestBodies));
+        var inputSchema = request.RootElement.GetProperty("tools")[0].GetProperty("input_schema");
+        Assert.Equal(["__sunder_mcp_call"], inputSchema.GetProperty("required").EnumerateArray().Select(item => item.GetString()));
+        var envelope = inputSchema.GetProperty("properties").GetProperty("__sunder_mcp_call");
+        Assert.Equal(
+            ["__sunder_mcp_metadata_version", "arguments"],
+            envelope.GetProperty("required").EnumerateArray().Select(item => item.GetString()));
+        var arguments = envelope.GetProperty("properties").GetProperty("arguments");
+        Assert.Equal("#/$defs/args", arguments.GetProperty("$ref").GetString());
+        Assert.Equal(2, arguments.GetProperty("$defs").GetProperty("args").GetProperty("oneOf").GetArrayLength());
+        Assert.Equal(
+            ["integer", "null"],
+            envelope.GetProperty("properties")
+                .GetProperty("__sunder_expected_timeout_seconds")
+                .GetProperty("type")
+                .EnumerateArray()
+                .Select(item => item.GetString()));
+    }
+
+    [Fact]
+    public async Task StandardRequest_McpEnvelopeKeepsRootDefinitionsNestedRefAndResourceIdentity()
+    {
+        using var schema = JsonDocument.Parse("""
+            {
+              "type": "object",
+              "properties": {
+                "__sunder_mcp_call": {
+                  "type": "object",
+                  "properties": {
+                    "__sunder_mcp_metadata_version": { "type": "string", "const": "sunder.mcp.call/1" },
+                    "arguments": {
+                      "$comment": "sunder:mcp-arguments:1",
+                      "allOf": [{
+                        "$id": "https://example.test/mcp/arguments",
+                        "type": "object",
+                        "$defs": {
+                          "name": { "type": "string", "minLength": 2 }
+                        },
+                        "properties": {
+                          "name": { "$ref": "#/$defs/name" },
+                          "count": { "type": "integer", "minimum": 1 }
+                        },
+                        "required": ["name"],
+                        "additionalProperties": false
+                      }]
+                    },
+                    "__sunder_expected_timeout_seconds": { "type": ["integer", "null"], "minimum": 1, "maximum": 1800 }
+                  },
+                  "required": ["__sunder_mcp_metadata_version", "arguments"],
+                  "additionalProperties": false
+                }
+              },
+              "required": ["__sunder_mcp_call"],
+              "additionalProperties": false
+            }
+            """);
+        var tool = AIFunctionFactory.CreateDeclaration("mcp_tool", "MCP tool", schema.RootElement);
+        var handler = new CapturingHandler(_ => JsonResponse(TextResponse("Accepted")));
+        var client = CreateChatClient(handler);
+
+        _ = await ReadUpdatesAsync(
+            client,
+            [new ChatMessage(ChatRole.User, "Use the MCP tool.")],
+            new ChatOptions { Tools = [tool] });
+
+        using var request = JsonDocument.Parse(Assert.Single(handler.RequestBodies));
+        var arguments = request.RootElement.GetProperty("tools")[0]
+            .GetProperty("input_schema")
+            .GetProperty("properties")
+            .GetProperty("__sunder_mcp_call")
+            .GetProperty("properties")
+            .GetProperty("arguments");
+        Assert.Equal("sunder:mcp-arguments:1", arguments.GetProperty("$comment").GetString());
+        var original = arguments.GetProperty("allOf")[0];
+        Assert.Equal("https://example.test/mcp/arguments", original.GetProperty("$id").GetString());
+        Assert.Equal("#/$defs/name", original.GetProperty("properties").GetProperty("name").GetProperty("$ref").GetString());
+        Assert.Equal(2, original.GetProperty("$defs").GetProperty("name").GetProperty("minLength").GetInt32());
+        Assert.True(original.GetProperty("properties").TryGetProperty("count", out _));
+    }
+
+    [Fact]
     public async Task ToolContinuation_RoundTripsSignedThinkingBlockUnchanged()
     {
         var handler = new CapturingHandler(_ => JsonResponse(TextResponse("Continued")));

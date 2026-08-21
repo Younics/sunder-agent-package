@@ -144,6 +144,8 @@ Package projects support two development modes:
 | Inside the private `sunder` workspace | Local source references to `repos/sunder-core` |
 | Standalone public clone | NuGet references to `Sunder.Sdk` and `Sunder.Package.Build` |
 
+Each runtime family has one root, unsuffixed canonical Worker/package project with `SunderPackagePrimaryProject=true`, an optional build-only App selected by `SunderPackageAppProject`, and an optional package-local Protocol project. A normal canonical build composes the current RID at `bin/<configuration>/<tfm>/sunder-dev`; invoke `PackSunderPackage` directly on that same project to build and package all six RIDs. There are no wrapper packaging projects.
+
 GitHub smoke CI and each new release run resolve `Younics/sunder-core` `main` once at workflow start and reuse that full commit SHA for every Core checkout in the run. A recovery rerun of the same release tag instead reuses the Core SHA recorded in preserved release evidence rather than resolving a newer `main`. Land coordinated Core changes on `main` before expecting Agent CI to consume them, and publish the required Core developer-package version before creating an Agent release tag; see [`docs/RELEASES.md`](docs/RELEASES.md).
 
 ## Tests
@@ -156,7 +158,7 @@ dotnet test tests/Sunder.Package.Agent.Provider.OpenAI.Tests/Sunder.Package.Agen
 
 ## Release Tags
 
-`agent/vX.Y.Z` releases `Sunder.Package.Agent.Protocol` and all 15 runtime packages as one family. Six native jobs build every Worker against final locked remote Core packages; Windows and macOS apphosts are signed and verified before Core Runtime lifecycle and metric-budget gates run. Fan-in aggregates only those exact leaves, records the immutable Core SDK tag/package/commit provenance, validates the final archives through Package Format, Runtime lifecycle, and App snapshot activation, publishes immutable versions without moving Registry tags, verifies downloaded bytes, and only then promotes `latest` for stable releases or `preview` for prereleases.
+`agent/vX.Y.Z` releases `Sunder.Package.Agent.Protocol` and all 15 runtime packages as one family. Six native jobs build every Worker against final locked remote Core packages; Windows and macOS apphosts are signed and verified before Core Runtime lifecycle and metric-budget gates run. Prebuilt fan-in composes only those exact signed leaves without rebuilding them, records the immutable Core SDK tag/package/commit provenance, validates the final archives through Package Format, Runtime lifecycle, and App snapshot activation, publishes immutable versions without moving Registry tags, verifies downloaded bytes, and only then promotes `latest` for stable releases or `preview` for prereleases.
 
 Stable releases require `PublicAPI.Unshipped.txt` to contain no API entries. The 2.x baseline belongs to the `Sunder.Package.Agent.Protocol` package and assembly identity. The retained `Sunder.Package.Agent.Contracts.*` source namespaces are types inside that artifact, not a second package. Full operator steps and required repository configuration are in [`docs/RELEASES.md`](docs/RELEASES.md).
 

@@ -10,10 +10,11 @@ namespace Sunder.Package.Agent.Protocol;
 
 public static class AgentRuntimeCatalogRpc
 {
+    private const int WatchCapacity = 256;
     public const string ServiceId = "runtime-catalog";
 
     public static ISunderRpcServiceHandler CreateHandler(IAgentRuntimeCatalog catalog)
-        => AgentRpcServiceHandler.Create()
+        => AgentRpcServiceHandler.Create(AgentRpcContractDescriptors.Get(AgentRpcContractIds.RuntimeCatalog))
             .AddUnary<AgentRpcEmpty, IReadOnlyList<AgentSessionRecord>>(ServiceId, "list-sessions", (_, _, _) => ValueTask.FromResult(catalog.ListSessions()))
             .AddUnary<StringRequest, IReadOnlyList<AgentSessionRecord>>(ServiceId, "list-sessions-for-profile", (_, request, _) => ValueTask.FromResult(catalog.ListSessionsForProfile(request.Value)))
             .AddUnary<StringRequest, IReadOnlyList<AgentSessionRecord>>(ServiceId, "list-sessions-for-workspace", (_, request, _) => ValueTask.FromResult(catalog.ListSessionsForWorkspace(request.Value)))
@@ -52,35 +53,63 @@ public static class AgentRuntimeCatalogRpc
         IAgentRuntimeCatalog catalog,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        var channel = Channel.CreateBounded<AgentRuntimeCatalogEvent>(new BoundedChannelOptions(256)
+        var channel = Channel.CreateBounded<AgentRuntimeCatalogEvent>(new BoundedChannelOptions(WatchCapacity)
         {
             FullMode = BoundedChannelFullMode.DropOldest,
             SingleReader = true,
             SingleWriter = false,
         });
+        var publishSync = new object();
         long sequence = 0;
-        void Session(Guid id) => channel.Writer.TryWrite(new AgentSessionCatalogEvent(Interlocked.Increment(ref sequence), id));
-        void Turn(Guid id, AgentTurnRecord turn) => channel.Writer.TryWrite(new AgentTurnCatalogEvent(Interlocked.Increment(ref sequence), id, turn));
-        void Profile(string id) => channel.Writer.TryWrite(new AgentProfileCatalogEvent(Interlocked.Increment(ref sequence), id));
+        void Publish(Func<long, AgentRuntimeCatalogEvent> create)
+        {
+            lock (publishSync)
+            {
+                channel.Writer.TryWrite(create(++sequence));
+            }
+        }
+        void Session(Guid id) => Publish(next => new AgentSessionCatalogEvent(next, id));
+        void Turn(Guid id, AgentTurnRecord turn) => Publish(next => new AgentTurnCatalogEvent(next, id, turn));
+        void Profile(string id) => Publish(next => new AgentProfileCatalogEvent(next, id));
+        void Reset() => Publish(next => new AgentRuntimeCatalogResetEvent(next));
+        Publish(next => new AgentRuntimeCatalogResetEvent(next));
         catalog.SessionChanged += Session;
         catalog.TurnChanged += Turn;
         catalog.ProfileChanged += Profile;
+        catalog.ResetRequired += Reset;
         try
         {
-            await foreach (var item in channel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false)) yield return item;
+            var expectedSequence = 1L;
+            await foreach (var item in channel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+            {
+                if (item.Sequence != expectedSequence)
+                {
+                    yield return new AgentRuntimeCatalogResetEvent(item.Sequence);
+                }
+                else
+                {
+                    yield return item;
+                }
+                expectedSequence = item.Sequence + 1;
+            }
         }
         finally
         {
             catalog.SessionChanged -= Session;
             catalog.TurnChanged -= Turn;
             catalog.ProfileChanged -= Profile;
+            catalog.ResetRequired -= Reset;
             channel.Writer.TryComplete();
         }
     }
 }
 
-public sealed class AgentRuntimeCatalogRpcClient : IAgentRuntimeCatalog, IAgentTranscriptCatalog, IDisposable
+public sealed class AgentRuntimeCatalogRpcClient :
+    IAgentRuntimeCatalog,
+    IAgentTranscriptCatalog,
+    IDisposable
 {
+    private static readonly TimeSpan WatchRetryDelay = TimeSpan.FromMilliseconds(250);
     private readonly ISunderRpcClient _client;
     private readonly SunderRpcEndpointReference _endpoint;
     private readonly CancellationTokenSource _lifetime = new();
@@ -96,6 +125,7 @@ public sealed class AgentRuntimeCatalogRpcClient : IAgentRuntimeCatalog, IAgentT
     public event Action<Guid>? SessionChanged;
     public event Action<Guid, AgentTurnRecord>? TurnChanged;
     public event Action<string>? ProfileChanged;
+    public event Action? ResetRequired;
 
     public IReadOnlyList<AgentSessionRecord> ListSessions() => Invoke<AgentRpcEmpty, IReadOnlyList<AgentSessionRecord>>("list-sessions", new AgentRpcEmpty());
     public IReadOnlyList<AgentSessionRecord> ListSessionsForProfile(string profileId) => Invoke<StringRequest, IReadOnlyList<AgentSessionRecord>>("list-sessions-for-profile", new(profileId));
@@ -133,26 +163,53 @@ public sealed class AgentRuntimeCatalogRpcClient : IAgentRuntimeCatalog, IAgentT
 
     private async Task WatchAsync()
     {
-        try
+        while (!_lifetime.IsCancellationRequested)
         {
-            await foreach (var item in AgentRpcServiceHandler.SubscribeAsync<AgentRpcEmpty, AgentRuntimeCatalogEvent>(_client, _endpoint, AgentRuntimeCatalogRpc.ServiceId, "watch", new AgentRpcEmpty(), _lifetime.Token).ConfigureAwait(false))
+            try
             {
-                if (item is AgentSessionCatalogEvent session) SessionChanged?.Invoke(session.SessionId);
-                else if (item is AgentTurnCatalogEvent turn) TurnChanged?.Invoke(turn.SessionId, turn.Turn);
-                else if (item is AgentProfileCatalogEvent profile) ProfileChanged?.Invoke(profile.ProfileId);
+                var expectedSequence = 1L;
+                await foreach (var item in AgentRpcServiceHandler.SubscribeAsync<AgentRpcEmpty, AgentRuntimeCatalogEvent>(_client, _endpoint, AgentRuntimeCatalogRpc.ServiceId, "watch", new AgentRpcEmpty(), _lifetime.Token).ConfigureAwait(false))
+                {
+                    var continuityLost = item.Sequence != expectedSequence;
+                    expectedSequence = item.Sequence + 1;
+                    if (continuityLost && item is not AgentRuntimeCatalogResetEvent)
+                    {
+                        ResetRequired?.Invoke();
+                    }
+
+                    if (item is AgentRuntimeCatalogResetEvent) ResetRequired?.Invoke();
+                    else if (item is AgentSessionCatalogEvent session) SessionChanged?.Invoke(session.SessionId);
+                    else if (item is AgentTurnCatalogEvent turn) TurnChanged?.Invoke(turn.SessionId, turn.Turn);
+                    else if (item is AgentProfileCatalogEvent profile) ProfileChanged?.Invoke(profile.ProfileId);
+                }
             }
-        }
-        catch (Exception exception) when (exception is OperationCanceledException or SunderRpcException)
-        {
+            catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception exception) when (exception is OperationCanceledException or SunderRpcException)
+            {
+            }
+
+            try
+            {
+                await Task.Delay(WatchRetryDelay, _lifetime.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+            {
+                return;
+            }
         }
     }
 }
 
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "kind")]
+[JsonDerivedType(typeof(AgentRuntimeCatalogResetEvent), "reset")]
 [JsonDerivedType(typeof(AgentSessionCatalogEvent), "session")]
 [JsonDerivedType(typeof(AgentTurnCatalogEvent), "turn")]
 [JsonDerivedType(typeof(AgentProfileCatalogEvent), "profile")]
 public abstract record AgentRuntimeCatalogEvent(long Sequence);
+internal sealed record AgentRuntimeCatalogResetEvent(long Sequence) : AgentRuntimeCatalogEvent(Sequence);
 public sealed record AgentSessionCatalogEvent(long Sequence, Guid SessionId) : AgentRuntimeCatalogEvent(Sequence);
 public sealed record AgentTurnCatalogEvent(long Sequence, Guid SessionId, AgentTurnRecord Turn) : AgentRuntimeCatalogEvent(Sequence);
 public sealed record AgentProfileCatalogEvent(long Sequence, string ProfileId) : AgentRuntimeCatalogEvent(Sequence);

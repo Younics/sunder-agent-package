@@ -37,7 +37,9 @@ public sealed partial class AgentChatViewModel
     partial void OnAttachmentPreviewImageChanged(Bitmap? value)
         => OnPropertyChanged(nameof(HasAttachmentPreviewImage));
 
-    public async Task AddAttachmentPathsAsync(IReadOnlyList<string> paths)
+    public async Task AddAttachmentPathsAsync(
+        IReadOnlyList<string> paths,
+        CancellationToken cancellationToken = default)
     {
         if (!CanAcceptAttachments())
         {
@@ -48,8 +50,9 @@ public sealed partial class AgentChatViewModel
         {
             try
             {
-                var upload = await _attachmentService!.LoadUploadRequestFromFileAsync(path)
+                var upload = await _attachmentService!.LoadUploadRequestFromFileAsync(path, cancellationToken)
                     .ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
                 var added = false;
                 await InvokeOnUiThreadAsync(() => added = TryAddAttachmentUpload(upload))
                     .ConfigureAwait(false);

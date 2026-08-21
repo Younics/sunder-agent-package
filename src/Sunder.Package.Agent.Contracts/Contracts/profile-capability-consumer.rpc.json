@@ -30,9 +30,7 @@
       "additionalProperties": false
     },
     "TextValue": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 65536
+      "type": "string"
     },
     "AgentProfileCapabilityConsumerDescriptor": {
       "type": "object",
@@ -58,9 +56,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentProfileCapabilityConsumerDescriptor"
-      },
-      "minItems": 0,
-      "maxItems": 10000
+      }
     },
     "ProfileCapabilityConsumerSnapshot": {
       "type": "object",
@@ -84,13 +80,10 @@
     },
     "Identifier": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 256
+      "minLength": 1
     },
     "DisplayText": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 8192
+      "type": "string"
     }
   }
 }

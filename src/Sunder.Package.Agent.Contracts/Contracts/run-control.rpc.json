@@ -274,23 +274,17 @@
       "type": "boolean"
     },
     "SafeInteger": {
-      "type": "integer",
-      "minimum": -9007199254740991,
-      "maximum": 9007199254740991
+      "type": "integer"
     },
     "Timestamp": {
       "type": "string",
       "format": "date-time"
     },
     "TextValue": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 65536
+      "type": "string"
     },
     "AgentTurnItemKind": {
       "type": "string",
-      "minLength": 4,
-      "maxLength": 11,
       "enum": [
         "text",
         "tool-call",
@@ -300,8 +294,6 @@
     },
     "AgentToolExecutionStatus": {
       "type": "string",
-      "minLength": 6,
-      "maxLength": 9,
       "enum": [
         "prepared",
         "started",
@@ -408,14 +400,10 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentTurnItemRecord"
-      },
-      "minItems": 0,
-      "maxItems": 1000
+      }
     },
     "AgentTurnKind": {
       "type": "string",
-      "minLength": 7,
-      "maxLength": 11,
       "enum": [
         "message",
         "tool-call",
@@ -424,8 +412,6 @@
     },
     "AgentMessageRole": {
       "type": "string",
-      "minLength": 4,
-      "maxLength": 9,
       "enum": [
         "system",
         "user",
@@ -487,9 +473,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentTurnRecord"
-      },
-      "minItems": 0,
-      "maxItems": 1000
+      }
     },
     "RunControlRecentTurnsRequest": {
       "type": "object",
@@ -509,8 +493,6 @@
     },
     "AgentPromptContextAuthority": {
       "type": "string",
-      "minLength": 9,
-      "maxLength": 20,
       "enum": [
         "reference",
         "standing-instruction",
@@ -519,8 +501,6 @@
     },
     "AgentContextProvenance": {
       "type": "string",
-      "minLength": 4,
-      "maxLength": 18,
       "enum": [
         "unknown",
         "user",
@@ -561,8 +541,6 @@
     },
     "AgentContextTrust": {
       "type": "string",
-      "minLength": 9,
-      "maxLength": 13,
       "enum": [
         "untrusted",
         "user-provided"
@@ -570,8 +548,6 @@
     },
     "AgentPromptContextUsage": {
       "type": "string",
-      "minLength": 9,
-      "maxLength": 20,
       "enum": [
         "reference",
         "scoped-instruction",
@@ -627,9 +603,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentPromptContextBlock"
-      },
-      "minItems": 0,
-      "maxItems": 4096
+      }
     },
     "AgentBehaviorInstructionContext": {
       "type": "object",
@@ -733,8 +707,6 @@
     },
     "AgentRunActivityKind": {
       "type": "string",
-      "minLength": 4,
-      "maxLength": 10,
       "enum": [
         "thinking",
         "reasoning",
@@ -846,9 +818,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentPromptContextReceiptBlock"
-      },
-      "minItems": 0,
-      "maxItems": 10000
+      }
     },
     "RunControlPromptContextRequest": {
       "type": "object",
@@ -888,14 +858,10 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/TextValue"
-      },
-      "minItems": 0,
-      "maxItems": 4096
+      }
     },
     "AgentToolConcurrencyMode": {
       "type": "string",
-      "minLength": 10,
-      "maxLength": 13,
       "enum": [
         "sequential",
         "parallel-safe"
@@ -903,8 +869,6 @@
     },
     "AgentToolPriority": {
       "type": "string",
-      "minLength": 3,
-      "maxLength": 6,
       "enum": [
         "low",
         "medium",
@@ -913,8 +877,6 @@
     },
     "AgentToolSelectionScope": {
       "type": "string",
-      "minLength": 4,
-      "maxLength": 5,
       "enum": [
         "tool",
         "group"
@@ -994,14 +956,10 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentToolDescriptor"
-      },
-      "minItems": 0,
-      "maxItems": 4096
+      }
     },
     "AgentRunStatus": {
       "type": "string",
-      "minLength": 4,
-      "maxLength": 20,
       "enum": [
         "idle",
         "running",
@@ -1064,8 +1022,6 @@
     },
     "PackageLogLevel": {
       "type": "string",
-      "minLength": 5,
-      "maxLength": 11,
       "enum": [
         "trace",
         "debug",
@@ -1148,8 +1104,6 @@
     },
     "AgentLifecycleEventKind": {
       "type": "string",
-      "minLength": 10,
-      "maxLength": 24,
       "enum": [
         "user-turn-added",
         "assistant-turn-completed",
@@ -1233,8 +1187,6 @@
     },
     "AgentToolCallOutcomeKind": {
       "type": "string",
-      "minLength": 6,
-      "maxLength": 20,
       "enum": [
         "executed",
         "waiting-for-approval",
@@ -1265,9 +1217,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentToolSourceItem"
-      },
-      "minItems": 0,
-      "maxItems": 4096
+      }
     },
     "AgentToolResult": {
       "type": "object",
@@ -1337,9 +1287,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentToolCallRequest"
-      },
-      "minItems": 0,
-      "maxItems": 4096
+      }
     },
     "RunControlToolsRequest": {
       "type": "object",
@@ -1364,9 +1312,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentToolCallOutcome"
-      },
-      "minItems": 0,
-      "maxItems": 4096
+      }
     },
     "AgentWorkspaceBindingRecord": {
       "type": "object",
@@ -1454,6 +1400,16 @@
       ],
       "additionalProperties": false
     },
+    "AgentReasoningEffort": {
+      "type": "string",
+      "enum": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "extra-high"
+      ]
+    },
     "AgentModelVariantDescriptor": {
       "type": "object",
       "properties": {
@@ -1464,7 +1420,7 @@
           "$ref": "#/$defs/DisplayText"
         },
         "reasoningEffort": {
-          "$ref": "#/$defs/AgentToolExecutionStatus"
+          "$ref": "#/$defs/AgentReasoningEffort"
         },
         "variantId": {
           "$ref": "#/$defs/Identifier"
@@ -1509,9 +1465,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentProfileModelBindingRecord"
-      },
-      "minItems": 0,
-      "maxItems": 10000
+      }
     },
     "AgentProfileSelectableCapabilityAssignmentRecord": {
       "type": "object",
@@ -1536,9 +1490,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentProfileSelectableCapabilityAssignmentRecord"
-      },
-      "minItems": 0,
-      "maxItems": 10000
+      }
     },
     "AgentProfileRecord": {
       "type": "object",
@@ -1649,8 +1601,6 @@
     },
     "AgentSessionState": {
       "type": "string",
-      "minLength": 6,
-      "maxLength": 11,
       "enum": [
         "active",
         "interrupted",
@@ -1753,9 +1703,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentWorkspaceDocumentRecord"
-      },
-      "minItems": 0,
-      "maxItems": 10000
+      }
     },
     "AgentWorkspacePathRecord": {
       "type": "object",
@@ -1797,9 +1745,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentWorkspacePathRecord"
-      },
-      "minItems": 0,
-      "maxItems": 10000
+      }
     },
     "AgentWorkspaceRecord": {
       "type": "object",
@@ -1921,8 +1867,6 @@
     },
     "AgentBehaviorLoopCompletionKind": {
       "type": "string",
-      "minLength": 6,
-      "maxLength": 20,
       "enum": [
         "completed",
         "failed",
@@ -2045,9 +1989,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentChatContent"
-      },
-      "minItems": 0,
-      "maxItems": 4096
+      }
     },
     "AgentChatMessage": {
       "type": "object",
@@ -2075,9 +2017,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentChatMessage"
-      },
-      "minItems": 0,
-      "maxItems": 4096
+      }
     },
     "ChatOptionValue": {
       "type": "number",
@@ -2107,9 +2047,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentChatTool"
-      },
-      "minItems": 0,
-      "maxItems": 4096
+      }
     },
     "AgentChatOptions": {
       "type": "object",
@@ -2201,39 +2139,28 @@
     },
     "Identifier": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 256
+      "minLength": 1
     },
     "VersionText": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 256
+      "minLength": 1
     },
     "MediaType": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 256
+      "minLength": 1
     },
     "PathText": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 4096
+      "type": "string"
     },
     "DisplayText": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 8192
+      "type": "string"
     },
     "ContentText": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 900000
+      "type": "string"
     },
     "JsonText": {
       "type": "string",
-      "minLength": 0,
-      "maxLength": 900000,
-      "description": "Bounded opaque JSON text that may be malformed, truncated, or interpreted by an extension-owned schema."
+      "description": "Opaque JSON text that may be malformed, truncated, or interpreted by an extension-owned schema."
     },
     "Sha256Text": {
       "type": "string",
@@ -2246,13 +2173,11 @@
     },
     "InlineContinuationBytes": {
       "type": "string",
-      "contentEncoding": "base64",
-      "maxDecodedBytes": 65536
+      "contentEncoding": "base64"
     },
     "JSON": {},
     "JSONObject": {
-      "type": "object",
-      "maxProperties": 256
+      "type": "object"
     },
     "PageSize": {
       "type": "integer",
@@ -2261,38 +2186,30 @@
     },
     "TopK": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 100000
+      "minimum": 0
     },
     "TokenCount": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 2147483647
+      "minimum": 0
     },
     "SortOrder": {
-      "type": "integer",
-      "minimum": -100000,
-      "maximum": 100000
+      "type": "integer"
     },
     "CollectionIndex": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 100000
+      "minimum": 0
     },
     "Revision": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 9007199254740991
+      "minimum": 0
     },
     "ElapsedMilliseconds": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 31536000000
+      "minimum": 0
     },
     "Count": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 9007199254740991
+      "minimum": 0
     },
     "JsonValues": {
       "type": "object",
@@ -2301,11 +2218,8 @@
       },
       "propertyNames": {
         "type": "string",
-        "minLength": 1,
-        "maxLength": 128
-      },
-      "minProperties": 0,
-      "maxProperties": 256
+        "minLength": 1
+      }
     },
     "AgentChatUpdateEvent": {
       "type": "object",
@@ -2327,8 +2241,6 @@
         },
         "kind": {
           "type": "string",
-          "minLength": 6,
-          "maxLength": 6,
           "const": "update"
         },
         "messageId": {
@@ -2366,8 +2278,6 @@
         },
         "kind": {
           "type": "string",
-          "minLength": 5,
-          "maxLength": 5,
           "const": "error"
         }
       },
@@ -2382,8 +2292,6 @@
     },
     "ChatReasoningEffort": {
       "type": "string",
-      "minLength": 3,
-      "maxLength": 10,
       "enum": [
         "none",
         "low",
@@ -2394,8 +2302,6 @@
     },
     "AgentChatProviderFailureKind": {
       "type": "string",
-      "minLength": 7,
-      "maxLength": 23,
       "enum": [
         "unknown",
         "context-window-exceeded"

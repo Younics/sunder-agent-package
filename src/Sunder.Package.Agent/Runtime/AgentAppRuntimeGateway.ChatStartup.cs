@@ -1,3 +1,5 @@
+using Sunder.Package.Agent.Contracts.Models;
+
 namespace Sunder.Package.Agent.Runtime;
 
 internal sealed partial class AgentAppRuntimeGateway
@@ -14,6 +16,7 @@ internal sealed partial class AgentAppRuntimeGateway
             generation = ++_chatSnapshotLoadGeneration;
             _pendingChatSnapshotRequest = null;
             _pendingChatSnapshot = null;
+            _chatSnapshotLoadPending = true;
         }
         PauseObservingChanges();
 
@@ -25,7 +28,6 @@ internal sealed partial class AgentAppRuntimeGateway
                 cancellationToken).ConfigureAwait(false);
             lock (_observationLock)
             {
-                _runtimeInstanceId = snapshot.RuntimeInstanceId;
                 if (generation == _chatSnapshotLoadGeneration)
                 {
                     _pendingChatSnapshotRequest = request;
@@ -43,6 +45,7 @@ internal sealed partial class AgentAppRuntimeGateway
                 {
                     _pendingChatSnapshotRequest = null;
                     _pendingChatSnapshot = null;
+                    _chatSnapshotLoadPending = false;
                     shouldResume = true;
                 }
             }
@@ -65,6 +68,7 @@ internal sealed partial class AgentAppRuntimeGateway
     public void CompleteChatSnapshot(AgentChatSnapshotProjection snapshot, bool applied)
     {
         var shouldResume = false;
+        var authoritativeCachesInvalidated = false;
         lock (_observationLock)
         {
             if (!ReferenceEquals(_pendingChatSnapshot, snapshot))
@@ -74,11 +78,16 @@ internal sealed partial class AgentAppRuntimeGateway
 
             if (applied)
             {
-                ApplyChatSnapshotCache(snapshot);
+                var runtimeChanged = HasRuntimeInstanceChanged(
+                    _runtimeInstanceId,
+                    snapshot.RuntimeInstanceId);
+                AdoptRuntimeInstance(snapshot.RuntimeInstanceId);
+                authoritativeCachesInvalidated = ApplyChatSnapshotCache(snapshot, runtimeChanged);
                 _activeChatSnapshotRequest = _pendingChatSnapshotRequest;
             }
             _pendingChatSnapshotRequest = null;
             _pendingChatSnapshot = null;
+            _chatSnapshotLoadPending = false;
             shouldResume = true;
         }
 
@@ -86,22 +95,39 @@ internal sealed partial class AgentAppRuntimeGateway
         {
             StartObservingChanges(ChangeObservationStartReason.HealthySnapshotHandoff);
         }
+        if (authoritativeCachesInvalidated)
+        {
+            RaiseAuthoritativeProjectionsChanged();
+        }
     }
 
-    private void ApplyChatSnapshotCache(AgentChatSnapshotProjection snapshot)
+    private bool ApplyChatSnapshotCache(
+        AgentChatSnapshotProjection snapshot,
+        bool runtimeChanged)
     {
         lock (_cacheLock)
         {
+            var authoritativeCachesInvalidated = runtimeChanged || snapshot.Revision > _revision;
+            if (authoritativeCachesInvalidated)
+            {
+                _dashboard = null;
+                _dashboardLoad = null;
+                _globalPermissions = null;
+                _globalPermissionRevision = runtimeChanged
+                    ? -1
+                    : Math.Max(_globalPermissionRevision, snapshot.Revision);
+                _globalPermissionGeneration++;
+                _catalogSnapshot = null;
+                _catalogGeneration++;
+                _catalogs.Clear();
+            }
             _workspaceSessions.Clear();
             _knownSessions.Clear();
-            _dashboard = new AgentDashboardProjection(
-                snapshot.Revision,
-                snapshot.Profiles,
-                snapshot.Workspaces,
-                snapshot.WorkspaceBindings);
-            var retainedStreamingTurns = _knownTurns.Values
-                .Where(turn => turn.IsStreaming)
-                .ToArray();
+            var retainedStreamingTurns = runtimeChanged
+                ? Array.Empty<AgentTurnRecord>()
+                : _knownTurns.Values
+                    .Where(turn => turn.IsStreaming)
+                    .ToArray();
             _knownTurns.Clear();
             foreach (var turn in retainedStreamingTurns)
             {
@@ -120,7 +146,33 @@ internal sealed partial class AgentAppRuntimeGateway
             {
                 CacheTurnCore(turn);
             }
-            _revision = Math.Max(_revision, snapshot.Revision);
+            _revision = runtimeChanged
+                ? snapshot.Revision
+                : Math.Max(_revision, snapshot.Revision);
+            return authoritativeCachesInvalidated;
+        }
+    }
+
+    private static bool HasRuntimeInstanceChanged(
+        string? current,
+        string? incoming)
+    {
+        if (string.IsNullOrWhiteSpace(incoming))
+        {
+            return false;
+        }
+        if (string.IsNullOrWhiteSpace(current))
+        {
+            return true;
+        }
+        return !string.Equals(current, incoming, StringComparison.Ordinal);
+    }
+
+    private void AdoptRuntimeInstance(string? runtimeInstanceId)
+    {
+        if (!string.IsNullOrWhiteSpace(runtimeInstanceId))
+        {
+            _runtimeInstanceId = runtimeInstanceId;
         }
     }
 }

@@ -24,7 +24,7 @@
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Memory.Semantic\Sunder.Package.Agent.Memory.Semantic.csproj" />
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Memory.Semantic\App\Sunder.Package.Agent.Memory.Semantic.App.csproj" />
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Memory.Semantic\Protocol\Sunder.Package.Agent.Memory.Semantic.Protocol.csproj" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Mcp\Worker\Sunder.Package.Agent.Mcp.Worker.csproj" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Mcp\Sunder.Package.Agent.Mcp.csproj" />
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Mcp\App\Sunder.Package.Agent.Mcp.App.csproj" />
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Skills\Sunder.Package.Agent.Skills.csproj"
                       Aliases="global,SkillsWorker" />
@@ -44,7 +44,7 @@
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.LMStudio\Sunder.Package.Agent.Provider.LMStudio.csproj"
                       Aliases="global,LMStudioWorker" />
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.LMStudio\App\Sunder.Package.Agent.Provider.LMStudio.App.csproj" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.OpenAI\Worker\Sunder.Package.Agent.Provider.OpenAI.Worker.csproj"
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.OpenAI\Sunder.Package.Agent.Provider.OpenAI.csproj"
                       Aliases="global,OpenAiWorker" />
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.OpenAI\App\Sunder.Package.Agent.Provider.OpenAI.App.csproj" />
   </ItemGroup>

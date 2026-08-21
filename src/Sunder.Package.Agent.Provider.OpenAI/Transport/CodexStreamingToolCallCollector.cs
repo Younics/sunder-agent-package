@@ -130,9 +130,9 @@ internal sealed class CodexStreamingToolCallCollector(bool allowMultipleToolCall
             }
 
             ArgumentBytes = checked(ArgumentBytes + Encoding.UTF8.GetByteCount(value));
-            if (ArgumentBytes > AgentPayloadLimits.MaxStreamedToolArgumentBytes)
+            if (ArgumentBytes > OpenAiExternalInputLimits.MaximumStreamedToolArgumentBytes)
             {
-                throw Malformed($"OpenAI streamed tool arguments exceeding the {AgentPayloadLimits.MaxStreamedToolArgumentBytes}-byte limit.");
+                throw Malformed($"OpenAI streamed tool arguments exceeding the {OpenAiExternalInputLimits.MaximumStreamedToolArgumentBytes}-byte limit.");
             }
 
             Arguments.Append(value);

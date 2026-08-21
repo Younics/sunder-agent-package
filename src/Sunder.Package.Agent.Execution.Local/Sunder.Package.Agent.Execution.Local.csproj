@@ -4,6 +4,8 @@
     <SunderPackageFamilyId>sunder.package.agent.execution.local</SunderPackageFamilyId>
     <SunderPackageRole>worker</SunderPackageRole>
     <SunderPackageProject>true</SunderPackageProject>
+    <SunderPackagePrimaryProject>true</SunderPackagePrimaryProject>
+    <SunderPackageAppProject>App\LocalApp.csproj</SunderPackageAppProject>
     <SunderSdkWorkerReference>true</SunderSdkWorkerReference>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <OutputType>Exe</OutputType>
@@ -23,13 +25,11 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Remove="Aggregate\**\*" />
     <Compile Remove="App\**\*" />
     <Compile Remove="Protocol\**\*" />
     <Compile Remove="LocalExecutionSettingsView.axaml.cs" />
     <Compile Remove="LocalExecutionSettingsViewModel.cs" />
     <Compile Remove="LocalShellRowViewModel.cs" />
-    <None Remove="Aggregate\**\*" />
     <None Remove="App\**\*" />
     <None Remove="Protocol\**\*" />
   </ItemGroup>
@@ -37,13 +37,13 @@
   <ItemGroup>
     <SunderContractBundle Include="Protocol\Contracts\local-execution-presentation.rpc.json"
                           ContractId="sunder.package.agent.execution.local.presentation"
-                           Version="2.0.0"
+                            Version="1.0.0"
                           DescriptorPath="contracts/local-execution-presentation.rpc.json"
                           Exposure="package" />
     <SunderRpcProvider Include="local.presentation"
                        Role="runtime"
                        ContractId="sunder.package.agent.execution.local.presentation"
-                       ContractVersion="2.0.0"
+                        ContractVersion="1.0.0"
                        Audience="owner" />
     <SunderPackageTarget Include="runtime/$(RuntimeIdentifier)"
                          Role="runtime"

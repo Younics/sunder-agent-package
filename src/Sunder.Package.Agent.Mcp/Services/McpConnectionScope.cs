@@ -1,4 +1,5 @@
 using ModelContextProtocol.Client;
+using ModelContextProtocol.Protocol;
 
 namespace Sunder.Package.Agent.Mcp.Services;
 
@@ -32,11 +33,17 @@ internal readonly record struct McpConnectionScope(string ScopeId)
     }
 }
 
-internal sealed class McpClientInvocationLease(McpClient? client, Action release) : IAsyncDisposable
+internal sealed class McpClientInvocationLease(IMcpClientConnection connection, Action release) : IAsyncDisposable
 {
     private Action? _release = release;
 
-    public McpClient? Client { get; } = client;
+    public bool CanInvokeTools => connection.CanInvokeTools;
+
+    public ValueTask<CallToolResult> CallToolAsync(
+        string toolName,
+        IReadOnlyDictionary<string, object?> arguments,
+        CancellationToken cancellationToken)
+        => connection.CallToolAsync(toolName, arguments, cancellationToken);
 
     public ValueTask DisposeAsync()
     {

@@ -312,7 +312,7 @@ public sealed class AgentPermissionStoreTests
         var claim = store.TryClaimPendingPermissionRequest(session.SessionId, "request-1");
         var waitingRun = Assert.IsType<AgentDurableRunRecord>(store.GetRun(run.Key.RunId));
         Assert.NotNull(store.ResumeClaimedPermissionRequest(claim.Request!, waitingRun.Epoch));
-        Assert.True(store.MarkClaimedPermissionExecutionStarted(
+        Assert.True(store.CommitClaimedPermissionApproval(
             session.SessionId,
             "request-1",
             claim.Request!.ClaimToken!));

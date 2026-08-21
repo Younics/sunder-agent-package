@@ -1,9 +1,13 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using ModelContextProtocol;
 using ModelContextProtocol.Client;
+using ModelContextProtocol.Protocol;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Mcp;
 using Sunder.Package.Agent.Mcp.Runtime;
@@ -42,6 +46,8 @@ public sealed class McpRefactorTests
     [Fact]
     public void ToolIdentity_UsesStableServerIdAndRoundTripsUnambiguousSegments()
     {
+        Assert.Equal("m1_2_memi", McpToolIdentity.CreateStable("a", "b"));
+
         var first = McpToolIdentity.CreateStable("server_a/1", "tool_with_prefix__segment-9");
         var renamed = McpToolIdentity.CreateStable("server_a/1", "tool_with_prefix__segment-9");
         var second = McpToolIdentity.CreateStable("server_a/10", "tool_with_prefix__segment-9");
@@ -186,7 +192,949 @@ public sealed class McpRefactorTests
 
         Assert.True(result.IsError);
         Assert.Equal(McpToolIdentity.CreateStable("one", "run"), result.ToolId);
+        Assert.Equal("MCP: foo: Run is unavailable.", result.Summary);
         Assert.Equal("mcp-server-unavailable", result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task ToolExecutionSummary_LongServerDisplayRetainsToolName()
+    {
+        var context = new TestPackageContext();
+        var catalog = new McpServerCatalogService(context);
+        var longDisplayName = new string('s', 52) + "\U0001F600" + new string('s', 202);
+        var server = CreateServer("one", "foo") with { DisplayName = longDisplayName };
+        await catalog.SaveServerAsync(server, Empty, Empty);
+        await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance, new FakeConnectionFactory());
+        var source = new McpToolSource(catalog, manager);
+
+        var result = await source.ExecuteAsync(
+            new AgentToolExecutionContext(Guid.NewGuid()),
+            new AgentToolRequest(McpToolIdentity.CreateStable("one", "run"), "{}"));
+
+        Assert.True(result.IsError);
+        Assert.StartsWith("MCP: ", result.Summary, StringComparison.Ordinal);
+        Assert.Contains(": Run is unavailable.", result.Summary, StringComparison.Ordinal);
+        _ = new UTF8Encoding(false, true).GetBytes(result.Summary);
+    }
+
+    [Fact]
+    public async Task ToolExecution_PreservesStructuredResultBeyondFormerByteCap()
+    {
+        const int formerMaximumBytes = 4 * 1024 * 1024;
+        var payload = new string('x', formerMaximumBytes + 1);
+        var context = new TestPackageContext();
+        var catalog = new McpServerCatalogService(context);
+        await catalog.SaveServerAsync(CreateServer("one", "stitch"), Empty, Empty);
+        var factory = new InvokableConnectionFactory((_, _, _) =>
+            ValueTask.FromResult(new CallToolResult
+            {
+                StructuredContent = JsonSerializer.SerializeToElement(new { payload }),
+            }));
+        await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance, factory);
+        var source = new McpToolSource(catalog, manager);
+
+        var result = await source.ExecuteAsync(
+            new AgentToolExecutionContext(Guid.NewGuid()),
+            new AgentToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"));
+
+        Assert.False(result.WasTruncated);
+        Assert.NotNull(result.Content);
+        Assert.NotNull(result.StructuredPayloadJson);
+        Assert.True(Encoding.UTF8.GetByteCount(result.StructuredPayloadJson) > formerMaximumBytes);
+        using var serialized = JsonDocument.Parse(result.StructuredPayloadJson);
+        Assert.Equal(payload.Length, serialized.RootElement.GetProperty("payload").GetString()!.Length);
+    }
+
+    [Fact]
+    public async Task ToolExecution_PreservesAllContentBlocksBeyondFormerItemCap()
+    {
+        const int formerMaximumItems = 1024;
+        var content = Enumerable.Range(0, formerMaximumItems + 1)
+            .Select(index => (ContentBlock)new TextContentBlock { Text = $"item-{index}" })
+            .ToList();
+        var context = new TestPackageContext();
+        var catalog = new McpServerCatalogService(context);
+        await catalog.SaveServerAsync(CreateServer("one", "stitch"), Empty, Empty);
+        var factory = new InvokableConnectionFactory((_, _, _) =>
+            ValueTask.FromResult(new CallToolResult { Content = content }));
+        await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance, factory);
+        var source = new McpToolSource(catalog, manager);
+
+        var result = await source.ExecuteAsync(
+            new AgentToolExecutionContext(Guid.NewGuid()),
+            new AgentToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"));
+
+        Assert.False(result.WasTruncated);
+        Assert.NotNull(result.Content);
+        using var serialized = JsonDocument.Parse(result.Content);
+        Assert.Equal(content.Count, serialized.RootElement.GetArrayLength());
+        Assert.Equal("item-1024", serialized.RootElement[formerMaximumItems].GetProperty("text").GetString());
+    }
+
+    [Fact]
+    public void ToolTimeoutMetadata_UsesFlatMetadataOnlyForAClosedDirectObject()
+    {
+        var originalSchema = JsonSerializer.SerializeToElement(new
+        {
+            type = "object",
+            properties = new
+            {
+                prompt = new { type = "string" },
+            },
+            additionalProperties = false,
+        });
+
+        var augmented = McpToolTimeoutMetadata.AugmentSchema(originalSchema);
+
+        Assert.Equal(McpToolArgumentSchemaMode.Flat, augmented.Mode);
+        Assert.False(originalSchema.GetProperty("properties").TryGetProperty(McpToolTimeoutMetadata.MetadataMarkerPropertyName, out _));
+        Assert.False(originalSchema.GetProperty("properties").TryGetProperty(McpToolTimeoutMetadata.TimeoutPropertyName, out _));
+        var properties = augmented.Schema.GetProperty("properties");
+        var timeoutSchema = properties.GetProperty(McpToolTimeoutMetadata.TimeoutPropertyName);
+        Assert.Equal(["integer", "null"], timeoutSchema.GetProperty("type").EnumerateArray().Select(item => item.GetString()));
+        Assert.Equal(1, timeoutSchema.GetProperty("minimum").GetInt32());
+        Assert.Equal(1800, timeoutSchema.GetProperty("maximum").GetInt32());
+        Assert.Contains("Sunder-only", timeoutSchema.GetProperty("description").GetString(), StringComparison.Ordinal);
+        Assert.Contains(
+            McpToolTimeoutMetadata.MetadataMarkerPropertyName,
+            augmented.Schema.GetProperty("required").EnumerateArray().Select(item => item.GetString()));
+
+        Assert.True(AgentToolArgumentObject.TryParse(
+            JsonSerializer.Serialize(new Dictionary<string, object?>
+            {
+                ["prompt"] = "Build a dashboard",
+                [McpToolTimeoutMetadata.MetadataMarkerPropertyName] = McpToolTimeoutMetadata.MetadataMarkerValue,
+                [McpToolTimeoutMetadata.TimeoutPropertyName] = 90,
+            }),
+            out var parsedArguments,
+            out _));
+        Assert.True(McpToolTimeoutMetadata.TryExtract(
+            parsedArguments!,
+            out var forwardedArguments,
+            out var timeoutSeconds,
+            out _));
+        Assert.Equal(90, timeoutSeconds);
+        Assert.Equal("Build a dashboard", Assert.IsType<JsonElement>(forwardedArguments["prompt"]).GetString());
+        Assert.DoesNotContain(McpToolTimeoutMetadata.MetadataMarkerPropertyName, forwardedArguments.Keys);
+        Assert.DoesNotContain(McpToolTimeoutMetadata.TimeoutPropertyName, forwardedArguments.Keys);
+    }
+
+    [Theory]
+    [InlineData("""{"type":"object","properties":{"name":{"type":"string"}}}""")]
+    [InlineData("""{"type":"object","properties":{},"patternProperties":{"^x-":{"type":"string"}},"additionalProperties":false}""")]
+    [InlineData("""{"type":"object","properties":{},"propertyNames":{"pattern":"^[a-z]+$"},"additionalProperties":false}""")]
+    [InlineData("""{"type":"object","properties":{"__sunder_mcp_metadata_version":{"type":"string"}},"additionalProperties":false}""")]
+    [InlineData("""{"type":"object","properties":{},"required":["__sunder_expected_timeout_seconds"],"additionalProperties":false}""")]
+    [InlineData("""{"type":"object","properties":{"__sunder_mcp_call":{"type":"string"}},"additionalProperties":false}""")]
+    [InlineData("""{"type":"object","properties":{},"required":["__sunder_mcp_call"],"additionalProperties":false}""")]
+    [InlineData("""{"type":"object","$defs":{"name":{"type":"string"}},"properties":{"name":{"$ref":"#/$defs/name"}},"additionalProperties":false}""")]
+    [InlineData("""{"$id":"https://example.test/args","type":"object","properties":{"name":{"type":"string"}},"additionalProperties":false}""")]
+    [InlineData("""{"$ref":"#/$defs/args","$defs":{"args":{"type":"object","properties":{"name":{"type":"string"}},"additionalProperties":false}}}""")]
+    [InlineData("""{"oneOf":[{"type":"object","properties":{"a":{"type":"string"}},"additionalProperties":false},{"type":"object","properties":{"b":{"type":"integer"}},"additionalProperties":false}]}""")]
+    [InlineData("""{"allOf":[{"type":"object","properties":{"a":{"type":"string"}}},{"type":"object","properties":{"b":{"type":"integer"}}}],"unevaluatedProperties":false}""")]
+    public void ToolTimeoutMetadata_UsesEnvelopeWhenFlatOwnershipCannotBeProven(string schemaJson)
+    {
+        using var document = JsonDocument.Parse(schemaJson);
+        var originalSchema = document.RootElement.Clone();
+
+        var augmented = McpToolTimeoutMetadata.AugmentSchema(originalSchema);
+
+        Assert.Equal(McpToolArgumentSchemaMode.Envelope, augmented.Mode);
+        var envelope = augmented.Schema
+            .GetProperty("properties")
+            .GetProperty(McpToolTimeoutMetadata.EnvelopePropertyName);
+        Assert.Equal(
+            [McpToolTimeoutMetadata.MetadataMarkerPropertyName, McpToolTimeoutMetadata.EnvelopeArgumentsPropertyName],
+            envelope.GetProperty("required").EnumerateArray().Select(item => item.GetString()));
+        Assert.Equal(
+            McpToolTimeoutMetadata.MetadataMarkerValue,
+            envelope.GetProperty("properties")
+                .GetProperty(McpToolTimeoutMetadata.MetadataMarkerPropertyName)
+                .GetProperty("const")
+                .GetString());
+        Assert.Equal(schemaJson, originalSchema.GetRawText());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ToolTimeoutMetadata_FlatTreatsOmittedOrNullTimeoutAsNoLimit(bool includeNullTimeout)
+    {
+        var arguments = new Dictionary<string, object?>
+        {
+            ["prompt"] = "Build a dashboard",
+            [McpToolTimeoutMetadata.MetadataMarkerPropertyName] = McpToolTimeoutMetadata.MetadataMarkerValue,
+        };
+        if (includeNullTimeout)
+        {
+            arguments[McpToolTimeoutMetadata.TimeoutPropertyName] = null;
+        }
+        Assert.True(AgentToolArgumentObject.TryParse(
+            JsonSerializer.Serialize(arguments),
+            out var parsedArguments,
+            out _));
+
+        Assert.True(McpToolTimeoutMetadata.TryExtract(
+            parsedArguments!,
+            out var forwardedArguments,
+            out var timeoutSeconds,
+            out _));
+
+        Assert.Null(timeoutSeconds);
+        Assert.Contains("prompt", forwardedArguments.Keys);
+        Assert.DoesNotContain(McpToolTimeoutMetadata.MetadataMarkerPropertyName, forwardedArguments.Keys);
+        Assert.DoesNotContain(McpToolTimeoutMetadata.TimeoutPropertyName, forwardedArguments.Keys);
+    }
+
+    [Fact]
+    public void ToolTimeoutMetadata_EnvelopePreservesRootRefAndClosedCombinators()
+    {
+        using var document = JsonDocument.Parse("""
+            {
+              "$ref": "#/$defs/args",
+              "$defs": {
+                "args": {
+                  "oneOf": [
+                    { "type": "object", "properties": { "prompt": { "type": "string" } }, "additionalProperties": false },
+                    { "allOf": [
+                      { "type": "object", "properties": { "path": { "type": "string" } } },
+                      { "type": "object", "properties": { "depth": { "type": "integer" } } }
+                    ], "unevaluatedProperties": false }
+                  ]
+                }
+              }
+            }
+            """);
+
+        var augmented = McpToolTimeoutMetadata.AugmentSchema(document.RootElement);
+        var argumentsSchema = augmented.Schema
+            .GetProperty("properties")
+            .GetProperty(McpToolTimeoutMetadata.EnvelopePropertyName)
+            .GetProperty("properties")
+            .GetProperty(McpToolTimeoutMetadata.EnvelopeArgumentsPropertyName);
+
+        Assert.Equal("#/$defs/args", argumentsSchema.GetProperty("$ref").GetString());
+        Assert.Equal("urn:sunder:mcp:arguments:1", argumentsSchema.GetProperty("$id").GetString());
+        Assert.Equal(2, argumentsSchema.GetProperty("$defs").GetProperty("args").GetProperty("oneOf").GetArrayLength());
+    }
+
+    [Fact]
+    public void ToolTimeoutMetadata_EnvelopePreservesAnExistingSchemaResourceIdentity()
+    {
+        using var document = JsonDocument.Parse("""
+            {
+              "$id": "https://example.test/mcp-arguments",
+              "$ref": "#/$defs/args",
+              "$defs": {
+                "args": { "type": "object", "properties": { "prompt": { "type": "string" } } }
+              }
+            }
+            """);
+
+        var augmented = McpToolTimeoutMetadata.AugmentSchema(document.RootElement);
+        var embedded = augmented.Schema
+            .GetProperty("properties")
+            .GetProperty(McpToolTimeoutMetadata.EnvelopePropertyName)
+            .GetProperty("properties")
+            .GetProperty(McpToolTimeoutMetadata.EnvelopeArgumentsPropertyName);
+
+        Assert.Equal("sunder:mcp-arguments:1", embedded.GetProperty("$comment").GetString());
+        var originalResource = embedded.GetProperty("allOf")[0];
+        Assert.Equal("https://example.test/mcp-arguments", originalResource.GetProperty("$id").GetString());
+        Assert.Equal("#/$defs/args", originalResource.GetProperty("$ref").GetString());
+    }
+
+    [Fact]
+    public void ToolTimeoutMetadata_EnvelopeKeepsReservedServerArgumentsAndUnwrapsNullAsOmitted()
+    {
+        Assert.True(AgentToolArgumentObject.TryParse(
+            JsonSerializer.Serialize(new Dictionary<string, object?>
+            {
+                [McpToolTimeoutMetadata.EnvelopePropertyName] = new Dictionary<string, object?>
+                {
+                    [McpToolTimeoutMetadata.MetadataMarkerPropertyName] = McpToolTimeoutMetadata.MetadataMarkerValue,
+                    [McpToolTimeoutMetadata.EnvelopeArgumentsPropertyName] = new Dictionary<string, object?>
+                    {
+                        [McpToolTimeoutMetadata.TimeoutPropertyName] = "server-owned-value",
+                        ["prompt"] = "Build a dashboard",
+                    },
+                    [McpToolTimeoutMetadata.TimeoutPropertyName] = null,
+                },
+            }),
+            out var parsedArguments,
+            out _));
+
+        Assert.True(McpToolTimeoutMetadata.TryExtract(
+            parsedArguments!,
+            out var forwardedArguments,
+            out var timeoutSeconds,
+            out _));
+        Assert.Null(timeoutSeconds);
+        Assert.Equal(
+            "server-owned-value",
+            Assert.IsType<JsonElement>(forwardedArguments[McpToolTimeoutMetadata.TimeoutPropertyName]).GetString());
+        Assert.Equal("Build a dashboard", Assert.IsType<JsonElement>(forwardedArguments["prompt"]).GetString());
+    }
+
+    [Fact]
+    public void ToolTimeoutMetadata_AugmentsDescriptorAndNativeDeclarationWithSameSchema()
+    {
+        var originalSchema = JsonSerializer.SerializeToElement(new
+        {
+            type = "object",
+            properties = new
+            {
+                prompt = new { type = "string" },
+            },
+            additionalProperties = false,
+        });
+
+        var converted = McpToolSource.CreateRuntimeTool(
+            CreateServer("one", "stitch"),
+            "edit_screens",
+            "Edit screens",
+            "Edits screens.",
+            originalSchema,
+            returnJsonSchema: null);
+
+        Assert.Equal(McpToolArgumentSchemaMode.Flat, converted.ArgumentSchemaMode);
+        Assert.Equal(converted.RuntimeTool.Descriptor.ToolId, converted.RuntimeTool.Declaration.Name);
+        Assert.NotNull(converted.RuntimeTool.Descriptor.ArgumentsJsonSchema);
+        using var descriptorSchema = JsonDocument.Parse(converted.RuntimeTool.Descriptor.ArgumentsJsonSchema!);
+        Assert.Equal(
+            descriptorSchema.RootElement.GetRawText(),
+            converted.RuntimeTool.Declaration.JsonSchema.GetRawText());
+        Assert.Equal(
+            ["integer", "null"],
+            descriptorSchema.RootElement
+                .GetProperty("properties")
+                .GetProperty(McpToolTimeoutMetadata.TimeoutPropertyName)
+                .GetProperty("type")
+                .EnumerateArray()
+                .Select(item => item.GetString()));
+        Assert.False(
+            originalSchema.GetProperty("properties").TryGetProperty(
+                McpToolTimeoutMetadata.TimeoutPropertyName,
+                out _));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1801)]
+    public void ToolTimeoutMetadata_RejectsOutOfRangeValues(int value)
+    {
+        Assert.True(AgentToolArgumentObject.TryParse(
+            JsonSerializer.Serialize(new Dictionary<string, object?>
+            {
+                [McpToolTimeoutMetadata.MetadataMarkerPropertyName] = McpToolTimeoutMetadata.MetadataMarkerValue,
+                [McpToolTimeoutMetadata.TimeoutPropertyName] = value,
+            }),
+            out var parsedArguments,
+            out _));
+
+        Assert.False(McpToolTimeoutMetadata.TryExtract(
+            parsedArguments!,
+            out var forwardedArguments,
+            out var timeoutSeconds,
+            out var error));
+        Assert.DoesNotContain(McpToolTimeoutMetadata.MetadataMarkerPropertyName, forwardedArguments.Keys);
+        Assert.Null(timeoutSeconds);
+        Assert.Contains("1 to 1800 seconds", error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ToolExecution_InvalidSunderTimeoutMetadataFailsBeforeDispatch()
+    {
+        var context = new TestPackageContext();
+        var catalog = new McpServerCatalogService(context);
+        await catalog.SaveServerAsync(CreateServer("one", "stitch"), Empty, Empty);
+        var factory = new FakeConnectionFactory();
+        await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance, factory);
+        var source = new McpToolSource(catalog, manager);
+        var dispatchCount = 0;
+
+        var result = await source.ExecuteAsync(
+            new AgentToolExecutionContext(Guid.NewGuid())
+            {
+                DispatchStarted = () => Interlocked.Increment(ref dispatchCount),
+            },
+            new AgentToolRequest(
+                McpToolIdentity.CreateStable("one", "edit_screens"),
+                JsonSerializer.Serialize(new Dictionary<string, object?>
+                {
+                    [McpToolTimeoutMetadata.MetadataMarkerPropertyName] = McpToolTimeoutMetadata.MetadataMarkerValue,
+                    [McpToolTimeoutMetadata.TimeoutPropertyName] = "60",
+                })));
+
+        Assert.Equal(0, dispatchCount);
+        Assert.Equal(0, factory.ConnectCount);
+        Assert.Equal("mcp-arguments-invalid", result.ErrorCode);
+        Assert.Contains("whole number from 1 to 1800 seconds", result.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ToolExecution_StripsSunderTimeoutMetadataBeforeMcpCall()
+    {
+        IReadOnlyDictionary<string, object?>? forwardedArguments = null;
+        var context = new TestPackageContext();
+        var catalog = new McpServerCatalogService(context);
+        await catalog.SaveServerAsync(CreateServer("one", "stitch"), Empty, Empty);
+        var factory = new InvokableConnectionFactory((_, arguments, _) =>
+        {
+            forwardedArguments = arguments;
+            return ValueTask.FromResult(new CallToolResult());
+        });
+        await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance, factory);
+        var source = new McpToolSource(catalog, manager);
+
+        var result = await source.ExecuteAsync(
+            new AgentToolExecutionContext(Guid.NewGuid()),
+            new AgentToolRequest(
+                McpToolIdentity.CreateStable("one", "edit_screens"),
+                JsonSerializer.Serialize(new Dictionary<string, object?>
+                {
+                    ["prompt"] = "Build a dashboard",
+                    [McpToolTimeoutMetadata.MetadataMarkerPropertyName] = McpToolTimeoutMetadata.MetadataMarkerValue,
+                    [McpToolTimeoutMetadata.TimeoutPropertyName] = 60,
+                })));
+
+        Assert.False(result.IsError);
+        Assert.NotNull(forwardedArguments);
+        Assert.Contains("prompt", forwardedArguments.Keys);
+        Assert.DoesNotContain(McpToolTimeoutMetadata.MetadataMarkerPropertyName, forwardedArguments.Keys);
+        Assert.DoesNotContain(McpToolTimeoutMetadata.TimeoutPropertyName, forwardedArguments.Keys);
+    }
+
+    [Fact]
+    public async Task ToolExecution_ReservedLookingArgumentWithoutMarkerIsForwarded()
+    {
+        IReadOnlyDictionary<string, object?>? forwardedArguments = null;
+        var context = new TestPackageContext();
+        var catalog = new McpServerCatalogService(context);
+        await catalog.SaveServerAsync(CreateServer("one", "stitch"), Empty, Empty);
+        var factory = new InvokableConnectionFactory((_, arguments, _) =>
+        {
+            forwardedArguments = arguments;
+            return ValueTask.FromResult(new CallToolResult());
+        });
+        await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance, factory);
+        var source = new McpToolSource(catalog, manager);
+
+        var result = await source.ExecuteAsync(
+            new AgentToolExecutionContext(Guid.NewGuid()),
+            new AgentToolRequest(
+                McpToolIdentity.CreateStable("one", "edit_screens"),
+                JsonSerializer.Serialize(new Dictionary<string, object?>
+                {
+                    [McpToolTimeoutMetadata.TimeoutPropertyName] = "server-owned-value",
+                    [McpToolTimeoutMetadata.EnvelopePropertyName] = new Dictionary<string, object?>
+                    {
+                        [McpToolTimeoutMetadata.MetadataMarkerPropertyName] = "server-version",
+                        [McpToolTimeoutMetadata.EnvelopeArgumentsPropertyName] = "server-owned-envelope",
+                    },
+                })));
+
+        Assert.False(result.IsError);
+        Assert.NotNull(forwardedArguments);
+        Assert.Equal(
+            "server-owned-value",
+            Assert.IsType<JsonElement>(forwardedArguments[McpToolTimeoutMetadata.TimeoutPropertyName]).GetString());
+        var forwardedEnvelope = Assert.IsType<JsonElement>(forwardedArguments[McpToolTimeoutMetadata.EnvelopePropertyName]);
+        Assert.Equal("server-version", forwardedEnvelope.GetProperty(McpToolTimeoutMetadata.MetadataMarkerPropertyName).GetString());
+        Assert.Equal("server-owned-envelope", forwardedEnvelope.GetProperty(McpToolTimeoutMetadata.EnvelopeArgumentsPropertyName).GetString());
+    }
+
+    [Fact]
+    public async Task ToolExecution_UnwrapsSelfIdentifyingEnvelopeBeforeMcpCall()
+    {
+        IReadOnlyDictionary<string, object?>? forwardedArguments = null;
+        var context = new TestPackageContext();
+        var catalog = new McpServerCatalogService(context);
+        await catalog.SaveServerAsync(CreateServer("one", "stitch"), Empty, Empty);
+        var factory = new InvokableConnectionFactory((_, arguments, _) =>
+        {
+            forwardedArguments = arguments;
+            return ValueTask.FromResult(new CallToolResult());
+        });
+        await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance, factory);
+        var source = new McpToolSource(catalog, manager);
+
+        var result = await source.ExecuteAsync(
+            new AgentToolExecutionContext(Guid.NewGuid()),
+            new AgentToolRequest(
+                McpToolIdentity.CreateStable("one", "edit_screens"),
+                JsonSerializer.Serialize(new Dictionary<string, object?>
+                {
+                    [McpToolTimeoutMetadata.EnvelopePropertyName] = new Dictionary<string, object?>
+                    {
+                        [McpToolTimeoutMetadata.MetadataMarkerPropertyName] = McpToolTimeoutMetadata.MetadataMarkerValue,
+                        [McpToolTimeoutMetadata.EnvelopeArgumentsPropertyName] = new Dictionary<string, object?>
+                        {
+                            ["prompt"] = "Build a dashboard",
+                        },
+                        [McpToolTimeoutMetadata.TimeoutPropertyName] = null,
+                    },
+                })));
+
+        Assert.False(result.IsError);
+        Assert.NotNull(forwardedArguments);
+        Assert.Equal("Build a dashboard", Assert.IsType<JsonElement>(forwardedArguments["prompt"]).GetString());
+        Assert.DoesNotContain(McpToolTimeoutMetadata.EnvelopePropertyName, forwardedArguments.Keys);
+    }
+
+    [Fact]
+    public async Task ToolExecution_NoLimitsPassesCallerTokenWithoutLocalTimer()
+    {
+        bool? canBeCanceled = null;
+        var context = new TestPackageContext();
+        var catalog = new McpServerCatalogService(context);
+        await catalog.SaveServerAsync(CreateServer("one", "stitch"), Empty, Empty);
+        var factory = new InvokableConnectionFactory((_, _, cancellationToken) =>
+        {
+            canBeCanceled = cancellationToken.CanBeCanceled;
+            return ValueTask.FromResult(new CallToolResult());
+        });
+        await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance, factory);
+        var source = new McpToolSource(catalog, manager);
+
+        var result = await source.ExecuteAsync(
+            new AgentToolExecutionContext(Guid.NewGuid()),
+            new AgentToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"));
+
+        Assert.False(result.IsError);
+        Assert.False(canBeCanceled);
+    }
+
+    [Fact]
+    public async Task ToolExecution_NoLimitsRemainsPendingUntilCallerCancellation()
+    {
+        var invocationStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var context = new TestPackageContext();
+        var catalog = new McpServerCatalogService(context);
+        await catalog.SaveServerAsync(CreateServer("one", "stitch"), Empty, Empty);
+        var factory = new InvokableConnectionFactory(async (_, _, cancellationToken) =>
+        {
+            invocationStarted.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            throw new InvalidOperationException("Unreachable.");
+        });
+        await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance, factory);
+        var source = new McpToolSource(catalog, manager);
+        using var cancellation = new CancellationTokenSource();
+
+        var invocation = source.ExecuteAsync(
+            new AgentToolExecutionContext(Guid.NewGuid()),
+            new AgentToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"),
+            cancellation.Token).AsTask();
+        await invocationStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        await Task.Delay(150);
+        Assert.False(invocation.IsCompleted);
+
+        await cancellation.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => invocation);
+    }
+
+    [Fact]
+    public async Task ToolExecution_ConfiguredTimerProducesMatchingAmbiguousTimeout()
+    {
+        var context = new TestPackageContext();
+        var catalog = new McpServerCatalogService(context);
+        var server = CreateServer("one", "stitch") with { ToolTimeoutMilliseconds = 50 };
+        await catalog.SaveServerAsync(server, Empty, Empty);
+        var factory = new InvokableConnectionFactory(async (_, _, cancellationToken) =>
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            throw new InvalidOperationException("Unreachable.");
+        });
+        await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance, factory);
+        var source = new McpToolSource(catalog, manager);
+
+        var dispatchCount = 0;
+        var result = await source.ExecuteAsync(
+            new AgentToolExecutionContext(Guid.NewGuid())
+            {
+                DispatchStarted = () => Interlocked.Increment(ref dispatchCount),
+            },
+            new AgentToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"));
+
+        Assert.Equal(1, dispatchCount);
+        Assert.True(result.IsError);
+        Assert.Equal(AgentToolResultErrorCodes.ToolOutcomeAmbiguous, result.ErrorCode);
+        Assert.Contains("timed out after 50 milliseconds", result.Summary, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("server configuration", result.Summary, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("HttpClient", result.Content, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("External effects may have occurred", result.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ToolExecution_ServerAndAgentTimeoutReportsBothSourcesAndEffectiveDuration()
+    {
+        var context = new TestPackageContext();
+        var catalog = new McpServerCatalogService(context);
+        var server = CreateServer("one", "stitch") with { ToolTimeoutMilliseconds = 50 };
+        await catalog.SaveServerAsync(server, Empty, Empty);
+        var factory = new InvokableConnectionFactory(async (_, _, cancellationToken) =>
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            throw new InvalidOperationException("Unreachable.");
+        });
+        await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance, factory);
+        var source = new McpToolSource(catalog, manager);
+
+        var result = await source.ExecuteAsync(
+            new AgentToolExecutionContext(Guid.NewGuid()),
+            new AgentToolRequest(
+                McpToolIdentity.CreateStable("one", "edit_screens"),
+                JsonSerializer.Serialize(new Dictionary<string, object?>
+                {
+                    [McpToolTimeoutMetadata.MetadataMarkerPropertyName] = McpToolTimeoutMetadata.MetadataMarkerValue,
+                    [McpToolTimeoutMetadata.TimeoutPropertyName] = 1,
+                })));
+
+        Assert.Equal(AgentToolResultErrorCodes.ToolOutcomeAmbiguous, result.ErrorCode);
+        Assert.Contains("50 milliseconds", result.Summary, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("both server configuration and the agent request", result.Summary, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("both server configuration and the agent request", result.Content, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ToolExecution_AgentTimeoutReportsAgentSourceAndDuration()
+    {
+        var context = new TestPackageContext();
+        var catalog = new McpServerCatalogService(context);
+        await catalog.SaveServerAsync(CreateServer("one", "stitch"), Empty, Empty);
+        var factory = new InvokableConnectionFactory(async (_, _, cancellationToken) =>
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            throw new InvalidOperationException("Unreachable.");
+        });
+        await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance, factory);
+        var source = new McpToolSource(catalog, manager);
+
+        var result = await source.ExecuteAsync(
+            new AgentToolExecutionContext(Guid.NewGuid()),
+            new AgentToolRequest(
+                McpToolIdentity.CreateStable("one", "edit_screens"),
+                JsonSerializer.Serialize(new Dictionary<string, object?>
+                {
+                    [McpToolTimeoutMetadata.MetadataMarkerPropertyName] = McpToolTimeoutMetadata.MetadataMarkerValue,
+                    [McpToolTimeoutMetadata.TimeoutPropertyName] = 1,
+                })));
+
+        Assert.Equal(AgentToolResultErrorCodes.ToolOutcomeAmbiguous, result.ErrorCode);
+        Assert.Contains("1 second", result.Summary, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("agent request", result.Summary, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("agent request", result.Content, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ToolExecution_TransportCancellationIsNotMislabeledAsConfiguredTimeout()
+    {
+        var context = new TestPackageContext();
+        var catalog = new McpServerCatalogService(context);
+        var server = CreateServer("one", "stitch") with { ToolTimeoutMilliseconds = 120_000 };
+        await catalog.SaveServerAsync(server, Empty, Empty);
+        var factory = new InvokableConnectionFactory((_, _, _) =>
+            ValueTask.FromException<CallToolResult>(new TaskCanceledException("Transport canceled.")));
+        await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance, factory);
+        var source = new McpToolSource(catalog, manager);
+
+        var result = await source.ExecuteAsync(
+            new AgentToolExecutionContext(Guid.NewGuid()),
+            new AgentToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"));
+
+        Assert.True(result.IsError);
+        Assert.Equal(AgentToolResultErrorCodes.ToolOutcomeAmbiguous, result.ErrorCode);
+        Assert.Contains("outcome is uncertain", result.Summary, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("120 seconds", result.Summary, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(McpErrorCode.ParseError)]
+    [InlineData(McpErrorCode.InvalidRequest)]
+    [InlineData(McpErrorCode.MethodNotFound)]
+    [InlineData(McpErrorCode.InvalidParams)]
+    public async Task ToolExecution_ProtocolRequestErrorIsDefinitiveFailureAfterDispatch(McpErrorCode errorCode)
+    {
+        var context = new TestPackageContext();
+        var catalog = new McpServerCatalogService(context);
+        var server = CreateServer("one", "stitch");
+        await catalog.SaveServerAsync(server, Empty, Empty);
+        var factory = new InvokableConnectionFactory((_, _, _) =>
+            ValueTask.FromException<CallToolResult>(new McpProtocolException(
+                "Unknown tool.",
+                errorCode)));
+        await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance, factory);
+        var source = new McpToolSource(catalog, manager);
+        var dispatchCount = 0;
+
+        var result = await source.ExecuteAsync(
+            new AgentToolExecutionContext(Guid.NewGuid())
+            {
+                DispatchStarted = () => Interlocked.Increment(ref dispatchCount),
+            },
+            new AgentToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"));
+
+        Assert.Equal(1, dispatchCount);
+        Assert.True(result.IsError);
+        Assert.Equal("mcp-protocol-error", result.ErrorCode);
+        Assert.NotEqual(AgentToolResultErrorCodes.ToolOutcomeAmbiguous, result.ErrorCode);
+    }
+
+    [Theory]
+    [InlineData(McpErrorCode.InternalError)]
+    [InlineData((McpErrorCode)(-32099))]
+    public async Task ToolExecution_InternalOrUnknownProtocolErrorAfterDispatchIsAmbiguous(McpErrorCode errorCode)
+    {
+        var context = new TestPackageContext();
+        var catalog = new McpServerCatalogService(context);
+        await catalog.SaveServerAsync(CreateServer("one", "stitch"), Empty, Empty);
+        var factory = new InvokableConnectionFactory((_, _, _) =>
+            ValueTask.FromException<CallToolResult>(new McpProtocolException("Protocol failed.", errorCode)));
+        await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance, factory);
+        var source = new McpToolSource(catalog, manager);
+
+        var result = await source.ExecuteAsync(
+            new AgentToolExecutionContext(Guid.NewGuid()),
+            new AgentToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"));
+
+        Assert.Equal(AgentToolResultErrorCodes.ToolOutcomeAmbiguous, result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task ToolExecution_ProtocolWrappedConfiguredCancellationUsesTimeoutOutcome()
+    {
+        var context = new TestPackageContext();
+        var catalog = new McpServerCatalogService(context);
+        await catalog.SaveServerAsync(
+            CreateServer("one", "stitch") with { ToolTimeoutMilliseconds = 50 },
+            Empty,
+            Empty);
+        var factory = new InvokableConnectionFactory(async (_, _, cancellationToken) =>
+        {
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
+            catch (OperationCanceledException ex)
+            {
+                throw new McpProtocolException("Wrapped cancellation.", ex, McpErrorCode.InternalError);
+            }
+            throw new InvalidOperationException("Unreachable.");
+        });
+        await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance, factory);
+        var source = new McpToolSource(catalog, manager);
+
+        var result = await source.ExecuteAsync(
+            new AgentToolExecutionContext(Guid.NewGuid()),
+            new AgentToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"));
+
+        Assert.Equal(AgentToolResultErrorCodes.ToolOutcomeAmbiguous, result.ErrorCode);
+        Assert.Contains("timed out after 50 milliseconds", result.Summary, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ToolExecution_ProtocolWrappedIndependentCancellationIsAmbiguous()
+    {
+        var context = new TestPackageContext();
+        var catalog = new McpServerCatalogService(context);
+        await catalog.SaveServerAsync(CreateServer("one", "stitch"), Empty, Empty);
+        var factory = new InvokableConnectionFactory((_, _, _) =>
+            ValueTask.FromException<CallToolResult>(new McpProtocolException(
+                "Wrapped cancellation.",
+                new TaskCanceledException("Transport canceled."),
+                McpErrorCode.InternalError)));
+        await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance, factory);
+        var source = new McpToolSource(catalog, manager);
+
+        var result = await source.ExecuteAsync(
+            new AgentToolExecutionContext(Guid.NewGuid()),
+            new AgentToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"));
+
+        Assert.Equal(AgentToolResultErrorCodes.ToolOutcomeAmbiguous, result.ErrorCode);
+        Assert.DoesNotContain("timed out", result.Summary, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ToolExecution_ProtocolWrappedCallerCancellationPropagates()
+    {
+        var context = new TestPackageContext();
+        var catalog = new McpServerCatalogService(context);
+        await catalog.SaveServerAsync(CreateServer("one", "stitch"), Empty, Empty);
+        using var cancellation = new CancellationTokenSource();
+        var factory = new InvokableConnectionFactory((_, _, _) =>
+        {
+            cancellation.Cancel();
+            return ValueTask.FromException<CallToolResult>(new McpProtocolException(
+                "Wrapped cancellation.",
+                new TaskCanceledException("Caller canceled."),
+                McpErrorCode.InternalError));
+        });
+        await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance, factory);
+        var source = new McpToolSource(catalog, manager);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => source.ExecuteAsync(
+            new AgentToolExecutionContext(Guid.NewGuid()),
+            new AgentToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"),
+            cancellation.Token).AsTask());
+    }
+
+    [Fact]
+    public async Task ToolExecution_ProtocolWrappedTransportLossIsAmbiguous()
+    {
+        var context = new TestPackageContext();
+        var catalog = new McpServerCatalogService(context);
+        var server = CreateServer("one", "stitch");
+        await catalog.SaveServerAsync(server, Empty, Empty);
+        var factory = new InvokableConnectionFactory((_, _, _) =>
+            ValueTask.FromException<CallToolResult>(new McpProtocolException(
+                "Protocol stream ended.",
+                new IOException("Transport lost."))));
+        await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance, factory);
+        var source = new McpToolSource(catalog, manager);
+
+        var result = await source.ExecuteAsync(
+            new AgentToolExecutionContext(Guid.NewGuid()),
+            new AgentToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"));
+
+        Assert.True(result.IsError);
+        Assert.Equal(AgentToolResultErrorCodes.ToolOutcomeAmbiguous, result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task ToolExecution_UnexpectedFailureAfterDispatchIsAmbiguous()
+    {
+        var context = new TestPackageContext();
+        var catalog = new McpServerCatalogService(context);
+        var server = CreateServer("one", "stitch");
+        await catalog.SaveServerAsync(server, Empty, Empty);
+        var factory = new InvokableConnectionFactory((_, _, _) =>
+            ValueTask.FromException<CallToolResult>(new InvalidOperationException("Unexpected decode failure.")));
+        await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance, factory);
+        var source = new McpToolSource(catalog, manager);
+
+        var result = await source.ExecuteAsync(
+            new AgentToolExecutionContext(Guid.NewGuid()),
+            new AgentToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"));
+
+        Assert.True(result.IsError);
+        Assert.Equal(AgentToolResultErrorCodes.ToolOutcomeAmbiguous, result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task ToolExecution_ConfiguredTimeoutStartsAfterDispatchAcknowledgment()
+    {
+        var context = new TestPackageContext();
+        var catalog = new McpServerCatalogService(context);
+        var server = CreateServer("one", "stitch") with { ToolTimeoutMilliseconds = 50 };
+        await catalog.SaveServerAsync(server, Empty, Empty);
+        var factory = new InvokableConnectionFactory((_, _, cancellationToken) =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromException<CallToolResult>(new McpProtocolException(
+                "Definitive response error.",
+                McpErrorCode.InvalidParams));
+        });
+        await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance, factory);
+        var source = new McpToolSource(catalog, manager);
+
+        var result = await source.ExecuteAsync(
+            new AgentToolExecutionContext(Guid.NewGuid())
+            {
+                DispatchStarted = () => Thread.Sleep(100),
+            },
+            new AgentToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"));
+
+        Assert.Equal("mcp-protocol-error", result.ErrorCode);
+        Assert.DoesNotContain("timed out", result.Summary, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ToolExecution_DiscoveryFailureDoesNotSignalDispatch()
+    {
+        var context = new TestPackageContext();
+        var catalog = new McpServerCatalogService(context);
+        var server = CreateServer("one", "stitch");
+        await catalog.SaveServerAsync(server, Empty, Empty);
+        var factory = new FakeConnectionFactory
+        {
+            DiscoveryFailure = new InvalidOperationException("Discovery failed."),
+        };
+        await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance, factory);
+        var source = new McpToolSource(catalog, manager);
+        var dispatchCount = 0;
+
+        var result = await source.ExecuteAsync(
+            new AgentToolExecutionContext(Guid.NewGuid())
+            {
+                DispatchStarted = () => Interlocked.Increment(ref dispatchCount),
+            },
+            new AgentToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"));
+
+        Assert.Equal(0, dispatchCount);
+        Assert.True(result.IsError);
+        Assert.Equal("mcp-server-unavailable", result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task ToolExecution_ConnectionCancellationPropagatesWithoutSignalingDispatch()
+    {
+        var context = new TestPackageContext();
+        var catalog = new McpServerCatalogService(context);
+        var server = CreateServer("one", "stitch");
+        await catalog.SaveServerAsync(server, Empty, Empty);
+        var factory = new FakeConnectionFactory { BlockConnect = true };
+        await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance, factory);
+        var source = new McpToolSource(catalog, manager);
+        var dispatchCount = 0;
+        using var cancellation = new CancellationTokenSource();
+
+        var invocation = source.ExecuteAsync(
+            new AgentToolExecutionContext(Guid.NewGuid())
+            {
+                DispatchStarted = () => Interlocked.Increment(ref dispatchCount),
+            },
+            new AgentToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"),
+            cancellation.Token).AsTask();
+        await factory.ConnectStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        await cancellation.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => invocation);
+        Assert.Equal(0, dispatchCount);
+    }
+
+    [Fact]
+    public async Task ToolExecution_HeaderCancellationPropagatesWithoutSignalingDispatch()
+    {
+        var secrets = new FaultingSecrets();
+        var context = new TestPackageContext(secrets: secrets);
+        var catalog = new McpServerCatalogService(context);
+        var server = CreateServer("one", "stitch") with
+        {
+            HeaderNames = ["Authorization"],
+        };
+        await catalog.SaveServerAsync(
+            server,
+            new Dictionary<string, string> { ["Authorization"] = "secret" },
+            Empty);
+        secrets.BlockReads = true;
+        await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance, new FakeConnectionFactory());
+        var source = new McpToolSource(catalog, manager);
+        var dispatchCount = 0;
+        using var cancellation = new CancellationTokenSource();
+
+        var invocation = source.ExecuteAsync(
+            new AgentToolExecutionContext(Guid.NewGuid())
+            {
+                DispatchStarted = () => Interlocked.Increment(ref dispatchCount),
+            },
+            new AgentToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"),
+            cancellation.Token).AsTask();
+        await secrets.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        await cancellation.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => invocation);
+        Assert.Equal(0, dispatchCount);
     }
 
     [Fact]
@@ -994,6 +1942,7 @@ public sealed class McpRefactorTests
     {
         public int ConnectCount { get; private set; }
         public bool BlockConnect { get; init; }
+        public Exception? DiscoveryFailure { get; init; }
         public TaskCompletionSource ConnectStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource SecondConnectStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public List<FakeConnection> Connections { get; } = [];
@@ -1017,13 +1966,13 @@ public sealed class McpRefactorTests
                 await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             }
 
-            var connection = new FakeConnection();
+            var connection = new FakeConnection(DiscoveryFailure);
             Connections.Add(connection);
             return connection;
         }
     }
 
-    private sealed class FakeConnection : IMcpClientConnection
+    private sealed class FakeConnection(Exception? discoveryFailure = null) : IMcpClientConnection
     {
         private readonly TaskCompletionSource _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public McpClient? Client => null;
@@ -1031,11 +1980,51 @@ public sealed class McpRefactorTests
         public int DisposeCount { get; private set; }
 
         public Task<IReadOnlyList<McpClientTool>> ListToolsAsync(CancellationToken cancellationToken)
-            => Task.FromResult<IReadOnlyList<McpClientTool>>([]);
+            => discoveryFailure is null
+                ? Task.FromResult<IReadOnlyList<McpClientTool>>([])
+                : Task.FromException<IReadOnlyList<McpClientTool>>(discoveryFailure);
 
         public ValueTask DisposeAsync()
         {
             DisposeCount++;
+            _completion.TrySetResult();
+            return ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class InvokableConnectionFactory(
+        Func<string, IReadOnlyDictionary<string, object?>, CancellationToken, ValueTask<CallToolResult>> invoke) : IMcpClientConnectionFactory
+    {
+        public Task<IMcpClientConnection> ConnectAsync(
+            ConfiguredMcpServerRecord server,
+            IReadOnlyDictionary<string, string> headers,
+            IReadOnlyDictionary<string, string> environmentVariables,
+            int? discoveryTimeoutMilliseconds,
+            Action<string> standardError,
+            CancellationToken cancellationToken)
+            => Task.FromResult<IMcpClientConnection>(new InvokableConnection(invoke));
+    }
+
+    private sealed class InvokableConnection(
+        Func<string, IReadOnlyDictionary<string, object?>, CancellationToken, ValueTask<CallToolResult>> invoke) : IMcpClientConnection
+    {
+        private readonly TaskCompletionSource _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public McpClient? Client => null;
+        public bool CanInvokeTools => true;
+        public Task Completion => _completion.Task;
+
+        public Task<IReadOnlyList<McpClientTool>> ListToolsAsync(CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<McpClientTool>>([]);
+
+        public ValueTask<CallToolResult> CallToolAsync(
+            string toolName,
+            IReadOnlyDictionary<string, object?> arguments,
+            CancellationToken cancellationToken)
+            => invoke(toolName, arguments, cancellationToken);
+
+        public ValueTask DisposeAsync()
+        {
             _completion.TrySetResult();
             return ValueTask.CompletedTask;
         }
@@ -1202,14 +2191,22 @@ public sealed class McpRefactorTests
         private readonly Dictionary<string, string> _values = new(StringComparer.Ordinal);
         public int SetCount { get; private set; }
         public int? FailOnSetNumber { get; set; }
+        public bool BlockReads { get; set; }
+        public TaskCompletionSource ReadStarted { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
         public IReadOnlyCollection<string> Keys => _values.Keys;
         public void Seed(string key, string value) => _values[key] = value;
         public string? GetRaw(string key) => _values.GetValueOrDefault(key);
-        public Task<string?> GetSecretAsync(string key, CancellationToken cancellationToken = default)
+        public async Task<string?> GetSecretAsync(string key, CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
             TestPackageStorageGuards.Key(key);
-            return Task.FromResult(_values.GetValueOrDefault(key));
+            if (BlockReads)
+            {
+                ReadStarted.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
+            return _values.GetValueOrDefault(key);
         }
 
         public Task SetSecretAsync(string key, string value, CancellationToken cancellationToken = default)

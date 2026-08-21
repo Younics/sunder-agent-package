@@ -85,14 +85,10 @@
       "additionalProperties": false
     },
     "TextValue": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 65536
+      "type": "string"
     },
     "ShortText": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 2048
+      "type": "string"
     },
     "Timestamp": {
       "type": "string",
@@ -103,9 +99,7 @@
       "format": "date"
     },
     "SafeInteger": {
-      "type": "integer",
-      "minimum": -9007199254740991,
-      "maximum": 9007199254740991
+      "type": "integer"
     },
     "ChatOptionValue": {
       "type": "number",
@@ -114,8 +108,6 @@
     },
     "AgentAuthMode": {
       "type": "string",
-      "minLength": 7,
-      "maxLength": 15,
       "enum": [
         "api-key",
         "codex-connected"
@@ -125,9 +117,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentAuthMode"
-      },
-      "minItems": 0,
-      "maxItems": 4096
+      }
     },
     "AgentProviderDescriptor": {
       "type": "object",
@@ -162,8 +152,6 @@
     },
     "AgentReasoningEffort": {
       "type": "string",
-      "minLength": 3,
-      "maxLength": 10,
       "enum": [
         "none",
         "low",
@@ -198,9 +186,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentModelVariantDescriptor"
-      },
-      "minItems": 0,
-      "maxItems": 10000
+      }
     },
     "AgentModelSpeedOptionDescriptor": {
       "type": "object",
@@ -225,9 +211,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentModelSpeedOptionDescriptor"
-      },
-      "minItems": 0,
-      "maxItems": 10000
+      }
     },
     "AgentModelModeOptionDescriptor": {
       "type": "object",
@@ -256,9 +240,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentModelModeOptionDescriptor"
-      },
-      "minItems": 0,
-      "maxItems": 10000
+      }
     },
     "AgentModelDescriptor": {
       "type": "object",
@@ -304,14 +286,10 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentModelDescriptor"
-      },
-      "minItems": 0,
-      "maxItems": 10000
+      }
     },
     "AgentProviderReadinessStatus": {
       "type": "string",
-      "minLength": 5,
-      "maxLength": 19,
       "enum": [
         "ready",
         "needs-configuration",
@@ -434,9 +412,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentChatMessage"
-      },
-      "minItems": 0,
-      "maxItems": 4096
+      }
     },
     "AgentChatTool": {
       "type": "object",
@@ -461,9 +437,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentChatTool"
-      },
-      "minItems": 0,
-      "maxItems": 4096
+      }
     },
     "AgentChatOptions": {
       "type": "object",
@@ -570,8 +544,6 @@
       "properties": {
         "kind": {
           "type": "string",
-          "minLength": 4,
-          "maxLength": 17,
           "enum": [
             "reasoning",
             "text",
@@ -629,9 +601,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentChatContent"
-      },
-      "minItems": 0,
-      "maxItems": 4096
+      }
     },
     "AgentChatStreamEvent": {
       "oneOf": [
@@ -645,23 +615,17 @@
     },
     "Identifier": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 256
+      "minLength": 1
     },
     "MediaType": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 256
+      "minLength": 1
     },
     "DisplayText": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 8192
+      "type": "string"
     },
     "ContentText": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 900000
+      "type": "string"
     },
     "AbsoluteUri": {
       "type": "string",
@@ -669,23 +633,19 @@
     },
     "InlineContinuationBytes": {
       "type": "string",
-      "contentEncoding": "base64",
-      "maxDecodedBytes": 65536
+      "contentEncoding": "base64"
     },
     "JSON": {},
     "JSONObject": {
-      "type": "object",
-      "maxProperties": 256
+      "type": "object"
     },
     "TopK": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 100000
+      "minimum": 0
     },
     "TokenCount": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 2147483647
+      "minimum": 0
     },
     "JsonValues": {
       "type": "object",
@@ -694,19 +654,14 @@
       },
       "propertyNames": {
         "type": "string",
-        "minLength": 1,
-        "maxLength": 128
-      },
-      "minProperties": 0,
-      "maxProperties": 256
+        "minLength": 1
+      }
     },
     "AgentChatUpdateEvent": {
       "type": "object",
       "properties": {
         "kind": {
           "type": "string",
-          "minLength": 6,
-          "maxLength": 6,
           "const": "update"
         },
         "role": {
@@ -747,8 +702,6 @@
       "properties": {
         "kind": {
           "type": "string",
-          "minLength": 5,
-          "maxLength": 5,
           "const": "error"
         },
         "errorCode": {
@@ -775,8 +728,6 @@
     },
     "ChatReasoningEffort": {
       "type": "string",
-      "minLength": 3,
-      "maxLength": 10,
       "enum": [
         "none",
         "low",
@@ -787,8 +738,6 @@
     },
     "AgentChatProviderFailureKind": {
       "type": "string",
-      "minLength": 7,
-      "maxLength": 23,
       "enum": [
         "unknown",
         "context-window-exceeded"

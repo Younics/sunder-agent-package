@@ -137,7 +137,8 @@ public sealed class CodexResponsesStreamParserTests
     [Fact]
     public async Task ParseAsync_OversizedSseLine_RejectsBeforeJsonParsing()
     {
-        using var response = CreateSseResponse("data: " + new string('x', AgentPayloadLimits.MaxProviderSseLineBytes + 1));
+        using var response = CreateSseResponse(
+            "data: " + new string('x', OpenAiExternalInputLimits.MaximumSseLineBytes + 1));
 
         var error = await Assert.ThrowsAsync<AgentChatProviderException>(() => ReadUpdatesAsync(response));
 

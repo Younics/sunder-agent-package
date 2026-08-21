@@ -66,8 +66,8 @@ jobs:
             || { echo "Release tag must match packages.json releaseVersion." >&2; exit 1; }
           [[ "$version" != 2.0.0-* ]] \
             || { echo "The Agent 2.0 baseline starts at stable 2.0.0." >&2; exit 1; }
-          test "$(jq '[.packages[] | select(.artifactType == "sunderpkg" and .workerProjectPath != null)] | length' packages.json)" -eq 15 \
-            || { echo "packages.json must contain exactly 15 runtime workers." >&2; exit 1; }
+          test "$(jq '[.packages[] | select(.artifactType == "sunderpkg")] | length' packages.json)" -eq 15 \
+            || { echo "packages.json must contain exactly 15 primary runtime package projects." >&2; exit 1; }
           test "$(jq '[.packages[] | select(.artifactType == "nuget" and .packageId == "Sunder.Package.Agent.Protocol")] | length' packages.json)" -eq 1 \
             || { echo "packages.json must contain exactly one Agent Protocol package." >&2; exit 1; }
 
@@ -432,7 +432,7 @@ jobs:
             || cleanup_status=1
           exit "$cleanup_status"
 
-  aggregate:
+  fan-in:
     name: Fan in tested native leaves and verify immutable family
     needs:
       - prepare
@@ -467,7 +467,7 @@ jobs:
           path: native-input
           merge-multiple: true
 
-      - name: Aggregate without rebuilding project references
+      - name: Compose signed leaves without rebuilding project references
         working-directory: sunder-agent-package
         shell: bash
         env:
@@ -540,7 +540,7 @@ jobs:
                 and ([.files[].path | select(. == "payload/runtime/shared/lib/SQLitePCLRaw.provider.e_sqlite3.dll")] | length) == 1
               ' "$index" >/dev/null
             fi
-          done < <(jq -r '.packages | map(select(.workerProjectPath != null)) | sort_by(.key)[] | [.packageId, (.providerIds | tojson)] | @tsv' packages.json)
+          done < <(jq -r '.packages | map(select(.artifactType == "sunderpkg")) | sort_by(.key)[] | [.packageId, (.providerIds | tojson)] | @tsv' packages.json)
           (( family_bytes <= max_family_archive_bytes ))
 
           while IFS=$'\t' read -r artifact expected_sha expected_size; do
@@ -620,7 +620,7 @@ jobs:
     name: Publish exact tested family and promote dist tags
     needs:
       - prepare
-      - aggregate
+      - fan-in
     runs-on: ubuntu-latest
     concurrency:
       group: sunder-agent-family-dist-tag-promotion
@@ -638,7 +638,7 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
-      - name: Download only the exact tested aggregate artifact
+      - name: Download only the exact tested fan-in artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: sunder-agent-family-release

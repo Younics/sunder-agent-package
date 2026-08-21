@@ -16,7 +16,8 @@ internal sealed class InlineRenameFocusCoordinator<TItem> : IDisposable where TI
     private readonly Func<TItem, bool> _isRenameActive;
     private readonly Func<Control?> _dropDownProvider;
     private readonly string _textBoxClass;
-    private readonly PresentationTaskScope _tasks = new();
+    private readonly PresentationTaskScope _tasks = new(
+        PresentationTaskScope.IgnoreExpectedFailure);
     private object? _pendingKey;
     private bool _disposed;
 

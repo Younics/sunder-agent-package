@@ -3,7 +3,7 @@
   "descriptorVersion": 2,
   "schemaProfile": "sunder.rpc.values.v1",
   "contractId": "sunder.package.agent.builder.runtime",
-  "version": "2.0.0",
+  "version": "1.0.0",
   "errors": {
     "agent.builder.execution-target-unavailable": {
       "description": "The selected execution-target activation became unavailable."
@@ -38,8 +38,12 @@
             "agent.builder.unsupported-operation",
             "agent.builder.workspace-execution-unavailable"
           ],
-          "requestSchema": { "$ref": "#/$defs/BuilderExecuteRequest" },
-          "responseSchema": { "$ref": "#/$defs/BuilderResultContent" }
+          "requestSchema": {
+            "$ref": "#/$defs/BuilderExecuteRequest"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/BuilderResultContent"
+          }
         }
       }
     }
@@ -47,8 +51,6 @@
   "$defs": {
     "BuilderOperation": {
       "type": "string",
-      "minLength": 12,
-      "maxLength": 17,
       "enum": [
         "list-workspaces",
         "resolve-workspace",
@@ -60,53 +62,65 @@
     },
     "WorkspaceId": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 256
+      "minLength": 1
     },
     "ExecutableName": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 4096
+      "minLength": 1
     },
     "ProcessArgument": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 32768
+      "type": "string"
     },
     "ProcessArguments": {
       "type": "array",
-      "items": { "$ref": "#/$defs/ProcessArgument" },
-      "minItems": 0,
-      "maxItems": 256
+      "items": {
+        "$ref": "#/$defs/ProcessArgument"
+      }
     },
     "ShellCommand": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 262144
+      "minLength": 1
     },
     "ExecutionPath": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 4096
+      "minLength": 1
     },
     "TimeoutSeconds": {
       "type": "integer",
-      "minimum": 1,
-      "maximum": 86400
+      "minimum": 1
     },
     "BuilderExecuteRequest": {
       "type": "object",
       "properties": {
-        "kind": { "$ref": "#/$defs/BuilderOperation" },
-        "workspaceId": { "$ref": "#/$defs/WorkspaceId" },
-        "fileName": { "$ref": "#/$defs/ExecutableName" },
-        "arguments": { "$ref": "#/$defs/ProcessArguments" },
-        "command": { "$ref": "#/$defs/ShellCommand" },
-        "workingDirectory": { "$ref": "#/$defs/ExecutionPath" },
-        "timeoutSeconds": { "$ref": "#/$defs/TimeoutSeconds" },
-        "executionPath": { "$ref": "#/$defs/ExecutionPath" }
+        "kind": {
+          "$ref": "#/$defs/BuilderOperation"
+        },
+        "workspaceId": {
+          "$ref": "#/$defs/WorkspaceId"
+        },
+        "fileName": {
+          "$ref": "#/$defs/ExecutableName"
+        },
+        "arguments": {
+          "$ref": "#/$defs/ProcessArguments"
+        },
+        "command": {
+          "$ref": "#/$defs/ShellCommand"
+        },
+        "workingDirectory": {
+          "$ref": "#/$defs/ExecutionPath"
+        },
+        "timeoutSeconds": {
+          "$ref": "#/$defs/TimeoutSeconds"
+        },
+        "executionPath": {
+          "$ref": "#/$defs/ExecutionPath"
+        }
       },
-      "required": ["kind", "timeoutSeconds"],
+      "required": [
+        "kind",
+        "timeoutSeconds"
+      ],
       "additionalProperties": false
     },
     "ContentReference": {
@@ -116,9 +130,13 @@
     "BuilderResultContent": {
       "type": "object",
       "properties": {
-        "content": { "$ref": "#/$defs/ContentReference" }
+        "content": {
+          "$ref": "#/$defs/ContentReference"
+        }
       },
-      "required": ["content"],
+      "required": [
+        "content"
+      ],
       "additionalProperties": false
     }
   }

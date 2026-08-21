@@ -8,17 +8,17 @@ namespace Sunder.Package.Agent.Tests;
 public sealed class McpConfigurationDocumentTests
 {
     [Fact]
-    public void CreateTemplates_IncludeOptionalTimeoutExamples()
+    public void CreateTemplates_OmitOptionalToolTimeout()
     {
         using var localDocument = JsonDocument.Parse(McpConfigurationDocument.CreateLocalTemplate());
         using var remoteDocument = JsonDocument.Parse(McpConfigurationDocument.CreateRemoteTemplate());
 
         Assert.False(localDocument.RootElement.TryGetProperty("timeout", out _));
         Assert.Equal(5000, localDocument.RootElement.GetProperty("discoveryTimeout").GetInt32());
-        Assert.Equal(180000, localDocument.RootElement.GetProperty("toolTimeout").GetInt32());
+        Assert.False(localDocument.RootElement.TryGetProperty("toolTimeout", out _));
         Assert.False(remoteDocument.RootElement.TryGetProperty("timeout", out _));
         Assert.Equal(5000, remoteDocument.RootElement.GetProperty("discoveryTimeout").GetInt32());
-        Assert.Equal(180000, remoteDocument.RootElement.GetProperty("toolTimeout").GetInt32());
+        Assert.False(remoteDocument.RootElement.TryGetProperty("toolTimeout", out _));
     }
 
     [Fact]
@@ -149,6 +149,87 @@ public sealed class McpConfigurationDocumentTests
         Assert.Equal(45000, parsed.Server.ToolTimeoutMilliseconds);
     }
 
+    [Theory]
+    [InlineData("toolTimeout")]
+    [InlineData("timeout")]
+    public void Parse_ZeroToolTimeoutResolvesToNoLocalTimer(string propertyName)
+    {
+        var parsed = McpConfigurationDocument.Parse(
+            "server-1",
+            "unlimited",
+            $$"""
+            {
+              "type": "remote",
+              "enabled": true,
+              "url": "https://example.com/mcp",
+              "{{propertyName}}": 0
+            }
+            """);
+
+        Assert.Equal(15_000, McpTimeoutResolver.ResolveDiscoveryTimeoutMilliseconds(parsed.Server));
+        Assert.Null(McpTimeoutResolver.ResolveToolTimeoutMilliseconds(parsed.Server));
+    }
+
+    [Theory]
+    [InlineData("timeout")]
+    [InlineData("discoveryTimeout")]
+    [InlineData("toolTimeout")]
+    public void Parse_RejectsNegativeTimeoutValues(string propertyName)
+    {
+        var exception = Assert.Throws<McpManagementOperationException>(() => McpConfigurationDocument.Parse(
+            "server-1",
+            "negative",
+            $$"""
+            {
+              "type": "remote",
+              "enabled": true,
+              "url": "https://example.com/mcp",
+              "{{propertyName}}": -1
+            }
+            """));
+
+        Assert.Contains("zero or a positive integer", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Parse_ExplicitZeroToolTimeoutOverridesPositiveLegacyTimeout()
+    {
+        var parsed = McpConfigurationDocument.Parse(
+            "server-1",
+            "mixed",
+            """
+            {
+              "type": "remote",
+              "enabled": true,
+              "url": "https://example.com/mcp",
+              "timeout": 45000,
+              "toolTimeout": 0
+            }
+            """);
+
+        Assert.Equal(45_000, McpTimeoutResolver.ResolveDiscoveryTimeoutMilliseconds(parsed.Server));
+        Assert.Null(McpTimeoutResolver.ResolveToolTimeoutMilliseconds(parsed.Server));
+    }
+
+    [Fact]
+    public void Parse_NegativeToolTimeoutCannotShadowPositiveLegacyTimeout()
+    {
+        var exception = Assert.Throws<McpManagementOperationException>(() => McpConfigurationDocument.Parse(
+            "server-1",
+            "mixed-negative",
+            """
+            {
+              "type": "remote",
+              "enabled": true,
+              "url": "https://example.com/mcp",
+              "timeout": 45000,
+              "toolTimeout": -1
+            }
+            """));
+
+        Assert.Contains("'toolTimeout' must be zero or a positive integer", exception.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Parse_RemoteOAuthRoundTrips()
     {
@@ -202,13 +283,64 @@ public sealed class McpConfigurationDocumentTests
     }
 
     [Fact]
-    public void TimeoutResolver_UsesFiniteDefaults()
+    public void TimeoutResolver_DefaultsOnlyDiscovery()
     {
         var server = new ConfiguredMcpServerRecord();
 
         Assert.Equal(15_000, McpTimeoutResolver.ResolveDiscoveryTimeoutMilliseconds(server));
-        Assert.Equal(120_000, McpTimeoutResolver.ResolveToolTimeoutMilliseconds(server));
+        Assert.Null(McpTimeoutResolver.ResolveToolTimeoutMilliseconds(server));
         Assert.Equal(15_000, McpTimeoutResolver.ResolveEffectiveTimeoutMilliseconds(null));
+    }
+
+    [Fact]
+    public void TimeoutResolver_PreservesExplicitAndLegacyToolLimitsAndHandlesPersistedNonPositiveValues()
+    {
+        Assert.Equal(
+            120_000,
+            McpTimeoutResolver.ResolveToolTimeoutMilliseconds(new ConfiguredMcpServerRecord
+            {
+                ToolTimeoutMilliseconds = 120_000,
+            }));
+        Assert.Equal(
+            45_000,
+            McpTimeoutResolver.ResolveToolTimeoutMilliseconds(new ConfiguredMcpServerRecord
+            {
+                TimeoutMilliseconds = 45_000,
+            }));
+        Assert.Null(McpTimeoutResolver.ResolveToolTimeoutMilliseconds(new ConfiguredMcpServerRecord
+        {
+            ToolTimeoutMilliseconds = 0,
+        }));
+        Assert.Equal(45_000, McpTimeoutResolver.ResolveToolTimeoutMilliseconds(new ConfiguredMcpServerRecord
+        {
+            TimeoutMilliseconds = 45_000,
+            ToolTimeoutMilliseconds = -1,
+        }));
+        Assert.Null(McpTimeoutResolver.ResolveToolTimeoutMilliseconds(new ConfiguredMcpServerRecord
+        {
+            TimeoutMilliseconds = -1,
+        }));
+    }
+
+    [Fact]
+    public void TimeoutResolver_UsesTheShorterServerAndAgentLimit()
+    {
+        Assert.Null(McpTimeoutResolver.ResolveToolExecutionTimeout(null, null));
+
+        var serverOnly = Assert.IsType<McpToolExecutionTimeout>(
+            McpTimeoutResolver.ResolveToolExecutionTimeout(120_000, null));
+        Assert.Equal(120_000, serverOnly.Milliseconds);
+        Assert.Equal(McpToolTimeoutSource.ServerConfiguration, serverOnly.Source);
+
+        var agentOnly = Assert.IsType<McpToolExecutionTimeout>(
+            McpTimeoutResolver.ResolveToolExecutionTimeout(null, 90));
+        Assert.Equal(90_000, agentOnly.Milliseconds);
+        Assert.Equal(McpToolTimeoutSource.AgentRequest, agentOnly.Source);
+
+        var both = Assert.IsType<McpToolExecutionTimeout>(
+            McpTimeoutResolver.ResolveToolExecutionTimeout(120_000, 30));
+        Assert.Equal(30_000, both.Milliseconds);
+        Assert.Equal(McpToolTimeoutSource.ServerAndAgent, both.Source);
     }
 
     [Fact]

@@ -150,7 +150,7 @@ internal interface IAgentOwnerRuntimeProvider
 internal static class AgentOwnerRuntimeRpc
 {
     internal const string ContractId = "sunder.agent.owner.runtime";
-    internal const string ContractVersion = "2.0.0";
+    internal const string ContractVersion = "1.0.0";
     internal const string ProviderId = "agent.owner.runtime";
 
     private const string OperationFailedCode = "agent.owner.operation-failed";

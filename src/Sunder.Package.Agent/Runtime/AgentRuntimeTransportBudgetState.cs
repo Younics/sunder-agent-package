@@ -35,8 +35,7 @@ internal sealed class AgentRuntimeTransportBudgetState
         ValidateValueBytes(request.RequestValueBytes, nameof(request.RequestValueBytes));
         ValidateValueBytes(request.ResponseValueBytes, nameof(request.ResponseValueBytes));
         ValidateValueBytes(request.EventValueBytes, nameof(request.EventValueBytes));
-        if (request.ContentReferenceBytes is < AgentRuntimePayloadLimits.MinimumContentReferenceBytes
-            or > AgentRuntimePayloadLimits.MaximumContentReferenceBytes)
+        if (request.ContentReferenceBytes <= 0)
         {
             throw new AgentOwnerOperationException("The proposed Runtime content-reference budget is invalid.");
         }
@@ -53,8 +52,7 @@ internal sealed class AgentRuntimeTransportBudgetState
 
     private static void ValidateValueBytes(int value, string name)
     {
-        if (value is < AgentRuntimePayloadLimits.MinimumValueBytes
-            or > AgentRuntimePayloadLimits.MaximumValueBytes)
+        if (value <= 0)
         {
             throw new AgentOwnerOperationException($"The proposed Runtime value budget '{name}' is invalid.");
         }

@@ -61,7 +61,7 @@ Profiles explicitly select tools, tool groups, skills, and subagents. A tool bei
 
 ## Arguments And Results
 
-Use `AgentToolArgumentObject.TryParse` or equivalent strict parsing. It enforces the shared byte, depth, property-count, and case-collision limits. Validate required fields, ranges, enum values, paths, URLs, and cross-field constraints before any side effect.
+Use `AgentToolArgumentObject.TryParse` or equivalent strict parsing. It enforces shared JSON depth, property-count, and case-collision policy. Runtime's `ISunderRpcClient.ResourceProfile` is authoritative for RPC payload size. Validate required fields, ranges, enum values, paths, URLs, and cross-field constraints before any side effect.
 
 Expected failures should return an `AgentToolResult` with:
 

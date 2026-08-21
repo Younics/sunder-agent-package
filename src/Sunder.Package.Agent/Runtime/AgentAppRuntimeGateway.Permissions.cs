@@ -24,36 +24,42 @@ internal sealed partial class AgentAppRuntimeGateway
         }
     }
 
-    private void TryCacheGlobalPermissions(
+    private bool TryCacheGlobalPermissions(
         AgentPermissionProjection projection,
         int generation)
     {
         lock (_cacheLock)
         {
             if (_disposed
-                || generation != _globalPermissionGeneration
-                || projection.Revision < _globalPermissionRevision)
+                || generation != _globalPermissionGeneration)
             {
-                return;
+                return false;
+            }
+            if (projection.Revision < _globalPermissionRevision)
+            {
+                return true;
             }
 
             _globalPermissions = projection;
             _globalPermissionRevision = projection.Revision;
+            return true;
         }
     }
 
-    private void InvalidateGlobalPermissions(long revision)
+    private bool InvalidateGlobalPermissions(long revision)
     {
         lock (_cacheLock)
         {
             if (_globalPermissions is not null
                 && _globalPermissionRevision >= revision)
             {
-                return;
+                return false;
             }
 
             _globalPermissions = null;
             _globalPermissionRevision = Math.Max(_globalPermissionRevision, revision);
+            _globalPermissionGeneration++;
+            return true;
         }
     }
 }

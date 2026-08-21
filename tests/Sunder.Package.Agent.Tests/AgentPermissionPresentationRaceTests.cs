@@ -66,6 +66,29 @@ public sealed class AgentPermissionPresentationRaceTests
     }
 
     [Fact]
+    public async Task RuntimeInvalidationAllowsLowerPermissionRevision()
+    {
+        var gateway = new ReplacingRuntimePermissionGateway();
+        using var viewModel = new AgentPermissionsViewModel(gateway, InlineDispatcher.Instance);
+        await viewModel.PrepareNavigationAsync(NavigationContext());
+        Assert.Equal(AgentPermissionDecision.Deny, Assert.Single(viewModel.Rows).SelectedDecision);
+        var replacementApplied = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        viewModel.Rows.CollectionChanged += (_, _) =>
+        {
+            if (viewModel.Rows.SingleOrDefault()?.SelectedDecision == AgentPermissionDecision.Allow)
+            {
+                replacementApplied.TrySetResult();
+            }
+        };
+
+        gateway.ReplaceRuntime();
+        await replacementApplied.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Equal(AgentPermissionDecision.Allow, Assert.Single(viewModel.Rows).SelectedDecision);
+    }
+
+    [Fact]
     public async Task DisposalSuppressesLatePermissionReloadPublication()
     {
         var gateway = new RacingReloadPermissionGateway();
@@ -154,6 +177,11 @@ public sealed class AgentPermissionPresentationRaceTests
         IAgentPermissionGateway,
         IAgentGlobalPermissionGateway
     {
+        public event Action? GlobalPermissionsInvalidated;
+
+        protected void RaiseGlobalPermissionsInvalidated()
+            => GlobalPermissionsInvalidated?.Invoke();
+
         public AgentSessionPermissionState GetSessionState(Guid sessionId) => new(sessionId, false);
         public void SetSessionUnrestrictedMode(Guid sessionId, bool isEnabled) { }
         public IReadOnlyList<AgentPermissionActionDescriptor> ListActions() => [];
@@ -269,6 +297,39 @@ public sealed class AgentPermissionPresentationRaceTests
                        active,
                        maximum) != maximum);
         }
+    }
+
+    private sealed class ReplacingRuntimePermissionGateway : GlobalPermissionGateway
+    {
+        private AgentPermissionProjection _projection = Projection(
+            100,
+            AgentPermissionDecision.Deny);
+
+        public void ReplaceRuntime()
+        {
+            _projection = Projection(1, AgentPermissionDecision.Allow);
+            RaiseGlobalPermissionsInvalidated();
+        }
+
+        public override Task<AgentPermissionProjection> LoadGlobalPermissionsAsync(
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(_projection);
+        }
+
+        public override Task SaveOverrideAsync(
+            string actionId,
+            string boundaryId,
+            AgentPermissionDecision decision,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public override Task DeleteOverrideAsync(
+            string actionId,
+            string boundaryId,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
     }
 
     private sealed class RacingReloadPermissionGateway :

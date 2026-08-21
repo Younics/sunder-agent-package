@@ -28,6 +28,12 @@ public sealed class AgentRuntimeCatalog : IAgentRuntimeCatalog, IAgentTranscript
 
     public event Action<string>? ProfileChanged;
 
+    public event Action? ResetRequired
+    {
+        add { }
+        remove { }
+    }
+
     public IReadOnlyList<AgentSessionRecord> ListSessions() => _sessionService.ListSessions();
 
     public IReadOnlyList<AgentSessionRecord> ListSessionsForProfile(string profileId)

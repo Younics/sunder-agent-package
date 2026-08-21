@@ -243,10 +243,19 @@ public sealed partial class AgentToolService(
         AgentToolInvocationReference? advertisedInvocation = null,
         AgentWorkspaceBindingRecord? expectedExecutionBinding = null,
         string? expectedExecutionTargetConfigurationGeneration = null,
-        bool enforceExpectedExecutionContext = false)
+        bool enforceExpectedExecutionContext = false,
+        Action? dispatchStarted = null)
     {
         var effectiveProfileId = string.IsNullOrWhiteSpace(profileId) ? null : profileId;
         var executionBinding = ResolveExecutionBinding(workspace);
+        var dispatchObserved = 0;
+        Action? observeDispatch = dispatchStarted is null
+            ? null
+            : () =>
+            {
+                dispatchStarted();
+                Volatile.Write(ref dispatchObserved, 1);
+            };
         if (!IsCurrentWorkspaceExecutionContext(
                 workspace,
                 enforceExpectedExecutionContext ? expectedExecutionBinding : executionBinding))
@@ -261,6 +270,7 @@ public sealed partial class AgentToolService(
             ApprovedResourceCapabilities = approvedResourceCapabilities ?? [],
             ExecutionTargetReference = ResolveExecutionTargetReference(executionBinding, advertisedInvocation),
             ExecutionTargetConfigurationGeneration = expectedExecutionTargetConfigurationGeneration,
+            DispatchStarted = observeDispatch,
         };
         try
         {
@@ -300,14 +310,25 @@ public sealed partial class AgentToolService(
                 workspace,
                 enforceExpectedExecutionContext ? expectedExecutionBinding : executionBinding,
                 PermissionContextChangedResult(toolId),
-                () => InvokeToolAsync(
+                () => ExecuteToolAsync(
                     resolvedTool.Invocation,
-                    cancellationToken,
-                    (source, token) => source.ExecuteAsync(executionContext, request, token))).ConfigureAwait(false);
+                    executionContext,
+                    request,
+                    cancellationToken)).ConfigureAwait(false);
+        }
+        catch (AgentPackageUnavailableException ex) when (Volatile.Read(ref dispatchObserved) != 0)
+        {
+            return ToolTransportOutcomeAmbiguousResult(toolId, ex.Message);
         }
         catch (AgentPackageUnavailableException ex)
         {
             return PackageUnavailableResult(toolId, ex.Message);
+        }
+        catch (OperationCanceledException ex) when (
+            !cancellationToken.IsCancellationRequested
+            && Volatile.Read(ref dispatchObserved) != 0)
+        {
+            return ToolTransportOutcomeAmbiguousResult(toolId, ex.Message);
         }
         catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
         {
@@ -322,6 +343,10 @@ public sealed partial class AgentToolService(
         {
             throw;
         }
+        catch (Exception ex) when (Volatile.Read(ref dispatchObserved) != 0)
+        {
+            return ToolTransportOutcomeAmbiguousResult(toolId, ex.Message);
+        }
         catch (Exception ex)
         {
             return new AgentToolResult(
@@ -332,6 +357,14 @@ public sealed partial class AgentToolService(
                 ErrorCode: AgentToolResultErrorCodes.ToolExecutionException);
         }
     }
+
+    private static AgentToolResult ToolTransportOutcomeAmbiguousResult(string toolId, string message)
+        => new(
+            toolId,
+            $"Tool '{toolId}' was dispatched, but its worker connection ended before a definitive response was received.",
+            Content: $"### Tool outcome is uncertain\n\nThe tool was dispatched, but its worker connection ended before a definitive response was received. Effects may have occurred. Verify current state before retrying.\n\n{message}",
+            IsError: true,
+            ErrorCode: AgentToolResultErrorCodes.ToolOutcomeAmbiguous);
 
     internal async Task<AgentToolResult?> PreflightExecutionAsync(
         string toolId,

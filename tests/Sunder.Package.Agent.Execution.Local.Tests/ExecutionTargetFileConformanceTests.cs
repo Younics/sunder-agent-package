@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Sunder.Agent.Execution.Common;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
@@ -589,7 +590,7 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
     {
         var fixture = CreateDockerFixture();
         var config = CreateDockerConfig(fixture.Root);
-        await fixture.WriteTextAsync("large.txt", new string('x', AgentPayloadLimits.MaxLocalFullFileReadBytes + 1));
+        await fixture.WriteTextAsync("large.txt", new string('x', HostFileSystemLimits.MaxFullFileReadBytes + 1));
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>

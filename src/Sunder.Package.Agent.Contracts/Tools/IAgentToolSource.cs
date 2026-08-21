@@ -57,3 +57,15 @@ public interface IAgentToolSource
         AgentToolRequest request,
         CancellationToken cancellationToken = default);
 }
+
+internal interface IAgentToolDispatchAwareSource : IAgentToolSource;
+
+internal interface IAgentObservedToolExecution
+{
+    string SourceId { get; }
+
+    ValueTask<AgentToolResult> ExecuteAsync(
+        AgentToolExecutionContext context,
+        AgentToolRequest request,
+        CancellationToken cancellationToken = default);
+}

@@ -281,6 +281,40 @@ public sealed partial class MemoryInspectorViewModel
         }
     }
 
+    private void OnResetRequired()
+        => _operations.Submit(
+            MemoryRefreshOperation,
+            HandleResetRequiredAsync,
+            ReconcileMemoryAsync);
+
+    private async Task HandleResetRequiredAsync(CancellationToken cancellationToken)
+    {
+        var refresh = false;
+        Guid? selectedMemoryId = null;
+        await _uiDispatcher.InvokeAsync(() =>
+        {
+            if (_disposed)
+            {
+                return;
+            }
+            if (!_isInitialized)
+            {
+                _initializationSessionRefreshPending = true;
+                _initializationWorkerRefreshPending = true;
+                return;
+            }
+
+            refresh = true;
+            selectedMemoryId = SelectedMemory?.MemoryId;
+        }).ConfigureAwait(false);
+        if (refresh)
+        {
+            await Task.WhenAll(
+                StartSessionRefresh(selectedMemoryId, cancellationToken),
+                RefreshSemanticWorkerStatusAsync(cancellationToken)).ConfigureAwait(false);
+        }
+    }
+
     private sealed record MemoryInspectorInitialState(
         IReadOnlyList<AgentSessionRecord> Sessions,
         SemanticMemoryWorkerStatusRecord WorkerStatus,

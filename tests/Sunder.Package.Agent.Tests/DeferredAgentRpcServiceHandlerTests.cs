@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Runtime;
 using Sunder.Sdk.Rpc;
 using Xunit;
@@ -10,6 +11,35 @@ namespace Sunder.Package.Agent.Tests;
 public sealed class DeferredAgentRpcServiceHandlerTests
 {
     private static readonly TimeSpan TestTimeout = TimeSpan.FromSeconds(5);
+    private static readonly SunderRpcContractDescriptor TestDescriptor =
+        AgentRpcContractDescriptors.Get(AgentRpcContractIds.SessionCleaner);
+    private static readonly IReadOnlyDictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>> TestDeclaredErrors =
+        AgentRpcServiceHandler.CreateDeclaredErrorMap(TestDescriptor);
+
+    [Fact]
+    public void DeclaredErrors_AreAvailableBeforeActivationAndMismatchedHandlerIsRejected()
+    {
+        using var services = new ServiceCollection().BuildServiceProvider();
+        var deferred = new DeferredAgentRpcServiceHandler(
+            "test.service",
+            TestDescriptor,
+            static _ => AgentRpcServiceHandler.Create().Build());
+
+        Assert.Equal(
+            FlattenDeclaredErrors(TestDeclaredErrors),
+            FlattenDeclaredErrors(deferred.DeclaredErrors));
+        var exception = Assert.Throws<InvalidOperationException>(() => deferred.Activate(services));
+        Assert.Contains("does not implement the declared domain errors", exception.Message, StringComparison.Ordinal);
+        Assert.False(deferred.IsActive);
+    }
+
+    private static IReadOnlyList<string> FlattenDeclaredErrors(
+        IReadOnlyDictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>> declaredErrors)
+        => declaredErrors
+            .SelectMany(static service => service.Value.Select(method =>
+                $"{service.Key}/{method.Key}:{string.Join(',', method.Value)}"))
+            .Order(StringComparer.Ordinal)
+            .ToArray();
 
     [Fact]
     public async Task InvokeUnaryAsync_WaitsForProviderActivation()
@@ -17,6 +47,7 @@ public sealed class DeferredAgentRpcServiceHandlerTests
         using var services = new ServiceCollection().BuildServiceProvider();
         var deferred = new DeferredAgentRpcServiceHandler(
             "test.service",
+            TestDescriptor,
             static _ => new EchoHandler());
         var request = JsonSerializer.SerializeToElement(new { value = "ready" });
 
@@ -39,6 +70,7 @@ public sealed class DeferredAgentRpcServiceHandlerTests
     {
         var deferred = new DeferredAgentRpcServiceHandler(
             "test.service",
+            TestDescriptor,
             static _ => new EchoHandler());
         var invocation = deferred.InvokeUnaryAsync(
             null!,
@@ -58,7 +90,7 @@ public sealed class DeferredAgentRpcServiceHandlerTests
     {
         using var services = new ServiceCollection().BuildServiceProvider();
         var handler = new RetirementAwareHandler();
-        var deferred = new DeferredAgentRpcServiceHandler("test.service", _ => handler);
+        var deferred = new DeferredAgentRpcServiceHandler("test.service", TestDescriptor, _ => handler);
         deferred.Activate(services);
 
         deferred.Deactivate();
@@ -76,7 +108,7 @@ public sealed class DeferredAgentRpcServiceHandlerTests
     {
         using var services = new ServiceCollection().BuildServiceProvider();
         var handler = new RetirementAwareHandler();
-        var deferred = new DeferredAgentRpcServiceHandler("test.service", _ => handler);
+        var deferred = new DeferredAgentRpcServiceHandler("test.service", TestDescriptor, _ => handler);
         deferred.Activate(services);
 
         deferred.Deactivate();
@@ -97,7 +129,7 @@ public sealed class DeferredAgentRpcServiceHandlerTests
     {
         using var services = new ServiceCollection().BuildServiceProvider();
         var handler = new RetirementAwareHandler();
-        var deferred = new DeferredAgentRpcServiceHandler("test.service", _ => handler);
+        var deferred = new DeferredAgentRpcServiceHandler("test.service", TestDescriptor, _ => handler);
         deferred.Activate(services);
         var invocation = deferred.InvokeUnaryAsync(
             null!,
@@ -117,7 +149,7 @@ public sealed class DeferredAgentRpcServiceHandlerTests
     {
         using var services = new ServiceCollection().BuildServiceProvider();
         var handler = new RetirementAwareHandler();
-        var deferred = new DeferredAgentRpcServiceHandler("test.service", _ => handler);
+        var deferred = new DeferredAgentRpcServiceHandler("test.service", TestDescriptor, _ => handler);
         deferred.Activate(services);
         await using var stream = deferred.InvokeServerStreamAsync(
                 null!,
@@ -134,8 +166,11 @@ public sealed class DeferredAgentRpcServiceHandlerTests
             () => moveNext.WaitAsync(TestTimeout));
     }
 
-    private sealed class EchoHandler : ISunderRpcServiceHandler
+    private sealed class EchoHandler : ISunderRpcServiceHandler, ISunderRpcDeclaredErrorMetadata
     {
+        public IReadOnlyDictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>> DeclaredErrors
+            => TestDeclaredErrors;
+
         public ValueTask<JsonElement> InvokeUnaryAsync(
             SunderRpcInvocationContext context,
             string serviceId,
@@ -160,7 +195,7 @@ public sealed class DeferredAgentRpcServiceHandlerTests
         }
     }
 
-    private sealed class RetirementAwareHandler : ISunderRpcServiceHandler
+    private sealed class RetirementAwareHandler : ISunderRpcServiceHandler, ISunderRpcDeclaredErrorMetadata
     {
         private int _streamInvocations;
         private int _unaryInvocations;
@@ -174,6 +209,9 @@ public sealed class DeferredAgentRpcServiceHandlerTests
 
         internal TaskCompletionSource UnaryStarted { get; } = new(
             TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public IReadOnlyDictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>> DeclaredErrors
+            => TestDeclaredErrors;
 
         public async ValueTask<JsonElement> InvokeUnaryAsync(
             SunderRpcInvocationContext context,

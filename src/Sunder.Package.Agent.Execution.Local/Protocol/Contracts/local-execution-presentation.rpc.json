@@ -3,7 +3,7 @@
   "descriptorVersion": 2,
   "schemaProfile": "sunder.rpc.values.v1",
   "contractId": "sunder.package.agent.execution.local.presentation",
-  "version": "2.0.0",
+  "version": "1.0.0",
   "errors": {},
   "services": {
     "presentation": {
@@ -12,8 +12,12 @@
           "kind": "unary",
           "idempotency": "none",
           "errors": [],
-          "requestSchema": { "$ref": "#/$defs/LocalExecutionOperationRequest" },
-          "responseSchema": { "$ref": "#/$defs/LocalExecutionOperationResponse" }
+          "requestSchema": {
+            "$ref": "#/$defs/LocalExecutionOperationRequest"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/LocalExecutionOperationResponse"
+          }
         }
       }
     }
@@ -21,102 +25,147 @@
   "$defs": {
     "LocalOperation": {
       "type": "string",
-      "minLength": 11,
-      "maxLength": 13,
-      "enum": ["get-settings", "save-settings", "save-shells"]
+      "enum": [
+        "get-settings",
+        "save-settings",
+        "save-shells"
+      ]
     },
     "TimeoutText": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 16
+      "type": "string"
     },
     "ShellId": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 128
+      "minLength": 1
     },
     "DisplayName": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 256
+      "type": "string"
     },
     "ExecutablePath": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 1024
+      "type": "string"
     },
     "ShellSyntax": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 128
+      "minLength": 1
     },
     "OperationMessage": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 1024
+      "minLength": 1
     },
     "DiagnosticCode": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 128
+      "minLength": 1
     },
     "CatalogRevision": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 9007199254740991
+      "minimum": 0
     },
     "LocalShellDefinition": {
       "type": "object",
       "properties": {
-        "shellId": { "$ref": "#/$defs/ShellId" },
-        "displayName": { "$ref": "#/$defs/DisplayName" },
-        "executablePath": { "$ref": "#/$defs/ExecutablePath" },
-        "syntaxKind": { "$ref": "#/$defs/ShellSyntax" },
-        "isDetected": { "type": "boolean" }
+        "shellId": {
+          "$ref": "#/$defs/ShellId"
+        },
+        "displayName": {
+          "$ref": "#/$defs/DisplayName"
+        },
+        "executablePath": {
+          "$ref": "#/$defs/ExecutablePath"
+        },
+        "syntaxKind": {
+          "$ref": "#/$defs/ShellSyntax"
+        },
+        "isDetected": {
+          "type": "boolean"
+        }
       },
-      "required": ["shellId", "displayName", "executablePath", "syntaxKind", "isDetected"],
+      "required": [
+        "shellId",
+        "displayName",
+        "executablePath",
+        "syntaxKind",
+        "isDetected"
+      ],
       "additionalProperties": false
     },
     "ShellCatalog": {
       "type": "array",
-      "items": { "$ref": "#/$defs/LocalShellDefinition" },
-      "minItems": 0,
-      "maxItems": 32
+      "items": {
+        "$ref": "#/$defs/LocalShellDefinition"
+      }
     },
     "LocalExecutionOperationError": {
       "type": "object",
       "properties": {
-        "code": { "$ref": "#/$defs/DiagnosticCode" },
-        "message": { "$ref": "#/$defs/OperationMessage" },
-        "isTransient": { "type": "boolean" },
-        "correlationId": { "$ref": "#/$defs/DiagnosticCode" }
+        "code": {
+          "$ref": "#/$defs/DiagnosticCode"
+        },
+        "message": {
+          "$ref": "#/$defs/OperationMessage"
+        },
+        "isTransient": {
+          "type": "boolean"
+        },
+        "correlationId": {
+          "$ref": "#/$defs/DiagnosticCode"
+        }
       },
-      "required": ["code", "message", "isTransient"],
+      "required": [
+        "code",
+        "message",
+        "isTransient"
+      ],
       "additionalProperties": false
     },
     "LocalExecutionOperationRequest": {
       "type": "object",
       "properties": {
-        "kind": { "$ref": "#/$defs/LocalOperation" },
-        "timeoutSeconds": { "$ref": "#/$defs/TimeoutText" },
-        "shells": { "$ref": "#/$defs/ShellCatalog" },
-        "expectedShellCatalogRevision": { "$ref": "#/$defs/CatalogRevision" }
+        "kind": {
+          "$ref": "#/$defs/LocalOperation"
+        },
+        "timeoutSeconds": {
+          "$ref": "#/$defs/TimeoutText"
+        },
+        "shells": {
+          "$ref": "#/$defs/ShellCatalog"
+        },
+        "expectedShellCatalogRevision": {
+          "$ref": "#/$defs/CatalogRevision"
+        }
       },
-      "required": ["kind"],
+      "required": [
+        "kind"
+      ],
       "additionalProperties": false
     },
     "LocalExecutionOperationResponse": {
       "type": "object",
       "properties": {
-        "timeoutSeconds": { "$ref": "#/$defs/TimeoutText" },
-        "detectedShells": { "$ref": "#/$defs/ShellCatalog" },
-        "customShells": { "$ref": "#/$defs/ShellCatalog" },
-        "shellCatalogRevision": { "$ref": "#/$defs/CatalogRevision" },
-        "message": { "$ref": "#/$defs/OperationMessage" },
-        "success": { "type": "boolean" },
-        "error": { "$ref": "#/$defs/LocalExecutionOperationError" }
+        "timeoutSeconds": {
+          "$ref": "#/$defs/TimeoutText"
+        },
+        "detectedShells": {
+          "$ref": "#/$defs/ShellCatalog"
+        },
+        "customShells": {
+          "$ref": "#/$defs/ShellCatalog"
+        },
+        "shellCatalogRevision": {
+          "$ref": "#/$defs/CatalogRevision"
+        },
+        "message": {
+          "$ref": "#/$defs/OperationMessage"
+        },
+        "success": {
+          "type": "boolean"
+        },
+        "error": {
+          "$ref": "#/$defs/LocalExecutionOperationError"
+        }
       },
-      "required": ["success"],
+      "required": [
+        "success"
+      ],
       "additionalProperties": false
     }
   }

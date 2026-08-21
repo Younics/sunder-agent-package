@@ -18,6 +18,7 @@ public static class AgentRpcContractIds
     public const string SessionCleaner = "sunder.agent.session.cleaner";
     public const string SystemPromptContributor = "sunder.agent.system.prompt.contributor";
     public const string ToolSource = "sunder.agent.tool.source";
+    internal const string ObservedToolExecution = "sunder.agent.tool.execution.observed";
     public const string PermissionSurface = "sunder.agent.permission.surface";
     public const string PromptContextContributor = "sunder.agent.prompt.context.contributor";
     public const string DurableLifecycleObserver = "sunder.agent.durable.lifecycle.observer";
@@ -68,6 +69,10 @@ public static class AgentRpcServices
         AgentRpcContractIds.ToolSource,
         static (client, endpoint) => new AgentToolSourceRpcClient(client, endpoint));
 
+    internal static AgentRpcService<IAgentObservedToolExecution> ObservedToolExecutions { get; } = new(
+        AgentRpcContractIds.ObservedToolExecution,
+        static (client, endpoint) => new AgentObservedToolExecutionRpcClient(client, endpoint));
+
     public static AgentRpcService<IAgentPermissionSurface> PermissionSurfaces { get; } = new(
         AgentRpcContractIds.PermissionSurface,
         static (client, endpoint) => new AgentPermissionSurfaceRpcClient(client, endpoint));
@@ -113,7 +118,7 @@ public static class AgentEmbeddingProviderRpc
     private const string Service = "embedding-provider";
 
     public static ISunderRpcServiceHandler CreateHandler(IAgentEmbeddingProvider provider)
-        => AgentRpcServiceHandler.Create()
+        => AgentRpcServiceHandler.Create(AgentRpcContractDescriptors.Get(AgentRpcContractIds.EmbeddingProvider))
             .AddUnary<AgentRpcEmpty, AgentEmbeddingProviderDescriptor>(Service, "describe", (_, _, _) => ValueTask.FromResult(provider.Descriptor))
             .AddUnary<AgentRpcEmpty, IReadOnlyList<AgentEmbeddingModelDescriptor>>(Service, "list-models", (_, _, token) => provider.GetAvailableModelsAsync(token))
             .AddUnary<AgentRpcEmpty, AgentEmbeddingProviderReadiness>(Service, "get-readiness", (_, _, token) => provider.GetReadinessAsync(token))
@@ -158,7 +163,7 @@ public static class AgentChildRunExecutorRpc
     public const string ServiceId = "child-run-executor";
 
     public static ISunderRpcServiceHandler CreateHandler(IAgentChildRunExecutor executor)
-        => AgentRpcServiceHandler.Create()
+        => AgentRpcServiceHandler.Create(AgentRpcContractDescriptors.Get(AgentRpcContractIds.ChildRunExecutor))
             .AddUnary<AgentChildRunRequest, AgentChildRunResult>(ServiceId, "run-child", (_, request, token) => executor.RunChildAsync(request, token))
             .Build();
 }
@@ -166,7 +171,14 @@ public static class AgentChildRunExecutorRpc
 public sealed class AgentChildRunExecutorRpcClient(ISunderRpcClient client, SunderRpcEndpointReference endpoint) : IAgentChildRunExecutor
 {
     public ValueTask<AgentChildRunResult> RunChildAsync(AgentChildRunRequest request, CancellationToken cancellationToken = default)
-        => AgentRpcServiceHandler.InvokeAsync<AgentChildRunRequest, AgentChildRunResult>(client, endpoint, AgentChildRunExecutorRpc.ServiceId, "run-child", request, cancellationToken);
+        => AgentRpcServiceHandler.InvokeAsync<AgentChildRunRequest, AgentChildRunResult>(
+            client,
+            endpoint,
+            AgentChildRunExecutorRpc.ServiceId,
+            "run-child",
+            request,
+            AgentRpcServiceHandler.CreateExtendedCallOptions(),
+            cancellationToken);
 }
 
 public static class AgentSessionCleanerRpc
@@ -174,7 +186,7 @@ public static class AgentSessionCleanerRpc
     public const string ServiceId = "session-cleaner";
 
     public static ISunderRpcServiceHandler CreateHandler(IAgentSessionDataCleaner cleaner)
-        => AgentRpcServiceHandler.Create()
+        => AgentRpcServiceHandler.Create(AgentRpcContractDescriptors.Get(AgentRpcContractIds.SessionCleaner))
             .AddUnary<AgentRpcEmpty, AgentRpcIdentity>(ServiceId, "describe", (_, _, _) => ValueTask.FromResult(new AgentRpcIdentity(cleaner.CleanerId, cleaner.CleanerId)))
             .AddUnary<SessionIdRequest, AgentRpcEmpty>(ServiceId, "delete-session", (_, request, _) =>
             {
@@ -202,7 +214,7 @@ public static class AgentSystemPromptContributorRpc
     public const string ServiceId = "system-prompt-contributor";
 
     public static ISunderRpcServiceHandler CreateHandler(IAgentSystemPromptContributor contributor)
-        => AgentRpcServiceHandler.Create()
+        => AgentRpcServiceHandler.Create(AgentRpcContractDescriptors.Get(AgentRpcContractIds.SystemPromptContributor))
             .AddUnary<AgentRpcEmpty, AgentRpcIdentity>(ServiceId, "describe", (_, _, _) => ValueTask.FromResult(new AgentRpcIdentity(contributor.ContributorId, contributor.DisplayName)))
             .AddUnary<AgentSystemPromptRequest, IReadOnlyList<AgentSystemPromptBlock>>(ServiceId, "contribute", (_, request, token) => contributor.ContributeAsync(request, token))
             .Build();
@@ -224,7 +236,7 @@ public static class AgentPermissionSurfaceRpc
     public const string ServiceId = "permission-surface";
 
     public static ISunderRpcServiceHandler CreateHandler(IAgentPermissionSurface surface)
-        => AgentRpcServiceHandler.Create()
+        => AgentRpcServiceHandler.Create(AgentRpcContractDescriptors.Get(AgentRpcContractIds.PermissionSurface))
             .AddUnary<AgentRpcEmpty, PermissionSurfaceSnapshot>(ServiceId, "describe", (_, _, _) => ValueTask.FromResult(new PermissionSurfaceSnapshot(surface.SurfaceId, surface.DisplayName, surface.ListActions())))
             .Build();
 }
@@ -245,7 +257,7 @@ public static class AgentPromptContextContributorRpc
     public static ISunderRpcServiceHandler CreateHandler(
         IAgentPromptContextContributor contributor,
         AgentRpcCatalog? rpcCatalog = null)
-        => AgentRpcServiceHandler.Create()
+        => AgentRpcServiceHandler.Create(AgentRpcContractDescriptors.Get(AgentRpcContractIds.PromptContextContributor))
             .AddUnary<AgentRpcEmpty, PromptContextContributorDescription>(ServiceId, "describe", (_, _, _) => ValueTask.FromResult(new PromptContextContributorDescription(
                 contributor.ContributorId,
                 contributor.DisplayName,
@@ -350,7 +362,7 @@ public static class AgentDurableLifecycleObserverRpc
     public const string ServiceId = "durable-lifecycle-observer";
 
     public static ISunderRpcServiceHandler CreateHandler(IAgentDurableLifecycleObserver observer)
-        => AgentRpcServiceHandler.Create()
+        => AgentRpcServiceHandler.Create(AgentRpcContractDescriptors.Get(AgentRpcContractIds.DurableLifecycleObserver))
             .AddUnary<AgentRpcEmpty, AgentRpcIdentity>(ServiceId, "describe", (_, _, _) => ValueTask.FromResult(new AgentRpcIdentity(observer.ObserverId, observer.DisplayName)))
             .AddUnary<AgentDurableLifecycleEventEnvelope, AgentRpcEmpty>(ServiceId, "handle", async (_, request, token) =>
             {
@@ -376,7 +388,7 @@ public static class AgentProfileCapabilityConsumerRpc
     public const string ServiceId = "profile-capability-consumer";
 
     public static ISunderRpcServiceHandler CreateHandler(IAgentProfileCapabilityConsumer consumer)
-        => AgentRpcServiceHandler.Create()
+        => AgentRpcServiceHandler.Create(AgentRpcContractDescriptors.Get(AgentRpcContractIds.ProfileCapabilityConsumer))
             .AddUnary<AgentRpcEmpty, ProfileCapabilityConsumerSnapshot>(ServiceId, "describe", (_, _, _) => ValueTask.FromResult(new ProfileCapabilityConsumerSnapshot(consumer.ConsumerId, consumer.DisplayName, consumer.ListConsumedCapabilities())))
             .Build();
 }
@@ -395,7 +407,7 @@ public static class AgentSelectableCapabilityProviderRpc
     public const string ServiceId = "selectable-capability-provider";
 
     public static ISunderRpcServiceHandler CreateHandler(IAgentProfileSelectableCapabilityProvider provider)
-        => AgentRpcServiceHandler.Create()
+        => AgentRpcServiceHandler.Create(AgentRpcContractDescriptors.Get(AgentRpcContractIds.SelectableCapabilityProvider))
             .AddUnary<AgentRpcEmpty, AgentRpcIdentity>(ServiceId, "describe", (_, _, _) => ValueTask.FromResult(new AgentRpcIdentity(provider.ProviderId, provider.DisplayName)))
             .AddUnary<AgentProfileSelectableCapabilityRequest, IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>>(ServiceId, "list", (_, request, token) => provider.ListCapabilitiesAsync(request, token))
             .AddStream<AgentRpcEmpty, AgentRpcChange>(ServiceId, "watch", (_, _, token) => WatchSelectableCapabilities(provider, token))
@@ -480,7 +492,7 @@ public static class AgentWorkspacePathMigratorRpc
     public const string ServiceId = "workspace-path-migrator";
 
     public static ISunderRpcServiceHandler CreateHandler(IAgentWorkspacePathMigrationContributor migrator)
-        => AgentRpcServiceHandler.Create()
+        => AgentRpcServiceHandler.Create(AgentRpcContractDescriptors.Get(AgentRpcContractIds.WorkspacePathMigrator))
             .AddUnary<AgentRpcEmpty, AgentRpcIdentity>(ServiceId, "describe", (_, _, _) => ValueTask.FromResult(new AgentRpcIdentity(migrator.ContributorId, migrator.ContributorId)))
             .AddUnary<AgentWorkspacePathMigrationContext, bool>(ServiceId, "can-migrate", (_, request, _) => ValueTask.FromResult(migrator.CanMigrate(request)))
             .AddUnary<AgentWorkspacePathMigrationContext, IReadOnlyList<AgentWorkspacePathMigrationItem>>(ServiceId, "list-legacy-paths", async (_, request, token) => await migrator.GetLegacyWorkspacePathsAsync(request, token).ConfigureAwait(false))
@@ -509,7 +521,7 @@ public static class AgentWorkspaceEditorRpc
     public const string ServiceId = "workspace-editor";
 
     public static ISunderRpcServiceHandler CreateHandler(IAgentWorkspaceEditorContributor editor)
-        => AgentRpcServiceHandler.Create()
+        => AgentRpcServiceHandler.Create(AgentRpcContractDescriptors.Get(AgentRpcContractIds.WorkspaceEditor))
             .AddUnary<AgentRpcEmpty, AgentRpcIdentity>(ServiceId, "describe", (_, _, _) => ValueTask.FromResult(new AgentRpcIdentity(editor.ContributorId, editor.ContributorId)))
             .AddUnary<AgentWorkspaceEditorContext, bool>(ServiceId, "can-edit", (_, request, _) => ValueTask.FromResult(editor.CanEdit(request)))
             .AddUnary<AgentWorkspaceEditorContext, IReadOnlyList<AgentEditorSection>>(ServiceId, "get-sections", (_, request, token) => editor.GetSectionsAsync(request, token))

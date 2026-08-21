@@ -15,7 +15,8 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
     private readonly BuilderProjectPersistence _persistence;
     private readonly BuilderPathService _pathService;
     private readonly IBuilderUiDispatcher _uiDispatcher;
-    private readonly PresentationTaskScope _tasks = new();
+    private readonly PresentationTaskScope _tasks = new(
+        PresentationTaskScope.IgnoreExpectedFailure);
     private readonly PresentationOperationObserver _presentationOperations;
     private readonly TimedStatusController _statusVisibility = new();
     private readonly CancellationTokenSource _lifetime = new();
@@ -26,7 +27,6 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
     private const string SnapshotChannel = "builder-snapshot";
     private BuilderProjectViewModel? _observedSelectedProject;
     private Task? _initializationTask;
-    private Task? _statusVisibilityTask;
     private string _statusText = string.Empty;
     private string _runtimeLogText = string.Empty;
     private bool _isBusy;
@@ -321,16 +321,18 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
         _persistence.SaveFailed -= OnPersistenceSaveFailed;
         _listDetail.PropertyChanged -= OnListDetailPropertyChanged;
         _statusVisibility.Dispose();
-        _presentationOperations.Dispose();
-        _tasks.Dispose();
         _lifetime.Cancel();
+        await _presentationOperations.DisposeAsync().ConfigureAwait(false);
+        await _tasks.DisposeAsync().ConfigureAwait(false);
         if (initializationTask is not null)
         {
             try
             {
                 await initializationTask.ConfigureAwait(false);
             }
-            catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+            catch (OperationCanceledException exception) when (
+                _lifetime.IsCancellationRequested
+                && !PresentationExceptionPolicy.IsFatal(exception))
             {
             }
         }
@@ -612,9 +614,9 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
             return;
         }
 
-        _statusVisibilityTask = _statusVisibility.ScheduleAsync(
+        _tasks.Run(_ => _statusVisibility.ScheduleAsync(
             StatusMessageVisibleDuration,
-            () => _tasks.Run(_ => _uiDispatcher.InvokeAsync(() => ShowStatusMessage = false)));
+            () => ShowStatusMessage = false));
     }
 
     private void NotifySetupStatePropertiesChanged()

@@ -84,33 +84,19 @@ jobs:
           mkdir -p "$output"
           version="$(jq -er '.releaseVersion' packages.json)"
 
-          while IFS= read -r worker_project; do
-            for rid in win-x64 win-arm64 linux-x64 linux-arm64 osx-x64 osx-arm64; do
-              dotnet restore "$worker_project" --force-evaluate -r "$rid" -p:SunderUseSourceSdk=true
-              dotnet build "$worker_project" -c Release --no-restore -m:1 -r "$rid" \
-                -p:SunderUseSourceSdk=true -p:SunderAgentVersion="$version" \
-                -p:ContinuousIntegrationBuild=true
-            done
-            dotnet restore "$worker_project" --force-evaluate -p:SunderUseSourceSdk=true
-          done < <(jq -r '.packages | map(select(.workerProjectPath != null)) | sort_by(.key)[] | .workerProjectPath' packages.json)
-
           dotnet pack src/Sunder.Package.Agent.Contracts/Sunder.Package.Agent.Contracts.csproj \
             -c Release --no-build --no-restore -o "$output" \
             -p:SunderUseSourceSdk=true -p:SunderAgentVersion="$version" \
             -p:ContinuousIntegrationBuild=true
 
-          while IFS=$'\t' read -r package_id project_path worker_project_path; do
+          while IFS=$'\t' read -r package_id project_path; do
             output_path="$output/$package_id.$version.sunderpkg"
-            extra_properties=()
-            if [[ -n "$worker_project_path" ]]; then
-              extra_properties+=("-p:SunderAgentUniversalWorkerPackage=true")
-            fi
+            dotnet restore "$project_path" --force-evaluate -p:SunderUseSourceSdk=true
             dotnet msbuild "$project_path" -t:PackSunderPackage -m:1 \
               -p:Configuration=Release -p:SunderUseSourceSdk=true \
               -p:SunderAgentVersion="$version" -p:ContinuousIntegrationBuild=true \
-              -p:SunderPackageOutputPath="$output_path" \
-              "${extra_properties[@]}"
-          done < <(jq -r '.packages | map(select(.artifactType == "sunderpkg")) | sort_by(.key)[] | [.packageId, .projectPath, (.workerProjectPath // "")] | @tsv' packages.json)
+              -p:SunderPackageOutputPath="$output_path"
+          done < <(jq -r '.packages | map(select(.artifactType == "sunderpkg")) | sort_by(.key)[] | [.packageId, .projectPath] | @tsv' packages.json)
 
           runtime_count="$(jq '[.packages[] | select(.artifactType == "sunderpkg")] | length' packages.json)"
           test "$(find "$output" -maxdepth 1 -name '*.sunderpkg' -type f | wc -l)" -eq "$runtime_count"
@@ -154,7 +140,7 @@ jobs:
               all(.files[] | select(.path | startswith("payload/runtime/"));
                 (.path | test("/[^/]+\\.App\\.(dll|pdb|deps\\.json)$")) == false)
             ' "$content_index" >/dev/null
-          done < <(jq -r '.packages | map(select(.workerProjectPath != null)) | sort_by(.key)[] | [.packageId, (.providerIds | tojson)] | @tsv' packages.json)
+          done < <(jq -r '.packages | map(select(.artifactType == "sunderpkg")) | sort_by(.key)[] | [.packageId, (.providerIds | tojson)] | @tsv' packages.json)
 
       - name: Build Core validation and smoke paths
         working-directory: sunder-core

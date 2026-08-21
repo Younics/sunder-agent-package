@@ -139,6 +139,8 @@ internal sealed record AgentDashboardProjection(
 
 internal interface IAgentDashboardLoader
 {
+    event Action? DashboardInvalidated;
+
     Task<AgentDashboardProjection> LoadDashboardAsync(
         CancellationToken cancellationToken = default);
 }
@@ -392,6 +394,8 @@ internal sealed record AgentPermissionProjection(
 
 internal interface IAgentGlobalPermissionGateway
 {
+    event Action? GlobalPermissionsInvalidated;
+
     Task<AgentPermissionProjection> LoadGlobalPermissionsAsync(
         CancellationToken cancellationToken = default);
 

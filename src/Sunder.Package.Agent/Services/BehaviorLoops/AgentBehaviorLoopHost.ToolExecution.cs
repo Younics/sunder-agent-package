@@ -169,9 +169,21 @@ internal sealed partial class AgentBehaviorLoopHost
             return new AgentToolCallOutcome(AgentToolCallOutcomeKind.Failed, checkpoint, result);
         }
 
+        var executionStatus = string.Equals(
+            result.ErrorCode,
+            AgentToolResultErrorCodes.ToolOutcomeAmbiguous,
+            StringComparison.Ordinal)
+            ? AgentToolExecutionStatus.Ambiguous
+            : result.IsError
+                ? AgentToolExecutionStatus.Failed
+                : AgentToolExecutionStatus.Completed;
         LogEvent(
-            result.IsError ? PackageLogLevel.Error : PackageLogLevel.Information,
-            result.IsError ? "tool.execution.failed" : "tool.execution.completed",
+            executionStatus == AgentToolExecutionStatus.Ambiguous
+                ? PackageLogLevel.Warning
+                : result.IsError ? PackageLogLevel.Error : PackageLogLevel.Information,
+            executionStatus == AgentToolExecutionStatus.Ambiguous
+                ? "tool.execution.ambiguous"
+                : result.IsError ? "tool.execution.failed" : "tool.execution.completed",
             result.Summary,
             executed.ElapsedMilliseconds,
             new Dictionary<string, object?>(StringComparer.Ordinal)
@@ -186,7 +198,7 @@ internal sealed partial class AgentBehaviorLoopHost
         var resultTurn = CompleteToolExecution(
             call,
             result,
-            result.IsError ? AgentToolExecutionStatus.Failed : AgentToolExecutionStatus.Completed,
+            executionStatus,
             executed.WasReadOnlyCacheHit
                 ? "read-only-cache-hit"
                 : result.ErrorCode ?? (result.IsError ? "tool-failed" : "tool-completed"),
@@ -198,9 +210,12 @@ internal sealed partial class AgentBehaviorLoopHost
             cancellationToken: cancellationToken);
         SaveCheckpoint(
             AgentRunStatus.Running,
-            result.IsError
-                ? $"Tool '{call.ToolId}' returned an error result. Continuing provider execution."
-                : $"Tool '{call.ToolId}' completed. Continuing provider execution.");
+            executionStatus switch
+            {
+                AgentToolExecutionStatus.Ambiguous => $"Tool '{call.ToolId}' returned without a definitive outcome. Continuing provider execution.",
+                AgentToolExecutionStatus.Failed => $"Tool '{call.ToolId}' returned an error result. Continuing provider execution.",
+                _ => $"Tool '{call.ToolId}' completed. Continuing provider execution.",
+            });
         return new AgentToolCallOutcome(AgentToolCallOutcomeKind.Executed, Result: result);
     }
 
@@ -339,10 +354,7 @@ internal sealed partial class AgentBehaviorLoopHost
             return preflight;
         }
 
-        var started = _sessionService.StartToolExecution(
-            _runLease,
-            execution.ExecutionId,
-            execution.InvocationFingerprint);
+        var recordDispatchStarted = CreateDispatchStartedCallback(execution);
         var executionTask = _toolService.ExecuteAsync(
             call.ToolId,
             call.ArgumentsJson,
@@ -363,8 +375,8 @@ internal sealed partial class AgentBehaviorLoopHost
             expectedExecutionBinding: _executionBinding,
             expectedExecutionTargetConfigurationGeneration: executionTargetConfigurationGeneration,
             enforceExpectedExecutionContext: true,
+            dispatchStarted: recordDispatchStarted,
             cancellationToken: cancellationToken);
-        _sessionService.PublishToolExecutionStarted(_runLease, started.ToolCallTurn);
         try
         {
             return await executionTask;
@@ -375,6 +387,24 @@ internal sealed partial class AgentBehaviorLoopHost
         }
     }
 
+    private Action CreateDispatchStartedCallback(AgentToolExecutionRecord execution)
+    {
+        var dispatchRecorded = 0;
+        return () =>
+        {
+            if (Interlocked.Exchange(ref dispatchRecorded, 1) != 0)
+            {
+                return;
+            }
+
+            var started = _sessionService.StartToolExecution(
+                _runLease,
+                execution.ExecutionId,
+                execution.InvocationFingerprint);
+            _sessionService.PublishToolExecutionStarted(_runLease, started.ToolCallTurn);
+        };
+    }
+
     private async Task<AgentToolResult> ExecuteApprovedToolAsync(
         AgentPendingPermissionRequestRecord pending,
         AgentToolDescriptor advertisedDescriptor,
@@ -383,6 +413,7 @@ internal sealed partial class AgentBehaviorLoopHost
         IReadOnlyList<string> approvedResourceReferences,
         IReadOnlyList<AgentResourceClaim> approvedResourceClaims,
         IReadOnlyList<string> approvedResourceCapabilities,
+        Action dispatchStarted,
         CancellationToken cancellationToken)
     {
         var allowOutsideConfiguredScope = string.Equals(
@@ -412,6 +443,7 @@ internal sealed partial class AgentBehaviorLoopHost
                 expectedExecutionTargetConfigurationGeneration:
                     _executionTargetConfigurationGenerationByCallId.GetValueOrDefault(pending.CallId),
                 enforceExpectedExecutionContext: true,
+                dispatchStarted: dispatchStarted,
                 cancellationToken: cancellationToken);
         }
         finally

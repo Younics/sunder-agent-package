@@ -20,6 +20,7 @@ using System.Text.Json;
 using System.Collections.Specialized;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
@@ -2122,6 +2123,52 @@ public sealed class ViewLifecycleTests
     }
 
     [AvaloniaFact]
+    public async Task AgentChatView_RestoredRunningMcpToolSuppressesDuplicateActivityRow()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var services = CreateAgentServices(scope);
+        using var profileService = services.ProfileService;
+        await profileService.CreateProfileAsync("Restored MCP profile");
+        var workspace = services.WorkspaceService.CreateWorkspace("Restored MCP workspace");
+        var session = services.SessionService.CreateSession(
+            "Restored MCP session",
+            workspaceId: workspace.WorkspaceId);
+        var runRevision = services.SessionService.GetNextRunRevision(session.SessionId);
+        services.SessionService.SaveCheckpoint(
+            session.SessionId,
+            runRevision,
+            AgentRunStatus.Running,
+            "Executing tool 'MCP'.");
+        services.SessionService.AppendToolCallTurn(
+            session.SessionId,
+            AgentMessageRole.Assistant,
+            "restored-mcp-call",
+            McpToolIdentity.CreateStable("stitch", "edit_screens"),
+            "{}");
+
+        using var view = CreateAgentChatView(scope, services, profileService);
+        var window = new Window { Width = 800, Height = 420, Content = view };
+        window.Show();
+        try
+        {
+            await view.OnNavigatedToAsync(new PackageViewNavigationContext(
+                "sunder.package.agent.chat",
+                new Dictionary<string, string?>()));
+            var viewModel = Assert.IsType<AgentChatViewModel>(view.DataContext);
+            await WaitUntilAsync(() => viewModel.Messages
+                .OfType<AgentToolInvocationRowViewModel>()
+                .Any(row => row.IsRunning));
+
+            Assert.False(viewModel.RunActivityRow.IsVisible);
+            Assert.Single(viewModel.Messages.OfType<AgentToolInvocationRowViewModel>());
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
     public async Task AgentChatView_ToolCallAndResultRemainPinnedWithoutCollectionRemoval()
     {
         using var scope = RegressionTestPackageScope.Create();
@@ -2222,7 +2269,7 @@ public sealed class ViewLifecycleTests
                 runRevision,
                 AgentRunActivityKind.Tool,
                 "Running test tool");
-            await WaitUntilAsync(() => viewModel.RunActivityRow.IsVisible);
+            Assert.False(viewModel.RunActivityRow.IsVisible);
             completedLayoutDistances.Clear();
             observeLayouts = true;
             services.SessionService.AppendToolResultTurn(
@@ -2282,7 +2329,7 @@ public sealed class ViewLifecycleTests
                 runRevision,
                 AgentRunActivityKind.Tool,
                 "Collecting detached failure output");
-            await WaitUntilAsync(() => viewModel.RunActivityRow.IsVisible);
+            Assert.False(viewModel.RunActivityRow.IsVisible);
 
             window.MouseMove(new Point(400, 180), RawInputModifiers.None);
             window.MouseWheel(new Point(400, 180), new Vector(0, 3), RawInputModifiers.None);
@@ -3545,6 +3592,127 @@ public sealed class ViewLifecycleTests
         Assert.Equal(2, workspaceGateway.InitializeCount);
         Assert.Equal("Create an agent before chatting", viewModel.SetupTitle);
         window.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task AgentChatViewModel_SendCommandContainsExpectedProviderFailure()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var services = CreateAgentServices(scope);
+        using var profileService = services.ProfileService;
+        var provider = new ReadyChatProvider();
+        services.ExtensionCatalog.AddProvider(AgentRpcServices.ChatProviders, provider);
+        var profile = await profileService.CreateProfileAsync("Fault containment profile");
+        profileService.SaveProfile(
+            profile.ProfileId,
+            profile.DisplayName,
+            profile.Description,
+            profile.Instructions,
+            provider.Descriptor.ProviderId,
+            "test-model",
+            embeddingProviderId: null,
+            embeddingModelId: null);
+        var workspace = services.WorkspaceService.CreateWorkspace("Fault containment workspace");
+        var session = services.SessionService.CreateSession(
+            "Fault containment session",
+            profileId: profile.ProfileId,
+            workspaceId: workspace.WorkspaceId);
+        var notifications = new RecordingNotificationService();
+        using var view = new AgentChatView(
+            profileService,
+            services.WorkspaceService,
+            services.SessionService,
+            NoOpPermissionGateway.Instance,
+            ProviderFaultingRunGateway.Instance,
+            new AgentChatSelectionStateService(scope.Context),
+            new AgentToolPresentationService(),
+            new AgentExecutionTargetWarmupService(
+                services.WorkspaceService,
+                services.TargetService),
+            null!,
+            new AgentAttachmentService(scope.Context),
+            notifications,
+            scope.Context);
+        var window = new Window { Width = 900, Height = 700, Content = view };
+        window.Show();
+        try
+        {
+            await view.OnNavigatedToAsync(new PackageViewNavigationContext(
+                "sunder.package.agent.chat",
+                new Dictionary<string, string?>()));
+            var viewModel = Assert.IsType<AgentChatViewModel>(view.DataContext);
+            viewModel.SelectedSession = viewModel.Sessions.Single(item => item.SessionId == session.SessionId);
+            viewModel.DraftMessage = "message that the provider rejects";
+
+            viewModel.SendMessageCommand.Execute(null);
+            await WaitUntilAsync(() => notifications.Requests.Count == 1);
+            await WaitUntilAsync(() => viewModel.SendMessageCommand.CanExecute(null));
+
+            var notification = Assert.Single(notifications.Requests);
+            Assert.Equal("Operation not completed", notification.Title);
+            Assert.Contains("message could not be sent", notification.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal("message that the provider rejects", viewModel.DraftMessage);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task AgentChatView_PasteAndDropFailuresAreContainedByNamedOperations()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var services = CreateAgentServices(scope);
+        using var profileService = services.ProfileService;
+        var profile = await profileService.CreateProfileAsync("Attachment fault profile");
+        var workspace = services.WorkspaceService.CreateWorkspace("Attachment fault workspace");
+        var session = services.SessionService.CreateSession(
+            "Attachment fault session",
+            profileId: profile.ProfileId,
+            workspaceId: workspace.WorkspaceId);
+        var notifications = new RecordingNotificationService();
+        using var view = new AgentChatView(
+            profileService,
+            services.WorkspaceService,
+            services.SessionService,
+            NoOpPermissionGateway.Instance,
+            NoOpRunGateway.Instance,
+            new AgentChatSelectionStateService(scope.Context),
+            new AgentToolPresentationService(),
+            new AgentExecutionTargetWarmupService(
+                services.WorkspaceService,
+                services.TargetService),
+            null!,
+            ProviderFaultingAttachmentGateway.Instance,
+            notifications,
+            scope.Context);
+        var window = new Window { Width = 900, Height = 700, Content = view };
+        window.Show();
+        try
+        {
+            await view.OnNavigatedToAsync(new PackageViewNavigationContext(
+                "sunder.package.agent.chat",
+                new Dictionary<string, string?>()));
+            var viewModel = Assert.IsType<AgentChatViewModel>(view.DataContext);
+            viewModel.SelectedSession = viewModel.Sessions.Single(item => item.SessionId == session.SessionId);
+
+            view.SubmitPastedAttachmentPaths(["pasted.txt"]);
+            view.SubmitDroppedAttachmentPaths(["dropped.txt"]);
+            await WaitUntilAsync(() => notifications.Requests.Count == 2);
+
+            Assert.Contains(
+                notifications.Requests,
+                request => request.Message.Contains("clipboard content", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(
+                notifications.Requests,
+                request => request.Message.Contains("dropped files", StringComparison.OrdinalIgnoreCase));
+            Assert.Empty(viewModel.PendingAttachments);
+        }
+        finally
+        {
+            window.Close();
+        }
     }
 
     [AvaloniaFact]
@@ -5389,6 +5557,12 @@ public sealed class ViewLifecycleTests
             remove { }
         }
 
+        public event Action? ResetRequired
+        {
+            add { }
+            remove { }
+        }
+
         public TaskCompletionSource BlockingReadStarted { get; }
             = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -5529,6 +5703,133 @@ public sealed class ViewLifecycleTests
         public Task<AgentRunCheckpointRecord?> DenyPendingPermissionAsync(Guid sessionId, string requestId,
             CancellationToken cancellationToken = default) => Task.FromResult<AgentRunCheckpointRecord?>(null);
     }
+
+    private sealed class ProviderFaultingRunGateway : IAgentRunGateway
+    {
+        public static ProviderFaultingRunGateway Instance { get; } = new();
+
+        public Task<AgentRunCheckpointRecord> QueueUserMessageAsync(
+            Guid sessionId,
+            string profileId,
+            string userMessage,
+            string workspaceId,
+            IReadOnlyList<AgentAttachmentUploadRequest> attachments,
+            CancellationToken cancellationToken = default)
+            => Task.FromException<AgentRunCheckpointRecord>(ProviderFailure());
+
+        public Task<AgentRunCheckpointRecord> RollbackAndQueueUserMessageAsync(
+            Guid sessionId,
+            Guid rollbackAnchorTurnId,
+            string profileId,
+            string userMessage,
+            string workspaceId,
+            IReadOnlyList<AgentAttachmentUploadRequest> attachments,
+            CancellationToken cancellationToken = default)
+            => Task.FromException<AgentRunCheckpointRecord>(ProviderFailure());
+
+        public Task<AgentRunCheckpointRecord?> StopAsync(
+            Guid sessionId,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<AgentRunCheckpointRecord?>(null);
+
+        public Task<AgentRunCheckpointRecord?> ApprovePendingPermissionAsync(
+            Guid sessionId,
+            string requestId,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<AgentRunCheckpointRecord?>(null);
+
+        public Task<AgentRunCheckpointRecord?> DenyPendingPermissionAsync(
+            Guid sessionId,
+            string requestId,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<AgentRunCheckpointRecord?>(null);
+    }
+
+    private sealed class ProviderFaultingAttachmentGateway : IAgentAttachmentGateway
+    {
+        public static ProviderFaultingAttachmentGateway Instance { get; } = new();
+
+        public Task<AgentAttachmentUploadRequest> LoadUploadRequestFromFileAsync(
+            string path,
+            CancellationToken cancellationToken = default)
+            => Task.FromException<AgentAttachmentUploadRequest>(ProviderFailure());
+
+        public AgentAttachmentInfo InspectUpload(AgentAttachmentUploadRequest upload)
+            => throw new NotSupportedException();
+
+        public Task<byte[]> ReadAttachmentBytesAsync(
+            AgentAttachmentMetadata metadata,
+            CancellationToken cancellationToken = default)
+            => Task.FromException<byte[]>(ProviderFailure());
+    }
+
+    private sealed class ReadyChatProvider : IAgentChatProvider
+    {
+        public AgentProviderDescriptor Descriptor { get; } = new(
+            "fault-containment-provider",
+            "Fault Containment Provider",
+            [],
+            SupportsStreaming: true,
+            SupportsInterruptibleRuns: true);
+
+        public ValueTask<IReadOnlyList<AgentModelDescriptor>> GetAvailableModelsAsync(
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult<IReadOnlyList<AgentModelDescriptor>>(
+                [new AgentModelDescriptor("test-model", "Test Model", 16_000, 2_000)]);
+
+        public ValueTask<AgentProviderReadiness> GetReadinessAsync(
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new AgentProviderReadiness(
+                Descriptor.ProviderId,
+                AgentProviderReadinessStatus.Ready,
+                "Ready."));
+
+        public ValueTask<AgentProviderRunCapabilities> GetRunCapabilitiesAsync(
+            string? modelId,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public ValueTask<IChatClient> CreateChatClientAsync(
+            AgentChatClientContext context,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+    }
+
+    private sealed class RecordingNotificationService : IPackageNotificationService
+    {
+        private readonly object _syncRoot = new();
+        private readonly List<PackageNotificationRequest> _requests = [];
+
+        public IReadOnlyList<PackageNotificationRequest> Requests
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _requests.ToArray();
+                }
+            }
+        }
+
+        public ValueTask PublishAsync(
+            PackageNotificationRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            lock (_syncRoot)
+            {
+                _requests.Add(request);
+            }
+
+            return ValueTask.CompletedTask;
+        }
+    }
+
+    private static SunderRpcException ProviderFailure()
+        => new(new SunderRpcError(
+            SunderRpcErrorKind.ProviderFaulted,
+            "test.provider-faulted",
+            "Injected provider failure."));
 
     private sealed class BlockingEmbeddingProvider : IAgentEmbeddingProvider
     {

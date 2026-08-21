@@ -13,7 +13,8 @@ namespace Sunder.Package.Agent.PackageViews;
 public partial class AgentProfilesView : UserControl, IDisposable, IPackageViewWarmupTarget, IPackageViewNavigationTarget
 {
     private readonly AdaptiveMasterDetail _adaptiveLayout;
-    private readonly PresentationTaskScope _tasks = new();
+    private readonly PresentationTaskScope _tasks = new(
+        PresentationTaskScope.IgnoreExpectedFailure);
     private AgentProfilesViewModel? _viewModel;
     private bool _disposed;
 

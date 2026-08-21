@@ -9,10 +9,13 @@ internal sealed class AgentRunActivityState : IDisposable
     private static readonly TimeSpan DefaultQuietDelay = TimeSpan.FromMilliseconds(900);
 
     private readonly TimedStatusController _quietTimer = new();
-    private readonly PresentationTaskScope _tasks = new();
+    private readonly PresentationTaskScope _tasks = new(
+        PresentationTaskScope.IgnoreExpectedFailure);
     private readonly TimeSpan _quietDelay;
     private readonly Func<bool> _isRunActive;
     private readonly Func<bool> _isFollowingLatest;
+    private readonly Dictionary<Guid, ActiveToolCall> _activeToolCalls = [];
+    private readonly HashSet<Guid> _observedToolResults = [];
     private bool _hasVisibleRunActivity;
     private bool _showAfterQuiet;
     private bool _disposed;
@@ -38,6 +41,7 @@ internal sealed class AgentRunActivityState : IDisposable
     public bool ShouldShow
         => _isRunActive()
            && _isFollowingLatest()
+           && _activeToolCalls.Count == 0
            && (!_hasVisibleRunActivity || _showAfterQuiet);
 
     public void Reset()
@@ -47,6 +51,24 @@ internal sealed class AgentRunActivityState : IDisposable
         IsReasoning = false;
         _hasVisibleRunActivity = false;
         _showAfterQuiet = false;
+        _activeToolCalls.Clear();
+        _observedToolResults.Clear();
+        PublishIfChanged();
+    }
+
+    public void RebuildActiveToolCalls(IEnumerable<AgentTurnRecord> turns)
+    {
+        _activeToolCalls.Clear();
+        _observedToolResults.Clear();
+        var items = turns.SelectMany(turn => turn.Items).ToArray();
+        foreach (var item in items.Where(item => item.Kind == AgentTurnItemKind.ToolCall))
+        {
+            TrackActiveToolCall(item);
+        }
+        foreach (var item in items.Where(item => item.Kind == AgentTurnItemKind.ToolResult))
+        {
+            RemoveActiveToolCall(item);
+        }
         PublishIfChanged();
     }
 
@@ -63,6 +85,7 @@ internal sealed class AgentRunActivityState : IDisposable
             return;
         }
 
+        TrackActiveToolCalls(turn);
         _hasVisibleRunActivity = true;
         _showAfterQuiet = !scheduleQuietTimer;
         SetText(ResolveActivityText(turn), isReasoning: false, notify: false);
@@ -134,7 +157,7 @@ internal sealed class AgentRunActivityState : IDisposable
             return;
         }
 
-        _tasks.Run(_quietTimer.ScheduleAsync(_quietDelay, ShowAfterQuietPeriod));
+        _tasks.Run(_ => _quietTimer.ScheduleAsync(_quietDelay, ShowAfterQuietPeriod));
     }
 
     private void ShowAfterQuietPeriod()
@@ -252,12 +275,95 @@ internal sealed class AgentRunActivityState : IDisposable
 
     private static string HumanizeToolName(string toolId)
     {
+        if (McpToolCardPresentation.TryParseStableToolId(toolId, out _, out var toolName))
+        {
+            return McpToolCardPresentation.HumanizeToolName(toolName);
+        }
+
         var parts = toolId.Split(['_', '-', '.'], StringSplitOptions.RemoveEmptyEntries);
         return parts.Length == 0
             ? "tool"
             : string.Join(' ', parts.Select(part =>
                 CultureInfo.InvariantCulture.TextInfo.ToTitleCase(part.ToLowerInvariant())));
     }
+
+    private void TrackActiveToolCalls(AgentTurnRecord turn)
+    {
+        foreach (var item in turn.Items.Where(item => item.Kind is AgentTurnItemKind.ToolCall or AgentTurnItemKind.ToolResult))
+        {
+            if (item.Kind == AgentTurnItemKind.ToolResult
+                || item.ToolExecutionStatus is AgentToolExecutionStatus.Completed
+                    or AgentToolExecutionStatus.Failed
+                    or AgentToolExecutionStatus.Ambiguous)
+            {
+                RemoveActiveToolCall(item);
+            }
+            else
+            {
+                TrackActiveToolCall(item);
+            }
+        }
+    }
+
+    private void TrackActiveToolCall(AgentTurnItemRecord item)
+    {
+        if (item.ToolExecutionStatus is AgentToolExecutionStatus.Completed
+            or AgentToolExecutionStatus.Failed
+            or AgentToolExecutionStatus.Ambiguous)
+        {
+            _activeToolCalls.Remove(item.ItemId);
+            return;
+        }
+        _activeToolCalls[item.ItemId] = new ActiveToolCall(
+            item.ToolExecutionId,
+            NormalizeCallId(item.CallId),
+            item.ToolId);
+    }
+
+    private void RemoveActiveToolCall(AgentTurnItemRecord item)
+    {
+        if (item.Kind == AgentTurnItemKind.ToolResult && !_observedToolResults.Add(item.ItemId))
+        {
+            return;
+        }
+        if (_activeToolCalls.Remove(item.ItemId))
+        {
+            return;
+        }
+
+        var callId = NormalizeCallId(item.CallId);
+        Guid? matchingItemId = item.ToolExecutionId is { } executionId
+            ? _activeToolCalls
+                .Where(pair => pair.Value.ExecutionId == executionId)
+                .Select(pair => (Guid?)pair.Key)
+                .FirstOrDefault()
+            : null;
+        if (matchingItemId is null && callId is not null)
+        {
+            matchingItemId = _activeToolCalls
+                .Where(pair => string.Equals(pair.Value.CallId, callId, StringComparison.Ordinal))
+                .Select(pair => (Guid?)pair.Key)
+                .FirstOrDefault();
+        }
+        if (matchingItemId is null
+            && item.ToolExecutionId is null
+            && callId is null)
+        {
+            matchingItemId = _activeToolCalls
+                .Where(pair => string.Equals(pair.Value.ToolId, item.ToolId, StringComparison.Ordinal))
+                .Select(pair => (Guid?)pair.Key)
+                .FirstOrDefault();
+        }
+        if (matchingItemId is { } itemId)
+        {
+            _activeToolCalls.Remove(itemId);
+        }
+    }
+
+    private static string? NormalizeCallId(string? callId)
+        => string.IsNullOrWhiteSpace(callId) ? null : callId;
+
+    private sealed record ActiveToolCall(Guid? ExecutionId, string? CallId, string? ToolId);
 
     private readonly record struct ActivityPresentation(
         string Text,

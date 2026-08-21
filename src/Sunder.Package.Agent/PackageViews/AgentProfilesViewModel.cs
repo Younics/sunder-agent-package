@@ -37,6 +37,7 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         new(StringComparer.OrdinalIgnoreCase);
     private bool _suppressDraftTracking;
     private bool _initializationRefreshPending;
+    private bool _initializationCapabilityRefreshPending;
     private bool _isInitialized;
     private bool _disposed;
     private string? _initializationFailureStatus;
@@ -65,9 +66,15 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         _runtimeAvailability = profileService as IAgentRuntimeAvailability;
         _settingsNavigationService = settingsNavigationService;
         _uiDispatcher = uiDispatcher;
-        _tasks = new PresentationTaskScope();
         _statusClear = new TimedStatusController(dispatcher: uiDispatcher);
         _runtimeNoticeDelay = new TimedStatusController(runtimeNoticeTimeProvider, uiDispatcher);
+        _tasks = new PresentationTaskScope(exception => _uiDispatcher.InvokeAsync(() =>
+        {
+            if (!_disposed)
+            {
+                SetStatus(exception.Message, AgentProfileStatusKind.Error);
+            }
+        }));
         _listDetail = new KeyedAdaptiveListDetailState<string, AgentProfileRecord>(
             Profiles,
             static profile => profile.ProfileId,
@@ -104,6 +111,10 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         _operation.PropertyChanged += OnOperationPropertyChanged;
         _profileService.ProfileChanged += OnProfileChanged;
         _profileService.SelectableCapabilitiesChanged += OnSelectableCapabilitiesChanged;
+        if (_dashboardLoader is not null)
+        {
+            _dashboardLoader.DashboardInvalidated += OnDashboardInvalidated;
+        }
         if (_runtimeAvailability is not null)
         {
             _runtimeAvailability.ConnectionStateChanged += OnRuntimeConnectionStateChanged;
@@ -519,27 +530,6 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         OnPropertyChanged(nameof(IsDirty));
     }
 
-    private void OnProfileChanged(string profileId) => RunOnUiThread(() =>
-    {
-        if (_isInitialized)
-        {
-            _tasks.Run(_runtimeRefresh.MarkDirty());
-        }
-        else
-        {
-            _initializationRefreshPending = true;
-        }
-    });
-
-    private void OnSelectableCapabilitiesChanged()
-        => RunOnUiThread(() =>
-        {
-            if (_isInitialized)
-            {
-                _tasks.Run(_ => RefreshSelectedProfileCapabilitiesAsync());
-            }
-        });
-
     private OperationGeneration BeginOperation(AgentProfileOperation operation)
     {
         if (_disposed)
@@ -588,8 +578,7 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
             if (_listDetail.IsExistingDetail && SelectedProfile is { } selected)
             {
                 var ticket = _listDetail.BeginDetailLoad(_lifetimeCancellation.Token);
-                _currentDetailLoad = LoadSelectedProfileAsync(selected, ticket);
-                _tasks.Run(_currentDetailLoad);
+                _currentDetailLoad = _tasks.Track(_ => LoadSelectedProfileAsync(selected, ticket));
             }
             else if (_listDetail.IsList)
             {
@@ -690,7 +679,7 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         StatusText = message;
         if (autoClear && StatusKind == AgentProfileStatusKind.Success)
         {
-            _tasks.Run(_statusClear.ScheduleAsync(SuccessStatusDisplayDuration, () =>
+            _tasks.Run(_ => _statusClear.ScheduleAsync(SuccessStatusDisplayDuration, () =>
             {
                 if (StatusKind == AgentProfileStatusKind.Success
                     && string.Equals(StatusText, message, StringComparison.Ordinal))
@@ -727,7 +716,7 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
 
     private void RunOnUiThread(Action action)
     {
-        _tasks.Run(_uiDispatcher.InvokeAsync(() =>
+        _tasks.Run(_ => _uiDispatcher.InvokeAsync(() =>
         {
             if (!_disposed)
             {

@@ -85,6 +85,30 @@ public sealed class MemoryInspectorAuthorityRaceTests
     }
 
     [Fact]
+    public async Task ResetDuringInitialization_ReplaysFullSessionAndWorkerRefresh()
+    {
+        var stale = Session("Stale");
+        var current = Session("Current");
+        var gateway = new DeferredMemoryInspectorGateway([stale]);
+        var initialSessions = gateway.DeferNextSessionList();
+        gateway.SetWorkerStatus("stale-worker");
+        using var viewModel = new MemoryInspectorViewModel(gateway);
+
+        var initialization = viewModel.InitializeAsync();
+        await initialSessions.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        gateway.SetSessions([current]);
+        gateway.SetWorkerStatus("current-worker");
+        gateway.RaiseResetRequired();
+        initialSessions.Complete([stale]);
+        await initialization.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Equal(2, gateway.SessionListCallCount);
+        Assert.Equal(2, gateway.WorkerStatusCallCount);
+        Assert.Equal(current.SessionId, Assert.Single(viewModel.Sessions).SessionId);
+        Assert.Equal("current-worker", viewModel.SemanticWorkerStatusText);
+    }
+
+    [Fact]
     public async Task RefreshCommand_ExpectedGatewayFailureIsContainedAndReconciled()
     {
         var selected = Session("Selected");
@@ -134,6 +158,8 @@ public sealed class MemoryInspectorAuthorityRaceTests
 
         public event Action? SemanticWorkerStatusChanged;
 
+        public event Action? ResetRequired;
+
         public Task InitializeAsync(CancellationToken cancellationToken = default)
             => Task.CompletedTask;
 
@@ -166,6 +192,8 @@ public sealed class MemoryInspectorAuthorityRaceTests
         public void RaiseSessionChanged(Guid sessionId) => SessionChanged?.Invoke(sessionId);
 
         public void RaiseWorkerStatusChanged() => SemanticWorkerStatusChanged?.Invoke();
+
+        public void RaiseResetRequired() => ResetRequired?.Invoke();
 
         public async Task<IReadOnlyList<AgentSessionRecord>> ListSessionsAsync(
             CancellationToken cancellationToken = default)

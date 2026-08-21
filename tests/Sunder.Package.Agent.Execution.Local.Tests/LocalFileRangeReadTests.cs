@@ -1,3 +1,4 @@
+using Sunder.Agent.Execution.Common;
 using Sunder.Package.Agent.Contracts.Models;
 using Xunit;
 
@@ -34,10 +35,10 @@ public sealed class LocalFileRangeReadTests : IDisposable
         Directory.CreateDirectory(_root);
         await File.WriteAllBytesAsync(
             Path.Combine(_root, "oversized.txt"),
-            Enumerable.Repeat((byte)'x', AgentPayloadLimits.MaxLocalFullFileReadBytes + 1).ToArray());
+            Enumerable.Repeat((byte)'x', HostFileSystemLimits.MaxFullFileReadBytes + 1).ToArray());
         var directory = Path.Combine(_root, "many");
         Directory.CreateDirectory(directory);
-        for (var index = 0; index <= AgentPayloadLimits.MaxLocalDirectoryEntries; index++)
+        for (var index = 0; index <= HostFileSystemLimits.MaxDirectoryEntries; index++)
         {
             File.Create(Path.Combine(directory, $"{index:D5}.txt")).Dispose();
         }
@@ -49,7 +50,7 @@ public sealed class LocalFileRangeReadTests : IDisposable
         Assert.True(file.IsError);
         Assert.Equal(AgentFileReadErrorCodes.TooLarge, file.ErrorCode);
         Assert.True(listing.WasTruncated);
-        Assert.Equal(AgentPayloadLimits.MaxLocalDirectoryEntries, listing.Content.Split(Environment.NewLine).Length);
+        Assert.Equal(HostFileSystemLimits.MaxDirectoryEntries, listing.Content.Split(Environment.NewLine).Length);
     }
 
     [Fact]

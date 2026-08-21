@@ -152,7 +152,7 @@ public sealed class AgentPermissionService(
         long expectedEpoch)
         => _store.ResumeClaimedPermissionRequest(request, expectedEpoch);
 
-    internal bool MarkExecutionStarted(
+    internal bool CommitApprovedExecution(
         AgentPendingPermissionRequestRecord request,
         bool approveForSession = false)
     {
@@ -176,7 +176,7 @@ public sealed class AgentPermissionService(
                     request.BoundaryId.Trim(),
                     DateTimeOffset.UtcNow)
                 : null;
-            return _store.MarkClaimedPermissionExecutionStarted(
+            return _store.CommitClaimedPermissionApproval(
                 request.SessionId,
                 request.RequestId,
                 request.ClaimToken,

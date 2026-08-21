@@ -17,7 +17,7 @@ public sealed partial class AgentPermissionsViewModel : ObservableObject,
     private readonly IAgentPermissionGateway _permissionService;
     private readonly IAgentGlobalPermissionGateway? _globalPermissionGateway;
     private readonly IAgentRuntimeAvailability? _runtimeAvailability;
-    private readonly PresentationTaskScope _tasks = new();
+    private readonly PresentationTaskScope _tasks;
     private readonly PresentationOperationObserver _operations;
     private readonly CancellationToken _lifetimeToken;
     private readonly IPresentationDispatcher _uiDispatcher;
@@ -53,6 +53,13 @@ public sealed partial class AgentPermissionsViewModel : ObservableObject,
         _globalPermissionGateway = permissionService as IAgentGlobalPermissionGateway;
         _runtimeAvailability = permissionService as IAgentRuntimeAvailability;
         _uiDispatcher = uiDispatcher;
+        _tasks = new PresentationTaskScope(exception => _uiDispatcher.InvokeAsync(() =>
+        {
+            if (!_disposed)
+            {
+                StatusText = $"Agent Runtime operation failed: {exception.Message}";
+            }
+        }));
         _operations = operationObserver
             ?? PresentationOperationObserver.CreateUnreported("Agent permissions");
         _lifetimeToken = _tasks.CancellationToken;
@@ -60,7 +67,11 @@ public sealed partial class AgentPermissionsViewModel : ObservableObject,
         {
             _runtimeAvailability.ConnectionStateChanged += OnRuntimeConnectionStateChanged;
         }
-        _initialization = InitializeCoreAsync();
+        if (_globalPermissionGateway is not null)
+        {
+            _globalPermissionGateway.GlobalPermissionsInvalidated += OnGlobalPermissionsInvalidated;
+        }
+        _initialization = _tasks.Track(_ => InitializeCoreAsync());
     }
 
     public ObservableCollection<PermissionBoundaryRowViewModel> Rows { get; } = [];
@@ -281,6 +292,7 @@ public sealed partial class AgentPermissionsViewModel : ObservableObject,
         {
             if (_disposed
                 || cancellationToken.IsCancellationRequested
+                || reloadGeneration != Volatile.Read(ref _reloadGeneration)
                 || projection.Revision < _appliedPermissionRevision)
             {
                 return;
@@ -330,7 +342,9 @@ public sealed partial class AgentPermissionsViewModel : ObservableObject,
             return await ReloadCoreAsync(cancellationToken, reloadGeneration, string.Empty)
                 .ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException exception) when (
+            cancellationToken.IsCancellationRequested
+            && !PresentationExceptionPolicy.IsFatal(exception))
         {
             return false;
         }
@@ -338,7 +352,7 @@ public sealed partial class AgentPermissionsViewModel : ObservableObject,
         {
             return false;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!PresentationExceptionPolicy.IsFatal(ex))
         {
             await _uiDispatcher.InvokeAsync(() =>
             {
@@ -364,13 +378,15 @@ public sealed partial class AgentPermissionsViewModel : ObservableObject,
             }
             _ = await TryReloadAsync(cancellationToken).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException exception) when (
+            cancellationToken.IsCancellationRequested
+            && !PresentationExceptionPolicy.IsFatal(exception))
         {
         }
         catch (ObjectDisposedException) when (_disposed)
         {
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!PresentationExceptionPolicy.IsFatal(ex))
         {
             await _uiDispatcher.InvokeAsync(() =>
             {
@@ -402,6 +418,21 @@ public sealed partial class AgentPermissionsViewModel : ObservableObject,
             }
         });
 
+    private void OnGlobalPermissionsInvalidated()
+        => _tasks.Run(async cancellationToken =>
+        {
+            Interlocked.Increment(ref _reloadGeneration);
+            await _uiDispatcher.InvokeAsync(() =>
+                {
+                    if (!_disposed)
+                    {
+                        _appliedPermissionRevision = -1;
+                    }
+                })
+                .ConfigureAwait(false);
+            _ = await TryReloadAsync(cancellationToken).ConfigureAwait(false);
+        });
+
     public void Dispose()
     {
         if (_disposed)
@@ -415,6 +446,10 @@ public sealed partial class AgentPermissionsViewModel : ObservableObject,
         if (_runtimeAvailability is not null)
         {
             _runtimeAvailability.ConnectionStateChanged -= OnRuntimeConnectionStateChanged;
+        }
+        if (_globalPermissionGateway is not null)
+        {
+            _globalPermissionGateway.GlobalPermissionsInvalidated -= OnGlobalPermissionsInvalidated;
         }
         SaveCommand.NotifyCanExecuteChanged();
         ResetToPackageDefaultsCommand.NotifyCanExecuteChanged();

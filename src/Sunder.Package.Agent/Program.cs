@@ -25,86 +25,8 @@ try
             ValidateScopes = true,
         });
 
-        var registrations = new List<SunderWorkerProviderRegistration>();
         var deferred = new List<DeferredAgentRpcServiceHandler>();
-        Register(
-            registrations,
-            deferred,
-            "agent.runtime.catalog",
-            AgentRpcContractDescriptors.Get(AgentRpcContractIds.RuntimeCatalog),
-            services => AgentRuntimeCatalogRpc.CreateHandler(
-                services.GetRequiredService<AgentRuntimeCatalog>()));
-        Register(
-            registrations,
-            deferred,
-            "agent.workspace.execution.resolver",
-            AgentRpcContractDescriptors.Get(AgentRpcContractIds.WorkspaceExecutionResolver),
-            services => AgentWorkspaceExecutionResolverRpc.CreateHandler(
-                services.GetRequiredService<AgentWorkspaceExecutionResolver>()));
-        Register(
-            registrations,
-            deferred,
-            "agent.child.runs",
-            AgentRpcContractDescriptors.Get(AgentRpcContractIds.ChildRunExecutor),
-            services => AgentChildRunExecutorRpc.CreateHandler(
-                services.GetRequiredService<AgentRunCoordinator>()));
-        Register(
-            registrations,
-            deferred,
-            "agent.attachment.cleaner",
-            AgentRpcContractDescriptors.Get(AgentRpcContractIds.SessionCleaner),
-            services => AgentSessionCleanerRpc.CreateHandler(
-                services.GetRequiredService<AgentAttachmentService>()));
-        Register(
-            registrations,
-            deferred,
-            "agent.history.cleaner",
-            AgentRpcContractDescriptors.Get(AgentRpcContractIds.SessionCleaner),
-            services => AgentSessionCleanerRpc.CreateHandler(
-                services.GetRequiredService<Sunder.Package.Agent.HistorySearch.HistorySearchIndexingService>()));
-        Register(
-            registrations,
-            deferred,
-            AgentRunControlRpc.ProviderId,
-            AgentRpcContractDescriptors.Get(AgentRpcContractIds.RunControl),
-            services => AgentRunControlRpc.CreateHandler(
-                services.GetRequiredService<AgentRunControlRegistry>()));
-        Register(
-            registrations,
-            deferred,
-            "agent.behavior.loop",
-            AgentRpcContractDescriptors.Get(AgentRpcContractIds.BehaviorLoop),
-            services => AgentBehaviorLoopRpc.CreateHandler(
-                services.GetRequiredService<Sunder.Package.Agent.Services.BehaviorLoops.DefaultAgentBehaviorLoop>(),
-                services.GetRequiredService<AgentRpcCatalog>()));
-        Register(
-            registrations,
-            deferred,
-            "agent.workspace.documentation",
-            AgentRpcContractDescriptors.Get(AgentRpcContractIds.PromptContextContributor),
-            services => AgentPromptContextContributorRpc.CreateHandler(
-                services.GetRequiredService<WorkspaceDocumentationContextService>()));
-        Register(
-            registrations,
-            deferred,
-            "agent.stack.profiles",
-            SunderStackContributorRpc.Descriptor,
-            services => SunderStackContributorRpc.CreateHandler(
-                services.GetRequiredService<AgentProfileStackContributor>()));
-        Register(
-            registrations,
-            deferred,
-            "agent.stack.workspaces",
-            SunderStackContributorRpc.Descriptor,
-            services => SunderStackContributorRpc.CreateHandler(
-                services.GetRequiredService<AgentWorkspaceStackContributor>()));
-        Register(
-            registrations,
-            deferred,
-            AgentOwnerRuntimeRpc.ProviderId,
-            AgentOwnerRuntimeRpc.Descriptor,
-            services => AgentOwnerRuntimeRpc.CreateHandler(
-                services.GetRequiredService<AgentOwnerRuntimeProvider>()));
+        var registrations = AgentWorkerProviderCatalog.CreateRegistrations(deferred);
 
         var lifecycle = new AgentWorkerLifecycle(serviceProvider, deferred);
         var composition = new SunderWorkerComposition(serviceProvider, [lifecycle]);
@@ -120,21 +42,97 @@ finally
     if (ownedComposition is not null) await ownedComposition.DisposeAsync();
 }
 
-static void Register(
-    ICollection<SunderWorkerProviderRegistration> registrations,
-    ICollection<DeferredAgentRpcServiceHandler> deferred,
-    string providerId,
-    SunderRpcContractDescriptor descriptor,
-    Func<IServiceProvider, ISunderRpcServiceHandler> createHandler)
+internal static class AgentWorkerProviderCatalog
 {
-    var handler = new DeferredAgentRpcServiceHandler(providerId, createHandler);
-    deferred.Add(handler);
-    registrations.Add(new SunderWorkerProviderRegistration(
-        providerId,
-        descriptor.ContractId,
-        descriptor.Version,
-        descriptor.Sha256,
-        descriptor.AbiSha256 ?? throw new InvalidDataException(
-            $"RPC contract '{descriptor.ContractId}' is missing its V2 ABI identity."),
-        handler));
+    private static readonly IReadOnlyList<AgentWorkerProviderDefinition> ProviderDefinitions =
+        Array.AsReadOnly<AgentWorkerProviderDefinition>(
+        [
+            new(
+                "agent.runtime.catalog",
+                AgentRpcContractDescriptors.Get(AgentRpcContractIds.RuntimeCatalog),
+                services => AgentRuntimeCatalogRpc.CreateHandler(
+                    services.GetRequiredService<AgentRuntimeCatalog>())),
+            new(
+                "agent.workspace.execution.resolver",
+                AgentRpcContractDescriptors.Get(AgentRpcContractIds.WorkspaceExecutionResolver),
+                services => AgentWorkspaceExecutionResolverRpc.CreateHandler(
+                    services.GetRequiredService<AgentWorkspaceExecutionResolver>())),
+            new(
+                "agent.child.runs",
+                AgentRpcContractDescriptors.Get(AgentRpcContractIds.ChildRunExecutor),
+                services => AgentChildRunExecutorRpc.CreateHandler(
+                    services.GetRequiredService<AgentRunCoordinator>())),
+            new(
+                "agent.attachment.cleaner",
+                AgentRpcContractDescriptors.Get(AgentRpcContractIds.SessionCleaner),
+                services => AgentSessionCleanerRpc.CreateHandler(
+                    services.GetRequiredService<AgentAttachmentService>())),
+            new(
+                "agent.history.cleaner",
+                AgentRpcContractDescriptors.Get(AgentRpcContractIds.SessionCleaner),
+                services => AgentSessionCleanerRpc.CreateHandler(
+                    services.GetRequiredService<Sunder.Package.Agent.HistorySearch.HistorySearchIndexingService>())),
+            new(
+                AgentRunControlRpc.ProviderId,
+                AgentRpcContractDescriptors.Get(AgentRpcContractIds.RunControl),
+                services => AgentRunControlRpc.CreateHandler(
+                    services.GetRequiredService<AgentRunControlRegistry>())),
+            new(
+                "agent.behavior.loop",
+                AgentRpcContractDescriptors.Get(AgentRpcContractIds.BehaviorLoop),
+                services => AgentBehaviorLoopRpc.CreateHandler(
+                    services.GetRequiredService<Sunder.Package.Agent.Services.BehaviorLoops.DefaultAgentBehaviorLoop>(),
+                    services.GetRequiredService<AgentRpcCatalog>())),
+            new(
+                "agent.workspace.documentation",
+                AgentRpcContractDescriptors.Get(AgentRpcContractIds.PromptContextContributor),
+                services => AgentPromptContextContributorRpc.CreateHandler(
+                    services.GetRequiredService<WorkspaceDocumentationContextService>())),
+            new(
+                "agent.stack.profiles",
+                SunderStackContributorRpc.Descriptor,
+                services => SunderStackContributorRpc.CreateHandler(
+                    services.GetRequiredService<AgentProfileStackContributor>())),
+            new(
+                "agent.stack.workspaces",
+                SunderStackContributorRpc.Descriptor,
+                services => SunderStackContributorRpc.CreateHandler(
+                    services.GetRequiredService<AgentWorkspaceStackContributor>())),
+            new(
+                AgentOwnerRuntimeRpc.ProviderId,
+                AgentOwnerRuntimeRpc.Descriptor,
+                services => AgentOwnerRuntimeRpc.CreateHandler(
+                    services.GetRequiredService<AgentOwnerRuntimeProvider>())),
+        ]);
+
+    internal static IReadOnlyList<AgentWorkerProviderDefinition> Definitions => ProviderDefinitions;
+
+    internal static IReadOnlyList<SunderWorkerProviderRegistration> CreateRegistrations(
+        ICollection<DeferredAgentRpcServiceHandler> deferred)
+    {
+        ArgumentNullException.ThrowIfNull(deferred);
+        var registrations = new List<SunderWorkerProviderRegistration>(ProviderDefinitions.Count);
+        foreach (var definition in ProviderDefinitions)
+        {
+            var handler = new DeferredAgentRpcServiceHandler(
+                definition.ProviderId,
+                definition.Descriptor,
+                definition.CreateHandler);
+            deferred.Add(handler);
+            registrations.Add(new SunderWorkerProviderRegistration(
+                definition.ProviderId,
+                definition.Descriptor.ContractId,
+                definition.Descriptor.Version,
+                definition.Descriptor.Sha256,
+                definition.Descriptor.AbiSha256 ?? throw new InvalidDataException(
+                    $"RPC contract '{definition.Descriptor.ContractId}' is missing its V2 ABI identity."),
+                handler));
+        }
+        return registrations;
+    }
 }
+
+internal sealed record AgentWorkerProviderDefinition(
+    string ProviderId,
+    SunderRpcContractDescriptor Descriptor,
+    Func<IServiceProvider, ISunderRpcServiceHandler> CreateHandler);

@@ -113,18 +113,17 @@ public sealed class LMStudioTranslationTests
     }
 
     [Fact]
-    public void StreamTranslator_RejectsOversizedAccumulatedToolArguments()
+    public void StreamTranslator_DoesNotApplyFormerGenericToolArgumentByteCap()
     {
+        const int formerMaximumBytes = 1024 * 1024;
         var translator = new LMStudioOpenAIStreamTranslator(allowMultipleToolCalls: false);
+        var arguments = "{\"value\":\"" + new string('x', formerMaximumBytes) + "\"}";
 
-        var exception = Assert.Throws<AgentChatProviderException>(() =>
-            translator.ApplyToolCallDelta(
-                0,
-                "call-1",
-                "read_file",
-                new string('x', AgentPayloadLimits.MaxStreamedToolArgumentBytes + 1)));
+        translator.ApplyToolCallDelta(0, "call-1", "read_file", arguments);
+        var update = translator.Complete("response", "message", "lmstudio/model");
 
-        Assert.Equal("lmstudio-malformed-tool-call", exception.ErrorCode);
+        Assert.NotNull(update);
+        Assert.IsType<FunctionCallContent>(Assert.Single(update.Contents));
     }
 
     [Fact]

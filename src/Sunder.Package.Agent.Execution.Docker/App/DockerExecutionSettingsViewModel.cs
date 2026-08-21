@@ -11,7 +11,7 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
     IPackageViewNavigationPreparationTarget,
     IDisposable
 {
-    private readonly PresentationTaskScope _tasks = new();
+    private readonly PresentationTaskScope _tasks;
     private readonly LatestRequestCoordinator _requests = new();
     private readonly SerializedRefreshLoop _imageRefresh;
     private readonly CancellationTokenSource _lifetime = new();
@@ -49,6 +49,7 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
         _backgroundProcessQueue = backgroundProcessQueue;
         _logger = logger;
         _uiDispatcher = uiDispatcher ?? PresentationDispatcher.Capture();
+        _tasks = new PresentationTaskScope(ReportBackgroundTaskFailureAsync);
         _imageRefresh = new SerializedRefreshLoop(
             cancellationToken => ReloadImagesAsync(cancellationToken: cancellationToken),
             ReportImageRefreshFailure);
@@ -508,7 +509,7 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
             return;
         }
 
-        _tasks.Run(_imageRefresh.MarkDirty());
+        _tasks.Run(_ => _imageRefresh.MarkDirty());
     }
 
     private void ReportImageRefreshFailure(Exception exception)
@@ -518,7 +519,7 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
             exception,
             "Docker image background refresh failed. CorrelationId: {CorrelationId}",
             correlationId);
-        _tasks.Run(InvokePresentationAsync(() =>
+        _tasks.Run(_ => InvokePresentationAsync(() =>
         {
             RuntimeErrorCode = "docker.presentation.refresh-failed";
             RuntimeCorrelationId = correlationId;
@@ -527,6 +528,26 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
                 "docker.presentation.refresh-failed",
                 correlationId);
         }));
+    }
+
+    private Task ReportBackgroundTaskFailureAsync(Exception exception)
+    {
+        var correlationId = Guid.NewGuid().ToString("N");
+        _logger?.LogError(
+            exception,
+            "Docker presentation background task failed. CorrelationId: {CorrelationId}",
+            correlationId);
+        return _disposed
+            ? Task.CompletedTask
+            : InvokePresentationAsync(() =>
+            {
+                RuntimeErrorCode = "docker.presentation.background-task-failed";
+                RuntimeCorrelationId = correlationId;
+                StatusText = FormatError(
+                    "Docker presentation background task failed.",
+                    "docker.presentation.background-task-failed",
+                    correlationId);
+            });
     }
 
     private static bool IsDockerImagePull(BackgroundProcessSnapshot snapshot)

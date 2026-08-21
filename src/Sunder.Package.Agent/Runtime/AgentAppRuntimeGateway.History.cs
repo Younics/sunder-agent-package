@@ -7,10 +7,12 @@ internal sealed partial class AgentAppRuntimeGateway :
     IAgentHistorySearchGateway,
     IAgentTranscriptAnchorGateway
 {
+    private static readonly TimeSpan HistoryReconnectDelay = TimeSpan.FromSeconds(1);
     private int _historyObservationStarted;
     private readonly object _historyStatusLock = new();
     private long _historyStatusRevision;
     private string? _historyRuntimeInstanceId;
+    private Task? _historyObservationTask;
 
     public event Action<HistorySearchStatus>? HistoryStatusChanged;
     public event Action? HistoryRuntimeChanged;
@@ -66,9 +68,15 @@ internal sealed partial class AgentAppRuntimeGateway :
 
     public void StartObservingHistoryStatus()
     {
-        if (Interlocked.Exchange(ref _historyObservationStarted, 1) == 0)
+        lock (_producerTaskLock)
         {
-            _ = ObserveHistoryStatusAsync(_lifetime.Token);
+            if (_disposed || Interlocked.Exchange(ref _historyObservationStarted, 1) != 0)
+            {
+                return;
+            }
+
+            _historyObservationTask = Task.Run(() => ObserveHistoryStatusAsync(_lifetime.Token));
+            RetainProducerTaskCore(_historyObservationTask);
         }
     }
 
@@ -85,6 +93,13 @@ internal sealed partial class AgentAppRuntimeGateway :
                     afterRevision = _historyStatusRevision;
                     runtimeInstanceId = _historyRuntimeInstanceId;
                 }
+                if (string.IsNullOrWhiteSpace(runtimeInstanceId))
+                {
+                    lock (_observationLock)
+                    {
+                        runtimeInstanceId = _runtimeInstanceId;
+                    }
+                }
                 await foreach (var status in _ownerClient.SubscribeAsync(
                                    AgentRuntimeOperations.HistoryStatus,
                                    new HistorySearchStatusSubscription(afterRevision, runtimeInstanceId),
@@ -99,10 +114,11 @@ internal sealed partial class AgentAppRuntimeGateway :
             }
             catch
             {
-                if (!await DelayForReconnectAsync(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false))
-                {
-                    return;
-                }
+                // Reconnect below after the same backoff used for a clean stream end.
+            }
+            if (!await DelayForReconnectAsync(HistoryReconnectDelay, cancellationToken).ConfigureAwait(false))
+            {
+                return;
             }
         }
     }

@@ -700,6 +700,7 @@ internal sealed partial class AgentBehaviorLoopHost(
                 cancellationToken);
         }
 
+        var recordDispatchStarted = CreateDispatchStartedCallback(preparedExecution);
         var toolResult = await ExecuteApprovedToolAsync(
             pending,
             permissionResolution.Descriptor,
@@ -708,10 +709,23 @@ internal sealed partial class AgentBehaviorLoopHost(
             approvedResourceReferences,
             approvedResourceClaims,
             approvedResourceCapabilities,
+            recordDispatchStarted,
             cancellationToken);
+        var executionStatus = string.Equals(
+            toolResult.ErrorCode,
+            AgentToolResultErrorCodes.ToolOutcomeAmbiguous,
+            StringComparison.Ordinal)
+            ? AgentToolExecutionStatus.Ambiguous
+            : toolResult.IsError
+                ? AgentToolExecutionStatus.Failed
+                : AgentToolExecutionStatus.Completed;
         LogEvent(
-            toolResult.IsError ? PackageLogLevel.Error : PackageLogLevel.Information,
-            toolResult.IsError ? "tool.approved_execution.failed" : "tool.approved_execution.completed",
+            executionStatus == AgentToolExecutionStatus.Ambiguous
+                ? PackageLogLevel.Warning
+                : toolResult.IsError ? PackageLogLevel.Error : PackageLogLevel.Information,
+            executionStatus == AgentToolExecutionStatus.Ambiguous
+                ? "tool.approved_execution.ambiguous"
+                : toolResult.IsError ? "tool.approved_execution.failed" : "tool.approved_execution.completed",
             toolResult.Summary,
             executionStopwatch.ElapsedMilliseconds,
             new Dictionary<string, object?>(StringComparer.Ordinal)
@@ -757,7 +771,7 @@ internal sealed partial class AgentBehaviorLoopHost(
         var toolResultTurn = CompleteToolExecution(
             pending,
             toolResult,
-            toolResult.IsError ? AgentToolExecutionStatus.Failed : AgentToolExecutionStatus.Completed,
+            executionStatus,
             toolResult.ErrorCode ?? (toolResult.IsError ? "tool-failed" : "tool-completed"),
             toolResult.IsError
                 ? AgentPendingPermissionStatus.Failed
@@ -774,7 +788,11 @@ internal sealed partial class AgentBehaviorLoopHost(
             return new AgentToolCallOutcome(AgentToolCallOutcomeKind.Executed, Result: toolResult);
         }
 
-        SaveCheckpoint(AgentRunStatus.Running, $"Tool '{pending.ToolId}' returned an error result. Continuing provider execution.");
+        SaveCheckpoint(
+            AgentRunStatus.Running,
+            executionStatus == AgentToolExecutionStatus.Ambiguous
+                ? $"Tool '{pending.ToolId}' returned without a definitive outcome. Continuing provider execution."
+                : $"Tool '{pending.ToolId}' returned an error result. Continuing provider execution.");
         return new AgentToolCallOutcome(AgentToolCallOutcomeKind.Executed, Result: toolResult);
     }
 

@@ -103,6 +103,10 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
             _runtimeAvailability.ConnectionStateChanged += OnRuntimeConnectionStateChanged;
         }
         _workspaceService.WorkspacesChanged += OnWorkspacesChanged;
+        if (_dashboardLoader is not null)
+        {
+            _dashboardLoader.DashboardInvalidated += OnDashboardInvalidated;
+        }
         _rpcCatalog.Changed += OnRpcCatalogChanged;
     }
 
@@ -282,6 +286,10 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
         _operation.PropertyChanged -= OnOperationPropertyChanged;
         _operation.Dispose();
         _workspaceService.WorkspacesChanged -= OnWorkspacesChanged;
+        if (_dashboardLoader is not null)
+        {
+            _dashboardLoader.DashboardInvalidated -= OnDashboardInvalidated;
+        }
         _rpcCatalog.Changed -= OnRpcCatalogChanged;
 
         _listDetail.PropertyChanged -= OnListDetailPropertyChanged;
@@ -440,7 +448,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
         {
             if (!_disposed && _isInitialized)
             {
-                _tasks.Run(_runtimeRefresh.MarkDirty());
+                _tasks.Run(_ => _runtimeRefresh.MarkDirty());
             }
             else if (!_disposed)
             {
@@ -448,6 +456,8 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
             }
         });
     }
+
+    private void OnDashboardInvalidated() => OnWorkspacesChanged();
 
     private void OnRuntimeConnectionStateChanged(AgentRuntimeConnectionState state)
         => RunOnUiThread(() =>
@@ -459,7 +469,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
             if (state == AgentRuntimeConnectionState.Connected && _isInitialized)
             {
                 StartExecutionTargetRefresh();
-                _tasks.Run(_runtimeRefresh.MarkDirty());
+                _tasks.Run(_ => _runtimeRefresh.MarkDirty());
                 ClearStatus();
             }
             else if (state == AgentRuntimeConnectionState.Connected)
@@ -658,7 +668,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
 
     private void RunOnUiThread(Action action)
     {
-        _tasks.Run(_uiDispatcher.InvokeAsync(() =>
+        _tasks.Run(_ => _uiDispatcher.InvokeAsync(() =>
         {
             if (!_disposed)
             {
@@ -680,7 +690,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
         StatusText = message;
         if (autoClear && StatusKind == AgentWorkspaceStatusKind.Success)
         {
-            _tasks.Run(_statusClear.ScheduleAsync(SuccessStatusDisplayDuration, () =>
+            _tasks.Run(_ => _statusClear.ScheduleAsync(SuccessStatusDisplayDuration, () =>
             {
                 if (StatusKind == AgentWorkspaceStatusKind.Success
                     && string.Equals(StatusText, message, StringComparison.Ordinal))
@@ -690,8 +700,6 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
             }));
         }
     }
-
-    private void TrackOperation(Task operation) => _tasks.Run(operation);
 
     private OperationGeneration BeginOperation(AgentWorkspaceOperation operation)
     {

@@ -274,27 +274,47 @@ internal sealed class McpRuntimeChangeStream(
     public async IAsyncEnumerable<McpChanged> WatchAsync(
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var channel = Channel.CreateBounded<McpChanged>(new BoundedChannelOptions(8)
-        {
-            FullMode = BoundedChannelFullMode.DropOldest,
-            SingleReader = true,
-        });
-        void Servers() => channel.Writer.TryWrite(new McpChanged(McpChangeKind.Servers));
-        void Status() => channel.Writer.TryWrite(new McpChanged(McpChangeKind.Status));
-        editor.ServersChanged += Servers;
-        connections.StatusChanged += Status;
+        var invalidations = new McpChangeQueue();
+        void Invalidate() => invalidations.Publish();
+        invalidations.Publish();
+        editor.ServersChanged += Invalidate;
+        connections.StatusChanged += Invalidate;
         try
         {
-            await foreach (var change in channel.Reader.ReadAllAsync(cancellationToken))
+            await foreach (var change in invalidations.ReadAllAsync(cancellationToken))
             {
                 yield return change;
             }
         }
         finally
         {
-            editor.ServersChanged -= Servers;
-            connections.StatusChanged -= Status;
-            channel.Writer.TryComplete();
+            editor.ServersChanged -= Invalidate;
+            connections.StatusChanged -= Invalidate;
+            invalidations.Complete();
         }
     }
+}
+
+internal sealed class McpChangeQueue
+{
+    private readonly Channel<bool> _signals = Channel.CreateBounded<bool>(new BoundedChannelOptions(1)
+    {
+        FullMode = BoundedChannelFullMode.DropWrite,
+        SingleReader = true,
+        SingleWriter = false,
+    });
+
+    public void Publish() => _signals.Writer.TryWrite(true);
+
+    public async IAsyncEnumerable<McpChanged> ReadAllAsync(
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        await foreach (var _ in _signals.Reader.ReadAllAsync(cancellationToken))
+        {
+            yield return new McpChanged(McpChangeKind.Servers);
+            yield return new McpChanged(McpChangeKind.Status);
+        }
+    }
+
+    public void Complete() => _signals.Writer.TryComplete();
 }

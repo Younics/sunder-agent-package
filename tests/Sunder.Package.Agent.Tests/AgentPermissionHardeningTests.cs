@@ -25,13 +25,16 @@ public sealed class AgentPermissionHardeningTests
     }
 
     [Fact]
-    public void ToolArguments_RejectByteDepthAndPropertyBounds()
+    public void ToolArguments_AcceptBeyondFormerByteCapAndRejectParserComplexityBounds()
     {
-        Assert.False(AgentToolArgumentObject.TryParse(
-            "{\"value\":\"" + new string('x', AgentPayloadLimits.MaxToolArgumentBytes) + "\"}",
-            out _,
-            out var byteError));
-        Assert.Contains("byte limit", byteError, StringComparison.OrdinalIgnoreCase);
+        const int formerMaximumBytes = 1024 * 1024;
+        Assert.True(AgentToolArgumentObject.TryParse(
+            "{\"value\":\"" + new string('x', formerMaximumBytes) + "\"}",
+            out var largeArguments,
+            out var largeError),
+            largeError);
+        Assert.True(largeArguments!.TryReadRequiredString("value", out var largeValue, out _));
+        Assert.Equal(formerMaximumBytes, largeValue!.Length);
 
         var nested = string.Concat(Enumerable.Repeat("{\"v\":", AgentPayloadLimits.MaxToolArgumentJsonDepth + 1))
                      + "null"
@@ -87,7 +90,7 @@ public sealed class AgentPermissionHardeningTests
     }
 
     [Fact]
-    public async Task ApprovedExecutionFailure_PersistsFailedTerminalState()
+    public async Task ApprovedExecutionFailure_PersistsAmbiguousTerminalState()
     {
         var source = new PermissionAwareMutationToolSource("mutate") { ThrowOnExecution = true };
         await using var runtime = await PermissionHardeningRuntime.CreateAsync(source);
@@ -99,7 +102,10 @@ public sealed class AgentPermissionHardeningTests
         Assert.Equal(1, source.ExecutionCount);
         Assert.Equal(AgentPendingPermissionStatus.Failed, persisted?.Status);
         Assert.NotNull(persisted?.DecidedAtUtc);
-        Assert.Contains("injected", persisted?.DecisionSummary, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("dispatched", persisted?.DecisionSummary, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(
+            AgentToolExecutionStatus.Ambiguous,
+            runtime.Store.GetToolExecution(pending.ToolExecutionId!.Value)?.Status);
         Assert.Empty(runtime.PermissionService.ListPendingRequests(runtime.Session.SessionId));
     }
 

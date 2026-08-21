@@ -45,8 +45,9 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
         _gateway = gateway;
         _settingsNavigationService = settingsNavigationService;
         _uiDispatcher = uiDispatcher;
-        _tasks = new PresentationTaskScope();
         _statusClear = new TimedStatusController(dispatcher: uiDispatcher);
+        _tasks = new PresentationTaskScope(exception => RunOnUiThreadAsync(() =>
+            SetStatus(exception.Message, SubagentStatusKind.Error)));
         _listDetail = new KeyedAdaptiveListDetailState<string, SubagentRecord>(
             Subagents,
             static subagent => subagent.SubagentId,
@@ -566,7 +567,7 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
         StatusText = message;
         if (autoClear && StatusKind == SubagentStatusKind.Success)
         {
-            _tasks.Run(_statusClear.ScheduleAsync(SuccessStatusDisplayDuration, () =>
+            _tasks.Run(_ => _statusClear.ScheduleAsync(SuccessStatusDisplayDuration, () =>
             {
                 if (StatusKind == SubagentStatusKind.Success
                     && string.Equals(StatusText, message, StringComparison.Ordinal))
@@ -611,7 +612,7 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
 
     private void RunOnUiThread(Action action)
     {
-        _tasks.Run(RunOnUiThreadAsync(action));
+        _tasks.Run(_ => RunOnUiThreadAsync(action));
     }
 
     private void OnSubagentSelectionChanging(SubagentRecord? previous, SubagentRecord? current)
@@ -636,8 +637,7 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
             if (_listDetail.IsExistingDetail && SelectedSubagent is { } selected)
             {
                 var ticket = _listDetail.BeginDetailLoad(_lifetimeCancellation.Token);
-                _currentDetailLoad = LoadSelectedSubagentAsync(selected, ticket);
-                _tasks.Run(_currentDetailLoad);
+                _currentDetailLoad = _tasks.Track(_ => LoadSelectedSubagentAsync(selected, ticket));
             }
             else if (_listDetail.IsList)
             {

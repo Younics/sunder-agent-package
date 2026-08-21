@@ -565,6 +565,42 @@ public sealed partial class AgentToolService
         Func<IAgentToolSource, CancellationToken, ValueTask<TResult>> sourceCallback)
         => InvokeSourceAsync(invocation, cancellationToken, sourceCallback);
 
+    private static ValueTask<AgentToolResult> ExecuteToolAsync(
+        AgentToolInvocationReference invocation,
+        AgentToolExecutionContext context,
+        AgentToolRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (invocation.ObservedExecutionReference is null)
+        {
+            return InvokeToolAsync(
+                invocation,
+                cancellationToken,
+                (source, token) =>
+                {
+                    if (source is not IAgentToolDispatchAwareSource)
+                    {
+                        context.DispatchStarted?.Invoke();
+                    }
+                    return source.ExecuteAsync(context, request, token);
+                });
+        }
+
+        return InvokeTargetBoundAsync(
+            invocation.ExecutionTargetReference,
+            cancellationToken,
+            token => AgentRpcInvocation.InvokeAsync(
+                new AgentRpcOwnedReference<IAgentObservedToolExecution, string>(
+                    invocation.ObservedExecutionReference,
+                    invocation.OwnerPackageId,
+                    invocation.Descriptor.SourceId ?? string.Empty),
+                token,
+                (execution, invocationToken) => execution.ExecuteAsync(
+                    context,
+                    request,
+                    invocationToken)));
+    }
+
     private static ValueTask<TResult> InvokeSourceAsync<TResult>(
         AgentToolInvocationReference invocation,
         CancellationToken cancellationToken,
@@ -664,6 +700,7 @@ internal sealed record AgentToolInvocationReference(
     string OwnerPackageId,
     AgentToolDescriptor Descriptor,
     AgentRpcReference<IAgentToolSource>? SourceReference,
+    AgentRpcReference<IAgentObservedToolExecution>? ObservedExecutionReference,
     bool SupportsSourcePermission,
     bool SupportsPreflight,
     AgentRpcReference<IAgentExecutionTarget>? ExecutionTargetReference,

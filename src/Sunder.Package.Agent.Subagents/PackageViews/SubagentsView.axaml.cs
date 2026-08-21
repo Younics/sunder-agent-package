@@ -11,7 +11,8 @@ namespace Sunder.Package.Agent.Subagents.PackageViews;
 public partial class SubagentsView : UserControl, IDisposable, IPackageViewWarmupTarget, IPackageViewNavigationTarget
 {
     private readonly AdaptiveMasterDetail _adaptiveLayout;
-    private readonly PresentationTaskScope _tasks = new();
+    private readonly PresentationTaskScope _tasks = new(
+        PresentationTaskScope.IgnoreExpectedFailure);
     private SubagentsViewModel? _viewModel;
     private bool _disposed;
 

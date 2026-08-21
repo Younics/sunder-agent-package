@@ -12,7 +12,8 @@ namespace Sunder.Package.Agent.Builder;
 public partial class BuilderView : UserControl, IDisposable, IPackageViewWarmupTarget, IPackageViewNavigationTarget
 {
     private readonly AdaptiveMasterDetail _adaptiveLayout;
-    private readonly PresentationTaskScope _tasks = new();
+    private readonly PresentationTaskScope _tasks = new(
+        PresentationTaskScope.IgnoreExpectedFailure);
     private PresentationOperationObserver _operations;
     private BuilderViewModel? _viewModel;
     private bool _disposed;

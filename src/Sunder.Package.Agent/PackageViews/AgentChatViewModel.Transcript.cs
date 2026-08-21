@@ -94,6 +94,8 @@ public sealed partial class AgentChatViewModel
         {
             ReconcileRunActivityAfterAuthoritativeReplacement(previousRunActivityTurns);
         }
+        _runActivity.RebuildActiveToolCalls(
+            SelectRunActivityTurns(_timeline.Projector.TurnWindow.OrderedTurns()));
         TrackCheckpointActivity(_sessionService.GetLatestCheckpoint(displayedSession.SessionId));
         ApplyRunActivityState();
         UpdateSessionState(displayedSession.SessionId, markUnread: false);
@@ -126,7 +128,12 @@ public sealed partial class AgentChatViewModel
             cancellationToken).ConfigureAwait(false);
         if (loaded)
         {
-            await InvokeOnUiThreadAsync(ApplyRunActivityState).ConfigureAwait(false);
+            await InvokeOnUiThreadAsync(() =>
+            {
+                _runActivity.RebuildActiveToolCalls(
+                    SelectRunActivityTurns(_timeline.Projector.TurnWindow.OrderedTurns()));
+                ApplyRunActivityState();
+            }).ConfigureAwait(false);
         }
 
         return loaded;
@@ -164,6 +171,8 @@ public sealed partial class AgentChatViewModel
                 {
                     _timeline.ResumeFollowingLatestIfCaughtUp();
                 }
+                _runActivity.RebuildActiveToolCalls(
+                    SelectRunActivityTurns(_timeline.Projector.TurnWindow.OrderedTurns()));
                 _runActivity.NotifyFollowStateChanged();
             }).ConfigureAwait(false);
         }

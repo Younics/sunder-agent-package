@@ -31,8 +31,6 @@
     },
     "AgentPermissionDecision": {
       "type": "string",
-      "minLength": 3,
-      "maxLength": 5,
       "enum": [
         "allow",
         "ask",
@@ -67,9 +65,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentPermissionBoundaryDescriptor"
-      },
-      "minItems": 0,
-      "maxItems": 4096
+      }
     },
     "AgentPermissionActionDescriptor": {
       "type": "object",
@@ -99,9 +95,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentPermissionActionDescriptor"
-      },
-      "minItems": 0,
-      "maxItems": 256
+      }
     },
     "PermissionSurfaceSnapshot": {
       "type": "object",
@@ -125,13 +119,10 @@
     },
     "Identifier": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 256
+      "minLength": 1
     },
     "DisplayText": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 8192
+      "type": "string"
     }
   }
 }

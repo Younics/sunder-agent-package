@@ -29,8 +29,8 @@ Package projects must not reference `Sunder.App` or `Sunder.Runtime.Host`.
 - Runtime package identity is authored with `[assembly: SunderPackage(...)]`.
 - Runtime package dependencies are authored with `[assembly: SunderPackageDependency(...)]`.
 - Package authors do not maintain source `sunder-package.json` files.
-- `Sunder.Package.Build` generates manifests, emits `sunder-dev` on build, and emits `.sunderpkg` on publish.
-- Runtime projects are self-contained exact-RID Worker V3 executables that call `SunderWorker.RunAsync`; optional App projects implement `ISunderAppPackageModule` and remain role-isolated.
+- `Sunder.Package.Build` generates manifests, composes `sunder-dev` on build, and emits `.sunderpkg` through direct `PackSunderPackage` on the canonical project.
+- Every runtime family has one root, unsuffixed primary Worker/package project. Runtime projects are self-contained exact-RID Worker V3 executables that call `SunderWorker.RunAsync`; optional App projects implement `ISunderAppPackageModule`, are selected through `SunderPackageAppProject`, and remain role-isolated.
 
 ## Build And Test
 

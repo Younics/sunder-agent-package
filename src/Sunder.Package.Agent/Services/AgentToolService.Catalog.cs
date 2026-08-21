@@ -97,6 +97,13 @@ public sealed partial class AgentToolService
                 cancellationToken,
                 omitUnavailableSources)
             .ConfigureAwait(false);
+        var observedExecutionReferences = await AgentRpcInvocation.SnapshotAsync(
+                _rpcCatalog,
+                AgentRpcServices.ObservedToolExecutions,
+                static (execution, _) => ValueTask.FromResult(execution.SourceId),
+                cancellationToken,
+                omitUnavailable: true)
+            .ConfigureAwait(false);
         foreach (var sourceReference in sourceReferences
                      .OrderBy(source => source.Metadata.DisplayName, StringComparer.OrdinalIgnoreCase))
         {
@@ -121,10 +128,25 @@ public sealed partial class AgentToolService
             foreach (var runtimeTool in runtimeTools)
             {
                 var descriptor = WithSourceIdentity(sourceReference.Metadata, runtimeTool.Descriptor);
+                var observedExecutionReference = observedExecutionReferences
+                    .Where(reference => string.Equals(
+                                            reference.PackageId,
+                                            sourceReference.PackageId,
+                                            StringComparison.Ordinal)
+                                        && string.Equals(
+                                            reference.Metadata,
+                                            sourceReference.Metadata.SourceId,
+                                            StringComparison.Ordinal))
+                    .Select(reference => reference.Reference)
+                    .Take(2)
+                    .ToArray();
                 var invocation = new AgentToolInvocationReference(
                     sourceReference.PackageId,
                     descriptor,
                     sourceReference.Reference,
+                    observedExecutionReference.Length == 1
+                        ? observedExecutionReference[0]
+                        : null,
                     sourceReference.Metadata.SupportsPermission,
                     sourceReference.Metadata.SupportsPreflight,
                     context.ExecutionTargetReference,

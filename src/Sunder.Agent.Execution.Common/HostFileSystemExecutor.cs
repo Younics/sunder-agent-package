@@ -403,7 +403,7 @@ internal static class HostFileSystemExecutor
         CancellationToken cancellationToken)
     {
         var budget = new HostTraversalBudget(cancellationToken);
-        var entries = new List<string>(AgentPayloadLimits.MaxLocalDirectoryEntries + 1);
+        var entries = new List<string>(HostFileSystemLimits.MaxDirectoryEntries + 1);
         foreach (var name in session.EnumerateRawNames(directory))
         {
             budget.Visit(depth: 0, name);
@@ -411,7 +411,7 @@ internal static class HostFileSystemExecutor
             {
                 continue;
             }
-            if (entries.Count > AgentPayloadLimits.MaxLocalDirectoryEntries)
+            if (entries.Count > HostFileSystemLimits.MaxDirectoryEntries)
             {
                 break;
             }
@@ -422,12 +422,12 @@ internal static class HostFileSystemExecutor
                             : string.Empty));
         }
 
-        var wasTruncated = entries.Count > AgentPayloadLimits.MaxLocalDirectoryEntries;
+        var wasTruncated = entries.Count > HostFileSystemLimits.MaxDirectoryEntries;
         return new AgentFileReadResult(
             path,
             string.Join(
                 Environment.NewLine,
-                entries.Take(AgentPayloadLimits.MaxLocalDirectoryEntries).OrderBy(entry => entry, StringComparer.Ordinal)),
+                entries.Take(HostFileSystemLimits.MaxDirectoryEntries).OrderBy(entry => entry, StringComparer.Ordinal)),
             IsDirectory: true,
             WasTruncated: wasTruncated);
     }
@@ -566,7 +566,7 @@ internal static class HostFileSystemExecutor
             return AgentFileReadResult.Failure(
                 path,
                 AgentFileReadErrorCodes.TooLarge,
-                $"File exceeds the {AgentPayloadLimits.MaxLocalFullFileReadBytes}-byte full-read limit; use offset and limit.");
+                $"File exceeds the {HostFileSystemLimits.MaxFullFileReadBytes}-byte full-read limit; use offset and limit.");
         }
         var totalLines = FileOperation.CountLines(content);
         return new AgentFileReadResult(path, content)
@@ -579,7 +579,7 @@ internal static class HostFileSystemExecutor
 
     private static async Task<string?> ReadBoundedTextAsync(FileStream stream, CancellationToken cancellationToken)
     {
-        var maximumBytes = AgentPayloadLimits.MaxLocalFullFileReadBytes;
+        var maximumBytes = HostFileSystemLimits.MaxFullFileReadBytes;
         if (stream.Length > maximumBytes)
         {
             return null;

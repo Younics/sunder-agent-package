@@ -7,8 +7,6 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Subagents\Sunder.Package.Agent.Subagents.csproj" />
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Subagents\Protocol\SubagentsProtocol.csproj" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Subagents\Aggregate\SubagentsPackage.csproj"
-                      ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <ItemGroup>

@@ -25,7 +25,7 @@ if ($nativeRid -cne $Rid) {
 }
 
 $inventory = Get-Content -LiteralPath $inventoryPath -Raw | ConvertFrom-Json
-$packages = @($inventory.packages | Where-Object { $null -ne $_.workerProjectPath } | Sort-Object key)
+$packages = @($inventory.packages | Where-Object { $_.artifactType -ceq "sunderpkg" } | Sort-Object key)
 if ($packages.Count -ne 15) {
     throw "Expected exactly 15 worker leaves, found $($packages.Count)."
 }
@@ -56,10 +56,14 @@ $commonProperties = @(
 )
 
 foreach ($package in $packages) {
-    $workerProject = Resolve-ProjectPath $package.workerProjectPath
-    Invoke-DotNet @("restore", $workerProject, "--locked-mode", "-r", $Rid, "--source", $env:NUGET_SOURCE, "-p:SunderUseSourceSdk=false", "-p:RestoreLockedMode=true")
+    $project = Resolve-ProjectPath $package.projectPath
+    if ($null -ne $package.appProjectPath) {
+        $appProject = Resolve-ProjectPath $package.appProjectPath
+        Invoke-DotNet @("restore", $appProject, "--locked-mode", "--source", $env:NUGET_SOURCE, "-p:SunderUseSourceSdk=false", "-p:RestoreLockedMode=true")
+    }
+    Invoke-DotNet @("restore", $project, "--locked-mode", "-r", $Rid, "--source", $env:NUGET_SOURCE, "-p:SunderUseSourceSdk=false", "-p:RestoreLockedMode=true")
 
-    $buildArguments = @("build", $workerProject, "-c", "Release", "-r", $Rid, "--no-restore", "-m:1") + $commonProperties
+    $buildArguments = @("build", $project, "-c", "Release", "-r", $Rid, "--no-restore", "-m:1") + $commonProperties
     if ($requiresSigning) {
         $buildArguments += @(
             "-p:CustomAfterMicrosoftCommonTargets=$signingTargets",
@@ -69,8 +73,8 @@ foreach ($package in $packages) {
     }
     Invoke-DotNet $buildArguments
 
-    $workerDirectory = Split-Path -Parent $workerProject
-    $leafPath = Join-Path $workerDirectory "bin/Release/net10.0/$Rid/sunder-dev"
+    $projectDirectory = Split-Path -Parent $project
+    $leafPath = Join-Path $projectDirectory "bin/Release/net10.0/$Rid/sunder-dev"
     $manifestPath = Join-Path $leafPath "manifest/sunder-package.json"
     if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
         throw "Worker leaf was not emitted for '$($package.packageId)': $leafPath"
@@ -89,26 +93,14 @@ foreach ($package in $packages) {
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     }
 
-    $aggregateProject = Resolve-ProjectPath $package.projectPath
-    [xml] $aggregateXml = Get-Content -LiteralPath $aggregateProject -Raw
-    $aggregateDirectory = Split-Path -Parent $aggregateProject
-    $appProjects = @($aggregateXml.Project.ItemGroup.ProjectReference |
-        ForEach-Object { $_.Include } |
-        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-        ForEach-Object { [System.IO.Path]::GetFullPath((Join-Path $aggregateDirectory $_)) })
-    foreach ($appProject in $appProjects) {
-        Invoke-DotNet @("restore", $appProject, "--locked-mode", "--source", $env:NUGET_SOURCE, "-p:SunderUseSourceSdk=false", "-p:RestoreLockedMode=true")
-        Invoke-DotNet (@("build", $appProject, "-c", "Release", "--no-restore", "-m:1") + $commonProperties)
-    }
-
-    Invoke-DotNet @("restore", $aggregateProject, "--locked-mode", "--source", $env:NUGET_SOURCE, "-p:SunderUseSourceSdk=false", "-p:RestoreLockedMode=true")
     $archivePath = Join-Path $archiveDirectory "$($package.packageId).$Version.sunderpkg"
     Invoke-DotNet @(
-        "msbuild", $aggregateProject,
+        "msbuild", $project,
         "-t:PackSunderPackage", "-m:1",
         "-p:Configuration=Release",
         "-p:BuildProjectReferences=false",
-        "-p:SunderAgentUniversalWorkerPackage=false",
+        "-p:SunderPackageUsePrebuiltLeaves=true",
+        "-p:SunderPackageComposeRuntimeIdentifiers=$Rid",
         "-p:SunderUseSourceSdk=false",
         "-p:SunderAgentVersion=$Version",
         "-p:ContinuousIntegrationBuild=true",
@@ -121,4 +113,4 @@ $archives = @(Get-ChildItem -LiteralPath $archiveDirectory -Filter "*.sunderpkg"
 if ($archives.Count -ne 15) {
     throw "Expected exactly 15 current-RID archives, found $($archives.Count)."
 }
-Write-Host "Built exactly 15 native $Rid worker leaves and current-RID smoke archives."
+Write-Host "Built exactly 15 native $Rid worker leaves and composed current-RID smoke archives without rebuilding them."

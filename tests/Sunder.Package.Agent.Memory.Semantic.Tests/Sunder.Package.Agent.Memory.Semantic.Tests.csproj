@@ -9,8 +9,6 @@
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Memory.Semantic\Sunder.Package.Agent.Memory.Semantic.csproj" />
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Memory.Semantic\App\Sunder.Package.Agent.Memory.Semantic.App.csproj" />
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Memory.Semantic\Protocol\Sunder.Package.Agent.Memory.Semantic.Protocol.csproj" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Memory.Semantic\Aggregate\MemorySemanticPackage.csproj"
-                      ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <ItemGroup>

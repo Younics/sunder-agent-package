@@ -32,7 +32,7 @@ public sealed class PackageLocalRpcDescriptorProfileTests
         var root = document.RootElement;
 
         Assert.Equal(SunderRpcProtocol.ValueSchemaProfile, descriptor.SchemaProfile);
-        Assert.Equal("2.0.0", descriptor.Version);
+        Assert.Equal("1.0.0", descriptor.Version);
         Assert.Equal(SunderRpcProtocol.ValueSchemaProfile, root.GetProperty("schemaProfile").GetString());
 
         var definitions = root.GetProperty("$defs");
@@ -50,6 +50,48 @@ public sealed class PackageLocalRpcDescriptorProfileTests
         {
             Assert.DoesNotContain("\"chunks\"", File.ReadAllText(path), StringComparison.Ordinal);
         }
+    }
+
+    [Fact]
+    public void DescriptorInventory_UsesUnreleasedVersionsAndOnlySemanticFiniteBounds()
+    {
+        var sourceRoot = Path.Combine(AgentPackageRepositoryInventory.RepositoryRoot.FullName, "src");
+        var paths = Directory.EnumerateFiles(sourceRoot, "*.rpc.json", SearchOption.AllDirectories)
+            .Where(AgentPackageRepositoryInventory.IsSourceFile)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        var retainedMaximums = new List<string>();
+
+        Assert.Equal(31, paths.Length);
+        foreach (var path in paths)
+        {
+            var bytes = File.ReadAllBytes(path);
+            var descriptor = SunderRpcContractDescriptor.Parse(bytes);
+            using var document = JsonDocument.Parse(bytes);
+
+            Assert.Equal("1.0.0", descriptor.Version);
+            InspectFiniteConstraints(
+                document.RootElement,
+                descriptor.ContractId,
+                "#",
+                retainedMaximums);
+        }
+
+        Assert.Equal(
+            new[]
+            {
+                "sunder.agent.execution.target:#/$defs/PageSize=2000",
+                "sunder.agent.memory.semantic.inspector:#/$defs/MemoryScore=1",
+                "sunder.agent.owner.runtime:#/$defs/AgentChatSnapshotRequest/properties/initialTranscriptLimit=500",
+                "sunder.agent.owner.runtime:#/$defs/AgentTranscriptAroundTurnRequest/properties/afterLimit=30",
+                "sunder.agent.owner.runtime:#/$defs/AgentTranscriptAroundTurnRequest/properties/beforeLimit=30",
+                "sunder.agent.owner.runtime:#/$defs/AgentTranscriptPageRequest/properties/limit=500",
+                "sunder.agent.owner.runtime:#/$defs/HistorySearchRequest/properties/limit=100",
+                "sunder.agent.owner.runtime:#/$defs/HistorySearchStateRequest/properties/limit=200",
+                "sunder.agent.run.control:#/$defs/PageSize=1000",
+                "sunder.agent.runtime.catalog:#/$defs/PageSize=1000",
+            },
+            retainedMaximums.Order(StringComparer.Ordinal));
     }
 
     private static void InspectSchema(JsonElement value, string relativePath)
@@ -74,13 +116,26 @@ public sealed class PackageLocalRpcDescriptorProfileTests
                 Assert.All(enumValues.EnumerateArray(), static item =>
                     Assert.Equal(JsonValueKind.String, item.ValueKind));
             }
-            foreach (var limitName in new[] { "maxLength", "maxItems", "maxProperties" })
+            foreach (var limitName in new[] { "maxItems", "maxProperties", "maxDecodedBytes" })
             {
-                if (value.TryGetProperty(limitName, out var limit))
-                {
-                    Assert.NotEqual(1_000_000, limit.GetInt32());
-                }
+                Assert.False(
+                    value.TryGetProperty(limitName, out _),
+                    $"Transport limit '{limitName}' in {relativePath}: {value.GetRawText()}");
             }
+            if (value.TryGetProperty("maxLength", out var maximumLength))
+            {
+                Assert.Equal(64, maximumLength.GetInt32());
+                Assert.Equal(64, value.GetProperty("minLength").GetInt32());
+            }
+            Assert.False(
+                value.TryGetProperty("minLength", out var minimumLength) && minimumLength.GetInt32() == 0,
+                $"Tautological minLength in {relativePath}: {value.GetRawText()}");
+            Assert.False(
+                value.TryGetProperty("minItems", out var minimumItems) && minimumItems.GetInt32() == 0,
+                $"Tautological minItems in {relativePath}: {value.GetRawText()}");
+            Assert.False(
+                value.TryGetProperty("minProperties", out var minimumProperties) && minimumProperties.GetInt32() == 0,
+                $"Tautological minProperties in {relativePath}: {value.GetRawText()}");
             foreach (var property in value.EnumerateObject())
             {
                 InspectSchema(property.Value, relativePath);
@@ -91,6 +146,57 @@ public sealed class PackageLocalRpcDescriptorProfileTests
             foreach (var item in value.EnumerateArray())
             {
                 InspectSchema(item, relativePath);
+            }
+        }
+    }
+
+    private static void InspectFiniteConstraints(
+        JsonElement value,
+        string contractId,
+        string schemaPath,
+        List<string> retainedMaximums)
+    {
+        if (value.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var limitName in new[] { "maxItems", "maxProperties", "maxDecodedBytes" })
+            {
+                Assert.False(
+                    value.TryGetProperty(limitName, out _),
+                    $"Transport limit '{limitName}' at {contractId}:{schemaPath}.");
+            }
+            if (value.TryGetProperty("maxLength", out var maximumLength))
+            {
+                Assert.Equal(64, maximumLength.GetInt32());
+                Assert.Equal(64, value.GetProperty("minLength").GetInt32());
+            }
+            Assert.False(
+                value.TryGetProperty("minLength", out var minimumLength) && minimumLength.GetInt32() == 0,
+                $"Tautological minLength at {contractId}:{schemaPath}.");
+            Assert.False(
+                value.TryGetProperty("minItems", out var minimumItems) && minimumItems.GetInt32() == 0,
+                $"Tautological minItems at {contractId}:{schemaPath}.");
+            Assert.False(
+                value.TryGetProperty("minProperties", out var minimumProperties) && minimumProperties.GetInt32() == 0,
+                $"Tautological minProperties at {contractId}:{schemaPath}.");
+            if (value.TryGetProperty("maximum", out var maximum))
+            {
+                retainedMaximums.Add($"{contractId}:{schemaPath}={maximum.GetRawText()}");
+            }
+            foreach (var property in value.EnumerateObject())
+            {
+                InspectFiniteConstraints(
+                    property.Value,
+                    contractId,
+                    $"{schemaPath}/{property.Name}",
+                    retainedMaximums);
+            }
+        }
+        else if (value.ValueKind == JsonValueKind.Array)
+        {
+            var index = 0;
+            foreach (var item in value.EnumerateArray())
+            {
+                InspectFiniteConstraints(item, contractId, $"{schemaPath}/{index++}", retainedMaximums);
             }
         }
     }

@@ -32,6 +32,77 @@ public sealed class PresentationV1Tests
     }
 
     [Fact]
+    public async Task AsyncOnce_DisposeAsync_DrainsBeforeDisposingLifetimeToken()
+    {
+        var once = new AsyncOnce();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var testCancellation = TestContext.Current.CancellationToken;
+        var operation = once.RunAsync(async cancellationToken =>
+        {
+            started.SetResult();
+            await release.Task;
+            using var registration = cancellationToken.Register(static () => { });
+            cancellationToken.ThrowIfCancellationRequested();
+        }, testCancellation);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(2), testCancellation);
+
+        var disposal = once.DisposeAsync().AsTask();
+        Assert.False(disposal.IsCompleted);
+        release.SetResult();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => operation);
+        await disposal.WaitAsync(TimeSpan.FromSeconds(2), testCancellation);
+    }
+
+    [Fact]
+    public async Task AsyncOnce_ReentrantDispose_DoesNotOutrunAcceptedOperation()
+    {
+        var once = new AsyncOnce();
+
+        var operation = once.RunAsync(async cancellationToken =>
+        {
+            await Task.Yield();
+            await once.DisposeAsync();
+            using var registration = cancellationToken.Register(static () => { });
+        }, TestContext.Current.CancellationToken);
+
+        await operation.WaitAsync(
+            TimeSpan.FromSeconds(2),
+            TestContext.Current.CancellationToken);
+        await once.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task AsyncOnce_DisposeAsync_ReportsCancellationFailureAfterDrain()
+    {
+        var once = new AsyncOnce();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var operation = once.RunAsync(async cancellationToken =>
+        {
+            using var registration = cancellationToken.Register(
+                static () => throw new InvalidOperationException("cancellation callback failed"));
+            started.TrySetResult();
+            await release.Task;
+        }, TestContext.Current.CancellationToken);
+        await started.Task.WaitAsync(
+            TimeSpan.FromSeconds(2),
+            TestContext.Current.CancellationToken);
+
+        var disposal = once.DisposeAsync().AsTask();
+        Assert.False(disposal.IsCompleted);
+        release.TrySetResult();
+        await operation;
+
+        var exception = await Assert.ThrowsAsync<AggregateException>(() => disposal);
+        Assert.Contains(
+            exception.InnerExceptions,
+            candidate => candidate is InvalidOperationException
+                && candidate.Message == "cancellation callback failed");
+    }
+
+    [Fact]
     public void TypedOperationState_TracksKindAndRejectsStaleCompletion()
     {
         using var state = new OperationState<TestOperation>();

@@ -27,7 +27,6 @@ The settings editor accepts one bare server object, not an outer `mcp` or `$sche
   "command": ["npx", "-y", "@modelcontextprotocol/server-everything"],
   "workingDirectory": "/path/to/project",
   "discoveryTimeout": 5000,
-  "toolTimeout": 180000,
   "env": {
     "MY_API_KEY": "replace-in-settings"
   }
@@ -44,7 +43,6 @@ The settings editor accepts one bare server object, not an outer `mcp` or `$sche
   "enabled": true,
   "url": "https://mcp.example.com",
   "discoveryTimeout": 5000,
-  "toolTimeout": 180000,
   "headers": {
     "Authorization": "Bearer replace-in-settings"
   }
@@ -55,7 +53,7 @@ Remote transport uses SDK auto-detection for supported HTTP modes, including str
 
 When editing a saved server, Runtime returns header and environment names with empty values; stored values are never returned to App. Leave an empty value to retain it, set a non-empty value to replace it, or set it to `null` (or remove the entry) to clear it. An enabled server cannot save a new empty entry because there is no stored value to retain.
 
-`timeout` is accepted as a legacy fallback for both phases. Current defaults are 15 seconds for discovery and 120 seconds for a tool call; effective values are capped at 120 seconds and 30 minutes respectively.
+`timeout` is accepted as a legacy fallback for both phases. Timeout values must be non-negative integers. Discovery defaults to 15 seconds and is capped at 120 seconds; zero `discoveryTimeout` (or legacy `timeout`) uses that discovery default. `toolTimeout` is optional milliseconds and is capped at 30 minutes. Zero `toolTimeout` explicitly disables the local tool timer even when legacy `timeout` is positive; zero legacy `timeout` disables the tool timer when `toolTimeout` is absent. Tool execution has no MCP-specific local timer when neither the server configuration nor the agent request supplies a limit. Stop, caller/RPC cancellation, and the global 30-minute run safety limit still apply.
 
 ## Transport Security
 
@@ -76,7 +74,7 @@ Discovery rejects:
 - Empty, duplicate, or case-colliding tool names.
 - More than 1 MiB of aggregate name/title/description/schema metadata.
 
-MCP tool result JSON is bounded to 4 MiB and at most 1,024 content items. Oversized data is omitted/truncated and marked. Tool arguments pass the shared Agent JSON byte/depth/property/case-collision validation.
+MCP tool result JSON is bounded to 4 MiB and at most 1,024 content items. Oversized data is omitted/truncated and marked. Tool arguments pass the shared Agent JSON byte/depth/property/case-collision validation. For a direct object schema that is closed with `additionalProperties: false`, contains no schema resources/refs/advanced constraints at any depth, and does not declare any reserved Sunder name, Sunder preserves the flat MCP argument shape and adds a required metadata-version marker plus an optional nullable expected-timeout field in whole seconds (1-1800). All other schemas use a versioned Sunder call envelope containing the complete original MCP argument object. Extraction and history presentation recognize an envelope only when its marker exactly equals the current `sunder.mcp.call/1` version; an absent or different nested marker is treated as an ordinary server argument. Current schemas that declare or accept `__sunder_mcp_call` are themselves enveloped, so the exact marker is the compatibility boundary between Sunder-owned calls and historical/raw arguments. The agent should choose a realistic expected limit for long-running operations when useful. Sunder validates and removes the marker/timeout or unwraps the envelope before any MCP connection or dispatch; null is treated as omitted. When both agent and server limits exist, the shorter limit wins.
 
 The MCP protocol's tool metadata is not treated as sufficient local mutation authority. Discovered MCP descriptors are conservatively marked `IsReadOnly = false`, so the generic Agent mutation permission defaults to `Ask`. A remote server cannot self-declare its way around local Agent approval.
 

@@ -3,7 +3,7 @@
   "descriptorVersion": 2,
   "schemaProfile": "sunder.rpc.values.v1",
   "contractId": "sunder.agent.memory.semantic.inspector",
-  "version": "2.0.0",
+  "version": "1.0.0",
   "errors": {
     "memory.semantic.operation-failed": {
       "description": "The requested semantic memory operation could not be completed."
@@ -15,23 +15,41 @@
         "query": {
           "kind": "unary",
           "idempotency": "idempotent",
-          "errors": ["memory.semantic.operation-failed"],
-          "requestSchema": { "$ref": "#/$defs/MemoryQuery" },
-          "responseSchema": { "$ref": "#/$defs/MemoryProjectionContent" }
+          "errors": [
+            "memory.semantic.operation-failed"
+          ],
+          "requestSchema": {
+            "$ref": "#/$defs/MemoryQuery"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/MemoryProjectionContent"
+          }
         },
         "command": {
           "kind": "unary",
           "idempotency": "none",
-          "errors": ["memory.semantic.operation-failed"],
-          "requestSchema": { "$ref": "#/$defs/MemoryCommand" },
-          "responseSchema": { "$ref": "#/$defs/MemoryProjectionContent" }
+          "errors": [
+            "memory.semantic.operation-failed"
+          ],
+          "requestSchema": {
+            "$ref": "#/$defs/MemoryCommand"
+          },
+          "responseSchema": {
+            "$ref": "#/$defs/MemoryProjectionContent"
+          }
         },
         "changes": {
           "kind": "server-stream",
           "idempotency": "idempotent",
-          "errors": ["memory.semantic.operation-failed"],
-          "requestSchema": { "$ref": "#/$defs/MemoryChangeSubscription" },
-          "eventSchema": { "$ref": "#/$defs/MemoryChanged" }
+          "errors": [
+            "memory.semantic.operation-failed"
+          ],
+          "requestSchema": {
+            "$ref": "#/$defs/MemoryChangeSubscription"
+          },
+          "eventSchema": {
+            "$ref": "#/$defs/MemoryChanged"
+          }
         }
       }
     }
@@ -43,53 +61,39 @@
     },
     "ProfileId": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 256
+      "minLength": 1
     },
     "SearchText": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 1024
+      "type": "string"
     },
     "MemoryCategory": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 128
+      "minLength": 1
     },
     "MemoryContent": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 65536
+      "minLength": 1
     },
     "EvidenceText": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 65536
+      "type": "string"
     },
     "CorrectionNote": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 4096
+      "type": "string"
     },
     "StatusText": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 2048
+      "type": "string"
     },
     "ProviderId": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 256
+      "minLength": 1
     },
     "ModelId": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 256
+      "minLength": 1
     },
     "ConfigurationFingerprint": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 512
+      "minLength": 1
     },
     "MemoryScore": {
       "type": "number",
@@ -99,18 +103,14 @@
     },
     "AccessCount": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 2147483647
+      "minimum": 0
     },
     "MemoryRevision": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 9007199254740991
+      "minimum": 0
     },
     "MemoryQueryKind": {
       "type": "string",
-      "minLength": 7,
-      "maxLength": 21,
       "enum": [
         "sessions",
         "session-checkpoint",
@@ -125,43 +125,94 @@
     },
     "MemoryCommandKind": {
       "type": "string",
-      "minLength": 3,
-      "maxLength": 9,
-      "enum": ["update", "pin", "contest", "forget", "supersede", "correct", "reindex"]
+      "enum": [
+        "update",
+        "pin",
+        "contest",
+        "forget",
+        "supersede",
+        "correct",
+        "reindex"
+      ]
     },
     "MemoryProvenance": {
       "type": "string",
-      "minLength": 4,
-      "maxLength": 9,
-      "enum": ["unknown", "user", "assistant", "tool"]
+      "enum": [
+        "unknown",
+        "user",
+        "assistant",
+        "tool"
+      ]
     },
     "MemoryState": {
       "type": "string",
-      "minLength": 6,
-      "maxLength": 10,
-      "enum": ["active", "contested", "forgotten", "superseded"]
+      "enum": [
+        "active",
+        "contested",
+        "forgotten",
+        "superseded"
+      ]
     },
     "StoredMemory": {
       "type": "object",
       "properties": {
-        "memoryId": { "$ref": "#/$defs/MemoryId" },
-        "sessionId": { "$ref": "#/$defs/MemoryId" },
-        "category": { "$ref": "#/$defs/MemoryCategory" },
-        "content": { "$ref": "#/$defs/MemoryContent" },
-        "evidenceText": { "$ref": "#/$defs/EvidenceText" },
-        "sourceTurnId": { "$ref": "#/$defs/MemoryId" },
-        "importance": { "$ref": "#/$defs/MemoryScore" },
-        "confidence": { "$ref": "#/$defs/MemoryScore" },
-        "isPinned": { "type": "boolean" },
-        "state": { "$ref": "#/$defs/MemoryState" },
-        "supersededByMemoryId": { "$ref": "#/$defs/MemoryId" },
-        "createdAtUtc": { "type": "string", "format": "date-time" },
-        "updatedAtUtc": { "type": "string", "format": "date-time" },
-        "lastAccessedAtUtc": { "type": "string", "format": "date-time" },
-        "accessCount": { "$ref": "#/$defs/AccessCount" },
-        "provenance": { "$ref": "#/$defs/MemoryProvenance" },
-        "memoryRevision": { "$ref": "#/$defs/MemoryRevision" },
-        "isManual": { "type": "boolean" }
+        "memoryId": {
+          "$ref": "#/$defs/MemoryId"
+        },
+        "sessionId": {
+          "$ref": "#/$defs/MemoryId"
+        },
+        "category": {
+          "$ref": "#/$defs/MemoryCategory"
+        },
+        "content": {
+          "$ref": "#/$defs/MemoryContent"
+        },
+        "evidenceText": {
+          "$ref": "#/$defs/EvidenceText"
+        },
+        "sourceTurnId": {
+          "$ref": "#/$defs/MemoryId"
+        },
+        "importance": {
+          "$ref": "#/$defs/MemoryScore"
+        },
+        "confidence": {
+          "$ref": "#/$defs/MemoryScore"
+        },
+        "isPinned": {
+          "type": "boolean"
+        },
+        "state": {
+          "$ref": "#/$defs/MemoryState"
+        },
+        "supersededByMemoryId": {
+          "$ref": "#/$defs/MemoryId"
+        },
+        "createdAtUtc": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAtUtc": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "lastAccessedAtUtc": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "accessCount": {
+          "$ref": "#/$defs/AccessCount"
+        },
+        "provenance": {
+          "$ref": "#/$defs/MemoryProvenance"
+        },
+        "memoryRevision": {
+          "$ref": "#/$defs/MemoryRevision"
+        },
+        "isManual": {
+          "type": "boolean"
+        }
       },
       "required": [
         "memoryId",
@@ -184,44 +235,99 @@
     "SemanticEmbeddingContext": {
       "type": "object",
       "properties": {
-        "statusLabel": { "$ref": "#/$defs/StatusText" },
-        "statusText": { "$ref": "#/$defs/StatusText" },
-        "isReady": { "type": "boolean" },
-        "providerId": { "$ref": "#/$defs/ProviderId" },
-        "modelId": { "$ref": "#/$defs/ModelId" },
-        "providerDisplayName": { "$ref": "#/$defs/StatusText" },
-        "configurationFingerprint": { "$ref": "#/$defs/ConfigurationFingerprint" }
+        "statusLabel": {
+          "$ref": "#/$defs/StatusText"
+        },
+        "statusText": {
+          "$ref": "#/$defs/StatusText"
+        },
+        "isReady": {
+          "type": "boolean"
+        },
+        "providerId": {
+          "$ref": "#/$defs/ProviderId"
+        },
+        "modelId": {
+          "$ref": "#/$defs/ModelId"
+        },
+        "providerDisplayName": {
+          "$ref": "#/$defs/StatusText"
+        },
+        "configurationFingerprint": {
+          "$ref": "#/$defs/ConfigurationFingerprint"
+        }
       },
-      "required": ["statusLabel", "statusText", "isReady"],
+      "required": [
+        "statusLabel",
+        "statusText",
+        "isReady"
+      ],
       "additionalProperties": false
     },
     "MemoryQuery": {
       "type": "object",
       "properties": {
-        "kind": { "$ref": "#/$defs/MemoryQueryKind" },
-        "sessionId": { "$ref": "#/$defs/MemoryId" },
-        "memoryId": { "$ref": "#/$defs/MemoryId" },
-        "searchText": { "$ref": "#/$defs/SearchText" },
-        "includeInactive": { "type": "boolean" },
-        "profileId": { "$ref": "#/$defs/ProfileId" },
-        "memory": { "$ref": "#/$defs/StoredMemory" },
-        "semanticContext": { "$ref": "#/$defs/SemanticEmbeddingContext" }
+        "kind": {
+          "$ref": "#/$defs/MemoryQueryKind"
+        },
+        "sessionId": {
+          "$ref": "#/$defs/MemoryId"
+        },
+        "memoryId": {
+          "$ref": "#/$defs/MemoryId"
+        },
+        "searchText": {
+          "$ref": "#/$defs/SearchText"
+        },
+        "includeInactive": {
+          "type": "boolean"
+        },
+        "profileId": {
+          "$ref": "#/$defs/ProfileId"
+        },
+        "memory": {
+          "$ref": "#/$defs/StoredMemory"
+        },
+        "semanticContext": {
+          "$ref": "#/$defs/SemanticEmbeddingContext"
+        }
       },
-      "required": ["kind", "includeInactive"],
+      "required": [
+        "kind",
+        "includeInactive"
+      ],
       "additionalProperties": false
     },
     "MemoryCommand": {
       "type": "object",
       "properties": {
-        "kind": { "$ref": "#/$defs/MemoryCommandKind" },
-        "memoryId": { "$ref": "#/$defs/MemoryId" },
-        "category": { "$ref": "#/$defs/MemoryCategory" },
-        "content": { "$ref": "#/$defs/MemoryContent" },
-        "note": { "$ref": "#/$defs/CorrectionNote" },
-        "isPinned": { "type": "boolean" },
-        "profileId": { "$ref": "#/$defs/ProfileId" }
+        "kind": {
+          "$ref": "#/$defs/MemoryCommandKind"
+        },
+        "memoryId": {
+          "$ref": "#/$defs/MemoryId"
+        },
+        "category": {
+          "$ref": "#/$defs/MemoryCategory"
+        },
+        "content": {
+          "$ref": "#/$defs/MemoryContent"
+        },
+        "note": {
+          "$ref": "#/$defs/CorrectionNote"
+        },
+        "isPinned": {
+          "type": "boolean"
+        },
+        "profileId": {
+          "$ref": "#/$defs/ProfileId"
+        }
       },
-      "required": ["kind", "memoryId", "isPinned"],
+      "required": [
+        "kind",
+        "memoryId",
+        "isPinned"
+      ],
       "additionalProperties": false
     },
     "ContentReference": {
@@ -231,9 +337,13 @@
     "MemoryProjectionContent": {
       "type": "object",
       "properties": {
-        "content": { "$ref": "#/$defs/ContentReference" }
+        "content": {
+          "$ref": "#/$defs/ContentReference"
+        }
       },
-      "required": ["content"],
+      "required": [
+        "content"
+      ],
       "additionalProperties": false
     },
     "MemoryChangeSubscription": {
@@ -244,17 +354,25 @@
     },
     "MemoryChangeKind": {
       "type": "string",
-      "minLength": 6,
-      "maxLength": 7,
-      "enum": ["session", "worker"]
+      "enum": [
+        "session",
+        "worker",
+        "reset-required"
+      ]
     },
     "MemoryChanged": {
       "type": "object",
       "properties": {
-        "kind": { "$ref": "#/$defs/MemoryChangeKind" },
-        "sessionId": { "$ref": "#/$defs/MemoryId" }
+        "kind": {
+          "$ref": "#/$defs/MemoryChangeKind"
+        },
+        "sessionId": {
+          "$ref": "#/$defs/MemoryId"
+        }
       },
-      "required": ["kind"],
+      "required": [
+        "kind"
+      ],
       "additionalProperties": false
     }
   }

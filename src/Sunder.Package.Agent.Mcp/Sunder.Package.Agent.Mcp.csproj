@@ -1,0 +1,68 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AssemblyName>Sunder.Package.Agent.Mcp</AssemblyName>
+    <RootNamespace>Sunder.Package.Agent.Mcp</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <SunderPackageFamilyId>sunder.package.agent.mcp</SunderPackageFamilyId>
+    <SunderPackageRole>worker</SunderPackageRole>
+    <SunderPackagePrimaryProject>true</SunderPackagePrimaryProject>
+    <SunderPackageAppProject>App\Sunder.Package.Agent.Mcp.App.csproj</SunderPackageAppProject>
+    <SunderSdkStacksReference>true</SunderSdkStacksReference>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <OutputType>Exe</OutputType>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">$(NETCoreSdkRuntimeIdentifier)</RuntimeIdentifier>
+    <RuntimeIdentifiers>win-x64;win-arm64;linux-x64;linux-arm64;osx-x64;osx-arm64</RuntimeIdentifiers>
+    <SelfContained>true</SelfContained>
+    <UseAppHost>true</UseAppHost>
+    <PublishSingleFile>false</PublishSingleFile>
+    <SunderPackageAssetsDirectory>$(MSBuildProjectDirectory)\Assets</SunderPackageAssetsDirectory>
+    <SunderGeneratedPackageManifest>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\obj\$(Configuration)\$(TargetFramework)\$(RuntimeIdentifier)\sunder-package.json'))</SunderGeneratedPackageManifest>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="ModelContextProtocol" />
+    <ProjectReference Include="Shared\Sunder.Package.Agent.Mcp.Shared.csproj" />
+    <ProjectReference Include="..\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
+    <Compile Include="Worker\**\*.cs"
+             Exclude="Worker\bin\**;Worker\obj\**" />
+    <Compile Include="McpToolIdentity.cs" />
+    <Compile Include="McpToolPresentationAdapter.cs" />
+    <Compile Include="McpToolSource.cs" />
+    <Compile Include="McpToolTimeoutMetadata.cs" />
+    <Compile Include="PackageMetadata.cs" />
+    <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="Runtime\McpManagementRpcProvider.cs" />
+    <Compile Include="Services\*.cs"
+             Exclude="Services\McpCatalogDiagnostic.cs;Services\McpConfigurationImportPipeline.cs;Services\McpConnectionStatus.cs;Services\McpTransportSecurity.cs"
+             Link="Services\%(Filename)%(Extension)" />
+    <Compile Include="..\Sunder.Package.Agent.Shared\Threading\ReferenceCountedKeyedLock.cs"
+             Link="Threading\ReferenceCountedKeyedLock.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Shared\Presentation\McpToolCardPresentation.cs"
+             Link="Presentation\McpToolCardPresentation.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Shared\Presentation\AgentToolPresentationMarkdown.cs"
+             Link="Presentation\AgentToolPresentationMarkdown.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Shared\Presentation\ToolArgumentDisplay.cs"
+             Link="Presentation\ToolArgumentDisplay.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <SunderSdkCapability Include="rpc.extended-deadline.v1" />
+    <SunderContractBundle Include="Shared\Contracts\mcp-management.rpc.json"
+                          ContractId="sunder.package.agent.mcp.management"
+                            Version="1.0.0"
+                          DescriptorPath="contracts/mcp-management.rpc.json"
+                          Exposure="package" />
+    <SunderRpcProvider Include="mcp.management"
+                       ContractId="sunder.package.agent.mcp.management"
+                        ContractVersion="1.0.0"
+                       Role="runtime"
+                       Audience="owner" />
+    <SunderPackageTarget Include="runtime/$(RuntimeIdentifier)"
+                         Role="runtime"
+                         Rid="$(RuntimeIdentifier)"
+                         Kind="worker" />
+  </ItemGroup>
+
+</Project>

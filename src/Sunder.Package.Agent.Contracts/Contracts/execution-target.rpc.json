@@ -265,17 +265,13 @@
       "additionalProperties": false
     },
     "TextValue": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 65536
+      "type": "string"
     },
     "TextValues": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/TextValue"
-      },
-      "minItems": 0,
-      "maxItems": 4096
+      }
     },
     "Flag": {
       "type": "boolean"
@@ -316,9 +312,7 @@
       "additionalProperties": false
     },
     "SignedInteger": {
-      "type": "integer",
-      "minimum": -2147483648,
-      "maximum": 2147483647
+      "type": "integer"
     },
     "AgentResourceClaim": {
       "type": "object",
@@ -405,9 +399,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentResourceClaim"
-      },
-      "minItems": 0,
-      "maxItems": 4096
+      }
     },
     "Timestamp": {
       "type": "string",
@@ -497,9 +489,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentWorkspaceDocumentRecord"
-      },
-      "minItems": 0,
-      "maxItems": 10000
+      }
     },
     "AgentWorkspacePathRecord": {
       "type": "object",
@@ -541,9 +531,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentWorkspacePathRecord"
-      },
-      "minItems": 0,
-      "maxItems": 10000
+      }
     },
     "AgentWorkspaceRecord": {
       "type": "object",
@@ -708,8 +696,6 @@
     },
     "AgentExecutionTargetReadinessStatus": {
       "type": "string",
-      "minLength": 5,
-      "maxLength": 19,
       "enum": [
         "ready",
         "needs-configuration",
@@ -786,8 +772,6 @@
     },
     "AgentPermissionScopeClassificationBasis": {
       "type": "string",
-      "minLength": 5,
-      "maxLength": 27,
       "enum": [
         "unspecified",
         "opened-ancestor-identity",
@@ -1156,8 +1140,6 @@
     },
     "AgentExecutionResourceAccessMode": {
       "type": "string",
-      "minLength": 9,
-      "maxLength": 10,
       "enum": [
         "read-only",
         "read-write"
@@ -1170,11 +1152,8 @@
       },
       "propertyNames": {
         "type": "string",
-        "minLength": 1,
-        "maxLength": 128
-      },
-      "minProperties": 0,
-      "maxProperties": 256
+        "minLength": 1
+      }
     },
     "AgentExecutionResourceDescriptor": {
       "type": "object",
@@ -1219,9 +1198,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentExecutionResourceDescriptor"
-      },
-      "minItems": 0,
-      "maxItems": 4096
+      }
     },
     "ExecutionResourcesRequest": {
       "type": "object",
@@ -1282,9 +1259,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentResolvedExecutionResource"
-      },
-      "minItems": 0,
-      "maxItems": 4096
+      }
     },
     "AgentResourceAuthorityValidation": {
       "type": "object",
@@ -1396,8 +1371,6 @@
     },
     "AgentFileSearchPathStyle": {
       "type": "string",
-      "minLength": 4,
-      "maxLength": 5,
       "enum": [
         "host",
         "posix"
@@ -1429,8 +1402,6 @@
     },
     "AgentFileSearchKind": {
       "type": "string",
-      "minLength": 4,
-      "maxLength": 4,
       "enum": [
         "grep",
         "glob"
@@ -1497,9 +1468,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentFileSearchMatch"
-      },
-      "minItems": 0,
-      "maxItems": 4096
+      }
     },
     "AgentFileSearchResult": {
       "type": "object",
@@ -1551,9 +1520,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentScopedInstructionProbe"
-      },
-      "minItems": 0,
-      "maxItems": 4096
+      }
     },
     "AgentScopedInstructionDiscoveryRequest": {
       "type": "object",
@@ -1619,9 +1586,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentScopedInstructionDocument"
-      },
-      "minItems": 0,
-      "maxItems": 4096
+      }
     },
     "AgentScopedInstructionScope": {
       "type": "object",
@@ -1659,9 +1624,7 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/AgentScopedInstructionScope"
-      },
-      "minItems": 0,
-      "maxItems": 4096
+      }
     },
     "AgentScopedInstructionDiscoveryResult": {
       "type": "object",
@@ -1693,33 +1656,22 @@
     },
     "Identifier": {
       "type": "string",
-      "minLength": 1,
-      "maxLength": 256
+      "minLength": 1
     },
     "IdentifierOrEmpty": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 256
+      "type": "string"
     },
     "PathText": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 4096
+      "type": "string"
     },
     "CommandText": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 131072
+      "type": "string"
     },
     "DisplayText": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 8192
+      "type": "string"
     },
     "ContentText": {
-      "type": "string",
-      "minLength": 0,
-      "maxLength": 900000
+      "type": "string"
     },
     "Sha256Text": {
       "type": "string",
@@ -1727,14 +1679,11 @@
       "maxLength": 64
     },
     "ProcessExitCode": {
-      "type": "integer",
-      "minimum": -2147483648,
-      "maximum": 2147483647
+      "type": "integer"
     },
     "TimeoutSeconds": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 86400
+      "minimum": 0
     },
     "PageSize": {
       "type": "integer",
@@ -1742,29 +1691,23 @@
       "maximum": 2000
     },
     "SortOrder": {
-      "type": "integer",
-      "minimum": -100000,
-      "maximum": 100000
+      "type": "integer"
     },
     "CollectionIndex": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 100000
+      "minimum": 0
     },
     "ResourceOperationIndex": {
       "type": "integer",
-      "minimum": -1,
-      "maximum": 100000
+      "minimum": -1
     },
     "Revision": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 9007199254740991
+      "minimum": 0
     },
     "Count": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 9007199254740991
+      "minimum": 0
     }
   }
 }
