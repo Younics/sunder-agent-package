@@ -19,6 +19,7 @@ namespace Sunder.Package.Agent.Execution.Local.Tests;
 public sealed class ExecutionPackageRoleBoundaryTests
 {
     [Theory]
+    [Trait("Lane", "PackageCompatibility")]
     [InlineData(true)]
     [InlineData(false)]
     public void AppModules_RegisterOnlyPresentationServices(bool local)
@@ -65,6 +66,7 @@ public sealed class ExecutionPackageRoleBoundaryTests
     }
 
     [Theory]
+    [Trait("Lane", "PackageCompatibility")]
     [InlineData(true)]
     [InlineData(false)]
     public void WorkerLeaves_HaveNoAppModuleAndUseOwnerRpcV2(bool local)

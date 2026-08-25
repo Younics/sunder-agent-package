@@ -271,13 +271,20 @@ public sealed class ProviderSharedUtilitiesTests
 
         Exception exception = nested
             ? new InvalidOperationException("wrapper", new TimeoutException("provider timeout"))
-            : new OperationCanceledException("canceled");
+            : new OperationCanceledException("canceled", innerException: null, cancellation.Token);
 
         Assert.Equal(expected, ProviderStreamFailureClassifier.Classify(
             exception,
             cancellation.Token,
             inspectInnerExceptions: nested,
             includeTimeouts: nested).ToString());
+        if (callerCanceled)
+        {
+            ProviderConformanceHarness.VerifyCallerCancellation(
+                "OpenAI",
+                exception,
+                cancellation.Token);
+        }
     }
 
     [Fact]

@@ -37,8 +37,12 @@ public sealed class ProfileHydrationTests
             embeddingModelId: null);
         using var viewModel = new AgentProfilesViewModel(profileService);
         var initialization = viewModel.InitializeAsync();
+        var concurrentInitialization = viewModel.InitializeAsync();
         await provider.LoadStarted.Task.WaitAsync(TestContext.Current.CancellationToken);
 
+        var adapter = Adapt(viewModel);
+        AdaptiveEditorLifecycleContract.SharedInitialization(adapter, provider.LoadCount);
+        AdaptiveEditorLifecycleContract.HydrationBlocksMutation(adapter);
         Assert.True(viewModel.IsHydrating);
         Assert.False(viewModel.IsEditorEnabled);
         Assert.False(viewModel.CanNavigateProfiles);
@@ -46,8 +50,12 @@ public sealed class ProfileHydrationTests
 
         viewModel.DisplayName = "Edited during hydration";
         provider.Models.SetResult([new AgentModelDescriptor("model", "Model", 16_000, 2_000)]);
-        await initialization;
+        await Task.WhenAll(initialization, concurrentInitialization);
 
+        AdaptiveEditorLifecycleContract.NewerEditRemainsDirty(
+            adapter,
+            "Edited during hydration",
+            "hydration completion");
         Assert.False(viewModel.IsHydrating);
         Assert.Equal("Edited during hydration", viewModel.DisplayName);
         Assert.True(viewModel.IsDirty);
@@ -154,8 +162,23 @@ public sealed class ProfileHydrationTests
             extensionCatalog.BehaviorLoops);
     }
 
+    private static IAdaptiveEditorLifecycleAdapter Adapt(AgentProfilesViewModel viewModel)
+        => new DelegateAdaptiveEditorLifecycleAdapter(
+            "Profiles",
+            () => new AdaptiveEditorSnapshot(
+                viewModel.IsHydrating,
+                viewModel.SaveProfileCommand.CanExecute(null),
+                viewModel.IsBusy,
+                viewModel.IsDirty,
+                viewModel.SelectedProfile?.ProfileId,
+                viewModel.DisplayName,
+                PublicationCount: 0),
+            viewModel);
+
     private sealed class DelayedChatProvider : IAgentChatProvider
     {
+        private int _loadCount;
+
         public AgentProviderDescriptor Descriptor { get; } = new(
             "delayed-provider",
             "Delayed Provider",
@@ -167,9 +190,12 @@ public sealed class ProfileHydrationTests
         public TaskCompletionSource<IReadOnlyList<AgentModelDescriptor>> Models { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        public int LoadCount => Volatile.Read(ref _loadCount);
+
         public ValueTask<IReadOnlyList<AgentModelDescriptor>> GetAvailableModelsAsync(
             CancellationToken cancellationToken = default)
         {
+            Interlocked.Increment(ref _loadCount);
             LoadStarted.TrySetResult();
             return new ValueTask<IReadOnlyList<AgentModelDescriptor>>(Models.Task);
         }

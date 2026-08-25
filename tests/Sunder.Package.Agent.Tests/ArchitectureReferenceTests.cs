@@ -230,7 +230,7 @@ public sealed class ArchitectureReferenceTests
     }
 
     [Fact]
-    public void AvaloniaProjects_UseCentralSharedPresentationPropsAndCompiledBindings()
+    public void AvaloniaProjects_UseReviewedSharedPresentationSourcesAndCompiledBindings()
     {
         var sourceRoot = Path.Combine(AgentPackageRepositoryInventory.RepositoryRoot.FullName, "src");
         var avaloniaProjects = Directory.EnumerateFiles(sourceRoot, "*.csproj", SearchOption.AllDirectories)
@@ -258,8 +258,18 @@ public sealed class ArchitectureReferenceTests
                 .Select(static element => element.Value)
                 .SingleOrDefault();
 
-            Assert.Single(sharedImports);
-            Assert.Empty(directSharedItems);
+            if (NarrowProviderAppProjects.Contains(Path.GetFileNameWithoutExtension(projectPath)))
+            {
+                Assert.Empty(sharedImports);
+                Assert.Contains(directSharedItems, static include => include?.Replace('\\', '/').EndsWith(
+                    "Sunder.Package.Agent.Shared/Presentation/PresentationStyles.axaml",
+                    StringComparison.OrdinalIgnoreCase) == true);
+            }
+            else
+            {
+                Assert.Single(sharedImports);
+                Assert.Empty(directSharedItems);
+            }
             Assert.Equal("true", compiledBindings, ignoreCase: true);
         }
     }
@@ -420,6 +430,15 @@ public sealed class ArchitectureReferenceTests
         ["Avalonia", "Dapper", "EntityFramework", "Hosting", "Sqlite", "Sunder.App", "Sunder.Runtime.Host"],
         StringComparer.OrdinalIgnoreCase);
 
+    private static readonly IReadOnlySet<string> NarrowProviderAppProjects = new HashSet<string>(
+        [
+            "Sunder.Package.Agent.Provider.Anthropic.App",
+            "Sunder.Package.Agent.Provider.Gemini.App",
+            "Sunder.Package.Agent.Provider.LMStudio.App",
+            "Sunder.Package.Agent.Provider.OpenAI.App",
+        ],
+        StringComparer.OrdinalIgnoreCase);
+
     private static readonly IReadOnlySet<string> AllowedCrossFamilySourceOwners = new HashSet<string>(
         [
             "Sunder.Package.Agent.Provider.Shared",
@@ -432,6 +451,7 @@ public sealed class ArchitectureReferenceTests
             "Sunder.Package.Agent -> Sunder.Package.Agent.Tests",
             "Sunder.Package.Agent -> Sunder.Package.Agent",
             "Sunder.Package.Agent -> Sunder.Package.Agent.App",
+            "Sunder.Package.Agent -> Sunder.Package.Agent.Presentation.State.Tests",
             "Sunder.Package.Agent -> Sunder.Package.Agent.Presentation.Tests",
             "Sunder.Package.Agent.Builder -> Sunder.Package.Agent.Builder",
             "Sunder.Package.Agent.Builder -> Sunder.Package.Agent.Builder.App",
@@ -458,10 +478,16 @@ public sealed class ArchitectureReferenceTests
             "Sunder.Package.Agent.Memory.Semantic -> Sunder.Package.Agent.Memory.Semantic",
             "Sunder.Package.Agent.Memory.Semantic -> Sunder.Package.Agent.Memory.Semantic.Tests",
             "Sunder.Package.Agent.Memory.Semantic -> Sunder.Package.Agent.Presentation.Tests",
+            "Sunder.Package.Agent.Provider.Anthropic -> Sunder.Package.Agent.Provider.Anthropic",
+            "Sunder.Package.Agent.Provider.Anthropic -> Sunder.Package.Agent.Provider.Anthropic.App",
             "Sunder.Package.Agent.Provider.Anthropic -> Sunder.Package.Agent.Provider.Anthropic.Tests",
             "Sunder.Package.Agent.Provider.Anthropic -> Sunder.Package.Agent.Tests",
+            "Sunder.Package.Agent.Provider.Gemini -> Sunder.Package.Agent.Provider.Gemini",
+            "Sunder.Package.Agent.Provider.Gemini -> Sunder.Package.Agent.Provider.Gemini.App",
             "Sunder.Package.Agent.Provider.Gemini -> Sunder.Package.Agent.Provider.Gemini.Tests",
             "Sunder.Package.Agent.Provider.Gemini -> Sunder.Package.Agent.Tests",
+            "Sunder.Package.Agent.Provider.LMStudio -> Sunder.Package.Agent.Provider.LMStudio",
+            "Sunder.Package.Agent.Provider.LMStudio -> Sunder.Package.Agent.Provider.LMStudio.App",
             "Sunder.Package.Agent.Provider.LMStudio -> Sunder.Package.Agent.Provider.LMStudio.Tests",
             "Sunder.Package.Agent.Provider.LMStudio -> Sunder.Package.Agent.Tests",
             "Sunder.Package.Agent.Provider.OpenAI -> Sunder.Package.Agent.Provider.OpenAI.Tests",

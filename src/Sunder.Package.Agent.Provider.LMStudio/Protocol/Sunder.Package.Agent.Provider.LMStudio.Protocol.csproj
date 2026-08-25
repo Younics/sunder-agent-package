@@ -10,6 +10,7 @@
   <ItemGroup>
     <SunderRpcBinding Include="Contracts\credential-settings.rpc.json"
                       Namespace="Sunder.Package.Agent.Provider.LMStudio.Protocol.Generated"
+                      Accessibility="Internal"
                       OutputFile="CredentialSettings.g.cs" />
     <EmbeddedResource Include="Contracts\credential-settings.rpc.json"
                       LogicalName="Sunder.Package.Agent.Provider.LMStudio.Protocol.credential-settings.rpc.json" />

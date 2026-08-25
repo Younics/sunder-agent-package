@@ -6,13 +6,13 @@
         "type": "Direct",
         "requested": "[1.1.0, 1.2.0)",
         "resolved": "1.1.0",
-        "contentHash": "045up6oTTBliYXO/VKhjrj78zOtU2hepiJwpPa2dwNpS6xs2SI7JM56+a3OhVo4/4SUnRti7bbsFuN1Iyvh0Kg=="
+        "contentHash": "2XE3bfs7nHV1nJwU7tNTodm0IOvofCeq7TdBm6ddexvUMih2YiiL2iTryeOwV0gT5OCE+Q5Abasw3qEIHwC4Mw=="
       },
       "Sunder.Sdk": {
         "type": "Direct",
         "requested": "[1.1.0, 1.2.0)",
         "resolved": "1.1.0",
-        "contentHash": "qbBDgVS5otbNfuCDyOoG8oRzttwq3PhAa36kkh9Qc4j93m23Z3zjBt3+YOOUqh1elalsZbOTp+gNKSQ0QPginA==",
+        "contentHash": "X6TIxu2cP/8doVvGtjz2NgA7IOZkuyH6k0gfOTOXYFKggN8aDy7qoWqH0DqStOdsGDL/4fYphwlvF91gEqmWyQ==",
         "dependencies": {
           "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.8",
           "Microsoft.Extensions.Logging.Abstractions": "10.0.8"

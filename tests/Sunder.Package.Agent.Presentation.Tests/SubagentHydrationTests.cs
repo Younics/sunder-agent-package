@@ -32,8 +32,12 @@ public sealed class SubagentHydrationTests
         using var viewModel = new SubagentsViewModel(gateway);
 
         var initialization = viewModel.InitializeAsync();
+        var concurrentInitialization = viewModel.InitializeAsync();
         await provider.LoadStarted.Task.WaitAsync(TestContext.Current.CancellationToken);
 
+        var adapter = Adapt(viewModel);
+        AdaptiveEditorLifecycleContract.SharedInitialization(adapter, provider.LoadCount);
+        AdaptiveEditorLifecycleContract.HydrationBlocksMutation(adapter);
         Assert.True(viewModel.IsHydrating);
         Assert.False(viewModel.IsEditorEnabled);
         Assert.False(viewModel.CanNavigateSubagents);
@@ -41,8 +45,12 @@ public sealed class SubagentHydrationTests
 
         viewModel.DisplayName = "Edited during hydration";
         provider.Models.SetResult([new AgentModelDescriptor("model", "Model", 16_000, 2_000)]);
-        await initialization;
+        await Task.WhenAll(initialization, concurrentInitialization);
 
+        AdaptiveEditorLifecycleContract.NewerEditRemainsDirty(
+            adapter,
+            "Edited during hydration",
+            "hydration completion");
         Assert.False(viewModel.IsHydrating);
         Assert.Equal("Edited during hydration", viewModel.DisplayName);
         Assert.True(viewModel.IsDirty);
@@ -70,17 +78,36 @@ public sealed class SubagentHydrationTests
 
         var initialization = viewModel.InitializeAsync();
         await provider.LoadStarted.Task.WaitAsync(TestContext.Current.CancellationToken);
-        viewModel.BackToSubagentListCommand.Execute(null);
-
-        await initialization.WaitAsync(TimeSpan.FromSeconds(2));
+        await AdaptiveEditorLifecycleContract.RetiredWorkCannotPublishAsync(
+            Adapt(viewModel),
+            () => viewModel.BackToSubagentListCommand.Execute(null),
+            () => provider.Models.TrySetResult([new AgentModelDescriptor("model", "Model", 16_000, 2_000)]),
+            initialization.WaitAsync(TimeSpan.FromSeconds(2)));
         Assert.Null(viewModel.SelectedSubagent);
         Assert.False(viewModel.IsHydrating);
         Assert.False(viewModel.IsBusy);
-        provider.Models.TrySetResult([new AgentModelDescriptor("model", "Model", 16_000, 2_000)]);
     }
+
+    private static IAdaptiveEditorLifecycleAdapter Adapt(SubagentsViewModel viewModel)
+        => new DelegateAdaptiveEditorLifecycleAdapter(
+            "Subagents",
+            () => new AdaptiveEditorSnapshot(
+                viewModel.IsHydrating,
+                viewModel.SaveSubagentCommand.CanExecute(null),
+                viewModel.IsBusy,
+                viewModel.IsDirty,
+                viewModel.SelectedSubagent?.SubagentId,
+                viewModel.DisplayName,
+                PublicationCount: 0,
+                viewModel.IsRuntimeAvailable
+                    ? AdaptiveEditorRuntimeState.Available
+                    : AdaptiveEditorRuntimeState.Unavailable),
+            viewModel);
 
     private sealed class DelayedChatProvider : IAgentChatProvider
     {
+        private int _loadCount;
+
         public AgentProviderDescriptor Descriptor { get; } = new(
             "delayed-provider",
             "Delayed Provider",
@@ -92,9 +119,12 @@ public sealed class SubagentHydrationTests
         public TaskCompletionSource<IReadOnlyList<AgentModelDescriptor>> Models { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        public int LoadCount => Volatile.Read(ref _loadCount);
+
         public ValueTask<IReadOnlyList<AgentModelDescriptor>> GetAvailableModelsAsync(
             CancellationToken cancellationToken = default)
         {
+            Interlocked.Increment(ref _loadCount);
             LoadStarted.TrySetResult();
             return new ValueTask<IReadOnlyList<AgentModelDescriptor>>(Models.Task);
         }

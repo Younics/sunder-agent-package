@@ -5592,9 +5592,14 @@ public sealed class ViewLifecycleTests
         public AgentSessionRecord? GetSession(Guid sessionId)
             => sessions.FirstOrDefault(session => session.SessionId == sessionId);
 
-        public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces() => [];
+        public ValueTask<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesAsync(
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult<IReadOnlyList<AgentWorkspaceRecord>>([]);
 
-        public AgentWorkspaceRecord? GetWorkspace(string workspaceId) => null;
+        public ValueTask<AgentWorkspaceRecord?> GetWorkspaceAsync(
+            string workspaceId,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult<AgentWorkspaceRecord?>(null);
 
         public AgentProfileRecord? GetSessionProfile(Guid sessionId)
             => GetSession(sessionId) is { ProfileId: { } profileId }

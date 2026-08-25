@@ -68,7 +68,18 @@ public sealed class LocalExecutionTarget
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return await GetReadinessCoreAsync(context, cancellationToken);
+        try
+        {
+            return await GetReadinessCoreAsync(context, cancellationToken);
+        }
+        catch (LocalExecutionDomainException exception)
+        {
+            return new AgentExecutionTargetReadiness(
+                Descriptor.TargetKind,
+                Descriptor.TargetId,
+                AgentExecutionTargetReadinessStatus.Failed,
+                $"{exception.Message} (code: {exception.Code})");
+        }
     }
 
     public async ValueTask<AgentExecutionShellDescriptor> GetShellAsync(

@@ -8,7 +8,6 @@ using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Tools.Files;
 using Sunder.Package.Agent.Tools.Shell;
 using Xunit;
-using Xunit.Sdk;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -345,13 +344,15 @@ public sealed class ScopedInstructionClaimTests
         Assert.False(File.Exists(Path.Combine(fixture.Root, "governed.txt")));
     }
 
-    [Fact]
+    [FileSystemFact(
+        TestFileSystemCapability.FileSymbolicLinks,
+        "Compound AGENTS.md alias checks require file symbolic links.")]
     public async Task CompoundAgentsPatch_RejectsSymlinkAliasBeforeAnyMutation()
     {
         using var fixture = await Fixture.CreateAsync();
         var agentsPath = Path.Combine(fixture.Root, "AGENTS.md");
         await File.WriteAllTextAsync(agentsPath, "old policy");
-        CreateFileSymlinkOrSkip(Path.Combine(fixture.Root, "policy-link.md"), agentsPath);
+        File.CreateSymbolicLink(Path.Combine(fixture.Root, "policy-link.md"), agentsPath);
         var source = fixture.CreateSource();
         await PresentAsync(source, fixture.PromptRequest(epoch: 1));
         var patch = """
@@ -411,14 +412,9 @@ public sealed class ScopedInstructionClaimTests
         Assert.Contains("secret-match.txt", rerun.Content, StringComparison.Ordinal);
     }
 
-    [Fact]
+    [UnixFact("Colon path segments are not valid Windows file names.")]
     public async Task RecursiveGrep_UsesUnambiguousMatchedPathForColonNamedNestedScope()
     {
-        if (OperatingSystem.IsWindows())
-        {
-            throw SkipException.ForSkip("Colon path segments are not valid Windows file names.");
-        }
-
         using var fixture = await Fixture.CreateAsync();
         var nested = Path.Combine(fixture.Root, "branch:12:nested");
         Directory.CreateDirectory(nested);
@@ -443,14 +439,9 @@ public sealed class ScopedInstructionClaimTests
         Assert.Contains("branch:12:nested", rerun.Content, StringComparison.Ordinal);
     }
 
-    [Fact]
+    [UnixFact("Backslash is a native path separator on Windows.")]
     public async Task RecursiveSearch_PreservesLiteralBackslashPathForGovernedDiscovery()
     {
-        if (OperatingSystem.IsWindows())
-        {
-            throw SkipException.ForSkip("Backslash is a native path separator on Windows.");
-        }
-
         using var fixture = await Fixture.CreateAsync();
         var nested = Path.Combine(fixture.Root, "backslash\\dir");
         Directory.CreateDirectory(nested);
@@ -474,7 +465,9 @@ public sealed class ScopedInstructionClaimTests
         Assert.Contains("backslash\\dir", rerun.Content, StringComparison.Ordinal);
     }
 
-    [Fact]
+    [FileSystemFact(
+        TestFileSystemCapability.DirectorySymbolicLinks,
+        "Contained directory-link search checks require symbolic links.")]
     public async Task SearchThroughContainedDirectorySymlink_IsRejectedWithoutDisclosingMatches()
     {
         using var fixture = await Fixture.CreateAsync();
@@ -484,7 +477,7 @@ public sealed class ScopedInstructionClaimTests
         await File.WriteAllTextAsync(Path.Combine(fixture.Root, "AGENTS.md"), "root policy");
         await File.WriteAllTextAsync(Path.Combine(target, "AGENTS.md"), "canonical target policy");
         await File.WriteAllTextAsync(Path.Combine(target, "match.txt"), "match");
-        CreateDirectorySymlinkOrSkip(alias, target);
+        Directory.CreateSymbolicLink(alias, target);
         var source = fixture.CreateSource();
         await PresentAsync(source, fixture.PromptRequest(epoch: 1));
         var request = Request("glob", new { pattern = "*.txt", path = alias });
@@ -596,7 +589,9 @@ public sealed class ScopedInstructionClaimTests
         Assert.DoesNotContain("nested-00", result.Content, StringComparison.Ordinal);
     }
 
-    [Theory]
+    [FileSystemTheory(
+        TestFileSystemCapability.FileSymbolicLinks,
+        "Retargeted approval checks require file symbolic links.")]
     [InlineData("read")]
     [InlineData("write")]
     [InlineData("edit")]
@@ -625,7 +620,7 @@ public sealed class ScopedInstructionClaimTests
             });
         await PresentAsync(fixture.CreateSource(), fixture.PromptRequest(epoch: 1));
         File.Delete(link);
-        CreateFileSymlinkOrSkip(link, second);
+        File.CreateSymbolicLink(link, second);
         var source = fixture.CreateSource();
         var request = operation switch
         {
@@ -1167,27 +1162,4 @@ public sealed class ScopedInstructionClaimTests
             => Path.GetFullPath(Path.IsPathRooted(path) ? path : Path.Combine(root, path));
     }
 
-    private static void CreateFileSymlinkOrSkip(string linkPath, string targetPath)
-    {
-        try
-        {
-            File.CreateSymbolicLink(linkPath, targetPath);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException or NotSupportedException)
-        {
-            throw SkipException.ForSkip($"Symbolic links are unavailable: {ex.Message}");
-        }
-    }
-
-    private static void CreateDirectorySymlinkOrSkip(string linkPath, string targetPath)
-    {
-        try
-        {
-            Directory.CreateSymbolicLink(linkPath, targetPath);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException or NotSupportedException)
-        {
-            throw SkipException.ForSkip($"Directory symbolic links are unavailable: {ex.Message}");
-        }
-    }
 }

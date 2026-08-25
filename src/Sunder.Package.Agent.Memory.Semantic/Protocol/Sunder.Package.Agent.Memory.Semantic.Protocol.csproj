@@ -4,7 +4,6 @@
     <SunderPackageFamilyId>sunder.package.agent.memory.semantic</SunderPackageFamilyId>
     <SunderPackageRole>protocol</SunderPackageRole>
     <SunderPackageProject>false</SunderPackageProject>
-    <IsPackable>false</IsPackable>
   </PropertyGroup>
 
   <ItemGroup>
@@ -14,6 +13,7 @@
                       LogicalName="Sunder.Package.Agent.Memory.Semantic.Protocol.Contracts.memory-inspector.rpc.json" />
     <SunderRpcBinding Include="Contracts\memory-inspector.rpc.json"
                       Namespace="Sunder.Package.Agent.Memory.Semantic.Protocol.Generated"
+                      Accessibility="Internal"
                       OutputFile="MemoryInspectorRpc.g.cs" />
   </ItemGroup>
 

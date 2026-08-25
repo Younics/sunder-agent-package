@@ -63,6 +63,64 @@ public sealed class AgentEventDeliveryReliabilityTests
         Assert.True(transport.SubscriptionAttempts >= 2);
     }
 
+    [Theory]
+    [InlineData("list-workspaces")]
+    [InlineData("get-workspace")]
+    public async Task RuntimeCatalogWorkspaceHandlers_PreserveRoutesAndPropagateCancellation(
+        string methodId)
+    {
+        var catalog = new TestRuntimeCatalog();
+        var handler = AgentRuntimeCatalogRpc.CreateHandler(catalog);
+        using var cancellation = new CancellationTokenSource();
+        await cancellation.CancelAsync();
+        var request = methodId == "list-workspaces"
+            ? JsonSerializer.SerializeToElement(new AgentRpcEmpty())
+            : JsonSerializer.SerializeToElement(new { value = "workspace" });
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => handler.InvokeUnaryAsync(
+            null!,
+            AgentRuntimeCatalogRpc.ServiceId,
+            methodId,
+            request,
+            cancellation.Token).AsTask());
+
+        Assert.Equal(
+            cancellation.Token,
+            methodId == "list-workspaces"
+                ? catalog.ListWorkspacesCancellationToken
+                : catalog.GetWorkspaceCancellationToken);
+    }
+
+    [Fact]
+    public async Task RuntimeCatalogWorkspaceClient_LinksListCallToClientLifetime()
+    {
+        var transport = new RetryingRuntimeCatalogRpcClient(Guid.NewGuid());
+        var client = new AgentRuntimeCatalogRpcClient(
+            transport,
+            new SunderRpcEndpointReference("rpc1_runtime_catalog_workspace_lifetime"));
+        var disposed = false;
+        try
+        {
+            var listing = client.ListWorkspacesAsync().AsTask();
+            var route = await transport.UnaryStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.Equal(AgentRuntimeCatalogRpc.ServiceId, route.ServiceId);
+            Assert.Equal("list-workspaces", route.MethodId);
+
+            client.Dispose();
+            disposed = true;
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => listing)
+                .WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            if (!disposed)
+            {
+                client.Dispose();
+            }
+        }
+    }
+
     [Fact]
     public async Task MemoryChangeQueue_DistinctSessionOverflowCollapsesPendingChangesToReset()
     {
@@ -143,6 +201,9 @@ public sealed class AgentEventDeliveryReliabilityTests
 
         public int SubscriptionAttempts => Volatile.Read(ref _subscriptionAttempts);
 
+        public TaskCompletionSource<(string ServiceId, string MethodId)> UnaryStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public ValueTask<SunderRpcProviderSnapshot?> GetProviderAsync(
             SunderRpcEndpointReference endpoint,
             CancellationToken cancellationToken = default)
@@ -165,14 +226,18 @@ public sealed class AgentEventDeliveryReliabilityTests
             CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
-        public ValueTask<JsonElement> InvokeAsync(
+        public async ValueTask<JsonElement> InvokeAsync(
             SunderRpcEndpointReference endpoint,
             string serviceId,
             string methodId,
             JsonElement request,
             SunderRpcCallOptions? options = null,
             CancellationToken cancellationToken = default)
-            => throw new NotSupportedException();
+        {
+            UnaryStarted.TrySetResult((serviceId, methodId));
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return default;
+        }
 
         public async IAsyncEnumerable<JsonElement> SubscribeAsync(
             SunderRpcEndpointReference endpoint,
@@ -228,8 +293,25 @@ public sealed class AgentEventDeliveryReliabilityTests
         public IReadOnlyList<AgentSessionRecord> ListSessionsForProfile(string profileId) => [];
         public IReadOnlyList<AgentSessionRecord> ListSessionsForWorkspace(string workspaceId) => [];
         public AgentSessionRecord? GetSession(Guid sessionId) => null;
-        public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces() => [];
-        public AgentWorkspaceRecord? GetWorkspace(string workspaceId) => null;
+        public CancellationToken ListWorkspacesCancellationToken { get; private set; }
+        public CancellationToken GetWorkspaceCancellationToken { get; private set; }
+
+        public ValueTask<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesAsync(
+            CancellationToken cancellationToken = default)
+        {
+            ListWorkspacesCancellationToken = cancellationToken;
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult<IReadOnlyList<AgentWorkspaceRecord>>([]);
+        }
+
+        public ValueTask<AgentWorkspaceRecord?> GetWorkspaceAsync(
+            string workspaceId,
+            CancellationToken cancellationToken = default)
+        {
+            GetWorkspaceCancellationToken = cancellationToken;
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult<AgentWorkspaceRecord?>(null);
+        }
         public AgentProfileRecord? GetSessionProfile(Guid sessionId) => null;
         public AgentWorkingSummaryRecord? GetWorkingSummary(Guid sessionId) => null;
         public AgentSessionContextCheckpointRecord? GetLatestSessionContextCheckpoint(Guid sessionId) => null;

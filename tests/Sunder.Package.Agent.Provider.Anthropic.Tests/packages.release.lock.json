@@ -165,8 +165,21 @@
       "sunder.package.agent.provider.testsupport": {
         "type": "Project",
         "dependencies": {
-          "Microsoft.Extensions.DependencyInjection": "[10.0.8, )",
-          "Sunder.Sdk": "[1.1.0, 1.2.0)",
+          "Sunder.Package.Agent.TestSupport": "[2.0.0, )",
+          "Sunder.Sdk": "[1.1.0, 1.2.0)"
+        }
+      },
+      "sunder.package.agent.testsupport": {
+        "type": "Project",
+        "dependencies": {
+          "Sunder.Sdk": "[1.1.0, 1.2.0)"
+        }
+      },
+      "sunder.package.agent.testsupport.avalonia": {
+        "type": "Project",
+        "dependencies": {
+          "Avalonia": "[12.0.3, )",
+          "Sunder.Package.Agent.TestSupport": "[2.0.0, )",
           "Sunder.Sdk.Avalonia": "[1.1.0, 1.2.0)"
         }
       },
@@ -209,7 +222,7 @@
         "type": "CentralTransitive",
         "requested": "[1.1.0, 1.2.0)",
         "resolved": "1.1.0",
-        "contentHash": "qbBDgVS5otbNfuCDyOoG8oRzttwq3PhAa36kkh9Qc4j93m23Z3zjBt3+YOOUqh1elalsZbOTp+gNKSQ0QPginA==",
+        "contentHash": "X6TIxu2cP/8doVvGtjz2NgA7IOZkuyH6k0gfOTOXYFKggN8aDy7qoWqH0DqStOdsGDL/4fYphwlvF91gEqmWyQ==",
         "dependencies": {
           "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.8",
           "Microsoft.Extensions.Logging.Abstractions": "10.0.8"
@@ -219,18 +232,17 @@
         "type": "CentralTransitive",
         "requested": "[1.1.0, 1.2.0)",
         "resolved": "1.1.0",
-        "contentHash": "Ajo7d8Yrk2lZkNz66SyWzr5Y0cncLFykHkgdU7Q6Ou9hDMhQPIIVr9asEQ2xljwLOUdxWSqv75cWLbVkS2qqeg==",
+        "contentHash": "3lglWwD0IH95c6wrOxqGu3jWo9KTDmpNAYUwMvl0IWT995NRPTJ13V3F4kFqqepgTQsub3i88sTAQlcoB6EEPg==",
         "dependencies": {
           "Avalonia": "12.0.3",
-          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.8",
-          "Sunder.Sdk": "1.1.0"
+          "Sunder.Sdk": "[1.1.0, 1.2.0)"
         }
       },
       "Sunder.Sdk.Worker": {
         "type": "CentralTransitive",
         "requested": "[1.1.0, 1.1.0]",
         "resolved": "1.1.0",
-        "contentHash": "p7YJcxYCcaBSktP/W+nzeav9m3mzqfSLsJJ6V63+4z/ijyIj/niSi3EVuAFj0Pfg4qPRotAzo9c6mzhxKk2XRQ==",
+        "contentHash": "nPqH28jP6rOcAftBUapaijUQGZ6iIPWR8P1CD97HxWgq3t6jUZ4mYOfj2QZlV0KTjXGass7A3aKWk/j2PIuLjg==",
         "dependencies": {
           "Sunder.Sdk": "[1.1.0]"
         }

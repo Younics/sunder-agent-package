@@ -115,6 +115,10 @@ public sealed partial class SubagentsViewModel
             _gateway.SubagentsChanged += OnSubagentsChanged;
             _gateway.CatalogChanged += OnSelectableCapabilitiesChanged;
         }
+        if (_ownerAvailability is not null)
+        {
+            _ownerAvailability.OwnerStreamAvailabilityChanged += OnOwnerStreamAvailabilityChanged;
+        }
     }
 
     private void OnModelBindingPropertyChanged(object? sender, PropertyChangedEventArgs args)

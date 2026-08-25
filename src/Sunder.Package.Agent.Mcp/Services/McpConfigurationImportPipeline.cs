@@ -8,9 +8,15 @@ internal static class McpConfigurationSourceReader
     internal const int MaxDocumentBytes = 2 * 1024 * 1024;
     internal const int MaxJsonDepth = 32;
 
+    public static Task<string> ReadTextAsync(
+        string filePath,
+        long maxBytes,
+        CancellationToken cancellationToken)
+        => BoundedImportIO.ReadUtf8FileAsync(filePath, maxBytes, cancellationToken);
+
     public static async Task<JsonDocument> ReadAsync(string filePath, CancellationToken cancellationToken)
     {
-        var json = await BoundedImportIO.ReadUtf8FileAsync(filePath, MaxDocumentBytes, cancellationToken).ConfigureAwait(false);
+        var json = await ReadTextAsync(filePath, MaxDocumentBytes, cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
         JsonDocument document;
         try

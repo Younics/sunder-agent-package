@@ -1,11 +1,11 @@
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Services;
 
 internal static class AgentFailurePresentationPolicy
 {
-    internal const string StreamQueueLimitErrorCode = "rpc.worker.stream-queue-limit";
     internal const string StreamInterruptedMarkdown =
         "### Response stream interrupted\n\nThe response stream was interrupted before it completed. You can retry or continue this session.";
     internal const string StreamInterruptedSummary = "The response stream was interrupted.";
@@ -41,7 +41,7 @@ internal static class AgentFailurePresentationPolicy
             if (current is SunderRpcException rpcException
                 && string.Equals(
                     rpcException.Error.Code,
-                    StreamQueueLimitErrorCode,
+                    AgentChatProviderRpc.StreamQueueLimitErrorCode,
                     StringComparison.Ordinal))
             {
                 return true;

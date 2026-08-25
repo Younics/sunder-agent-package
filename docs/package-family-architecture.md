@@ -1,6 +1,6 @@
 # Package Family Architecture
 
-Sunder Agent is a package family, not one monolithic plugin. The base package owns durable Agent state and orchestration; independently installed packages provide tools, execution, memory, MCP, skills, and subagents through the 18 public RPC descriptors.
+Sunder Agent is a package family, not one monolithic plugin. The base package owns durable Agent state and orchestration; independently installed packages provide tools, execution, memory, MCP, skills, and subagents through 18 supported third-party RPC extension points. The Protocol artifact bundles 19 public descriptors because the observed-execution bridge is reserved for first-party package composition.
 
 ## Layering
 
@@ -130,6 +130,12 @@ Do not maintain a source manifest or copy SDK assemblies into the package archiv
 ## Public Surface Policy
 
 `Sunder.Package.Agent.Protocol` is the public Agent author protocol assembly. Its checked-in descriptors and generated bindings are compatibility surfaces reviewed with the public API ledger.
+
+The 19 central bindings intentionally generate public DTOs, provider interfaces,
+clients, and handlers for external extension authors. Package-local and owner
+Protocol assemblies generate their bindings with `Accessibility="Internal"`;
+their first-party worker/App consumers use maintained public wrappers or explicit
+friend assemblies. No package-local generated transport type is an external API.
 
 Concrete types under first-party package projects are examples, not supported cross-package APIs. If a required capability cannot be expressed with the Protocol package, propose a descriptor/binding change instead of reflecting into an implementation or copying its internal storage format.
 

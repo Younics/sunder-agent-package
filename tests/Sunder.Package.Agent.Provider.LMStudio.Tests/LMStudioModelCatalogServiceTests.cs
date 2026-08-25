@@ -49,6 +49,29 @@ public sealed class LMStudioModelCatalogServiceTests
     }
 
     [Fact]
+    public async Task Readiness_SatisfiesCommonLifecycleConformance()
+    {
+        var timeProvider = new MutableTimeProvider(new DateTimeOffset(2026, 7, 10, 0, 0, 0, TimeSpan.Zero));
+        var handler = new LMStudioTestHttpHandler((_, requestNumber, _) => LMStudioTestHttpHandler.Json(
+            requestNumber == 1
+                ? "{\"data\":[]}"
+                : "{\"data\":[{\"id\":\"loaded-model\",\"type\":\"llm\"}]}"));
+        var context = CreateContext();
+        using var connection = new LMStudioConnection(context, handler);
+        var catalog = new LMStudioModelCatalogService(connection, TimeSpan.FromSeconds(10), timeProvider);
+        using var provider = new LMStudioAgentProvider(context, connection, catalog);
+        var transitions = new List<string>
+        {
+            (await provider.GetReadinessAsync()).Status.ToString(),
+        };
+
+        timeProvider.Advance(TimeSpan.FromSeconds(11));
+        transitions.Add((await provider.GetReadinessAsync()).Status.ToString());
+
+        ProviderConformanceHarness.VerifyReadinessTransitions("LM Studio", transitions);
+    }
+
+    [Fact]
     public async Task ConcurrentModelAndReadinessCalls_ShareColdFetchAndCancelWaitersIndependently()
     {
         var requestStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

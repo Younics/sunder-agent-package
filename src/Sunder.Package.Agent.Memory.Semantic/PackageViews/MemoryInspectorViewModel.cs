@@ -52,6 +52,7 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
         _memoryInspectorService.SessionChanged += OnSessionChanged;
         _memoryInspectorService.SemanticWorkerStatusChanged += OnSemanticWorkerStatusChanged;
         _memoryInspectorService.ResetRequired += OnResetRequired;
+        InitializeOwnerAvailability(memoryInspectorService);
     }
 
     public ObservableCollection<AgentSessionRecord> Sessions { get; } = [];
@@ -116,9 +117,6 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
 
     [ObservableProperty]
     private bool _canReindexSemanticIndex;
-
-    [ObservableProperty]
-    private bool _isBusy;
 
     public bool HasSelection => SelectedMemory is not null;
 
@@ -407,6 +405,7 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
         _memoryInspectorService.SessionChanged -= OnSessionChanged;
         _memoryInspectorService.SemanticWorkerStatusChanged -= OnSemanticWorkerStatusChanged;
         _memoryInspectorService.ResetRequired -= OnResetRequired;
+        DisposeOwnerAvailability();
         _sessionLoadCancellation?.Dispose();
         _sessionLoadCancellation = null;
         _operations.Dispose();

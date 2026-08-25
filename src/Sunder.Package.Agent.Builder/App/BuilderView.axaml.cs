@@ -90,7 +90,7 @@ public partial class BuilderView : UserControl, IDisposable, IPackageViewWarmupT
     {
         if (DataContext is BuilderViewModel viewModel)
         {
-            Submit("refresh-setup", viewModel.RefreshSetupAsync);
+            Submit("builder-view.refresh-setup", viewModel.RefreshSetupAsync);
         }
     }
 
@@ -98,7 +98,7 @@ public partial class BuilderView : UserControl, IDisposable, IPackageViewWarmupT
     {
         if (DataContext is BuilderViewModel viewModel)
         {
-            Submit("create-project", async () =>
+            Submit("builder-view.create-project", async () =>
             {
                 await viewModel.CreateProjectAsync();
                 FocusPackageDisplayName();
@@ -157,7 +157,7 @@ public partial class BuilderView : UserControl, IDisposable, IPackageViewWarmupT
     {
         if (DataContext is BuilderViewModel viewModel)
         {
-            Submit("delete-project", viewModel.DeleteSelectedProjectAsync);
+            Submit("builder-view.delete-project", viewModel.DeleteSelectedProjectAsync);
         }
     }
 
@@ -165,7 +165,7 @@ public partial class BuilderView : UserControl, IDisposable, IPackageViewWarmupT
     {
         if (DataContext is BuilderViewModel viewModel)
         {
-            Submit("initialize-project", viewModel.InitializeSelectedProjectAsync);
+            Submit("builder-view.initialize-project", viewModel.InitializeSelectedProjectAsync);
         }
     }
 
@@ -173,7 +173,7 @@ public partial class BuilderView : UserControl, IDisposable, IPackageViewWarmupT
     {
         if (DataContext is BuilderViewModel viewModel)
         {
-            Submit("build-project", viewModel.BuildSelectedProjectAsync);
+            Submit("builder-view.build-project", viewModel.BuildSelectedProjectAsync);
         }
     }
 
@@ -181,7 +181,7 @@ public partial class BuilderView : UserControl, IDisposable, IPackageViewWarmupT
     {
         if (DataContext is BuilderViewModel viewModel)
         {
-            Submit("ensure-setup", viewModel.EnsureSelectedProjectSetupAsync);
+            Submit("builder-view.ensure-setup", viewModel.EnsureSelectedProjectSetupAsync);
         }
     }
 
@@ -189,7 +189,7 @@ public partial class BuilderView : UserControl, IDisposable, IPackageViewWarmupT
     {
         if (DataContext is BuilderViewModel viewModel)
         {
-            Submit("publish-project", viewModel.PublishSelectedProjectAsync);
+            Submit("builder-view.publish-project", viewModel.PublishSelectedProjectAsync);
         }
     }
 
@@ -213,6 +213,6 @@ public partial class BuilderView : UserControl, IDisposable, IPackageViewWarmupT
 
     private static PresentationOperation ViewOperation(string operationName)
         => new(
-            $"builder-view.{operationName}",
+            operationName,
             "The Package Builder operation could not be completed.");
 }

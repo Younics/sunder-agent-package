@@ -1,6 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <IsPackable>false</IsPackable>
+    <SunderTestOwner>sunder.package.agent.execution.local</SunderTestOwner>
+    <SunderTestCategory>Conformance</SunderTestCategory>
+    <SunderTestCapabilities>Filesystem;Native;Process;Worker</SunderTestCapabilities>
+    <SunderTestOS>Any</SunderTestOS>
+    <SunderTestSize>Large</SunderTestSize>
+    <SunderTestSourceMode>true</SunderTestSourceMode>
+    <SunderTestPackageMode>true</SunderTestPackageMode>
+    <SunderTestLanes>PackageCompatibility</SunderTestLanes>
   </PropertyGroup>
 
   <ItemGroup>
@@ -15,17 +22,20 @@
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Tools.Files\Sunder.Package.Agent.Tools.Files.csproj" />
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Tools.Shell\Sunder.Package.Agent.Tools.Shell.csproj" />
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Tools.Web\Sunder.Package.Agent.Tools.Web.csproj" />
+    <ProjectReference Include="..\Sunder.Package.Agent.TestSupport\Sunder.Package.Agent.TestSupport.csproj" />
+    <ProjectReference Include="..\Sunder.Package.Agent.TestSupport.Avalonia\Sunder.Package.Agent.TestSupport.Avalonia.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <Compile Include="..\Sunder.Package.Agent.Tests\RegressionTestInfrastructure.cs" Link="RegressionTestInfrastructure.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Tests\RegressionTestPackageContext.cs" Link="RegressionTestPackageContext.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Tests\RegressionTestPackageScope.cs" Link="RegressionTestPackageScope.cs" />
     <Compile Include="..\Sunder.Package.Agent.Tests\TestPackageStorageFakes.cs" Link="TestPackageStorageFakes.cs" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
-    <PackageReference Include="ModelContextProtocol" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio">
       <PrivateAssets>all</PrivateAssets>

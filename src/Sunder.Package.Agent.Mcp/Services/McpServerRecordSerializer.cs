@@ -5,6 +5,15 @@ namespace Sunder.Package.Agent.Mcp.Services;
 
 internal static class McpServerRecordSerializer
 {
+    internal const string DocumentSchemaId = "sunder.agent.mcp.server-record";
+    internal const int DocumentSchemaVersion = 1;
+
+    public static string Serialize(ConfiguredMcpServerRecord server)
+        => JsonSerializer.Serialize(new McpServerDocument(
+            DocumentSchemaId,
+            DocumentSchemaVersion,
+            server));
+
     public static async Task<McpServerDeserializeResult> DeserializeAsync(
         string payload,
         IPackageSecrets secrets,
@@ -29,6 +38,26 @@ internal static class McpServerRecordSerializer
             }
 
             var root = document.RootElement;
+            var hasSchemaId = root.TryGetProperty(nameof(McpServerDocument.DocumentSchemaId), out var schemaId);
+            var hasSchemaVersion = root.TryGetProperty(nameof(McpServerDocument.DocumentSchemaVersion), out var schemaVersion);
+            var hasServer = root.TryGetProperty(nameof(McpServerDocument.Server), out var serverDocument);
+            if (hasSchemaId || hasSchemaVersion || hasServer)
+            {
+                if (!hasSchemaId
+                    || !hasSchemaVersion
+                    || !hasServer
+                    || schemaId.ValueKind != JsonValueKind.String
+                    || !string.Equals(schemaId.GetString(), DocumentSchemaId, StringComparison.Ordinal)
+                    || !schemaVersion.TryGetInt32(out var version)
+                    || version != DocumentSchemaVersion
+                    || serverDocument.ValueKind != JsonValueKind.Object)
+                {
+                    return new(null, "Stored MCP server metadata has an unsupported or missing document schema identity.");
+                }
+
+                root = serverDocument;
+            }
+
             var serverId = ReadString(root, "ServerId") ?? string.Empty;
             if (string.IsNullOrWhiteSpace(serverId))
             {
@@ -160,3 +189,8 @@ internal static class McpServerRecordSerializer
 internal sealed record McpServerDeserializeResult(
     ConfiguredMcpServerRecord? Server,
     string? Error);
+
+internal sealed record McpServerDocument(
+    string DocumentSchemaId,
+    int DocumentSchemaVersion,
+    ConfiguredMcpServerRecord Server);

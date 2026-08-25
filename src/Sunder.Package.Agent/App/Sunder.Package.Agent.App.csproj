@@ -7,6 +7,7 @@
     <SunderSdkAvaloniaReference>true</SunderSdkAvaloniaReference>
     <SunderSdkStacksReference>true</SunderSdkStacksReference>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <SunderAgentCurrentPackageStorageKey>true</SunderAgentCurrentPackageStorageKey>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <SunderAgentSharedTranscript>true</SunderAgentSharedTranscript>
     <AssemblyName>Sunder.Package.Agent.App</AssemblyName>

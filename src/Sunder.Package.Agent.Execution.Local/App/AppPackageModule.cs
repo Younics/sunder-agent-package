@@ -20,8 +20,7 @@ public sealed class AppPackageModule : ISunderAppPackageModule
         services.AddTransient(provider => new LocalExecutionSettingsView(
             provider.GetRequiredService<LocalExecutionSettingsViewModel>(),
             context,
-            provider.GetService<IPackageNotificationService>()
-                ?? NullPackageNotificationService.Instance));
+            provider.GetRequiredService<IPackageNotificationService>()));
     }
 
     public void RegisterAppContributions(

@@ -5,52 +5,12 @@ using System.Text.Json;
 using System.Threading.Channels;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Protocol;
+using Sunder.Package.Agent.TestSupport;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Rpc;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
-
-internal sealed class RegressionTestPackageScope : IDisposable
-{
-    private RegressionTestPackageScope(string rootPath)
-    {
-        RootPath = rootPath;
-        Context = new RegressionTestPackageContext(rootPath);
-    }
-
-    public string RootPath { get; }
-
-    public IPackageContext Context { get; }
-
-    public static RegressionTestPackageScope Create()
-    {
-        var temporaryRoot = OperatingSystem.IsMacOS()
-            ? "/private" + Path.GetTempPath().TrimEnd(Path.DirectorySeparatorChar)
-            : Path.GetTempPath();
-        var rootPath = Path.Combine(
-            temporaryRoot,
-            "sunder-agent-regression-tests",
-            Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(rootPath);
-        return new RegressionTestPackageScope(rootPath);
-    }
-
-    public void Dispose()
-    {
-        try
-        {
-            if (Directory.Exists(RootPath))
-            {
-                Directory.Delete(RootPath, recursive: true);
-            }
-        }
-        catch
-        {
-            // Cleanup should not hide assertion failures.
-        }
-    }
-}
 
 internal partial class RegressionTestExtensionCatalog : AgentRpcCatalog
 {
@@ -208,7 +168,10 @@ internal sealed class RegressionTestRpcClient(
     }
 
     public ValueTask<SunderRpcProviderSnapshot?> GetProviderAsync(SunderRpcEndpointReference endpoint, CancellationToken cancellationToken = default)
-        => ValueTask.FromResult(State.GetProvider(endpoint, callerPackageId));
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(State.GetProvider(endpoint, callerPackageId));
+    }
 
     public ValueTask<bool> TryReportInvariantViolationAsync(
         SunderRpcEndpointReference endpoint,
@@ -221,28 +184,75 @@ internal sealed class RegressionTestRpcClient(
             cancellationToken);
 
     public ValueTask<SunderRpcCatalogSnapshot> DiscoverAsync(string contractId, CancellationToken cancellationToken = default)
-        => ValueTask.FromResult(State.Discover(contractId));
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(State.Discover(contractId));
+    }
 
     public IAsyncEnumerable<SunderRpcCatalogEvent> WatchAsync(long afterRevision, long afterSequence, CancellationToken cancellationToken = default)
         => State.WatchAsync(afterRevision, afterSequence, cancellationToken);
 
-    public ValueTask<JsonElement> InvokeAsync(
+    public async ValueTask<JsonElement> InvokeAsync(
         SunderRpcEndpointReference endpoint,
         string serviceId,
         string methodId,
         JsonElement request,
         SunderRpcCallOptions? options = null,
         CancellationToken cancellationToken = default)
-        => State.InvokeAsync(callerPackageId, endpoint, serviceId, methodId, request, cancellationToken, scope: null);
+    {
+        using var invocation = CreateInvocationCancellation(options, cancellationToken);
+        return await State.InvokeAsync(
+            callerPackageId,
+            endpoint,
+            serviceId,
+            methodId,
+            request,
+            invocation.Token,
+            scope: null).ConfigureAwait(false);
+    }
 
-    public IAsyncEnumerable<JsonElement> SubscribeAsync(
+    public async IAsyncEnumerable<JsonElement> SubscribeAsync(
         SunderRpcEndpointReference endpoint,
         string serviceId,
         string methodId,
         JsonElement request,
         SunderRpcCallOptions? options = null,
-        CancellationToken cancellationToken = default)
-        => State.SubscribeAsync(callerPackageId, endpoint, serviceId, methodId, request, cancellationToken, scope: null);
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        using var invocation = CreateInvocationCancellation(options, cancellationToken);
+        await foreach (var item in State.SubscribeAsync(
+                           callerPackageId,
+                           endpoint,
+                           serviceId,
+                           methodId,
+                           request,
+                           invocation.Token,
+                           scope: null).ConfigureAwait(false))
+        {
+            yield return item;
+        }
+    }
+
+    private static CancellationTokenSource CreateInvocationCancellation(
+        SunderRpcCallOptions? options,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var invocation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        if (options?.DeadlineUtc is { } deadline)
+        {
+            var remaining = deadline - DateTimeOffset.UtcNow;
+            if (remaining <= TimeSpan.Zero)
+            {
+                invocation.Cancel();
+            }
+            else
+            {
+                invocation.CancelAfter(remaining);
+            }
+        }
+        return invocation;
+    }
 }
 
 internal sealed class RegressionTestRpcCallScope(
@@ -301,7 +311,7 @@ internal sealed class RegressionTestRpcCallScope(
         long afterSequence,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        using var invocation = CreateInvocationCancellation(cancellationToken);
+        using var invocation = CreateInvocationCancellation(null, cancellationToken);
         await foreach (var item in state.WatchAsync(
                            afterRevision,
                            afterSequence,
@@ -319,7 +329,7 @@ internal sealed class RegressionTestRpcCallScope(
         SunderRpcCallOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        using var invocation = CreateInvocationCancellation(cancellationToken);
+        using var invocation = CreateInvocationCancellation(options, cancellationToken);
         return await state.InvokeAsync(
             callerPackageId,
             endpoint,
@@ -338,7 +348,7 @@ internal sealed class RegressionTestRpcCallScope(
         SunderRpcCallOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        using var invocation = CreateInvocationCancellation(cancellationToken);
+        using var invocation = CreateInvocationCancellation(options, cancellationToken);
         await foreach (var item in state.SubscribeAsync(
                            callerPackageId,
                            endpoint,
@@ -499,11 +509,16 @@ internal sealed class RegressionTestRpcCallScope(
         return ValueTask.FromResult<Stream>(new MemoryStream(content, writable: false));
     }
 
-    private CancellationTokenSource CreateInvocationCancellation(CancellationToken cancellationToken)
+    private CancellationTokenSource CreateInvocationCancellation(
+        SunderRpcCallOptions? options,
+        CancellationToken cancellationToken)
     {
         ThrowIfUnavailable(cancellationToken);
         var invocation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
-        var remaining = DeadlineUtc - DateTimeOffset.UtcNow;
+        var deadline = options?.DeadlineUtc is { } callDeadline && callDeadline < DeadlineUtc
+            ? callDeadline
+            : DeadlineUtc;
+        var remaining = deadline - DateTimeOffset.UtcNow;
         if (remaining <= TimeSpan.Zero)
         {
             invocation.Cancel();
@@ -1060,177 +1075,5 @@ internal sealed class RegressionTestRpcState(bool workerStyleProviderBoundary = 
         public TaskCompletionSource Drained { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public int ActiveCalls { get; set; }
         public bool Active { get; set; } = true;
-    }
-}
-
-internal sealed class RegressionTestPackageContext(string rootPath) : IPackageContext
-{
-    public string PackageId => "test.package.agent";
-
-    public string Version { get; } = "1.0.0";
-
-    public string ContentRootPath => AppContext.BaseDirectory;
-
-    public IPackageStorageContext Storage { get; } = new RegressionTestStorageContext(rootPath);
-
-    public IPackageSettings Settings { get; } = new RegressionTestSettings();
-
-    public IPackageSecrets Secrets { get; } = new RegressionTestSecrets();
-
-
-    public Sunder.Sdk.Logging.IPackageLogging Logging { get; } =
-        Sunder.Sdk.Logging.NullPackageLogging.Instance;
-}
-
-internal sealed class RegressionTestStorageContext : IPackageStorageContext
-{
-    public RegressionTestStorageContext(string rootPath)
-    {
-        Directory.CreateDirectory(rootPath);
-        Files = new RegressionTestFileStore(Path.Combine(rootPath, "files"));
-        RoleLocalWorkspace = new TestPackageRoleLocalWorkspace(rootPath);
-    }
-
-    public IPackageFileStore Files { get; }
-
-    public IPackageKeyValueStore State { get; } = new RegressionTestKeyValueStore();
-
-    public IPackageRoleLocalWorkspace RoleLocalWorkspace { get; }
-}
-
-internal sealed class RegressionTestFileStore(string rootPath) : IPackageFileStore
-{
-    private readonly string _rootPath = rootPath;
-
-    public async Task<byte[]?> ReadAsync(string relativePath, CancellationToken cancellationToken = default)
-    {
-        TestPackageStorageGuards.RelativePath(relativePath);
-        var path = Path.Combine(_rootPath, relativePath);
-        return File.Exists(path) ? await File.ReadAllBytesAsync(path, cancellationToken) : null;
-    }
-
-    public async Task WriteAsync(string relativePath, ReadOnlyMemory<byte> contents, CancellationToken cancellationToken = default)
-    {
-        TestPackageStorageGuards.RelativePath(relativePath);
-        TestPackageStorageGuards.FileLength(contents.Length);
-        var path = Path.Combine(_rootPath, relativePath);
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        await File.WriteAllBytesAsync(path, contents.ToArray(), cancellationToken);
-    }
-
-    public Task DeleteAsync(string relativePath, CancellationToken cancellationToken = default)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        TestPackageStorageGuards.RelativePath(relativePath);
-        File.Delete(Path.Combine(_rootPath, relativePath));
-        return Task.CompletedTask;
-    }
-}
-
-internal sealed class RegressionTestKeyValueStore : IPackageKeyValueStore
-{
-    private readonly ConcurrentDictionary<string, string> _values = new(StringComparer.Ordinal);
-    private WriteBlock? _nextWrite;
-
-    public WriteBlock BlockNextWrite()
-    {
-        var block = new WriteBlock();
-        Assert.Null(Interlocked.CompareExchange(ref _nextWrite, block, null));
-        return block;
-    }
-
-    public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        TestPackageStorageGuards.Key(key);
-        return Task.FromResult(_values.GetValueOrDefault(key));
-    }
-
-    public async Task SetValueAsync(
-        string key,
-        string value,
-        CancellationToken cancellationToken = default)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        TestPackageStorageGuards.Key(key);
-        TestPackageStorageGuards.Value(value);
-        var block = Interlocked.Exchange(ref _nextWrite, null);
-        if (block is not null)
-        {
-            block.Started.TrySetResult();
-            await block.Release.Task.WaitAsync(cancellationToken);
-        }
-        cancellationToken.ThrowIfCancellationRequested();
-        _values[key] = value;
-    }
-
-    public Task<bool> ContainsKeyAsync(string key, CancellationToken cancellationToken = default)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        TestPackageStorageGuards.Key(key);
-        return Task.FromResult(_values.ContainsKey(key));
-    }
-
-    public Task DeleteValueAsync(string key, CancellationToken cancellationToken = default)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        TestPackageStorageGuards.Key(key);
-        _values.TryRemove(key, out _);
-        return Task.CompletedTask;
-    }
-
-    public Task<IReadOnlyList<string>> ListKeysAsync(
-        string? prefix = null,
-        CancellationToken cancellationToken = default)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        TestPackageStorageGuards.Prefix(prefix);
-        return Task.FromResult<IReadOnlyList<string>>(
-            _values.Keys
-                .Where(key => prefix is null || key.StartsWith(prefix, StringComparison.Ordinal))
-                .Order(StringComparer.Ordinal)
-                .ToArray());
-    }
-
-    internal sealed class WriteBlock
-    {
-        public TaskCompletionSource Started { get; } =
-            new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        public TaskCompletionSource Release { get; } =
-            new(TaskCreationOptions.RunContinuationsAsynchronously);
-    }
-}
-
-internal sealed class RegressionTestSettings : EmptyPackageSettings
-{
-}
-
-internal sealed class RegressionTestSecrets : IPackageSecrets
-{
-    private readonly Dictionary<string, string> _values = new(StringComparer.Ordinal);
-
-    public Task<string?> GetSecretAsync(string key, CancellationToken cancellationToken = default)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        TestPackageStorageGuards.Key(key);
-        return Task.FromResult(_values.GetValueOrDefault(key));
-    }
-
-    public Task SetSecretAsync(string key, string value, CancellationToken cancellationToken = default)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        TestPackageStorageGuards.Key(key);
-        TestPackageStorageGuards.Value(value);
-        _values[key] = value;
-        return Task.CompletedTask;
-    }
-
-    public Task DeleteSecretAsync(string key, CancellationToken cancellationToken = default)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        TestPackageStorageGuards.Key(key);
-        _values.Remove(key);
-        return Task.CompletedTask;
     }
 }

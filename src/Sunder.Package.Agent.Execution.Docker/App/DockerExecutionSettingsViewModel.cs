@@ -118,6 +118,8 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
 
     public bool HasRuntimeError => !string.IsNullOrWhiteSpace(RuntimeErrorCode);
 
+    internal bool IsDisposed => _disposed;
+
     public bool CanAddImage => CanMutate && !string.IsNullOrWhiteSpace(NewImageReference);
 
     public bool CanUseSelectedImage => CanMutate && SelectedImage is { Status: not DockerImageStatus.Pulling };

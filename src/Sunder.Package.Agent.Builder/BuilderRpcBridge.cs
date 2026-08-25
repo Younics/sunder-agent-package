@@ -16,7 +16,9 @@ internal static class BuilderRpcExecutor
         cancellationToken.ThrowIfCancellationRequested();
         if (request.Kind == BuilderRpcOperationKind.ListWorkspaces)
         {
-            return new BuilderRpcResponse(Workspaces: resolver.ListWorkspaces());
+            return new BuilderRpcResponse(Workspaces: await resolver
+                .ListWorkspacesAsync(cancellationToken)
+                .ConfigureAwait(false));
         }
 
         var workspaceId = string.IsNullOrWhiteSpace(request.WorkspaceId)

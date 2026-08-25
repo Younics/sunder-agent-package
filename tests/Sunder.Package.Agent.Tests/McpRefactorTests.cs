@@ -44,6 +44,19 @@ public sealed class McpRefactorTests
     }
 
     [Fact]
+    public async Task OAuthClientOptions_IgnoreOnlyMalformedStoredRegistration()
+    {
+        var context = new TestPackageContext();
+        context.Secrets.Seed(McpOAuthSecretKeys.ClientRegistration("oauth-server"), "{not-json");
+        await using var oauth = new McpOAuthService(context);
+        var server = CreateServer("oauth-server", "OAuth server") with { OAuthEnabled = true };
+
+        var options = await oauth.CreateClientOptionsAsync(server, allowInteractive: false);
+
+        Assert.NotNull(options);
+    }
+
+    [Fact]
     public void ToolIdentity_UsesStableServerIdAndRoundTripsUnambiguousSegments()
     {
         Assert.Equal("m1_2_memi", McpToolIdentity.CreateStable("a", "b"));
@@ -112,14 +125,9 @@ public sealed class McpRefactorTests
         });
     }
 
-    [Fact]
+    [UnixFact("The login-shell process-tree fixture requires a POSIX shell.")]
     public async Task CommandResolver_LoginShellTimeoutKillsAndDrainsProcessTree()
     {
-        if (OperatingSystem.IsWindows())
-        {
-            return;
-        }
-
         var fixture = CreateBlockingShellProbe();
         try
         {
@@ -127,12 +135,12 @@ public sealed class McpRefactorTests
                 fixture.ScriptPath,
                 ShellProbeEnvironment(),
                 NullLogger.Instance,
-                TimeSpan.FromSeconds(1),
+                TimeSpan.FromSeconds(5),
                 CancellationToken.None);
             await WaitUntilAsync(() => File.Exists(fixture.ProcessIdsPath));
             fixture.ProcessIds.AddRange(ReadProcessIds(fixture.ProcessIdsPath));
 
-            Assert.Null(await probe.WaitAsync(TimeSpan.FromSeconds(5)));
+            Assert.Null(await probe.WaitAsync(TimeSpan.FromSeconds(10)));
             await WaitUntilAsync(() => fixture.ProcessIds.All(static processId => !IsProcessRunning(processId)));
         }
         finally
@@ -142,14 +150,9 @@ public sealed class McpRefactorTests
         }
     }
 
-    [Fact]
+    [UnixFact("The login-shell process-tree fixture requires a POSIX shell.")]
     public async Task CommandResolver_LoginShellCancellationPropagatesAfterProcessTreeDrain()
     {
-        if (OperatingSystem.IsWindows())
-        {
-            return;
-        }
-
         var fixture = CreateBlockingShellProbe();
         using var cancellation = new CancellationTokenSource();
         try
@@ -1739,6 +1742,57 @@ public sealed class McpRefactorTests
         Assert.Single(servers);
         Assert.Contains(catalog.LastDiagnostics, diagnostic => diagnostic.StorageKey == storageKey);
         Assert.Equal("{ not-json", await context.State.GetValueAsync(storageKey));
+    }
+
+    [Fact]
+    public async Task Catalog_WritesDocumentSchemaSeparatelyFromRecordRevision()
+    {
+        var context = new TestPackageContext();
+        var catalog = new McpServerCatalogService(context);
+        await catalog.SaveServerAsync(CreateServer("one", "one"), Empty, Empty);
+        var persisted = Assert.Single(await catalog.ListServersAsync());
+        var payload = await context.State.GetValueAsync(McpServerCatalogService.BuildServerKey(persisted.ServerId));
+
+        using var document = JsonDocument.Parse(payload!);
+        Assert.Equal(McpServerRecordSerializer.DocumentSchemaId, document.RootElement.GetProperty("DocumentSchemaId").GetString());
+        Assert.Equal(McpServerRecordSerializer.DocumentSchemaVersion, document.RootElement.GetProperty("DocumentSchemaVersion").GetInt32());
+        Assert.Equal(persisted.PersistenceVersion, document.RootElement.GetProperty("Server").GetProperty("PersistenceVersion").GetInt32());
+    }
+
+    [Fact]
+    public async Task Catalog_ReadsReleasedFlatRecordDocument()
+    {
+        var context = new TestPackageContext();
+        var catalog = new McpServerCatalogService(context);
+        var server = CreateServer("legacy", "legacy");
+        await context.State.SetValueAsync(
+            McpServerCatalogService.BuildServerKey(server.ServerId),
+            JsonSerializer.Serialize(server));
+
+        var loaded = Assert.Single(await catalog.ListServersAsync());
+
+        Assert.Equal(server.ServerId, loaded.ServerId);
+        Assert.Empty(catalog.LastDiagnostics);
+    }
+
+    [Fact]
+    public async Task Catalog_RejectsFutureDocumentSchemaAndPreservesPayload()
+    {
+        var context = new TestPackageContext();
+        var catalog = new McpServerCatalogService(context);
+        var server = CreateServer("future", "future");
+        var key = McpServerCatalogService.BuildServerKey(server.ServerId);
+        var payload = JsonSerializer.Serialize(new
+        {
+            DocumentSchemaId = McpServerRecordSerializer.DocumentSchemaId,
+            DocumentSchemaVersion = McpServerRecordSerializer.DocumentSchemaVersion + 1,
+            Server = server,
+        });
+        await context.State.SetValueAsync(key, payload);
+
+        Assert.Empty(await catalog.ListServersAsync());
+        Assert.Contains(catalog.LastDiagnostics, diagnostic => diagnostic.StorageKey == key);
+        Assert.Equal(payload, await context.State.GetValueAsync(key));
     }
 
     [Fact]

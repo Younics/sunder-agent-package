@@ -16,7 +16,8 @@ public sealed class AppPackageModule : ISunderAppPackageModule
             new McpOwnerManagementRpcClient(provider.GetRequiredService<ISunderRpcClient>()));
         services.AddSingleton<IMcpManagementGateway>(provider => new McpAppRuntimeGateway(
             provider.GetRequiredService<IMcpOwnerManagementClient>(),
-            context.Callbacks));
+            context.Callbacks,
+            context.Logging.LoggerFactory));
         services.AddTransient(provider => new AgentMcpSettingsViewModel(
             provider.GetRequiredService<IMcpManagementGateway>(),
             PresentationDispatcher.Capture()));
@@ -26,8 +27,7 @@ public sealed class AppPackageModule : ISunderAppPackageModule
                 provider.GetRequiredService<AgentMcpSettingsViewModel>());
             view.ConfigureOperationObserver(
                 context,
-                provider.GetService<IPackageNotificationService>()
-                    ?? NullPackageNotificationService.Instance);
+                provider.GetRequiredService<IPackageNotificationService>());
             return view;
         });
     }

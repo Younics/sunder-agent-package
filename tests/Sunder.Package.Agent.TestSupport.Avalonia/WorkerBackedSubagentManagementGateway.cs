@@ -10,7 +10,7 @@ using AppProviderModelCatalogOption = SubagentsApp::Sunder.Package.Agent.Shared.
 using AppProviderModelCatalogResult = SubagentsApp::Sunder.Package.Agent.Shared.Presentation.ProviderModelCatalogResult;
 using WorkerGateway = SubagentsWorker::Sunder.Package.Agent.Subagents.Runtime.SubagentLocalManagementGateway;
 
-namespace Sunder.Package.Agent.Presentation.Tests;
+namespace Sunder.Package.Agent.TestSupport.Avalonia;
 
 internal sealed class WorkerBackedSubagentManagementGateway(
     SubagentService service,
@@ -62,8 +62,7 @@ internal sealed class WorkerBackedSubagentManagementGateway(
         string providerId,
         CancellationToken cancellationToken = default)
     {
-        var result = await _worker.LoadChatModelsAsync(providerId, cancellationToken)
-            .ConfigureAwait(false);
+        var result = await _worker.LoadChatModelsAsync(providerId, cancellationToken).ConfigureAwait(false);
         return new AppProviderModelCatalogResult(
             result.Models.Select(static model => new AppProviderModelCatalogOption(
                 model.Id,

@@ -11,23 +11,17 @@
           "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.8"
         }
       },
-      "Octokit": {
-        "type": "Direct",
-        "requested": "[14.0.0, )",
-        "resolved": "14.0.0",
-        "contentHash": "jGOuTH1l+TCpJH+fwYOp7USzHDuGfN1jKbLz3J2COwyn+wL08eynvpnM6rY2qkzIEXum3PN2p2QkP3BW/p9Qcw=="
-      },
       "Sunder.Package.Build": {
         "type": "Direct",
         "requested": "[1.1.0, 1.2.0)",
         "resolved": "1.1.0",
-        "contentHash": "045up6oTTBliYXO/VKhjrj78zOtU2hepiJwpPa2dwNpS6xs2SI7JM56+a3OhVo4/4SUnRti7bbsFuN1Iyvh0Kg=="
+        "contentHash": "2XE3bfs7nHV1nJwU7tNTodm0IOvofCeq7TdBm6ddexvUMih2YiiL2iTryeOwV0gT5OCE+Q5Abasw3qEIHwC4Mw=="
       },
       "Sunder.Sdk": {
         "type": "Direct",
         "requested": "[1.1.0, 1.2.0)",
         "resolved": "1.1.0",
-        "contentHash": "qbBDgVS5otbNfuCDyOoG8oRzttwq3PhAa36kkh9Qc4j93m23Z3zjBt3+YOOUqh1elalsZbOTp+gNKSQ0QPginA==",
+        "contentHash": "X6TIxu2cP/8doVvGtjz2NgA7IOZkuyH6k0gfOTOXYFKggN8aDy7qoWqH0DqStOdsGDL/4fYphwlvF91gEqmWyQ==",
         "dependencies": {
           "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.8",
           "Microsoft.Extensions.Logging.Abstractions": "10.0.8"
@@ -37,16 +31,16 @@
         "type": "Direct",
         "requested": "[1.1.0, 1.2.0)",
         "resolved": "1.1.0",
-        "contentHash": "Ym0OnNoasnOrFUV1lyS/zluDiC2ROrxwLTpFx23Mb822uEAHHKRAbrSAWxsPrdJI/I60eiYeOx51rCr+Jz8ixw==",
+        "contentHash": "i2rPH6KoALmKSzXGSKmDYIoj/OtOncUMJ8cMHMBrWDbrpQu3KdepNwCGaX883vfr87/gSYZMaK7VlO9zEtU9fw==",
         "dependencies": {
-          "Sunder.Sdk": "1.1.0"
+          "Sunder.Sdk": "[1.1.0, 1.2.0)"
         }
       },
       "Sunder.Sdk.Worker": {
         "type": "Direct",
         "requested": "[1.1.0, 1.1.0]",
         "resolved": "1.1.0",
-        "contentHash": "p7YJcxYCcaBSktP/W+nzeav9m3mzqfSLsJJ6V63+4z/ijyIj/niSi3EVuAFj0Pfg4qPRotAzo9c6mzhxKk2XRQ==",
+        "contentHash": "nPqH28jP6rOcAftBUapaijUQGZ6iIPWR8P1CD97HxWgq3t6jUZ4mYOfj2QZlV0KTjXGass7A3aKWk/j2PIuLjg==",
         "dependencies": {
           "Sunder.Sdk": "[1.1.0]"
         }

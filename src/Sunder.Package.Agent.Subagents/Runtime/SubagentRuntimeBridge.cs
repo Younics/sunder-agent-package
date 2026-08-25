@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
@@ -58,7 +59,9 @@ internal sealed class SubagentAppRuntimeGateway :
     ISubsessionTranscriptPageReader,
     ISubsessionChangeNotifications,
     ISubagentPresentationInitialization,
-    IDisposable
+    IOwnerStreamAvailability,
+    IDisposable,
+    IAsyncDisposable
 {
     private readonly ISubagentOwnerClient _client;
     private readonly CancellationTokenSource _lifetime = new();
@@ -67,18 +70,38 @@ internal sealed class SubagentAppRuntimeGateway :
     private Task<SubagentProjection>? _runtimeSnapshot;
     private Task<SubagentProjection>? _abandonedRuntimeSnapshot;
     private Task? _observationTask;
+    private Task? _ownerObservationTask;
+    private readonly ILogger<SubagentAppRuntimeGateway>? _logger;
+    private readonly OwnerStreamObserver _observer;
     private long _changeRevision;
     private string? _changeRuntimeInstanceId;
     private int _disposed;
+    private int _lifetimeDisposed;
 
     public SubagentAppRuntimeGateway(Sunder.Sdk.Rpc.ISunderRpcClient client)
-        : this(new SubagentOwnerClient(client))
+        : this(new SubagentOwnerClient(client), loggerFactory: null)
+    {
+    }
+
+    internal SubagentAppRuntimeGateway(
+        Sunder.Sdk.Rpc.ISunderRpcClient client,
+        ILoggerFactory loggerFactory)
+        : this(new SubagentOwnerClient(client), loggerFactory)
     {
     }
 
     internal SubagentAppRuntimeGateway(ISubagentOwnerClient client)
+        : this(client, loggerFactory: null)
+    {
+    }
+
+    internal SubagentAppRuntimeGateway(
+        ISubagentOwnerClient client,
+        ILoggerFactory? loggerFactory)
     {
         _client = client;
+        _logger = loggerFactory?.CreateLogger<SubagentAppRuntimeGateway>();
+        _observer = new OwnerStreamObserver(LogObservationRetry);
     }
 
     public Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -94,7 +117,7 @@ internal sealed class SubagentAppRuntimeGateway :
     private async Task StartObservingChangesAsync()
     {
         await Task.Yield();
-        _ = ObserveChangesAsync(_lifetime.Token);
+        _ownerObservationTask = _observer.RunAsync(ObserveChangesOnceAsync, _lifetime.Token);
     }
 
     public event Action? SubagentsChanged;
@@ -102,6 +125,14 @@ internal sealed class SubagentAppRuntimeGateway :
     public event Action<Guid>? SessionChanged;
     public event Action<Guid, AgentTurnRecord>? TurnChanged;
     public event Action? ResnapshotRequired;
+    public bool IsOwnerStreamAvailable => _observer.IsAvailable;
+    public event Action<bool>? OwnerStreamAvailabilityChanged
+    {
+        add => _observer.AvailabilityChanged += value;
+        remove => _observer.AvailabilityChanged -= value;
+    }
+
+    internal Task? OwnerObservationTask => _ownerObservationTask;
 
     public async Task<IReadOnlyList<SubagentRecord>> ListSubagentsAsync(CancellationToken cancellationToken = default)
     {
@@ -289,68 +320,72 @@ internal sealed class SubagentAppRuntimeGateway :
     private async Task<SubagentProjection> CommandAsync(SubagentCommand request, CancellationToken cancellationToken)
         => await _client.CommandAsync(request, cancellationToken).ConfigureAwait(false);
 
-    private async Task ObserveChangesAsync(CancellationToken cancellationToken)
+    private async Task ObserveChangesOnceAsync(
+        Action markAvailable,
+        CancellationToken cancellationToken)
     {
-        while (!cancellationToken.IsCancellationRequested)
+        var connected = false;
+        await foreach (var change in _client.SubscribeChangesAsync(
+                           new SubagentChangeSubscription(Interlocked.Read(ref _changeRevision)),
+                           cancellationToken))
         {
+            if (!connected)
+            {
+                connected = true;
+                markAvailable();
+            }
+            if (change.Kind == SubagentChangeKind.Connected)
+            {
+                var previousInstanceId = _changeRuntimeInstanceId;
+                _changeRuntimeInstanceId = change.RuntimeInstanceId;
+                Interlocked.Exchange(ref _changeRevision, change.Revision);
+                if (previousInstanceId is not null
+                    && !string.Equals(
+                        previousInstanceId,
+                        change.RuntimeInstanceId,
+                        StringComparison.Ordinal))
+                {
+                    RequireResnapshot();
+                }
+                continue;
+            }
+            if (change.Kind == SubagentChangeKind.ResnapshotRequired)
+            {
+                _changeRuntimeInstanceId = change.RuntimeInstanceId ?? _changeRuntimeInstanceId;
+                Interlocked.Exchange(ref _changeRevision, change.Revision);
+                RequireResnapshot();
+                continue;
+            }
+
+            var previousRevision = Interlocked.Read(ref _changeRevision);
+            if (change.Revision <= previousRevision)
+            {
+                continue;
+            }
+            if (previousRevision > 0 && change.Revision != previousRevision + 1)
+            {
+                Interlocked.Exchange(ref _changeRevision, change.Revision);
+                RequireResnapshot();
+                continue;
+            }
             try
             {
-                await foreach (var change in _client.SubscribeChangesAsync(
-                                   new SubagentChangeSubscription(Interlocked.Read(ref _changeRevision)),
-                                   cancellationToken))
-                {
-                    if (change.Kind == SubagentChangeKind.Connected)
-                    {
-                        var previousInstanceId = _changeRuntimeInstanceId;
-                        _changeRuntimeInstanceId = change.RuntimeInstanceId;
-                        Interlocked.Exchange(ref _changeRevision, change.Revision);
-                        if (previousInstanceId is not null
-                            && !string.Equals(
-                                previousInstanceId,
-                                change.RuntimeInstanceId,
-                                StringComparison.Ordinal))
-                        {
-                            RequireResnapshot();
-                        }
-                        continue;
-                    }
-                    if (change.Kind == SubagentChangeKind.ResnapshotRequired)
-                    {
-                        _changeRuntimeInstanceId = change.RuntimeInstanceId ?? _changeRuntimeInstanceId;
-                        Interlocked.Exchange(ref _changeRevision, change.Revision);
-                        RequireResnapshot();
-                        continue;
-                    }
-
-                    var previousRevision = Interlocked.Read(ref _changeRevision);
-                    if (change.Revision <= previousRevision)
-                    {
-                        continue;
-                    }
-                    if (previousRevision > 0 && change.Revision != previousRevision + 1)
-                    {
-                        Interlocked.Exchange(ref _changeRevision, change.Revision);
-                        RequireResnapshot();
-                        continue;
-                    }
-                    try
-                    {
-                        await ProcessChangeAsync(change, cancellationToken).ConfigureAwait(false);
-                    }
-                    catch (Exception exception) when (!PresentationExceptionPolicy.IsFatal(exception))
-                    {
-                        RequireResnapshot();
-                        throw;
-                    }
-                    Interlocked.Exchange(ref _changeRevision, change.Revision);
-                }
+                await ProcessChangeAsync(change, cancellationToken).ConfigureAwait(false);
             }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
-            catch (Exception exception) when (!PresentationExceptionPolicy.IsFatal(exception)) { }
-            try { await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false); }
-            catch (OperationCanceledException) { return; }
+            catch (Exception exception) when (!PresentationExceptionPolicy.IsFatal(exception))
+            {
+                RequireResnapshot();
+                throw;
+            }
+            Interlocked.Exchange(ref _changeRevision, change.Revision);
         }
     }
+
+    private void LogObservationRetry(Exception exception, TimeSpan retryDelay)
+        => _logger?.LogWarning(
+            "Subagents owner change observation failed and will retry in {RetryDelayMilliseconds} ms ({ExceptionType}).",
+            retryDelay.TotalMilliseconds,
+            exception.GetType().Name);
 
     private async Task ProcessChangeAsync(
         SubagentChanged change,
@@ -378,6 +413,8 @@ internal sealed class SubagentAppRuntimeGateway :
             case SubagentChangeKind.Profile:
                 InvalidateRuntimeSnapshot();
                 break;
+            default:
+                throw new InvalidDataException("The Subagents Runtime returned a malformed change event.");
         }
     }
 
@@ -452,13 +489,44 @@ internal sealed class SubagentAppRuntimeGateway :
 
     public void Dispose()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
-        {
-            return;
-        }
+        StopObservation();
+        DisposeLifetime();
+    }
 
-        _lifetime.Cancel();
-        _lifetime.Dispose();
+    public async ValueTask DisposeAsync()
+    {
+        StopObservation();
+        try
+        {
+            if (_observationTask is { } startupTask)
+            {
+                await startupTask.ConfigureAwait(false);
+            }
+            if (_ownerObservationTask is { } observationTask)
+            {
+                await observationTask.ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            DisposeLifetime();
+        }
+    }
+
+    private void StopObservation()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) == 0)
+        {
+            _lifetime.Cancel();
+        }
+    }
+
+    private void DisposeLifetime()
+    {
+        if (Interlocked.Exchange(ref _lifetimeDisposed, 1) == 0)
+        {
+            _lifetime.Dispose();
+        }
     }
 
     private void UpdateProviders(SubagentProjection projection)

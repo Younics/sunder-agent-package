@@ -23,6 +23,16 @@
     <Compile Include="..\..\Sunder.Package.Agent.Provider.Shared\ProviderModelId.cs" Link="Provider.Shared\ProviderModelId.cs" />
     <Compile Include="..\..\Sunder.Package.Agent.Provider.Shared\ProviderUtilityModelSelection.cs" Link="Provider.Shared\ProviderUtilityModelSelection.cs" />
     <Compile Include="..\..\Sunder.Package.Agent.Provider.Shared\UtilityModelSettingsState.cs" Link="Provider.Shared\UtilityModelSettingsState.cs" />
+    <Compile Include="..\..\Sunder.Package.Agent.Shared\PackageViews\SunderComboBox.cs" Link="PackageViews\SunderComboBox.cs" />
+    <Compile Include="..\..\Sunder.Package.Agent.Shared\Presentation\CapabilitySelectionState.cs" Link="Presentation\CapabilitySelectionState.cs" />
+    <Compile Include="..\..\Sunder.Package.Agent.Shared\Presentation\ModelBindingEditorState.cs" Link="Presentation\ModelBindingEditorState.cs" />
+    <Compile Include="..\..\Sunder.Package.Agent.Shared\Presentation\OperationState.cs" Link="Presentation\OperationState.cs" />
+    <Compile Include="..\..\Sunder.Package.Agent.Shared\Presentation\PresentationDispatcher.cs" Link="Presentation\PresentationDispatcher.cs" />
+    <Compile Include="..\..\Sunder.Package.Agent.Shared\Presentation\PresentationExceptionPolicy.cs" Link="Presentation\PresentationExceptionPolicy.cs" />
+    <Compile Include="..\..\Sunder.Package.Agent.Shared\Presentation\PresentationTaskScope.cs" Link="Presentation\PresentationTaskScope.cs" />
+    <Compile Include="..\..\Sunder.Package.Agent.Shared\Presentation\ProviderModelLoader.cs" Link="Presentation\ProviderModelLoader.cs" />
+    <Compile Include="..\..\Sunder.Package.Agent.Shared\Presentation\TimedStatusController.cs" Link="Presentation\TimedStatusController.cs" />
+    <AvaloniaResource Include="..\..\Sunder.Package.Agent.Shared\Presentation\PresentationStyles.axaml" Link="Presentation\PresentationStyles.axaml" />
     <AvaloniaResource Include="..\..\Sunder.Package.Agent.Provider.Shared\ProviderSettingsStyles.axaml" Link="Provider.Shared\ProviderSettingsStyles.axaml" />
   </ItemGroup>
 
@@ -38,7 +48,5 @@
                         Required="true"
                         Actions="discover;invoke" />
   </ItemGroup>
-
-  <Import Project="..\..\Sunder.Package.Agent.Shared\Sunder.Package.Agent.Shared.props" />
 
 </Project>

@@ -307,7 +307,7 @@ public sealed class CodexConnectedTransport(CodexConnectedAuthStrategy codexConn
             new HttpRequestException(title, null, response.StatusCode))
         {
             FailureKind = ProviderContextWindowFailureClassifier.IsOpenAi(
-                    OpenAiErrorDiagnosticExtractor.Extract(responseContent))
+                    ProviderErrorDiagnosticExtractor.Extract(responseContent))
                 ? AgentChatProviderFailureKind.ContextWindowExceeded
                 : AgentChatProviderFailureKind.Unknown,
         };

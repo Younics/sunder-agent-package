@@ -70,9 +70,14 @@ internal static class McpWorkerConfiguration
                 "mcp.session.cleaner",
                 AgentRpcContractIds.SessionCleaner,
                 AgentSessionCleanerRpc.CreateHandler(serviceProvider.GetRequiredService<McpSessionConnectionCleaner>())),
-            SunderStackContributorRpc.CreateWorkerProviderRegistration(
+            new SunderWorkerProviderRegistration(
                 "mcp.stack",
-                serviceProvider.GetRequiredService<McpServerStackContributor>()),
+                SunderStackContributorRpc.ContractId,
+                SunderStackContributorRpc.ContractVersion,
+                SunderStackContributorRpc.DescriptorSha256,
+                SunderStackContributorRpc.AbiSha256,
+                SunderStackContributorRpc.CreateHandler(
+                    serviceProvider.GetRequiredService<McpServerStackContributor>())),
             new SunderWorkerProviderRegistration(
                 McpManagementProtocol.ProviderId,
                 descriptor.ContractId,

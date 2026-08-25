@@ -504,10 +504,17 @@ public sealed class MemoryEvaluationTests
         public AgentSessionRecord? GetSession(Guid requestedSessionId)
             => requestedSessionId == _session.SessionId ? _session : null;
 
-        public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces() => [_workspace];
+        public ValueTask<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesAsync(
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult<IReadOnlyList<AgentWorkspaceRecord>>([_workspace]);
 
-        public AgentWorkspaceRecord? GetWorkspace(string workspaceId)
-            => string.Equals(workspaceId, _workspace.WorkspaceId, StringComparison.OrdinalIgnoreCase) ? _workspace : null;
+        public ValueTask<AgentWorkspaceRecord?> GetWorkspaceAsync(
+            string workspaceId,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult<AgentWorkspaceRecord?>(
+                string.Equals(workspaceId, _workspace.WorkspaceId, StringComparison.OrdinalIgnoreCase)
+                    ? _workspace
+                    : null);
 
         public AgentProfileRecord? GetSessionProfile(Guid requestedSessionId)
             => requestedSessionId == _session.SessionId ? profile : null;

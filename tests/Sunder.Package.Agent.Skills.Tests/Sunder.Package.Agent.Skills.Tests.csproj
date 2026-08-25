@@ -1,9 +1,17 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <IsPackable>false</IsPackable>
+    <SunderTestOwner>sunder.package.agent.skills</SunderTestOwner>
+    <SunderTestCategory>Component</SunderTestCategory>
+    <SunderTestCapabilities>Filesystem;HTTP;Worker</SunderTestCapabilities>
+    <SunderTestOS>Any</SunderTestOS>
+    <SunderTestSize>Medium</SunderTestSize>
+    <SunderTestSourceMode>true</SunderTestSourceMode>
+    <SunderTestPackageMode>true</SunderTestPackageMode>
+    <SunderTestLanes>PackageCompatibility</SunderTestLanes>
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Sunder.Package.Agent.TestSupport\Sunder.Package.Agent.TestSupport.csproj" />
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Skills\Sunder.Package.Agent.Skills.csproj" />
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Skills\App\SkillsApp.csproj" />
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Skills\Protocol\SkillsProtocol.csproj" />

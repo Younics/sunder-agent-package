@@ -53,6 +53,60 @@ public sealed class SkillsWorkerTopologyTests
     }
 
     [Fact]
+    public async Task AppGateway_RetiredOwnerReconnectsAndShutsDownObservation()
+    {
+        var root = CreateTemporaryRoot();
+        var client = new ReconnectingOwnerClient();
+        var gateway = new SkillAppRuntimeGateway(
+            client,
+            new SkillRuntimeTransferTests.TestContext(root, NullFileStore.Instance));
+        var changed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        gateway.SkillsChanged += () => changed.TrySetResult();
+        try
+        {
+            await client.SecondSubscriptionStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            await changed.Task.WaitAsync(TimeSpan.FromSeconds(3));
+
+            Assert.True(gateway.IsOwnerStreamAvailable);
+            Assert.Equal(2, client.SubscriptionCount);
+
+            await gateway.DisposeAsync();
+            Assert.True(gateway.ObservationTask.IsCompletedSuccessfully);
+            Assert.False(gateway.IsOwnerStreamAvailable);
+        }
+        finally
+        {
+            gateway.Dispose();
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ChangeStream_EstablishesSubscriptionBeforeInitialSignal()
+    {
+        var root = CreateTemporaryRoot();
+        try
+        {
+            var store = new SkillStore(
+                new SkillRuntimeTransferTests.TestContext(root, NullFileStore.Instance));
+            var stream = new SkillRuntimeChangeStream(store, store.NotifySkillsImported);
+            using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            await using var enumerator = stream.SubscribeAsync(
+                    new SkillChangeSubscription(),
+                    cancellation.Token)
+                .GetAsyncEnumerator(cancellation.Token);
+
+            Assert.True(await enumerator.MoveNextAsync());
+            Assert.True(await enumerator.MoveNextAsync());
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    [Trait("Lane", "PackageCompatibility")]
     public void ComposedManifest_ContainsSixRidAppExactRidWorkerAndOwnerProvider()
     {
         var composedRoot = ComposedOutputRoot();
@@ -139,6 +193,37 @@ public sealed class SkillsWorkerTopologyTests
         {
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             yield break;
+        }
+    }
+
+    private sealed class ReconnectingOwnerClient : ISkillOwnerClient
+    {
+        private int _subscriptionCount;
+
+        internal int SubscriptionCount => Volatile.Read(ref _subscriptionCount);
+        internal TaskCompletionSource SecondSubscriptionStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public ValueTask<SkillProjection> QueryAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromException<SkillProjection>(new NotSupportedException());
+
+        public ValueTask<SkillProjection> CommandAsync(
+            SkillCommand command,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromException<SkillProjection>(new NotSupportedException());
+
+        public async IAsyncEnumerable<SkillChanged> SubscribeChangesAsync(
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            var subscription = Interlocked.Increment(ref _subscriptionCount);
+            yield return new SkillChanged();
+            if (subscription == 1)
+            {
+                throw new IOException("Injected owner retirement.");
+            }
+
+            SecondSubscriptionStarted.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
         }
     }
 

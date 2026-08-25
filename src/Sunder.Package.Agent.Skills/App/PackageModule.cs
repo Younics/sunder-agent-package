@@ -23,8 +23,7 @@ public sealed class AppPackageModule : ISunderAppPackageModule
         services.AddTransient(provider => new SkillSettingsView(
             provider.GetRequiredService<SkillSettingsViewModel>(),
             context,
-            provider.GetService<IPackageNotificationService>()
-                ?? NullPackageNotificationService.Instance));
+            provider.GetRequiredService<IPackageNotificationService>()));
     }
 
     public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services)

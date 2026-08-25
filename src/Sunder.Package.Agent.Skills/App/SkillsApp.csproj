@@ -16,7 +16,6 @@
   <ItemGroup>
     <PackageReference Include="Avalonia" />
     <PackageReference Include="CommunityToolkit.Mvvm" />
-    <PackageReference Include="Octokit" />
     <ProjectReference Include="..\..\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
     <ProjectReference Include="..\Protocol\SkillsProtocol.csproj" PrivateAssets="all" />
   </ItemGroup>
@@ -26,6 +25,9 @@
     <Compile Include="..\Properties\AssemblyInfo.cs" Link="Properties\AssemblyInfo.cs" />
     <Compile Include="..\PackageViews\**\*.cs" Link="PackageViews\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\Runtime\SkillRuntimeGateway.cs" Link="Runtime\SkillRuntimeGateway.cs" />
+    <Compile Include="..\Runtime\SkillRuntimeGateway.AppCleanup.cs" Link="Runtime\SkillRuntimeGateway.AppCleanup.cs" />
+    <Compile Include="..\Runtime\SkillRuntimeGateway.Observation.cs" Link="Runtime\SkillRuntimeGateway.Observation.cs" />
+    <Compile Include="..\Runtime\SkillTransferLimits.cs" Link="Runtime\SkillTransferLimits.cs" />
     <AvaloniaXaml Include="..\PackageViews\**\*.axaml" Link="PackageViews\%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 
@@ -43,5 +45,6 @@
   </ItemGroup>
 
   <Import Project="..\..\Sunder.Package.Agent.Shared\Sunder.Package.Agent.Shared.props" />
+  <Import Project="..\..\Sunder.Package.Agent.Shared\Importing\Sunder.Package.Agent.Importing.props" />
 
 </Project>

@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <SunderPackageFamilyId>sunder.package.agent</SunderPackageFamilyId>
+    <SunderPackageRole>test</SunderPackageRole>
+    <OutputType>Exe</OutputType>
+    <SunderTestOwner>agent-family</SunderTestOwner>
+    <SunderTestCategory>Unit</SunderTestCategory>
+    <SunderTestCapabilities>None</SunderTestCapabilities>
+    <SunderTestOS>Any</SunderTestOS>
+    <SunderTestSize>Medium</SunderTestSize>
+    <SunderTestSourceMode>true</SunderTestSourceMode>
+    <SunderTestPackageMode>false</SunderTestPackageMode>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent\App\Sunder.Package.Agent.App.csproj" />
+    <ProjectReference Include="..\Sunder.Package.Agent.TestSupport\Sunder.Package.Agent.TestSupport.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+</Project>

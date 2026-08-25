@@ -198,16 +198,25 @@ public static class MemoryInspectorRpc
     }
 }
 
-public sealed class MemoryInspectorRpcClient(
-    ISunderRpcCallScope scope,
-    Wire.MemoryInspectorClient client)
+public sealed class MemoryInspectorRpcClient
 {
+    private readonly ISunderRpcCallScope _scope;
+    private readonly Wire.MemoryInspectorClient _client;
+
+    internal MemoryInspectorRpcClient(
+        ISunderRpcCallScope scope,
+        Wire.MemoryInspectorClient client)
+    {
+        _scope = scope;
+        _client = client;
+    }
+
     public async ValueTask<MemoryProjection> QueryAsync(
         MemoryQuery request,
         CancellationToken cancellationToken = default)
         => await MemoryInspectorRpc.ReadProjectionAsync(
-            scope,
-            await client.QueryAsync(MemoryInspectorRpcMapper.ToWire(request), cancellationToken)
+            _scope,
+            await _client.QueryAsync(MemoryInspectorRpcMapper.ToWire(request), cancellationToken)
                 .ConfigureAwait(false),
             cancellationToken).ConfigureAwait(false);
 
@@ -215,8 +224,8 @@ public sealed class MemoryInspectorRpcClient(
         MemoryCommand request,
         CancellationToken cancellationToken = default)
         => await MemoryInspectorRpc.ReadProjectionAsync(
-            scope,
-            await client.CommandAsync(MemoryInspectorRpcMapper.ToWire(request), cancellationToken)
+            _scope,
+            await _client.CommandAsync(MemoryInspectorRpcMapper.ToWire(request), cancellationToken)
                 .ConfigureAwait(false),
             cancellationToken).ConfigureAwait(false);
 
@@ -224,7 +233,7 @@ public sealed class MemoryInspectorRpcClient(
         MemoryChangeSubscription request,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        await foreach (var change in client.ChangesAsync(
+        await foreach (var change in _client.ChangesAsync(
                            new Wire.MemoryChangeSubscription(),
                            cancellationToken).ConfigureAwait(false))
         {

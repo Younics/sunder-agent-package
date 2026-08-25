@@ -8,6 +8,7 @@
     <SunderPackageAppProject>App\LocalApp.csproj</SunderPackageAppProject>
     <SunderSdkWorkerReference>true</SunderSdkWorkerReference>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <SunderAgentCurrentPackageStorageKey>true</SunderAgentCurrentPackageStorageKey>
     <OutputType>Exe</OutputType>
     <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">$(NETCoreSdkRuntimeIdentifier)</RuntimeIdentifier>
     <RuntimeIdentifiers>win-x64;win-arm64;linux-x64;linux-arm64;osx-x64;osx-arm64</RuntimeIdentifiers>
@@ -27,9 +28,6 @@
   <ItemGroup>
     <Compile Remove="App\**\*" />
     <Compile Remove="Protocol\**\*" />
-    <Compile Remove="LocalExecutionSettingsView.axaml.cs" />
-    <Compile Remove="LocalExecutionSettingsViewModel.cs" />
-    <Compile Remove="LocalShellRowViewModel.cs" />
     <None Remove="App\**\*" />
     <None Remove="Protocol\**\*" />
   </ItemGroup>

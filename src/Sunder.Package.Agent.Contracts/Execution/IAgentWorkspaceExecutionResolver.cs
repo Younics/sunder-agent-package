@@ -15,8 +15,11 @@ public interface IAgentWorkspaceExecutionResolver
     /// <summary>
     /// Lists the workspaces currently known to the authoritative workspace store.
     /// </summary>
+    /// <param name="cancellationToken">Signals that the workspace query should be canceled.</param>
     /// <returns>A read-only snapshot of workspace records. The order is implementation-defined.</returns>
-    IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces();
+    /// <exception cref="OperationCanceledException">The operation was canceled.</exception>
+    ValueTask<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesAsync(
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Resolves the enabled primary execution binding for a workspace and verifies that its target is currently usable.

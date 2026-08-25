@@ -22,6 +22,7 @@
                       LogicalName="Sunder.Package.Agent.Provider.OpenAI.Contracts.openai-management.rpc.json" />
     <SunderRpcBinding Include="Contracts\openai-management.rpc.json"
                       Namespace="Sunder.Package.Agent.Provider.OpenAI.Protocol.Generated"
+                      Accessibility="Internal"
                       OutputFile="OpenAiManagementRpc.g.cs" />
   </ItemGroup>
 

@@ -5,13 +5,8 @@
     <Compile Include="$(MSBuildThisFileDirectory)Presentation\*.cs"
              Exclude="$(MSBuildThisFileDirectory)Presentation\PackageCallbackFlowRunner.cs"
              Link="Presentation\%(Filename)%(Extension)" />
-    <Compile Include="$(MSBuildThisFileDirectory)Importing\*.cs"
-             Link="Importing\%(Filename)%(Extension)" />
     <Compile Include="$(MSBuildThisFileDirectory)Threading\*.cs"
              Link="Threading\%(Filename)%(Extension)" />
-    <Compile Include="$(MSBuildThisFileDirectory)Storage\*.cs"
-             Exclude="$(MSBuildThisFileDirectory)Storage\SqliteWalCheckpointMaintenance.cs"
-             Link="Storage\%(Filename)%(Extension)" />
     <Compile Include="$(MSBuildThisFileDirectory)PackageViews\SunderComboBox.cs"
              Link="PackageViews\SunderComboBox.cs" />
     <AvaloniaResource Include="$(MSBuildThisFileDirectory)Presentation\PresentationStyles.axaml"

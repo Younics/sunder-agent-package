@@ -64,6 +64,7 @@ internal sealed class McpManagementRpcProvider(
         ChangeSubscription request,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        yield return new ManagementChange { Kind = ManagementChangeKind.Servers };
         await foreach (var change in changes.WatchAsync(cancellationToken))
         {
             yield return new ManagementChange

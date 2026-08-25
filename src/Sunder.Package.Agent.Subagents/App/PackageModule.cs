@@ -16,7 +16,8 @@ public sealed class AppPackageModule : ISunderAppPackageModule
     public void ConfigureAppServices(IServiceCollection services, IPackageContext context)
     {
         services.AddSingleton(provider => new SubagentAppRuntimeGateway(
-            provider.GetRequiredService<ISunderRpcClient>()));
+            provider.GetRequiredService<ISunderRpcClient>(),
+            context.Logging.LoggerFactory));
         services.AddSingletonAlias<ISubagentManagementGateway, SubagentAppRuntimeGateway>();
         services.AddSingletonAlias<ISubsessionSessionReader, SubagentAppRuntimeGateway>();
         services.AddSingletonAlias<ISubsessionCheckpointReader, SubagentAppRuntimeGateway>();
@@ -33,14 +34,12 @@ public sealed class AppPackageModule : ISunderAppPackageModule
             PresentationDispatcher.Capture(),
             new PresentationOperationObserver(
                 context,
-                provider.GetService<IPackageNotificationService>()
-                    ?? NullPackageNotificationService.Instance,
+                provider.GetRequiredService<IPackageNotificationService>(),
                 "Subsessions")));
         services.AddTransient(provider => new SubsessionsView(
             provider.GetRequiredService<SubsessionsViewModel>(),
             context,
-            provider.GetService<IPackageNotificationService>()
-                ?? NullPackageNotificationService.Instance));
+            provider.GetRequiredService<IPackageNotificationService>()));
     }
 
     public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services)

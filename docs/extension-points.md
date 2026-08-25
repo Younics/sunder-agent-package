@@ -1,10 +1,10 @@
 # RPC Contract Catalog
 
-Agent 2.x exposes every cross-package capability through exactly 18 schema-first Sunder RPC contracts. There is no second object-discovery path. Each provider declaration has a stable provider id, contract id, contract version, host-stamped owner, and opaque endpoint reference.
+Agent 2.x bundles 19 schema-first Sunder RPC contracts. Eighteen are supported third-party extension points; `sunder.agent.tool.execution.observed` is a reserved first-party bridge. There is no second object-discovery path. Each provider declaration has a stable provider id, contract id, contract version, host-stamped owner, and opaque endpoint reference.
 
 ## Contract Rules
 
-- Bundle every imported or provided descriptor locally. `Sunder.Package.Agent.Protocol` supplies all 18 first-party descriptors through `buildTransitive` assets.
+- Bundle every imported or provided descriptor locally. `Sunder.Package.Agent.Protocol` supplies all 19 descriptors through `buildTransitive` assets.
 - Declare providers with `SunderRpcProvider`. Worker V3 targets pass the matching immutable `SunderWorkerProviderRegistration` entries to `SunderWorker.RunAsync` through `SunderWorkerV3Options`.
 - Declare consumers with `SunderUsesContract`; discovery and invocation remain default-denied unless the package manifest grants the relevant action.
 - Retain endpoint references, not provider objects. A reference names one exact activation and becomes stale when that activation retires.
@@ -40,6 +40,13 @@ Agent 2.x exposes every cross-package capability through exactly 18 schema-first
 | `sunder.agent.run.control` | `run-control` | Invocation-scoped behavior-loop operations and chat stream |
 | `sunder.agent.workspace.execution.resolver` | `workspace-execution-resolver` | Resolve a workspace to one exact execution-target endpoint |
 | `sunder.agent.child.run.executor` | `child-run-executor` | Launch and correlate durable child sessions |
+
+## Reserved First-Party Bridge
+
+`sunder.agent.tool.execution.observed` carries observed tool execution between
+first-party packages without making it a supported third-party provider
+contract. It is bundled for first-party manifest composition but is excluded
+from the 18 public extension points.
 
 ## Failure Semantics
 

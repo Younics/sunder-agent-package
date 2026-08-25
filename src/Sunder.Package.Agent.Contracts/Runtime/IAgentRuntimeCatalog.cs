@@ -44,13 +44,20 @@ public interface IAgentRuntimeCatalog
     AgentSessionRecord? GetSession(Guid sessionId);
 
     /// <summary>Lists hydrated workspace snapshots, including configured paths and documents.</summary>
+    /// <param name="cancellationToken">Signals that the workspace query should be canceled.</param>
     /// <returns>An immutable-by-contract snapshot collection.</returns>
-    IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces();
+    /// <exception cref="OperationCanceledException">The operation was canceled.</exception>
+    ValueTask<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesAsync(
+        CancellationToken cancellationToken = default);
 
     /// <summary>Gets a hydrated workspace snapshot.</summary>
     /// <param name="workspaceId">The opaque workspace identifier.</param>
+    /// <param name="cancellationToken">Signals that the workspace query should be canceled.</param>
     /// <returns>The snapshot, or <see langword="null"/> when no workspace has that identifier.</returns>
-    AgentWorkspaceRecord? GetWorkspace(string workspaceId);
+    /// <exception cref="OperationCanceledException">The operation was canceled.</exception>
+    ValueTask<AgentWorkspaceRecord?> GetWorkspaceAsync(
+        string workspaceId,
+        CancellationToken cancellationToken = default);
 
     /// <summary>Resolves the profile currently referenced by a session.</summary>
     /// <param name="sessionId">The stable session identifier.</param>

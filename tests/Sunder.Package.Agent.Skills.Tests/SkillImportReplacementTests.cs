@@ -1,4 +1,5 @@
 using Sunder.Package.Agent.Skills.Services;
+using Sunder.Package.Agent.TestSupport;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Storage;
 using System.Text.Json;
@@ -24,6 +25,60 @@ public sealed class SkillImportReplacementTests
             Assert.Throws<InvalidDataException>(() => store.ListSkills());
             Assert.Throws<InvalidDataException>(() => store.SaveSkill(CreateRecord("new-skill")));
             Assert.Equal(malformedIndex, File.ReadAllText(indexPath));
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public void Store_ReadsReleasedArrayIndexAndWritesCurrentSchemaEnvelope()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "sunder-skill-index-schema-tests", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var context = new TestPackageContext(root);
+            var indexPath = context.Storage.RoleLocalWorkspace.GetLocalPath("skills/skills.json");
+            Directory.CreateDirectory(Path.GetDirectoryName(indexPath)!);
+            File.WriteAllText(indexPath, JsonSerializer.Serialize(new[] { CreateRecord("legacy") }));
+            var store = new SkillStore(context);
+
+            Assert.Equal("legacy", Assert.Single(store.ListSkills()).SkillId);
+            store.SaveSkill(CreateRecord("current"));
+
+            using var document = JsonDocument.Parse(File.ReadAllBytes(indexPath));
+            Assert.Equal(SkillPersistenceSchemas.IndexId, document.RootElement.GetProperty("SchemaId").GetString());
+            Assert.Equal(SkillPersistenceSchemas.CurrentVersion, document.RootElement.GetProperty("SchemaVersion").GetInt32());
+            Assert.Equal(2, document.RootElement.GetProperty("Skills").GetArrayLength());
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public void Store_RejectsFutureIndexSchemaWithoutOverwritingIt()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "sunder-skill-index-future-tests", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var context = new TestPackageContext(root);
+            var indexPath = context.Storage.RoleLocalWorkspace.GetLocalPath("skills/skills.json");
+            Directory.CreateDirectory(Path.GetDirectoryName(indexPath)!);
+            var payload = JsonSerializer.SerializeToUtf8Bytes(new
+            {
+                SchemaId = SkillPersistenceSchemas.IndexId,
+                SchemaVersion = SkillPersistenceSchemas.CurrentVersion + 1,
+                Skills = new[] { CreateRecord("future") },
+            });
+            File.WriteAllBytes(indexPath, payload);
+            var store = new SkillStore(context);
+
+            Assert.Throws<InvalidDataException>(() => store.ListSkills());
+            Assert.Throws<InvalidDataException>(() => store.SaveSkill(CreateRecord("new-skill")));
+            Assert.Equal(payload, File.ReadAllBytes(indexPath));
         }
         finally
         {
@@ -113,6 +168,52 @@ public sealed class SkillImportReplacementTests
     public Task ImportLocalFolderAsync_FailureAfterStagedMove_RestoresPriorContentAndIndex()
         => AssertReplacementFailureRestoresPriorStateAsync(SkillImportFaultPoint.AfterStagedMove);
 
+    [Fact]
+    public async Task ImportLocalFolderAsync_FailureAfterCommitPreservesReplacementForRecovery()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "sunder-skill-post-commit-tests", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var context = new TestPackageContext(Path.Combine(root, "install"));
+            var store = new SkillStore(context);
+            await new SkillImportService(store, new UnusedGitHubSkillClient(), context)
+                .ImportLocalFolderAsync(CreateSkillSource(root, "original", "1.0.0", "original content"));
+            var importer = new SkillImportService(
+                store,
+                new UnusedGitHubSkillClient(),
+                context,
+                point =>
+                {
+                    if (point == SkillImportFaultPoint.AfterIndexCommitted)
+                    {
+                        throw new IOException("Injected post-commit interruption.");
+                    }
+                });
+
+            await Assert.ThrowsAsync<IOException>(() => importer.ImportLocalFolderAsync(
+                CreateSkillSource(root, "replacement", "2.0.0", "replacement content")));
+
+            Assert.Equal("2.0.0", store.GetSkill("replacement-safety")?.Version);
+            Assert.Equal("replacement content", await ReadResourceAsync(store, "replacement-safety"));
+            Assert.True(File.Exists(store.ImportJournalPath));
+            using (var journal = JsonDocument.Parse(File.ReadAllBytes(store.ImportJournalPath)))
+            {
+                Assert.Equal(SkillPersistenceSchemas.ImportJournalId, journal.RootElement.GetProperty("SchemaId").GetString());
+                Assert.Equal(SkillPersistenceSchemas.CurrentVersion, journal.RootElement.GetProperty("SchemaVersion").GetInt32());
+            }
+
+            var recovered = new SkillStore(context);
+            Assert.Equal("2.0.0", recovered.GetSkill("replacement-safety")?.Version);
+            Assert.Equal("replacement content", await ReadResourceAsync(recovered, "replacement-safety"));
+            Assert.False(File.Exists(recovered.ImportJournalPath));
+            Assert.Empty(Directory.EnumerateDirectories(recovered.SkillsRootPath, "replacement-safety.backup-*"));
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
@@ -179,6 +280,7 @@ public sealed class SkillImportReplacementTests
     [InlineData("file-count")]
     [InlineData("per-file-size")]
     [InlineData("aggregate-size")]
+    [InlineData("alternate-data-stream")]
     public async Task GitHubAcquisition_RejectsAdversarialTreesBeforeDownloading(string adversary)
     {
         var root = Path.Combine(Path.GetTempPath(), "sunder-skill-adversarial-tests", Guid.NewGuid().ToString("N"));
@@ -206,9 +308,17 @@ public sealed class SkillImportReplacementTests
 
     [Theory]
     [InlineData("invalid-utf8")]
-    [InlineData("symlink")]
     [InlineData("cancellation")]
-    public async Task Replacement_PreflightFailurePreservesPriorSkill(string adversary)
+    public Task Replacement_PreflightFailurePreservesPriorSkill(string adversary)
+        => AssertReplacementPreflightFailurePreservesPriorSkill(adversary);
+
+    [FileSystemFact(
+        TestFileSystemCapability.FileSymbolicLinks,
+        "Skill replacement symlink preflight requires file symbolic links.")]
+    public Task Replacement_PreflightSymlinkFailurePreservesPriorSkill()
+        => AssertReplacementPreflightFailurePreservesPriorSkill("symlink");
+
+    private static async Task AssertReplacementPreflightFailurePreservesPriorSkill(string adversary)
     {
         var root = Path.Combine(Path.GetTempPath(), "sunder-skill-preflight-tests", Guid.NewGuid().ToString("N"));
         try
@@ -259,6 +369,280 @@ public sealed class SkillImportReplacementTests
             Assert.Equal("fixed-commit", imported.ResolvedCommitSha);
             Assert.All(client.ReadCommitShas, sha => Assert.Equal("fixed-commit", sha));
             Assert.Equal("from fixed commit", await File.ReadAllTextAsync(Path.Combine(new SkillStore(context).GetSkillRootPath(imported), "resource.txt")));
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task GitHubImport_UsesOneAbsoluteDeadlineAcrossClientCalls()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "sunder-skill-github-deadline-tests", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var context = new TestPackageContext(root);
+            var client = new SlowGitHubSkillClient(TimeSpan.FromMilliseconds(70));
+            var importer = new SkillImportService(
+                new SkillStore(context),
+                client,
+                context,
+                faultInjector: null,
+                gitHubImportTimeout: TimeSpan.FromMilliseconds(100));
+
+            await Assert.ThrowsAsync<TimeoutException>(() => importer.ImportGitHubFolderAsync(
+                "https://github.com/owner/repo/tree/main/skill"));
+
+            Assert.True(client.ListStarted);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task LocalAcquisition_SourceIdentitySwapFailsAndRemovesStagingSnapshot()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "sunder-skill-source-swap-tests", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var source = CreateSkillSource(root, "source", "1.0.0", "original source");
+            var resourcePath = Path.Combine(source, "resource.txt");
+            var context = new TestPackageContext(Path.Combine(root, "install"));
+            var swapped = false;
+            var acquirer = new SkillSourceAcquirer(
+                new UnusedGitHubSkillClient(),
+                context,
+                (checkpoint, file) =>
+                {
+                    if (!swapped
+                        && checkpoint.ToString() == "BeforeSourceOpen"
+                        && file.RelativePath == "resource.txt")
+                    {
+                        swapped = true;
+                        File.Move(resourcePath, resourcePath + ".original");
+                        File.WriteAllText(resourcePath, "mutated source");
+                    }
+                });
+
+            await Assert.ThrowsAsync<InvalidDataException>(() =>
+                acquirer.AcquireLocalAsync(source, CancellationToken.None));
+
+            Assert.True(swapped);
+            var stagingParent = context.Storage.RoleLocalWorkspace.GetLocalPath("skill-import");
+            Assert.False(Directory.Exists(stagingParent) && Directory.EnumerateDirectories(stagingParent).Any());
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [FileSystemFact(
+        TestFileSystemCapability.DirectorySymbolicLinks,
+        "Transient source-ancestor checks require directory symbolic links.")]
+    public async Task LocalAcquisition_RejectsTransientSourceAncestorSymlink()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "sunder-skill-source-ancestor-swap-tests", Guid.NewGuid().ToString("N"));
+        var source = CreateSkillSource(root, "source", "1.0.0", "original source");
+        var parkedSource = source + ".parked";
+        try
+        {
+            var context = new TestPackageContext(Path.Combine(root, "install"));
+            var swapped = false;
+            var acquirer = new SkillSourceAcquirer(
+                new UnusedGitHubSkillClient(),
+                context,
+                (checkpoint, file) =>
+                {
+                    if (swapped
+                        || checkpoint.ToString() != "BeforeSourceOpen"
+                        || file.RelativePath != "resource.txt")
+                    {
+                        return;
+                    }
+
+                    swapped = true;
+                    Directory.Move(source, parkedSource);
+                    Directory.CreateSymbolicLink(source, parkedSource);
+                });
+
+            await Assert.ThrowsAsync<InvalidDataException>(() =>
+                acquirer.AcquireLocalAsync(source, CancellationToken.None));
+
+            Assert.True(swapped);
+            var stagingParent = context.Storage.RoleLocalWorkspace.GetLocalPath("skill-import");
+            Assert.False(Directory.Exists(stagingParent) && Directory.EnumerateDirectories(stagingParent).Any());
+        }
+        finally
+        {
+            if (Directory.Exists(source) && new DirectoryInfo(source).LinkTarget is not null)
+            {
+                Directory.Delete(source);
+            }
+            if (Directory.Exists(parkedSource) && !Directory.Exists(source))
+            {
+                Directory.Move(parkedSource, source);
+            }
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [FileSystemFact(
+        TestFileSystemCapability.DirectorySymbolicLinks,
+        "Transient staging checks require directory symbolic links.")]
+    public async Task LocalAcquisition_DoesNotWriteThroughTransientStagingSymlink()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "sunder-skill-target-ancestor-swap-tests", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var source = CreateSkillSource(root, "source", "1.0.0", "original source");
+            var nestedSource = Path.Combine(source, "nested");
+            Directory.CreateDirectory(nestedSource);
+            File.WriteAllText(Path.Combine(nestedSource, "payload.txt"), "must stay in staging");
+            var external = Path.Combine(root, "external");
+            Directory.CreateDirectory(external);
+            var context = new TestPackageContext(Path.Combine(root, "install"));
+            var swapped = false;
+            var acquirer = new SkillSourceAcquirer(
+                new UnusedGitHubSkillClient(),
+                context,
+                (checkpoint, file) =>
+                {
+                    if (swapped
+                        || checkpoint.ToString() != "AfterSourceRead"
+                        || file.RelativePath != "SKILL.md")
+                    {
+                        return;
+                    }
+
+                    swapped = true;
+                    var stagingParent = context.Storage.RoleLocalWorkspace.GetLocalPath("skill-import");
+                    var stagingRoot = Assert.Single(Directory.EnumerateDirectories(stagingParent));
+                    Directory.CreateSymbolicLink(Path.Combine(stagingRoot, "nested"), external);
+                });
+
+            await Assert.ThrowsAsync<InvalidDataException>(() =>
+                acquirer.AcquireLocalAsync(source, CancellationToken.None));
+
+            Assert.True(swapped);
+            Assert.False(File.Exists(Path.Combine(external, "payload.txt")));
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task LocalAcquisition_SourceGrowthOrShrinkAfterOpenFails(bool grow)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "sunder-skill-source-size-race-tests", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var source = CreateSkillSource(root, "source", "1.0.0", "original source content");
+            var resourcePath = Path.Combine(source, "resource.txt");
+            var context = new TestPackageContext(Path.Combine(root, "install"));
+            var mutated = false;
+            var acquirer = new SkillSourceAcquirer(
+                new UnusedGitHubSkillClient(),
+                context,
+                (checkpoint, file) =>
+                {
+                    if (mutated
+                        || checkpoint.ToString() != "AfterSourceOpen"
+                        || file.RelativePath != "resource.txt")
+                    {
+                        return;
+                    }
+
+                    mutated = true;
+                    if (grow)
+                    {
+                        File.AppendAllText(resourcePath, " expanded");
+                    }
+                    else
+                    {
+                        using var stream = new FileStream(
+                            resourcePath,
+                            FileMode.Open,
+                            FileAccess.Write,
+                            FileShare.ReadWrite | FileShare.Delete);
+                        stream.SetLength(1);
+                    }
+                });
+
+            await Assert.ThrowsAsync<InvalidDataException>(() =>
+                acquirer.AcquireLocalAsync(source, CancellationToken.None));
+
+            Assert.True(mutated);
+            var stagingParent = context.Storage.RoleLocalWorkspace.GetLocalPath("skill-import");
+            Assert.False(Directory.Exists(stagingParent) && Directory.EnumerateDirectories(stagingParent).Any());
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [FileSystemFact(
+        TestFileSystemCapability.HardLinks,
+        "Skill hard-link rejection requires hard-link support.")]
+    public async Task LocalAcquisition_RejectsHardLinkedFiles()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "sunder-skill-hard-link-tests", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var source = CreateSkillSource(root, "source", "1.0.0", "linked source");
+            TestFileSystemCapabilities.CreateHardLink(
+                Path.Combine(source, "resource-copy.txt"),
+                Path.Combine(source, "resource.txt"));
+            var context = new TestPackageContext(Path.Combine(root, "install"));
+            var acquirer = new SkillSourceAcquirer(new UnusedGitHubSkillClient(), context);
+
+            var exception = await Assert.ThrowsAsync<InvalidDataException>(() =>
+                acquirer.AcquireLocalAsync(source, CancellationToken.None));
+
+            Assert.Contains("hard-linked", exception.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [FileSystemFact(
+        TestFileSystemCapability.DirectorySymbolicLinks,
+        "Install-target replacement checks require directory symbolic links.")]
+    public async Task Replacement_RejectsSymlinkedInstallTargetWithoutTouchingExternalContent()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "sunder-skill-target-link-tests", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var context = new TestPackageContext(Path.Combine(root, "install"));
+            var store = new SkillStore(context);
+            var importer = new SkillImportService(store, new UnusedGitHubSkillClient(), context);
+            var original = await importer.ImportLocalFolderAsync(
+                CreateSkillSource(root, "original", "1.0.0", "original"));
+            var target = store.GetSkillRootPath(original);
+            Directory.Delete(target, recursive: true);
+            var external = Path.Combine(root, "external");
+            Directory.CreateDirectory(external);
+            var sentinel = Path.Combine(external, "sentinel.txt");
+            File.WriteAllText(sentinel, "must remain unchanged");
+            Directory.CreateSymbolicLink(target, external);
+
+            await Assert.ThrowsAsync<InvalidDataException>(() =>
+                importer.ImportLocalFolderAsync(
+                    CreateSkillSource(root, "replacement", "2.0.0", "replacement")));
+
+            Assert.Equal("must remain unchanged", File.ReadAllText(sentinel));
+            Assert.NotNull(new FileInfo(target).LinkTarget);
+            Assert.Equal("1.0.0", store.GetSkill(original.SkillId)?.Version);
         }
         finally
         {
@@ -320,10 +704,12 @@ public sealed class SkillImportReplacementTests
             File.WriteAllText(Path.Combine(staging, "resource.txt"), "replacement");
             Directory.Move(target, backup);
             Directory.Move(staging, target);
-            var journal = new SkillImportJournal(
-                "Prepared",
-                Convert.ToBase64String(snapshot!),
-                [new SkillImportJournalEntry(staging, target, backup, true, true, true)]);
+            var journal = new
+            {
+                Phase = "Prepared",
+                IndexSnapshotBase64 = Convert.ToBase64String(snapshot!),
+                Entries = new[] { new SkillImportJournalEntry(staging, target, backup, true, true, true) },
+            };
             File.WriteAllBytes(store.ImportJournalPath, JsonSerializer.SerializeToUtf8Bytes(journal));
 
             var recoveredStore = new SkillStore(context);
@@ -340,12 +726,75 @@ public sealed class SkillImportReplacementTests
     }
 
     [Fact]
+    public void StoreStartup_RejectsFutureJournalSchemaWithoutRecoveryMutation()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "sunder-skill-journal-future-tests", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var context = new TestPackageContext(Path.Combine(root, "install"));
+            var store = new SkillStore(context);
+            store.Activate();
+            var staging = context.Storage.RoleLocalWorkspace.GetLocalPath("skill-import/future");
+            var target = Path.Combine(store.SkillsRootPath, "future");
+            var backup = target + ".backup-future";
+            Directory.CreateDirectory(staging);
+            var journal = new SkillImportJournal(
+                "Prepared",
+                null,
+                [new SkillImportJournalEntry(staging, target, backup, false, false, false)]) with
+            {
+                SchemaVersion = SkillPersistenceSchemas.CurrentVersion + 1,
+            };
+            var payload = JsonSerializer.SerializeToUtf8Bytes(journal);
+            File.WriteAllBytes(store.ImportJournalPath, payload);
+
+            Assert.Throws<InvalidDataException>(() => new SkillStore(context).Activate());
+            Assert.Equal(payload, File.ReadAllBytes(store.ImportJournalPath));
+            Assert.True(Directory.Exists(staging));
+            Assert.False(Directory.Exists(target));
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
     public void SkillImportLimits_AreSecurityRatchets()
     {
         Assert.Equal(2_048, SkillSourceAcquirer.Limits.MaxFiles);
+        Assert.Equal(2_048, SkillSourceAcquirer.Limits.MaxDirectories);
         Assert.Equal(16, SkillSourceAcquirer.Limits.MaxPathDepth);
         Assert.Equal(10 * 1024 * 1024, SkillSourceAcquirer.Limits.MaxFileBytes);
         Assert.Equal(50 * 1024 * 1024, SkillSourceAcquirer.Limits.MaxTotalBytes);
+    }
+
+    [Fact]
+    public async Task SecureSnapshot_RejectsEmptyDirectoryBombAtDirectoryBound()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "sunder-skill-directory-limit-tests", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var source = Path.Combine(root, "source");
+            Directory.CreateDirectory(source);
+            for (var index = 0; index < SkillSourceAcquirer.Limits.MaxDirectories; index++)
+            {
+                Directory.CreateDirectory(Path.Combine(source, $"empty-{index:D4}"));
+            }
+            var context = new TestPackageContext(Path.Combine(root, "install"));
+            var acquirer = new SkillSourceAcquirer(new UnusedGitHubSkillClient(), context);
+
+            var exception = await Assert.ThrowsAsync<InvalidDataException>(() =>
+                acquirer.AcquireLocalAsync(source, CancellationToken.None));
+            Assert.Contains(
+                $"{SkillSourceAcquirer.Limits.MaxDirectories}-directory limit",
+                exception.Message,
+                StringComparison.Ordinal);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
     }
 
     private static async Task AssertReplacementFailureRestoresPriorStateAsync(SkillImportFaultPoint faultPoint)
@@ -465,6 +914,9 @@ public sealed class SkillImportReplacementTests
                 files.AddRange(Enumerable.Range(0, 6)
                     .Select(index => new GitHubSkillFile($"large-{index}.bin", $"skill/large-{index}.bin", 10L * 1024 * 1024)));
                 break;
+            case "alternate-data-stream":
+                files.Add(new("resource.txt:payload", "skill/resource.txt:payload", 1));
+                break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(adversary));
         }
@@ -555,6 +1007,51 @@ public sealed class SkillImportReplacementTests
                 ? "---\nname: branch-safe\nversion: 1.0.0\n---\n# Branch Safe\n"u8.ToArray()
                 : "from fixed commit"u8.ToArray());
         }
+    }
+
+    private sealed class SlowGitHubSkillClient(TimeSpan delay) : IGitHubSkillClient
+    {
+        public bool ListStarted { get; private set; }
+
+        public Task<string?> TryGetDefaultBranchAsync(
+            string owner,
+            string repo,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public Task<GitHubSkillFolder?> TryGetFolderAsync(
+            GitHubSkillFolderRequest request,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public async Task<GitHubSkillFolder?> TryGetSkillFolderAsync(
+            GitHubSkillFolderRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            await Task.Delay(delay, cancellationToken);
+            return new GitHubSkillFolder(
+                request.Owner,
+                request.Repo,
+                request.Ref,
+                request.FolderPath,
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        }
+
+        public async Task<IReadOnlyList<GitHubSkillFile>> ListFilesAsync(
+            GitHubSkillFolder folder,
+            CancellationToken cancellationToken = default)
+        {
+            ListStarted = true;
+            await Task.Delay(delay, cancellationToken);
+            return [new GitHubSkillFile("SKILL.md", "skill/SKILL.md", 1)];
+        }
+
+        public Task<byte[]> ReadFileAsync(
+            GitHubSkillFolder folder,
+            GitHubSkillFile file,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
     }
 
     private sealed class TestPackageContext(string rootPath) : IPackageContext

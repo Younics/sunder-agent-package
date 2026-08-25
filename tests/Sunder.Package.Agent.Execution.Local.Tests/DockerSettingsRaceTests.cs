@@ -1,4 +1,5 @@
 using Sunder.Package.Agent.Execution.Docker;
+using Sunder.Package.Agent.TestSupport.Avalonia;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Rpc;
 using Xunit;
@@ -19,6 +20,7 @@ public sealed class DockerSettingsRaceTests
         await runtime.Requests[0].Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
         var second = viewModel.InitializeAsync();
 
+        AdaptiveEditorLifecycleContract.SharedInitialization(Adapt(viewModel), first, second);
         Assert.Same(first, second);
         Assert.False(runtime.Requests[1].Started.Task.IsCompleted);
         runtime.Requests[0].Response.TrySetResult(Response(
@@ -51,6 +53,7 @@ public sealed class DockerSettingsRaceTests
         await runtime.Requests[0].Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
         viewModel.NewImageReference = "fresh:1.0";
 
+        AdaptiveEditorLifecycleContract.HydrationBlocksMutation(Adapt(viewModel));
         Assert.False(viewModel.AddImageCommand.CanExecute(null));
         var refresh = viewModel.RefreshAllImagesCommand.ExecuteAsync(null);
         await refresh;
@@ -204,6 +207,7 @@ public sealed class DockerSettingsRaceTests
             CatalogRevision: 2));
         await add;
 
+        AdaptiveEditorLifecycleContract.CurrentSelectionWins(Adapt(viewModel), "beta:latest");
         Assert.Equal("newer:text", viewModel.NewImageReference);
         Assert.Equal("beta:latest", viewModel.SelectedImage?.ImageReference);
 
@@ -219,6 +223,12 @@ public sealed class DockerSettingsRaceTests
             []));
         await save;
 
+        AdaptiveEditorLifecycleContract.EditDuringSaveRemainsDirty(
+            Adapt(
+                viewModel,
+                isDirty: () => viewModel.TimeoutSeconds == "222",
+                draftValue: () => viewModel.TimeoutSeconds),
+            "222");
         Assert.Equal("222", viewModel.TimeoutSeconds);
         Assert.Equal("/tmp/docker-new", viewModel.DockerCliPath);
 
@@ -235,6 +245,7 @@ public sealed class DockerSettingsRaceTests
             CatalogRevision: 3));
         await delete;
 
+        AdaptiveEditorLifecycleContract.CurrentSelectionWins(Adapt(viewModel), "added:latest");
         Assert.Equal("added:latest", viewModel.SelectedImage?.ImageReference);
     }
 
@@ -300,18 +311,21 @@ public sealed class DockerSettingsRaceTests
             runtime,
             new EmptyBackgroundProcessQueue());
 
-        var first = viewModel.InitializeAsync();
-        await FailRequestAsync(runtime.Requests[0]);
-        await first;
+        await AdaptiveEditorLifecycleContract.RuntimeCycleIsExplicitAsync(Adapt(viewModel), async () =>
+        {
+            var first = viewModel.InitializeAsync();
+            await FailRequestAsync(runtime.Requests[0]);
+            await first;
 
-        Assert.True(viewModel.IsError);
-        Assert.True(viewModel.RetryInitializationCommand.CanExecute(null));
-        Assert.Equal("docker.presentation.unavailable", viewModel.RuntimeErrorCode);
+            Assert.True(viewModel.IsError);
+            Assert.True(viewModel.RetryInitializationCommand.CanExecute(null));
+            Assert.Equal("docker.presentation.unavailable", viewModel.RuntimeErrorCode);
 
-        var retry = viewModel.RetryInitializationCommand.ExecuteAsync(null);
-        await runtime.Requests[1].Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        runtime.Requests[1].Response.TrySetResult(Response(Image("recovered:1.0")));
-        await retry;
+            var retry = viewModel.RetryInitializationCommand.ExecuteAsync(null);
+            await runtime.Requests[1].Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            runtime.Requests[1].Response.TrySetResult(Response(Image("recovered:1.0")));
+            await retry;
+        });
 
         Assert.True(viewModel.IsReady);
         Assert.Null(viewModel.RuntimeErrorCode);
@@ -328,22 +342,44 @@ public sealed class DockerSettingsRaceTests
         var initialization = viewModel.InitializeAsync();
         await runtime.Requests[0].Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
         var notifications = 0;
-        viewModel.PropertyChanged += (_, _) => notifications++;
+        viewModel.PropertyChanged += (_, _) => Interlocked.Increment(ref notifications);
 
-        viewModel.Dispose();
-        var notificationsAtDisposal = notifications;
-        await initialization.WaitAsync(TimeSpan.FromSeconds(2));
-        runtime.Requests[0].Response.TrySetResult(new DockerExecutionOperationResponse(
+        var lateResponse = new DockerExecutionOperationResponse(
             "999",
             "/tmp/stale",
             [Image("stale:latest")],
-            CatalogRevision: 99));
-        await Task.Yield();
+            CatalogRevision: 99);
+        await AdaptiveEditorLifecycleContract.RetiredWorkCannotPublishAsync(
+            Adapt(viewModel, publicationCount: () => Volatile.Read(ref notifications)),
+            viewModel.Dispose,
+            () => runtime.Requests[0].Response.TrySetResult(lateResponse),
+            initialization.WaitAsync(TimeSpan.FromSeconds(2)));
 
-        Assert.Equal(notificationsAtDisposal, notifications);
         Assert.Empty(viewModel.Images);
         Assert.NotEqual("999", viewModel.TimeoutSeconds);
     }
+
+    private static IAdaptiveEditorLifecycleAdapter Adapt(
+        DockerExecutionSettingsViewModel viewModel,
+        Func<bool>? isDirty = null,
+        Func<string?>? draftValue = null,
+        Func<int>? publicationCount = null)
+        => new DelegateAdaptiveEditorLifecycleAdapter(
+            "Docker",
+            () => new AdaptiveEditorSnapshot(
+                IsHydrating: !viewModel.IsDisposed && viewModel.IsLoading,
+                CanMutate: !viewModel.IsDisposed && viewModel.CanMutate,
+                IsBusy: !viewModel.IsDisposed && viewModel.IsBusy,
+                IsDirty: isDirty?.Invoke() ?? false,
+                viewModel.SelectedImage?.ImageReference,
+                draftValue?.Invoke() ?? viewModel.NewImageReference,
+                publicationCount?.Invoke() ?? 0,
+                viewModel.IsError
+                    ? AdaptiveEditorRuntimeState.Unavailable
+                    : viewModel.IsReady
+                        ? AdaptiveEditorRuntimeState.Available
+                        : AdaptiveEditorRuntimeState.Unknown),
+            viewModel);
 
     private static DockerExecutionOperationResponse Response(DockerImageDefinition image)
         => new("300", string.Empty, [image], CatalogRevision: 1);

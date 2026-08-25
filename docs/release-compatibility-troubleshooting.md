@@ -4,7 +4,7 @@ This guide is for extension authors. Maintainers releasing the complete first-pa
 
 ## Compatibility Contract
 
-Agent 2.x defines one schema-first RPC compatibility surface. Cross-package behavior is limited to the 18 bundled descriptors, generated bindings, and manifest-declared providers.
+Agent 2.x defines one schema-first RPC compatibility surface. It contains 31 RPC descriptors: 19 public bundled descriptors and 12 package-local owner descriptors. Cross-package behavior is limited to the public descriptors, generated bindings, and manifest-declared providers; 18 third-party extension points remain supported.
 
 Use these coordinated ranges:
 
@@ -53,7 +53,7 @@ Binary compatibility is not the only requirement. Descriptor ids, permission bou
 ## Release Checklist
 
 1. Set an immutable extension version.
-2. Confirm all Sunder/Agent dependency ranges are bounded to the intended minor.
+2. Confirm Agent Protocol references use `[2.0.0,3.0.0)` and runtime dependencies use the fixed `>=2.0.0 <3.0.0` family range, including patch and prerelease family releases.
 3. Restore/build/test in standalone NuGet mode, not only source-reference mode.
 4. Inspect generated manifest capabilities and runtime dependencies.
 5. Publish the project and validate the exact `.sunderpkg` bytes.

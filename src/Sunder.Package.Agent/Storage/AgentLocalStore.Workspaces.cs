@@ -5,6 +5,10 @@ namespace Sunder.Package.Agent.Storage;
 
 public sealed partial class AgentLocalStore
 {
+    // Microsoft.Data.Sqlite executes its async ADO.NET methods synchronously, so workspace reads
+    // own this thread-pool boundary rather than blocking an RPC dispatch thread.
+    internal Action<CancellationToken>? WorkspaceReadStarting { get; set; }
+
     public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces()
     {
         using var connection = CreateConnection();
@@ -17,6 +21,33 @@ public sealed partial class AgentLocalStore
         using var connection = CreateConnection();
         connection.Open();
         return GetWorkspace(connection, workspaceId);
+    }
+
+    public Task<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesAsync(
+        CancellationToken cancellationToken = default)
+    {
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return Task.FromCanceled<IReadOnlyList<AgentWorkspaceRecord>>(cancellationToken);
+        }
+
+        return Task.Run(
+            () => ListWorkspacesCoreAsync(cancellationToken),
+            CancellationToken.None);
+    }
+
+    public Task<AgentWorkspaceRecord?> GetWorkspaceAsync(
+        string workspaceId,
+        CancellationToken cancellationToken = default)
+    {
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return Task.FromCanceled<AgentWorkspaceRecord?>(cancellationToken);
+        }
+
+        return Task.Run(
+            () => GetWorkspaceCoreAsync(workspaceId, cancellationToken),
+            CancellationToken.None);
     }
 
     public void SaveWorkspace(AgentWorkspaceRecord workspace)
@@ -198,6 +229,20 @@ public sealed partial class AgentLocalStore
         return ListWorkspaceBindings(connection, workspaceId);
     }
 
+    public Task<IReadOnlyList<AgentWorkspaceBindingRecord>> ListWorkspaceBindingsAsync(
+        string workspaceId,
+        CancellationToken cancellationToken = default)
+    {
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return Task.FromCanceled<IReadOnlyList<AgentWorkspaceBindingRecord>>(cancellationToken);
+        }
+
+        return Task.Run(
+            () => ListWorkspaceBindingsCoreAsync(workspaceId, cancellationToken),
+            CancellationToken.None);
+    }
+
     public AgentWorkspaceBindingRecord? GetWorkspaceBinding(string bindingId)
     {
         using var connection = CreateConnection();
@@ -240,6 +285,34 @@ public sealed partial class AgentLocalStore
         return items.Select(workspace => HydrateWorkspace(connection, workspace)).ToArray();
     }
 
+    private async Task<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesCoreAsync(
+        CancellationToken cancellationToken)
+    {
+        WorkspaceReadStarting?.Invoke(cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT WorkspaceId, DisplayName, Description, CreatedAtUtc, UpdatedAtUtc FROM AgentWorkspaces ORDER BY DisplayName, UpdatedAtUtc DESC;";
+        var items = new List<AgentWorkspaceRecord>();
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
+        {
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                items.Add(ReadWorkspace(reader));
+            }
+        }
+
+        var hydrated = new List<AgentWorkspaceRecord>(items.Count);
+        foreach (var workspace in items)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            hydrated.Add(await HydrateWorkspaceAsync(connection, workspace, cancellationToken).ConfigureAwait(false));
+        }
+        return hydrated;
+    }
+
     private static AgentWorkspaceRecord? GetWorkspace(SqliteConnection connection, string workspaceId)
     {
         using var command = connection.CreateCommand();
@@ -258,11 +331,49 @@ public sealed partial class AgentLocalStore
         return workspace is null ? null : HydrateWorkspace(connection, workspace);
     }
 
+    private async Task<AgentWorkspaceRecord?> GetWorkspaceCoreAsync(
+        string workspaceId,
+        CancellationToken cancellationToken)
+    {
+        WorkspaceReadStarting?.Invoke(cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT WorkspaceId, DisplayName, Description, CreatedAtUtc, UpdatedAtUtc FROM AgentWorkspaces WHERE WorkspaceId = $workspaceId;";
+        command.Parameters.AddWithValue("$workspaceId", workspaceId);
+
+        AgentWorkspaceRecord? workspace = null;
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
+        {
+            if (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                workspace = ReadWorkspace(reader);
+            }
+        }
+
+        return workspace is null
+            ? null
+            : await HydrateWorkspaceAsync(connection, workspace, cancellationToken).ConfigureAwait(false);
+    }
+
     private static AgentWorkspaceRecord HydrateWorkspace(SqliteConnection connection, AgentWorkspaceRecord workspace)
         => workspace with
         {
             Paths = ListWorkspacePaths(connection, workspace.WorkspaceId),
             Documents = ListWorkspaceDocuments(connection, workspace.WorkspaceId),
+        };
+
+    private static async Task<AgentWorkspaceRecord> HydrateWorkspaceAsync(
+        SqliteConnection connection,
+        AgentWorkspaceRecord workspace,
+        CancellationToken cancellationToken)
+        => workspace with
+        {
+            Paths = await ListWorkspacePathsAsync(connection, workspace.WorkspaceId, cancellationToken)
+                .ConfigureAwait(false),
+            Documents = await ListWorkspaceDocumentsAsync(connection, workspace.WorkspaceId, cancellationToken)
+                .ConfigureAwait(false),
         };
 
     private static AgentWorkspaceRecord ReadWorkspace(SqliteDataReader reader)
@@ -319,6 +430,32 @@ public sealed partial class AgentLocalStore
         using var reader = command.ExecuteReader();
         var paths = new List<AgentWorkspacePathRecord>();
         while (reader.Read())
+        {
+            paths.Add(new AgentWorkspacePathRecord(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.GetInt64(3) != 0,
+                reader.GetInt32(4),
+                DateTimeOffset.Parse(reader.GetString(5)),
+                DateTimeOffset.Parse(reader.GetString(6))));
+        }
+
+        return paths;
+    }
+
+    private static async Task<IReadOnlyList<AgentWorkspacePathRecord>> ListWorkspacePathsAsync(
+        SqliteConnection connection,
+        string workspaceId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT PathId, WorkspaceId, HostPath, IsDefault, SortOrder, CreatedAtUtc, UpdatedAtUtc FROM AgentWorkspacePaths WHERE WorkspaceId = $workspaceId ORDER BY SortOrder, HostPath;";
+        command.Parameters.AddWithValue("$workspaceId", workspaceId);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        var paths = new List<AgentWorkspacePathRecord>();
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
             paths.Add(new AgentWorkspacePathRecord(
                 reader.GetString(0),
@@ -399,6 +536,31 @@ public sealed partial class AgentLocalStore
         return documents;
     }
 
+    private static async Task<IReadOnlyList<AgentWorkspaceDocumentRecord>> ListWorkspaceDocumentsAsync(
+        SqliteConnection connection,
+        string workspaceId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT DocumentId, WorkspaceId, FilePath, SortOrder, CreatedAtUtc, UpdatedAtUtc FROM AgentWorkspaceDocuments WHERE WorkspaceId = $workspaceId ORDER BY SortOrder, FilePath;";
+        command.Parameters.AddWithValue("$workspaceId", workspaceId);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        var documents = new List<AgentWorkspaceDocumentRecord>();
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            documents.Add(new AgentWorkspaceDocumentRecord(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.GetInt32(3),
+                DateTimeOffset.Parse(reader.GetString(4)),
+                DateTimeOffset.Parse(reader.GetString(5))));
+        }
+
+        return documents;
+    }
+
     private static void InsertWorkspaceDocument(
         SqliteConnection connection,
         AgentWorkspaceDocumentRecord document,
@@ -455,6 +617,27 @@ public sealed partial class AgentLocalStore
             bindings.Add(ReadWorkspaceBinding(reader));
         }
 
+        return bindings;
+    }
+
+    private async Task<IReadOnlyList<AgentWorkspaceBindingRecord>> ListWorkspaceBindingsCoreAsync(
+        string workspaceId,
+        CancellationToken cancellationToken)
+    {
+        WorkspaceReadStarting?.Invoke(cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        await using var connection = CreateConnection();
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT BindingId, WorkspaceId, ExtensionPointId, ContributionId, Role, IsEnabled, SortOrder, CreatedAtUtc, UpdatedAtUtc FROM AgentWorkspaceBindings WHERE WorkspaceId = $workspaceId ORDER BY SortOrder, ContributionId;";
+        command.Parameters.AddWithValue("$workspaceId", workspaceId);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        var bindings = new List<AgentWorkspaceBindingRecord>();
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            bindings.Add(ReadWorkspaceBinding(reader));
+        }
         return bindings;
     }
 

@@ -439,13 +439,83 @@ public sealed class McpServerStackContributorTests
         }
     }
 
+    [Fact]
+    public async Task SunderConfigurationSyncService_PropagatesWorkspaceCatalogCallerCancellation()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            var context = new TestPackageContext(Path.Combine(root, "package"));
+            var importer = new McpEcosystemConfigurationImporter(new McpServerCatalogService(context));
+            var runtimeCatalog = new TestRuntimeCatalog([], blockWorkspaceList: true);
+            using var extensionCatalog = new TestExtensionCatalog(runtimeCatalog);
+            var syncService = new McpSunderConfigurationSyncService(
+                importer,
+                extensionCatalog,
+                userProfilePath: root);
+            using var cancellation = new CancellationTokenSource();
+
+            var sync = syncService.SyncAsync(cancellation.Token);
+            await runtimeCatalog.WorkspaceListStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            await cancellation.CancelAsync();
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sync)
+                .WaitAsync(TimeSpan.FromSeconds(2));
+            await runtimeCatalog.WorkspaceListCancellationObserved.Task
+                .WaitAsync(TimeSpan.FromSeconds(2));
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    [Fact]
+    public async Task SunderConfigurationSyncService_TreatsWorkspaceCatalogRetirementAsUnavailable()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            var context = new TestPackageContext(Path.Combine(root, "package"));
+            var importer = new McpEcosystemConfigurationImporter(new McpServerCatalogService(context));
+            var runtimeCatalog = new TestRuntimeCatalog([], blockWorkspaceList: true);
+            using var extensionCatalog = new TestExtensionCatalog(runtimeCatalog);
+            var syncService = new McpSunderConfigurationSyncService(
+                importer,
+                extensionCatalog,
+                userProfilePath: root);
+
+            var sync = syncService.SyncAsync();
+            await runtimeCatalog.WorkspaceListStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            var retirement = extensionCatalog.RetireProviderAsync(runtimeCatalog);
+
+            var result = await sync.WaitAsync(TimeSpan.FromSeconds(2));
+            await retirement.WaitAsync(TimeSpan.FromSeconds(2));
+            await runtimeCatalog.WorkspaceListCancellationObserved.Task
+                .WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.Equal(0, result.ImportedCount);
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
     [Theory]
     [InlineData("duplicate-property")]
     [InlineData("normalized-name-collision")]
     [InlineData("invalid-utf8")]
-    [InlineData("symlink")]
     [InlineData("oversized")]
-    public async Task ConfigurationImport_RejectsAdversarialDocumentBeforeMutation(string adversary)
+    public Task ConfigurationImport_RejectsAdversarialDocumentBeforeMutation(string adversary)
+        => AssertConfigurationImportRejectsAdversarialDocumentBeforeMutation(adversary);
+
+    [FileSystemFact(
+        TestFileSystemCapability.FileSymbolicLinks,
+        "MCP configuration-link rejection requires file symbolic links.")]
+    public Task ConfigurationImport_RejectsSymbolicLinkBeforeMutation()
+        => AssertConfigurationImportRejectsAdversarialDocumentBeforeMutation("symlink");
+
+    private static async Task AssertConfigurationImportRejectsAdversarialDocumentBeforeMutation(string adversary)
     {
         var root = CreateTempDirectory();
         try
@@ -617,7 +687,9 @@ public sealed class McpServerStackContributorTests
         }
     }
 
-    private sealed class TestRuntimeCatalog(IReadOnlyList<AgentWorkspaceRecord> workspaces) : IAgentRuntimeCatalog
+    private sealed class TestRuntimeCatalog(
+        IReadOnlyList<AgentWorkspaceRecord> workspaces,
+        bool blockWorkspaceList = false) : IAgentRuntimeCatalog
     {
         public event Action<Guid>? SessionChanged;
 
@@ -627,6 +699,12 @@ public sealed class McpServerStackContributorTests
 
         public event Action? ResetRequired;
 
+        public TaskCompletionSource WorkspaceListStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource WorkspaceListCancellationObserved { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public IReadOnlyList<AgentSessionRecord> ListSessions() => [];
 
         public IReadOnlyList<AgentSessionRecord> ListSessionsForProfile(string profileId) => [];
@@ -635,10 +713,36 @@ public sealed class McpServerStackContributorTests
 
         public AgentSessionRecord? GetSession(Guid sessionId) => null;
 
-        public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces() => workspaces;
+        public async ValueTask<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesAsync(
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!blockWorkspaceList)
+            {
+                return workspaces;
+            }
 
-        public AgentWorkspaceRecord? GetWorkspace(string workspaceId)
-            => workspaces.FirstOrDefault(workspace => string.Equals(workspace.WorkspaceId, workspaceId, StringComparison.OrdinalIgnoreCase));
+            WorkspaceListStarted.TrySetResult();
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                return workspaces;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                WorkspaceListCancellationObserved.TrySetResult();
+                throw;
+            }
+        }
+
+        public ValueTask<AgentWorkspaceRecord?> GetWorkspaceAsync(
+            string workspaceId,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult<AgentWorkspaceRecord?>(workspaces.FirstOrDefault(workspace =>
+                string.Equals(workspace.WorkspaceId, workspaceId, StringComparison.OrdinalIgnoreCase)));
+        }
 
         public AgentProfileRecord? GetSessionProfile(Guid sessionId) => null;
 

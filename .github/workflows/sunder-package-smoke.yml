@@ -65,15 +65,141 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
-      - name: Restore, build, and test coordinated Agent sources
+      - name: Restore and build coordinated Agent sources
         working-directory: sunder-agent-package
         shell: bash
         run: |
           set -euo pipefail
           version="$(jq -er '.releaseVersion' packages.json)"
+          mkdir -p artifacts/reports
+          bash scripts/generate-test-inventory.sh > artifacts/reports/test-inventory.json
+          test "$(jq '.projects | length' artifacts/reports/test-inventory.json)" -eq 11
+          bash scripts/test-silent-return-analyzer.fixture.sh
+          bash scripts/release/verify-agent-release-version.fixture.sh
+          bash scripts/generate-test-duration-report.fixture.sh
           dotnet restore Sunder.AgentPackage.slnx --force-evaluate -p:SunderUseSourceSdk=true
           dotnet build Sunder.AgentPackage.slnx -c Release --no-restore -m:1 -p:SunderUseSourceSdk=true -p:SunderAgentVersion="$version" -p:ContinuousIntegrationBuild=true
-          dotnet test Sunder.AgentPackage.slnx -c Release --no-build --no-restore -m:1 -p:SunderUseSourceSdk=true
+
+      - name: Run complete source-mode behavioral suite
+        id: source_tests
+        continue-on-error: true
+        working-directory: sunder-agent-package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/test-results/full
+          dotnet test Sunder.AgentPackage.slnx -c Release --no-build --no-restore -m:1 \
+            -p:SunderUseSourceSdk=true --logger trx \
+            --results-directory "$PWD/artifacts/test-results/full"
+
+      - name: Run required Linux selection once
+        id: required_linux_test
+        continue-on-error: true
+        working-directory: sunder-agent-package
+        shell: bash
+        env:
+          SUNDER_REQUIRE_TEST_PREREQUISITES: "1"
+        run: |
+          set -euo pipefail
+          project=tests/Sunder.Package.Agent.Execution.Local.Tests/Sunder.Package.Agent.Execution.Local.Tests.csproj
+          test_fqn=Sunder.Package.Agent.Execution.Local.Tests.FilesToolSourceRefactorTests.ApplyPatch_LinuxAtEmptyPathEperm_UsesPortablePublishFallback
+          discovered="$(dotnet test "$project" -c Release --no-build --no-restore -m:1 \
+            -p:SunderUseSourceSdk=true --list-tests --filter "FullyQualifiedName=$test_fqn")"
+          grep -Fqx "    $test_fqn" <<< "$discovered"
+          mkdir -p artifacts/test-results/required
+          dotnet test "$project" -c Release --no-build --no-restore -m:1 \
+            -p:SunderUseSourceSdk=true --filter "FullyQualifiedName=$test_fqn" \
+            --logger "trx;LogFileName=required-linux.trx" \
+            --results-directory "$PWD/artifacts/test-results/required"
+
+      - name: Run required real-Docker selection once
+        id: required_docker_test
+        continue-on-error: true
+        working-directory: sunder-agent-package
+        shell: bash
+        env:
+          SUNDER_DOCKER_INTEGRATION: "1"
+          SUNDER_REQUIRE_TEST_PREREQUISITES: "1"
+        run: |
+          set -euo pipefail
+          project=tests/Sunder.Package.Agent.Tests/Sunder.Package.Agent.Tests.csproj
+          test_fqn=Sunder.Package.Agent.Tests.WorkspaceTests.DockerExecutionTarget_RealDaemon_VerifiesMountAndContainerCanReadNestedHostCreation
+          discovered="$(dotnet test "$project" -c Release --no-build --no-restore -m:1 \
+            -p:SunderUseSourceSdk=true --list-tests --filter "FullyQualifiedName=$test_fqn")"
+          grep -Fqx "    $test_fqn" <<< "$discovered"
+          mkdir -p artifacts/test-results/required
+          dotnet test "$project" -c Release --no-build --no-restore -m:1 \
+            -p:SunderUseSourceSdk=true --filter "FullyQualifiedName=$test_fqn" \
+            --logger "trx;LogFileName=required-docker.trx" \
+            --results-directory "$PWD/artifacts/test-results/required"
+
+      - name: Summarize source-mode test evidence
+        id: source_test_summary
+        if: always()
+        working-directory: sunder-agent-package
+        shell: bash
+        run: |
+          set -uo pipefail
+          status=0
+          python3 scripts/generate-test-duration-report.py artifacts/test-results \
+            --inventory artifacts/reports/test-inventory.json \
+            --mode source \
+            --platform linux \
+            --expectations tests/test-evidence-expectations.json \
+            > artifacts/reports/test-duration-report.json || status=1
+          python3 scripts/generate-test-duration-report.py artifacts/test-results/required \
+            --expected-skips 0 \
+            > artifacts/reports/required-test-duration-report.json || status=1
+          exit "$status"
+
+      - name: Upload source-mode test evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sunder-agent-source-mode-tests
+          path: |
+            sunder-agent-package/artifacts/reports/test-inventory.json
+            sunder-agent-package/artifacts/reports/test-duration-report.json
+            sunder-agent-package/artifacts/reports/required-test-duration-report.json
+            sunder-agent-package/artifacts/test-results/**/*.trx
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Enforce source-mode test evidence
+        if: always()
+        working-directory: sunder-agent-package
+        shell: bash
+        env:
+          DOCKER_TEST_OUTCOME: ${{ steps.required_docker_test.outcome }}
+          LINUX_TEST_OUTCOME: ${{ steps.required_linux_test.outcome }}
+          SOURCE_SUMMARY_OUTCOME: ${{ steps.source_test_summary.outcome }}
+          SOURCE_TEST_OUTCOME: ${{ steps.source_tests.outcome }}
+        run: |
+          set -euo pipefail
+          test "$SOURCE_TEST_OUTCOME" = success
+          test "$LINUX_TEST_OUTCOME" = success
+          test "$DOCKER_TEST_OUTCOME" = success
+          test "$SOURCE_SUMMARY_OUTCOME" = success
+          jq -e '
+            .selection == {mode: "source", lane: null, platform: "linux"}
+            and .summary.failed == 0
+            and .summary.other == 0
+            and .canonicalIdentityExpectation == {platform: "linux", enforced: true}
+            and (.projectSuiteEvidence | length) == 11
+            and (.identityEvidence | length) == 11
+            and .evidenceViolations == []
+          ' artifacts/reports/test-duration-report.json >/dev/null
+          jq -e '
+            .summary == {
+              total: 2,
+              passed: 2,
+              failed: 0,
+              skipped: 0,
+              other: 0,
+              totalDurationMilliseconds: .summary.totalDurationMilliseconds
+            }
+            and .evidenceViolations == []
+          ' artifacts/reports/required-test-duration-report.json >/dev/null
 
       - name: Pack Protocol and every runtime archive once
         working-directory: sunder-agent-package
@@ -88,6 +214,8 @@ jobs:
             -c Release --no-build --no-restore -o "$output" \
             -p:SunderUseSourceSdk=true -p:SunderAgentVersion="$version" \
             -p:ContinuousIntegrationBuild=true
+          bash scripts/compatibility/verify-packed-protocol.sh \
+            "$output/Sunder.Package.Agent.Protocol.$version.nupkg" "$version"
 
           while IFS=$'\t' read -r package_id project_path; do
             output_path="$output/$package_id.$version.sunderpkg"
@@ -126,6 +254,7 @@ jobs:
                 elif .role == "app" then
                   .kind == "avalonia" and (.requiredHostCapabilities | index("worker-protocol.v3") == null)
                 else false end) and
+              all(.dependsOn[]; .versionRange == ">=2.0.0 <3.0.0") and
               ([.provides[].providerId] | sort) == ($provider_ids | sort)
             ' "$manifest" >/dev/null
             jq -e '
@@ -141,6 +270,12 @@ jobs:
                 (.path | test("/[^/]+\\.App\\.(dll|pdb|deps\\.json)$")) == false)
             ' "$content_index" >/dev/null
           done < <(jq -r '.packages | map(select(.artifactType == "sunderpkg")) | sort_by(.key)[] | [.packageId, (.providerIds | tojson)] | @tsv' packages.json)
+
+          SUNDER_REQUIRE_TEST_PREREQUISITES=1 \
+          SUNDER_AGENT_PACKAGE_ARCHIVE_DIR="$output" \
+            dotnet test tests/Sunder.Package.Agent.Tests/Sunder.Package.Agent.Tests.csproj \
+              -c Release --no-build --no-restore -m:1 \
+              --filter "FullyQualifiedName~PackageFamilyArchiveContractTests"
 
       - name: Build Core validation and smoke paths
         working-directory: sunder-core

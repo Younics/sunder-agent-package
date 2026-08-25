@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
@@ -13,6 +14,7 @@ public sealed class AgentSystemPromptComposer(AgentRpcCatalog rpcCatalog)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var blocks = new List<AgentSystemPromptBlock>();
+        blocks.Add(CreateUtcContextBlock(request.RunStartedAtUtc));
         blocks.Add(CreateUntrustedContextPolicyBlock());
         blocks.Add(AgentVisibleResponseGuard.CreateSystemPromptBlock());
         blocks.Add(CreateToolOutcomePolicyBlock());
@@ -84,6 +86,26 @@ public sealed class AgentSystemPromptComposer(AgentRpcCatalog rpcCatalog)
         }
 
         return builder.Length == 0 ? null : builder.ToString();
+    }
+
+    private static AgentSystemPromptBlock CreateUtcContextBlock(DateTimeOffset runStartedAtUtc)
+    {
+        var startedAtUtc = runStartedAtUtc.ToUniversalTime();
+        var date = startedAtUtc.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        var timestamp = startedAtUtc.ToString("O", CultureInfo.InvariantCulture);
+        return new AgentSystemPromptBlock(
+            "current-utc-date-time",
+            "Current UTC Date And Time",
+            $"""
+            Current UTC date: {date}
+            This run started at: {timestamp}
+
+            Use this as the authoritative current date and time for this run.
+            Do not infer the current date from conversation history, memory, historical tool results, model knowledge, or Web Search.
+            """,
+            Priority: 1_000,
+            Required: true,
+            SourceId: "sunder.package.agent");
     }
 
     private static IReadOnlyList<AgentSystemPromptBlock> BuildToolRuntimeInstructionBlocks(IReadOnlyList<AgentToolDescriptor> availableTools)

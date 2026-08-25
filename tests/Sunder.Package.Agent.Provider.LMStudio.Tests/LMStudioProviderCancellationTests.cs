@@ -37,6 +37,10 @@ public sealed class LMStudioProviderCancellationTests
             (true, true) => () => embeddingProvider.GetReadinessAsync(cancellation.Token).AsTask(),
         };
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(operation);
+        var exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(operation);
+        ProviderConformanceHarness.VerifyCallerCancellation(
+            "LM Studio",
+            exception,
+            cancellation.Token);
     }
 }

@@ -470,7 +470,7 @@ public sealed class AnthropicProviderTests
 
         var updates = await ReadUpdatesAsync(
             client,
-            [new ChatMessage(ChatRole.User, "Think.")],
+            [new ChatMessage(ChatRole.User, ProviderFailureInputs.RequestCanary)],
             new ChatOptions
             {
                 Reasoning = new ReasoningOptions
@@ -488,6 +488,12 @@ public sealed class AnthropicProviderTests
         Assert.Equal(
             "provider.request.start,provider.stream.start,provider.stream.first_event,provider.stream.completed",
             string.Join(",", logger.EventNames));
+        ProviderConformanceHarness.VerifyTelemetryAndRedaction(
+            "Anthropic",
+            logger.EventNames,
+            logger.TelemetryText,
+            ProviderFailureInputs.SecretCanary,
+            ProviderFailureInputs.RequestCanary);
     }
 
     [Theory]
@@ -588,16 +594,17 @@ public sealed class AnthropicProviderTests
             var exception = await Assert.ThrowsAsync<AgentChatProviderException>(() => ReadUpdatesAsync(
                 client,
                 [new ChatMessage(ChatRole.User, "Read both.")],
-                options));
+            options));
             Assert.Equal("anthropic-multiple-tool-calls", exception.ErrorCode);
-            return;
         }
-
-        var updates = await ReadUpdatesAsync(
-            client,
-            [new ChatMessage(ChatRole.User, "Read both.")],
-            options);
-        Assert.Equal(2, Assert.Single(ContentUpdates(updates)).Contents.OfType<FunctionCallContent>().Count());
+        else
+        {
+            var updates = await ReadUpdatesAsync(
+                client,
+                [new ChatMessage(ChatRole.User, "Read both.")],
+                options);
+            Assert.Equal(2, Assert.Single(ContentUpdates(updates)).Contents.OfType<FunctionCallContent>().Count());
+        }
     }
 
     [Fact]
@@ -660,6 +667,15 @@ public sealed class AnthropicProviderTests
         Assert.Equal(AgentChatProviderFailureKind.ContextWindowExceeded, exception.FailureKind);
     }
 
+    [Fact]
+    public void ExceptionMapper_SatisfiesCommonFailureConformance()
+        => ProviderConformanceHarness.VerifyFailureClassification(new ProviderFailureConformanceAdapter(
+            "Anthropic",
+            exception => AnthropicExceptionMapper.Map(exception).FailureKind
+                == AgentChatProviderFailureKind.ContextWindowExceeded
+                    ? ProviderFailureClassification.ContextWindowExceeded
+                    : ProviderFailureClassification.Unknown));
+
     [Theory]
     [InlineData("Anthropic returned HTTP 400: bad request")]
     [InlineData("max_output_tokens must be positive")]
@@ -705,11 +721,30 @@ public sealed class AnthropicProviderTests
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => ReadUpdatesAsync(
+        var exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => ReadUpdatesAsync(
             client,
             [new ChatMessage(ChatRole.User, "Do not send.")],
             cancellationToken: cancellation.Token));
+        ProviderConformanceHarness.VerifyCallerCancellation("Anthropic", exception, cancellation.Token);
         Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task Readiness_SatisfiesCommonLifecycleConformance()
+    {
+        var context = new ProviderTestPackageContext("sunder.package.agent.provider.anthropic");
+        var provider = new AnthropicAgentProvider(context);
+        var transitions = new List<string>
+        {
+            (await provider.GetReadinessAsync()).Status.ToString(),
+        };
+
+        await context.Secrets.SetSecretAsync(
+            AnthropicProviderConfiguration.ApiKeySecretKey,
+            "test-key");
+        transitions.Add((await provider.GetReadinessAsync()).Status.ToString());
+
+        ProviderConformanceHarness.VerifyReadinessTransitions("Anthropic", transitions);
     }
 
     [Fact]
@@ -741,6 +776,9 @@ public sealed class AnthropicProviderTests
         Assert.Equal("Before", Assert.IsType<TextContent>(contents[0]).Text);
         Assert.Equal("read_file", Assert.IsType<FunctionCallContent>(contents[1]).Name);
         Assert.Equal("After", Assert.IsType<TextContent>(contents[2]).Text);
+        ProviderConformanceHarness.VerifyToolResultOrder(
+            "Anthropic",
+            contents.Select(static content => content is FunctionCallContent ? "tool" : "text"));
     }
 
     [Theory]
@@ -784,6 +822,7 @@ public sealed class AnthropicProviderTests
             [new ChatMessage(ChatRole.User, "Continue.")]));
 
         Assert.Equal("anthropic-incomplete-response", exception.ErrorCode);
+        ProviderConformanceHarness.VerifyPrematureEof("Anthropic", exception.ErrorCode);
     }
 
     [Fact]
@@ -804,7 +843,24 @@ public sealed class AnthropicProviderTests
         });
 
         Assert.Equal("anthropic-timeout", exception.ErrorCode);
+        ProviderConformanceHarness.VerifyProviderTimeout("Anthropic", exception.ErrorCode);
     }
+
+    [Fact]
+    public async Task RealProviderAdapter_SatisfiesUnifiedConformanceContract()
+        => await ProviderConformanceHarness.VerifyAsync(new ProviderConformanceAdapter(
+            "Anthropic",
+            () =>
+            {
+                ExceptionMapper_SatisfiesCommonFailureConformance();
+                return Task.CompletedTask;
+            },
+            StreamingPrematureEof_IsFailure,
+            StreamingCancellation_IsNotMappedAndIsLogged,
+            ProviderCancellationWithoutCallerCancellation_IsTimeoutFailure,
+            Readiness_SatisfiesCommonLifecycleConformance,
+            ToolResponse_PreservesMixedTextAndToolOrdering,
+            StandardStreaming_TranslatesReasoningSummaryAndTextDeltas));
 
     private static AnthropicChatClient CreateChatClient(
         HttpMessageHandler handler,
@@ -816,14 +872,14 @@ public sealed class AnthropicProviderTests
             new ProviderCredentialAccessor(
                 new ProviderTestSecrets(new Dictionary<string, string>
                 {
-                    [AnthropicProviderConfiguration.ApiKeySecretKey] = "test-key",
+                    [AnthropicProviderConfiguration.ApiKeySecretKey] = ProviderFailureInputs.SecretCanary,
                 }),
                 AnthropicProviderConfiguration.ApiKeySecretKey),
             (_, useFastMode, transportContext) =>
             {
                 IAnthropicClient sdkClient = new AnthropicClient
                 {
-                    ApiKey = "test-key",
+                    ApiKey = ProviderFailureInputs.SecretCanary,
                     HttpClient = new HttpClient(handler, disposeHandler: false),
                     MaxRetries = 0,
                 };
@@ -1025,6 +1081,10 @@ public sealed class AnthropicProviderTests
     {
         internal List<string> EventNames { get; } = [];
 
+        internal List<string> Entries { get; } = [];
+
+        internal string TelemetryText => string.Join('\n', Entries);
+
         public ValueTask WriteAsync(
             PackageLogLevel level,
             string eventName,
@@ -1035,6 +1095,14 @@ public sealed class AnthropicProviderTests
         {
             cancellationToken.ThrowIfCancellationRequested();
             EventNames.Add(eventName);
+            Entries.Add(string.Join(
+                "|",
+                eventName,
+                message,
+                attributes is null
+                    ? string.Empty
+                    : string.Join(",", attributes.Select(static entry => $"{entry.Key}={entry.Value}")),
+                exception?.ToString() ?? string.Empty));
             return ValueTask.CompletedTask;
         }
     }

@@ -251,7 +251,6 @@ export MOCK_EXPECTED_PACKAGE_ID=fixture.package
 export MOCK_EXPECTED_VERSION=1.2.3
 export MOCK_EXPECTED_PUBLISH_TOKEN=sunder_pub_v1_0123456789012345678901234567890123456789012
 export SUNDER_REGISTRY_PUBLISH_TOKEN="$MOCK_EXPECTED_PUBLISH_TOKEN"
-export SUNDER_REGISTRY_CLI_TOKEN=sunder_cli_0123456789012345678901234567890123456789012
 
 write_details() {
   local advertised_canonical_sha="${1:-$canonical_sha}"
@@ -434,12 +433,38 @@ run_publisher() {
     https://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION"
 }
 
+run_verifier() {
+  env -u SUNDER_REGISTRY_PUBLISH_TOKEN PATH="$mock_bin:$PATH" bash "$publisher" --verify-only \
+    https://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION"
+}
+
 reset_fixture absent
 run_publisher > "$fixture_dir/publish.log"
 [[ "$(grep -c '^DETAILS$' "$MOCK_REGISTRY_CALLS")" -eq 2 ]]
 [[ "$(grep -c '^PUBLISH$' "$MOCK_REGISTRY_CALLS")" -eq 1 ]]
 [[ "$(grep -c '^CANONICAL$' "$MOCK_REGISTRY_CALLS")" -eq 1 ]]
 [[ "$(grep -c '^PROJECTION ' "$MOCK_REGISTRY_CALLS")" -eq 2 ]]
+
+reset_fixture published
+run_verifier > "$fixture_dir/verify-only.log"
+[[ "$(grep -c '^DETAILS$' "$MOCK_REGISTRY_CALLS")" -eq 1 ]]
+[[ "$(grep -c '^CANONICAL$' "$MOCK_REGISTRY_CALLS")" -eq 1 ]]
+[[ "$(grep -c '^PROJECTION ' "$MOCK_REGISTRY_CALLS")" -eq 2 ]]
+if grep -q '^PUBLISH$' "$MOCK_REGISTRY_CALLS"; then
+  printf 'Verify-only Registry inspection unexpectedly published a package.\n' >&2
+  exit 1
+fi
+
+reset_fixture absent
+if run_verifier > "$fixture_dir/verify-only-missing.log" 2>&1; then
+  printf 'Verify-only Registry inspection accepted a missing immutable version.\n' >&2
+  exit 1
+fi
+grep -Fq 'does not exist' "$fixture_dir/verify-only-missing.log"
+if grep -q '^PUBLISH$' "$MOCK_REGISTRY_CALLS"; then
+  printf 'Verify-only Registry inspection mutated a missing version.\n' >&2
+  exit 1
+fi
 
 reset_fixture published
 run_publisher > "$fixture_dir/existing.log"
@@ -560,7 +585,6 @@ grep -Fq 'content identity does not match its descriptor' "$fixture_dir/wrong-pr
 
 reset_fixture absent
 if env -u SUNDER_REGISTRY_PUBLISH_TOKEN \
-  SUNDER_REGISTRY_CLI_TOKEN="$SUNDER_REGISTRY_CLI_TOKEN" \
   PATH="$mock_bin:$PATH" bash "$publisher" \
   https://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION" \
   > "$fixture_dir/missing-token.log" 2>&1; then
@@ -586,4 +610,4 @@ if SUNDER_REGISTRY_PUBLISH_TOKEN=sunder_pub_v1_invalid \
 fi
 grep -Fq 'valid scoped sunder_pub_v1' "$fixture_dir/invalid-token.log"
 
-printf 'Registry publication fixture passed: canonical manifest-derived inventory, content identities, payloads, scoped headers, and reruns verified.\n'
+printf 'Registry publication fixture passed: publish and read-only verification enforce canonical bytes, projections, scoped headers, and no implicit promotion.\n'

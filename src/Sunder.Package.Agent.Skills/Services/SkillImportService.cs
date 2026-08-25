@@ -7,14 +7,16 @@ namespace Sunder.Package.Agent.Skills.Services;
 
 public sealed partial class SkillImportService
 {
+    internal static readonly TimeSpan DefaultGitHubImportTimeout = TimeSpan.FromMinutes(2);
     private readonly SkillStore _store;
     private readonly IGitHubSkillClient _gitHubClient;
     private readonly IPackageContext _packageContext;
     private readonly Action<SkillImportFaultPoint>? _faultInjector;
     private readonly SkillSourceAcquirer _sourceAcquirer;
+    private readonly TimeSpan _gitHubImportTimeout;
 
     public SkillImportService(SkillStore store, IGitHubSkillClient gitHubClient, IPackageContext packageContext)
-        : this(store, gitHubClient, packageContext, null)
+        : this(store, gitHubClient, packageContext, null, null)
     {
     }
 
@@ -23,12 +25,27 @@ public sealed partial class SkillImportService
         IGitHubSkillClient gitHubClient,
         IPackageContext packageContext,
         Action<SkillImportFaultPoint>? faultInjector)
+        : this(store, gitHubClient, packageContext, faultInjector, null)
     {
+    }
+
+    internal SkillImportService(
+        SkillStore store,
+        IGitHubSkillClient gitHubClient,
+        IPackageContext packageContext,
+        Action<SkillImportFaultPoint>? faultInjector,
+        TimeSpan? gitHubImportTimeout)
+    {
+        if (gitHubImportTimeout is { } timeout && timeout <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(gitHubImportTimeout));
+        }
         _store = store;
         _gitHubClient = gitHubClient;
         _packageContext = packageContext;
         _faultInjector = faultInjector;
         _sourceAcquirer = new SkillSourceAcquirer(gitHubClient, packageContext);
+        _gitHubImportTimeout = gitHubImportTimeout ?? DefaultGitHubImportTimeout;
     }
 
     public Task<InstalledSkillRecord> ImportLocalFolderAsync(string folderPath, CancellationToken cancellationToken = default)
@@ -111,12 +128,21 @@ public sealed partial class SkillImportService
         return imported;
     }
 
-    public async Task<IReadOnlyList<InstalledSkillRecord>> ImportGitHubAsync(string githubUrl, CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<InstalledSkillRecord>> ImportGitHubAsync(
+        string githubUrl,
+        CancellationToken cancellationToken = default)
+        => RunGitHubImportWithDeadlineAsync(
+            token => ImportGitHubCoreAsync(githubUrl, token),
+            cancellationToken);
+
+    private async Task<IReadOnlyList<InstalledSkillRecord>> ImportGitHubCoreAsync(
+        string githubUrl,
+        CancellationToken cancellationToken)
     {
         var parsedUrl = ParseGitHubUrl(githubUrl) ?? throw new InvalidOperationException("Enter a GitHub repository, tree, blob, or raw URL that points to a skill folder, SKILL.md, or a folder containing skills.");
         try
         {
-            return [await ImportGitHubFolderAsync(githubUrl, cancellationToken).ConfigureAwait(false)];
+            return [await ImportGitHubFolderCoreAsync(githubUrl, cancellationToken).ConfigureAwait(false)];
         }
         catch (InvalidOperationException ex) when (ex.Message.Contains("root SKILL.md", StringComparison.OrdinalIgnoreCase)
                                                  || ex.Message.Contains("must include a branch", StringComparison.OrdinalIgnoreCase))
@@ -180,7 +206,16 @@ public sealed partial class SkillImportService
         }
     }
 
-    public async Task<InstalledSkillRecord> ImportGitHubFolderAsync(string githubUrl, CancellationToken cancellationToken = default)
+    public Task<InstalledSkillRecord> ImportGitHubFolderAsync(
+        string githubUrl,
+        CancellationToken cancellationToken = default)
+        => RunGitHubImportWithDeadlineAsync(
+            token => ImportGitHubFolderCoreAsync(githubUrl, token),
+            cancellationToken);
+
+    private async Task<InstalledSkillRecord> ImportGitHubFolderCoreAsync(
+        string githubUrl,
+        CancellationToken cancellationToken)
     {
         var parsedUrl = ParseGitHubUrl(githubUrl) ?? throw new InvalidOperationException("Enter a GitHub tree/blob/raw URL that points to a skill folder or SKILL.md.");
         var reference = await ResolveGitHubReferenceAsync(parsedUrl, cancellationToken);
@@ -193,6 +228,24 @@ public sealed partial class SkillImportService
                 sourceRef: reference.Ref,
                 resolvedCommitSha: reference.CommitSha,
                 cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<T> RunGitHubImportWithDeadlineAsync<T>(
+        Func<CancellationToken, Task<T>> operation,
+        CancellationToken cancellationToken)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(_gitHubImportTimeout);
+        try
+        {
+            return await operation(deadline.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (
+            deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException(
+                $"GitHub skill import exceeded the {_gitHubImportTimeout.TotalSeconds:0.###}-second deadline.");
+        }
     }
 
     public Task<InstalledSkillRecord> ImportStackFolderAsync(string folderPath, CancellationToken cancellationToken = default)

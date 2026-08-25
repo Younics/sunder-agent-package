@@ -8,6 +8,7 @@ namespace Sunder.Package.Agent.Tests;
 public sealed class GeneratedPackageManifestTests
 {
     [Fact]
+    [Trait("Lane", "PackageCompatibility")]
     public void WorkerPackages_GenerateExpectedSdkCompatibilityMetadata()
     {
         var artifactsRoot = ResolveArtifactsRoot();
@@ -149,6 +150,26 @@ public sealed class GeneratedPackageManifestTests
                         RuntimeInformation.RuntimeIdentifier)
                     : Path.Combine(package.DirectoryPath, "bin", configuration, targetFramework!)
                 : Path.Combine(artifactsRoot, "bin", package.Name, configuration);
+            var familyOutputPath = artifactsRoot is null
+                ? Path.Combine(package.DirectoryPath, "bin", configuration, targetFramework!)
+                : packageOutputPath;
+            using (var canonicalManifest = JsonDocument.Parse(File.ReadAllText(Path.Combine(
+                       familyOutputPath,
+                       "sunder-dev",
+                       "manifest",
+                       "sunder-package.json"))))
+            {
+                var canonicalCapabilities = canonicalManifest.RootElement.GetProperty("targets")
+                    .EnumerateArray()
+                    .SelectMany(static target => target.GetProperty("requiredHostCapabilities").EnumerateArray()
+                        .Select(static capability => capability.GetString()!))
+                    .ToHashSet(StringComparer.Ordinal);
+                Assert.True(
+                    expected.SetEquals(canonicalCapabilities),
+                    $"{packageId} canonical capabilities differ. Missing: "
+                    + $"{string.Join(", ", expected.Except(canonicalCapabilities).Order(StringComparer.Ordinal))}. "
+                    + $"Unexpected: {string.Join(", ", canonicalCapabilities.Except(expected).Order(StringComparer.Ordinal))}.");
+            }
             var avaloniaSdkPath = Path.Combine(
                 packageOutputPath,
                 "sunder-dev",

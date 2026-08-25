@@ -38,10 +38,19 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
         return _store.ListWorkspaces();
     }
 
+    public Task<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesAsync(
+        CancellationToken cancellationToken = default)
+        => _store.ListWorkspacesAsync(cancellationToken);
+
     public AgentWorkspaceRecord? GetWorkspace(string workspaceId)
     {
         return _store.GetWorkspace(workspaceId);
     }
+
+    public Task<AgentWorkspaceRecord?> GetWorkspaceAsync(
+        string workspaceId,
+        CancellationToken cancellationToken = default)
+        => _store.GetWorkspaceAsync(workspaceId, cancellationToken);
 
     public AgentWorkspaceRecord CreateWorkspace(string displayName)
     {
@@ -222,6 +231,11 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
 
     public IReadOnlyList<AgentWorkspaceBindingRecord> ListBindings(string workspaceId)
         => _store.ListWorkspaceBindings(workspaceId);
+
+    public Task<IReadOnlyList<AgentWorkspaceBindingRecord>> ListBindingsAsync(
+        string workspaceId,
+        CancellationToken cancellationToken = default)
+        => _store.ListWorkspaceBindingsAsync(workspaceId, cancellationToken);
 
     public AgentWorkspaceBindingRecord SavePrimaryExecutionBinding(
         string workspaceId,

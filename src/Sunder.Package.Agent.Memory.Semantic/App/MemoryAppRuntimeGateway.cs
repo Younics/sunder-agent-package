@@ -1,19 +1,50 @@
+using Microsoft.Extensions.Logging;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Memory.Semantic.Runtime;
 using Sunder.Package.Agent.Memory.Semantic.Services;
+using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Memory.Semantic;
 
-internal sealed class MemoryAppRuntimeGateway(ISunderRpcClient rpc) : IMemoryInspectorGateway, IDisposable
+internal sealed class MemoryAppRuntimeGateway :
+    IMemoryInspectorGateway,
+    IOwnerStreamAvailability,
+    IDisposable,
+    IAsyncDisposable
 {
+    private readonly ISunderRpcClient _rpc;
     private readonly CancellationTokenSource _lifetime = new();
+    private readonly ILogger<MemoryAppRuntimeGateway>? _logger;
+    private readonly OwnerStreamObserver _observer;
+    private Task? _observationTask;
     private int _observationStarted;
     private int _disposed;
+    private int _lifetimeDisposed;
 
     public event Action<Guid>? SessionChanged;
     public event Action? SemanticWorkerStatusChanged;
     public event Action? ResetRequired;
+    public bool IsOwnerStreamAvailable => _observer.IsAvailable;
+    public event Action<bool>? OwnerStreamAvailabilityChanged
+    {
+        add => _observer.AvailabilityChanged += value;
+        remove => _observer.AvailabilityChanged -= value;
+    }
+
+    internal MemoryAppRuntimeGateway(ISunderRpcClient rpc)
+        : this(rpc, loggerFactory: null)
+    {
+    }
+
+    internal MemoryAppRuntimeGateway(ISunderRpcClient rpc, ILoggerFactory? loggerFactory)
+    {
+        _rpc = rpc;
+        _logger = loggerFactory?.CreateLogger<MemoryAppRuntimeGateway>();
+        _observer = new OwnerStreamObserver(LogObservationRetry);
+    }
+
+    internal Task? ObservationTask => _observationTask;
 
     public Task InitializeAsync(CancellationToken cancellationToken = default)
     {
@@ -21,7 +52,7 @@ internal sealed class MemoryAppRuntimeGateway(ISunderRpcClient rpc) : IMemoryIns
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         if (Interlocked.Exchange(ref _observationStarted, 1) == 0)
         {
-            _ = ObserveChangesAsync(_lifetime.Token);
+            _observationTask = _observer.RunAsync(ObserveChangesOnceAsync, _lifetime.Token);
         }
         return Task.CompletedTask;
     }
@@ -85,12 +116,40 @@ internal sealed class MemoryAppRuntimeGateway(ISunderRpcClient rpc) : IMemoryIns
 
     public void Dispose()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        StopObservation();
+        DisposeLifetime();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        StopObservation();
+        try
         {
-            return;
+            if (_observationTask is { } observationTask)
+            {
+                await observationTask.ConfigureAwait(false);
+            }
         }
-        _lifetime.Cancel();
-        _lifetime.Dispose();
+        finally
+        {
+            DisposeLifetime();
+        }
+    }
+
+    private void StopObservation()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) == 0)
+        {
+            _lifetime.Cancel();
+        }
+    }
+
+    private void DisposeLifetime()
+    {
+        if (Interlocked.Exchange(ref _lifetimeDisposed, 1) == 0)
+        {
+            _lifetime.Dispose();
+        }
     }
 
     private Task<MemoryProjection> DetailsAsync(Guid memoryId, CancellationToken cancellationToken)
@@ -108,59 +167,54 @@ internal sealed class MemoryAppRuntimeGateway(ISunderRpcClient rpc) : IMemoryIns
     {
         using var invocation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
         var provider = await ResolveProviderAsync(invocation.Token).ConfigureAwait(false);
-        await using var scope = await rpc.CreateCallScopeAsync(cancellationToken: invocation.Token).ConfigureAwait(false);
+        await using var scope = await _rpc.CreateCallScopeAsync(cancellationToken: invocation.Token).ConfigureAwait(false);
         return await invoke(MemoryInspectorRpc.CreateClient(scope, provider.Endpoint), invocation.Token).ConfigureAwait(false);
     }
 
-    private async Task ObserveChangesAsync(CancellationToken cancellationToken)
+    private async Task ObserveChangesOnceAsync(
+        Action markAvailable,
+        CancellationToken cancellationToken)
     {
-        while (!cancellationToken.IsCancellationRequested)
+        var provider = await ResolveProviderAsync(cancellationToken).ConfigureAwait(false);
+        await using var scope = await _rpc.CreateCallScopeAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+        var client = MemoryInspectorRpc.CreateClient(scope, provider.Endpoint);
+        var connected = false;
+        await foreach (var change in client.ChangesAsync(
+                           new MemoryChangeSubscription(),
+                           cancellationToken).ConfigureAwait(false))
         {
-            try
+            if (!connected)
             {
-                var provider = await ResolveProviderAsync(cancellationToken).ConfigureAwait(false);
-                await using var scope = await rpc.CreateCallScopeAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
-                var client = MemoryInspectorRpc.CreateClient(scope, provider.Endpoint);
-                await foreach (var change in client.ChangesAsync(new MemoryChangeSubscription(), cancellationToken).ConfigureAwait(false))
-                {
-                    if (change.Kind == MemoryChangeKind.Session && change.SessionId is { } sessionId)
-                    {
-                        SessionChanged?.Invoke(sessionId);
-                    }
-                    if (change.Kind == MemoryChangeKind.Worker)
-                    {
-                        SemanticWorkerStatusChanged?.Invoke();
-                    }
-                    if (change.Kind == MemoryChangeKind.ResetRequired)
-                    {
-                        ResetRequired?.Invoke();
-                    }
-                }
+                connected = true;
+                markAvailable();
             }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            switch (change.Kind)
             {
-                return;
-            }
-            catch
-            {
-                // Provider replacement is recovered by fresh owner discovery below.
-            }
-
-            try
-            {
-                await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                return;
+                case MemoryChangeKind.Session when change.SessionId is { } sessionId:
+                    SessionChanged?.Invoke(sessionId);
+                    break;
+                case MemoryChangeKind.Worker:
+                    SemanticWorkerStatusChanged?.Invoke();
+                    break;
+                case MemoryChangeKind.ResetRequired:
+                    ResetRequired?.Invoke();
+                    break;
+                default:
+                    throw new InvalidDataException("The Semantic Memory Runtime returned a malformed change event.");
             }
         }
     }
 
+    private void LogObservationRetry(Exception exception, TimeSpan retryDelay)
+        => _logger?.LogWarning(
+            "Semantic Memory owner change observation failed and will retry in {RetryDelayMilliseconds} ms ({ExceptionType}).",
+            retryDelay.TotalMilliseconds,
+            exception.GetType().Name);
+
     private async ValueTask<SunderRpcProviderSnapshot> ResolveProviderAsync(CancellationToken cancellationToken)
     {
         var descriptor = MemorySemanticProtocol.Inspector;
-        var catalog = await rpc.DiscoverAsync(descriptor.ContractId, cancellationToken).ConfigureAwait(false);
+        var catalog = await _rpc.DiscoverAsync(descriptor.ContractId, cancellationToken).ConfigureAwait(false);
         var provider = catalog.Providers.SingleOrDefault(candidate =>
             candidate.ProviderId == MemorySemanticProtocol.ProviderId
             && candidate.State == SunderRpcProviderState.Active

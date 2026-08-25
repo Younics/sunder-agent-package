@@ -12,6 +12,8 @@ internal sealed class LatestRequestCoordinator : IDisposable
     private readonly object _syncRoot = new();
     private readonly Dictionary<string, RequestState> _requests = new(StringComparer.Ordinal);
     private readonly long _coordinatorId = Interlocked.Increment(ref _nextCoordinatorId);
+    private TaskCompletionSource? _idleCompletion;
+    private int _activeRequestCount;
     private bool _disposed;
 
     public LatestRequestTicket Begin(string channel, CancellationToken cancellationToken = default)
@@ -27,11 +29,30 @@ internal sealed class LatestRequestCoordinator : IDisposable
             var generation = (previous?.Generation ?? 0) + 1;
             var current = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             _requests[channel] = new RequestState(generation, current);
+            if (superseded is null)
+            {
+                _activeRequestCount++;
+                if (_activeRequestCount == 1)
+                {
+                    _idleCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                }
+            }
             ticket = new LatestRequestTicket(_coordinatorId, channel, generation, current.Token);
         }
 
         CancelAndDispose(superseded);
         return ticket;
+    }
+
+    public Task WhenIdle
+    {
+        get
+        {
+            lock (_syncRoot)
+            {
+                return _idleCompletion?.Task ?? Task.CompletedTask;
+            }
+        }
     }
 
     public bool IsCurrent(LatestRequestTicket ticket)
@@ -54,6 +75,7 @@ internal sealed class LatestRequestCoordinator : IDisposable
     public bool Complete(LatestRequestTicket ticket)
     {
         CancellationTokenSource? cancellation = null;
+        TaskCompletionSource? idleCompletion = null;
         lock (_syncRoot)
         {
             if (!IsLatestCore(ticket))
@@ -63,9 +85,11 @@ internal sealed class LatestRequestCoordinator : IDisposable
 
             cancellation = _requests[ticket.Channel].Cancellation;
             _requests[ticket.Channel] = new RequestState(ticket.Generation, null);
+            idleCompletion = RetireActiveRequestCore();
         }
 
         cancellation!.Dispose();
+        idleCompletion?.TrySetResult();
         return true;
     }
 
@@ -73,6 +97,7 @@ internal sealed class LatestRequestCoordinator : IDisposable
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(channel);
         CancellationTokenSource? cancellation;
+        TaskCompletionSource? idleCompletion = null;
         lock (_syncRoot)
         {
             if (_disposed)
@@ -83,14 +108,20 @@ internal sealed class LatestRequestCoordinator : IDisposable
             _requests.TryGetValue(channel, out var previous);
             cancellation = previous?.Cancellation;
             _requests[channel] = new RequestState((previous?.Generation ?? 0) + 1, null);
+            if (cancellation is not null)
+            {
+                idleCompletion = RetireActiveRequestCore();
+            }
         }
 
         CancelAndDispose(cancellation);
+        idleCompletion?.TrySetResult();
     }
 
     public void Dispose()
     {
         CancellationTokenSource[] cancellations;
+        TaskCompletionSource? idleCompletion;
         lock (_syncRoot)
         {
             if (_disposed)
@@ -104,6 +135,9 @@ internal sealed class LatestRequestCoordinator : IDisposable
                 .Where(static cancellation => cancellation is not null)
                 .Cast<CancellationTokenSource>()
                 .ToArray();
+            _activeRequestCount = 0;
+            idleCompletion = _idleCompletion;
+            _idleCompletion = null;
             _requests.Clear();
         }
 
@@ -111,6 +145,7 @@ internal sealed class LatestRequestCoordinator : IDisposable
         {
             CancelAndDispose(cancellation);
         }
+        idleCompletion?.TrySetResult();
     }
 
     private bool IsLatestCore(LatestRequestTicket ticket)
@@ -119,6 +154,19 @@ internal sealed class LatestRequestCoordinator : IDisposable
            && _requests.TryGetValue(ticket.Channel, out var current)
            && current.Generation == ticket.Generation
            && current.Cancellation is not null;
+
+    private TaskCompletionSource? RetireActiveRequestCore()
+    {
+        _activeRequestCount--;
+        if (_activeRequestCount != 0)
+        {
+            return null;
+        }
+
+        var idleCompletion = _idleCompletion;
+        _idleCompletion = null;
+        return idleCompletion;
+    }
 
     private static void CancelAndDispose(CancellationTokenSource? cancellation)
     {

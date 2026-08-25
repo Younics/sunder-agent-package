@@ -3,8 +3,14 @@ set -euo pipefail
 export LC_ALL=C
 
 usage() {
-  printf 'Usage: publish-registry-package.sh <registry-api-url> <archive> <package-id> <version>\n' >&2
+  printf 'Usage: publish-registry-package.sh [--verify-only] <registry-api-url> <archive> <package-id> <version>\n' >&2
 }
+
+verify_only=false
+if [[ "${1:-}" == '--verify-only' ]]; then
+  verify_only=true
+  shift
+fi
 
 if [[ $# -ne 4 ]]; then
   usage
@@ -20,10 +26,12 @@ version="$4"
 [[ "$registry_api" =~ ^https://[^/@?#]+$ ]] \
   || { printf 'Registry API URL must be an absolute HTTPS origin without user info, path, query, or fragment.\n' >&2; exit 2; }
 [[ -f "$archive" ]] || { printf 'Registry package archive not found: %s\n' "$archive" >&2; exit 1; }
-[[ -n "${SUNDER_REGISTRY_PUBLISH_TOKEN:-}" ]] \
-  || { printf 'SUNDER_REGISTRY_PUBLISH_TOKEN is not configured for Registry publication.\n' >&2; exit 1; }
-[[ "$SUNDER_REGISTRY_PUBLISH_TOKEN" =~ ^sunder_pub_v1_[A-Za-z0-9_-]{43}$ ]] \
-  || { printf 'SUNDER_REGISTRY_PUBLISH_TOKEN must be a valid scoped sunder_pub_v1 publish token.\n' >&2; exit 1; }
+if [[ "$verify_only" != true ]]; then
+  [[ -n "${SUNDER_REGISTRY_PUBLISH_TOKEN:-}" ]] \
+    || { printf 'SUNDER_REGISTRY_PUBLISH_TOKEN is not configured for Registry publication.\n' >&2; exit 1; }
+  [[ "$SUNDER_REGISTRY_PUBLISH_TOKEN" =~ ^sunder_pub_v1_[A-Za-z0-9_-]{43}$ ]] \
+    || { printf 'SUNDER_REGISTRY_PUBLISH_TOKEN must be a valid scoped sunder_pub_v1 publish token.\n' >&2; exit 1; }
+fi
 
 for required_command in cat cmp curl cut grep jq mktemp sed sort tr unzip wc; do
   command -v "$required_command" >/dev/null 2>&1 \
@@ -580,11 +588,20 @@ fetch_version_details
 case "$details_status" in
   200)
     verify_version_details
-    printf "Registry package '%s' %s already exists and matches the verified release archive and projections.\n" \
-      "$package_id" "$version"
+    if [[ "$verify_only" == true ]]; then
+      printf "Verified immutable Registry package '%s' %s canonical archive and projections.\n" \
+        "$package_id" "$version"
+    else
+      printf "Registry package '%s' %s already exists and matches the verified release archive and projections.\n" \
+        "$package_id" "$version"
+    fi
     exit 0
     ;;
   404)
+    if [[ "$verify_only" == true ]]; then
+      printf "Immutable Registry package '%s' %s does not exist.\n" "$package_id" "$version" >&2
+      exit 1
+    fi
     ;;
   *)
     printf "Registry version preflight for package '%s' %s returned HTTP %s.\n" \

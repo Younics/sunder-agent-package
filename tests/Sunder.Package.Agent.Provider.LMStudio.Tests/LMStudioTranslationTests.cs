@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Provider.TestSupport;
+using Sunder.Sdk.Logging;
 using Xunit;
 
 namespace Sunder.Package.Agent.Provider.LMStudio.Tests;
@@ -29,11 +30,16 @@ public sealed class LMStudioTranslationTests
             "sunder.package.agent.provider.lmstudio",
             new Dictionary<string, string>
             {
-                [LMStudioProviderConfiguration.BaseUrlKey] = "http://lmstudio.test/v1",
+                [LMStudioProviderConfiguration.BaseUrlKey] = "http://127.0.0.1:1234/v1",
+            },
+            secretValues: new Dictionary<string, string>
+            {
+                [LMStudioProviderConfiguration.ApiKeyKey] = ProviderFailureInputs.SecretCanary,
             });
+        var logger = new RecordingEventLogger();
         using var connection = new LMStudioConnection(context, handler);
         using var client = new LMStudioChatClient(
-            new AgentChatClientContext("lmstudio", "lmstudio/model"),
+            new AgentChatClientContext("lmstudio", "lmstudio/model", logger),
             connection);
         var messages = new[]
         {
@@ -45,7 +51,7 @@ public sealed class LMStudioTranslationTests
                 }),
             ]),
             new ChatMessage(ChatRole.Tool, [new FunctionResultContent("call-1", "contents")]),
-            new ChatMessage(ChatRole.User, "Continue."),
+            new ChatMessage(ChatRole.User, ProviderFailureInputs.RequestCanary),
         };
         var updates = new List<ChatResponseUpdate>();
 
@@ -66,7 +72,8 @@ public sealed class LMStudioTranslationTests
         Assert.Equal(4, usage.CachedInputTokenCount);
         Assert.Equal(3, usage.ReasoningTokenCount);
         var request = Assert.Single(handler.Requests);
-        Assert.Null(request.Authorization);
+        Assert.Equal("Bearer", request.Authorization?.Scheme);
+        Assert.Equal(ProviderFailureInputs.SecretCanary, request.Authorization?.Parameter);
         using var body = JsonDocument.Parse(request.Body!);
         var root = body.RootElement;
         Assert.Equal(321, root.GetProperty("max_completion_tokens").GetInt32());
@@ -75,6 +82,57 @@ public sealed class LMStudioTranslationTests
             wireMessages.EnumerateArray().Select(message => message.GetProperty("role").GetString()).ToArray());
         Assert.Equal("read_file", wireMessages[1].GetProperty("tool_calls")[0].GetProperty("function").GetProperty("name").GetString());
         Assert.Equal("call-1", wireMessages[2].GetProperty("tool_call_id").GetString());
+        ProviderConformanceHarness.VerifyTelemetryAndRedaction(
+            "LM Studio",
+            logger.EventNames,
+            logger.TelemetryText,
+            ProviderFailureInputs.SecretCanary,
+            ProviderFailureInputs.RequestCanary);
+    }
+
+    [Fact]
+    public async Task ChatClient_PreservesCommonMixedTextAndToolOrdering()
+    {
+        const string stream = """
+            data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":0,"model":"model","choices":[{"index":0,"delta":{"content":"Before"},"finish_reason":null}]}
+
+            data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":0,"model":"model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"README.md\"}"}}]},"finish_reason":null}]}
+
+            data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":0,"model":"model","choices":[{"index":0,"delta":{"content":"After"},"finish_reason":null}]}
+
+            data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":0,"model":"model","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+            data: [DONE]
+
+            """;
+        var handler = new LMStudioTestHttpHandler((_, _, _) => Task.FromResult(new HttpResponseMessage
+        {
+            Content = new StringContent(stream, Encoding.UTF8, "text/event-stream"),
+        }));
+        var context = new ProviderTestPackageContext(
+            "sunder.package.agent.provider.lmstudio",
+            new Dictionary<string, string>
+            {
+                [LMStudioProviderConfiguration.BaseUrlKey] = "http://lmstudio.test/v1",
+            });
+        using var connection = new LMStudioConnection(context, handler);
+        using var client = new LMStudioChatClient(
+            new AgentChatClientContext("lmstudio", "lmstudio/model"),
+            connection);
+        var updates = new List<ChatResponseUpdate>();
+
+        await foreach (var update in client.GetStreamingResponseAsync(
+                           [new ChatMessage(ChatRole.User, "Use the tool.")],
+                           new ChatOptions { AllowMultipleToolCalls = true }))
+        {
+            updates.Add(update);
+        }
+
+        ProviderConformanceHarness.VerifyToolResultOrder(
+            "LM Studio",
+            updates.Select(static update => update.Contents.Any(static content => content is FunctionCallContent)
+                ? "tool"
+                : "text"));
     }
 
     [Fact]
@@ -156,6 +214,7 @@ public sealed class LMStudioTranslationTests
         });
 
         Assert.Equal("lmstudio-incomplete-response", exception.ErrorCode);
+        ProviderConformanceHarness.VerifyPrematureEof("LM Studio", exception.ErrorCode);
     }
 
     [Theory]
@@ -216,6 +275,7 @@ public sealed class LMStudioTranslationTests
         });
 
         Assert.Equal("lmstudio-timeout", exception.ErrorCode);
+        ProviderConformanceHarness.VerifyProviderTimeout("LM Studio", exception.ErrorCode);
     }
 
     [Fact]
@@ -245,6 +305,33 @@ public sealed class LMStudioTranslationTests
         Assert.Equal(AgentChatProviderFailureKind.ContextWindowExceeded, exception.FailureKind);
     }
 
+    [Fact]
+    public void ExceptionMapper_SatisfiesCommonFailureConformance()
+        => ProviderConformanceHarness.VerifyFailureClassification(new ProviderFailureConformanceAdapter(
+            "LM Studio",
+            exception => LMStudioExceptionMapper.Map(exception).FailureKind
+                == AgentChatProviderFailureKind.ContextWindowExceeded
+                    ? ProviderFailureClassification.ContextWindowExceeded
+                    : ProviderFailureClassification.Unknown));
+
+    [Fact]
+    public async Task RealProviderAdapter_SatisfiesUnifiedConformanceContract()
+        => await ProviderConformanceHarness.VerifyAsync(new ProviderConformanceAdapter(
+            "LM Studio",
+            () =>
+            {
+                ExceptionMapper_SatisfiesCommonFailureConformance();
+                return Task.CompletedTask;
+            },
+            ChatClient_PrematureEofIsFailure,
+            () => new LMStudioProviderCancellationTests().CatalogAndReadiness_PropagateCancellation(
+                embeddings: false,
+                readiness: false),
+            ChatClient_ProviderTimeoutIsNotReportedAsCallerCancellation,
+            () => new LMStudioModelCatalogServiceTests().Readiness_SatisfiesCommonLifecycleConformance(),
+            ChatClient_PreservesCommonMixedTextAndToolOrdering,
+            ChatClient_TranslatesRolesToolsAndMaxOutputOnWire));
+
     [Theory]
     [InlineData("LM Studio returned HTTP 400: bad request")]
     [InlineData("max_output_tokens exceeds the supported value")]
@@ -258,5 +345,33 @@ public sealed class LMStudioTranslationTests
         var exception = LMStudioExceptionMapper.Map(new InvalidOperationException(message));
 
         Assert.Equal(AgentChatProviderFailureKind.Unknown, exception.FailureKind);
+    }
+
+    private sealed class RecordingEventLogger : IPackageEventLogger
+    {
+        public List<(string EventName, string Text)> Entries { get; } = [];
+
+        public IEnumerable<string> EventNames => Entries.Select(static entry => entry.EventName);
+
+        public string TelemetryText => string.Join('\n', Entries.Select(static entry => entry.Text));
+
+        public ValueTask WriteAsync(
+            PackageLogLevel level,
+            string eventName,
+            string message,
+            IReadOnlyDictionary<string, object?>? attributes = null,
+            Exception? exception = null,
+            CancellationToken cancellationToken = default)
+        {
+            Entries.Add((
+                eventName,
+                string.Join(
+                    "|",
+                    eventName,
+                    message,
+                    string.Join(",", (attributes ?? new Dictionary<string, object?>())
+                        .Select(static attribute => $"{attribute.Key}={attribute.Value}")))));
+            return ValueTask.CompletedTask;
+        }
     }
 }

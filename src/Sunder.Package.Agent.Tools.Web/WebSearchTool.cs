@@ -31,7 +31,7 @@ public sealed class WebSearchTool(Backends.ExaWebSearchBackend exaWebSearchBacke
             "maxResults": {
               "type": "integer",
               "minimum": 1,
-              "maximum": 20,
+              "maximum": 10,
               "description": "Optional maximum number of results to return."
             }
           },
@@ -133,7 +133,7 @@ public sealed class WebSearchTool(Backends.ExaWebSearchBackend exaWebSearchBacke
         {
             throw;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!IsFatal(ex))
         {
             return new AgentToolResult(
                 Descriptor.ToolId,
@@ -158,6 +158,14 @@ public sealed class WebSearchTool(Backends.ExaWebSearchBackend exaWebSearchBacke
         arguments = new WebSearchArguments(query!, maxResults);
         return true;
     }
+
+    private static bool IsFatal(Exception exception)
+        => exception is OutOfMemoryException
+            or StackOverflowException
+            or AccessViolationException
+            or System.Runtime.InteropServices.SEHException
+           || exception is AggregateException aggregate && aggregate.InnerExceptions.Any(IsFatal)
+           || exception.InnerException is { } inner && IsFatal(inner);
 
     private sealed record WebSearchArguments(string Query, int? MaxResults = null);
 }

@@ -16,6 +16,7 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject,
     private const string ListRefreshChannel = "mcp-servers";
     private const string ConnectionStatusChannel = "mcp-status";
     private readonly IMcpManagementGateway _gateway;
+    private readonly IOwnerStreamAvailability? _ownerAvailability;
     private readonly McpSettingsOperationsViewModel _operations;
     private readonly IPresentationDispatcher _uiDispatcher;
     private readonly CancellationTokenSource _lifetimeCancellation = new();
@@ -45,6 +46,7 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject,
         IPresentationDispatcher uiDispatcher)
     {
         _gateway = gateway;
+        _ownerAvailability = gateway as IOwnerStreamAvailability;
         _uiDispatcher = uiDispatcher;
         _listDetail = new KeyedAdaptiveListDetailState<string, ConfiguredMcpServerRecord>(
             Servers,
@@ -60,6 +62,11 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject,
             uiDispatcher);
         _gateway.ServersChanged += OnServersChanged;
         _gateway.StatusChanged += OnConnectionStatusChanged;
+        IsRuntimeAvailable = _ownerAvailability?.IsOwnerStreamAvailable ?? true;
+        if (_ownerAvailability is not null)
+        {
+            _ownerAvailability.OwnerStreamAvailabilityChanged += OnOwnerStreamAvailabilityChanged;
+        }
         _operations.PropertyChanged += OnOperationsPropertyChanged;
         _initialization = _operations.InitializeAsync();
     }
@@ -104,6 +111,7 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject,
         || _listDetail.DetailPhase == AdaptiveDetailPhase.Ready;
     public bool IsEditorReadOnly => IsDocumentLoading;
     public bool IsDiscovering => _operations.IsDiscovering;
+    public bool IsRuntimeAvailable { get; private set; }
     public string StatusText => _operations.StatusText;
     public McpStatusKind StatusKind => _operations.StatusKind;
     public bool IsStatusSuccess => StatusKind == McpStatusKind.Success;
@@ -268,6 +276,10 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject,
         _lifetimeCancellation.Cancel();
         _gateway.ServersChanged -= OnServersChanged;
         _gateway.StatusChanged -= OnConnectionStatusChanged;
+        if (_ownerAvailability is not null)
+        {
+            _ownerAvailability.OwnerStreamAvailabilityChanged -= OnOwnerStreamAvailabilityChanged;
+        }
         _operations.PropertyChanged -= OnOperationsPropertyChanged;
         _listDetail.PropertyChanged -= OnListDetailPropertyChanged;
         _runtimeRefresh.Dispose();
@@ -430,6 +442,8 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject,
 
     internal Task CurrentConnectionStatusLoad => _currentConnectionStatusLoad;
 
+    internal bool IsDisposed => _disposed;
+
     internal Task RunOnUiAsync(Action action) => _uiDispatcher.InvokeAsync(() =>
     {
         if (!_disposed)
@@ -492,6 +506,16 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject,
     });
 
     private void OnConnectionStatusChanged() => RunOnUiThread(() => RefreshConnectionStatus(SelectedServer));
+
+    private void OnOwnerStreamAvailabilityChanged(bool available)
+        => RunOnUiThread(() =>
+        {
+            if (IsRuntimeAvailable != available)
+            {
+                IsRuntimeAvailable = available;
+                OnPropertyChanged(nameof(IsRuntimeAvailable));
+            }
+        });
 
     private void OnOperationsPropertyChanged(object? sender, PropertyChangedEventArgs e) => RunOnUiThread(() =>
     {

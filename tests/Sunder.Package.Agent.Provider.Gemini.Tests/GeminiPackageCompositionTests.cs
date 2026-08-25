@@ -5,6 +5,7 @@ using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Provider.Gemini.Protocol.Generated;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Package.Agent.Provider.TestSupport;
+using Sunder.Package.Agent.TestSupport.Avalonia;
 using Xunit;
 using GeminiAppPackageModule = GeminiApp::Sunder.Package.Agent.Provider.Gemini.AppPackageModule;
 using GeminiSettingsView = GeminiApp::Sunder.Package.Agent.Provider.Gemini.GeminiSettingsView;
@@ -16,6 +17,7 @@ namespace Sunder.Package.Agent.Provider.Gemini.Tests;
 public sealed class GeminiPackageCompositionTests
 {
     [Fact]
+    [Trait("Lane", "PackageCompatibility")]
     public void WorkerAndAppComposition_KeepProvidersAndEmbeddingsWorkerOnly()
     {
         var context = new ProviderTestPackageContext("sunder.package.agent.provider.gemini");
@@ -42,9 +44,12 @@ public sealed class GeminiPackageCompositionTests
         Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(GeminiEmbeddingProvider));
 
         using var appProvider = appServices.BuildServiceProvider();
-        var appRegistry = new ProviderCompositionTestRegistry();
+        var appRegistry = new RecordingPackageContributionRegistry();
         appModule.RegisterAppContributions(appRegistry, appProvider);
         Assert.Equal([typeof(GeminiSettingsView)], appRegistry.SettingsViewTypes);
+        Assert.Empty(appRegistry.PackageViews);
+        Assert.Throws<InvalidOperationException>(() => appRegistry.RegisterPackageView<GeminiSettingsView>(
+            new("forbidden.gemini", "Forbidden provider package view")));
     }
 
 }

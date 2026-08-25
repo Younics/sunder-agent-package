@@ -512,7 +512,9 @@ public sealed class BuilderViewModelTests
         public void BindTargetReference(AgentRpcReference<IAgentExecutionTarget> targetReference)
             => _targetReference = targetReference;
 
-        public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces() => [_workspace];
+        public ValueTask<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesAsync(
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult<IReadOnlyList<AgentWorkspaceRecord>>([_workspace]);
 
         public ValueTask<AgentWorkspaceExecutionResolution> ResolveAsync(string workspaceId, CancellationToken cancellationToken = default)
         {

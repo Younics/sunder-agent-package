@@ -16,6 +16,18 @@ public sealed class SubagentGatewayLifetimeTests
     }
 
     [Fact]
+    public async Task AppRuntimeGateway_DisposeAsyncDrainsOwnerObservation()
+    {
+        var gateway = new SubagentAppRuntimeGateway(NullOwnerClient.Instance);
+        await gateway.InitializeAsync();
+
+        await gateway.DisposeAsync();
+        await gateway.DisposeAsync();
+
+        Assert.True(gateway.OwnerObservationTask!.IsCompletedSuccessfully);
+    }
+
+    [Fact]
     public async Task SubsessionsViewModel_DisposeDoesNotDisposeSharedAppRuntimeGateway()
     {
         using var gateway = new SubagentAppRuntimeGateway(NullOwnerClient.Instance);

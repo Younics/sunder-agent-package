@@ -50,9 +50,14 @@ public sealed class AgentRuntimeCatalog : IAgentRuntimeCatalog, IAgentTranscript
 
     public AgentSessionRecord? GetSession(Guid sessionId) => _sessionService.GetSession(sessionId);
 
-    public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces() => _workspaceService.ListWorkspaces();
+    public async ValueTask<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesAsync(
+        CancellationToken cancellationToken = default)
+        => await _workspaceService.ListWorkspacesAsync(cancellationToken).ConfigureAwait(false);
 
-    public AgentWorkspaceRecord? GetWorkspace(string workspaceId) => _workspaceService.GetWorkspace(workspaceId);
+    public async ValueTask<AgentWorkspaceRecord?> GetWorkspaceAsync(
+        string workspaceId,
+        CancellationToken cancellationToken = default)
+        => await _workspaceService.GetWorkspaceAsync(workspaceId, cancellationToken).ConfigureAwait(false);
 
     public AgentProfileRecord? GetSessionProfile(Guid sessionId)
     {

@@ -1,4 +1,5 @@
 using Sunder.Package.Agent.Execution.Local;
+using Sunder.Package.Agent.TestSupport.Avalonia;
 using Sunder.Sdk.Abstractions;
 using Xunit;
 
@@ -16,6 +17,9 @@ public sealed class LocalSettingsLifecycleTests
         var second = viewModel.InitializeAsync();
         await runtime.Requests[0].Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
+        var adapter = Adapt(viewModel);
+        AdaptiveEditorLifecycleContract.SharedInitialization(adapter, first, second);
+        AdaptiveEditorLifecycleContract.HydrationBlocksMutation(adapter);
         Assert.Same(first, second);
         Assert.True(viewModel.IsLoading);
         Assert.False(viewModel.AddShellCommand.CanExecute(null));
@@ -64,6 +68,12 @@ public sealed class LocalSettingsLifecycleTests
             message: "Shell settings saved."));
         await save;
 
+        AdaptiveEditorLifecycleContract.EditDuringSaveRemainsDirty(
+            Adapt(
+                viewModel,
+                isDirty: () => added.DisplayName == "Newer draft name",
+                draftValue: () => added.DisplayName),
+            "Newer draft name");
         Assert.Same(added, viewModel.CustomShells.Single(shell => shell.ShellId == added.ShellId));
         Assert.Equal("Newer draft name", added.DisplayName);
         Assert.Equal(added.ShellId, viewModel.SelectedShell?.ShellId);
@@ -114,6 +124,7 @@ public sealed class LocalSettingsLifecycleTests
             ]));
         await refresh;
 
+        AdaptiveEditorLifecycleContract.CurrentSelectionWins(Adapt(viewModel), draft.ShellId);
         Assert.Same(alpha, viewModel.CustomShells.Single(shell => shell.ShellId == "alpha"));
         Assert.Equal("Locally edited Alpha", alpha.DisplayName);
         Assert.Contains(viewModel.CustomShells, shell => shell.ShellId == "beta");
@@ -127,16 +138,27 @@ public sealed class LocalSettingsLifecycleTests
     {
         var runtime = new BlockingLocalRuntimeClient();
         using var viewModel = new LocalExecutionSettingsViewModel(runtime);
-        var initialization = viewModel.InitializeAsync();
-        await runtime.Requests[0].Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        runtime.Requests[0].Response.TrySetResult(new LocalExecutionOperationResponse(
-            TimeoutSeconds: "300"));
-        await initialization;
+        await AdaptiveEditorLifecycleContract.RuntimeCycleIsExplicitAsync(Adapt(viewModel), async () =>
+        {
+            var initialization = viewModel.InitializeAsync();
+            await runtime.Requests[0].Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            runtime.Requests[0].Response.TrySetResult(new LocalExecutionOperationResponse(
+                TimeoutSeconds: "300"));
+            await initialization;
 
-        Assert.True(viewModel.IsError);
-        Assert.Equal("local.protocol.invalid-response", viewModel.RuntimeErrorCode);
-        Assert.False(viewModel.AddShellCommand.CanExecute(null));
-        Assert.True(viewModel.RetryInitializationCommand.CanExecute(null));
+            Assert.True(viewModel.IsError);
+            Assert.Equal("local.protocol.invalid-response", viewModel.RuntimeErrorCode);
+            Assert.False(viewModel.AddShellCommand.CanExecute(null));
+            Assert.True(viewModel.RetryInitializationCommand.CanExecute(null));
+
+            var retry = viewModel.RetryInitializationCommand.ExecuteAsync(null);
+            await runtime.Requests[1].Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            runtime.Requests[1].Response.TrySetResult(SettingsResponse(
+                revision: 1,
+                custom: [Shell("recovered", "Recovered", "/tmp/recovered")]));
+            await retry;
+        });
+        Assert.True(viewModel.IsReady);
     }
 
     [Fact]
@@ -147,19 +169,41 @@ public sealed class LocalSettingsLifecycleTests
         var initialization = viewModel.InitializeAsync();
         await runtime.Requests[0].Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
         var notifications = 0;
-        viewModel.PropertyChanged += (_, _) => notifications++;
+        viewModel.PropertyChanged += (_, _) => Interlocked.Increment(ref notifications);
 
-        viewModel.Dispose();
-        var notificationsAtDisposal = notifications;
-        await initialization.WaitAsync(TimeSpan.FromSeconds(2));
-        runtime.Requests[0].Response.TrySetResult(SettingsResponse(
+        var lateResponse = SettingsResponse(
             revision: 99,
-            custom: [Shell("late", "Late", "/tmp/late")]));
-        await Task.Yield();
+            custom: [Shell("late", "Late", "/tmp/late")]);
+        await AdaptiveEditorLifecycleContract.RetiredWorkCannotPublishAsync(
+            Adapt(viewModel, publicationCount: () => Volatile.Read(ref notifications)),
+            viewModel.Dispose,
+            () => runtime.Requests[0].Response.TrySetResult(lateResponse),
+            initialization.WaitAsync(TimeSpan.FromSeconds(2)));
 
-        Assert.Equal(notificationsAtDisposal, notifications);
         Assert.Empty(viewModel.CustomShells);
     }
+
+    private static IAdaptiveEditorLifecycleAdapter Adapt(
+        LocalExecutionSettingsViewModel viewModel,
+        Func<bool>? isDirty = null,
+        Func<string?>? draftValue = null,
+        Func<int>? publicationCount = null)
+        => new DelegateAdaptiveEditorLifecycleAdapter(
+            "Local",
+            () => new AdaptiveEditorSnapshot(
+                IsHydrating: !viewModel.IsDisposed && viewModel.IsLoading,
+                CanMutate: !viewModel.IsDisposed && viewModel.CanMutate,
+                IsBusy: !viewModel.IsDisposed && viewModel.IsBusy,
+                IsDirty: isDirty?.Invoke() ?? false,
+                viewModel.SelectedShell?.ShellId,
+                draftValue?.Invoke() ?? viewModel.TimeoutSeconds,
+                publicationCount?.Invoke() ?? 0,
+                viewModel.IsError
+                    ? AdaptiveEditorRuntimeState.Unavailable
+                    : viewModel.IsReady
+                        ? AdaptiveEditorRuntimeState.Available
+                        : AdaptiveEditorRuntimeState.Unknown),
+            viewModel);
 
     private static LocalExecutionOperationResponse SettingsResponse(
         long revision,

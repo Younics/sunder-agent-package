@@ -13,7 +13,7 @@ public sealed class FilesToolSource
         IAgentPromptContextAcknowledgmentSink
 {
     private const int MaxPostAccessScopePaths = 64;
-    private readonly Lazy<ScopedInstructionContextService>? _scopedInstructions;
+    private readonly Lazy<ScopedInstructionContextService> _scopedInstructions;
 
     /// <summary>Creates a Files source with required scoped-instruction persistence and enforcement.</summary>
     public FilesToolSource(IPackageContext packageContext)
@@ -23,9 +23,6 @@ public sealed class FilesToolSource
             () => new ScopedInstructionContextService(packageContext),
             LazyThreadSafetyMode.ExecutionAndPublication);
     }
-
-    /// <summary>Gets whether this instance enforces scoped instructions for structured Files mutations.</summary>
-    public bool IsScopedInstructionEnforcementEnabled => _scopedInstructions is not null;
 
     internal void Activate() => _ = ScopedInstructions;
 
@@ -90,18 +87,16 @@ public sealed class FilesToolSource
             {
                 if ((toolId.Equals("grep", StringComparison.OrdinalIgnoreCase)
                      || toolId.Equals("glob", StringComparison.OrdinalIgnoreCase))
-                    && !AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.StructuredFileSearch)
-                    && !AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.LegacyFileSearch))
+                    && !AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.StructuredFileSearch))
                 {
                     return new AgentToolReadiness(
                         toolId,
                         AgentToolReadinessStatus.Failed,
-                        "The selected target cannot safely bind file-search paths to canonical resources.");
+                        "The selected target does not support governed structured file search.");
                 }
 
-                if (IsScopedInstructionEnforcementEnabled
-                    && (!AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.ScopedInstructionDiscovery)
-                        || !AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.ExecutionScope)))
+                if (!AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.ScopedInstructionDiscovery)
+                    || !AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.ExecutionScope))
                 {
                     return new AgentToolReadiness(
                         toolId,
@@ -119,9 +114,7 @@ public sealed class FilesToolSource
                     ? new AgentToolReadiness(
                         toolId,
                         AgentToolReadinessStatus.Ready,
-                        !IsScopedInstructionEnforcementEnabled
-                            ? "Workspace file tools are ready. Scoped AGENTS.md enforcement is disabled by legacy FilesToolSource composition."
-                            : "Workspace file tools are ready with scoped AGENTS.md enforcement.")
+                        "Workspace file tools are ready with scoped AGENTS.md enforcement.")
                     : new AgentToolReadiness(toolId, AgentToolReadinessStatus.Failed, readiness.Message);
             },
             () => new AgentToolReadiness(
@@ -233,7 +226,7 @@ public sealed class FilesToolSource
                         return result with { RequiresPromptContextRefresh = true };
                     }
 
-                    if (ScopedInstructions is { } scopedInstructions && !result.IsError && accessProbes.Count > 0)
+                    if (!result.IsError && accessProbes.Count > 0)
                     {
                         if (accessProbes.Count > MaxPostAccessScopePaths)
                         {
@@ -246,7 +239,7 @@ public sealed class FilesToolSource
                         }
                         try
                         {
-                            var claim = await scopedInstructions.ClaimAfterAccessAsync(
+                            var claim = await ScopedInstructions.ClaimAfterAccessAsync(
                                 target,
                                 context,
                                 accessProbes,
@@ -355,10 +348,7 @@ public sealed class FilesToolSource
             {
                 var scopeContribution = await FileSystemPromptBuilder.BuildAsync(target, request, invocationToken);
                 var blocks = scopeContribution?.Blocks.ToList() ?? [];
-                if (ScopedInstructions is { } scopedInstructions)
-                {
-                    blocks.AddRange(await scopedInstructions.BuildPromptContextAsync(target, request, invocationToken));
-                }
+                blocks.AddRange(await ScopedInstructions.BuildPromptContextAsync(target, request, invocationToken));
 
                 return blocks.Count == 0 ? null : new AgentPromptContextContribution(blocks);
             },
@@ -429,13 +419,12 @@ public sealed class FilesToolSource
                 {
                     return compoundError;
                 }
-                if (ScopedInstructions is not { } scopedInstructions
-                    || !TryBuildMutationProbes(request, out var probes))
+                if (!TryBuildMutationProbes(request, out var probes))
                 {
                     return null;
                 }
 
-                return await scopedInstructions.PreflightMutationAsync(
+                return await ScopedInstructions.PreflightMutationAsync(
                     target,
                     context,
                     request,
@@ -449,17 +438,14 @@ public sealed class FilesToolSource
     }
 
     public void DeleteSessionData(Guid sessionId)
-        => ScopedInstructions?.DeleteSessionData(sessionId);
+        => ScopedInstructions.DeleteSessionData(sessionId);
 
     public ValueTask AcknowledgePromptContextAsync(
         AgentPromptContextReceipt receipt,
         CancellationToken cancellationToken = default)
-        => ScopedInstructions is not { } scopedInstructions
-            ? ValueTask.FromException(new InvalidOperationException(
-                "Scoped instruction acknowledgment is unavailable because this Files source uses the legacy disabled constructor."))
-            : scopedInstructions.AcknowledgePromptContextAsync(receipt, cancellationToken);
+        => ScopedInstructions.AcknowledgePromptContextAsync(receipt, cancellationToken);
 
-    private ScopedInstructionContextService? ScopedInstructions => _scopedInstructions?.Value;
+    private ScopedInstructionContextService ScopedInstructions => _scopedInstructions.Value;
 
     private static async ValueTask<AgentRpcLease<IAgentExecutionTarget>?> AcquireTargetAsync(
         AgentRpcReference<IAgentExecutionTarget>? selectedReference,

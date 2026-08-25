@@ -1,4 +1,3 @@
-using System.Text.Json;
 using System.Globalization;
 using Microsoft.Extensions.Logging;
 using Sunder.Package.Agent.Shared.Storage;
@@ -227,7 +226,7 @@ public sealed class McpServerCatalogService
                 cancellationToken.ThrowIfCancellationRequested();
                 await _packageContext.Storage.State.SetValueAsync(
                     BuildServerKey(staged.Persisted.ServerId),
-                    JsonSerializer.Serialize(staged.Persisted),
+                    McpServerRecordSerializer.Serialize(staged.Persisted),
                     cancellationToken).ConfigureAwait(false);
             }
 

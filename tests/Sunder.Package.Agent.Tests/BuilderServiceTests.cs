@@ -9,7 +9,6 @@ using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Rpc;
 using Xunit;
-using Xunit.Sdk;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -188,7 +187,9 @@ public sealed class BuilderServiceTests
         Assert.Equal(persisted, await scope.Context.Storage.State.GetValueAsync(key));
     }
 
-    [Fact]
+    [FileSystemFact(
+        TestFileSystemCapability.DirectorySymbolicLinks,
+        "Builder host-path containment requires directory symbolic links.")]
     public void PathService_ResolveContainedHostPath_RejectsDirectorySymlinkEscape()
     {
         var root = Path.Combine(Path.GetTempPath(), "sunder-builder-containment", Guid.NewGuid().ToString("N"));
@@ -196,7 +197,7 @@ public sealed class BuilderServiceTests
         var outside = Path.Combine(root, "outside");
         Directory.CreateDirectory(workspace);
         Directory.CreateDirectory(outside);
-        CreateDirectorySymlinkOrSkip(Path.Combine(workspace, "escape"), outside);
+        Directory.CreateSymbolicLink(Path.Combine(workspace, "escape"), outside);
 
         try
         {
@@ -212,7 +213,9 @@ public sealed class BuilderServiceTests
         }
     }
 
-    [Fact]
+    [FileSystemFact(
+        TestFileSystemCapability.DirectorySymbolicLinks,
+        "Builder project validation requires directory symbolic links.")]
     public void ValidateProject_RejectsHostProjectFolderSymlinkEscape()
     {
         var root = Path.Combine(Path.GetTempPath(), "sunder-builder-validation", Guid.NewGuid().ToString("N"));
@@ -222,7 +225,7 @@ public sealed class BuilderServiceTests
         Directory.CreateDirectory(outside);
         File.WriteAllText(Path.Combine(outside, "Outside.csproj"), "<Project />");
         var projectLink = Path.Combine(workspaceRoot, "project");
-        CreateDirectorySymlinkOrSkip(projectLink, outside);
+        Directory.CreateSymbolicLink(projectLink, outside);
         var workspace = CreateWorkspace(workspaceRoot);
         var service = CreateApplicationService(workspace, new TestExecutionTarget(), new RecordingProjectStore());
 
@@ -405,6 +408,23 @@ public sealed class BuilderServiceTests
                 await resolver.Completed.Task.WaitAsync(TimeSpan.FromSeconds(2));
             }
         }
+    }
+
+    [Fact]
+    public async Task WorkspaceList_PropagatesCallerCancellationThroughResolverRpcRoute()
+    {
+        var resolver = new CancellationAwareWorkspaceExecutionResolver();
+        using var runtime = new LoopbackBuilderRpcClient(resolver);
+        var service = new BuilderWorkspaceExecutionService(runtime);
+        using var cancellation = new CancellationTokenSource();
+
+        var listing = service.ListWorkspacesAsync(cancellation.Token);
+        await resolver.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await cancellation.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => listing)
+            .WaitAsync(TimeSpan.FromSeconds(2));
+        await resolver.CancellationObserved.Task.WaitAsync(TimeSpan.FromSeconds(2));
     }
 
     [Fact]
@@ -606,21 +626,6 @@ public sealed class BuilderServiceTests
 
     private static BackgroundProcessContext CreateContext(CancellationToken cancellationToken = default)
         => new(cancellationToken, _ => { }, (_, _) => { }, _ => { });
-
-    private static void CreateDirectorySymlinkOrSkip(string linkPath, string targetPath)
-    {
-        try
-        {
-            Directory.CreateSymbolicLink(linkPath, targetPath);
-        }
-        catch (Exception exception) when (exception is IOException
-                                          or UnauthorizedAccessException
-                                          or PlatformNotSupportedException
-                                          or NotSupportedException)
-        {
-            throw SkipException.ForSkip($"Symbolic link creation is unavailable: {exception.Message}");
-        }
-    }
 
     private sealed class RecordingProjectStore(bool blockFirstSave = false) : IBuilderProjectStore
     {
@@ -835,7 +840,9 @@ public sealed class BuilderServiceTests
         public void BindTargetReference(AgentRpcReference<IAgentExecutionTarget> targetReference)
             => _targetReference = targetReference;
 
-        public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces() => [_workspace];
+        public ValueTask<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesAsync(
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult<IReadOnlyList<AgentWorkspaceRecord>>([_workspace]);
 
         public ValueTask<AgentWorkspaceExecutionResolution> ResolveAsync(
             string workspaceId,
@@ -872,7 +879,9 @@ public sealed class BuilderServiceTests
     private sealed class ListOnlyWorkspaceExecutionResolver(
         IReadOnlyList<AgentWorkspaceRecord> workspaces) : IAgentWorkspaceExecutionResolver
     {
-        public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces() => workspaces;
+        public ValueTask<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesAsync(
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(workspaces);
 
         public ValueTask<AgentWorkspaceExecutionResolution> ResolveAsync(
             string workspaceId,
@@ -887,18 +896,48 @@ public sealed class BuilderServiceTests
         public TaskCompletionSource Completed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Thread? InvocationThread { get; private set; }
 
-        public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces()
+        public ValueTask<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesAsync(
+            CancellationToken cancellationToken = default)
         {
             InvocationThread = Thread.CurrentThread;
             Started.TrySetResult();
             try
             {
                 Release.Task.GetAwaiter().GetResult();
-                return [];
+                return ValueTask.FromResult<IReadOnlyList<AgentWorkspaceRecord>>([]);
             }
             finally
             {
                 Completed.TrySetResult();
+            }
+        }
+
+        public ValueTask<AgentWorkspaceExecutionResolution> ResolveAsync(
+            string workspaceId,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromException<AgentWorkspaceExecutionResolution>(new NotSupportedException());
+    }
+
+    private sealed class CancellationAwareWorkspaceExecutionResolver : IAgentWorkspaceExecutionResolver
+    {
+        public TaskCompletionSource Started { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource CancellationObserved { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async ValueTask<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesAsync(
+            CancellationToken cancellationToken = default)
+        {
+            Started.TrySetResult();
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                return [];
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                CancellationObserved.TrySetResult();
+                throw;
             }
         }
 
@@ -996,7 +1035,9 @@ public sealed class BuilderServiceTests
         public void BindTargetReference(AgentRpcReference<IAgentExecutionTarget> targetReference)
             => _targetReference = targetReference;
 
-        public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces() => [workspace];
+        public ValueTask<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesAsync(
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult<IReadOnlyList<AgentWorkspaceRecord>>([workspace]);
 
         public ValueTask<AgentWorkspaceExecutionResolution> ResolveAsync(
             string workspaceId,

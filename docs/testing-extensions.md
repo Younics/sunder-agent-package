@@ -70,7 +70,7 @@ Inspect generated `sunder-dev/sunder-package.json` and the `.sunderpkg`:
 - Required inferred capabilities and no accidental capabilities from wrong-role code.
 - No SDK assemblies, test binaries, credentials, local config, or private files.
 
-Validate both source-SDK mode in the private workspace and NuGet mode in an isolated standalone checkout before release.
+Validate the complete behavioral solution in source-SDK mode and the focused compatibility lane in NuGet mode before release. A focused package identity count is not a complete-suite count. Run artifact-backed tests only with their required archive/native inputs and fail the selected lane when those inputs are absent.
 
 ## Runtime Lifecycle Smoke
 

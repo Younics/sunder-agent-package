@@ -344,6 +344,34 @@ public sealed class AdaptiveListDetailStateTests
     }
 
     [Fact]
+    public async Task LatestRequestCoordinator_WhenIdleTracksCurrentChannelsAndSupersession()
+    {
+        using var requests = new LatestRequestCoordinator();
+        Assert.True(requests.WhenIdle.IsCompletedSuccessfully);
+
+        var staleList = requests.Begin("list", TestContext.Current.CancellationToken);
+        var pending = requests.WhenIdle;
+        Assert.False(pending.IsCompleted);
+
+        var currentList = requests.Begin("list", TestContext.Current.CancellationToken);
+        var detail = requests.Begin("detail", TestContext.Current.CancellationToken);
+        Assert.Same(pending, requests.WhenIdle);
+        Assert.True(staleList.CancellationToken.IsCancellationRequested);
+        Assert.False(requests.Complete(staleList));
+        Assert.True(requests.Complete(currentList));
+        Assert.False(pending.IsCompleted);
+
+        requests.Invalidate("detail");
+        await pending.WaitAsync(TestContext.Current.CancellationToken);
+        Assert.True(requests.WhenIdle.IsCompletedSuccessfully);
+        Assert.True(detail.CancellationToken.IsCancellationRequested);
+
+        _ = requests.Begin("list", TestContext.Current.CancellationToken);
+        Assert.NotSame(pending, requests.WhenIdle);
+        Assert.False(requests.WhenIdle.IsCompleted);
+    }
+
+    [Fact]
     public void CanceledCurrentDetail_CanRetireWithoutLeavingLoadingLatched()
     {
         var items = new ObservableCollection<TestRow>();

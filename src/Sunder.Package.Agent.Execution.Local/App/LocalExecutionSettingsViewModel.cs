@@ -65,6 +65,8 @@ public sealed partial class LocalExecutionSettingsViewModel : ObservableObject,
 
     public bool HasRuntimeError => !string.IsNullOrWhiteSpace(RuntimeErrorCode);
 
+    internal bool IsDisposed => _disposed;
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsLoading))]
     [NotifyPropertyChangedFor(nameof(IsReady))]

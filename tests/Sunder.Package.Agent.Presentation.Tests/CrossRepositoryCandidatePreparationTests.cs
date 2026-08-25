@@ -221,6 +221,19 @@ public sealed class CrossRepositoryCandidatePreparationTests
                     Error: null));
             }
 
+            if (invocation.MethodId == "dashboard")
+            {
+                return Json(new RuntimeRpcAppInvokeResponse(
+                    JsonSerializer.SerializeToElement(new
+                    {
+                        Revision = 1L,
+                        Profiles = Array.Empty<object>(),
+                        Workspaces = Array.Empty<object>(),
+                        WorkspaceBindings = Array.Empty<object>(),
+                    }, WebJson),
+                    Error: null));
+            }
+
             if (invocation.MethodId == "chat-snapshot")
             {
                 Interlocked.Increment(ref _chatSnapshotRequestCount);

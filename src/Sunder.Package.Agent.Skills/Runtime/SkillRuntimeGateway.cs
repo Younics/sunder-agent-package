@@ -3,6 +3,11 @@ using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading.Channels;
+using Microsoft.Extensions.Logging;
+using Sunder.Package.Agent.Shared.Importing;
+#if SUNDER_SKILLS_APP
+using Sunder.Package.Agent.Shared.Presentation;
+#endif
 using Sunder.Package.Agent.Skills.Protocol;
 using Sunder.Package.Agent.Skills.Protocol.Generated;
 using Sunder.Package.Agent.Skills.Services;
@@ -45,17 +50,32 @@ internal sealed class SkillLocalManagementGateway(SkillStore store, SkillImportS
 }
 #endif
 
-#if SUNDER_SKILLS_APP
-internal sealed class SkillAppRuntimeGateway : ISkillManagementGateway, IDisposable
+internal static class SkillRuntimeExceptionPolicy
 {
-    private const int MaxFileCount = 2_000;
-    private const long MaxFileBytes = 10 * 1024 * 1024;
-    private const long MaxTotalBytes = 50 * 1024 * 1024;
-    private const int ChunkBytes = 8 * 1024 * 1024;
+    public static bool IsFatal(Exception exception)
+        => exception is OutOfMemoryException
+            or StackOverflowException
+            or AccessViolationException
+            or System.Runtime.InteropServices.SEHException
+           || exception is AggregateException aggregate && aggregate.InnerExceptions.Any(IsFatal)
+           || exception.InnerException is { } inner && IsFatal(inner);
+}
+
+#if SUNDER_SKILLS_APP
+internal sealed partial class SkillAppRuntimeGateway :
+    ISkillManagementGateway,
+    IOwnerStreamAvailability,
+    IDisposable,
+    IAsyncDisposable
+{
     private readonly ISkillOwnerClient _client;
     private readonly IPackageContext _context;
+    private readonly ILogger<SkillAppRuntimeGateway> _logger;
     private readonly CancellationTokenSource _lifetime = new();
+    private readonly OwnerStreamObserver _observer;
+    private readonly Task _observationTask;
     private int _disposed;
+    private int _lifetimeDisposed;
 
     public SkillAppRuntimeGateway(ISunderRpcClient client, IPackageContext context)
         : this(new SkillOwnerClient(client), context)
@@ -66,10 +86,21 @@ internal sealed class SkillAppRuntimeGateway : ISkillManagementGateway, IDisposa
     {
         _client = client;
         _context = context;
-        _ = ObserveChangesAsync(_lifetime.Token);
+        _logger = context.Logging.LoggerFactory.CreateLogger<SkillAppRuntimeGateway>();
+        _pendingTransferCleanupTask = CleanupPendingTransfersAsync();
+        _observer = new OwnerStreamObserver(LogObservationRetry);
+        _observationTask = _observer.RunAsync(ObserveChangesOnceAsync, _lifetime.Token);
     }
 
     public event Action? SkillsChanged;
+    public bool IsOwnerStreamAvailable => _observer.IsAvailable;
+    public event Action<bool>? OwnerStreamAvailabilityChanged
+    {
+        add => _observer.AvailabilityChanged += value;
+        remove => _observer.AvailabilityChanged -= value;
+    }
+
+    internal Task ObservationTask => _observationTask;
 
     public async Task<IReadOnlyList<InstalledSkillRecord>> ListAsync(CancellationToken cancellationToken = default)
         => (await _client.QueryAsync(cancellationToken).ConfigureAwait(false)).Skills;
@@ -87,13 +118,18 @@ internal sealed class SkillAppRuntimeGateway : ISkillManagementGateway, IDisposa
         var transferId = Guid.NewGuid().ToString("N");
         var transferRoot = $"skill-import-transfers/{transferId}";
         var temporaryArchive = _context.Storage.RoleLocalWorkspace.GetLocalPath($"skill-transfer/{transferId}.zip");
-        Directory.CreateDirectory(Path.GetDirectoryName(temporaryArchive)!);
         var uploadedPaths = new List<string>();
+        var cleanupRegistered = false;
         try
         {
-            CreateBoundedArchive(folderPath, temporaryArchive, cancellationToken);
+            await _pendingTransferCleanupTask.WaitAsync(cancellationToken).ConfigureAwait(false);
+            await RegisterTransferCleanupAsync(transferId, cancellationToken).ConfigureAwait(false);
+            cleanupRegistered = true;
+            Directory.CreateDirectory(Path.GetDirectoryName(temporaryArchive)!);
+            await CreateBoundedArchiveAsync(folderPath, temporaryArchive, cancellationToken)
+                .ConfigureAwait(false);
             var archiveLength = new FileInfo(temporaryArchive).Length;
-            if (archiveLength > MaxTotalBytes)
+            if (archiveLength > SkillTransferLimits.MaxArchiveBytes)
             {
                 throw new InvalidOperationException("The compressed skill transfer exceeds the 50 MB limit.");
             }
@@ -102,14 +138,14 @@ internal sealed class SkillAppRuntimeGateway : ISkillManagementGateway, IDisposa
             var chunkCount = 0;
             await using (var archive = File.OpenRead(temporaryArchive))
             {
-                var buffer = new byte[ChunkBytes];
+                var buffer = new byte[SkillTransferLimits.ChunkBytes];
                 int read;
                 while ((read = await archive.ReadAsync(buffer, cancellationToken).ConfigureAwait(false)) > 0)
                 {
                     var path = $"{transferRoot}/chunks/{chunkCount:D4}.bin";
+                    uploadedPaths.Add(path);
                     await _context.Storage.Files.WriteAsync(path, buffer.AsMemory(0, read), cancellationToken)
                         .ConfigureAwait(false);
-                    uploadedPaths.Add(path);
                     chunkCount++;
                 }
             }
@@ -119,31 +155,23 @@ internal sealed class SkillAppRuntimeGateway : ISkillManagementGateway, IDisposa
                 chunkCount,
                 archiveLength,
                 hash));
-            await _context.Storage.Files.WriteAsync(manifestPath, manifest, cancellationToken).ConfigureAwait(false);
             uploadedPaths.Add(manifestPath);
+            await _context.Storage.Files.WriteAsync(manifestPath, manifest, cancellationToken).ConfigureAwait(false);
             return await InvokeImportedAsync(
                 new SkillCommand(SkillCommandKind.ImportTransfer, transferId),
                 cancellationToken);
         }
         finally
         {
+            var cleanupSucceeded = true;
             foreach (var path in uploadedPaths)
             {
-                try
-                {
-                    await _context.Storage.Files.DeleteAsync(path, CancellationToken.None).ConfigureAwait(false);
-                }
-                catch
-                {
-                }
+                cleanupSucceeded &= await DeleteUploadedPathAsync(path).ConfigureAwait(false);
             }
-
-            try
+            cleanupSucceeded &= await DeleteTemporaryArchiveAsync(temporaryArchive).ConfigureAwait(false);
+            if (cleanupRegistered && cleanupSucceeded)
             {
-                File.Delete(temporaryArchive);
-            }
-            catch
-            {
+                await DeleteTransferMarkerAsync(transferId).ConfigureAwait(false);
             }
         }
     }
@@ -164,67 +192,33 @@ internal sealed class SkillAppRuntimeGateway : ISkillManagementGateway, IDisposa
             .ToArray();
     }
 
-    private async Task ObserveChangesAsync(CancellationToken cancellationToken)
-    {
-        while (!cancellationToken.IsCancellationRequested)
-        {
-            try
-            {
-                await foreach (var _ in _client.SubscribeChangesAsync(cancellationToken))
-                {
-                    SkillsChanged?.Invoke();
-                }
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
-            catch { }
-            try { await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false); }
-            catch (OperationCanceledException) { return; }
-        }
-    }
-
-    private static void CreateBoundedArchive(string folderPath, string archivePath, CancellationToken cancellationToken)
+    private static async Task CreateBoundedArchiveAsync(
+        string folderPath,
+        string archivePath,
+        CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(folderPath) || !Directory.Exists(folderPath))
         {
             throw new InvalidOperationException("Select an existing skill folder.");
         }
 
-        var root = Path.GetFullPath(folderPath);
-        var files = Directory.EnumerateFiles(root, "*", new EnumerationOptions
-        {
-            RecurseSubdirectories = true,
-            IgnoreInaccessible = true,
-            AttributesToSkip = FileAttributes.ReparsePoint,
-        }).ToArray();
-        if (files.Length > MaxFileCount)
-        {
-            throw new InvalidOperationException($"The selected folder contains more than {MaxFileCount} files.");
-        }
-
-        long totalBytes = 0;
+        var files = BoundedImportIO.ValidateTree(
+            folderPath,
+            new ImportTreeLimits(
+                SkillTransferLimits.MaxFiles,
+                SkillTransferLimits.MaxFiles,
+                SkillTransferLimits.MaxPathDepth,
+                SkillTransferLimits.MaxFileBytes,
+                SkillTransferLimits.MaxExpandedBytes),
+            cancellationToken);
         using var archive = ZipFile.Open(archivePath, ZipArchiveMode.Create);
         foreach (var file in files)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var info = new FileInfo(file);
-            if (info.Length > MaxFileBytes)
-            {
-                throw new InvalidOperationException($"Skill file is larger than 10 MB: {Path.GetFileName(file)}");
-            }
-
-            totalBytes += info.Length;
-            if (totalBytes > MaxTotalBytes)
-            {
-                throw new InvalidOperationException("The selected skill folder exceeds the 50 MB limit.");
-            }
-
-            var relativePath = Path.GetRelativePath(root, file).Replace('\\', '/');
-            if (relativePath.Split('/').Any(segment => segment is "" or "." or ".."))
-            {
-                throw new InvalidOperationException("The selected folder contains an unsafe path.");
-            }
-
-            archive.CreateEntryFromFile(file, relativePath, CompressionLevel.Fastest);
+            var entry = archive.CreateEntry(file.RelativePath, CompressionLevel.Fastest);
+            await using var destination = entry.Open();
+            await BoundedImportIO.CopyFileToAsync(file, destination, cancellationToken)
+                .ConfigureAwait(false);
         }
     }
 
@@ -236,23 +230,53 @@ internal sealed class SkillAppRuntimeGateway : ISkillManagementGateway, IDisposa
 
     public void Dispose()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
-        {
-            return;
-        }
+        StopObservation();
+        DisposeLifetime();
+    }
 
-        _lifetime.Cancel();
-        _lifetime.Dispose();
+    public async ValueTask DisposeAsync()
+    {
+        StopObservation();
+        try
+        {
+            await Task.WhenAll(_observationTask, _pendingTransferCleanupTask).ConfigureAwait(false);
+        }
+        finally
+        {
+            DisposeLifetime();
+        }
+    }
+
+    private void StopObservation()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) == 0)
+        {
+            _lifetime.Cancel();
+        }
+    }
+
+    private void DisposeLifetime()
+    {
+        if (Interlocked.Exchange(ref _lifetimeDisposed, 1) == 0)
+        {
+            _lifetime.Dispose();
+        }
     }
 }
 #endif
 
 #if SUNDER_SKILLS_WORKER
-internal sealed class SkillRuntimeHandler(
+internal sealed partial class SkillRuntimeHandler(
     SkillStore store,
     SkillImportService importer,
     IPackageContext context)
 {
+    private readonly ILogger<SkillRuntimeHandler> _logger = context.Logging.LoggerFactory
+        .CreateLogger<SkillRuntimeHandler>();
+    private readonly Task _orphanedTransferCleanup = CleanupOrphanedTransferStagingAsync(context);
+
+    internal Task OrphanedTransferCleanup => _orphanedTransferCleanup;
+
     public ValueTask<SkillProjection> HandleAsync(SkillQuery request, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -290,88 +314,208 @@ internal sealed class SkillRuntimeHandler(
             throw new SkillOwnerOperationException("The skill transfer id is invalid.");
         }
 
-        var root = $"skill-import-transfers/{transferId}";
-        var manifestBytes = await context.Storage.Files.ReadAsync($"{root}/manifest.json", cancellationToken)
-            .ConfigureAwait(false)
-            ?? throw new SkillOwnerOperationException("The skill transfer manifest was not found.");
-        var manifest = JsonSerializer.Deserialize<SkillTransferManifest>(manifestBytes)
-            ?? throw new SkillOwnerOperationException("The skill transfer manifest is invalid.");
-        if (manifest.ChunkCount is < 1 or > 8 || manifest.TotalBytes is < 1 or > 50 * 1024 * 1024)
-        {
-            throw new SkillOwnerOperationException("The skill transfer exceeds its bounded limits.");
-        }
+        await _orphanedTransferCleanup.WaitAsync(cancellationToken).ConfigureAwait(false);
 
-        var stagingRoot = context.Storage.RoleLocalWorkspace.GetLocalPath($"skill-transfer/{transferId}");
-        var archivePath = stagingRoot + ".zip";
-        Directory.CreateDirectory(Path.GetDirectoryName(stagingRoot)!);
+        var root = $"skill-import-transfers/{transferId}";
         try
         {
-            await using (var archive = File.Create(archivePath))
+            var manifestBytes = await context.Storage.Files.ReadAsync($"{root}/manifest.json", cancellationToken)
+                .ConfigureAwait(false)
+                ?? throw new SkillOwnerOperationException("The skill transfer manifest was not found.");
+            var manifest = ParseTransferManifest(manifestBytes);
+            var stagingRoot = context.Storage.RoleLocalWorkspace.GetLocalPath($"skill-transfer/{transferId}");
+            var archivePath = stagingRoot + ".zip";
+            Directory.CreateDirectory(Path.GetDirectoryName(stagingRoot)!);
+            try
             {
-                for (var index = 0; index < manifest.ChunkCount; index++)
+                await using (var archive = File.Create(archivePath))
                 {
-                    var chunk = await context.Storage.Files.ReadAsync(
-                        $"{root}/chunks/{index:D4}.bin",
-                        cancellationToken).ConfigureAwait(false)
-                        ?? throw new SkillOwnerOperationException("A skill transfer chunk is missing.");
-                    if (archive.Length + chunk.Length > 50 * 1024 * 1024)
+                    for (var index = 0; index < manifest.ChunkCount; index++)
                     {
-                        throw new SkillOwnerOperationException("The skill transfer exceeds the 50 MB limit.");
+                        var chunk = await context.Storage.Files.ReadAsync(
+                            $"{root}/chunks/{index:D4}.bin",
+                            cancellationToken).ConfigureAwait(false)
+                            ?? throw new SkillOwnerOperationException("A skill transfer chunk is missing.");
+                        if (chunk.Length > SkillTransferLimits.ChunkBytes)
+                        {
+                            throw new SkillOwnerOperationException("A skill transfer chunk exceeds its bounded limit.");
+                        }
+                        if (archive.Length + chunk.Length > SkillTransferLimits.MaxArchiveBytes)
+                        {
+                            throw new SkillOwnerOperationException("The skill transfer exceeds the 50 MB limit.");
+                        }
+                        await archive.WriteAsync(chunk, cancellationToken).ConfigureAwait(false);
                     }
-                    await archive.WriteAsync(chunk, cancellationToken).ConfigureAwait(false);
                 }
-            }
 
-            if (new FileInfo(archivePath).Length != manifest.TotalBytes
-                || !string.Equals(await ComputeHashAsync(archivePath, cancellationToken), manifest.Sha256, StringComparison.OrdinalIgnoreCase))
+                if (new FileInfo(archivePath).Length != manifest.TotalBytes
+                    || !string.Equals(await ComputeHashAsync(archivePath, cancellationToken), manifest.Sha256, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new SkillOwnerOperationException("The skill transfer failed integrity validation.");
+                }
+
+                await ExtractBoundedArchiveAsync(archivePath, stagingRoot, cancellationToken)
+                    .ConfigureAwait(false);
+                return await importer.ImportTransferredSkillsAsync(stagingRoot, cancellationToken).ConfigureAwait(false);
+            }
+            finally
             {
-                throw new SkillOwnerOperationException("The skill transfer failed integrity validation.");
+                await DeleteTransferPathAsync(stagingRoot, isDirectory: true).ConfigureAwait(false);
+                await DeleteTransferPathAsync(archivePath, isDirectory: false).ConfigureAwait(false);
             }
-
-            ExtractBoundedArchive(archivePath, stagingRoot);
-            return await importer.ImportTransferredSkillsAsync(stagingRoot, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
-            try { Directory.Delete(stagingRoot, recursive: true); } catch { }
-            try { File.Delete(archivePath); } catch { }
+            await DeleteTransferUploadsAsync(root).ConfigureAwait(false);
         }
     }
 
-    private static void ExtractBoundedArchive(string archivePath, string destination)
+    private static async Task ExtractBoundedArchiveAsync(
+        string archivePath,
+        string destination,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         Directory.CreateDirectory(destination);
+        BoundedImportIO.ValidateDirectoryPath(destination);
         var destinationRoot = Path.GetFullPath(destination) + Path.DirectorySeparatorChar;
         using var archive = ZipFile.OpenRead(archivePath);
-        if (archive.Entries.Count > 2_000)
+        if (archive.Entries.Count > SkillTransferLimits.MaxFiles)
         {
             throw new SkillOwnerOperationException("The skill transfer contains too many files.");
         }
 
+        var planned = new List<(ZipArchiveEntry Entry, string RelativePath, string TargetPath, bool IsDirectory)>();
+        var paths = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
         long totalBytes = 0;
         foreach (var entry in archive.Entries)
         {
-            if (entry.Length > 10 * 1024 * 1024 || (totalBytes += entry.Length) > 50 * 1024 * 1024)
+            cancellationToken.ThrowIfCancellationRequested();
+            var isDirectory = string.IsNullOrEmpty(entry.Name);
+            ValidateArchiveEntryType(entry, isDirectory);
+            var archivePathName = entry.FullName.Replace('\\', '/');
+            if (isDirectory)
+            {
+                archivePathName = archivePathName.TrimEnd('/');
+                if (archivePathName.Length == 0)
+                {
+                    continue;
+                }
+            }
+            string relativePath;
+            try
+            {
+                relativePath = BoundedImportIO.NormalizeRelativePath(
+                    archivePathName,
+                    SkillTransferLimits.MaxPathDepth);
+            }
+            catch (InvalidDataException exception)
+            {
+                throw new SkillOwnerOperationException(
+                    "The skill transfer contains an unsafe path.",
+                    exception);
+            }
+            if (!paths.TryAdd(relativePath, isDirectory))
+            {
+                throw new SkillOwnerOperationException(
+                    $"The skill transfer contains duplicate or case-colliding path '{relativePath}'.");
+            }
+            if (!isDirectory
+                && (entry.Length > SkillTransferLimits.MaxFileBytes
+                    || (totalBytes = checked(totalBytes + entry.Length)) > SkillTransferLimits.MaxExpandedBytes))
             {
                 throw new SkillOwnerOperationException("The extracted skill transfer exceeds its bounded limits.");
             }
 
-            var target = Path.GetFullPath(Path.Combine(destination, entry.FullName.Replace('/', Path.DirectorySeparatorChar)));
-            if (!target.StartsWith(destinationRoot, StringComparison.Ordinal))
+            var target = Path.GetFullPath(Path.Combine(
+                destination,
+                relativePath.Replace('/', Path.DirectorySeparatorChar)));
+            if (!target.StartsWith(destinationRoot, PathComparison))
             {
                 throw new SkillOwnerOperationException("The skill transfer contains an unsafe path.");
             }
+            planned.Add((entry, relativePath, target, isDirectory));
+        }
 
-            if (string.IsNullOrEmpty(entry.Name))
+        foreach (var item in planned)
+        {
+            var parent = Path.GetDirectoryName(item.RelativePath)?.Replace('\\', '/');
+            while (!string.IsNullOrEmpty(parent))
             {
-                Directory.CreateDirectory(target);
+                if (paths.TryGetValue(parent, out var parentIsDirectory) && !parentIsDirectory)
+                {
+                    throw new SkillOwnerOperationException(
+                        $"The skill transfer path '{item.RelativePath}' is nested beneath file '{parent}'.");
+                }
+                parent = Path.GetDirectoryName(parent)?.Replace('\\', '/');
+            }
+        }
+
+        var buffer = new byte[64 * 1024];
+        long extractedBytes = 0;
+        using var writer = BoundedImportIO.OpenTreeWriter(destination);
+        foreach (var item in planned.OrderBy(item => item.RelativePath.Count(character => character == '/')))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (item.IsDirectory)
+            {
+                writer.CreateDirectory(item.RelativePath);
                 continue;
             }
 
-            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-            entry.ExtractToFile(target);
+            await using var source = item.Entry.Open();
+            await using var target = writer.CreateFile(item.RelativePath);
+            long fileBytes = 0;
+            while (true)
+            {
+                var read = await source.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+                if (read == 0)
+                {
+                    break;
+                }
+                fileBytes = checked(fileBytes + read);
+                extractedBytes = checked(extractedBytes + read);
+                if (fileBytes > item.Entry.Length
+                    || fileBytes > SkillTransferLimits.MaxFileBytes
+                    || extractedBytes > SkillTransferLimits.MaxExpandedBytes)
+                {
+                    throw new SkillOwnerOperationException(
+                        "The extracted skill transfer exceeds its bounded limits.");
+                }
+                await target.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
+            }
+            if (fileBytes != item.Entry.Length)
+            {
+                throw new SkillOwnerOperationException(
+                    $"The skill transfer entry '{item.RelativePath}' changed size during extraction.");
+            }
+        }
+        writer.Complete();
+    }
+
+    private static void ValidateArchiveEntryType(ZipArchiveEntry entry, bool isDirectory)
+    {
+        if ((entry.ExternalAttributes & (int)FileAttributes.ReparsePoint) != 0)
+        {
+            throw new SkillOwnerOperationException("The skill transfer contains a reparse point.");
+        }
+        var unixType = (entry.ExternalAttributes >> 16) & 0xf000;
+        if (unixType == 0)
+        {
+            return;
+        }
+        var expectedType = isDirectory ? 0x4000 : 0x8000;
+        if (unixType != expectedType)
+        {
+            throw new SkillOwnerOperationException(
+                "The skill transfer contains a symbolic link, device, or unsupported entry.");
         }
     }
+
+    private static StringComparison PathComparison
+        => OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
 
     private SkillProjection Project(IReadOnlyList<string> importedIds)
         => new(store.ListSkills(), importedIds);
@@ -386,10 +530,20 @@ internal sealed class SkillRuntimeHandler(
         await using var stream = File.OpenRead(path);
         return Convert.ToHexString(await SHA256.HashDataAsync(stream, cancellationToken)).ToLowerInvariant();
     }
+
 }
 
-internal sealed class SkillRuntimeChangeStream(SkillStore store)
+internal sealed class SkillRuntimeChangeStream
 {
+    private readonly SkillStore _store;
+    private readonly Action? _subscriptionEstablished;
+
+    public SkillRuntimeChangeStream(SkillStore store, Action? subscriptionEstablished = null)
+    {
+        _store = store;
+        _subscriptionEstablished = subscriptionEstablished;
+    }
+
     public async IAsyncEnumerable<SkillChanged> SubscribeAsync(
         SkillChangeSubscription request,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -401,9 +555,11 @@ internal sealed class SkillRuntimeChangeStream(SkillStore store)
             SingleWriter = false,
         });
         void Changed() => channel.Writer.TryWrite(new SkillChanged());
-        store.SkillsChanged += Changed;
+        _store.SkillsChanged += Changed;
         try
         {
+            _subscriptionEstablished?.Invoke();
+            yield return new SkillChanged();
             await foreach (var change in channel.Reader.ReadAllAsync(cancellationToken))
             {
                 yield return change;
@@ -411,7 +567,7 @@ internal sealed class SkillRuntimeChangeStream(SkillStore store)
         }
         finally
         {
-            store.SkillsChanged -= Changed;
+            _store.SkillsChanged -= Changed;
             channel.Writer.TryComplete();
         }
     }

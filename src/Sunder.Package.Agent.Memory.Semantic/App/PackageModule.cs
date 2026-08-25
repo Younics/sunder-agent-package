@@ -13,15 +13,16 @@ public sealed class AppPackageModule : ISunderAppPackageModule
 {
     public void ConfigureAppServices(IServiceCollection services, IPackageContext context)
     {
-        services.AddSingleton<MemoryAppRuntimeGateway>();
+        services.AddSingleton(provider => new MemoryAppRuntimeGateway(
+            provider.GetRequiredService<Sunder.Sdk.Rpc.ISunderRpcClient>(),
+            context.Logging.LoggerFactory));
         services.AddSingletonAlias<IMemoryInspectorGateway, MemoryAppRuntimeGateway>();
         services.AddTransient(provider => new MemoryInspectorViewModel(
             provider.GetRequiredService<IMemoryInspectorGateway>(),
             PresentationDispatcher.Capture(),
             new PresentationOperationObserver(
                 context,
-                provider.GetService<IPackageNotificationService>()
-                    ?? NullPackageNotificationService.Instance,
+                provider.GetRequiredService<IPackageNotificationService>(),
                 "Semantic Memory")));
     }
 

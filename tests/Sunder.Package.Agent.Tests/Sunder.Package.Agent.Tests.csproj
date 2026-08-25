@@ -1,9 +1,16 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <SunderSdkAvaloniaReference>true</SunderSdkAvaloniaReference>
-    <IsPackable>false</IsPackable>
     <SunderSdkReference>true</SunderSdkReference>
     <SunderSdkStacksReference>true</SunderSdkStacksReference>
+    <SunderTestOwner>agent-family</SunderTestOwner>
+    <SunderTestCategory>Component</SunderTestCategory>
+    <SunderTestCapabilities>Docker;Filesystem;PackageArchive;SQLite;Worker</SunderTestCapabilities>
+    <SunderTestOS>Any</SunderTestOS>
+    <SunderTestSize>Large</SunderTestSize>
+    <SunderTestSourceMode>true</SunderTestSourceMode>
+    <SunderTestPackageMode>true</SunderTestPackageMode>
+    <SunderTestLanes>PackageCompatibility</SunderTestLanes>
   </PropertyGroup>
 
   <ItemGroup>
@@ -33,7 +40,7 @@
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Subagents\Sunder.Package.Agent.Subagents.csproj"
                       Aliases="SubagentsWorker" />
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Subagents\App\SubagentsApp.csproj"
-                      Aliases="global,SubagentsPackage" />
+                      Aliases="global,SubagentsPackage,SubagentsApp" />
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Subagents\Protocol\SubagentsProtocol.csproj" />
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.Anthropic\Sunder.Package.Agent.Provider.Anthropic.csproj"
                       Aliases="global,AnthropicWorker" />
@@ -47,6 +54,8 @@
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.OpenAI\Sunder.Package.Agent.Provider.OpenAI.csproj"
                       Aliases="global,OpenAiWorker" />
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.OpenAI\App\Sunder.Package.Agent.Provider.OpenAI.App.csproj" />
+    <ProjectReference Include="..\Sunder.Package.Agent.TestSupport\Sunder.Package.Agent.TestSupport.csproj" />
+    <ProjectReference Include="..\Sunder.Package.Agent.TestSupport.Avalonia\Sunder.Package.Agent.TestSupport.Avalonia.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -61,5 +70,7 @@
   <ItemGroup>
     <Compile Remove="MemoryLocalStorePersistenceTests.cs" />
     <Compile Remove="SemanticMemoryIndexingReliabilityTests.cs" />
+    <Compile Include="..\Sunder.Package.Agent.TestSupport.Avalonia\WorkerBackedSubagentManagementGateway.cs"
+             Link="TestSupport\WorkerBackedSubagentManagementGateway.cs" />
   </ItemGroup>
 </Project>

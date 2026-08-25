@@ -151,13 +151,31 @@ public sealed class GeminiChatClientWireTests
         using var client = CreateClient(server, logger);
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+        var exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => ReadUpdatesAsync(
                 client,
                 [new AIChatMessage(AIChatRole.User, "wait")],
                 cancellationToken: cancellation.Token));
 
+        ProviderConformanceHarness.VerifyCallerCancellation("Gemini", exception, cancellation.Token);
         Assert.Contains(logger.Events, entry => entry.EventName == "provider.stream.canceled");
+    }
+
+    [Fact]
+    public async Task SuccessfulStream_SatisfiesCommonTelemetryAndRedactionConformance()
+    {
+        await using var server = new GeminiWireServer(StreamResponse, "text/event-stream");
+        var logger = new RecordingEventLogger();
+        using var client = CreateClient(server, logger);
+
+        await ReadUpdatesAsync(client, [new AIChatMessage(AIChatRole.User, ProviderFailureInputs.RequestCanary)]);
+
+        ProviderConformanceHarness.VerifyTelemetryAndRedaction(
+            "Gemini",
+            logger.Events.Select(static entry => entry.EventName),
+            logger.TelemetryText,
+            "fixed-key",
+            ProviderFailureInputs.RequestCanary);
     }
 
     [Fact]
@@ -191,6 +209,15 @@ public sealed class GeminiChatClientWireTests
         Assert.Equal(AgentChatProviderFailureKind.ContextWindowExceeded, exception.FailureKind);
     }
 
+    [Fact]
+    public void ExceptionMapper_SatisfiesCommonFailureConformance()
+        => ProviderConformanceHarness.VerifyFailureClassification(new ProviderFailureConformanceAdapter(
+            "Gemini",
+            exception => GeminiExceptionMapper.Request(exception).FailureKind
+                == AgentChatProviderFailureKind.ContextWindowExceeded
+                    ? ProviderFailureClassification.ContextWindowExceeded
+                    : ProviderFailureClassification.Unknown));
+
     [Theory]
     [InlineData("Gemini returned HTTP 400: bad request")]
     [InlineData("max_output_tokens exceeds the supported value")]
@@ -217,6 +244,7 @@ public sealed class GeminiChatClientWireTests
             [new AIChatMessage(AIChatRole.User, "continue")]));
 
         Assert.Equal("gemini-incomplete-response", exception.ErrorCode);
+        ProviderConformanceHarness.VerifyPrematureEof("Gemini", exception.ErrorCode);
     }
 
     [Theory]
@@ -257,7 +285,28 @@ public sealed class GeminiChatClientWireTests
             [new AIChatMessage(AIChatRole.User, "wait")]));
 
         Assert.Equal("gemini-timeout", exception.ErrorCode);
+        ProviderConformanceHarness.VerifyProviderTimeout("Gemini", exception.ErrorCode);
     }
+
+    [Fact]
+    public async Task RealProviderAdapter_SatisfiesUnifiedConformanceContract()
+        => await ProviderConformanceHarness.VerifyAsync(new ProviderConformanceAdapter(
+            "Gemini",
+            () =>
+            {
+                ExceptionMapper_SatisfiesCommonFailureConformance();
+                return Task.CompletedTask;
+            },
+            StreamingRequest_PrematureEofIsFailure,
+            StreamingRequest_PropagatesCancellationAndRecordsTelemetry,
+            StreamingRequest_ProviderTimeoutIsNotReportedAsCallerCancellation,
+            () => new GeminiProviderTests().SettingsChatAndEmbeddings_ObserveTheSameCredentialAccessor(),
+            () =>
+            {
+                new GeminiResponseTranslatorTests().Translate_PreservesCommonMixedTextAndToolOrdering();
+                return Task.CompletedTask;
+            },
+            SuccessfulStream_SatisfiesCommonTelemetryAndRedactionConformance));
 
     private static GeminiChatClient CreateClient(
         GeminiWireServer server,
@@ -294,6 +343,10 @@ public sealed class GeminiChatClientWireTests
     {
         public List<(PackageLogLevel Level, string EventName)> Events { get; } = [];
 
+        public List<string> Entries { get; } = [];
+
+        public string TelemetryText => string.Join('\n', Entries);
+
         public ValueTask WriteAsync(
             PackageLogLevel level,
             string eventName,
@@ -302,7 +355,16 @@ public sealed class GeminiChatClientWireTests
             Exception? exception = null,
             CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             Events.Add((level, eventName));
+            Entries.Add(string.Join(
+                "|",
+                eventName,
+                message,
+                attributes is null
+                    ? string.Empty
+                    : string.Join(",", attributes.Select(static entry => $"{entry.Key}={entry.Value}")),
+                exception?.ToString() ?? string.Empty));
             return ValueTask.CompletedTask;
         }
     }

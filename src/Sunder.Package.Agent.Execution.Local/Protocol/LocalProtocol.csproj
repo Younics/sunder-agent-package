@@ -14,6 +14,7 @@
                       LogicalName="Sunder.Package.Agent.Execution.Local.Protocol.Contracts.local-execution-presentation.rpc.json" />
     <SunderRpcBinding Include="Contracts\local-execution-presentation.rpc.json"
                       Namespace="Sunder.Package.Agent.Execution.Local.Protocol.Generated"
+                      Accessibility="Internal"
                       OutputFile="LocalExecutionPresentationRpc.g.cs" />
   </ItemGroup>
 

@@ -1,0 +1,146 @@
+name: Sunder Agent Family Promotion
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Exact draft tag to promote (agent/vX.Y.Z)
+        required: true
+        type: string
+      source_sha:
+        description: Full Agent source commit accepted for this tag
+        required: true
+        type: string
+      acceptance_run_id:
+        description: Successful production-acceptance workflow run containing the archived evidence
+        required: true
+        type: string
+      acceptance_run_attempt:
+        description: Exact attempt number from the accepted production-acceptance workflow run
+        required: true
+        type: string
+      acceptance_artifact_id:
+        description: Exact numeric GitHub Actions artifact ID produced by the accepted run attempt
+        required: true
+        type: string
+      acceptance_artifact_digest:
+        description: Exact GitHub sha256 digest for the selected acceptance artifact
+        required: true
+        type: string
+      acceptance_evidence_sha256:
+        description: Lowercase SHA-256 of agent-family-acceptance.json from that run
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: sunder-agent-family-promotion
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: Promote accepted immutable Agent family
+    runs-on: ubuntu-24.04
+    environment: sunder-agent-release-promotion
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Checkout only the explicitly accepted Agent source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Authorize only the designated production acceptance workflow attempt
+        shell: bash
+        env:
+          ACCEPTANCE_ARTIFACT_DIGEST: ${{ inputs.acceptance_artifact_digest }}
+          ACCEPTANCE_ARTIFACT_ID: ${{ inputs.acceptance_artifact_id }}
+          ACCEPTANCE_RUN_ATTEMPT: ${{ inputs.acceptance_run_attempt }}
+          ACCEPTANCE_RUN_ID: ${{ inputs.acceptance_run_id }}
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          bash scripts/release/verify-acceptance-artifact.sh \
+            "$GH_REPO" "$SOURCE_SHA" "$ACCEPTANCE_RUN_ID" "$ACCEPTANCE_RUN_ATTEMPT" \
+            "$ACCEPTANCE_ARTIFACT_ID" "$ACCEPTANCE_ARTIFACT_DIGEST"
+
+      - name: Download archived production acceptance evidence from the exact run
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ inputs.acceptance_artifact_id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/agent-acceptance
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.acceptance_run_id }}
+
+      - name: Fail closed on source, run, evidence identity, and release script syntax
+        shell: bash
+        env:
+          ACCEPTANCE_ARTIFACT_DIGEST: ${{ inputs.acceptance_artifact_digest }}
+          ACCEPTANCE_ARTIFACT_ID: ${{ inputs.acceptance_artifact_id }}
+          ACCEPTANCE_EVIDENCE_SHA256: ${{ inputs.acceptance_evidence_sha256 }}
+          ACCEPTANCE_RUN_ATTEMPT: ${{ inputs.acceptance_run_attempt }}
+          ACCEPTANCE_RUN_ID: ${{ inputs.acceptance_run_id }}
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$ACCEPTANCE_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          [[ "$ACCEPTANCE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$ACCEPTANCE_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$ACCEPTANCE_ARTIFACT_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$ACCEPTANCE_EVIDENCE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          bash -n scripts/*.sh scripts/release/*.sh scripts/compatibility/*.sh
+
+          acceptance="$RUNNER_TEMP/agent-acceptance/agent-family-acceptance.json"
+          test -f "$acceptance"
+          mapfile -t acceptance_files < <(find "$RUNNER_TEMP/agent-acceptance" -type f -print)
+          test "${#acceptance_files[@]}" -eq 1
+          test "$(sha256sum "$acceptance" | cut -d ' ' -f 1)" = "$ACCEPTANCE_EVIDENCE_SHA256"
+
+          bash scripts/release/verify-acceptance-artifact.sh \
+            "$GH_REPO" "$SOURCE_SHA" "$ACCEPTANCE_RUN_ID" "$ACCEPTANCE_RUN_ATTEMPT" \
+            "$ACCEPTANCE_ARTIFACT_ID" "$ACCEPTANCE_ARTIFACT_DIGEST"
+          jq -e \
+            --arg attempt "$ACCEPTANCE_RUN_ATTEMPT" \
+            --arg id "$ACCEPTANCE_RUN_ID" \
+            --arg source "$SOURCE_SHA" \
+            --arg tag "$TAG" '
+              .acceptanceRunId == $id
+              and .acceptanceRunAttempt == $attempt
+              and .sourceCommit == $source
+              and .tag == $tag
+              and .decision == "accepted"
+            ' "$acceptance" >/dev/null
+
+      - name: Verify accepted immutable bytes, apply compensating promotion, and finalize exact draft
+        shell: bash
+        env:
+          ACCEPTANCE_ARTIFACT_DIGEST: ${{ inputs.acceptance_artifact_digest }}
+          ACCEPTANCE_ARTIFACT_ID: ${{ inputs.acceptance_artifact_id }}
+          ACCEPTANCE_EVIDENCE_SHA256: ${{ inputs.acceptance_evidence_sha256 }}
+          ACCEPTANCE_RUN_ATTEMPT: ${{ inputs.acceptance_run_attempt }}
+          ACCEPTANCE_RUN_ID: ${{ inputs.acceptance_run_id }}
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY_API_URL: ${{ vars.SUNDER_REGISTRY_API_URL }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          SUNDER_REGISTRY_CLI_TOKEN: ${{ secrets.SUNDER_REGISTRY_CLI_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          bash scripts/release/promote-agent-family.sh \
+            "$TAG" "$SOURCE_SHA" "$REGISTRY_API_URL" \
+            "$RUNNER_TEMP/agent-acceptance/agent-family-acceptance.json" \
+            "$RUNNER_TEMP/agent-promotion-verification"

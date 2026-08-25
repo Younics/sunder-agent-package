@@ -41,7 +41,7 @@ internal static class OpenAiExceptionMapper
         for (var current = exception; current is not null; current = current.InnerException)
         {
             if (ProviderContextWindowFailureClassifier.IsOpenAi(
-                    OpenAiErrorDiagnosticExtractor.Extract(current.Message)))
+                    ProviderErrorDiagnosticExtractor.Extract(current.Message)))
             {
                 return true;
             }
@@ -54,7 +54,7 @@ internal static class OpenAiExceptionMapper
             try
             {
                 if (ProviderContextWindowFailureClassifier.IsOpenAi(
-                        OpenAiErrorDiagnosticExtractor.Extract(
+                        ProviderErrorDiagnosticExtractor.Extract(
                             resultException.GetRawResponse()?.Content.ToString())))
                 {
                     return true;

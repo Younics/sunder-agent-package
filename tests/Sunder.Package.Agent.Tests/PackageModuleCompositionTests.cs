@@ -2,6 +2,7 @@ using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Avalonia;
+using Sunder.Sdk.Notifications;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -73,6 +74,7 @@ public sealed class PackageModuleCompositionTests
 
     [Theory]
     [MemberData(nameof(AppPackageNames))]
+    [Trait("Lane", "PackageCompatibility")]
     public async Task AppPackageModule_ConfiguresValidatedServicesAndRegistersContributions(string packageName)
     {
         using var packageScope = RegressionTestPackageScope.Create();
@@ -84,6 +86,7 @@ public sealed class PackageModuleCompositionTests
         services.AddSingleton<Sunder.Sdk.Rpc.ISunderRpcClient>(
             new RegressionTestRpcClient(rpcState, packageName));
         services.AddSingleton<IBackgroundProcessQueue, CompositionBackgroundProcessQueue>();
+        services.AddSingleton<IPackageNotificationService>(NullPackageNotificationService.Instance);
 
         var appModule = CreateAppPackageModule(packageName);
         appModule.ConfigureAppServices(services, packageScope.Context);

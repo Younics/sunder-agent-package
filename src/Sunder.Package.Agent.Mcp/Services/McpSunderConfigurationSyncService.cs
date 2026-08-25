@@ -158,22 +158,36 @@ public sealed class McpSunderConfigurationSyncService(
             }
             IReadOnlyList<AgentWorkspaceRecord> workspaces;
             using (lease)
+            using (var invocation = CancellationTokenSource.CreateLinkedTokenSource(
+                       cancellationToken,
+                       lease.RetirementToken))
+            {
                 try
                 {
-                    workspaces = lease.Service.ListWorkspaces().ToArray();
+                    workspaces = (await lease.Service
+                        .ListWorkspacesAsync(invocation.Token)
+                        .ConfigureAwait(false)).ToArray();
+                    cancellationToken.ThrowIfCancellationRequested();
                     if (lease.RetirementToken.IsCancellationRequested)
                     {
                         continue;
                     }
                 }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
                 catch
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     continue;
                 }
+            }
 
             result.AddRange(workspaces);
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         return result;
     }
 

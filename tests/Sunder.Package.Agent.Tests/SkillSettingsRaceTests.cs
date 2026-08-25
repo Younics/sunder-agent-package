@@ -12,20 +12,18 @@ public sealed class SkillSettingsRaceTests
     {
         var gateway = new BlockingSkillGateway();
         using var viewModel = new SkillSettingsViewModel(gateway);
+        var firstInitialization = viewModel.InitializeAsync();
+        var secondInitialization = viewModel.InitializeAsync();
+        AdaptiveEditorLifecycleContract.SharedInitialization(
+            Adapt(viewModel),
+            firstInitialization,
+            secondInitialization);
         await gateway.First.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        var freshApplied = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        viewModel.Skills.CollectionChanged += (_, _) =>
-        {
-            if (viewModel.Skills.SingleOrDefault()?.DisplayName == "Fresh skill")
-            {
-                freshApplied.TrySetResult();
-            }
-        };
 
         gateway.RaiseSkillsChanged();
         await gateway.Second.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
         gateway.Second.Response.TrySetResult([Skill("fresh", "Fresh skill")]);
-        await freshApplied.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await viewModel.RuntimeRefreshIdle.WaitAsync(TimeSpan.FromSeconds(2));
 
         gateway.First.Response.TrySetResult([Skill("stale", "Stale skill")]);
         await viewModel.InitializeAsync();
@@ -33,6 +31,10 @@ public sealed class SkillSettingsRaceTests
         var skill = Assert.Single(viewModel.Skills);
         Assert.Equal("fresh", skill.SkillId);
         Assert.Equal("Fresh skill", skill.DisplayName);
+        AdaptiveEditorLifecycleContract.CurrentSelectionWins(
+            Adapt(viewModel),
+            "fresh",
+            "Stale skill");
     }
 
     [Fact]
@@ -64,20 +66,42 @@ public sealed class SkillSettingsRaceTests
         var gateway = new BlockingImportSkillGateway();
         var viewModel = new SkillSettingsViewModel(gateway);
         await viewModel.InitializeAsync();
+        var publications = 0;
+        viewModel.PropertyChanged += (_, _) => Interlocked.Increment(ref publications);
 
         var import = viewModel.ImportLocalFolderAsync("/first");
         await gateway.ImportStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        viewModel.Dispose();
-
+        await AdaptiveEditorLifecycleContract.RetiredWorkCannotPublishAsync(
+            Adapt(viewModel, () => Volatile.Read(ref publications)),
+            viewModel.Dispose,
+            () => gateway.ReleaseImport.TrySetResult(),
+            import.WaitAsync(TimeSpan.FromSeconds(2)));
+        var publicationsAfterDrainage = Volatile.Read(ref publications);
         await viewModel.ImportLocalFolderAsync("/after-disposal");
+
         Assert.Equal(1, gateway.ImportCount);
-
-        gateway.ReleaseImport.TrySetResult();
-        await import.WaitAsync(TimeSpan.FromSeconds(2));
-
+        Assert.Equal(publicationsAfterDrainage, Volatile.Read(ref publications));
         Assert.Empty(viewModel.Skills);
         Assert.Empty(viewModel.StatusText);
     }
+
+    private static IAdaptiveEditorLifecycleAdapter Adapt(
+        SkillSettingsViewModel viewModel,
+        Func<int>? publicationCount = null)
+        => new DelegateAdaptiveEditorLifecycleAdapter(
+            "Skills",
+            () => new AdaptiveEditorSnapshot(
+                IsHydrating: !viewModel.InitializeAsync().IsCompleted,
+                CanMutate: !viewModel.IsDisposed && !viewModel.IsBusy && viewModel.IsRuntimeAvailable,
+                viewModel.IsBusy,
+                IsDirty: !string.IsNullOrWhiteSpace(viewModel.GithubUrl),
+                viewModel.SelectedSkill?.SkillId,
+                viewModel.SelectedSkill?.DisplayName,
+                publicationCount?.Invoke() ?? 0,
+                viewModel.IsRuntimeAvailable
+                    ? AdaptiveEditorRuntimeState.Available
+                    : AdaptiveEditorRuntimeState.Unavailable),
+            viewModel);
 
     private static InstalledSkillRecord Skill(string id, string name)
     {

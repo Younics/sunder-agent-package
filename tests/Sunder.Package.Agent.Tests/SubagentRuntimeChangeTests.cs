@@ -210,6 +210,24 @@ public sealed class SubagentRuntimeChangeTests
     }
 
     [Fact]
+    public async Task AppGateway_MalformedChangeResnapshotsAndViewModelTracksAvailability()
+    {
+        var client = new MalformedChangeRuntimeClient();
+        using var gateway = new SubagentAppRuntimeGateway(client);
+        using var viewModel = new SubagentsViewModel(gateway);
+        var resnapshot = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        gateway.ResnapshotRequired += () => resnapshot.TrySetResult();
+
+        await gateway.InitializeAsync();
+        await resnapshot.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        await client.SecondSubscriptionStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        await WaitUntilAsync(() => viewModel.IsRuntimeAvailable);
+
+        Assert.Equal([0, 0], client.AfterRevisions.ToArray());
+        Assert.True(gateway.IsOwnerStreamAvailable);
+    }
+
+    [Fact]
     public async Task ResnapshotRequired_ReloadsSelectedTranscriptAcrossRowMoveAndAcceptsLaterChange()
     {
         var gateway = new ResnapshotSubsessionGateway();
@@ -401,6 +419,48 @@ public sealed class SubagentRuntimeChangeTests
                     null)],
                 now,
                 now);
+        }
+    }
+
+    private sealed class MalformedChangeRuntimeClient : ISubagentOwnerClient
+    {
+        private int _subscriptionCount;
+
+        internal ConcurrentQueue<long> AfterRevisions { get; } = new();
+        internal TaskCompletionSource SecondSubscriptionStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public ValueTask<SubagentProjection> QueryAsync(
+            SubagentQuery request,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromException<SubagentProjection>(new NotSupportedException(request.Kind.ToString()));
+
+        public ValueTask<SubagentProjection> CommandAsync(
+            SubagentCommand request,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromException<SubagentProjection>(new NotSupportedException(request.Kind.ToString()));
+
+        public async IAsyncEnumerable<SubagentChanged> SubscribeChangesAsync(
+            SubagentChangeSubscription request,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            AfterRevisions.Enqueue(request.AfterRevision);
+            var subscription = Interlocked.Increment(ref _subscriptionCount);
+            yield return new SubagentChanged(
+                0,
+                SubagentChangeKind.Connected,
+                RuntimeInstanceId: "runtime");
+            if (subscription == 1)
+            {
+                yield return new SubagentChanged(
+                    1,
+                    (SubagentChangeKind)int.MaxValue,
+                    RuntimeInstanceId: "runtime");
+                yield break;
+            }
+
+            SecondSubscriptionStarted.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
         }
     }
 
@@ -641,8 +701,13 @@ public sealed class SubagentRuntimeChangeTests
         public IReadOnlyList<AgentSessionRecord> ListSessionsForProfile(string profileId) => [];
         public IReadOnlyList<AgentSessionRecord> ListSessionsForWorkspace(string workspaceId) => [];
         public AgentSessionRecord? GetSession(Guid sessionId) => null;
-        public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces() => [];
-        public AgentWorkspaceRecord? GetWorkspace(string workspaceId) => null;
+        public ValueTask<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesAsync(
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult<IReadOnlyList<AgentWorkspaceRecord>>([]);
+        public ValueTask<AgentWorkspaceRecord?> GetWorkspaceAsync(
+            string workspaceId,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult<AgentWorkspaceRecord?>(null);
         public AgentProfileRecord? GetSessionProfile(Guid sessionId) => null;
         public AgentWorkingSummaryRecord? GetWorkingSummary(Guid sessionId) => null;
         public AgentSessionContextCheckpointRecord? GetLatestSessionContextCheckpoint(Guid sessionId) => null;

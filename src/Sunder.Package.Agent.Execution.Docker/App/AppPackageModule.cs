@@ -23,8 +23,7 @@ public sealed class AppPackageModule : ISunderAppPackageModule
         services.AddTransient(provider => new DockerExecutionSettingsView(
             provider.GetRequiredService<DockerExecutionSettingsViewModel>(),
             context,
-            provider.GetService<IPackageNotificationService>()
-                ?? NullPackageNotificationService.Instance));
+            provider.GetRequiredService<IPackageNotificationService>()));
     }
 
     public void RegisterAppContributions(

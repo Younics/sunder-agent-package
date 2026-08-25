@@ -54,6 +54,7 @@ public sealed class ToolPackageRoleCompositionTests
 
     [Theory]
     [MemberData(nameof(ToolPackages))]
+    [Trait("Lane", "PackageCompatibility")]
     public void WorkerRole_GeneratesExactContributions(string assemblyName, string[] expectedRegistrations)
     {
         var package = Assert.Single(

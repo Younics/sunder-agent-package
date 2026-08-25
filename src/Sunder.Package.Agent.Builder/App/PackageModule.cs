@@ -30,14 +30,12 @@ public sealed class AppPackageModule : ISunderAppPackageModule
             provider.GetRequiredService<IBuilderUiDispatcher>(),
             new PresentationOperationObserver(
                 context,
-                provider.GetService<IPackageNotificationService>()
-                    ?? NullPackageNotificationService.Instance,
+                provider.GetRequiredService<IPackageNotificationService>(),
                 "Package Builder")));
         services.AddTransient(provider => new BuilderView(
             provider.GetRequiredService<BuilderViewModel>(),
             context,
-            provider.GetService<IPackageNotificationService>()
-                ?? NullPackageNotificationService.Instance));
+            provider.GetRequiredService<IPackageNotificationService>()));
     }
 
     public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services)

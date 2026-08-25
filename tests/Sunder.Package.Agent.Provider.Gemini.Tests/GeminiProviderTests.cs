@@ -73,12 +73,18 @@ public sealed class GeminiProviderTests
             new CredentialOwnerClientFake(credentials));
         var chat = new GeminiAgentProvider(context, credentials);
         var embeddings = new GeminiEmbeddingProvider(context, credentials);
+        var readinessTransitions = new List<string>
+        {
+            (await chat.GetReadinessAsync()).Status.ToString(),
+        };
 
         settings.ApiKeySettings.EnteredCredential = "shared-key";
         await settings.ApiKeySettings.SaveCredentialCommand.ExecuteAsync(null);
 
         Assert.Equal(AgentProviderReadinessStatus.Ready, (await chat.GetReadinessAsync()).Status);
         Assert.Equal(AgentProviderReadinessStatus.Ready, (await embeddings.GetReadinessAsync()).Status);
+        readinessTransitions.Add((await chat.GetReadinessAsync()).Status.ToString());
+        ProviderConformanceHarness.VerifyReadinessTransitions("Gemini", readinessTransitions);
 
         settings.ApiKeySettings.RequestClearCredentialCommand.Execute(null);
         await settings.ApiKeySettings.ClearCredentialCommand.ExecuteAsync(null);

@@ -1,7 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <IsPackable>false</IsPackable>
     <SunderSdkReference>true</SunderSdkReference>
+    <SunderTestOwner>sunder.package.agent.memory.semantic</SunderTestOwner>
+    <SunderTestCategory>Component</SunderTestCategory>
+    <SunderTestCapabilities>Filesystem;SQLite;Worker</SunderTestCapabilities>
+    <SunderTestOS>Any</SunderTestOS>
+    <SunderTestSize>Medium</SunderTestSize>
+    <SunderTestSourceMode>true</SunderTestSourceMode>
+    <SunderTestPackageMode>true</SunderTestPackageMode>
+    <SunderTestLanes>PackageCompatibility</SunderTestLanes>
   </PropertyGroup>
 
   <ItemGroup>
@@ -9,12 +16,15 @@
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Memory.Semantic\Sunder.Package.Agent.Memory.Semantic.csproj" />
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Memory.Semantic\App\Sunder.Package.Agent.Memory.Semantic.App.csproj" />
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Memory.Semantic\Protocol\Sunder.Package.Agent.Memory.Semantic.Protocol.csproj" />
+    <ProjectReference Include="..\Sunder.Package.Agent.TestSupport\Sunder.Package.Agent.TestSupport.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <Compile Include="..\Sunder.Package.Agent.Tests\MemoryLocalStorePersistenceTests.cs" Link="MemoryLocalStorePersistenceTests.cs" />
     <Compile Include="..\Sunder.Package.Agent.Tests\AgentPackageRepositoryInventory.cs" Link="AgentPackageRepositoryInventory.cs" />
     <Compile Include="..\Sunder.Package.Agent.Tests\RegressionTestInfrastructure.cs" Link="RegressionTestInfrastructure.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Tests\RegressionTestPackageContext.cs" Link="RegressionTestPackageContext.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Tests\RegressionTestPackageScope.cs" Link="RegressionTestPackageScope.cs" />
     <Compile Include="..\Sunder.Package.Agent.Tests\SemanticMemoryIndexingReliabilityTests.cs" Link="SemanticMemoryIndexingReliabilityTests.cs" />
     <Compile Include="..\Sunder.Package.Agent.Tests\TestPackageStorageFakes.cs" Link="TestPackageStorageFakes.cs" />
   </ItemGroup>

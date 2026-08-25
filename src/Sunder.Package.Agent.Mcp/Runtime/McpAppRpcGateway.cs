@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using Microsoft.Extensions.Logging;
 using Sunder.Package.Agent.Mcp.Protocol.Generated;
 using Sunder.Package.Agent.Mcp.Services;
 using Sunder.Package.Agent.Shared.Presentation;
@@ -83,27 +84,46 @@ internal sealed class McpOwnerManagementRpcClient(ISunderRpcClient rpc) : IMcpOw
     }
 }
 
-internal sealed class McpAppRuntimeGateway : IMcpManagementGateway, IDisposable
+internal sealed class McpAppRuntimeGateway :
+    IMcpManagementGateway,
+    IOwnerStreamAvailability,
+    IDisposable,
+    IAsyncDisposable
 {
     private const int MaxImportBytes = 1024 * 1024;
     private readonly IMcpOwnerManagementClient _client;
     private readonly PackageCallbackFlowRunner _callbackFlow;
     private readonly CancellationTokenSource _lifetime = new();
+    private readonly ILogger<McpAppRuntimeGateway>? _logger;
+    private readonly OwnerStreamObserver _observer;
+    private readonly Task _observationTask;
     private IReadOnlyList<McpCatalogDiagnostic> _diagnostics = [];
     private int _disposed;
+    private int _lifetimeDisposed;
 
     internal McpAppRuntimeGateway(
         IMcpOwnerManagementClient client,
-        IPackageCallbackClient callbacks)
+        IPackageCallbackClient callbacks,
+        ILoggerFactory? loggerFactory = null)
     {
         _client = client;
         _callbackFlow = new PackageCallbackFlowRunner(callbacks);
-        _ = ObserveChangesAsync(_lifetime.Token);
+        _logger = loggerFactory?.CreateLogger<McpAppRuntimeGateway>();
+        _observer = new OwnerStreamObserver(LogObservationRetry);
+        _observationTask = _observer.RunAsync(ObserveChangesOnceAsync, _lifetime.Token);
     }
 
     public event Action? ServersChanged;
     public event Action? StatusChanged;
     public IReadOnlyList<McpCatalogDiagnostic> Diagnostics => _diagnostics;
+    public bool IsOwnerStreamAvailable => _observer.IsAvailable;
+    public event Action<bool>? OwnerStreamAvailabilityChanged
+    {
+        add => _observer.AvailabilityChanged += value;
+        remove => _observer.AvailabilityChanged -= value;
+    }
+
+    internal Task ObservationTask => _observationTask;
 
     public async Task<IReadOnlyList<ConfiguredMcpServerRecord>> ListAsync(
         CancellationToken cancellationToken = default)
@@ -163,21 +183,19 @@ internal sealed class McpAppRuntimeGateway : IMcpManagementGateway, IDisposable
         string filePath,
         CancellationToken cancellationToken = default)
     {
-        var info = new FileInfo(filePath);
-        if (!info.Exists)
+        if (string.IsNullOrWhiteSpace(filePath))
         {
             throw new InvalidOperationException("Select an existing MCP configuration file.");
         }
-        if (info.Length > MaxImportBytes)
-        {
-            throw new InvalidOperationException("The MCP configuration file exceeds the 1 MB import limit.");
-        }
-        var document = await File.ReadAllTextAsync(filePath, cancellationToken);
+        var document = await McpConfigurationSourceReader.ReadTextAsync(
+            filePath,
+            MaxImportBytes,
+            cancellationToken).ConfigureAwait(false);
         return (await CommandAsync(
             new McpCommand(
                 McpCommandKind.ImportDocument,
                 Document: document,
-                FileName: info.Name),
+                FileName: Path.GetFileName(filePath)),
             cancellationToken)).ImportResult!;
     }
 
@@ -232,51 +250,70 @@ internal sealed class McpAppRuntimeGateway : IMcpManagementGateway, IDisposable
     private async Task<McpProjection> CommandAsync(McpCommand command, CancellationToken cancellationToken)
         => await _client.CommandAsync(command, cancellationToken).ConfigureAwait(false);
 
-    private async Task ObserveChangesAsync(CancellationToken cancellationToken)
+    private async Task ObserveChangesOnceAsync(
+        Action markAvailable,
+        CancellationToken cancellationToken)
     {
-        while (!cancellationToken.IsCancellationRequested)
+        var connected = false;
+        await foreach (var change in _client.WatchChangesAsync(cancellationToken))
         {
-            try
+            if (!connected)
             {
-                await foreach (var change in _client.WatchChangesAsync(cancellationToken))
-                {
-                    if (change.Kind == McpChangeKind.Servers)
-                    {
-                        ServersChanged?.Invoke();
-                    }
-                    else
-                    {
-                        StatusChanged?.Invoke();
-                    }
-                }
+                connected = true;
+                markAvailable();
             }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            switch (change.Kind)
             {
-                return;
-            }
-            catch
-            {
-            }
-
-            try
-            {
-                await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                return;
+                case McpChangeKind.Servers:
+                    ServersChanged?.Invoke();
+                    break;
+                case McpChangeKind.Status:
+                    StatusChanged?.Invoke();
+                    break;
+                default:
+                    throw new InvalidDataException("The MCP Runtime returned a malformed change event.");
             }
         }
     }
 
+    private void LogObservationRetry(Exception exception, TimeSpan retryDelay)
+        => _logger?.LogWarning(
+            "MCP owner change observation failed and will retry in {RetryDelayMilliseconds} ms ({ExceptionType}).",
+            retryDelay.TotalMilliseconds,
+            exception.GetType().Name);
+
     public void Dispose()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
-        {
-            return;
-        }
+        StopObservation();
+        DisposeLifetime();
+    }
 
-        _lifetime.Cancel();
-        _lifetime.Dispose();
+    public async ValueTask DisposeAsync()
+    {
+        StopObservation();
+        try
+        {
+            await _observationTask.ConfigureAwait(false);
+        }
+        finally
+        {
+            DisposeLifetime();
+        }
+    }
+
+    private void StopObservation()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) == 0)
+        {
+            _lifetime.Cancel();
+        }
+    }
+
+    private void DisposeLifetime()
+    {
+        if (Interlocked.Exchange(ref _lifetimeDisposed, 1) == 0)
+        {
+            _lifetime.Dispose();
+        }
     }
 }

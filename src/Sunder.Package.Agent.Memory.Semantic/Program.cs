@@ -107,6 +107,7 @@ internal sealed class AgentRpcCatalogLifecycle(
     AgentRpcCatalog catalog,
     MemoryLocalStore store) : ISunderWorkerLifecycleService
 {
+    private readonly object _syncRoot = new();
     private int _started;
 
     public Task Completion => Task.CompletedTask;
@@ -138,17 +139,21 @@ internal sealed class AgentRpcCatalogLifecycle(
     public Task StartAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        store.Initialize();
-        if (Interlocked.Exchange(ref _started, 1) == 0)
+        store.Initialize(cancellationToken);
+        lock (_syncRoot)
         {
-            catalog.StartWatching();
+            if (_started == 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                catalog.StartWatching();
+                _started = 1;
+            }
         }
         return Task.CompletedTask;
     }
 
     public Task StopAsync(CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
         catalog.Dispose();
         return Task.CompletedTask;
     }

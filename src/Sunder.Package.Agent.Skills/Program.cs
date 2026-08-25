@@ -1,5 +1,4 @@
 using Microsoft.Extensions.DependencyInjection;
-using Octokit;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Skills.Protocol;
 using Sunder.Package.Agent.Skills.Protocol.Generated;
@@ -21,8 +20,13 @@ try
         var services = new ServiceCollection();
         services.AddSingleton<IPackageContext>(context);
         services.AddSingleton(catalog);
-        services.AddSingleton(new GitHubClient(new ProductHeaderValue("Sunder-Agent-Skills")));
-        services.AddSingleton<IGitHubSkillClient, OctokitGitHubSkillClient>();
+        services.AddSingleton(_ => new HttpClient(
+            new SocketsHttpHandler { AllowAutoRedirect = false })
+        {
+            BaseAddress = new Uri("https://api.github.com/"),
+            Timeout = Timeout.InfiniteTimeSpan,
+        });
+        services.AddSingleton<IGitHubSkillClient, GitHubSkillClient>();
         services.AddSingleton<SkillStore>();
         services.AddSingleton<SkillImportService>();
         services.AddSingleton<SkillsFeature>();
@@ -54,9 +58,14 @@ try
                 "skills.prompt.context",
                 AgentRpcContractIds.PromptContextContributor,
                 AgentPromptContextContributorRpc.CreateHandler(feature, catalog)),
-            SunderStackContributorRpc.CreateWorkerProviderRegistration(
+            new SunderWorkerProviderRegistration(
                 "skills.stack",
-                serviceProvider.GetRequiredService<SkillStackContributor>()),
+                SunderStackContributorRpc.ContractId,
+                SunderStackContributorRpc.ContractVersion,
+                SunderStackContributorRpc.DescriptorSha256,
+                SunderStackContributorRpc.AbiSha256,
+                SunderStackContributorRpc.CreateHandler(
+                    serviceProvider.GetRequiredService<SkillStackContributor>())),
             new SunderWorkerProviderRegistration(
                 SkillsOwnerProtocol.ProviderId,
                 ownerDescriptor.ContractId,

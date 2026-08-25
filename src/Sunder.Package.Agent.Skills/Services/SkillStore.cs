@@ -5,6 +5,40 @@ using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Skills.Services;
 
+internal static class SkillPersistenceSchemas
+{
+    public const string IndexId = "sunder.agent.skills.index";
+    public const string ImportJournalId = "sunder.agent.skills.import-journal";
+    public const int CurrentVersion = 1;
+}
+
+internal static class SkillPersistenceJson
+{
+    public static void RejectDuplicateProperties(JsonElement value)
+    {
+        if (value.ValueKind == JsonValueKind.Object)
+        {
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var property in value.EnumerateObject())
+            {
+                if (!names.Add(property.Name))
+                {
+                    throw new InvalidDataException($"Skill persistence document contains duplicate property '{property.Name}'.");
+                }
+
+                RejectDuplicateProperties(property.Value);
+            }
+        }
+        else if (value.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in value.EnumerateArray())
+            {
+                RejectDuplicateProperties(item);
+            }
+        }
+    }
+}
+
 public sealed class SkillStore
 {
     private static readonly TimeSpan LockTimeout = TimeSpan.FromSeconds(30);
@@ -206,9 +240,15 @@ public sealed class SkillStore
                     throw new InvalidDataException($"The skill index '{_indexPath}' grew beyond the {MaxIndexBytes}-byte limit while it was being read.");
                 }
 
-                records = JsonSerializer.Deserialize<IReadOnlyList<InstalledSkillRecord>>(
-                              StrictUtf8.GetString(bytes), JsonOptions)
-                          ?? throw new InvalidDataException($"The skill index '{_indexPath}' is empty.");
+                var json = StrictUtf8.GetString(bytes);
+                using var document = JsonDocument.Parse(json, new JsonDocumentOptions { MaxDepth = 64 });
+                SkillPersistenceJson.RejectDuplicateProperties(document.RootElement);
+                records = document.RootElement.ValueKind switch
+                {
+                    JsonValueKind.Array => JsonSerializer.Deserialize<IReadOnlyList<InstalledSkillRecord>>(json, JsonOptions),
+                    JsonValueKind.Object => ReadCurrentIndex(json, document.RootElement),
+                    _ => null,
+                } ?? throw new InvalidDataException($"The skill index '{_indexPath}' is empty or has an unsupported shape.");
             }
             catch (DecoderFallbackException ex)
             {
@@ -240,7 +280,31 @@ public sealed class SkillStore
             ValidateRecord(skill);
         }
 
-        WriteIndex(JsonSerializer.SerializeToUtf8Bytes(skills, JsonOptions));
+        WriteIndex(JsonSerializer.SerializeToUtf8Bytes(
+            new SkillIndexDocument(
+                SkillPersistenceSchemas.IndexId,
+                SkillPersistenceSchemas.CurrentVersion,
+                skills),
+            JsonOptions));
+    }
+
+    private InvalidDataException UnsupportedIndexSchema()
+        => new($"The skill index '{_indexPath}' has an unsupported or missing schema identity.");
+
+    private IReadOnlyList<InstalledSkillRecord> ReadCurrentIndex(string json, JsonElement root)
+    {
+        if (!root.TryGetProperty(nameof(SkillIndexDocument.SchemaId), out var schemaId)
+            || schemaId.ValueKind != JsonValueKind.String
+            || !string.Equals(schemaId.GetString(), SkillPersistenceSchemas.IndexId, StringComparison.Ordinal)
+            || !root.TryGetProperty(nameof(SkillIndexDocument.SchemaVersion), out var schemaVersion)
+            || !schemaVersion.TryGetInt32(out var version)
+            || version != SkillPersistenceSchemas.CurrentVersion)
+        {
+            throw UnsupportedIndexSchema();
+        }
+
+        return JsonSerializer.Deserialize<SkillIndexDocument>(json, JsonOptions)?.Skills
+               ?? throw new InvalidDataException($"The skill index '{_indexPath}' is empty.");
     }
 
     private static void ValidateRecord(InstalledSkillRecord skill)
@@ -376,3 +440,8 @@ public sealed class SkillStore
         }
     }
 }
+
+internal sealed record SkillIndexDocument(
+    string SchemaId,
+    int SchemaVersion,
+    IReadOnlyList<InstalledSkillRecord> Skills);

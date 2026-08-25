@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using Xunit;
@@ -37,6 +39,76 @@ public sealed partial class ProviderArchitectureTests
                 .Where(include => include?.Contains("Sunder.Package.Agent.Provider.Shared", StringComparison.Ordinal) == true)
                 .ToArray();
             Assert.NotEmpty(sharedSources);
+        }
+    }
+
+    [Fact]
+    public async Task ProviderApps_EvaluatedCompileItemsUseExactSharedSourceAllowlists()
+    {
+        var repositoryRoot = GetRepositoryRoot();
+        var agentSharedRoot = Path.GetFullPath(Path.Combine(
+            repositoryRoot,
+            "src",
+            "Sunder.Package.Agent.Shared"));
+        var agentSharedPrefix = agentSharedRoot.TrimEnd(
+            Path.DirectorySeparatorChar,
+            Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var expectedByProvider = new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal)
+        {
+            ["Anthropic"] = ProviderSettingsSharedSources,
+            ["Gemini"] = ProviderSettingsSharedSources,
+            ["LMStudio"] = ProviderSettingsSharedSources,
+            ["OpenAI"] = ProviderSettingsSharedSources.Concat(
+                [
+                    "Presentation/PackageCallbackFlowRunner.cs",
+                    "Presentation/PresentationOperationObserver.cs",
+                ])
+                .ToHashSet(StringComparer.OrdinalIgnoreCase),
+        };
+
+        foreach (var provider in expectedByProvider)
+        {
+            var projectPath = Path.Combine(
+                repositoryRoot,
+                "src",
+                $"Sunder.Package.Agent.Provider.{provider.Key}",
+                "App",
+                $"Sunder.Package.Agent.Provider.{provider.Key}.App.csproj");
+            var project = XDocument.Load(projectPath);
+            var broadImports = project.Descendants("Import")
+                .Select(static element => element.Attribute("Project")?.Value.Replace('\\', '/'))
+                .Where(static path => path?.EndsWith(
+                    "Sunder.Package.Agent.Shared/Sunder.Package.Agent.Shared.props",
+                    StringComparison.OrdinalIgnoreCase) == true)
+                .ToArray();
+            var broadCompileIncludes = project.Descendants("Compile")
+                .Select(static element => element.Attribute("Include")?.Value)
+                .Where(static include => include is not null
+                                         && include.Contains("Sunder.Package.Agent.Shared", StringComparison.OrdinalIgnoreCase)
+                                         && include.Contains('*'))
+                .ToArray();
+
+            Assert.Empty(broadImports);
+            Assert.Empty(broadCompileIncludes);
+
+            var evaluatedCompilePaths = await GetEvaluatedCompilePathsAsync(repositoryRoot, projectPath);
+            var duplicatePaths = evaluatedCompilePaths
+                .GroupBy(static path => path, StringComparer.OrdinalIgnoreCase)
+                .Where(static group => group.Count() > 1)
+                .Select(static group => group.Key)
+                .Order(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            Assert.True(
+                duplicatePaths.Length == 0,
+                $"{provider.Key} App links duplicate Compile sources: [{string.Join(", ", duplicatePaths)}].");
+
+            var actualSharedSources = evaluatedCompilePaths
+                .Where(path => path.StartsWith(agentSharedPrefix, StringComparison.OrdinalIgnoreCase))
+                .Select(path => Path.GetRelativePath(agentSharedRoot, path).Replace('\\', '/'))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            Assert.True(
+                provider.Value.SetEquals(actualSharedSources),
+                $"{provider.Key} App shared Compile sources were [{string.Join(", ", actualSharedSources.Order(StringComparer.OrdinalIgnoreCase))}].");
         }
     }
 
@@ -135,6 +207,8 @@ public sealed partial class ProviderArchitectureTests
             {
                 "Sunder.Package.Agent.Contracts",
                 "Sunder.Package.Agent.Provider.TestSupport",
+                "Sunder.Package.Agent.TestSupport",
+                "Sunder.Package.Agent.TestSupport.Avalonia",
             };
             if (string.Equals(vendor, "OpenAI", StringComparison.Ordinal))
             {
@@ -226,6 +300,58 @@ public sealed partial class ProviderArchitectureTests
         throw new DirectoryNotFoundException(
             "Could not locate the Sunder Agent package repository root from SUNDER_AGENT_REPOSITORY_ROOT, the test output, or the working directory.");
     }
+
+    private static async Task<string[]> GetEvaluatedCompilePathsAsync(
+        string repositoryRoot,
+        string projectPath)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = Environment.GetEnvironmentVariable("DOTNET_HOST_PATH") ?? "dotnet",
+            WorkingDirectory = repositoryRoot,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        startInfo.ArgumentList.Add("msbuild");
+        startInfo.ArgumentList.Add(projectPath);
+        startInfo.ArgumentList.Add("-nologo");
+        startInfo.ArgumentList.Add("-getItem:Compile");
+        startInfo.ArgumentList.Add("-property:Configuration=Release");
+
+        using var process = new Process { StartInfo = startInfo };
+        Assert.True(process.Start(), $"Could not start MSBuild evaluation for {projectPath}.");
+        var standardOutput = process.StandardOutput.ReadToEndAsync();
+        var standardError = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        var output = await standardOutput;
+        var error = await standardError;
+        Assert.True(
+            process.ExitCode == 0,
+            $"MSBuild evaluation failed for {projectPath} with exit code {process.ExitCode}:{Environment.NewLine}{error}{Environment.NewLine}{output}");
+
+        using var result = JsonDocument.Parse(output);
+        return result.RootElement
+            .GetProperty("Items")
+            .GetProperty("Compile")
+            .EnumerateArray()
+            .Select(static item => Path.GetFullPath(item.GetProperty("FullPath").GetString()!))
+            .ToArray();
+    }
+
+    private static readonly IReadOnlySet<string> ProviderSettingsSharedSources = new HashSet<string>(
+        [
+            "PackageViews/SunderComboBox.cs",
+            "Presentation/CapabilitySelectionState.cs",
+            "Presentation/ModelBindingEditorState.cs",
+            "Presentation/OperationState.cs",
+            "Presentation/PresentationDispatcher.cs",
+            "Presentation/PresentationExceptionPolicy.cs",
+            "Presentation/PresentationTaskScope.cs",
+            "Presentation/ProviderModelLoader.cs",
+            "Presentation/TimedStatusController.cs",
+        ],
+        StringComparer.OrdinalIgnoreCase);
 
     [GeneratedRegex(@"^\s*public\s+(?:(?:abstract|sealed|static|partial|readonly|ref)\s+)*(?:class|struct|interface|enum|record|delegate)\b")]
     private static partial Regex PublicTypeDeclaration();

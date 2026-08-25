@@ -15,6 +15,7 @@ namespace Sunder.Package.Agent.Tests;
 public sealed class McpWorkerCompositionTests
 {
     [Fact]
+    [Trait("Lane", "PackageCompatibility")]
     public async Task WorkerAndAppComposition_KeepAuthorityInTheWorker()
     {
         using var scope = RegressionTestPackageScope.Create();

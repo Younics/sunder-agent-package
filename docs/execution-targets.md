@@ -24,7 +24,6 @@ Return `NeedsConfiguration` for missing user configuration and `Failed` for an u
 | --- | --- |
 | `IAgentProcessExecutionTarget` | Execute a file name plus an ordered argument list without caller-authored shell quoting. |
 | `IAgentStructuredFileSearchExecutionTarget` | Execute a bounded structured grep/glob request under target-owned filesystem authority. First-party Local and Docker implement this without launching a process. |
-| `IAgentFileSearchExecutionTarget` | Legacy path-bound process-search contract retained for external compatibility. New targets should prefer the structured capability. |
 | `IAgentRangedFileExecutionTarget` | Declare that `ReadFileAsync` validates one-based `Offset`/`Limit` and returns line metadata/errors. |
 | `IAgentExecutionScopeProvider` | Describe target-visible workspace roots, default working directory, and path syntax. Required by consumers that need a concrete execution workspace. |
 | `IAgentExecutionPathMapper` | Map a target-visible path back to a host path inside an allowed root. |
@@ -81,7 +80,7 @@ For every file and working-directory operation:
 
 Never trust `AgentPermissionRequest.Path` or a previous resolution as the final path. The execution target performs the last check.
 
-`IAgentStructuredFileSearchExecutionTarget` accepts only structured grep/glob fields and returns structured matches. First-party Local and Docker perform managed, handle-relative traversal and never pass a validated path to `rg`, `grep`, or `find`. They reject links and device transitions anywhere traversed, skip binary files without returning partial matches, apply regex timeout/cancellation, and bound expression size/expansion, traversal, matches, and output. Reserved internal entries remain hidden but are charged to the same raw traversal budget before filtering, and every glob/include match in one request consumes one aggregate matcher-state budget. POSIX paths treat backslashes as literal filename characters, not separators. The additive `IAgentFileSearchExecutionTarget` contract remains available only for compatibility with external implementations.
+`IAgentStructuredFileSearchExecutionTarget` accepts only structured grep/glob fields and returns structured matches. It is the only supported file-search facet; execution targets cannot delegate Files searches to caller-shaped processes. First-party Local and Docker perform managed, handle-relative traversal and never pass a validated path to `rg`, `grep`, or `find`. They reject links and device transitions anywhere traversed, skip binary files without returning partial matches, apply regex timeout/cancellation, and bound expression size/expansion, traversal, matches, and output. Reserved internal entries remain hidden but are charged to the same raw traversal budget before filtering, and every glob/include match in one request consumes one aggregate matcher-state budget. POSIX paths treat backslashes as literal filename characters, not separators.
 
 ## File Semantics
 

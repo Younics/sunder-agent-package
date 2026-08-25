@@ -3,7 +3,6 @@ using System.Runtime.InteropServices;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Execution.Local;
 using Xunit;
-using Xunit.Sdk;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
 
@@ -132,7 +131,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         Assert.Equal("OUTSIDE", await File.ReadAllTextAsync(Path.Combine(fixture.Outside, "dir", "sentinel.txt")));
     }
 
-    [Theory]
+    [PlatformTheory(TestPlatform.Linux, "Anonymous file publication fallback is Linux-specific.")]
     [InlineData(false)]
     [InlineData(true)]
     public async Task Write_PublishesOnlyInPinnedParent(bool overwrite)
@@ -160,16 +159,11 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         Assert.Empty(Directory.EnumerateFiles(fixture.Pinned, $".{targetName}.sunder-*.tmp"));
     }
 
-    [Theory]
+    [PlatformTheory(TestPlatform.Linux, "Anonymous publication through /proc/self/fd is Linux-specific.")]
     [InlineData(false)]
     [InlineData(true)]
     public async Task LinuxWrite_AtEmptyPathEperm_UsesProcFallbackWithoutTemporaryLeak(bool overwrite)
     {
-        if (!OperatingSystem.IsLinux())
-        {
-            return;
-        }
-
         var fixture = CreateFixture();
         var targetName = overwrite ? "proc-existing.txt" : "proc-created.txt";
         var target = Path.Combine(fixture.Workspace, targetName);
@@ -200,16 +194,11 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         AssertNoTemporaryEntries(fixture.Workspace);
     }
 
-    [Theory]
+    [PlatformTheory(TestPlatform.Linux, "Named fallback publication is Linux-specific.")]
     [InlineData(false)]
     [InlineData(true)]
     public async Task LinuxWrite_WhenAnonymousLinksAreUnavailable_UsesNamedFallbackWithoutTemporaryLeak(bool overwrite)
     {
-        if (!OperatingSystem.IsLinux())
-        {
-            return;
-        }
-
         var fixture = CreateFixture();
         var target = Path.Combine(fixture.Workspace, "named-fallback.txt");
         if (overwrite)
@@ -239,14 +228,12 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         AssertNoTemporaryEntries(fixture.Workspace);
     }
 
-    [Fact]
+    [PlatformFact(
+        TestPlatform.Linux,
+        TestFileSystemCapability.FileSymbolicLinks,
+        "Named fallback substitution requires Linux file symbolic links.")]
     public async Task LinuxNamedFallback_RejectsTemporaryEntrySubstitutionAndRestoresOriginal()
     {
-        if (!OperatingSystem.IsLinux())
-        {
-            return;
-        }
-
         var fixture = CreateFixture();
         var target = Path.Combine(fixture.Workspace, "named-attack.txt");
         var outside = Path.Combine(fixture.Outside, "outside.txt");
@@ -280,14 +267,9 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         AssertNoTemporaryEntries(fixture.Workspace);
     }
 
-    [Fact]
+    [PlatformFact(TestPlatform.Linux, "Named fallback no-replace behavior is Linux-specific.")]
     public async Task LinuxNamedFallback_TargetCreationRaceRemainsNoReplaceAndCleansTemporaryEntry()
     {
-        if (!OperatingSystem.IsLinux())
-        {
-            return;
-        }
-
         var fixture = CreateFixture();
         var target = Path.Combine(fixture.Workspace, "named-race.txt");
         var hook = new CreateAtFinalPublishHook(target, "ATTACKER");
@@ -310,14 +292,12 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         AssertNoTemporaryEntries(fixture.Workspace);
     }
 
-    [Fact]
+    [PlatformFact(
+        TestPlatform.MacOS,
+        TestFileSystemCapability.FileSymbolicLinks,
+        "Named temporary substitution requires macOS file symbolic links.")]
     public async Task Write_RejectsTemporaryNameSubstitutionBeforePublish()
     {
-        if (!OperatingSystem.IsMacOS())
-        {
-            return;
-        }
-
         var fixture = CreateFixture();
         var target = Path.Combine(fixture.Pinned, "target.txt");
         var outside = Path.Combine(fixture.Outside, "outside.txt");
@@ -509,19 +489,21 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         Assert.Equal("OUTSIDE policy", await File.ReadAllTextAsync(Path.Combine(fixture.Outside, "AGENTS.md")));
     }
 
-    [Fact]
+    [FileSystemFact(
+        TestFileSystemCapability.DirectorySymbolicLinks,
+        "Root and child link containment requires directory symbolic links.")]
     public async Task RootAndChildLinksAreRejectedWithoutFollowing()
     {
         var fixture = CreateFixture();
         var rootLink = Path.Combine(_root, "workspace-link");
-        CreateDirectoryLinkOrSkip(rootLink, fixture.Workspace);
+        Directory.CreateSymbolicLink(rootLink, fixture.Workspace);
         var rootResult = await LocalFileSystemExecutor.ReadFileAsync(
             new LocalExecutionRuntimeConfig([rootLink], rootLink),
             new AgentFileReadRequest("."),
             false,
             CancellationToken.None);
 
-        CreateDirectoryLinkOrSkip(Path.Combine(fixture.Workspace, "child-link"), fixture.Outside);
+        Directory.CreateSymbolicLink(Path.Combine(fixture.Workspace, "child-link"), fixture.Outside);
         var childResult = await LocalFileSystemExecutor.ReadFileAsync(
             fixture.Config,
             new AgentFileReadRequest("child-link"),
@@ -532,14 +514,9 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         Assert.Equal(AgentFileReadErrorCodes.PathCanonicalizationFailed, childResult.ErrorCode);
     }
 
-    [Fact]
+    [PlatformFact(TestPlatform.UnixWithDistinctDevice, "st_dev transition validation requires distinct Unix devices.")]
     public void UnixDeviceTransition_IsRejectedWhenCapabilityIsObservable()
     {
-        if (OperatingSystem.IsWindows())
-        {
-            throw SkipException.ForSkip("st_dev transition validation is a Unix capability test.");
-        }
-
         var rootDescriptor = LocalUnixNative.Open(
             "/",
             LocalUnixNative.ReadOnly | LocalUnixNative.DirectoryFlag | LocalUnixNative.NoFollowFlag | LocalUnixNative.CloseOnExecFlag);
@@ -549,11 +526,6 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         Assert.True(rootDescriptor >= 0 && deviceDescriptor >= 0);
         using var rootHandle = new SafeFileHandle(new IntPtr(rootDescriptor), ownsHandle: true);
         using var deviceHandle = new SafeFileHandle(new IntPtr(deviceDescriptor), ownsHandle: true);
-        if (LocalUnixNative.ReadMetadata(rootDescriptor).Device == LocalUnixNative.ReadMetadata(deviceDescriptor).Device)
-        {
-            throw SkipException.ForSkip("/dev does not expose a distinct device on this host.");
-        }
-
         Assert.Throws<LocalSecurePathException>(() => LocalSecurePathEngine.OpenRoot("/dev"));
     }
 
@@ -637,7 +609,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         Assert.Empty(result.Matches);
     }
 
-    [Theory]
+    [PlatformTheory(TestPlatform.Unix, "Mutation checkpoint CAS races require Unix file-descriptor semantics.")]
     [InlineData(false)]
     [InlineData(true)]
     public async Task SearchRejectsUnboundedExpressions(bool braceExpansion)
@@ -715,10 +687,6 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
     [InlineData(true)]
     public async Task ExpectedContentCas_RejectsContentChangedAtMutationCheckpoint(bool delete)
     {
-        if (OperatingSystem.IsWindows())
-        {
-            return;
-        }
         var fixture = CreateFixture();
         var path = Path.Combine(fixture.Workspace, "cas-race.txt");
         await File.WriteAllTextAsync(path, "original");
@@ -758,15 +726,11 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
             content => content == "changed concurrently");
     }
 
-    [Theory]
+    [PlatformTheory(TestPlatform.Unix, "Final mutation syscall races require Unix file-descriptor semantics.")]
     [InlineData(false)]
     [InlineData(true)]
     public async Task FinalMutationSyscall_DoesNotPublishOrDeleteReplacementEntry(bool delete)
     {
-        if (OperatingSystem.IsWindows())
-        {
-            return;
-        }
         var fixture = CreateFixture();
         var target = Path.Combine(fixture.Workspace, "final-race.txt");
         var parked = Path.Combine(fixture.Workspace, "approved-parked.txt");
@@ -823,13 +787,9 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         Assert.Equal("ATTACKER", await File.ReadAllTextAsync(target));
     }
 
-    [Fact]
+    [PlatformFact(TestPlatform.Windows, "Final mutation handle replacement is Windows-specific.")]
     public async Task WindowsFinalMutationHandles_BlockInPlaceEntryReplacement()
     {
-        if (!OperatingSystem.IsWindows())
-        {
-            return;
-        }
         var fixture = CreateFixture();
         var outside = Path.Combine(fixture.Outside, "outside.txt");
         await File.WriteAllTextAsync(outside, "OUTSIDE");
@@ -868,14 +828,16 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         Assert.Equal("OUTSIDE", await File.ReadAllTextAsync(outside));
     }
 
-    [Fact]
+    [FileSystemFact(
+        TestFileSystemCapability.HardLinks,
+        "Structured-operation hard-link containment requires hard-link support.")]
     public async Task HardLinkedRegularFiles_AreRejectedAcrossStructuredOperations()
     {
         var fixture = CreateFixture();
         var target = Path.Combine(fixture.Workspace, "linked.txt");
         var alias = Path.Combine(fixture.Workspace, "linked-alias.txt");
         await File.WriteAllTextAsync(target, "content");
-        CreateHardLinkOrSkip(alias, target);
+        TestFileSystemCapabilities.CreateHardLink(alias, target);
 
         var read = await LocalFileSystemExecutor.ReadFileAsync(
             fixture.Config,
@@ -900,7 +862,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
             CancellationToken.None);
         var instruction = Path.Combine(fixture.Workspace, "AGENTS.md");
         await File.WriteAllTextAsync(instruction, "policy");
-        CreateHardLinkOrSkip(Path.Combine(fixture.Workspace, "policy-alias.md"), instruction);
+        TestFileSystemCapabilities.CreateHardLink(Path.Combine(fixture.Workspace, "policy-alias.md"), instruction);
         var discovery = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await LocalScopedInstructionDiscovery.DiscoverAsync(
                 fixture.Config,
@@ -961,23 +923,15 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         Assert.Equal("keep", await File.ReadAllTextAsync(Path.Combine(nested, "keep.txt")));
     }
 
-    [Fact]
+    [PlatformFact(TestPlatform.MacCaseInsensitive, "This verifies case-insensitive macOS configured-root aliases.")]
     public async Task RecursiveDelete_RejectsCaseFoldedAliasOfNestedConfiguredRoot()
     {
-        if (!OperatingSystem.IsMacOS())
-        {
-            return;
-        }
         var outer = Path.Combine(_root, "CaseConfiguredOuter");
         var parent = Path.Combine(outer, "Parent");
         var nested = Path.Combine(parent, "NestedRoot");
         Directory.CreateDirectory(nested);
         await File.WriteAllTextAsync(Path.Combine(nested, "keep.txt"), "keep");
         var caseFoldedNested = Path.Combine(outer.ToLowerInvariant(), "parent", "nestedroot");
-        if (!Directory.Exists(caseFoldedNested))
-        {
-            return;
-        }
         var config = new LocalExecutionRuntimeConfig([outer, caseFoldedNested], outer);
 
         var result = await LocalFileSystemExecutor.DeleteFileAsync(
@@ -1035,54 +989,6 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         Directory.CreateDirectory(outside);
         return new Fixture(workspace, pinned, outside, new LocalExecutionRuntimeConfig([workspace], workspace));
     }
-
-    private static void CreateDirectoryLinkOrSkip(string link, string target)
-    {
-        try
-        {
-            Directory.CreateSymbolicLink(link, target);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException or NotSupportedException)
-        {
-            throw SkipException.ForSkip($"Directory links are unavailable: {ex.Message}");
-        }
-    }
-
-    private static void CreateHardLinkOrSkip(string link, string target)
-    {
-        try
-        {
-            if (OperatingSystem.IsWindows())
-            {
-                if (!CreateHardLinkWindows(link, target, IntPtr.Zero))
-                {
-                    throw new IOException(
-                        new System.ComponentModel.Win32Exception(
-                            System.Runtime.InteropServices.Marshal.GetLastPInvokeError()).Message);
-                }
-                return;
-            }
-
-            var directory = Path.GetDirectoryName(target)!;
-            using var root = LocalSecurePathEngine.OpenRoot(directory);
-            LocalUnixNative.Link(
-                root.Handle.Handle.DangerousGetHandle().ToInt32(),
-                Path.GetFileName(target),
-                Path.GetFileName(link));
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException or NotSupportedException)
-        {
-            throw SkipException.ForSkip($"Hard links are unavailable: {ex.Message}");
-        }
-    }
-
-    [System.Runtime.InteropServices.DllImport(
-        "kernel32.dll",
-        EntryPoint = "CreateHardLinkW",
-        CharSet = System.Runtime.InteropServices.CharSet.Unicode,
-        SetLastError = true)]
-    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
-    private static extern bool CreateHardLinkWindows(string fileName, string existingFileName, IntPtr securityAttributes);
 
     private static string ContentHash(string content)
         => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
@@ -1197,10 +1103,10 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
             {
                 File.CreateSymbolicLink(temporaryPath, outsidePath);
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException or NotSupportedException)
+            catch
             {
                 File.Move(parkedPath, temporaryPath);
-                throw SkipException.ForSkip($"File links are unavailable: {ex.Message}");
+                throw;
             }
             _temporaryPath = temporaryPath;
             _parkedPath = parkedPath;
@@ -1248,10 +1154,10 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
             {
                 File.CreateSymbolicLink(temporaryPath, outsidePath);
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException or NotSupportedException)
+            catch
             {
                 File.Move(parkedPath, temporaryPath);
-                throw SkipException.ForSkip($"File links are unavailable: {ex.Message}");
+                throw;
             }
             _temporaryPath = temporaryPath;
             _parkedPath = parkedPath;

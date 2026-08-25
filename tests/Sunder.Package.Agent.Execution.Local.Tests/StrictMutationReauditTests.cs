@@ -254,14 +254,9 @@ public sealed class StrictMutationReauditTests : IDisposable
             root.Platform.ReserveMutationSlots(root.Handle, 1, cancellation.Token));
     }
 
-    [Fact]
+    [PlatformFact(TestPlatform.Unix, "Bounded quarantine accounting requires Unix directory handles.")]
     public void QuarantineAccounting_RejectsDirectoryBeyondScanBound()
     {
-        if (OperatingSystem.IsWindows())
-        {
-            return;
-        }
-
         var workspace = Path.Combine(_root, "workspace");
         Directory.CreateDirectory(workspace);
         for (var index = 0; index <= HostSecurePathEngine.MaxQuarantineAccountingEntries; index++)
@@ -279,14 +274,9 @@ public sealed class StrictMutationReauditTests : IDisposable
             StringComparison.Ordinal);
     }
 
-    [Fact]
+    [PlatformFact(TestPlatform.Unix, "Atomic quarantine reservation requires Unix directory handles.")]
     public async Task QuarantineCapacity_IsAtomicAcrossConcurrentMutations()
     {
-        if (OperatingSystem.IsWindows())
-        {
-            return;
-        }
-
         var workspace = Path.Combine(_root, "workspace");
         Directory.CreateDirectory(workspace);
         const int requiredSlots = 4;
@@ -365,13 +355,11 @@ public sealed class StrictMutationReauditTests : IDisposable
         Assert.Contains("aggregate", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact]
+    [PlatformFact(TestPlatform.Unix, "Metadata transfer requires Unix file modes.")]
+    [SupportedOSPlatform("linux")]
+    [SupportedOSPlatform("macos")]
     public async Task Overwrite_CopiesMetadataFromFreshlyQuarantinedHandle()
     {
-        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())
-        {
-            return;
-        }
         var workspace = Path.Combine(_root, "workspace");
         Directory.CreateDirectory(workspace);
         var path = Path.Combine(workspace, "mode.txt");
@@ -391,16 +379,11 @@ public sealed class StrictMutationReauditTests : IDisposable
         Assert.Equal(expectedMode, File.GetUnixFileMode(path) & (UnixFileMode)0x0fff);
     }
 
-    [Theory]
+    [PlatformTheory(TestPlatform.Unix, "Quarantine rollback fault injection requires Unix file descriptors.")]
     [InlineData(false)]
     [InlineData(true)]
     public async Task QuarantineRollbackFailure_ReturnsStableRecoveryRequiredError(bool delete)
     {
-        if (OperatingSystem.IsWindows())
-        {
-            return;
-        }
-
         var workspace = Path.Combine(_root, "rollback-failure-workspace");
         Directory.CreateDirectory(workspace);
         var path = Path.Combine(workspace, delete ? "delete.txt" : "write.txt");
@@ -435,16 +418,12 @@ public sealed class StrictMutationReauditTests : IDisposable
         Assert.Equal("recoverable-original", await File.ReadAllTextAsync(alias));
     }
 
-    [Theory]
+    [PlatformTheory(TestPlatform.Unix, "Post-quarantine rollback fault injection requires Unix file descriptors.")]
     [InlineData((int)LocalSecureFileSystemCheckpoint.AfterQuarantineBeforeMetadata)]
     [InlineData((int)LocalSecureFileSystemCheckpoint.BeforePostQuarantineSync)]
     public async Task PostQuarantineMetadataOrSyncFailure_RestoresExactTarget(
         int checkpointValue)
     {
-        if (OperatingSystem.IsWindows())
-        {
-            return;
-        }
         var workspace = Path.Combine(_root, "workspace");
         Directory.CreateDirectory(workspace);
         var path = Path.Combine(workspace, "rollback.txt");
@@ -472,16 +451,14 @@ public sealed class StrictMutationReauditTests : IDisposable
             content => content == "old");
     }
 
-    [Theory]
+    [PlatformTheory(TestPlatform.Unix, "Post-publication rollback fault injection requires Unix file descriptors.")]
     [InlineData((int)LocalSecureFileSystemCheckpoint.AfterPublishedFileSync)]
     [InlineData((int)LocalSecureFileSystemCheckpoint.AfterPublishedParentSync)]
+    [SupportedOSPlatform("linux")]
+    [SupportedOSPlatform("macos")]
     public async Task PostPublicationSyncFailure_DurablyRestoresOriginalAndAllowsCleanRetry(
         int checkpointValue)
     {
-        if (OperatingSystem.IsWindows())
-        {
-            return;
-        }
         var workspace = Path.Combine(_root, "workspace");
         Directory.CreateDirectory(workspace);
         var path = Path.Combine(workspace, "published-rollback.txt");
@@ -531,13 +508,9 @@ public sealed class StrictMutationReauditTests : IDisposable
         Assert.Equal("retry", await File.ReadAllTextAsync(path));
     }
 
-    [Fact]
+    [PlatformFact(TestPlatform.Unix, "Rollback recovery fault injection requires Unix file descriptors.")]
     public async Task PostPublicationRollbackFailure_ReturnsStableFatalErrorAndHidesSensitiveState()
     {
-        if (OperatingSystem.IsWindows())
-        {
-            return;
-        }
         var workspace = Path.Combine(_root, "workspace");
         Directory.CreateDirectory(workspace);
         var path = Path.Combine(workspace, "fatal-rollback.txt");
@@ -581,13 +554,9 @@ public sealed class StrictMutationReauditTests : IDisposable
             content => content == "old-recoverable");
     }
 
-    [Fact]
+    [PlatformFact(TestPlatform.Unix, "Post-quarantine validation fault injection requires Unix file descriptors.")]
     public async Task PostQuarantineValidatorFailure_RestoresFreshlyValidatedTarget()
     {
-        if (OperatingSystem.IsWindows())
-        {
-            return;
-        }
         var workspace = Path.Combine(_root, "workspace");
         Directory.CreateDirectory(workspace);
         var path = Path.Combine(workspace, "validator.txt");
@@ -614,15 +583,11 @@ public sealed class StrictMutationReauditTests : IDisposable
             content => content == "changed-after-quarantine");
     }
 
-    [Theory]
+    [PlatformTheory(TestPlatform.Unix, "Post-quarantine cancellation checkpoints require Unix file descriptors.")]
     [InlineData(false)]
     [InlineData(true)]
     public async Task CancellationAfterQuarantine_CompletesExactMutationWithoutStranding(bool delete)
     {
-        if (OperatingSystem.IsWindows())
-        {
-            return;
-        }
         var workspace = Path.Combine(_root, "workspace");
         Directory.CreateDirectory(workspace);
         var path = Path.Combine(workspace, "cancel.txt");
@@ -659,13 +624,9 @@ public sealed class StrictMutationReauditTests : IDisposable
         }
     }
 
-    [Fact]
+    [PlatformFact(TestPlatform.Unix, "Pre-publish replacement races require Unix file descriptors.")]
     public async Task PostValidationPrePublishReplacement_IsNeverOverwritten()
     {
-        if (OperatingSystem.IsWindows())
-        {
-            return;
-        }
         var workspace = Path.Combine(_root, "workspace");
         Directory.CreateDirectory(workspace);
         var path = Path.Combine(workspace, "publish-race.txt");
@@ -689,14 +650,9 @@ public sealed class StrictMutationReauditTests : IDisposable
             content => content == "ATTACKER");
     }
 
-    [Fact]
+    [PlatformFact(TestPlatform.Windows, "This verifies the Windows fail-closed structured-mutation path.")]
     public async Task WindowsStructuredMutations_FailClosedWithoutTemporaryOrOutsideChanges()
     {
-        if (!OperatingSystem.IsWindows())
-        {
-            Assert.True(LocalSecureNative.StrictMutationsAvailable);
-            return;
-        }
         Assert.False(LocalSecureNative.StrictMutationsAvailable);
         var workspace = Path.Combine(_root, "workspace");
         var outside = Path.Combine(_root, "outside.txt");

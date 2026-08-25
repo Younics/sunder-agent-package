@@ -16,13 +16,14 @@
     <Compile Include="..\Services\McpConfigurationImportPipeline.cs" Link="Services\McpConfigurationImportPipeline.cs" />
     <Compile Include="..\Services\McpConnectionStatus.cs" Link="Services\McpConnectionStatus.cs" />
     <Compile Include="..\Services\McpTransportSecurity.cs" Link="Services\McpTransportSecurity.cs" />
-    <Compile Include="..\..\Sunder.Package.Agent.Shared\Importing\BoundedImportIO.cs"
-             Link="Importing\BoundedImportIO.cs" />
     <EmbeddedResource Include="Contracts\mcp-management.rpc.json"
                       LogicalName="Sunder.Package.Agent.Mcp.Contracts.mcp-management.rpc.json" />
     <SunderRpcBinding Include="Contracts\mcp-management.rpc.json"
                       Namespace="Sunder.Package.Agent.Mcp.Protocol.Generated"
+                      Accessibility="Internal"
                       OutputFile="McpManagementRpc.g.cs" />
   </ItemGroup>
+
+  <Import Project="..\..\Sunder.Package.Agent.Shared\Importing\Sunder.Package.Agent.Importing.props" />
 
 </Project>

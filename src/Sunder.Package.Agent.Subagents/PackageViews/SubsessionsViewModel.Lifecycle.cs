@@ -8,12 +8,16 @@ namespace Sunder.Package.Agent.Subagents.PackageViews;
 public sealed partial class SubsessionsViewModel
 {
     private bool _ownsChangeNotifications;
+    private IOwnerStreamAvailability? _ownerAvailability;
 
     [ObservableProperty]
     private string _statusText = string.Empty;
 
     [ObservableProperty]
     private bool _hasLoadError;
+
+    [ObservableProperty]
+    private bool _isRuntimeAvailable = true;
 
     internal SubsessionsViewModel(
         ISubsessionSessionReader sessionReader,
@@ -139,6 +143,10 @@ public sealed partial class SubsessionsViewModel
             _changeNotifications.ResnapshotRequired -= OnRuntimeResnapshotRequired;
             if (_ownsChangeNotifications) (_changeNotifications as IDisposable)?.Dispose();
         }
+        if (_ownerAvailability is not null)
+        {
+            _ownerAvailability.OwnerStreamAvailabilityChanged -= OnOwnerStreamAvailabilityChanged;
+        }
 
         _runActivity.Changed -= OnRunActivityStateChanged;
         _runActivity.Dispose();
@@ -154,5 +162,22 @@ public sealed partial class SubsessionsViewModel
         _requests.Dispose();
         _operations.Dispose();
         _tasks.Dispose();
+    }
+
+    private void OnOwnerStreamAvailabilityChanged(bool available)
+        => RunOnUiThread(() => IsRuntimeAvailable = available);
+
+    private void SetOwnerAvailability(ISubsessionChangeNotifications changeNotifications)
+    {
+        if (_ownerAvailability is not null)
+        {
+            _ownerAvailability.OwnerStreamAvailabilityChanged -= OnOwnerStreamAvailabilityChanged;
+        }
+        _ownerAvailability = changeNotifications as IOwnerStreamAvailability;
+        IsRuntimeAvailable = _ownerAvailability?.IsOwnerStreamAvailable ?? true;
+        if (_ownerAvailability is not null)
+        {
+            _ownerAvailability.OwnerStreamAvailabilityChanged += OnOwnerStreamAvailabilityChanged;
+        }
     }
 }

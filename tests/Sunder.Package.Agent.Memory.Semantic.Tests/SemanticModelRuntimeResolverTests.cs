@@ -76,8 +76,13 @@ public sealed class SemanticModelRuntimeResolverTests
         public IReadOnlyList<AgentSessionRecord> ListSessionsForProfile(string profileId) => [];
         public IReadOnlyList<AgentSessionRecord> ListSessionsForWorkspace(string workspaceId) => [];
         public AgentSessionRecord? GetSession(Guid sessionId) => null;
-        public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces() => [];
-        public AgentWorkspaceRecord? GetWorkspace(string workspaceId) => null;
+        public ValueTask<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesAsync(
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult<IReadOnlyList<AgentWorkspaceRecord>>([]);
+        public ValueTask<AgentWorkspaceRecord?> GetWorkspaceAsync(
+            string workspaceId,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult<AgentWorkspaceRecord?>(null);
         public AgentProfileRecord? GetSessionProfile(Guid sessionId) => null;
         public AgentWorkingSummaryRecord? GetWorkingSummary(Guid sessionId) => null;
         public AgentSessionContextCheckpointRecord? GetLatestSessionContextCheckpoint(Guid sessionId) => null;

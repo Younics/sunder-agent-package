@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Provider.OpenAI.Transport;
+using Sunder.Package.Agent.Provider.TestSupport;
 using Xunit;
 
 namespace Sunder.Package.Agent.Provider.OpenAI.Tests;
@@ -91,6 +92,36 @@ public sealed class CodexResponsesStreamParserTests
         Assert.Equal("call-1", functionCall.CallId);
         Assert.Equal("read", functionCall.Name);
         Assert.Equal("README.md", Assert.IsType<JsonElement>(functionCall.Arguments!["path"]).GetString());
+    }
+
+    [Fact]
+    public async Task ParseAsync_PreservesCommonMixedTextAndToolOrdering()
+    {
+        using var response = CreateSseResponse("""
+            event: response.output_text.delta
+            data: {"type":"response.output_text.delta","delta":"Before"}
+
+            event: response.output_item.added
+            data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"item-1","call_id":"call-1","name":"read","arguments":""}}
+
+            event: response.function_call_arguments.done
+            data: {"type":"response.function_call_arguments.done","output_index":0,"arguments":"{\"path\":\"README.md\"}"}
+
+            event: response.output_text.delta
+            data: {"type":"response.output_text.delta","delta":"After"}
+
+            event: response.completed
+            data: {"type":"response.completed","response":{"id":"resp-1","status":"completed"}}
+
+            """);
+
+        var updates = await ReadUpdatesAsync(response, toolAware: true);
+
+        ProviderConformanceHarness.VerifyToolResultOrder(
+            "OpenAI",
+            updates.Select(static update => update.Contents.Any(static content => content is FunctionCallContent)
+                ? "tool"
+                : "text"));
     }
 
     [Fact]

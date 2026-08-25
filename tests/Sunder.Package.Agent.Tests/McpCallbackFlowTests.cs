@@ -48,6 +48,60 @@ public sealed class McpCallbackFlowTests
         Assert.Equal(1, statusChanges);
     }
 
+    [FileSystemFact(
+        TestFileSystemCapability.FileSymbolicLinks,
+        "MCP import-link rejection requires file symbolic links.")]
+    public async Task AppGateway_ImportFileRejectsSymbolicLinkBeforeOwnerCommand()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "sunder-mcp-app-import-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var target = Path.Combine(root, "target.json");
+            var link = Path.Combine(root, "linked.json");
+            await File.WriteAllTextAsync(target, "{\"mcp\":{}}");
+            File.CreateSymbolicLink(link, target);
+            using var gateway = new McpAppRuntimeGateway(
+                new IdleManagementClient(),
+                new FakeCallbackClient());
+
+            await Assert.ThrowsAsync<InvalidDataException>(() =>
+                gateway.ImportFileAsync(link, CancellationToken.None));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task AppGateway_MalformedChangeReconnectsAndShutsDownObservation()
+    {
+        var client = new ReconnectingManagementClient();
+        var gateway = new McpAppRuntimeGateway(client, new FakeCallbackClient());
+        var changed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        gateway.ServersChanged += () => changed.TrySetResult();
+        try
+        {
+            await client.SecondSubscriptionStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            await changed.Task.WaitAsync(TimeSpan.FromSeconds(3));
+
+            Assert.True(gateway.IsOwnerStreamAvailable);
+            Assert.Equal(2, client.SubscriptionCount);
+
+            await gateway.DisposeAsync();
+            Assert.True(gateway.ObservationTask.IsCompletedSuccessfully);
+            Assert.False(gateway.IsOwnerStreamAvailable);
+        }
+        finally
+        {
+            gateway.Dispose();
+        }
+    }
+
     private static ConfiguredMcpServerRecord CreateServer() => new()
     {
         ServerId = "remote-one",
@@ -151,6 +205,40 @@ public sealed class McpCallbackFlowTests
         {
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             yield break;
+        }
+    }
+
+    private sealed class ReconnectingManagementClient : IMcpOwnerManagementClient
+    {
+        private int _subscriptionCount;
+
+        internal int SubscriptionCount => Volatile.Read(ref _subscriptionCount);
+        internal TaskCompletionSource SecondSubscriptionStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public ValueTask<McpProjection> QueryAsync(
+            McpQuery query,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromException<McpProjection>(new NotSupportedException());
+
+        public ValueTask<McpProjection> CommandAsync(
+            McpCommand command,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromException<McpProjection>(new NotSupportedException());
+
+        public async IAsyncEnumerable<McpChanged> WatchChangesAsync(
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            var subscription = Interlocked.Increment(ref _subscriptionCount);
+            yield return new McpChanged(McpChangeKind.Servers);
+            if (subscription == 1)
+            {
+                yield return new McpChanged((McpChangeKind)int.MaxValue);
+                yield break;
+            }
+
+            SecondSubscriptionStarted.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
         }
     }
 }

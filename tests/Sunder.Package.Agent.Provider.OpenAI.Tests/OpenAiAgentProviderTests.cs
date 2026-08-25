@@ -8,6 +8,7 @@ using OpenAI.Responses;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Provider.OpenAI.Auth;
 using Sunder.Package.Agent.Provider.OpenAI.Transport;
+using Sunder.Package.Agent.Provider.TestSupport;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Storage;
 using Xunit;
@@ -45,6 +46,34 @@ public sealed class OpenAiAgentProviderTests
 
         Assert.Equal(AgentChatProviderFailureKind.ContextWindowExceeded, exception.FailureKind);
         Assert.Equal("openai-context-window-exceeded", exception.ErrorCode);
+    }
+
+    [Fact]
+    public void ExceptionMapper_SatisfiesCommonFailureConformance()
+        => ProviderConformanceHarness.VerifyFailureClassification(new ProviderFailureConformanceAdapter(
+            "OpenAI",
+            exception => OpenAiExceptionMapper.TryMapContextWindowExceeded(exception, out _)
+                ? ProviderFailureClassification.ContextWindowExceeded
+                : ProviderFailureClassification.Unknown));
+
+    [Fact]
+    public async Task Readiness_SatisfiesCommonLifecycleConformance()
+    {
+        var packageContext = new TestPackageContext(
+            new Dictionary<string, string> { [OpenAiAuthMode.ConfigurationKey] = OpenAiAuthMode.ApiKey },
+            new Dictionary<string, string>());
+        var provider = CreateProvider(packageContext);
+        var transitions = new List<string>
+        {
+            (await provider.GetReadinessAsync()).Status.ToString(),
+        };
+
+        await packageContext.Secrets.SetSecretAsync(
+            OpenAiProviderConfiguration.ApiKeySecretKey,
+            "sk-test");
+        transitions.Add((await provider.GetReadinessAsync()).Status.ToString());
+
+        ProviderConformanceHarness.VerifyReadinessTransitions("OpenAI", transitions);
     }
 
     [Theory]
@@ -107,6 +136,7 @@ public sealed class OpenAiAgentProviderTests
 
         Assert.Equal(AgentChatProviderFailureKind.Unknown, exception.FailureKind);
         Assert.Equal("openai-response-failed", exception.ErrorCode);
+        ProviderConformanceHarness.VerifyPrematureEof("OpenAI", exception.ErrorCode);
     }
 
     [Theory]
@@ -289,6 +319,51 @@ public sealed class OpenAiAgentProviderTests
             return providerSessionId;
         }
     }
+
+    [Fact]
+    public async Task CodexChatClient_ProviderCancellationSatisfiesCommonTimeoutConformance()
+    {
+        var packageContext = new TestPackageContext(
+            new Dictionary<string, string> { [OpenAiAuthMode.ConfigurationKey] = OpenAiAuthMode.CodexConnected },
+            new Dictionary<string, string>());
+        using var auth = new CodexConnectedAuthStrategy(packageContext);
+        var handler = new CapturingHttpMessageHandler(_ =>
+            throw new OperationCanceledException("The provider canceled the request."));
+        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("https://chatgpt.com/backend-api/") };
+        var transport = new CodexConnectedTransport(auth, httpClient);
+        using var client = new OpenAiCodexChatClient(
+            new AgentChatClientContext("openai", "openai/gpt-5.5"),
+            "OpenAI",
+            transport,
+            new CodexResponseContinuationStore(),
+            new OpenAiCodexSession(
+                "access-token",
+                "refresh-token",
+                DateTimeOffset.UtcNow.AddHours(1),
+                "account-id"));
+
+        var exception = await Assert.ThrowsAsync<AgentChatProviderException>(() => DrainAsync(
+            client.GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "Wait.")])));
+
+        Assert.Equal("codex-timeout", exception.ErrorCode);
+        ProviderConformanceHarness.VerifyProviderTimeout("OpenAI", exception.ErrorCode);
+    }
+
+    [Fact]
+    public async Task RealProviderAdapter_SatisfiesUnifiedConformanceContract()
+        => await ProviderConformanceHarness.VerifyAsync(new ProviderConformanceAdapter(
+            "OpenAI",
+            () =>
+            {
+                ExceptionMapper_SatisfiesCommonFailureConformance();
+                return Task.CompletedTask;
+            },
+            () => OpenAiModelOptionsChatClient_SurfacesUnrelatedReturnedErrors(streaming: true),
+            () => new AgentChatClientContextLoggingTests().LogProviderEventAsync_PropagatesAsynchronousCancellation(),
+            CodexChatClient_ProviderCancellationSatisfiesCommonTimeoutConformance,
+            Readiness_SatisfiesCommonLifecycleConformance,
+            () => new CodexResponsesStreamParserTests().ParseAsync_PreservesCommonMixedTextAndToolOrdering(),
+            () => new AgentChatClientContextLoggingTests().ProviderStreamTelemetry_SatisfiesCommonLifecycleAndRedactionConformance()));
 
     [Fact]
     public void CodexResponseContinuationStore_DeleteSessionData_ClearsResponsesLiteSessionId()

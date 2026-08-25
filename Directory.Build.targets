@@ -4,9 +4,16 @@
     <SunderSdkWorkerReference Condition="'$(SunderSdkWorkerReference)' == ''">true</SunderSdkWorkerReference>
   </PropertyGroup>
 
-  <ItemGroup Condition="'$(SunderPackageRole)' == 'worker'">
+  <ItemGroup Condition="'$(SunderAgentCurrentPackageStorageKey)' == 'true'">
     <Compile Include="$(MSBuildThisFileDirectory)src/Sunder.Package.Agent.Shared/Storage/CurrentPackageStorageKey.cs"
              Link="Storage/CurrentPackageStorageKey.cs" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(IsTestProject)' == 'true'">
+    <ProjectReference Include="$(MSBuildThisFileDirectory)tests/Sunder.Package.Agent.TestAnalyzers/Sunder.Package.Agent.TestAnalyzers.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false"
+                      PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(SunderPackageRole)' == 'worker' and '$(SunderPackagePrimaryProject)' == 'true' and '$(SunderPackageAppProject)' != '' and '$(SunderPackageInnerBuild)' != 'true'">

@@ -12,13 +12,9 @@ public sealed class DockerStrictReauditTests : IDisposable
         "sunder-docker-strict-reaudit",
         Guid.NewGuid().ToString("N"));
 
-    [Fact]
+    [PlatformFact(TestPlatform.Unix, "The mount identity verifier requires Unix file descriptors.")]
     public async Task MountVerifier_PerformsBidirectionalNestedChallengeAndExactCleanup()
     {
-        if (OperatingSystem.IsWindows())
-        {
-            return;
-        }
         Directory.CreateDirectory(_root);
         using var root = HostSecurePathEngine.OpenRoot(_root);
         var mount = new DockerExecutionMount(_root, _root.Replace('\\', '/'));
@@ -37,13 +33,9 @@ public sealed class DockerStrictReauditTests : IDisposable
             path => HostSecurePathEngine.IsChallengeName(Path.GetFileName(path)));
     }
 
-    [Fact]
+    [PlatformFact(TestPlatform.Unix, "The mount identity verifier requires Unix file descriptors.")]
     public async Task MountVerifier_MismatchFailsClosedAndZerosHiddenChallenge()
     {
-        if (OperatingSystem.IsWindows())
-        {
-            return;
-        }
         Directory.CreateDirectory(_root);
         using var root = HostSecurePathEngine.OpenRoot(_root);
         var mount = new DockerExecutionMount(_root, _root.Replace('\\', '/'));
@@ -249,22 +241,14 @@ public sealed class DockerStrictReauditTests : IDisposable
         Assert.Equal("keep", await File.ReadAllTextAsync(Path.Combine(nested, "keep.txt")));
     }
 
-    [Fact]
+    [PlatformFact(TestPlatform.MacCaseInsensitive, "This verifies case-insensitive macOS mount aliases.")]
     public async Task DockerDelete_ProtectsNestedRootThroughCaseInsensitiveMacAlias()
     {
-        if (!OperatingSystem.IsMacOS())
-        {
-            return;
-        }
         var outer = Path.Combine(_root, "CaseRoot");
         var nested = Path.Combine(outer, "NestedRoot");
         Directory.CreateDirectory(nested);
         await File.WriteAllTextAsync(Path.Combine(nested, "keep.txt"), "keep");
         var lowerAlias = Path.Combine(_root, "caseroot", "nestedroot");
-        if (!Directory.Exists(lowerAlias))
-        {
-            return;
-        }
         var config = CreateConfig(
         [
             new DockerExecutionMount(outer, "/outer"),

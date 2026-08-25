@@ -1,5 +1,8 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using System.IO.Compression;
+using System.Security.Cryptography;
+using System.Text.Json;
 using Sunder.Package.Agent.Skills.Runtime;
 using Sunder.Package.Agent.Skills.Services;
 using Sunder.Sdk.Abstractions;
@@ -48,6 +51,230 @@ public sealed class SkillRuntimeTransferTests
         }
     }
 
+    [Theory]
+    [InlineData("oversized")]
+    [InlineData("symlink")]
+    [InlineData("alternate-data-stream")]
+    public async Task RuntimeTransfer_RejectsUnsafeOrOversizedArchiveBeforeImport(string adversary)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "sunder-skill-transfer-adversarial-tests", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var files = new MemoryFileStore();
+            var runtimeRoot = Path.Combine(root, "runtime");
+            var runtimeContext = new TestContext(runtimeRoot, files);
+            var store = new SkillStore(runtimeContext);
+            var importer = new SkillImportService(store, new UnusedGitHubClient(), runtimeContext);
+            var handler = new SkillRuntimeHandler(store, importer, runtimeContext);
+            var transferId = Guid.NewGuid().ToString("N");
+            var archive = CreateAdversarialArchive(adversary);
+            var transferRoot = $"skill-import-transfers/{transferId}";
+            await files.WriteAsync($"{transferRoot}/chunks/0000.bin", archive);
+            await files.WriteAsync(
+                $"{transferRoot}/manifest.json",
+                JsonSerializer.SerializeToUtf8Bytes(new SkillTransferManifest(
+                    1,
+                    archive.LongLength,
+                    Convert.ToHexString(SHA256.HashData(archive)).ToLowerInvariant())));
+
+            await Assert.ThrowsAnyAsync<InvalidOperationException>(() =>
+                handler.HandleAsync(
+                    new SkillCommand(SkillCommandKind.ImportTransfer, transferId))
+                    .AsTask());
+
+            Assert.Empty(store.ListSkills());
+            Assert.Empty(files.Paths);
+            Assert.False(Directory.Exists(Path.Combine(runtimeRoot, "skill-transfer", transferId)));
+            Assert.False(File.Exists(Path.Combine(runtimeRoot, "skill-transfer", transferId + ".zip")));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData("{not-json")]
+    [InlineData("{\"ChunkCount\":1,\"TotalBytes\":1,\"Sha256\":null}")]
+    public async Task RuntimeTransfer_RejectsMalformedManifestAndCleansUploads(string manifestJson)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "sunder-skill-transfer-manifest-tests", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var files = new MemoryFileStore();
+            var runtimeContext = new TestContext(root, files);
+            var handler = new SkillRuntimeHandler(
+                new SkillStore(runtimeContext),
+                new SkillImportService(new SkillStore(runtimeContext), new UnusedGitHubClient(), runtimeContext),
+                runtimeContext);
+            var transferId = Guid.NewGuid().ToString("N");
+            var transferRoot = $"skill-import-transfers/{transferId}";
+            await files.WriteAsync($"{transferRoot}/chunks/0000.bin", new byte[] { 1 });
+            await files.WriteAsync($"{transferRoot}/manifest.json", System.Text.Encoding.UTF8.GetBytes(manifestJson));
+
+            await Assert.ThrowsAnyAsync<InvalidOperationException>(() =>
+                handler.HandleAsync(new SkillCommand(SkillCommandKind.ImportTransfer, transferId)).AsTask());
+
+            Assert.Empty(files.Paths);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task AppTransfer_AmbiguousChunkWriteIsStillCleanedUp()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "sunder-skill-transfer-cleanup-tests", Guid.NewGuid().ToString("N"));
+        var source = Path.Combine(root, "source");
+        Directory.CreateDirectory(source);
+        await File.WriteAllTextAsync(Path.Combine(source, "SKILL.md"), "---\nname: Cleanup Test\n---\n# Cleanup");
+        try
+        {
+            var files = new MemoryFileStore { FailAfterWriteCall = 1 };
+            var runtimeContext = new TestContext(Path.Combine(root, "runtime"), files);
+            var handler = new SkillRuntimeHandler(
+                new SkillStore(runtimeContext),
+                new SkillImportService(new SkillStore(runtimeContext), new UnusedGitHubClient(), runtimeContext),
+                runtimeContext);
+            using var gateway = new SkillAppRuntimeGateway(
+                new HandlerRuntimeClient(handler),
+                new TestContext(Path.Combine(root, "app"), files));
+
+            await Assert.ThrowsAsync<IOException>(() => gateway.ImportLocalAsync(source));
+
+            Assert.Empty(files.Paths);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task AppStartup_ReplaysOrphanedTransferCleanupMarker()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "sunder-skill-transfer-orphan-tests", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var transferId = Guid.NewGuid().ToString("N");
+            var transferRoot = $"skill-import-transfers/{transferId}";
+            var files = new MemoryFileStore();
+            var state = new MemoryStateStore();
+            var appContext = new TestContext(Path.Combine(root, "app"), files, state);
+            await files.WriteAsync($"{transferRoot}/chunks/0000.bin", new byte[] { 1, 2, 3 });
+            await files.WriteAsync($"{transferRoot}/manifest.json", new byte[] { 4, 5, 6 });
+            await state.SetValueAsync(SkillAppRuntimeGateway.TransferCleanupKey(transferId), "pending");
+            var archive = appContext.Storage.RoleLocalWorkspace.GetLocalPath($"skill-transfer/{transferId}.zip");
+            Directory.CreateDirectory(Path.GetDirectoryName(archive)!);
+            await File.WriteAllBytesAsync(archive, new byte[] { 7, 8, 9 });
+
+            using var gateway = new SkillAppRuntimeGateway(
+                new HandlerRuntimeClient(new SkillRuntimeHandler(
+                    new SkillStore(appContext),
+                    new SkillImportService(new SkillStore(appContext), new UnusedGitHubClient(), appContext),
+                    appContext)),
+                appContext);
+            await gateway.PendingTransferCleanup.WaitAsync(TimeSpan.FromSeconds(3));
+
+            Assert.Empty(files.Paths);
+            Assert.False(File.Exists(archive));
+            Assert.False(await state.ContainsKeyAsync(SkillAppRuntimeGateway.TransferCleanupKey(transferId)));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task RuntimeStartupCleansOrphanedTransferStaging()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "sunder-skill-runtime-orphan-tests", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var transferId = Guid.NewGuid().ToString("N");
+            var stagingParent = Path.Combine(root, "skill-transfer");
+            var staging = Path.Combine(stagingParent, transferId);
+            var archive = Path.Combine(stagingParent, transferId + ".zip");
+            var unrelated = Path.Combine(stagingParent, "keep.txt");
+            Directory.CreateDirectory(staging);
+            await File.WriteAllTextAsync(Path.Combine(staging, "partial.txt"), "partial");
+            await File.WriteAllTextAsync(archive, "partial archive");
+            await File.WriteAllTextAsync(unrelated, "unrelated");
+            var context = new TestContext(root, new MemoryFileStore());
+            var store = new SkillStore(context);
+
+            var handler = new SkillRuntimeHandler(
+                store,
+                new SkillImportService(store, new UnusedGitHubClient(), context),
+                context);
+            await handler.OrphanedTransferCleanup.WaitAsync(TimeSpan.FromSeconds(3));
+
+            Assert.False(Directory.Exists(staging));
+            Assert.False(File.Exists(archive));
+            Assert.True(File.Exists(unrelated));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    private static byte[] CreateAdversarialArchive(string adversary)
+    {
+        using var output = new MemoryStream();
+        using (var archive = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            var entry = archive.CreateEntry(adversary switch
+            {
+                "symlink" => "linked",
+                "alternate-data-stream" => "resource.txt:payload",
+                _ => "large.bin",
+            });
+            if (adversary == "symlink")
+            {
+                entry.ExternalAttributes = unchecked((int)(0xa000u << 16));
+                using var writer = new StreamWriter(entry.Open());
+                writer.Write("outside");
+            }
+            else if (adversary == "alternate-data-stream")
+            {
+                using var writer = new StreamWriter(entry.Open());
+                writer.Write("hidden payload");
+            }
+            else
+            {
+                using var stream = entry.Open();
+                var block = new byte[64 * 1024];
+                var remaining = 10 * 1024 * 1024 + 1;
+                while (remaining > 0)
+                {
+                    var count = Math.Min(block.Length, remaining);
+                    stream.Write(block, 0, count);
+                    remaining -= count;
+                }
+            }
+        }
+        return output.ToArray();
+    }
+
     private sealed class HandlerRuntimeClient(SkillRuntimeHandler handler) : ISkillOwnerClient
     {
         public SkillCommand? LastCommand { get; private set; }
@@ -71,21 +298,30 @@ public sealed class SkillRuntimeTransferTests
         }
     }
 
-    internal sealed class TestContext(string root, IPackageFileStore files) : IPackageContext
+    internal sealed class TestContext(
+        string root,
+        IPackageFileStore files,
+        IPackageKeyValueStore? state = null) : IPackageContext
     {
         public string PackageId => "sunder.package.agent.skills";
         public string Version => "1.0.0";
         public string ContentRootPath => AppContext.BaseDirectory;
-        public IPackageStorageContext Storage { get; } = new TestStorage(root, files);
+        public IPackageStorageContext Storage { get; } = new TestStorage(
+            root,
+            files,
+            state ?? new MemoryStateStore());
         public IPackageSettings Settings { get; } = new EmptySettings();
         public IPackageSecrets Secrets { get; } = new EmptySecrets();
         public IPackageLogging Logging => NullPackageLogging.Instance;
     }
 
-    private sealed class TestStorage(string root, IPackageFileStore files) : IPackageStorageContext
+    private sealed class TestStorage(
+        string root,
+        IPackageFileStore files,
+        IPackageKeyValueStore state) : IPackageStorageContext
     {
         public IPackageFileStore Files { get; } = files;
-        public IPackageKeyValueStore State { get; } = new MemoryStateStore();
+        public IPackageKeyValueStore State { get; } = state;
         public IPackageRoleLocalWorkspace RoleLocalWorkspace { get; } = new TestWorkspace(root);
     }
 
@@ -99,6 +335,8 @@ public sealed class SkillRuntimeTransferTests
     private sealed class MemoryFileStore : IPackageFileStore
     {
         private readonly Dictionary<string, byte[]> _files = new(StringComparer.Ordinal);
+        private int _writeCount;
+        public int? FailAfterWriteCall { get; init; }
         public IReadOnlyCollection<string> Paths => _files.Keys;
         public Task<byte[]?> ReadAsync(string relativePath, CancellationToken cancellationToken = default)
         {
@@ -110,6 +348,10 @@ public sealed class SkillRuntimeTransferTests
             ValidatePath(relativePath);
             if (!PackageStorageValidation.IsValidFileLength(contents.Length)) throw new ArgumentException("Invalid test file length.", nameof(contents));
             _files[relativePath] = contents.ToArray();
+            if (Interlocked.Increment(ref _writeCount) == FailAfterWriteCall)
+            {
+                throw new IOException("Injected ambiguous transfer upload failure.");
+            }
             return Task.CompletedTask;
         }
         public Task DeleteAsync(string relativePath, CancellationToken cancellationToken = default)

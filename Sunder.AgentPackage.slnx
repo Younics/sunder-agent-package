@@ -43,6 +43,10 @@
     <Project Path="src/Sunder.Package.Agent.Tools.Web/Sunder.Package.Agent.Tools.Web.csproj" />
   </Folder>
   <Folder Name="/Tests/">
+    <Project Path="tests/Sunder.Package.Agent.TestAnalyzers/Sunder.Package.Agent.TestAnalyzers.csproj" />
+    <Project Path="tests/Sunder.Package.Agent.TestSupport/Sunder.Package.Agent.TestSupport.csproj" />
+    <Project Path="tests/Sunder.Package.Agent.TestSupport.Avalonia/Sunder.Package.Agent.TestSupport.Avalonia.csproj" />
+    <Project Path="tests/Sunder.Package.Agent.Presentation.State.Tests/Sunder.Package.Agent.Presentation.State.Tests.csproj" />
     <Project Path="tests/Sunder.Package.Agent.Presentation.Tests/Sunder.Package.Agent.Presentation.Tests.csproj" />
     <Project Path="tests/Sunder.Package.Agent.Execution.Local.Tests/Sunder.Package.Agent.Execution.Local.Tests.csproj" />
     <Project Path="tests/Sunder.Package.Agent.Memory.Semantic.Tests/Sunder.Package.Agent.Memory.Semantic.Tests.csproj" />

@@ -1,0 +1,6 @@
+<Project>
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)*.cs"
+             Link="Importing\%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>

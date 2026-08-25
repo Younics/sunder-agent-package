@@ -13,6 +13,7 @@
                       LogicalName="Sunder.Package.Agent.Subagents.Protocol.Contracts.subagents-owner.rpc.json" />
     <SunderRpcBinding Include="Contracts\subagents-owner.rpc.json"
                       Namespace="Sunder.Package.Agent.Subagents.Protocol.Generated"
+                      Accessibility="Internal"
                       OutputFile="SubagentsOwnerRpc.g.cs" />
   </ItemGroup>
 

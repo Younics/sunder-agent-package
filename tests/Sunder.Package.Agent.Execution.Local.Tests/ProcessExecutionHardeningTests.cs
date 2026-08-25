@@ -79,14 +79,9 @@ public sealed class ProcessExecutionHardeningTests : IDisposable
         }
     }
 
-    [Fact]
+    [PlatformFact(TestPlatform.Unix, "This process-tree fixture requires a POSIX shell.")]
     public async Task ProcessRunner_PostStartFailureTerminatesProcessTree()
     {
-        if (OperatingSystem.IsWindows())
-        {
-            return;
-        }
-
         Directory.CreateDirectory(_root);
         var marker = Path.Combine(_root, "child-survived");
         var startInfo = new ProcessStartInfo

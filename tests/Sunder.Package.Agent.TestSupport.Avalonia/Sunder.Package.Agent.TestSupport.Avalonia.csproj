@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <SunderSdkAvaloniaReference>true</SunderSdkAvaloniaReference>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" />
+    <ProjectReference Include="..\Sunder.Package.Agent.TestSupport\Sunder.Package.Agent.TestSupport.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="WorkerBackedSubagentManagementGateway.cs" />
+  </ItemGroup>
+</Project>

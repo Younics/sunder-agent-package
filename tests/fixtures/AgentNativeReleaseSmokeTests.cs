@@ -22,11 +22,16 @@ public sealed class AgentNativeReleaseSmokeTests
     private const string ShellPackageId = "sunder.package.agent.tools.shell";
     private const string AgentOwnerContractId = "sunder.agent.owner.runtime";
 
-    [Fact]
+    [NativeReleaseFact]
+    [Trait("Category", "Release")]
+    [Trait("Capability", "Native")]
+    [Trait("Size", "Large")]
     public async Task CurrentRidArchives_ExerciseEveryNativeWorkerThroughRuntimeHost()
     {
-        var archiveDirectory = Environment.GetEnvironmentVariable("SUNDER_AGENT_NATIVE_ARCHIVE_DIR");
-        if (string.IsNullOrWhiteSpace(archiveDirectory)) return;
+        var archiveDirectory = Environment.GetEnvironmentVariable("SUNDER_AGENT_NATIVE_ARCHIVE_DIR")
+            ?? throw new InvalidOperationException(
+                "A selected release lane is missing a required prerequisite. "
+                + "Set SUNDER_AGENT_NATIVE_ARCHIVE_DIR to run the native release smoke test.");
 
         archiveDirectory = Path.GetFullPath(archiveDirectory);
         var metricsDirectory = Path.GetFullPath(
@@ -48,7 +53,6 @@ public sealed class AgentNativeReleaseSmokeTests
         services.AddSingleton(new RuntimeProcessPolicyOptions
         {
             StartupTimeout = TimeSpan.FromSeconds(30),
-            ActivationTimeout = TimeSpan.FromSeconds(30),
             ShutdownTimeout = TimeSpan.FromSeconds(15),
         });
         var provider = services.BuildServiceProvider(new ServiceProviderOptions
@@ -762,4 +766,21 @@ public sealed class AgentNativeReleaseSmokeTests
         private delegate nint SqliteErrorMessageDelegate(nint database);
     }
 
+}
+
+[AttributeUsage(AttributeTargets.Method, AllowMultiple = false)]
+internal sealed class NativeReleaseFactAttribute : FactAttribute
+{
+    public NativeReleaseFactAttribute()
+    {
+        if (string.IsNullOrWhiteSpace(
+                Environment.GetEnvironmentVariable("SUNDER_AGENT_NATIVE_ARCHIVE_DIR"))
+            && !string.Equals(
+                Environment.GetEnvironmentVariable("SUNDER_REQUIRE_TEST_PREREQUISITES"),
+                "1",
+                StringComparison.Ordinal))
+        {
+            Skip = "Set SUNDER_AGENT_NATIVE_ARCHIVE_DIR to run the native release smoke test.";
+        }
+    }
 }

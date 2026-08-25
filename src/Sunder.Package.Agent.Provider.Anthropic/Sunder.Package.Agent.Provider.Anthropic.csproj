@@ -36,7 +36,6 @@
     <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderConfigurationSections.cs" Link="Provider.Shared\ProviderConfigurationSections.cs" />
     <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderContextWindowFailureClassifier.cs" Link="Provider.Shared\ProviderContextWindowFailureClassifier.cs" />
     <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderCredentialAccessor.cs" Link="Provider.Shared\ProviderCredentialAccessor.cs" />
-    <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderEmbeddingBatch.cs" Link="Provider.Shared\ProviderEmbeddingBatch.cs" />
     <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderErrorDiagnosticExtractor.cs" Link="Provider.Shared\ProviderErrorDiagnosticExtractor.cs" />
     <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderJson.cs" Link="Provider.Shared\ProviderJson.cs" />
     <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderModelCatalog.cs" Link="Provider.Shared\ProviderModelCatalog.cs" />

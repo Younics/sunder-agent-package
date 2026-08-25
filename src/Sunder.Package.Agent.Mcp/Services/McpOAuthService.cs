@@ -12,6 +12,7 @@ public sealed class McpOAuthService : IAsyncDisposable
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly IPackageContext _packageContext;
     private readonly ILoggerFactory _loggerFactory;
+    private readonly ILogger<McpOAuthService> _logger;
     private readonly object _syncRoot = new();
     private readonly Dictionary<string, McpOAuthFlow> _flowsBySession = new(StringComparer.Ordinal);
     private readonly Dictionary<string, McpOAuthFlow> _flowsByServer = new(StringComparer.OrdinalIgnoreCase);
@@ -22,6 +23,7 @@ public sealed class McpOAuthService : IAsyncDisposable
     {
         _packageContext = packageContext;
         _loggerFactory = packageContext.Logging.LoggerFactory;
+        _logger = _loggerFactory.CreateLogger<McpOAuthService>();
     }
 
     public async Task<ClientOAuthOptions?> CreateClientOptionsAsync(
@@ -116,10 +118,21 @@ public sealed class McpOAuthService : IAsyncDisposable
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             await flow.Lifetime.CancelAsync();
-            try { await flow.RunTask; } catch { }
+            try
+            {
+                await flow.RunTask;
+            }
+            catch (Exception exception) when (!IsFatal(exception))
+            {
+                _logger.LogDebug(
+                    "MCP OAuth flow stopped during callback cancellation ({ExceptionType}).",
+                    exception.GetType().Name);
+            }
             throw;
         }
-        catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        catch (Exception exception) when (!IsFatal(exception)
+                                          && (exception is not OperationCanceledException
+                                              || !cancellationToken.IsCancellationRequested))
         {
             return new McpOAuthCompletion(false, exception.Message);
         }
@@ -141,7 +154,19 @@ public sealed class McpOAuthService : IAsyncDisposable
         try
         {
             await flow.Lifetime.CancelAsync();
-            try { await flow.RunTask; } catch (OperationCanceledException) { } catch { }
+            try
+            {
+                await flow.RunTask;
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception exception) when (!IsFatal(exception))
+            {
+                _logger.LogDebug(
+                    "MCP OAuth flow stopped during explicit cancellation ({ExceptionType}).",
+                    exception.GetType().Name);
+            }
         }
         finally
         {
@@ -256,7 +281,7 @@ public sealed class McpOAuthService : IAsyncDisposable
         var payload = await _packageContext.Secrets.GetSecretAsync(McpOAuthSecretKeys.ClientRegistration(serverId), cancellationToken);
         if (string.IsNullOrWhiteSpace(payload)) return null;
         try { return JsonSerializer.Deserialize<StoredOAuthClientRegistration>(payload, JsonOptions); }
-        catch { return null; }
+        catch (Exception exception) when (exception is JsonException or NotSupportedException) { return null; }
     }
 
     private async Task<StoredOAuthClientRegistration?> ReadClientRegistrationAsync(
@@ -301,6 +326,14 @@ public sealed class McpOAuthService : IAsyncDisposable
     private static string? GetValue(IReadOnlyDictionary<string, string?> values, string key)
         => values.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value) ? value : null;
 
+    private static bool IsFatal(Exception exception)
+        => exception is OutOfMemoryException
+            or StackOverflowException
+            or AccessViolationException
+            or System.Runtime.InteropServices.SEHException
+           || exception is AggregateException aggregate && aggregate.InnerExceptions.Any(IsFatal)
+           || exception.InnerException is { } inner && IsFatal(inner);
+
     private sealed class McpOAuthFlow(
         string callbackSessionId,
         string serverId,
@@ -331,7 +364,7 @@ public sealed class McpOAuthService : IAsyncDisposable
             var payload = await packageContext.Secrets.GetSecretAsync(McpOAuthSecretKeys.TokenCache(serverId), cancellationToken);
             if (string.IsNullOrWhiteSpace(payload)) return null;
             try { return JsonSerializer.Deserialize<TokenContainer>(payload, JsonOptions); }
-            catch { return null; }
+            catch (Exception exception) when (exception is JsonException or NotSupportedException) { return null; }
         }
     }
 }

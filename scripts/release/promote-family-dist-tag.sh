@@ -2,8 +2,14 @@
 set -euo pipefail
 
 usage() {
-  printf 'Usage: promote-family-dist-tag.sh <registry-api-url> <latest|preview> <version> <package-id>...\n' >&2
+  printf 'Usage: promote-family-dist-tag.sh [--verify-only] <registry-api-url> <latest|preview> <version> <package-id>...\n' >&2
 }
+
+verify_only=false
+if [[ "${1:-}" == '--verify-only' ]]; then
+  verify_only=true
+  shift
+fi
 
 if [[ $# -lt 4 ]]; then
   usage
@@ -21,12 +27,14 @@ package_ids=("$@")
   || { printf 'Registry API URL must be an absolute HTTPS origin without user info, path, query, or fragment.\n' >&2; exit 2; }
 [[ "$dist_tag" == "latest" || "$dist_tag" == "preview" ]] \
   || { printf "Family promotion only supports the 'latest' and 'preview' dist tags.\n" >&2; exit 2; }
-[[ -n "${SUNDER_REGISTRY_CLI_TOKEN:-}" ]] \
-  || { printf 'SUNDER_REGISTRY_CLI_TOKEN is not configured for Registry dist-tag promotion.\n' >&2; exit 1; }
-[[ "$SUNDER_REGISTRY_CLI_TOKEN" =~ ^sunder_cli_[A-Za-z0-9_-]{43}$ ]] \
-  || { printf 'SUNDER_REGISTRY_CLI_TOKEN must be a valid interactive sunder_cli token.\n' >&2; exit 1; }
+if [[ "$verify_only" != true ]]; then
+  [[ -n "${SUNDER_REGISTRY_CLI_TOKEN:-}" ]] \
+    || { printf 'SUNDER_REGISTRY_CLI_TOKEN is not configured for Registry dist-tag promotion.\n' >&2; exit 1; }
+  [[ "$SUNDER_REGISTRY_CLI_TOKEN" =~ ^sunder_cli_[A-Za-z0-9_-]{43}$ ]] \
+    || { printf 'SUNDER_REGISTRY_CLI_TOKEN must be a valid interactive sunder_cli token.\n' >&2; exit 1; }
+fi
 
-for required_command in curl jq; do
+for required_command in curl env jq; do
   command -v "$required_command" >/dev/null 2>&1 \
     || { printf '%s is required to promote Registry dist tags.\n' "$required_command" >&2; exit 127; }
 done
@@ -316,33 +324,119 @@ previous_exists=()
 changed_indices=()
 rollback_needed=false
 
+capture_family_snapshot() {
+  local index
+  local package_id
+  local previous_version
+  local tags
+
+  previous_versions=()
+  previous_exists=()
+
+  # Fetch every member before evaluating any member so this is one complete observed family state.
+  for package_id in "${package_ids[@]}"; do
+    if ! tags="$(fetch_dist_tags "$package_id")"; then
+      printf "Could not capture package '%s' dist tags before promotion.\n" "$package_id" >&2
+      return 1
+    fi
+    if ! validate_dist_tags_response "$package_id" "$tags"; then
+      printf "Registry returned an invalid dist-tag document for package '%s'.\n" "$package_id" >&2
+      return 1
+    fi
+    if ! previous_version="$(read_tag_target "$tags")"; then
+      printf "Registry returned duplicate '%s' dist tags for package '%s'.\n" "$dist_tag" "$package_id" >&2
+      return 1
+    fi
+
+    if [[ -n "$previous_version" ]]; then
+      previous_exists+=(true)
+      previous_versions+=("$previous_version")
+    else
+      previous_exists+=(false)
+      previous_versions+=('')
+    fi
+  done
+
+  # Re-run monotonicity and idempotence classification against only the complete snapshot above.
+  for ((index = 0; index < ${#package_ids[@]}; index++)); do
+    package_id="${package_ids[$index]}"
+    previous_version="${previous_versions[$index]}"
+    if [[ "${previous_exists[$index]}" == true ]]; then
+      is_strict_semver "$previous_version" \
+        || { printf "Existing package '%s' dist tag '%s' target '%s' is not strict SemVer.\n" "$package_id" "$dist_tag" "$previous_version" >&2; return 1; }
+      compare_semver_precedence "$version" "$previous_version"
+      if [[ $semver_comparison -lt 0 ]]; then
+        printf "Refusing to regress package '%s' dist tag '%s' from %s to older SemVer %s.\n" \
+          "$package_id" "$dist_tag" "$previous_version" "$version" >&2
+        return 1
+      fi
+    fi
+
+    if [[ "$verify_only" == true && "$previous_version" != "$version" ]]; then
+      printf "Package '%s' dist tag '%s' resolves to '%s', expected promoted version '%s'.\n" \
+        "$package_id" "$dist_tag" "${previous_version:-<absent>}" "$version" >&2
+      return 1
+    fi
+  done
+}
+
 rollback_changed_tags() {
   local changed_position
   local package_index
   local package_id
+  local current_tags
+  local current_version
   local rollback_failed=false
 
-  printf 'Promotion failed; rolling back %s attempted dist-tag change(s).\n' "${#changed_indices[@]}" >&2
+  printf 'Promotion failed; compensating %s attempted dist-tag change(s).\n' "${#changed_indices[@]}" >&2
   for ((changed_position = ${#changed_indices[@]} - 1; changed_position >= 0; changed_position--)); do
     package_index="${changed_indices[$changed_position]}"
     package_id="${package_ids[$package_index]}"
+    if ! current_tags="$(fetch_dist_tags "$package_id")" \
+      || ! validate_dist_tags_response "$package_id" "$current_tags" \
+      || ! current_version="$(read_tag_target "$current_tags")"; then
+      printf "Could not establish current package '%s' dist tag '%s' before compensation.\n" \
+        "$package_id" "$dist_tag" >&2
+      rollback_failed=true
+      continue
+    fi
     if [[ "${previous_exists[$package_index]}" == "true" ]]; then
+      if [[ "$current_version" == "${previous_versions[$package_index]}" ]]; then
+        continue
+      fi
+      if [[ "$current_version" != "$version" ]]; then
+        printf "Refusing to compensate package '%s' dist tag '%s' over concurrent target '%s'.\n" \
+          "$package_id" "$dist_tag" "${current_version:-<absent>}" >&2
+        rollback_failed=true
+        continue
+      fi
       if ! set_dist_tag "$package_id" "${previous_versions[$package_index]}" \
         || ! verify_tag_target "$package_id" "${previous_versions[$package_index]}"; then
-        printf "Rollback failed for package '%s' dist tag '%s'; expected prior target '%s'.\n" \
+        printf "Compensation failed for package '%s' dist tag '%s'; expected prior target '%s'.\n" \
           "$package_id" "$dist_tag" "${previous_versions[$package_index]}" >&2
         rollback_failed=true
       fi
-    elif ! delete_dist_tag "$package_id" || ! verify_tag_absent "$package_id"; then
-      printf "Rollback failed for newly created package '%s' dist tag '%s'.\n" "$package_id" "$dist_tag" >&2
-      rollback_failed=true
+    else
+      if [[ -z "$current_version" ]]; then
+        continue
+      fi
+      if [[ "$current_version" != "$version" ]]; then
+        printf "Refusing to compensate newly created package '%s' dist tag '%s' over concurrent target '%s'.\n" \
+          "$package_id" "$dist_tag" "$current_version" >&2
+        rollback_failed=true
+        continue
+      fi
+      if ! delete_dist_tag "$package_id" || ! verify_tag_absent "$package_id"; then
+        printf "Compensation failed for newly created package '%s' dist tag '%s'.\n" "$package_id" "$dist_tag" >&2
+        rollback_failed=true
+      fi
     fi
   done
 
   if [[ "$rollback_failed" == "true" ]]; then
-    printf 'Registry dist-tag rollback was incomplete; manual repair is required.\n' >&2
+    printf 'Registry dist-tag compensation was incomplete; retry or manual repair is required.\n' >&2
   else
-    printf 'Registry dist-tag rollback restored the complete pre-promotion snapshot.\n' >&2
+    printf 'Registry dist-tag compensating rollback restored the complete pre-promotion snapshot.\n' >&2
   fi
 }
 
@@ -360,38 +454,40 @@ trap on_exit EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-# Snapshot and validate the entire family before the first mutation.
-for ((index = 0; index < ${#package_ids[@]}; index++)); do
-  package_id="${package_ids[$index]}"
-  if ! tags="$(fetch_dist_tags "$package_id")"; then
-    printf "Could not capture package '%s' dist tags before promotion.\n" "$package_id" >&2
-    exit 1
-  fi
-  if ! validate_dist_tags_response "$package_id" "$tags"; then
-    printf "Registry returned an invalid dist-tag document for package '%s'.\n" "$package_id" >&2
-    exit 1
-  fi
-  if ! previous_version="$(read_tag_target "$tags")"; then
-    printf "Registry returned duplicate '%s' dist tags for package '%s'.\n" "$dist_tag" "$package_id" >&2
-    exit 1
-  fi
+# Snapshot and validate the entire family before invoking any potentially long guard.
+capture_family_snapshot
 
-  if [[ -n "$previous_version" ]]; then
-    is_strict_semver "$previous_version" \
-      || { printf "Existing package '%s' dist tag '%s' target '%s' is not strict SemVer.\n" "$package_id" "$dist_tag" "$previous_version" >&2; exit 1; }
-    compare_semver_precedence "$version" "$previous_version"
-    if [[ $semver_comparison -lt 0 ]]; then
-      printf "Refusing to regress package '%s' dist tag '%s' from %s to older SemVer %s.\n" \
-        "$package_id" "$dist_tag" "$previous_version" "$version" >&2
-      exit 1
-    fi
-    previous_exists+=(true)
-    previous_versions+=("$previous_version")
-  else
-    previous_exists+=(false)
-    previous_versions+=('')
-  fi
-done
+if [[ "$verify_only" == true ]]; then
+  printf "Verified package family dist tag '%s' resolves to %s for all %s packages.\n" \
+    "$dist_tag" "$version" "${#package_ids[@]}"
+  rollback_needed=false
+  exit 0
+fi
+
+# The release guard runs after the initial complete family snapshot.
+if [[ -n "${SUNDER_REGISTRY_PRE_MUTATION_GUARD_JSON:-}" ]]; then
+  jq -e '
+    type == "array"
+    and length > 0 and length <= 16
+    and all(.[];
+      type == "string"
+      and length > 0
+      and index("\r") == null
+      and index("\n") == null
+      and index("\u0000") == null)
+  ' <<< "$SUNDER_REGISTRY_PRE_MUTATION_GUARD_JSON" >/dev/null \
+    || { printf 'Registry pre-mutation guard command is invalid.\n' >&2; exit 1; }
+  pre_mutation_guard=()
+  while IFS= read -r argument; do pre_mutation_guard+=("$argument"); done \
+    < <(jq -r '.[]' <<< "$SUNDER_REGISTRY_PRE_MUTATION_GUARD_JSON")
+  [[ "${#pre_mutation_guard[@]}" == "$(jq 'length' <<< "$SUNDER_REGISTRY_PRE_MUTATION_GUARD_JSON")" ]] \
+    || { printf 'Registry pre-mutation guard command could not be decoded exactly.\n' >&2; exit 1; }
+  env -u SUNDER_REGISTRY_CLI_TOKEN "${pre_mutation_guard[@]}"
+fi
+
+# Discard the stale state after the guard and rebuild the complete compensation snapshot.
+changed_indices=()
+capture_family_snapshot
 
 changed_count=0
 idempotent_count=0
@@ -410,11 +506,11 @@ for ((index = 0; index < ${#package_ids[@]}; index++)); do
   changed_count=$((changed_count + 1))
 done
 
-# Re-read the complete family before committing the workflow-level transaction.
+# Re-read the complete family before accepting the serialized compensating mutation.
 for package_id in "${package_ids[@]}"; do
   verify_tag_target "$package_id" "$version"
 done
 
 rollback_needed=false
-printf "Promoted package family dist tag '%s' to %s: %s changed, %s already current.\n" \
+printf "Completed serialized package family dist-tag promotion '%s' to %s: %s changed, %s already current.\n" \
   "$dist_tag" "$version" "$changed_count" "$idempotent_count"

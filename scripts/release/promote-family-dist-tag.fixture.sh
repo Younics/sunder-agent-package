@@ -5,7 +5,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 promoter="$script_dir/promote-family-dist-tag.sh"
 [[ -f "$promoter" ]] || { printf 'Promotion script not found: %s\n' "$promoter" >&2; exit 1; }
 
-for required_command in grep jq mktemp; do
+for required_command in grep jq mktemp mv; do
   command -v "$required_command" >/dev/null 2>&1 \
     || { printf '%s is required to run the dist-tag promotion fixture.\n' "$required_command" >&2; exit 127; }
 done
@@ -55,7 +55,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -n "$url" ]] || { printf 'Mock curl did not receive a URL.\n' >&2; exit 2; }
-if [[ "$method" != GET && "$authorization" != "$SUNDER_REGISTRY_CLI_TOKEN" ]]; then
+if [[ "$method" != GET && "$authorization" != "${SUNDER_REGISTRY_CLI_TOKEN:-}" ]]; then
   printf 'Dist-tag mutation did not use SUNDER_REGISTRY_CLI_TOKEN.\n' >&2
   exit 2
 fi
@@ -71,6 +71,12 @@ if [[ "$method" == "GET" && "$operation" == "dist-tags" ]]; then
     && "$current_target" == "${MOCK_TARGET_VERSION:-}" \
     && ! -e "$MOCK_VERIFY_FAILURE_MARKER" ]]; then
     : > "$MOCK_VERIFY_FAILURE_MARKER"
+    if [[ -n "${MOCK_CONCURRENT_TARGET:-}" ]]; then
+      state_temp="${MOCK_REGISTRY_STATE}.tmp"
+      jq --arg package_id "$package_id" --arg tag "$MOCK_DIST_TAG" --arg version "$MOCK_CONCURRENT_TARGET" \
+        '.packages[$package_id][$tag] = $version' "$MOCK_REGISTRY_STATE" > "$state_temp"
+      mv "$state_temp" "$MOCK_REGISTRY_STATE"
+    fi
     exit 22
   fi
   jq -c --arg package_id "$package_id" '
@@ -115,8 +121,31 @@ exit 2
 MOCK_CURL
 chmod +x "$mock_bin/curl"
 
+cat > "$mock_bin/pre-mutation-guard" <<'MOCK_GUARD'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ -z "${SUNDER_REGISTRY_CLI_TOKEN:-}" ]] \
+  || { printf 'Pre-mutation guard inherited the Registry CLI token.\n' >&2; exit 2; }
+[[ "$(grep -c '^GET[[:space:]]' "$MOCK_REGISTRY_CALLS")" == "$MOCK_EXPECTED_GUARD_GET_COUNT" ]]
+! grep -Eq '^(PUT|DELETE)[[:space:]]' "$MOCK_REGISTRY_CALLS"
+printf 'GUARD\n' >> "$MOCK_GUARD_CALLS"
+if [[ -n "${MOCK_GUARD_CONCURRENT_PACKAGE:-}" ]]; then
+  state_temp="${MOCK_REGISTRY_STATE}.tmp"
+  jq \
+    --arg package_id "$MOCK_GUARD_CONCURRENT_PACKAGE" \
+    --arg tag "$MOCK_DIST_TAG" \
+    --arg version "$MOCK_GUARD_CONCURRENT_TARGET" \
+    '.packages[$package_id][$tag] = $version' \
+    "$MOCK_REGISTRY_STATE" > "$state_temp"
+  mv "$state_temp" "$MOCK_REGISTRY_STATE"
+fi
+[[ "${MOCK_GUARD_FAIL:-false}" != true ]]
+MOCK_GUARD
+chmod +x "$mock_bin/pre-mutation-guard"
+
 export MOCK_REGISTRY_STATE="$fixture_dir/registry-state.json"
 export MOCK_REGISTRY_CALLS="$fixture_dir/registry-calls.tsv"
+export MOCK_GUARD_CALLS="$fixture_dir/guard-calls.log"
 export MOCK_UPDATE_FAILURE_MARKER="$fixture_dir/update-failed"
 export MOCK_VERIFY_FAILURE_MARKER="$fixture_dir/verify-failed"
 export SUNDER_REGISTRY_CLI_TOKEN=sunder_cli_0123456789012345678901234567890123456789012
@@ -125,12 +154,27 @@ export SUNDER_REGISTRY_PUBLISH_TOKEN=sunder_pub_v1_01234567890123456789012345678
 reset_fixture() {
   printf '%s\n' "$1" > "$MOCK_REGISTRY_STATE"
   : > "$MOCK_REGISTRY_CALLS"
+  : > "$MOCK_GUARD_CALLS"
   rm -f "$MOCK_UPDATE_FAILURE_MARKER" "$MOCK_VERIFY_FAILURE_MARKER"
-  unset MOCK_FAIL_UPDATE_AFTER_WRITE_PACKAGE MOCK_FAIL_VERIFY_PACKAGE MOCK_TARGET_VERSION
+  unset \
+    MOCK_CONCURRENT_TARGET \
+    MOCK_EXPECTED_GUARD_GET_COUNT \
+    MOCK_FAIL_UPDATE_AFTER_WRITE_PACKAGE \
+    MOCK_FAIL_VERIFY_PACKAGE \
+    MOCK_GUARD_CONCURRENT_PACKAGE \
+    MOCK_GUARD_CONCURRENT_TARGET \
+    MOCK_GUARD_FAIL \
+    MOCK_TARGET_VERSION \
+    SUNDER_REGISTRY_PRE_MUTATION_GUARD_JSON
 }
 
 run_promotion() {
   PATH="$mock_bin:$PATH" bash "$promoter" 'https://registry.test' "$@"
+}
+
+run_verification() {
+  env -u SUNDER_REGISTRY_CLI_TOKEN PATH="$mock_bin:$PATH" \
+    bash "$promoter" --verify-only 'https://registry.test' "$@"
 }
 
 assert_no_mutations() {
@@ -162,6 +206,8 @@ grep -Fq 'valid interactive sunder_cli token' "$fixture_dir/invalid-token.log"
 
 reset_fixture '{"packages":{"pkg.a":{"latest":"1.0.0"},"pkg.b":{"latest":"1.0.0"}}}'
 export MOCK_DIST_TAG=latest
+export MOCK_EXPECTED_GUARD_GET_COUNT=2
+export SUNDER_REGISTRY_PRE_MUTATION_GUARD_JSON="$(jq -cn --arg command "$mock_bin/pre-mutation-guard" '[$command]')"
 if ! run_promotion latest 1.1.0 pkg.a pkg.b > "$fixture_dir/success.log" 2>&1; then
   printf 'Expected family promotion failed:\n' >&2
   while IFS= read -r line; do printf '%s\n' "$line" >&2; done < "$fixture_dir/success.log"
@@ -169,6 +215,35 @@ if ! run_promotion latest 1.1.0 pkg.a pkg.b > "$fixture_dir/success.log" 2>&1; t
 fi
 jq -e '.packages["pkg.a"].latest == "1.1.0" and .packages["pkg.b"].latest == "1.1.0"' \
   "$MOCK_REGISTRY_STATE" >/dev/null
+grep -Fqx 'GUARD' "$MOCK_GUARD_CALLS"
+
+reset_fixture '{"packages":{"pkg.a":{"latest":"1.0.0"},"pkg.b":{"latest":"1.0.0"}}}'
+export MOCK_DIST_TAG=latest
+export MOCK_EXPECTED_GUARD_GET_COUNT=2
+export MOCK_GUARD_CONCURRENT_PACKAGE=pkg.a
+export MOCK_GUARD_CONCURRENT_TARGET=1.2.0
+export SUNDER_REGISTRY_PRE_MUTATION_GUARD_JSON="$(jq -cn --arg command "$mock_bin/pre-mutation-guard" '[$command]')"
+if run_promotion latest 1.1.0 pkg.a pkg.b > "$fixture_dir/guard-concurrent-newer.log" 2>&1; then
+  printf 'Promotion downgraded a newer target installed during the pre-mutation guard.\n' >&2
+  exit 1
+fi
+jq -e '.packages["pkg.a"].latest == "1.2.0" and .packages["pkg.b"].latest == "1.0.0"' \
+  "$MOCK_REGISTRY_STATE" >/dev/null
+[[ "$(grep -c '^GET[[:space:]]' "$MOCK_REGISTRY_CALLS")" -eq 4 ]]
+grep -Fq 'Refusing to regress' "$fixture_dir/guard-concurrent-newer.log"
+assert_no_mutations
+
+reset_fixture '{"packages":{"pkg.a":{"latest":"1.0.0"},"pkg.b":{"latest":"1.0.0"}}}'
+export MOCK_DIST_TAG=latest
+export MOCK_EXPECTED_GUARD_GET_COUNT=2
+export MOCK_GUARD_FAIL=true
+export SUNDER_REGISTRY_PRE_MUTATION_GUARD_JSON="$(jq -cn --arg command "$mock_bin/pre-mutation-guard" '[$command]')"
+if run_promotion latest 1.1.0 pkg.a pkg.b > "$fixture_dir/guard-failure.log" 2>&1; then
+  printf 'Promotion unexpectedly mutated after a failed just-in-time guard.\n' >&2
+  exit 1
+fi
+grep -Fqx 'GUARD' "$MOCK_GUARD_CALLS"
+assert_no_mutations
 
 reset_fixture '{"packages":{"pkg.a":{},"pkg.b":{"latest":"1.0.0"},"pkg.c":{"latest":"1.0.0"}}}'
 export MOCK_DIST_TAG=latest
@@ -194,6 +269,20 @@ jq -e '.packages["pkg.a"].latest == "1.0.0" and .packages["pkg.b"].latest == "1.
   "$MOCK_REGISTRY_STATE" >/dev/null
 grep -Fq 'rollback restored the complete pre-promotion snapshot' "$fixture_dir/verification-failure.log"
 
+reset_fixture '{"packages":{"pkg.a":{"latest":"1.0.0"},"pkg.b":{"latest":"1.0.0"}}}'
+export MOCK_DIST_TAG=latest
+export MOCK_TARGET_VERSION=1.1.0
+export MOCK_FAIL_VERIFY_PACKAGE=pkg.a
+export MOCK_CONCURRENT_TARGET=1.2.0
+if run_promotion latest 1.1.0 pkg.a pkg.b > "$fixture_dir/concurrent-compensation.log" 2>&1; then
+  printf 'Promotion unexpectedly accepted a concurrent dist-tag replacement.\n' >&2
+  exit 1
+fi
+jq -e '.packages["pkg.a"].latest == "1.2.0" and .packages["pkg.b"].latest == "1.0.0"' \
+  "$MOCK_REGISTRY_STATE" >/dev/null
+grep -Fq 'Refusing to compensate' "$fixture_dir/concurrent-compensation.log"
+grep -Fq 'compensation was incomplete' "$fixture_dir/concurrent-compensation.log"
+
 reset_fixture '{"packages":{"pkg.a":{"latest":"1.2.0"},"pkg.b":{"latest":"1.0.0"}}}'
 export MOCK_DIST_TAG=latest
 if run_promotion latest 1.1.0 pkg.a pkg.b > "$fixture_dir/latest-regression.log" 2>&1; then
@@ -218,4 +307,19 @@ run_promotion latest 1.1.0 pkg.a pkg.b > "$fixture_dir/idempotent.log"
 grep -Fq '0 changed, 2 already current' "$fixture_dir/idempotent.log"
 assert_no_mutations
 
-printf 'Dist-tag promotion fixture passed: success, rollback, monotonicity, and idempotent reruns verified.\n'
+reset_fixture '{"packages":{"pkg.a":{"latest":"1.1.0"},"pkg.b":{"latest":"1.1.0"}}}'
+export MOCK_DIST_TAG=latest
+run_verification latest 1.1.0 pkg.a pkg.b > "$fixture_dir/verify-only.log"
+grep -Fq 'Verified package family dist tag' "$fixture_dir/verify-only.log"
+assert_no_mutations
+
+reset_fixture '{"packages":{"pkg.a":{"latest":"1.1.0"},"pkg.b":{"latest":"1.0.0"}}}'
+export MOCK_DIST_TAG=latest
+if run_verification latest 1.1.0 pkg.a pkg.b > "$fixture_dir/verify-only-mismatch.log" 2>&1; then
+  printf 'Read-only dist-tag verification accepted a partial family.\n' >&2
+  exit 1
+fi
+grep -Fq 'expected promoted version' "$fixture_dir/verify-only-mismatch.log"
+assert_no_mutations
+
+printf 'Dist-tag promotion fixture passed: post-guard snapshot refresh, downgrade rejection, compensation, idempotent reruns, and read-only verification verified.\n'

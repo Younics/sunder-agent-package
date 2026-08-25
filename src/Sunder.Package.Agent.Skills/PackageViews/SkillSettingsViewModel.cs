@@ -18,9 +18,11 @@ public sealed partial class SkillSettingsViewModel : ObservableObject,
     private const string MutationChannel = "skills-mutation";
 
     private readonly ISkillManagementGateway _gateway;
+    private readonly IOwnerStreamAvailability? _ownerAvailability;
     private readonly TimedStatusController _successStatus;
     private readonly IPresentationDispatcher _uiDispatcher;
     private readonly PresentationTaskScope _tasks;
+    private readonly object _publicationGate = new();
     private readonly LatestRequestCoordinator _requests = new();
     private readonly KeyedAdaptiveListDetailState<string, InstalledSkillItemViewModel> _listDetail;
     private readonly SerializedRefreshLoop _runtimeRefresh;
@@ -34,6 +36,7 @@ public sealed partial class SkillSettingsViewModel : ObservableObject,
         TimeProvider? timeProvider = null)
     {
         _gateway = gateway;
+        _ownerAvailability = gateway as IOwnerStreamAvailability;
         _uiDispatcher = PresentationDispatcher.Capture();
         _successStatus = new TimedStatusController(timeProvider, _uiDispatcher);
         _tasks = new PresentationTaskScope(exception => _uiDispatcher.InvokeAsync(() =>
@@ -53,6 +56,11 @@ public sealed partial class SkillSettingsViewModel : ObservableObject,
             RefreshListAsync,
             exception => RunOnUiThread(() => SetStatus(exception.Message, SkillStatusKind.Error)));
         _gateway.SkillsChanged += OnSkillsChanged;
+        IsRuntimeAvailable = _ownerAvailability?.IsOwnerStreamAvailable ?? true;
+        if (_ownerAvailability is not null)
+        {
+            _ownerAvailability.OwnerStreamAvailabilityChanged += OnOwnerStreamAvailabilityChanged;
+        }
         _initialization = InitializeCoreAsync();
     }
 
@@ -139,6 +147,9 @@ public sealed partial class SkillSettingsViewModel : ObservableObject,
 
     [ObservableProperty]
     private bool _isBusy;
+
+    [ObservableProperty]
+    private bool _isRuntimeAvailable;
 
     public bool IsStatusSuccess => StatusKind == SkillStatusKind.Success;
 
@@ -334,7 +345,7 @@ public sealed partial class SkillSettingsViewModel : ObservableObject,
 
             DiscardPendingSkillRefresh();
             var snapshot = await _gateway.ListAsync(mutation.CancellationToken);
-            await _uiDispatcher.InvokeAsync(() =>
+            await PublishOnUiThreadAsync(() =>
             {
                 if (!_requests.IsCurrent(mutation))
                 {
@@ -361,7 +372,7 @@ public sealed partial class SkillSettingsViewModel : ObservableObject,
                         SkillStatusKind.Success,
                         autoClear: true);
                 }
-            });
+            }, mutation.CancellationToken);
         }
         catch (OperationCanceledException) when (mutation.CancellationToken.IsCancellationRequested)
         {
@@ -393,14 +404,14 @@ public sealed partial class SkillSettingsViewModel : ObservableObject,
         try
         {
             var skills = await _gateway.ListAsync(request.CancellationToken);
-            await _uiDispatcher.InvokeAsync(() =>
+            await PublishOnUiThreadAsync(() =>
             {
                 if (_requests.IsCurrent(request))
                 {
                     _listDetail.Reconcile(skills.Select(static skill =>
                         new InstalledSkillItemViewModel(skill, skill.RelativeRootPath)).ToArray());
                 }
-            });
+            }, request.CancellationToken);
         }
         catch (OperationCanceledException) when (request.CancellationToken.IsCancellationRequested)
         {
@@ -427,6 +438,9 @@ public sealed partial class SkillSettingsViewModel : ObservableObject,
     private void OnSkillsChanged()
         => _tasks.Run(_ => _runtimeRefresh.MarkDirty());
 
+    private void OnOwnerStreamAvailabilityChanged(bool available)
+        => RunOnUiThread(() => IsRuntimeAvailable = available);
+
     private void DiscardPendingSkillRefresh()
     {
         _runtimeRefresh.DiscardPending();
@@ -442,7 +456,12 @@ public sealed partial class SkillSettingsViewModel : ObservableObject,
 
         _disposed = true;
         _gateway.SkillsChanged -= OnSkillsChanged;
+        if (_ownerAvailability is not null)
+        {
+            _ownerAvailability.OwnerStreamAvailabilityChanged -= OnOwnerStreamAvailabilityChanged;
+        }
         _listDetail.PropertyChanged -= OnListDetailPropertyChanged;
+        IsBusy = false;
         _runtimeRefresh.Dispose();
         _listDetail.Dispose();
         _requests.Dispose();
@@ -530,6 +549,19 @@ public sealed partial class SkillSettingsViewModel : ObservableObject,
         }
 
         _tasks.Run(_ => _uiDispatcher.InvokeAsync(action));
+    }
+
+    private Task PublishOnUiThreadAsync(Action action, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return _uiDispatcher.InvokeAsync(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            lock (_publicationGate)
+            {
+                action();
+            }
+        });
     }
 }
 

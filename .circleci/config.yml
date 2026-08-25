@@ -24,31 +24,31 @@ commands:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 jobs:
-  agent_package_build_test:
-    parameters:
-      sdk_mode:
-        type: enum
-        enum: ["package", "source"]
-        default: "package"
+  agent_package_compatibility:
     executor:
       name: win/default
       size: medium
     steps:
       - checkout
       - install_dotnet_10
-      - when:
-          condition:
-            equal: ["source", << parameters.sdk_mode >>]
-          steps:
-            - run:
-                name: Checkout Sunder source SDK
-                command: |
-                  $ErrorActionPreference = "Stop"
-                  $sourceSdkPath = Join-Path (Split-Path -Parent (Get-Location).Path) "sunder-core"
-                  git clone --depth 1 https://github.com/Younics/sunder-core.git $sourceSdkPath
-                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - run:
-          name: Build and test Agent packages (<< parameters.sdk_mode >> SDK)
+          name: Resolve exact Core main source beside Agent
+          command: |
+            $ErrorActionPreference = "Stop"
+            $corePath = [IO.Path]::GetFullPath((Join-Path $PWD "..\sunder-core"))
+            $remote = git ls-remote --exit-code https://github.com/Younics/sunder-core.git refs/heads/main
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $parts = $remote -split "\s+"
+            if ($parts.Count -ne 2 -or $parts[0] -notmatch '^[0-9a-f]{40}$' -or $parts[1] -ne 'refs/heads/main') {
+              throw "Could not resolve exactly one full Core main commit."
+            }
+            git clone --no-checkout https://github.com/Younics/sunder-core.git $corePath
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            git -C $corePath checkout --detach $parts[0]
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - run:
+          name: Restore and build complete source mode
           command: |
             $ErrorActionPreference = "Stop"
             $env:PATH = "$env:USERPROFILE\.dotnet;$env:USERPROFILE\.dotnet\tools;$env:PATH"
@@ -60,25 +60,125 @@ jobs:
               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             }
 
-            $useSourceSdk = if ("<< parameters.sdk_mode >>" -eq "source") { "true" } else { "false" }
-            $lockArg = if ($useSourceSdk -eq "false") { "--locked-mode" } else { "--force-evaluate" }
-            Invoke-Checked { dotnet restore ".\Sunder.AgentPackage.slnx" $lockArg "-p:SunderUseSourceSdk=$useSourceSdk" }
-            Invoke-Checked { dotnet build ".\Sunder.AgentPackage.slnx" -c Release --no-restore "-p:SunderUseSourceSdk=$useSourceSdk" }
+            Invoke-Checked { dotnet restore ".\Sunder.AgentPackage.slnx" --force-evaluate "-p:SunderUseSourceSdk=true" }
+            Invoke-Checked { dotnet build ".\Sunder.AgentPackage.slnx" -c Release --no-restore -m:1 "-p:SunderUseSourceSdk=true" }
+            bash ./scripts/generate-test-inventory.sh | Out-File -FilePath ".\test-inventory.json" -Encoding utf8
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            bash ./scripts/generate-test-duration-report.fixture.sh
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-            New-Item -ItemType Directory -Force -Path ".\test-results" | Out-Null
+      - run:
+          name: Run complete source-mode behavioral suite
+          command: |
+            $ErrorActionPreference = "Stop"
+            $env:PATH = "$env:USERPROFILE\.dotnet;$env:USERPROFILE\.dotnet\tools;$env:PATH"
+            if (Test-Path variable:PSNativeCommandUseErrorActionPreference) {
+              $PSNativeCommandUseErrorActionPreference = $false
+            }
+            New-Item -ItemType Directory -Force -Path ".\test-results\source\full" | Out-Null
 
-            Invoke-Checked { dotnet test ".\Sunder.AgentPackage.slnx" -c Release --no-build --no-restore "-p:SunderUseSourceSdk=$useSourceSdk" --logger "trx" --results-directory ".\test-results" }
+            & dotnet test ".\Sunder.AgentPackage.slnx" -c Release --no-build --no-restore -m:1 `
+              "-p:SunderUseSourceSdk=true" --logger "trx" `
+              --results-directory ".\test-results\source\full"
+            [ordered]@{ sourceTestExitCode = $LASTEXITCODE } | ConvertTo-Json |
+              Out-File -FilePath ".\test-results\ci-status.json" -Encoding utf8
+
+      - run:
+          name: Restore and build focused locked-package mode
+          command: |
+            $ErrorActionPreference = "Stop"
+            $env:PATH = "$env:USERPROFILE\.dotnet;$env:USERPROFILE\.dotnet\tools;$env:PATH"
+            dotnet restore ".\Sunder.AgentPackage.slnx" --locked-mode "-p:SunderUseSourceSdk=false"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            dotnet build ".\Sunder.AgentPackage.slnx" -c Release --no-restore -m:1 "-p:SunderUseSourceSdk=false"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - run:
+          name: Run and summarize focused package compatibility lane
+          command: |
+            $ErrorActionPreference = "Stop"
+            $env:PATH = "$env:USERPROFILE\.dotnet;$env:USERPROFILE\.dotnet\tools;$env:PATH"
+            if (Test-Path variable:PSNativeCommandUseErrorActionPreference) {
+              $PSNativeCommandUseErrorActionPreference = $false
+            }
+            New-Item -ItemType Directory -Force -Path ".\test-results\package\full" | Out-Null
+
+            & dotnet test ".\Sunder.AgentPackage.slnx" -c Release --no-build --no-restore -m:1 `
+              "-p:SunderUseSourceSdk=false" --filter "Lane=PackageCompatibility&Category!=Artifact" `
+              --logger "trx" --results-directory ".\test-results\package\full"
+            $packageTestExitCode = $LASTEXITCODE
+
+            & python ".\scripts\generate-test-duration-report.py" ".\test-results\source" `
+              --inventory ".\test-inventory.json" --mode source --platform windows `
+              --expectations ".\tests\test-evidence-expectations.json" |
+              Out-File -FilePath ".\test-results\source-test-duration-report.json" -Encoding utf8
+            $sourceReportExitCode = $LASTEXITCODE
+
+            & python ".\scripts\generate-test-duration-report.py" ".\test-results\package" `
+              --inventory ".\test-inventory.json" `
+              --mode package --platform windows --lane PackageCompatibility `
+              --exclude-category Artifact `
+              --expectations ".\tests\test-evidence-expectations.json" |
+              Out-File -FilePath ".\test-results\package-test-duration-report.json" -Encoding utf8
+            $packageReportExitCode = $LASTEXITCODE
+
+            $prior = Get-Content ".\test-results\ci-status.json" -Raw | ConvertFrom-Json
+            [ordered]@{
+              sourceTestExitCode = $prior.sourceTestExitCode
+              sourceReportExitCode = $sourceReportExitCode
+              packageTestExitCode = $packageTestExitCode
+              packageReportExitCode = $packageReportExitCode
+            } | ConvertTo-Json | Out-File -FilePath ".\test-results\ci-status.json" -Encoding utf8
       - store_test_results:
           path: test-results
       - store_artifacts:
           path: test-results
           destination: test-results
+      - run:
+          name: Enforce package compatibility evidence
+          command: |
+            $ErrorActionPreference = "Stop"
+            $status = Get-Content ".\test-results\ci-status.json" -Raw | ConvertFrom-Json
+            $source = Get-Content ".\test-results\source-test-duration-report.json" -Raw | ConvertFrom-Json
+            $package = Get-Content ".\test-results\package-test-duration-report.json" -Raw | ConvertFrom-Json
+            if ($status.sourceTestExitCode -ne 0 -or $status.sourceReportExitCode -ne 0 -or
+                $status.packageTestExitCode -ne 0 -or $status.packageReportExitCode -ne 0) {
+              throw "Source or package compatibility execution/evidence verification failed."
+            }
+            if ($source.selection.mode -ne "source" -or $null -ne $source.selection.lane -or
+                $source.selection.platform -ne "windows") {
+              throw "Complete source report selection is invalid."
+            }
+            if ($source.summary.failed -ne 0 -or $source.summary.other -ne 0) {
+              throw "Complete source report outcomes are invalid."
+            }
+            if ($source.canonicalIdentityExpectation.platform -ne "linux" -or
+                $source.canonicalIdentityExpectation.enforced -ne $false -or
+                @($source.projectSuiteEvidence).Count -ne 11 -or
+                @($source.identityEvidence).Count -ne 11 -or @($source.evidenceViolations).Count -ne 0) {
+              throw "Complete source identity evidence is invalid."
+            }
+            $expectedSourceSkips = @($source.expectedSkipEvidence) | ConvertTo-Json -Compress -Depth 10
+            $observedSourceSkips = @($source.skippedTests) | ConvertTo-Json -Compress -Depth 10
+            if ($expectedSourceSkips -ne $observedSourceSkips) {
+              throw "Complete source skips differ by exact identity, reason, or owner."
+            }
+            if ($package.selection.mode -ne "package" -or $package.selection.lane -ne "PackageCompatibility" -or
+                $package.selection.platform -ne "windows") {
+              throw "Package compatibility report selection is invalid."
+            }
+            if ($package.summary.failed -ne 0 -or $package.summary.other -ne 0 -or $package.primarySummary.skipped -ne 0) {
+              throw "Package compatibility report outcomes are invalid."
+            }
+            if ($package.canonicalIdentityExpectation.platform -ne "linux" -or
+                $package.canonicalIdentityExpectation.enforced -ne $false -or
+                @($package.projectSuiteEvidence).Count -ne 9 -or
+                @($package.identityEvidence).Count -ne 9 -or @($package.evidenceViolations).Count -ne 0) {
+              throw "Package compatibility identity evidence is invalid."
+            }
 
 workflows:
   sunder_agent_package:
     jobs:
-      - agent_package_build_test:
-          name: agent-package-<< matrix.sdk_mode >>
-          matrix:
-            parameters:
-              sdk_mode: ["package", "source"]
+      - agent_package_compatibility:
+          name: agent-package-compatibility

@@ -525,6 +525,34 @@ public sealed class AgentRunCoordinatorTests
         Assert.Contains("do not present requested arguments", prompt ?? string.Empty, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task AgentSystemPromptComposer_ComposeAsync_RendersStableAuthoritativeUtcContext()
+    {
+        var composer = new AgentSystemPromptComposer(new TestExtensionCatalog());
+        var runStartedAtUtc = new DateTimeOffset(2026, 8, 25, 5, 1, 16, TimeSpan.Zero);
+        var request = BuildSystemPromptRequest(runStartedAtUtc: runStartedAtUtc);
+
+        var firstPrompt = await composer.ComposeAsync(
+            request,
+            "Historical tool result reported 2026-08-21.");
+        var recomposedPrompt = await composer.ComposeAsync(
+            request,
+            "Historical tool result reported 2026-08-21.");
+        var nextRunPrompt = await composer.ComposeAsync(
+            BuildSystemPromptRequest(runStartedAtUtc: runStartedAtUtc.AddDays(1)),
+            "Historical tool result reported 2026-08-21.");
+
+        Assert.Contains("## Current UTC Date And Time", firstPrompt);
+        Assert.Contains("Current UTC date: 2026-08-25", firstPrompt);
+        Assert.Contains("This run started at: 2026-08-25T05:01:16.0000000+00:00", firstPrompt);
+        Assert.Contains("Historical tool result reported 2026-08-21.", firstPrompt);
+        Assert.Contains("Do not infer the current date", firstPrompt);
+        Assert.Contains("Web Search", firstPrompt);
+        Assert.Equal(firstPrompt, recomposedPrompt);
+        Assert.Contains("Current UTC date: 2026-08-26", nextRunPrompt);
+        Assert.NotEqual(firstPrompt, nextRunPrompt);
+    }
+
     [Theory]
     [InlineData("assistant to=functions.webfetch  {\"url\":\"https://example.com\"}")]
     [InlineData("First I will edit the file.assistant to=functions.apply_patch {\"patch\":\"*** Begin Patch\"}")]
@@ -13321,6 +13349,7 @@ public sealed class AgentRunCoordinatorTests
 
         await backgroundService.StartAsync();
         await backgroundService.CommitGenerationAsync(new PackageRuntimeGeneration(Guid.NewGuid(), 1));
+        await backgroundService.ActivateCommittedGenerationAsync();
         Assert.True(backgroundService.QueueMemoryIndex(memory.MemoryId, profile.ProfileId));
 
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -13420,6 +13449,7 @@ public sealed class AgentRunCoordinatorTests
 
         await backgroundService.StartAsync();
         await backgroundService.CommitGenerationAsync(new PackageRuntimeGeneration(Guid.NewGuid(), 1));
+        await backgroundService.ActivateCommittedGenerationAsync();
         Assert.True(backgroundService.QueueMemoryIndex(memory.MemoryId, "profile-1"));
 
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -13501,10 +13531,11 @@ public sealed class AgentRunCoordinatorTests
     private static AgentSystemPromptRequest BuildSystemPromptRequest(
         IReadOnlyList<AgentToolDescriptor>? availableTools = null,
         AgentWorkspaceRecord? workspace = null,
-        AgentWorkspaceBindingRecord? executionBinding = null
+        AgentWorkspaceBindingRecord? executionBinding = null,
+        DateTimeOffset? runStartedAtUtc = null
     )
     {
-        var now = DateTimeOffset.UtcNow;
+        var now = runStartedAtUtc ?? DateTimeOffset.UtcNow;
         var session = new AgentSessionRecord(
             Guid.NewGuid(),
             "Test Session",
@@ -17117,16 +17148,20 @@ public sealed class AgentRunCoordinatorTests
         public AgentSessionRecord? GetSession(Guid sessionId) =>
             _sessions.FirstOrDefault(session => session.SessionId == sessionId);
 
-        public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces() => _workspaces;
+        public ValueTask<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesAsync(
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(_workspaces);
 
-        public AgentWorkspaceRecord? GetWorkspace(string workspaceId) =>
-            _workspaces.FirstOrDefault(workspace =>
+        public ValueTask<AgentWorkspaceRecord?> GetWorkspaceAsync(
+            string workspaceId,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult<AgentWorkspaceRecord?>(_workspaces.FirstOrDefault(workspace =>
                 string.Equals(
                     workspace.WorkspaceId,
                     workspaceId,
                     StringComparison.OrdinalIgnoreCase
                 )
-            );
+            ));
 
         public AgentProfileRecord? GetSessionProfile(Guid sessionId) => null;
 

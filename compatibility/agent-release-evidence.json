@@ -1,0 +1,180 @@
+{
+  "schemaVersion": 1,
+  "verifiedDate": "2026-08-22",
+  "repository": "Younics/sunder-agent-package",
+  "method": {
+    "bytes": "Every published sunder.package.agent 1.0.x artifact was downloaded, matched to its GitHub sha256 digest, and its payload/lib/Sunder.Package.Agent.Contracts.dll was inspected.",
+    "artifactCoverage": "The base Agent artifact is the authoritative released carrier of the shared Agent Contracts assembly; latest artifacts for all 15 package families were also digest-verified."
+  },
+  "allowedFutureDeltas": [
+    {
+      "phase": 6,
+      "implementationStatus": "implemented",
+      "surface": "Agent workspace discovery public CLR API",
+      "change": "Replace synchronous workspace listing and metadata-hydration entry points with async, cancellation-aware contracts and update all first-party consumers atomically.",
+      "expectedLedgerEffect": "Agent public CLR API snapshots change signatures; descriptor schema, semantic contract versions, and persisted workspace records remain unchanged.",
+      "acceptance": "Public API and packed Protocol consumer tests pass, workspace discovery propagates cancellation without blocking, and source/package-mode Agent matrices pass."
+    }
+  ],
+  "agentArtifacts": [
+    {
+      "version": "1.0.0",
+      "sha256": "32ceba63e0869caf54304c4e5e789c4ac375e3917303d2824bba4db60374b59e",
+      "workspacePathMigration": false,
+      "legacyFileSearch": false,
+      "workingSummary": true
+    },
+    {
+      "version": "1.0.1",
+      "sha256": "65908f2fd8af6d70ce1cdc127e8d2ce492e6fcaf09e85fb88814040131f025a5",
+      "workspacePathMigration": false,
+      "legacyFileSearch": false,
+      "workingSummary": true
+    },
+    {
+      "version": "1.0.2",
+      "sha256": "0d4b62d142fed73f89528f62fd7c43ee5118c82c2cc3a428adf764f9fe720f4f",
+      "workspacePathMigration": false,
+      "legacyFileSearch": false,
+      "workingSummary": true
+    },
+    {
+      "version": "1.0.3",
+      "sha256": "aa47d9c919f743215e7e923de86e99a2185f9a02f3cfbaea10d43d51121f079e",
+      "workspacePathMigration": false,
+      "legacyFileSearch": false,
+      "workingSummary": true
+    },
+    {
+      "version": "1.0.4",
+      "sha256": "7de7c92268ce10f66b83e7a443ac4a5df5081d1984f23bbb41c202460d3ebc56",
+      "workspacePathMigration": false,
+      "legacyFileSearch": false,
+      "workingSummary": true
+    },
+    {
+      "version": "1.0.5",
+      "sha256": "c13547ed58e99f0a067a6e96fbe0893813e211bfeb978567a2c606d3d3d1ba0a",
+      "workspacePathMigration": true,
+      "legacyFileSearch": false,
+      "workingSummary": true
+    },
+    {
+      "version": "1.0.6",
+      "sha256": "f2853f69301742bef0de50de0cce142e08b57d22b9f753223d582a98e597ca0f",
+      "workspacePathMigration": true,
+      "legacyFileSearch": false,
+      "workingSummary": true
+    },
+    {
+      "version": "1.0.7",
+      "sha256": "72405a4296ad5cd7f7d189de87479b64eab2dd59ab170aa88e9bf56d849ea96a",
+      "workspacePathMigration": true,
+      "legacyFileSearch": false,
+      "workingSummary": true
+    }
+  ],
+  "latestFamilyArtifacts": [
+    { "package": "sunder.package.agent", "version": "1.0.7", "sha256": "72405a4296ad5cd7f7d189de87479b64eab2dd59ab170aa88e9bf56d849ea96a" },
+    { "package": "sunder.package.agent.builder", "version": "1.0.3", "sha256": "0db080da9859d96410e048cf0fb04fd2ee00f983627c06f2e85072c2580c08ad" },
+    { "package": "sunder.package.agent.execution.docker", "version": "1.0.6", "sha256": "245e7e72e951814de93ad824b8ad2d6f00c498150a6e0bc427037c5543e4dd1e" },
+    { "package": "sunder.package.agent.execution.local", "version": "1.0.6", "sha256": "5301069bf1c49a00d3a40c9fea0f53380088fe380e20a963e29853f844fa2eb0" },
+    { "package": "sunder.package.agent.mcp", "version": "1.0.5", "sha256": "2b11450939367c9d729b7aa662d17a03fc716561f74056e5d719b4877f9f9cb6" },
+    { "package": "sunder.package.agent.memory.semantic", "version": "1.0.5", "sha256": "4f79c421b14a5f406c978dc8289ccc262355b76428ecedad376a69af74ffb00d" },
+    { "package": "sunder.package.agent.provider.anthropic", "version": "1.0.5", "sha256": "77d049acb81ee35148f7c87f5a3a50ce8acd443e1d088a87601430de45ae2fd4" },
+    { "package": "sunder.package.agent.provider.gemini", "version": "1.0.4", "sha256": "26a576e8c64badbf4ec5c7470564dadcc7b6628ccc76ef0821e9940bc5e9fab5" },
+    { "package": "sunder.package.agent.provider.lmstudio", "version": "1.0.5", "sha256": "b9804eb46fe5f1af7a548815f4238151910c84d2f17a2805f2745a5d6e4acea9" },
+    { "package": "sunder.package.agent.provider.openai", "version": "1.0.5", "sha256": "3dbb2e1ae0401ae0abc1a0829c8c5a1803585544cf1e6649181085d34009567a" },
+    { "package": "sunder.package.agent.skills", "version": "1.0.5", "sha256": "5737b979a9e66da5199ca3d2bebcb527daa6948a44603d2e6ad3d238adc8ec9f" },
+    { "package": "sunder.package.agent.subagents", "version": "1.0.5", "sha256": "356e22b2b887de40c92e75aef6f56cfb18bd62b11cfb48f0b137c7e60eaebd61" },
+    { "package": "sunder.package.agent.tools.files", "version": "1.0.5", "sha256": "236bd93791b6dcc8d2c38cb48ce8dcc59cc7bd741e2456c483b4791158d1ad3b" },
+    { "package": "sunder.package.agent.tools.shell", "version": "1.0.5", "sha256": "0e8f0f703f2620506d09503c9c5a328fbdd4714ecd473a5a671e3417d0205b71" },
+    { "package": "sunder.package.agent.tools.web", "version": "1.0.5", "sha256": "1163c3927ecb11357072569d150a2aeb36dd628f7ff8cbc980dadc8092207e34" }
+  ],
+  "decisions": [
+    {
+      "id": "B1",
+      "surface": "workspace-path-migrator",
+      "decision": "retain",
+      "reason": "Released in Agent 1.0.5 through 1.0.7 and still required to migrate target-owned durable workspace paths."
+    },
+    {
+      "id": "B2",
+      "surface": "legacy-file-search",
+      "decision": "remove",
+      "reason": "Product-approved Phase 2 clean break. The facet was absent from every inspected released Contracts DLL, had no durable selector, and Local and Docker already implement structured-file-search."
+    },
+    {
+      "id": "B3",
+      "surface": "working-summary",
+      "decision": "retain",
+      "reason": "AgentWorkingSummaryRecord is present in every released Contracts DLL and is backed by durable session projection state."
+    },
+    {
+      "id": "B4.local-shell-array",
+      "surface": "Local bare shell array",
+      "decision": "retain-reader",
+      "reason": "A public predecessor wrote the durable array; current writes use the versioned document."
+    },
+    {
+      "id": "B4.subagent-array",
+      "surface": "Subagent top-level array",
+      "decision": "retain-reader",
+      "reason": "A public predecessor wrote the durable array; current writes use the versioned document."
+    },
+    {
+      "id": "B4.selected-session",
+      "surface": "Global selected-session key",
+      "decision": "reset",
+      "reason": "Released state is cleared or ignored and can never select a session in the workspace-scoped model."
+    },
+    {
+      "id": "B4.unassigned-workspace",
+      "surface": "Unassigned Sessions sentinel",
+      "decision": "retain-reader",
+      "reason": "Released durable Agent databases can contain the sentinel and must not appear silently empty."
+    },
+    {
+      "id": "B4.lifecycle-ordering",
+      "surface": "Legacy lifecycle ordering keys",
+      "decision": "retain-reader",
+      "reason": "Released durable outbox events can carry predecessor ordering keys; replay barriers retain deterministic handling."
+    },
+    {
+      "id": "B4.docker-catalog",
+      "surface": "Docker legacy catalog, tagless, and needs-attention state",
+      "decision": "retain-reader",
+      "reason": "Released Docker state is preserved and surfaced for explicit remediation rather than silently replaced."
+    },
+    {
+      "id": "B4.checkpoint-enum",
+      "surface": "Legacy checkpoint enum values",
+      "decision": "retain-reader",
+      "reason": "Released durable checkpoints remain readable through the current projection policy."
+    },
+    {
+      "id": "B4.fast-model-id",
+      "surface": "Provider -fast model IDs",
+      "decision": "normalize",
+      "reason": "Released profile/configuration records can persist predecessor model IDs."
+    },
+    {
+      "id": "B4.mcp-name-id",
+      "surface": "MCP name-based tool IDs",
+      "decision": "retain-unambiguous-reader",
+      "reason": "Released sessions/tool state can contain name-based IDs; ambiguous aliases reject."
+    },
+    {
+      "id": "B4.child-suspension-backend",
+      "surface": "BackendId-only child suspension",
+      "decision": "retain-reader",
+      "reason": "Released durable child suspension records can contain only BackendId."
+    },
+    {
+      "id": "B5",
+      "surface": "Current unmanaged package source adoption",
+      "decision": "retain-explicit-current-source-adoption",
+      "reason": "The explicit Registry operation remains available for current unmanaged packages. Agent does not infer provenance, scan historical roots, or adopt pre-V1 package records."
+    }
+  ]
+}

@@ -89,8 +89,9 @@ public sealed partial class MemoryLocalStore : IDisposable, IAsyncDisposable
         }
     }
 
-    internal void Initialize()
+    internal void Initialize(CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         lock (_initializationSync)
         {
             if (_initialized)
@@ -98,6 +99,7 @@ public sealed partial class MemoryLocalStore : IDisposable, IAsyncDisposable
                 return;
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             MemoryDatabase.Initialize(_contentRootPath);
             Directory.CreateDirectory(Path.GetDirectoryName(DatabasePath)!);
             new MemorySchemaMigrator(DatabasePath).Migrate();

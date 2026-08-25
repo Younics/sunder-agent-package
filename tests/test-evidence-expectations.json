@@ -1,0 +1,151 @@
+{
+  "schemaVersion": 3,
+  "modes": {
+    "source": {
+      "projectSuite": [
+        "sunder.package.agent.execution.local.tests",
+        "sunder.package.agent.memory.semantic.tests",
+        "sunder.package.agent.presentation.state.tests",
+        "sunder.package.agent.presentation.tests",
+        "sunder.package.agent.provider.anthropic.tests",
+        "sunder.package.agent.provider.gemini.tests",
+        "sunder.package.agent.provider.lmstudio.tests",
+        "sunder.package.agent.provider.openai.tests",
+        "sunder.package.agent.skills.tests",
+        "sunder.package.agent.subagents.tests",
+        "sunder.package.agent.tests"
+      ],
+      "canonicalIdentity": {
+        "platform": "linux",
+        "projects": [
+        {
+          "project": "sunder.package.agent.execution.local.tests",
+          "identityCount": 300,
+          "identitySha256": "d6d0530f5e2ef3ba5262baff1d45be518d2304bf89e70b73804a4d1a8ec01af6"
+        },
+        {
+          "project": "sunder.package.agent.memory.semantic.tests",
+          "identityCount": 50,
+          "identitySha256": "eedef7eaa7645d5c70caf6fe0466168128b59286293c4bda47b93ef45b95c3f7"
+        },
+        {
+          "project": "sunder.package.agent.presentation.state.tests",
+          "identityCount": 38,
+          "identitySha256": "ee2c8a01fd7801d5b813c74b78e77261aec6946907a9aaa44fe71b212b9c62df"
+        },
+        {
+          "project": "sunder.package.agent.presentation.tests",
+          "identityCount": 198,
+          "identitySha256": "2d9e12a8816d37b1f77de0f9a4e60a129cd677b911b7b0c5f662c07b2e6c4212"
+        },
+        {
+          "project": "sunder.package.agent.provider.anthropic.tests",
+          "identityCount": 47,
+          "identitySha256": "62456278bfa6517c9829232111dc5cba859774908b66a474706ab3eadd1ff4a3"
+        },
+        {
+          "project": "sunder.package.agent.provider.gemini.tests",
+          "identityCount": 48,
+          "identitySha256": "bee69dbef21fb2c53281133f7e749151f899ddfca4d91efd06e8be1a3d6074c8"
+        },
+        {
+          "project": "sunder.package.agent.provider.lmstudio.tests",
+          "identityCount": 47,
+          "identitySha256": "1498a0a2331d60c176738a35a3a8a28be1aeafebff3fa912186990c7c59ab3c4"
+        },
+        {
+          "project": "sunder.package.agent.provider.openai.tests",
+          "identityCount": 229,
+          "identitySha256": "4623707c99774b82c63bc49cd038b885fa90375ad443b4e5e2bb62e5cdcad19d"
+        },
+        {
+          "project": "sunder.package.agent.skills.tests",
+          "identityCount": 61,
+          "identitySha256": "e75f1cec12ef0b539de751f27223a1913aee6f5688a0664b57e4f5de5a30c14b"
+        },
+        {
+          "project": "sunder.package.agent.subagents.tests",
+          "identityCount": 2,
+          "identitySha256": "f0c542189bb9159d95929ca2c1ae3953b08cd070ebad0a6d3bd88757e23daee3"
+        },
+        {
+          "project": "sunder.package.agent.tests",
+          "identityCount": 1779,
+          "identitySha256": "6ff2d6f38292748b153b08e41b7b25744d934a596a0831664337383d5d38c09f"
+        }
+        ]
+      },
+      "skipPolicy": {
+        "identityCount": 98,
+        "identitySha256": "767e99babe6660e50a8e342f4c49fe4dfd1d22862bfc71b9b7bab51dc7c9ef6f"
+      }
+    },
+    "package": {
+      "projectSuite": [
+        "sunder.package.agent.execution.local.tests",
+        "sunder.package.agent.memory.semantic.tests",
+        "sunder.package.agent.provider.anthropic.tests",
+        "sunder.package.agent.provider.gemini.tests",
+        "sunder.package.agent.provider.lmstudio.tests",
+        "sunder.package.agent.provider.openai.tests",
+        "sunder.package.agent.skills.tests",
+        "sunder.package.agent.subagents.tests",
+        "sunder.package.agent.tests"
+      ],
+      "canonicalIdentity": {
+        "platform": "linux",
+        "projects": [
+        {
+          "project": "sunder.package.agent.execution.local.tests",
+          "identityCount": 4,
+          "identitySha256": "c859abf6bb0fc876c61f05cc4d5694ec9eef6c0c9d1b8167ca39b8c1ac86c081"
+        },
+        {
+          "project": "sunder.package.agent.memory.semantic.tests",
+          "identityCount": 2,
+          "identitySha256": "7546fa7ca90d8fdfa5ec3df752d5631447f0dbb1172a274ff4b4040ec3146de4"
+        },
+        {
+          "project": "sunder.package.agent.provider.anthropic.tests",
+          "identityCount": 1,
+          "identitySha256": "4a8118d58881819fc64b33bbd19f3977693652790f1d15975dd161528401e45a"
+        },
+        {
+          "project": "sunder.package.agent.provider.gemini.tests",
+          "identityCount": 1,
+          "identitySha256": "26f67abb344590328d660739bbe4a2bdbd333e37fda9725424882003de6a6796"
+        },
+        {
+          "project": "sunder.package.agent.provider.lmstudio.tests",
+          "identityCount": 1,
+          "identitySha256": "29d12d612ce37bba7ff6254442508c50d94ae62132d720d1d7b3cfcc323e6cc7"
+        },
+        {
+          "project": "sunder.package.agent.provider.openai.tests",
+          "identityCount": 1,
+          "identitySha256": "e714238508351c9754ff7a5125f0e7b0d70f26935c965c8b3ff8aee327467db6"
+        },
+        {
+          "project": "sunder.package.agent.skills.tests",
+          "identityCount": 1,
+          "identitySha256": "dc340ba61d04427fc70bbb6d312e485c1c83ff09d3d6dc1953bb20f3c6c2993b"
+        },
+        {
+          "project": "sunder.package.agent.subagents.tests",
+          "identityCount": 1,
+          "identitySha256": "a5ab30a3ef2b8e56d4959bdeb6cf644f6b142d1400b70a8733c9e2b06f484903"
+        },
+        {
+          "project": "sunder.package.agent.tests",
+          "identityCount": 21,
+          "identitySha256": "21fa0a26a76dbc6cbdde4465ee1f7983e64d53884d3815d05f1e5be92bc37dc6"
+        }
+        ]
+      },
+      "skipPolicy": {
+        "identityCount": 0,
+        "identitySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    }
+  }
+}

@@ -4,9 +4,16 @@
     <SunderPackageRole>test</SunderPackageRole>
     <SunderSdkAvaloniaReference>true</SunderSdkAvaloniaReference>
     <OutputType>Exe</OutputType>
-    <IsPackable>false</IsPackable>
     <ValidateExecutableReferencesMatchSelfContained>false</ValidateExecutableReferencesMatchSelfContained>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <SunderTestOwner>agent-family</SunderTestOwner>
+    <SunderTestCategory>UI</SunderTestCategory>
+    <SunderTestCapabilities>AvaloniaHeadless;Filesystem;Worker</SunderTestCapabilities>
+    <SunderTestOS>Any</SunderTestOS>
+    <SunderTestSize>Large</SunderTestSize>
+    <SunderTestSourceMode>true</SunderTestSourceMode>
+    <SunderTestPackageMode>true</SunderTestPackageMode>
+    <SunderTestSourceOnlyTests>Sunder.Package.Agent.Presentation.Tests.CrossRepositoryCandidatePreparationTests.SelectedAgentChat_RecoversWhenCandidateOwnerProviderBecomesLeaseReady</SunderTestSourceOnlyTests>
   </PropertyGroup>
 
   <ItemGroup>
@@ -63,6 +70,12 @@
                       Condition="'$(SunderUseSourceSdk)' == 'true'" />
     <ProjectReference Include="$(SunderRuntimeClientProject)"
                       Condition="'$(SunderUseSourceSdk)' == 'true'" />
+    <ProjectReference Include="$(SunderRuntimeContractsProject)"
+                      Condition="'$(SunderUseSourceSdk)' == 'true'" />
+    <ProjectReference Include="$(SunderRuntimeLocalStateProject)"
+                      Condition="'$(SunderUseSourceSdk)' == 'true'" />
+    <ProjectReference Include="..\Sunder.Package.Agent.TestSupport\Sunder.Package.Agent.TestSupport.csproj" />
+    <ProjectReference Include="..\Sunder.Package.Agent.TestSupport.Avalonia\Sunder.Package.Agent.TestSupport.Avalonia.csproj" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(SunderUseSourceSdk)' != 'true'">
@@ -74,7 +87,13 @@
              Link="TestSupport\AgentOwnerOperationTestExtensions.cs" />
     <Compile Include="..\Sunder.Package.Agent.Tests\RegressionTestInfrastructure.cs"
              Link="TestSupport\RegressionTestInfrastructure.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Tests\RegressionTestPackageContext.cs"
+             Link="TestSupport\RegressionTestPackageContext.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Tests\RegressionTestPackageScope.cs"
+             Link="TestSupport\RegressionTestPackageScope.cs" />
     <Compile Include="..\Sunder.Package.Agent.Tests\TestPackageStorageFakes.cs"
              Link="TestSupport\TestPackageStorageFakes.cs" />
+    <Compile Include="..\Sunder.Package.Agent.TestSupport.Avalonia\WorkerBackedSubagentManagementGateway.cs"
+             Link="TestSupport\WorkerBackedSubagentManagementGateway.cs" />
   </ItemGroup>
 </Project>

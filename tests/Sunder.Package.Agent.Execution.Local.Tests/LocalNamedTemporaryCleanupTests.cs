@@ -12,14 +12,9 @@ public sealed class LocalNamedTemporaryCleanupTests : IDisposable
         "sunder-named-temp-cleanup",
         Guid.NewGuid().ToString("N"));
 
-    [Fact]
+    [PlatformFact(TestPlatform.Unix, "Named temporary cleanup requires Unix file-descriptor semantics.")]
     public async Task DirectNamedTemporaryCancellation_SanitizesQuarantinedIdentity()
     {
-        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())
-        {
-            return;
-        }
-
         var workspace = CreateWorkspace();
         const string canary = "DIRECT-NAMED-CANCELLATION-CANARY";
         using var cancellation = new CancellationTokenSource();
@@ -38,14 +33,9 @@ public sealed class LocalNamedTemporaryCleanupTests : IDisposable
         await AssertSanitizedReservedEntriesAsync(workspace, canary);
     }
 
-    [Fact]
+    [PlatformFact(TestPlatform.Linux, "Anonymous-to-named temporary fallback is Linux-specific.")]
     public async Task LinuxAnonymousToNamedFallbackCancellation_SanitizesQuarantinedIdentity()
     {
-        if (!OperatingSystem.IsLinux())
-        {
-            return;
-        }
-
         var workspace = CreateWorkspace();
         const string canary = "ANONYMOUS-NAMED-CANCELLATION-CANARY";
         using var cancellation = new CancellationTokenSource();
@@ -66,14 +56,9 @@ public sealed class LocalNamedTemporaryCleanupTests : IDisposable
         await AssertSanitizedReservedEntriesAsync(workspace, canary);
     }
 
-    [Fact]
+    [PlatformFact(TestPlatform.Linux, "Anonymous-to-named temporary fallback is Linux-specific.")]
     public async Task LinuxAnonymousToNamedFallbackCopyFailure_SanitizesPartialCopy()
     {
-        if (!OperatingSystem.IsLinux())
-        {
-            return;
-        }
-
         var workspace = CreateWorkspace();
         const string canary = "ANONYMOUS-NAMED-COPY-FAILURE-CANARY";
         var hook = new CheckpointHook(
@@ -94,14 +79,9 @@ public sealed class LocalNamedTemporaryCleanupTests : IDisposable
         await AssertSanitizedReservedEntriesAsync(workspace, canary);
     }
 
-    [Fact]
+    [PlatformFact(TestPlatform.Linux, "Anonymous-to-named temporary fallback is Linux-specific.")]
     public async Task LinuxAnonymousToNamedFallbackPublicationFailure_SanitizesFullCopy()
     {
-        if (!OperatingSystem.IsLinux())
-        {
-            return;
-        }
-
         var workspace = CreateWorkspace();
         var target = Path.Combine(workspace, "fallback-publication-failure.txt");
         const string canary = "ANONYMOUS-NAMED-PUBLICATION-FAILURE-CANARY";
@@ -123,16 +103,11 @@ public sealed class LocalNamedTemporaryCleanupTests : IDisposable
         await AssertSanitizedReservedEntriesAsync(workspace, canary);
     }
 
-    [Theory]
+    [PlatformTheory(TestPlatform.Unix, "Named temporary inode races require Unix file-descriptor semantics.")]
     [InlineData(false)]
     [InlineData(true)]
     public async Task DirectNamedTemporaryRace_SanitizesExactRenamedOrLinkedInode(bool hardLink)
     {
-        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())
-        {
-            return;
-        }
-
         var workspace = CreateWorkspace();
         const string canary = "DIRECT-NAMED-RACE-CANARY";
         var racedPath = Path.Combine(workspace, hardLink ? "linked-copy.txt" : "renamed-copy.txt");
@@ -165,14 +140,9 @@ public sealed class LocalNamedTemporaryCleanupTests : IDisposable
         AssertReservationReleased(workspace);
     }
 
-    [Fact]
+    [PlatformFact(TestPlatform.MacOS, "Clone-based named-source cleanup is macOS-specific.")]
     public async Task MacOsSuccessfulClone_SanitizesNamedSourceQuarantine()
     {
-        if (!OperatingSystem.IsMacOS())
-        {
-            return;
-        }
-
         var workspace = CreateWorkspace();
         const string canary = "MACOS-NAMED-SOURCE-CANARY";
         var payload = CreatePayload(canary);
@@ -189,16 +159,11 @@ public sealed class LocalNamedTemporaryCleanupTests : IDisposable
         await AssertSanitizedReservedEntriesAsync(workspace, canary);
     }
 
-    [Fact]
+    [PlatformFact(TestPlatform.Unix, "Named temporary quarantine recovery requires Unix file-descriptor semantics.")]
     [SupportedOSPlatform("linux")]
     [SupportedOSPlatform("macos")]
     public async Task DirectNamedTemporaryQuarantineFailure_SanitizesExactInodeAndReportsRecovery()
     {
-        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())
-        {
-            return;
-        }
-
         var workspace = CreateWorkspace();
         const string canary = "DIRECT-NAMED-SANITIZATION-FAILURE-CANARY";
         var hook = new CheckpointHook(

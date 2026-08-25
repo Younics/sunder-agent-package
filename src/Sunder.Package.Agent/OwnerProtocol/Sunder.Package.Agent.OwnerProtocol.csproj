@@ -26,6 +26,7 @@
                       LogicalName="Sunder.Package.Agent.OwnerProtocol.Contracts.agent-owner-runtime.rpc.json" />
     <SunderRpcBinding Include="Contracts\agent-owner-runtime.rpc.json"
                       Namespace="Sunder.Package.Agent.OwnerProtocol.Generated"
+                      Accessibility="Internal"
                       OutputFile="AgentOwnerRuntimeRpc.g.cs" />
   </ItemGroup>
 

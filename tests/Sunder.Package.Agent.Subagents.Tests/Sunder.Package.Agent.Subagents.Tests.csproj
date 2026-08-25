@@ -1,12 +1,20 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <IsPackable>false</IsPackable>
     <SunderSdkReference>true</SunderSdkReference>
+    <SunderTestOwner>sunder.package.agent.subagents</SunderTestOwner>
+    <SunderTestCategory>Component</SunderTestCategory>
+    <SunderTestCapabilities>Filesystem;Worker</SunderTestCapabilities>
+    <SunderTestOS>Any</SunderTestOS>
+    <SunderTestSize>Medium</SunderTestSize>
+    <SunderTestSourceMode>true</SunderTestSourceMode>
+    <SunderTestPackageMode>true</SunderTestPackageMode>
+    <SunderTestLanes>PackageCompatibility</SunderTestLanes>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Subagents\Sunder.Package.Agent.Subagents.csproj" />
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Subagents\Protocol\SubagentsProtocol.csproj" />
+    <ProjectReference Include="..\Sunder.Package.Agent.TestSupport\Sunder.Package.Agent.TestSupport.csproj" />
   </ItemGroup>
 
   <ItemGroup>

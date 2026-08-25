@@ -6,6 +6,7 @@ using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Models;
+using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Services.BehaviorLoops;
 using Sunder.Package.Agent.Storage;
@@ -68,7 +69,7 @@ public sealed class AgentFailurePresentationTests
         var exception = new SunderRpcException(new SunderRpcError(
             SunderRpcErrorKind.ResourceExhausted,
             "rpc.worker.some-other-limit",
-            $"{AgentFailurePresentationPolicy.StreamQueueLimitErrorCode}: response stream queue limit"));
+            $"{AgentChatProviderRpc.StreamQueueLimitErrorCode}: response stream queue limit"));
 
         var presentation = AgentFailurePresentationPolicy.Create(exception);
 
@@ -318,7 +319,7 @@ public sealed class AgentFailurePresentationTests
     private static SunderRpcException StreamQueueFailure(string diagnostic)
         => new(new SunderRpcError(
             SunderRpcErrorKind.ResourceExhausted,
-            AgentFailurePresentationPolicy.StreamQueueLimitErrorCode,
+            AgentChatProviderRpc.StreamQueueLimitErrorCode,
             diagnostic,
             SunderRpcDispatchState.PossiblyDispatched,
             SunderRpcRetrySafety.Unsafe));

@@ -7,6 +7,12 @@ using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Worker;
 
+if (OperatingSystem.IsMacOS())
+{
+    // .NET 10 requires Network.framework for client-side TLS 1.3 on macOS.
+    AppContext.SetSwitch("System.Net.Security.UseNetworkFramework", true);
+}
+
 ServiceProvider? ownedServices = null;
 try
 {
@@ -21,6 +27,11 @@ try
         services.AddSingleton(provider => new WebFetchService(
             provider.GetRequiredService<WebUrlNetworkPolicy>(),
             provider.GetRequiredService<IWebFetchHttpClientFactory>()));
+        services.AddSingleton(_ => new HttpClient(
+            new SocketsHttpHandler { AllowAutoRedirect = false })
+        {
+            Timeout = Timeout.InfiniteTimeSpan,
+        });
         services.AddSingleton<ExaWebSearchBackend>();
         services.AddSingleton<WebFetchTool>();
         services.AddSingleton<WebSearchTool>();

@@ -1,7 +1,6 @@
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Execution.Docker;
 using Xunit;
-using Xunit.Sdk;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
 
@@ -12,7 +11,9 @@ public sealed class DockerHostBindRaceTests : IDisposable
         "sunder-docker-host-races",
         Guid.NewGuid().ToString("N"));
 
-    [Fact]
+    [FileSystemFact(
+        TestFileSystemCapability.UnixDirectorySymbolicLinks,
+        "Bind-parent replacement requires directory symbolic links on Unix.")]
     public async Task Read_UsesPinnedBindParentDuringRenameAndSymlinkReplacement()
     {
         var fixture = CreateFixture();
@@ -40,7 +41,9 @@ public sealed class DockerHostBindRaceTests : IDisposable
         Assert.Equal("OUTSIDE", await File.ReadAllTextAsync(Path.Combine(fixture.Outside, "safe.txt")));
     }
 
-    [Fact]
+    [FileSystemFact(
+        TestFileSystemCapability.UnixDirectorySymbolicLinks,
+        "Bind-parent replacement requires directory symbolic links on Unix.")]
     public async Task WriteAndDelete_UsePinnedBindParentDuringRenameAndSymlinkReplacement()
     {
         var fixture = CreateFixture();
@@ -87,7 +90,9 @@ public sealed class DockerHostBindRaceTests : IDisposable
         Assert.Equal("OUTSIDE", await File.ReadAllTextAsync(Path.Combine(fixture.Outside, "delete.txt")));
     }
 
-    [Fact]
+    [FileSystemFact(
+        TestFileSystemCapability.UnixDirectorySymbolicLinks,
+        "Bind-parent replacement requires directory symbolic links on Unix.")]
     public async Task Search_UsesPinnedBindParentAndReturnsContainerPathsDuringReplacement()
     {
         var fixture = CreateFixture();
@@ -120,7 +125,9 @@ public sealed class DockerHostBindRaceTests : IDisposable
         Assert.Equal("needle OUTSIDE", await File.ReadAllTextAsync(Path.Combine(outsideSearch, "secret.txt")));
     }
 
-    [Fact]
+    [FileSystemFact(
+        TestFileSystemCapability.UnixDirectorySymbolicLinks,
+        "Bind-parent replacement requires directory symbolic links on Unix.")]
     public async Task ScopedDiscovery_UsesPinnedBindParentAndReturnsContainerPathsDuringReplacement()
     {
         var fixture = CreateFixture();
@@ -225,13 +232,13 @@ public sealed class DockerHostBindRaceTests : IDisposable
             {
                 // A held ancestor without FILE_SHARE_DELETE blocks replacement on Windows.
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException or NotSupportedException)
+            catch (Exception) when (!OperatingSystem.IsWindows())
             {
                 if (Directory.Exists(_parked) && !Directory.Exists(parent))
                 {
                     Directory.Move(_parked, parent);
                 }
-                throw SkipException.ForSkip($"Directory replacement is unavailable: {ex.Message}");
+                throw;
             }
         }
 

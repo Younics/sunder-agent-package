@@ -143,7 +143,7 @@ Transient authority is separate. First-party Local planning issues random `local
 
 Shell permission includes a bounded command summary and the selected binding. Structured process invocation is safer than caller-authored shell quoting but still requires execution permission. Shell commands are not parsed into trustworthy file paths and are outside Local and Docker no-follow structured-files guarantees, so scoped `AGENTS.md` mutation enforcement applies only to structured Files tools. Shell completion refreshes workspace roots and known claims; it does not claim arbitrary command paths.
 
-First-party package composition constructs `FilesToolSource` with `IPackageContext` and resolves targets through the Agent RPC catalog. Local/Docker use also requires `IAgentScopedInstructionDiscoveryTarget` and `IAgentExecutionScopeProvider`. Files `grep`/`glob` prefer `IAgentStructuredFileSearchExecutionTarget`; the path-bound `IAgentFileSearchExecutionTarget` remains a narrower compatibility facet. Neither path falls back to broad shell authorization.
+First-party package composition constructs `FilesToolSource` with `IPackageContext` and resolves targets through the Agent RPC catalog. Local/Docker use also requires `IAgentScopedInstructionDiscoveryTarget` and `IAgentExecutionScopeProvider`. Files `grep`/`glob` require `IAgentStructuredFileSearchExecutionTarget` and never fall back to process or broad shell authorization.
 
 ## Discovery And Presentation
 

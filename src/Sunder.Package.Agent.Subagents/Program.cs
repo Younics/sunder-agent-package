@@ -58,9 +58,14 @@ try
                 AgentBehaviorLoopRpc.CreateHandler(
                     serviceProvider.GetRequiredService<OrchestratedAgentBehaviorLoop>(),
                     catalog)),
-            SunderStackContributorRpc.CreateWorkerProviderRegistration(
+            new SunderWorkerProviderRegistration(
                 "subagents.stack",
-                serviceProvider.GetRequiredService<SubagentStackContributor>()),
+                SunderStackContributorRpc.ContractId,
+                SunderStackContributorRpc.ContractVersion,
+                SunderStackContributorRpc.DescriptorSha256,
+                SunderStackContributorRpc.AbiSha256,
+                SunderStackContributorRpc.CreateHandler(
+                    serviceProvider.GetRequiredService<SubagentStackContributor>())),
             new SunderWorkerProviderRegistration(
                 SubagentsOwnerProtocol.ProviderId,
                 ownerDescriptor.ContractId,

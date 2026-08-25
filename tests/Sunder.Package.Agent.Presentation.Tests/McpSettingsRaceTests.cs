@@ -32,6 +32,7 @@ public sealed class McpSettingsRaceTests
         var second = viewModel.InitializeAsync();
         await Task.WhenAll(first, second);
 
+        AdaptiveEditorLifecycleContract.SharedInitialization(Adapt(viewModel), first, second);
         Assert.Same(first, second);
         Assert.Equal(McpStatusKind.Error, viewModel.StatusKind);
         Assert.Contains("Injected MCP catalog failure", viewModel.StatusText, StringComparison.Ordinal);
@@ -52,6 +53,7 @@ public sealed class McpSettingsRaceTests
         viewModel.SelectedServer = viewModel.Servers.Single(server => server.ServerId == "beta");
         var load = GetTask(viewModel, "CurrentDocumentLoad");
 
+        AdaptiveEditorLifecycleContract.HydrationBlocksMutation(Adapt(viewModel));
         Assert.True(viewModel.IsDocumentLoading);
         Assert.False(viewModel.IsDocumentReady);
         Assert.False(viewModel.SaveCommand.CanExecute(null));
@@ -88,6 +90,10 @@ public sealed class McpSettingsRaceTests
         read.Release.SetResult();
         await staleLoad;
 
+        AdaptiveEditorLifecycleContract.CurrentSelectionWins(
+            Adapt(viewModel),
+            "alpha",
+            "beta");
         Assert.Equal("alpha", viewModel.SelectedServer?.ServerId);
         Assert.Equal("alpha", viewModel.Name);
     }
@@ -155,6 +161,13 @@ public sealed class McpSettingsRaceTests
         write.Release.SetResult();
         await save;
 
+        AdaptiveEditorLifecycleContract.EditDuringSaveRemainsDirty(
+            Adapt(
+                viewModel,
+                isDirty: () => viewModel.StatusText.Contains(
+                    "remain unsaved",
+                    StringComparison.OrdinalIgnoreCase)),
+            newerEdit);
         Assert.Equal(newerEdit, viewModel.EditorText);
         Assert.Contains("remain unsaved", viewModel.StatusText, StringComparison.OrdinalIgnoreCase);
     }
@@ -207,15 +220,20 @@ public sealed class McpSettingsRaceTests
         var load = GetTask(viewModel, "CurrentDocumentLoad");
         await read.Started.Task.WaitAsync(TestContext.Current.CancellationToken);
 
-        viewModel.BackToServerListCommand.Execute(null);
-        await load.WaitAsync(TimeSpan.FromSeconds(2));
-        viewModel.CreateServerCommand.Execute(null);
+        await AdaptiveEditorLifecycleContract.RetiredWorkCannotPublishAsync(
+            Adapt(viewModel),
+            () =>
+            {
+                viewModel.BackToServerListCommand.Execute(null);
+                viewModel.CreateServerCommand.Execute(null);
+            },
+            () => read.Release.TrySetResult(),
+            load.WaitAsync(TimeSpan.FromSeconds(2)));
 
         Assert.True(viewModel.IsDocumentReady);
         Assert.False(viewModel.IsDocumentLoading);
         Assert.True(viewModel.IsEditorActive || !viewModel.IsCompactLayout);
         Assert.Equal("mcp_server", viewModel.Name);
-        read.Release.TrySetResult();
     }
 
     [AvaloniaFact]
@@ -233,14 +251,14 @@ public sealed class McpSettingsRaceTests
         var load = GetTask(viewModel, "CurrentDocumentLoad");
         await read.Started.Task.WaitAsync(TestContext.Current.CancellationToken);
         var notifications = 0;
-        viewModel.PropertyChanged += (_, _) => notifications++;
+        viewModel.PropertyChanged += (_, _) => Interlocked.Increment(ref notifications);
 
-        viewModel.Dispose();
-        var notificationsAtDisposal = notifications;
-        read.Release.SetResult();
-        await load;
+        await AdaptiveEditorLifecycleContract.RetiredWorkCannotPublishAsync(
+            Adapt(viewModel, publicationCount: () => Volatile.Read(ref notifications)),
+            viewModel.Dispose,
+            read.Release.SetResult,
+            load);
 
-        Assert.Equal(notificationsAtDisposal, notifications);
     }
 
     private static readonly IReadOnlyDictionary<string, string> Empty =
@@ -275,7 +293,26 @@ public sealed class McpSettingsRaceTests
                     new McpEcosystemConfigurationImporter(catalog),
                     syncService: null),
                 new McpServerConnectionService(catalog, manager, oauth),
-                new McpOAuthCoordinator(oauth, manager)));
+                 new McpOAuthCoordinator(oauth, manager)));
+
+    private static IAdaptiveEditorLifecycleAdapter Adapt(
+        AgentMcpSettingsViewModel viewModel,
+        Func<bool>? isDirty = null,
+        Func<int>? publicationCount = null)
+        => new DelegateAdaptiveEditorLifecycleAdapter(
+            "MCP",
+            () => new AdaptiveEditorSnapshot(
+                IsHydrating: !viewModel.IsDisposed && viewModel.IsDocumentLoading,
+                CanMutate: !viewModel.IsDisposed && viewModel.SaveCommand.CanExecute(null),
+                IsBusy: !viewModel.IsDisposed && viewModel.IsBusy,
+                IsDirty: isDirty?.Invoke() ?? false,
+                viewModel.SelectedServer?.ServerId,
+                viewModel.EditorText,
+                publicationCount?.Invoke() ?? 0,
+                viewModel.IsRuntimeAvailable
+                    ? AdaptiveEditorRuntimeState.Available
+                    : AdaptiveEditorRuntimeState.Unavailable),
+            viewModel);
 
     private static Task GetTask(object instance, string propertyName)
         => Assert.IsAssignableFrom<Task>(instance.GetType()

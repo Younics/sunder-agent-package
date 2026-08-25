@@ -67,7 +67,7 @@ internal sealed record AgentEditorInvocationFailure(
             operation == AgentEditorInvocationOperation.Save
                 ? "The package became unavailable before these workspace settings could be saved."
                 : "The package providing these workspace settings is unavailable.",
-            "package-unavailable");
+            AgentToolResultErrorCodes.PackageUnavailable);
 
     public static AgentEditorInvocationFailure OwnerFaulted(string? packageId)
         => new(

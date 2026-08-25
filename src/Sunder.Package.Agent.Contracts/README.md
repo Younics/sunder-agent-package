@@ -10,7 +10,7 @@ Runtime extensions must also declare a `sunder.package.agent` dependency with `>
 
 This project's historical source directory and some public namespaces use `Sunder.Package.Agent.Contracts`. The built assembly, NuGet package, embedded descriptor resource prefix, and generated binding namespaces use `Sunder.Package.Agent.Protocol`. The retained source names are implementation/API organization within this one artifact; they do not represent another package or shared cross-package CLR types.
 
-The package contains exactly 18 checked-in descriptors and generates deterministic DTO/client/provider sources during the build. Its `buildTransitive` assets bundle those descriptors into each consuming Sunder package.
+The package contains exactly 19 checked-in descriptors and generates deterministic DTO/client/provider sources during the build. Its `buildTransitive` assets bundle those descriptors into each consuming Sunder package.
 
 V2 scalar semantics are explicit: identifiers use the `uuid` logical type, UTC timestamps use `utc-date-time`, and numeric model options and embedding components use binary64-compatible JSON numbers. Generated timestamp bindings retain canonical text with one through nine fractional digits; handwritten adapters accept the same range and project it to `DateTimeOffset` tick precision where their public contracts require it.
 

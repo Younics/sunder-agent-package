@@ -23,8 +23,7 @@ public sealed class AppPackageModule : ISunderAppPackageModule
             provider.GetRequiredService<ProviderCredentialOwnerClient>(),
             new PresentationOperationObserver(
                 context,
-                provider.GetService<IPackageNotificationService>()
-                    ?? NullPackageNotificationService.Instance,
+                provider.GetRequiredService<IPackageNotificationService>(),
                 "OpenAI settings")));
     }
 

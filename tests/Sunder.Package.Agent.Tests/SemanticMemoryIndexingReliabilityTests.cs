@@ -83,6 +83,8 @@ public sealed class SemanticMemoryIndexingReliabilityTests
         await harness.Worker.StartAsync();
         await harness.Worker.CommitGenerationAsync(generation);
         await harness.Worker.CommitGenerationAsync(generation);
+        await harness.Worker.ActivateCommittedGenerationAsync();
+        await harness.Worker.ActivateCommittedGenerationAsync();
         await WaitUntilAsync(() => harness.ActiveEmbeddings.Count == 1);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -91,7 +93,7 @@ public sealed class SemanticMemoryIndexingReliabilityTests
     }
 
     [Fact]
-    public async Task BackgroundService_CommitBeforeStart_BeginsOnlyAfterPreparationAndExposesCompletion()
+    public async Task BackgroundService_PrepareAndCommitRemainIdleUntilActivationAndExposeCompletion()
     {
         await using var harness = new IndexingHarness();
         harness.AddMemory("A committed generation waits for background-service preparation.");
@@ -103,6 +105,9 @@ public sealed class SemanticMemoryIndexingReliabilityTests
         Assert.True(harness.Worker.GenerationCompletion.IsCompletedSuccessfully);
 
         await harness.Worker.StartAsync();
+        Assert.False(harness.Worker.GetStatus().IsRunning);
+
+        await harness.Worker.ActivateCommittedGenerationAsync();
         var generationCompletion = harness.Worker.GenerationCompletion;
         await WaitUntilAsync(() => harness.ActiveEmbeddings.Count == 1);
 
@@ -112,6 +117,37 @@ public sealed class SemanticMemoryIndexingReliabilityTests
         await harness.Worker.StopAsync();
         await generationCompletion.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.True(harness.Worker.GenerationCompletion.IsCompletedSuccessfully);
+    }
+
+    [Fact]
+    public async Task BackgroundService_CanceledPreparationDoesNotCommitStateOrPreventRetry()
+    {
+        await using var harness = new IndexingHarness();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            harness.Worker.StartAsync(cancellation.Token));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            harness.Worker.ActivateCommittedGenerationAsync());
+
+        await harness.StartWorkerAsync();
+        Assert.True(harness.Worker.GetStatus().IsRunning);
+    }
+
+    [Fact]
+    public async Task BackgroundService_ShutdownCleansPreparedOnlyAndCommittedOnlyStates()
+    {
+        await using var harness = new IndexingHarness();
+
+        await harness.Worker.StartAsync();
+        await harness.Worker.StopAsync();
+
+        await harness.Worker.CommitGenerationAsync(new PackageRuntimeGeneration(Guid.NewGuid(), 1));
+        await harness.Worker.StopAsync();
+
+        await harness.StartWorkerAsync();
+        Assert.True(harness.Worker.GetStatus().IsRunning);
     }
 
     [Fact]
@@ -409,6 +445,103 @@ public sealed class SemanticMemoryIndexingReliabilityTests
     }
 
     [Fact]
+    public async Task BackgroundService_StopHonorsDeadlineWhileWorkerDrains()
+    {
+        await using var harness = new IndexingHarness();
+        harness.AddMemory("A non-cooperative embedding request must not overrun shutdown.");
+        harness.Provider.Mode = EmbeddingProviderMode.IgnoreCancellationUntilRelease;
+        await harness.StartWorkerAsync();
+        await harness.Provider.GenerationStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            harness.Worker.StopAsync(deadline.Token));
+
+        harness.Provider.ReleaseGeneration();
+        await harness.Worker.StopAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.False(harness.Worker.GetStatus().IsRunning);
+    }
+
+    [Fact]
+    public async Task LifecycleDisposal_DoesNotRetryNonCooperativeShutdownWithoutDeadline()
+    {
+        var harness = new IndexingHarness();
+        try
+        {
+            harness.AddMemory("A non-cooperative embedding request must not block composition disposal.");
+            harness.Provider.Mode = EmbeddingProviderMode.IgnoreCancellationUntilRelease;
+            await harness.StartWorkerAsync();
+            await harness.Provider.GenerationStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            using var deadline = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+                harness.Worker.StopAsync(deadline.Token));
+            await harness.Worker.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromMilliseconds(500));
+
+            Assert.Contains(
+                "shutdown deadline",
+                harness.Worker.GetStatus().LastFailureMessage,
+                StringComparison.OrdinalIgnoreCase);
+            harness.Provider.ReleaseGeneration();
+            await harness.Worker.GenerationCompletion.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+        finally
+        {
+            harness.Provider.ReleaseGeneration();
+            await harness.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task AbandonedShutdown_ObservesAndReportsLateWorkerFailure()
+    {
+        var harness = new IndexingHarness();
+        try
+        {
+            harness.AddMemory("A late fatal shutdown failure must be observed.");
+            harness.Provider.Mode = EmbeddingProviderMode.IgnoreCancellationUntilReleaseThenFatal;
+            await harness.StartWorkerAsync();
+            await harness.Provider.GenerationStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            using var deadline = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+                harness.Worker.StopAsync(deadline.Token));
+            await harness.Worker.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromMilliseconds(500));
+            harness.Provider.ReleaseGeneration();
+
+            await Assert.ThrowsAsync<OutOfMemoryException>(() =>
+                harness.Worker.GenerationCompletion.WaitAsync(TimeSpan.FromSeconds(2)));
+            await WaitUntilAsync(() => harness.Worker.GetStatus().LastFailureMessage?.Contains(
+                "failed during shutdown",
+                StringComparison.OrdinalIgnoreCase) == true);
+        }
+        finally
+        {
+            harness.Provider.ReleaseGeneration();
+            await harness.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task BackgroundService_FatalProviderFailureFaultsGenerationCompletion()
+    {
+        var harness = new IndexingHarness();
+        try
+        {
+            harness.AddMemory("A fatal provider failure must fault the active generation.");
+            harness.Provider.Mode = EmbeddingProviderMode.Fatal;
+            await harness.StartWorkerAsync();
+
+            await Assert.ThrowsAsync<OutOfMemoryException>(() =>
+                harness.Worker.GenerationCompletion.WaitAsync(TimeSpan.FromSeconds(2)));
+        }
+        finally
+        {
+            await Assert.ThrowsAsync<OutOfMemoryException>(() => harness.DisposeAsync().AsTask());
+        }
+    }
+
+    [Fact]
     public async Task ProviderRetirement_CancelsInFlightLeaseAndPreventsLaterCallbacks()
     {
         await using var harness = new IndexingHarness();
@@ -660,6 +793,7 @@ public sealed class SemanticMemoryIndexingReliabilityTests
             await Worker.CommitGenerationAsync(new PackageRuntimeGeneration(
                 Guid.NewGuid(),
                 Interlocked.Increment(ref _runtimeGeneration)));
+            await Worker.ActivateCommittedGenerationAsync();
         }
 
         public async Task RestartWorkerAsync()
@@ -697,11 +831,17 @@ public sealed class SemanticMemoryIndexingReliabilityTests
 
         public async ValueTask DisposeAsync()
         {
-            await Worker.DisposeAsync();
-            _catalog.Dispose();
-            if (Directory.Exists(_rootPath))
+            try
             {
-                Directory.Delete(_rootPath, recursive: true);
+                await Worker.DisposeAsync();
+            }
+            finally
+            {
+                _catalog.Dispose();
+                if (Directory.Exists(_rootPath))
+                {
+                    Directory.Delete(_rootPath, recursive: true);
+                }
             }
         }
     }
@@ -712,6 +852,9 @@ public sealed class SemanticMemoryIndexingReliabilityTests
         Fail,
         WaitForCancellation,
         WaitForRelease,
+        IgnoreCancellationUntilRelease,
+        IgnoreCancellationUntilReleaseThenFatal,
+        Fatal,
     }
 
     private sealed class ControlledEmbeddingProvider(string providerId) :
@@ -815,6 +958,10 @@ public sealed class SemanticMemoryIndexingReliabilityTests
             {
                 throw new InvalidOperationException("Embedding generation failed for the reliability fixture.");
             }
+            if (Mode == EmbeddingProviderMode.Fatal)
+            {
+                throw new OutOfMemoryException("Fatal embedding provider failure.");
+            }
 
             if (Mode == EmbeddingProviderMode.WaitForCancellation)
             {
@@ -831,6 +978,15 @@ public sealed class SemanticMemoryIndexingReliabilityTests
             if (Mode == EmbeddingProviderMode.WaitForRelease)
             {
                 await GenerationRelease.Task.WaitAsync(cancellationToken);
+            }
+            if (Mode is EmbeddingProviderMode.IgnoreCancellationUntilRelease
+                or EmbeddingProviderMode.IgnoreCancellationUntilReleaseThenFatal)
+            {
+                await GenerationRelease.Task;
+            }
+            if (Mode == EmbeddingProviderMode.IgnoreCancellationUntilReleaseThenFatal)
+            {
+                throw new OutOfMemoryException("Late fatal embedding provider shutdown failure.");
             }
 
             Interlocked.Add(ref _uploadedTextCount, texts.Count);
@@ -865,8 +1021,13 @@ public sealed class SemanticMemoryIndexingReliabilityTests
         public IReadOnlyList<AgentSessionRecord> ListSessionsForProfile(string profileId) => profileId == Profile.ProfileId ? [_session] : [];
         public IReadOnlyList<AgentSessionRecord> ListSessionsForWorkspace(string workspaceId) => [];
         public AgentSessionRecord? GetSession(Guid sessionId) => sessionId == _session.SessionId ? _session : null;
-        public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces() => [];
-        public AgentWorkspaceRecord? GetWorkspace(string workspaceId) => null;
+        public ValueTask<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesAsync(
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult<IReadOnlyList<AgentWorkspaceRecord>>([]);
+        public ValueTask<AgentWorkspaceRecord?> GetWorkspaceAsync(
+            string workspaceId,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult<AgentWorkspaceRecord?>(null);
         public AgentProfileRecord? GetSessionProfile(Guid sessionId) => sessionId == _session.SessionId ? Profile : null;
         public AgentWorkingSummaryRecord? GetWorkingSummary(Guid sessionId) => null;
         public AgentSessionContextCheckpointRecord? GetLatestSessionContextCheckpoint(Guid sessionId) => null;

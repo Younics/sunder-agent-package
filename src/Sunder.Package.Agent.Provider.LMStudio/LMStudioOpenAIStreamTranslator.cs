@@ -14,6 +14,7 @@ internal sealed record LMStudioStreamTranslation(
 internal sealed class LMStudioOpenAIStreamTranslator(bool allowMultipleToolCalls)
 {
     private readonly bool _allowMultipleToolCalls = allowMultipleToolCalls;
+    private readonly List<ChatResponseUpdate> _bufferedTextUpdates = [];
     private readonly SortedDictionary<int, ToolCallAccumulator> _toolCalls = [];
 
     public LMStudioStreamTranslation Translate(
@@ -27,11 +28,19 @@ internal sealed class LMStudioOpenAIStreamTranslator(bool allowMultipleToolCalls
         {
             if (!string.IsNullOrEmpty(contentPart.Text))
             {
-                translated.Add(ProviderResponseUpdates.CreateText(
+                var textUpdate = ProviderResponseUpdates.CreateText(
                     modelId,
                     responseId,
                     messageId,
-                    contentPart.Text));
+                    contentPart.Text);
+                if (_toolCalls.Count == 0)
+                {
+                    translated.Add(textUpdate);
+                }
+                else
+                {
+                    _bufferedTextUpdates.Add(textUpdate);
+                }
             }
         }
 
@@ -92,6 +101,8 @@ internal sealed class LMStudioOpenAIStreamTranslator(bool allowMultipleToolCalls
             if (toolCall is not null)
             {
                 translated.Add(toolCall);
+                translated.AddRange(_bufferedTextUpdates);
+                _bufferedTextUpdates.Clear();
             }
         }
 

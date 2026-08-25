@@ -56,7 +56,10 @@ internal sealed class CodexOAuthClient
                 HttpCompletionOption.ResponseHeadersRead,
                 operationCancellation.Token).ConfigureAwait(false);
             responseStatusCode = response.StatusCode;
-            await LogHeadersAsync("refresh", response, stopwatch.ElapsedMilliseconds);
+            await LogHeadersAsync(
+                "openai.codex.auth.refresh.headers_received",
+                response,
+                stopwatch.ElapsedMilliseconds);
             var payload = await ReadTokenPayloadAsync(response.Content, operationCancellation.Token).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
@@ -199,7 +202,10 @@ internal sealed class CodexOAuthClient
                 HttpCompletionOption.ResponseHeadersRead,
                 operationCancellation.Token).ConfigureAwait(false);
             responseStatusCode = response.StatusCode;
-            await LogHeadersAsync("token_exchange", response, stopwatch.ElapsedMilliseconds);
+            await LogHeadersAsync(
+                "openai.codex.auth.token_exchange.headers_received",
+                response,
+                stopwatch.ElapsedMilliseconds);
             var payload = await ReadTokenPayloadAsync(response.Content, operationCancellation.Token).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
@@ -375,10 +381,10 @@ internal sealed class CodexOAuthClient
         };
     }
 
-    private ValueTask LogHeadersAsync(string operation, HttpResponseMessage response, long elapsedMilliseconds)
+    private ValueTask LogHeadersAsync(string eventName, HttpResponseMessage response, long elapsedMilliseconds)
         => _telemetry.WriteAsync(
             response.IsSuccessStatusCode ? PackageLogLevel.Debug : PackageLogLevel.Warning,
-            $"openai.codex.auth.{operation}.headers_received",
+            eventName,
             "OpenAI token endpoint response headers were received.",
             elapsedMilliseconds,
             new Dictionary<string, object?>

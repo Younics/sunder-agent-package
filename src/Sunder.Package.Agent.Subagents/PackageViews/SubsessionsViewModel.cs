@@ -782,6 +782,7 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         _checkpointReader = checkpointReader;
         _transcriptReader = transcriptReader;
         _changeNotifications = changeNotifications;
+        SetOwnerAvailability(changeNotifications);
         _ownsChangeNotifications = ownsChangeNotifications;
         changeNotifications.SessionChanged += OnSessionChanged;
         changeNotifications.TurnChanged += OnTurnChanged;

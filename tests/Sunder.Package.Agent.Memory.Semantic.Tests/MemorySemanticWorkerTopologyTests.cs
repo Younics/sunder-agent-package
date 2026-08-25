@@ -14,6 +14,7 @@ namespace Sunder.Package.Agent.Memory.Semantic.Tests;
 public sealed class MemorySemanticWorkerTopologyTests
 {
     [Fact]
+    [Trait("Lane", "PackageCompatibility")]
     public void RepositoryInventory_UsesPrimaryWorkerProvidersAndRoleSpecificLocks()
     {
         var repositoryRoot = AgentPackageRepositoryInventory.RepositoryRoot.FullName;
@@ -109,6 +110,12 @@ public sealed class MemorySemanticWorkerTopologyTests
         Assert.False(store.IsInitialized);
         Assert.False(File.Exists(store.DatabasePath));
 
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        Assert.ThrowsAny<OperationCanceledException>(() => store.Initialize(cancellation.Token));
+        Assert.False(store.IsInitialized);
+        Assert.False(File.Exists(store.DatabasePath));
+
         store.Initialize();
         store.Initialize();
 
@@ -196,6 +203,50 @@ public sealed class MemorySemanticWorkerTopologyTests
     }
 
     [Fact]
+    public async Task AppGateway_MalformedChangeReconnectsAndResnapshots()
+    {
+        using var state = new RegressionTestRpcState();
+        var service = new ReconnectingInspectorService();
+        state.Add(
+            "sunder.package.agent.memory.semantic",
+            MemorySemanticProtocol.Inspector,
+            service,
+            MemoryInspectorRpc.CreateHandler(service),
+            new NoOpDisposable(),
+            MemorySemanticProtocol.ProviderId);
+        var gateway = new MemoryAppRuntimeGateway(new RegressionTestRpcClient(
+            state,
+            "sunder.package.agent.memory.semantic"));
+        var resetCount = 0;
+        var resnapshot = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        gateway.ResetRequired += () =>
+        {
+            if (Interlocked.Increment(ref resetCount) >= 2)
+            {
+                resnapshot.TrySetResult();
+            }
+        };
+        try
+        {
+            await gateway.InitializeAsync();
+            await service.SecondSubscriptionStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            await resnapshot.Task.WaitAsync(TimeSpan.FromSeconds(3));
+
+            Assert.True(gateway.IsOwnerStreamAvailable);
+            Assert.Equal(2, service.SubscriptionCount);
+
+            await gateway.DisposeAsync();
+            Assert.True(gateway.ObservationTask!.IsCompletedSuccessfully);
+            Assert.False(gateway.IsOwnerStreamAvailable);
+        }
+        finally
+        {
+            gateway.Dispose();
+        }
+    }
+
+    [Fact]
+    [Trait("Lane", "PackageCompatibility")]
     public void ComposedManifest_IsSixRidAppExactRidWorkerOwnerScopedAndLoadsPackagedSqlite()
     {
         var manifestPath = Path.Combine(
@@ -350,6 +401,47 @@ public sealed class MemorySemanticWorkerTopologyTests
             yield return new MemoryChanged(MemoryChangeKind.Session, Memory.SessionId);
             yield return new MemoryChanged(MemoryChangeKind.Worker);
             yield return new MemoryChanged(MemoryChangeKind.ResetRequired);
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        }
+    }
+
+    private sealed class ReconnectingInspectorService : IMemoryInspectorRpcService
+    {
+        private int _subscriptionCount;
+
+        internal int SubscriptionCount => Volatile.Read(ref _subscriptionCount);
+        internal TaskCompletionSource SecondSubscriptionStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public ValueTask<MemoryProjection> QueryAsync(
+            SunderRpcInvocationContext context,
+            MemoryQuery request,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new MemoryProjection());
+
+        public ValueTask<MemoryProjection> CommandAsync(
+            SunderRpcInvocationContext context,
+            MemoryCommand request,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new MemoryProjection());
+
+        public async IAsyncEnumerable<MemoryChanged> ChangesAsync(
+            SunderRpcInvocationContext context,
+            MemoryChangeSubscription request,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            var subscription = Interlocked.Increment(ref _subscriptionCount);
+            if (subscription == 2)
+            {
+                SecondSubscriptionStarted.TrySetResult();
+            }
+            yield return new MemoryChanged(MemoryChangeKind.ResetRequired);
+            if (subscription == 1)
+            {
+                yield return new MemoryChanged((MemoryChangeKind)int.MaxValue);
+                yield break;
+            }
+
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
         }
     }

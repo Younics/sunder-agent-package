@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Net.Sockets;
+using System.Runtime.Versioning;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -265,14 +266,16 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
         Assert.Equal("newer", await File.ReadAllTextAsync(Path.Combine(fixture.Root, "conditional.txt")));
     }
 
-    [Fact]
+    [FileSystemFact(
+        TestFileSystemCapability.DirectorySymbolicLinks,
+        "Docker symlink-escape checks require directory symbolic links.")]
     public async Task DockerStructuredOperations_RejectSymlinkEscapeForReadWriteDeleteAndRangedRead()
     {
         var fixture = CreateDockerFixture();
         var outside = Path.Combine(_root, "outside");
         Directory.CreateDirectory(outside);
         await File.WriteAllTextAsync(Path.Combine(outside, "secret.txt"), "secret");
-        CreateDirectorySymlinkOrSkip(Path.Combine(fixture.Root, "escape"), outside);
+        Directory.CreateSymbolicLink(Path.Combine(fixture.Root, "escape"), outside);
 
         var read = await fixture.ReadAsync(new AgentFileReadRequest("escape/secret.txt"));
         var ranged = await fixture.ReadAsync(new AgentFileReadRequest("escape/secret.txt", 1, 1));
@@ -287,13 +290,15 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
         Assert.True(File.Exists(Path.Combine(outside, "secret.txt")));
     }
 
-    [Fact]
+    [FileSystemFact(
+        TestFileSystemCapability.DirectorySymbolicLinks,
+        "Docker internal-link checks require directory symbolic links.")]
     public async Task DockerStructuredOperations_RejectInternalSymlinks()
     {
         var fixture = CreateDockerFixture();
         var target = Path.Combine(fixture.Root, "target");
         Directory.CreateDirectory(target);
-        CreateDirectorySymlinkOrSkip(Path.Combine(fixture.Root, "link"), target);
+        Directory.CreateSymbolicLink(Path.Combine(fixture.Root, "link"), target);
 
         var write = await fixture.WriteAsync(new AgentFileWriteRequest("link/file.txt", "inside"));
         var read = await fixture.ReadAsync(new AgentFileReadRequest("link/file.txt", 1, 1));
@@ -305,7 +310,9 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
         Assert.False(File.Exists(Path.Combine(target, "file.txt")));
     }
 
-    [Theory]
+    [FileSystemTheory(
+        TestFileSystemCapability.FileSymbolicLinks,
+        "Mutation link-containment checks require file symbolic links.")]
     [MemberData(nameof(RangedTargets))]
     public async Task MutationTargets_DoNotFollowFileSymlinkDuringDelete(string targetKind)
     {
@@ -313,7 +320,7 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
         var target = Path.Combine(fixture.Root, "target.txt");
         var link = Path.Combine(fixture.Root, "link.txt");
         await File.WriteAllTextAsync(target, "keep");
-        CreateFileSymlinkOrSkip(link, target);
+        File.CreateSymbolicLink(link, target);
 
         var delete = await fixture.DeleteAsync(new AgentFileDeleteRequest("link.txt")
         {
@@ -326,14 +333,16 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
         Assert.Equal("keep", await File.ReadAllTextAsync(target));
     }
 
-    [Fact]
+    [FileSystemFact(
+        TestFileSystemCapability.FileSymbolicLinks,
+        "Local resource link-entry checks require file symbolic links.")]
     public void LocalResourceResolution_RejectsLinkEntry()
     {
         var fixture = CreateLocalFixture();
         var outsideTarget = Path.Combine(_root, "outside-target.txt");
         var link = Path.Combine(fixture.Root, "link.txt");
         File.WriteAllText(outsideTarget, "outside");
-        CreateFileSymlinkOrSkip(link, outsideTarget);
+        File.CreateSymbolicLink(link, outsideTarget);
         var config = new LocalExecutionRuntimeConfig([fixture.Root], fixture.Root);
 
         Assert.Throws<LocalSecurePathException>(() => LocalResourceResolver.ResolveFileResource(
@@ -342,7 +351,9 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
             allowOutsideConfiguredScope: true));
     }
 
-    [Theory]
+    [FileSystemTheory(
+        TestFileSystemCapability.FileSymbolicLinks,
+        "Canonical AGENTS.md alias checks require file symbolic links.")]
     [InlineData("local")]
     [InlineData("docker")]
     public async Task CompoundPatch_RejectsCanonicalAgentsSymlinkAliasForEveryFileTarget(string targetKind)
@@ -352,7 +363,7 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
         var agentsPath = Path.Combine(root, "AGENTS.md");
         var aliasPath = Path.Combine(root, "policy-alias.md");
         await File.WriteAllTextAsync(agentsPath, "old policy");
-        CreateFileSymlinkOrSkip(aliasPath, agentsPath);
+        File.CreateSymbolicLink(aliasPath, agentsPath);
         var target = targetKind == "local"
             ? new ResolvingExecutionTarget(
                 targetKind,
@@ -393,11 +404,13 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
         Assert.False(File.Exists(Path.Combine(root, "other.txt")));
     }
 
-    [Fact]
+    [FileSystemFact(
+        TestFileSystemCapability.FileSymbolicLinks,
+        "Dangling-link ambiguity checks require file symbolic links.")]
     public async Task DockerStructuredOperations_RejectDanglingSymlinkAsAmbiguous()
     {
         var fixture = CreateDockerFixture();
-        CreateFileSymlinkOrSkip(Path.Combine(fixture.Root, "dangling.txt"), Path.Combine(fixture.Root, "missing-target.txt"));
+        File.CreateSymbolicLink(Path.Combine(fixture.Root, "dangling.txt"), Path.Combine(fixture.Root, "missing-target.txt"));
 
         var read = await fixture.ReadAsync(new AgentFileReadRequest("dangling.txt"));
         var write = await fixture.WriteAsync(new AgentFileWriteRequest("dangling.txt", "content"));
@@ -407,14 +420,9 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
         Assert.Equal(AgentFileReadErrorCodes.PathCanonicalizationFailed, write.ErrorCode);
     }
 
-    [Fact]
+    [PlatformFact(TestPlatform.Unix, "A POSIX host filesystem is required.")]
     public async Task DockerStructuredOperations_ReturnStructuredErrorForNonFileNode()
     {
-        if (OperatingSystem.IsWindows())
-        {
-            throw SkipException.ForSkip("A POSIX host filesystem is required.");
-        }
-
         var root = Path.Combine(Path.GetTempPath(), "snr-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(root);
         try
@@ -453,14 +461,9 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
         Assert.False(File.Exists(Path.Combine(fixture.Root, "SUNDER_SUBSTITUTED")));
     }
 
-    [Fact]
+    [PlatformFact(TestPlatform.Unix, "Backslashes are Windows separators and are rejected by Docker host mapping.")]
     public async Task DockerStructuredOperations_PreservePosixComponentWhitespaceAndBackslashes()
     {
-        if (OperatingSystem.IsWindows())
-        {
-            throw SkipException.ForSkip("Backslashes are Windows separators and are rejected by Docker host mapping.");
-        }
-
         var fixture = CreateDockerFixture();
         const string requestedPath = "  folder  / file\\name ";
 
@@ -508,13 +511,15 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
         Assert.Equal("keep", await File.ReadAllTextAsync(Path.Combine(outer, "parent", "keep.txt")));
     }
 
-    [Fact]
+    [FileSystemFact(
+        TestFileSystemCapability.DirectorySymbolicLinks,
+        "Symlinked Docker bind-root checks require directory symbolic links.")]
     public async Task DockerStructuredOperations_RejectSymlinkedHostBindRoot()
     {
         var hostRoot = Path.Combine(_root, "docker-real-root");
         var linkedRoot = Path.Combine(_root, "docker-linked-root");
         Directory.CreateDirectory(hostRoot);
-        CreateDirectorySymlinkOrSkip(linkedRoot, hostRoot);
+        Directory.CreateSymbolicLink(linkedRoot, hostRoot);
         var fileSystem = new DockerFileSystemExecutor();
         var config = CreateDockerConfig(linkedRoot);
 
@@ -603,18 +608,11 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
         AssertReadError(bounded, AgentFileReadErrorCodes.TooLarge);
     }
 
-    [Fact]
+    [PlatformFact(TestPlatform.NonRootUnix, "POSIX permission modes are required.")]
+    [SupportedOSPlatform("linux")]
+    [SupportedOSPlatform("macos")]
     public async Task DockerStructuredOperations_FailAtPermissionBoundaryWithoutCreatingTarget()
     {
-        if (OperatingSystem.IsWindows())
-        {
-            throw SkipException.ForSkip("POSIX permission modes are required.");
-        }
-        if (string.Equals(Environment.UserName, "root", StringComparison.Ordinal))
-        {
-            return;
-        }
-
         var fixture = CreateDockerFixture();
         var boundary = Path.Combine(fixture.Root, "boundary");
         Directory.CreateDirectory(boundary);
@@ -785,30 +783,6 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
         Assert.True(result.IsError);
         Assert.Equal(expectedCode, result.ErrorCode);
         Assert.False(string.IsNullOrWhiteSpace(result.Summary));
-    }
-
-    private static void CreateDirectorySymlinkOrSkip(string linkPath, string targetPath)
-    {
-        try
-        {
-            Directory.CreateSymbolicLink(linkPath, targetPath);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException or NotSupportedException)
-        {
-            throw SkipException.ForSkip($"Symbolic link creation is unavailable: {ex.Message}");
-        }
-    }
-
-    private static void CreateFileSymlinkOrSkip(string linkPath, string targetPath)
-    {
-        try
-        {
-            File.CreateSymbolicLink(linkPath, targetPath);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException or NotSupportedException)
-        {
-            throw SkipException.ForSkip($"Symbolic link creation is unavailable: {ex.Message}");
-        }
     }
 
     private class FileFixture(

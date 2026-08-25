@@ -22,6 +22,7 @@ temp_root="${TMPDIR:-/tmp}"
 fixture_root="$(mktemp -d "${temp_root%/}/sunder-native-release-fixture.XXXXXX")"
 trap 'rm -rf "$fixture_root"' EXIT
 cp "$repository_root/packages.json" "$fixture_root/packages.json"
+cp "$repository_root/Sunder.AgentPackage.slnx" "$fixture_root/Sunder.AgentPackage.slnx"
 while IFS= read -r lock_path; do
   relative_path="${lock_path#"$repository_root"/}"
   mkdir -p "$fixture_root/$(dirname "$relative_path")"

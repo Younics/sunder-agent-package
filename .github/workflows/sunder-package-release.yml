@@ -27,7 +27,6 @@ jobs:
     outputs:
       core_commit: ${{ steps.core.outputs.commit }}
       core_tag: ${{ steps.core.outputs.tag }}
-      dist_tag: ${{ steps.release.outputs.dist_tag }}
       is_prerelease: ${{ steps.release.outputs.is_prerelease }}
       version: ${{ steps.release.outputs.version }}
     steps:
@@ -47,42 +46,28 @@ jobs:
         run: |
           set -euo pipefail
           tag="$GITHUB_REF_NAME"
-          if [[ ! "$tag" =~ ^agent/v((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?)$ ]]; then
+          if [[ "$tag" != agent/v* ]]; then
             echo "Agent family releases must use agent/v<semver>." >&2
             exit 1
           fi
-          version="${BASH_REMATCH[1]}"
-          if [[ "$version" == *-* ]]; then
-            prerelease="${version#*-}"
-            IFS='.' read -ra identifiers <<< "$prerelease"
-            for identifier in "${identifiers[@]}"; do
-              if [[ "$identifier" =~ ^[0-9]+$ && "$identifier" == 0* && "$identifier" != "0" ]]; then
-                echo "Numeric SemVer prerelease identifiers must not contain leading zeroes." >&2
-                exit 1
-              fi
-            done
-          fi
+          version="${tag#agent/v}"
+          bash scripts/release/verify-agent-release-version.sh "$version" "$CORE_SDK_VERSION"
           test "$version" = "$(jq -er '.releaseVersion' packages.json)" \
             || { echo "Release tag must match packages.json releaseVersion." >&2; exit 1; }
-          [[ "$version" != 2.0.0-* ]] \
-            || { echo "The Agent 2.0 baseline starts at stable 2.0.0." >&2; exit 1; }
           test "$(jq '[.packages[] | select(.artifactType == "sunderpkg")] | length' packages.json)" -eq 15 \
             || { echo "packages.json must contain exactly 15 primary runtime package projects." >&2; exit 1; }
           test "$(jq '[.packages[] | select(.artifactType == "nuget" and .packageId == "Sunder.Package.Agent.Protocol")] | length' packages.json)" -eq 1 \
             || { echo "packages.json must contain exactly one Agent Protocol package." >&2; exit 1; }
 
           is_prerelease=false
-          dist_tag=latest
           if [[ "$version" == *-* ]]; then
             is_prerelease=true
-            dist_tag=preview
           else
             unshipped="$(grep -Ev '^[[:space:]]*(#|$)' src/Sunder.Package.Agent.Contracts/PublicAPI.Unshipped.txt || true)"
             [[ -z "$unshipped" ]] \
               || { echo "Stable releases require a finalized Protocol API ledger." >&2; printf '%s\n' "$unshipped" >&2; exit 1; }
           fi
           {
-            echo "dist_tag=$dist_tag"
             echo "is_prerelease=$is_prerelease"
             echo "version=$version"
           } >> "$GITHUB_OUTPUT"
@@ -117,6 +102,8 @@ jobs:
             "https://api.github.com/repos/$GH_REPO/releases/tags/$encoded_tag")"
           [[ "$status" == 404 ]] && exit 0
           [[ "$status" == 200 ]] || { echo "GitHub release lookup returned HTTP $status." >&2; exit 1; }
+          jq -e --arg tag "$GITHUB_REF_NAME" '.draft == true and .tag_name == $tag' "$state" >/dev/null \
+            || { echo "Immutable publication recovery requires the exact GitHub draft release." >&2; exit 1; }
           provenance_url="$(jq -er '[.assets[] | select(.name == "release-provenance.json")] | if length == 1 then .[0].url else error("release must have one provenance asset") end' "$state")"
           provenance="$RUNNER_TEMP/release-provenance.json"
           curl --fail --silent --show-error --location \
@@ -137,23 +124,27 @@ jobs:
             || { echo "Existing release provenance differs from this Agent tag or final Core release." >&2; exit 1; }
 
   source-verify:
-    name: Locked remote-Core source and release-tool verification
+    name: Complete source behavior and focused locked-package compatibility
     needs: prepare
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    defaults:
+      run:
+        working-directory: sunder-agent-package
     steps:
       - name: Checkout exact Agent source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          path: sunder-agent-package
           persist-credentials: false
 
-      - name: Checkout exact Core fixture tooling
+      - name: Checkout exact Core source and fixture tooling
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: Younics/sunder-core
           ref: ${{ needs.prepare.outputs.core_commit }}
-          path: sunder-core-fixture
+          path: sunder-core
           persist-credentials: false
 
       - name: Setup .NET
@@ -173,10 +164,37 @@ jobs:
           bash scripts/release/verify-core-sdk-release.fixture.sh
           bash scripts/release/publish-registry-package.fixture.sh
           bash scripts/release/promote-family-dist-tag.fixture.sh
+          bash scripts/release/promote-agent-family.fixture.sh
           bash scripts/release/native-release.fixture.sh
+          bash scripts/release/verify-agent-release-version.fixture.sh
+          bash scripts/generate-test-duration-report.fixture.sh
           bash scripts/release/verify-core-sdk-release.sh "$CORE_SDK_VERSION" "$EXPECTED_CORE_COMMIT"
 
-      - name: Restore, build, and test only final remote Core packages
+      - name: Restore and build complete source mode against exact Core
+        shell: bash
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          test "$(git -C ../sunder-core rev-parse HEAD)" = "${{ needs.prepare.outputs.core_commit }}"
+          mkdir -p artifacts/test-results/source/full artifacts/reports
+          bash scripts/generate-test-inventory.sh > artifacts/reports/test-inventory.json
+          dotnet restore Sunder.AgentPackage.slnx --force-evaluate -p:SunderUseSourceSdk=true
+          dotnet build Sunder.AgentPackage.slnx -c Release --no-restore -m:1 \
+            -p:SunderUseSourceSdk=true -p:SunderAgentVersion="$VERSION" \
+            -p:ContinuousIntegrationBuild=true
+
+      - name: Run complete source-mode behavioral suite
+        id: source_tests
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet test Sunder.AgentPackage.slnx -c Release --no-build --no-restore -m:1 \
+            -p:SunderUseSourceSdk=true --logger trx \
+            --results-directory "$PWD/artifacts/test-results/source/full"
+
+      - name: Restore and build final locked Core packages
         shell: bash
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
@@ -188,8 +206,86 @@ jobs:
           dotnet build Sunder.AgentPackage.slnx -c Release --no-restore -m:1 \
             -p:SunderUseSourceSdk=false -p:SunderAgentVersion="$VERSION" \
             -p:ContinuousIntegrationBuild=true
+          mkdir -p artifacts/test-results/package/full
+
+      - name: Run focused package compatibility lane
+        id: package_compatibility_tests
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
           dotnet test Sunder.AgentPackage.slnx -c Release --no-build --no-restore -m:1 \
-            -p:SunderUseSourceSdk=false
+            -p:SunderUseSourceSdk=false \
+            --filter "Lane=PackageCompatibility&Category!=Artifact" --logger trx \
+            --results-directory "$PWD/artifacts/test-results/package/full"
+
+      - name: Summarize source and package compatibility evidence
+        id: test_summary
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          status=0
+          python3 scripts/generate-test-duration-report.py artifacts/test-results/source \
+            --inventory artifacts/reports/test-inventory.json \
+            --mode source \
+            --platform linux \
+            --expectations tests/test-evidence-expectations.json \
+            > artifacts/reports/source-test-duration-report.json || status=1
+          python3 scripts/generate-test-duration-report.py artifacts/test-results/package \
+            --inventory artifacts/reports/test-inventory.json \
+            --mode package \
+            --platform linux \
+            --lane PackageCompatibility \
+            --exclude-category Artifact \
+            --expectations tests/test-evidence-expectations.json \
+            > artifacts/reports/package-test-duration-report.json || status=1
+          exit "$status"
+
+      - name: Upload source- and package-mode test evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sunder-agent-release-test-evidence
+          path: |
+            sunder-agent-package/artifacts/reports/test-inventory.json
+            sunder-agent-package/artifacts/reports/source-test-duration-report.json
+            sunder-agent-package/artifacts/reports/package-test-duration-report.json
+            sunder-agent-package/artifacts/test-results/**/*.trx
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Enforce complete source and focused package evidence
+        if: always()
+        shell: bash
+        env:
+          PACKAGE_TEST_OUTCOME: ${{ steps.package_compatibility_tests.outcome }}
+          SOURCE_TEST_OUTCOME: ${{ steps.source_tests.outcome }}
+          SUMMARY_OUTCOME: ${{ steps.test_summary.outcome }}
+        run: |
+          set -euo pipefail
+          test "$SOURCE_TEST_OUTCOME" = success
+          test "$PACKAGE_TEST_OUTCOME" = success
+          test "$SUMMARY_OUTCOME" = success
+          jq -e '
+            .selection == {mode: "source", lane: null, platform: "linux"}
+            and .summary.failed == 0
+            and .summary.other == 0
+            and .canonicalIdentityExpectation == {platform: "linux", enforced: true}
+            and (.projectSuiteEvidence | length) == 11
+            and (.identityEvidence | length) == 11
+            and .evidenceViolations == []
+          ' artifacts/reports/source-test-duration-report.json >/dev/null
+          jq -e '
+            .selection == {mode: "package", lane: "PackageCompatibility", platform: "linux"}
+            and .summary.failed == 0
+            and .summary.other == 0
+            and .primarySummary.skipped == 0
+            and .canonicalIdentityExpectation == {platform: "linux", enforced: true}
+            and (.projectSuiteEvidence | length) == 9
+            and (.identityEvidence | length) == 9
+            and .evidenceViolations == []
+          ' artifacts/reports/package-test-duration-report.json >/dev/null
 
   native-leaves:
     name: Native signed leaves and Runtime lifecycle (${{ matrix.rid }})
@@ -498,6 +594,8 @@ jobs:
           test "$runtime_count" -eq 15
           test "$(find "$output" -maxdepth 1 -name '*.sunderpkg' -type f | wc -l)" -eq 15
           test -f "$output/Sunder.Package.Agent.Protocol.$VERSION.nupkg"
+          bash scripts/compatibility/verify-packed-protocol.sh \
+            "$output/Sunder.Package.Agent.Protocol.$VERSION.nupkg" "$VERSION"
           jq -e \
             --arg version "$VERSION" --arg agent "$GITHUB_SHA" \
             --arg core_tag "$CORE_TAG" --arg core_commit "$CORE_COMMIT" --arg core_version "$CORE_SDK_VERSION" '
@@ -532,6 +630,7 @@ jobs:
               ([.targets[] | select(.role == "runtime") | .rid] | sort) == rids
               and (([.targets[] | select(.role == "app") | .rid] | sort) as $apps | $apps == [] or $apps == rids)
               and all(.targets[] | select(.role == "runtime"); .kind == "worker" and (.requiredHostCapabilities | index("worker-protocol.v3") != null))
+              and all(.dependsOn[]; .versionRange == ">=2.0.0 <3.0.0")
               and ([.provides[].providerId] | sort) == ($provider_ids | sort)
             ' "$manifest" >/dev/null
             if [[ "$package_id" == "sunder.package.agent.memory.semantic" ]]; then
@@ -560,6 +659,23 @@ jobs:
             esac
           done < <(jq -r '.nativeRuns[] | .rid as $rid | .packages[] | [$rid, .packageId, .leaf.appHostPath, .leaf.appHostSha256, .leaf.signatureKind] | @tsv' "$evidence")
 
+      - name: Run Agent contract against exact immutable archives
+        working-directory: sunder-agent-package
+        shell: bash
+        env:
+          SUNDER_REQUIRE_TEST_PREREQUISITES: "1"
+          SUNDER_AGENT_PACKAGE_ARCHIVE_DIR: ${{ github.workspace }}/sunder-agent-package/artifacts/family
+        run: |
+          set -euo pipefail
+          dotnet restore tests/Sunder.Package.Agent.Tests/Sunder.Package.Agent.Tests.csproj \
+            --locked-mode -p:SunderUseSourceSdk=false -p:RestoreLockedMode=true \
+            --source "$NUGET_SOURCE"
+          dotnet build tests/Sunder.Package.Agent.Tests/Sunder.Package.Agent.Tests.csproj \
+            -c Release --no-restore -p:SunderUseSourceSdk=false
+          dotnet test tests/Sunder.Package.Agent.Tests/Sunder.Package.Agent.Tests.csproj \
+            -c Release --no-build --no-restore -p:SunderUseSourceSdk=false \
+            --filter "FullyQualifiedName~PackageFamilyArchiveContractTests"
+
       - name: Build exact Core validation paths
         working-directory: sunder-core
         shell: bash
@@ -585,6 +701,7 @@ jobs:
         working-directory: sunder-core
         shell: bash
         env:
+          SUNDER_REQUIRE_AGENT_PACKAGE_RELEASE: "1"
           SUNDER_AGENT_PACKAGE_ARCHIVE_DIR: ${{ github.workspace }}/sunder-agent-package/artifacts/family
           SUNDER_AGENT_UI_SNAPSHOT_DIR: ${{ github.workspace }}/agent-ui-snapshot
         run: |
@@ -599,6 +716,7 @@ jobs:
         working-directory: sunder-core
         shell: bash
         env:
+          SUNDER_REQUIRE_AGENT_UI_SNAPSHOT: "1"
           SUNDER_AGENT_UI_SNAPSHOT_DIR: ${{ github.workspace }}/agent-ui-snapshot
         run: |
           set -euo pipefail
@@ -616,15 +734,12 @@ jobs:
           retention-days: 7
           compression-level: 0
 
-  publish:
-    name: Publish exact tested family and promote dist tags
+  publish-immutable:
+    name: Publish exact versions and preserve verified GitHub draft
     needs:
       - prepare
       - fan-in
     runs-on: ubuntu-latest
-    concurrency:
-      group: sunder-agent-family-dist-tag-promotion
-      cancel-in-progress: false
     permissions:
       contents: write
     steps:
@@ -644,18 +759,16 @@ jobs:
           name: sunder-agent-family-release
           path: release-assets
 
-      - name: Publish immutable versions, then promote the tested family
+      - name: Publish and verify immutable versions and exact draft assets
         shell: bash
         env:
           CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
           CORE_TAG: ${{ needs.prepare.outputs.core_tag }}
-          DIST_TAG: ${{ needs.prepare.outputs.dist_tag }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           IS_PRERELEASE: ${{ needs.prepare.outputs.is_prerelease }}
           NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
           REGISTRY_API_URL: ${{ vars.SUNDER_REGISTRY_API_URL }}
-          SUNDER_REGISTRY_CLI_TOKEN: ${{ secrets.SUNDER_REGISTRY_CLI_TOKEN }}
           SUNDER_REGISTRY_PUBLISH_TOKEN: ${{ secrets.SUNDER_REGISTRY_PUBLISH_TOKEN }}
           VERSION: ${{ needs.prepare.outputs.version }}
         run: bash scripts/release/publish-agent-family.sh release-assets

@@ -1,9 +1,13 @@
+using CommunityToolkit.Mvvm.ComponentModel;
 using Sunder.Package.Agent.Shared.Presentation;
 
 namespace Sunder.Package.Agent.Memory.Semantic.PackageViews;
 
 public sealed partial class MemoryInspectorViewModel
 {
+    [ObservableProperty]
+    private bool _isBusy;
+
     private static readonly PresentationOperation MemoryRefreshOperation = new(
         "semantic-memory.refresh",
         "Semantic Memory could not refresh. Its current state was preserved.");

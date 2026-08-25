@@ -1,6 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <IsPackable>false</IsPackable>
+    <SunderTestOwner>sunder.package.agent.provider.openai</SunderTestOwner>
+    <SunderTestCategory>Conformance</SunderTestCategory>
+    <SunderTestCapabilities>HTTP;Worker</SunderTestCapabilities>
+    <SunderTestOS>Any</SunderTestOS>
+    <SunderTestSize>Large</SunderTestSize>
+    <SunderTestSourceMode>true</SunderTestSourceMode>
+    <SunderTestPackageMode>true</SunderTestPackageMode>
+    <SunderTestLanes>PackageCompatibility</SunderTestLanes>
   </PropertyGroup>
 
   <ItemGroup>
@@ -8,6 +15,8 @@
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.OpenAI\App\Sunder.Package.Agent.Provider.OpenAI.App.csproj" />
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
     <ProjectReference Include="..\Sunder.Package.Agent.Provider.TestSupport\Sunder.Package.Agent.Provider.TestSupport.csproj" />
+    <ProjectReference Include="..\Sunder.Package.Agent.TestSupport\Sunder.Package.Agent.TestSupport.csproj" />
+    <ProjectReference Include="..\Sunder.Package.Agent.TestSupport.Avalonia\Sunder.Package.Agent.TestSupport.Avalonia.csproj" />
   </ItemGroup>
 
   <ItemGroup>

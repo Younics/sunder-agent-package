@@ -19,6 +19,7 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
     private const string MutationChannel = "subagents-mutation";
     private const string CapabilitiesChannel = "subagent-capabilities";
     private readonly ISubagentManagementGateway? _gateway;
+    private readonly IOwnerStreamAvailability? _ownerAvailability;
     private readonly IPackageSettingsNavigationService? _settingsNavigationService;
     private readonly IPresentationDispatcher _uiDispatcher;
     private readonly TimedStatusController _statusClear;
@@ -43,6 +44,7 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
         IPresentationDispatcher uiDispatcher)
     {
         _gateway = gateway;
+        _ownerAvailability = gateway as IOwnerStreamAvailability;
         _settingsNavigationService = settingsNavigationService;
         _uiDispatcher = uiDispatcher;
         _statusClear = new TimedStatusController(dispatcher: uiDispatcher);
@@ -60,6 +62,7 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
                 gateway.ListChatProvidersAsync,
                 gateway.LoadChatModelsAsync),
             uiDispatcher);
+        IsRuntimeAvailable = _ownerAvailability?.IsOwnerStreamAvailable ?? true;
         Subscribe();
     }
 
@@ -168,6 +171,9 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
     [NotifyPropertyChangedFor(nameof(IsStatusWarning))]
     [NotifyPropertyChangedFor(nameof(IsStatusError))]
     private SubagentStatusKind _statusKind = SubagentStatusKind.None;
+
+    [ObservableProperty]
+    private bool _isRuntimeAvailable;
 
     internal ProviderCatalogOption? SelectedChatProvider
     {
@@ -676,5 +682,8 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
 
     private void ReportRuntimeRefreshFailure(Exception exception)
         => RunOnUiThread(() => SetStatus(exception.Message, SubagentStatusKind.Error));
+
+    private void OnOwnerStreamAvailabilityChanged(bool available)
+        => RunOnUiThread(() => IsRuntimeAvailable = available);
 
 }

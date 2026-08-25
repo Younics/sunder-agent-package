@@ -5,7 +5,6 @@ using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Execution.Docker;
 using Sunder.Package.Agent.Execution.Local;
 using Xunit;
-using Xunit.Sdk;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
 
@@ -16,13 +15,13 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
         "sunder-local-path-tests",
         Guid.NewGuid().ToString("N"));
 
-    [Fact]
+    [FileSystemFact(TestFileSystemCapability.DirectorySymbolicLinks, "Directory escape checks require symbolic links.")]
     public async Task ReadFileAsync_RejectsDirectorySymlinkEscape()
     {
         var (workspace, outside) = CreateDirectories();
         var secretPath = Path.Combine(outside, "secret.txt");
         await File.WriteAllTextAsync(secretPath, "outside");
-        CreateDirectorySymlinkOrSkip(Path.Combine(workspace, "escape"), outside);
+        Directory.CreateSymbolicLink(Path.Combine(workspace, "escape"), outside);
         var config = CreateConfig(workspace);
 
         var result = await LocalFileSystemExecutor.ReadFileAsync(
@@ -36,11 +35,11 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
         Assert.Empty(result.Content);
     }
 
-    [Fact]
+    [FileSystemFact(TestFileSystemCapability.DirectorySymbolicLinks, "Directory resource checks require symbolic links.")]
     public void ResolveFileResource_RejectsDirectorySymlink()
     {
         var (workspace, outside) = CreateDirectories();
-        CreateDirectorySymlinkOrSkip(Path.Combine(workspace, "escape"), outside);
+        Directory.CreateSymbolicLink(Path.Combine(workspace, "escape"), outside);
         var config = CreateConfig(workspace);
 
         Assert.Throws<LocalSecurePathException>(() => LocalResourceResolver.ResolveFileResource(
@@ -95,14 +94,9 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
         Assert.Null(Assert.IsType<AgentResourceClaim>(resource.ResourceClaim).ConfiguredRoot);
     }
 
-    [Fact]
+    [PlatformFact(TestPlatform.Windows, "This verifies Windows lexical scope exclusion.")]
     public void ResolveFileResource_WindowsOutsideScopeUsesLexicalExclusion()
     {
-        if (!OperatingSystem.IsWindows())
-        {
-            return;
-        }
-
         var (workspace, outside) = CreateDirectories();
         var target = Path.Combine(outside, "file.txt");
         File.WriteAllText(target, "outside");
@@ -118,22 +112,13 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
             resource.ScopeClassificationBasis);
     }
 
-    [Fact]
+    [PlatformFact(TestPlatform.MacCaseInsensitive, "This verifies case-insensitive macOS path aliases.")]
     public void ResolveFileResource_MacCaseAliasUsesOpenedConfiguredRootIdentity()
     {
-        if (!OperatingSystem.IsMacOS())
-        {
-            throw SkipException.ForSkip("This verifies case-insensitive macOS path aliases.");
-        }
-
         var (workspace, _) = CreateDirectories();
         var aliasedWorkspace = Path.Combine(
             Path.GetDirectoryName(workspace)!,
             Path.GetFileName(workspace).ToUpperInvariant());
-        if (!Directory.Exists(aliasedWorkspace))
-        {
-            throw SkipException.ForSkip("The test volume is case-sensitive.");
-        }
         var target = Path.Combine(workspace, "file.txt");
         File.WriteAllText(target, "inside");
         var config = new LocalExecutionRuntimeConfig([aliasedWorkspace], aliasedWorkspace);
@@ -152,22 +137,13 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
             Assert.IsType<AgentResourceClaim>(resource.ResourceClaim).ConfiguredRoot);
     }
 
-    [Fact]
+    [PlatformFact(TestPlatform.MacCaseInsensitive, "This verifies case-insensitive macOS path aliases.")]
     public void ResolveFileResource_MacCaseAliasClassifiesMissingDescendants()
     {
-        if (!OperatingSystem.IsMacOS())
-        {
-            throw SkipException.ForSkip("This verifies case-insensitive macOS path aliases.");
-        }
-
         var (workspace, _) = CreateDirectories();
         var aliasedWorkspace = Path.Combine(
             Path.GetDirectoryName(workspace)!,
             Path.GetFileName(workspace).ToUpperInvariant());
-        if (!Directory.Exists(aliasedWorkspace))
-        {
-            throw SkipException.ForSkip("The test volume is case-sensitive.");
-        }
         var requestedPath = Path.Combine(workspace, "new", "nested", "file.txt");
         var config = new LocalExecutionRuntimeConfig([aliasedWorkspace], aliasedWorkspace);
 
@@ -183,35 +159,35 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
             resource.ScopeClassificationBasis);
     }
 
-    [Fact]
+    [FileSystemFact(TestFileSystemCapability.DirectorySymbolicLinks, "Host-path escape checks require symbolic links.")]
     public void MapToHostPath_RejectsDirectorySymlinkEscape()
     {
         var (workspace, outside) = CreateDirectories();
-        CreateDirectorySymlinkOrSkip(Path.Combine(workspace, "escape"), outside);
+        Directory.CreateSymbolicLink(Path.Combine(workspace, "escape"), outside);
 
         Assert.Throws<LocalSecurePathException>(() => LocalResourceResolver.MapToHostPath(
             CreateConfig(workspace),
             Path.Combine("escape", "project")));
     }
 
-    [Fact]
+    [FileSystemFact(TestFileSystemCapability.DirectorySymbolicLinks, "Contained host-path link checks require symbolic links.")]
     public void MapToHostPath_RejectsContainedDirectorySymlink()
     {
         var (workspace, _) = CreateDirectories();
         var target = Path.Combine(workspace, "target");
         Directory.CreateDirectory(target);
-        CreateDirectorySymlinkOrSkip(Path.Combine(workspace, "link"), target);
+        Directory.CreateSymbolicLink(Path.Combine(workspace, "link"), target);
 
         Assert.Throws<LocalSecurePathException>(() => LocalResourceResolver.MapToHostPath(
             CreateConfig(workspace),
             Path.Combine("link", "project")));
     }
 
-    [Fact]
+    [FileSystemFact(TestFileSystemCapability.DirectorySymbolicLinks, "Working-directory escape checks require symbolic links.")]
     public void ResolveWorkingDirectory_RejectsDirectorySymlinkEscape()
     {
         var (workspace, outside) = CreateDirectories();
-        CreateDirectorySymlinkOrSkip(Path.Combine(workspace, "escape"), outside);
+        Directory.CreateSymbolicLink(Path.Combine(workspace, "escape"), outside);
 
         Assert.Throws<InvalidOperationException>(() => LocalPathResolver.ResolveWorkingDirectory(
             CreateConfig(workspace),
@@ -219,12 +195,12 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
             allowOutsideConfiguredScope: false));
     }
 
-    [Fact]
+    [FileSystemFact(TestFileSystemCapability.DirectorySymbolicLinks, "Default working-directory escape checks require symbolic links.")]
     public void ResolveWorkingDirectory_RejectsDefaultDirectorySymlinkEscape()
     {
         var (workspace, outside) = CreateDirectories();
         var defaultWorkingDirectory = Path.Combine(workspace, "escape");
-        CreateDirectorySymlinkOrSkip(defaultWorkingDirectory, outside);
+        Directory.CreateSymbolicLink(defaultWorkingDirectory, outside);
         var config = new LocalExecutionRuntimeConfig([workspace], defaultWorkingDirectory);
 
         Assert.Throws<InvalidOperationException>(() => LocalPathResolver.ResolveWorkingDirectory(
@@ -233,13 +209,13 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
             allowOutsideConfiguredScope: false));
     }
 
-    [Fact]
+    [FileSystemFact(TestFileSystemCapability.DirectorySymbolicLinks, "Contained working-directory link checks require symbolic links.")]
     public void ResolveWorkingDirectory_ReturnsCanonicalPathForContainedDirectorySymlink()
     {
         var (workspace, _) = CreateDirectories();
         var target = Path.Combine(workspace, "target");
         Directory.CreateDirectory(target);
-        CreateDirectorySymlinkOrSkip(Path.Combine(workspace, "link"), target);
+        Directory.CreateSymbolicLink(Path.Combine(workspace, "link"), target);
 
         var resolved = LocalPathResolver.ResolveWorkingDirectory(
             CreateConfig(workspace),
@@ -249,33 +225,33 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
         Assert.Equal(Physical(target), resolved);
     }
 
-    [Fact]
+    [FileSystemFact(TestFileSystemCapability.DirectorySymbolicLinks, "Docker host-path escape checks require symbolic links.")]
     public void DockerMapToHostPath_RejectsDirectorySymlinkEscape()
     {
         var (workspace, outside) = CreateDirectories();
-        CreateDirectorySymlinkOrSkip(Path.Combine(workspace, "escape"), outside);
+        Directory.CreateSymbolicLink(Path.Combine(workspace, "escape"), outside);
         var config = CreateDockerConfig(workspace);
 
         Assert.Throws<LocalSecurePathException>(() => DockerPathResolver.MapToHostPath(config, "/workspace/escape/project"));
     }
 
-    [Fact]
+    [FileSystemFact(TestFileSystemCapability.DirectorySymbolicLinks, "Docker contained-link checks require symbolic links.")]
     public void DockerMapToHostPath_RejectsContainedDirectorySymlink()
     {
         var (workspace, _) = CreateDirectories();
         var target = Path.Combine(workspace, "target");
         Directory.CreateDirectory(target);
-        CreateDirectorySymlinkOrSkip(Path.Combine(workspace, "link"), target);
+        Directory.CreateSymbolicLink(Path.Combine(workspace, "link"), target);
 
         Assert.Throws<LocalSecurePathException>(() =>
             DockerPathResolver.MapToHostPath(CreateDockerConfig(workspace), "/workspace/link/project"));
     }
 
-    [Fact]
+    [FileSystemFact(TestFileSystemCapability.DirectorySymbolicLinks, "Nested write escape checks require symbolic links.")]
     public async Task WriteFileAsync_RejectsNewFileBelowDirectorySymlinkEscape()
     {
         var (workspace, outside) = CreateDirectories();
-        CreateDirectorySymlinkOrSkip(Path.Combine(workspace, "escape"), outside);
+        Directory.CreateSymbolicLink(Path.Combine(workspace, "escape"), outside);
         var config = CreateConfig(workspace);
         var outsidePath = Path.Combine(outside, "new", "file.txt");
 
@@ -289,12 +265,12 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
         Assert.False(File.Exists(outsidePath));
     }
 
-    [Fact]
+    [FileSystemFact(TestFileSystemCapability.FileSymbolicLinks, "Dangling write-link checks require symbolic links.")]
     public async Task WriteFileAsync_RejectsDanglingFileSymlinkEscape()
     {
         var (workspace, outside) = CreateDirectories();
         var outsidePath = Path.Combine(outside, "new.txt");
-        CreateFileSymlinkOrSkip(Path.Combine(workspace, "escape.txt"), outsidePath);
+        File.CreateSymbolicLink(Path.Combine(workspace, "escape.txt"), outsidePath);
         var config = CreateConfig(workspace);
 
         var result = await LocalFileSystemExecutor.WriteFileAsync(
@@ -307,13 +283,13 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
         Assert.False(File.Exists(outsidePath));
     }
 
-    [Fact]
+    [FileSystemFact(TestFileSystemCapability.DirectorySymbolicLinks, "Delete escape checks require symbolic links.")]
     public async Task DeleteFileAsync_RejectsDirectorySymlinkEscape()
     {
         var (workspace, outside) = CreateDirectories();
         var outsidePath = Path.Combine(outside, "keep.txt");
         await File.WriteAllTextAsync(outsidePath, "keep");
-        CreateDirectorySymlinkOrSkip(Path.Combine(workspace, "escape"), outside);
+        Directory.CreateSymbolicLink(Path.Combine(workspace, "escape"), outside);
         var config = CreateConfig(workspace);
 
         var result = await LocalFileSystemExecutor.DeleteFileAsync(
@@ -325,13 +301,13 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
         Assert.True(File.Exists(outsidePath));
     }
 
-    [Fact]
+    [FileSystemFact(TestFileSystemCapability.DirectorySymbolicLinks, "Contained file-operation link checks require symbolic links.")]
     public async Task FileOperations_RejectDirectorySymlinkThatStaysInsideWorkspace()
     {
         var (workspace, _) = CreateDirectories();
         var target = Path.Combine(workspace, "target");
         Directory.CreateDirectory(target);
-        CreateDirectorySymlinkOrSkip(Path.Combine(workspace, "link"), target);
+        Directory.CreateSymbolicLink(Path.Combine(workspace, "link"), target);
         var config = CreateConfig(workspace);
 
         var writeResult = await LocalFileSystemExecutor.WriteFileAsync(
@@ -561,36 +537,6 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
         => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(content))).ToLowerInvariant();
 
     private static string Physical(string path) => LocalPathResolver.ResolvePhysicalPath(path);
-
-    private static void CreateDirectorySymlinkOrSkip(string linkPath, string targetPath)
-    {
-        try
-        {
-            Directory.CreateSymbolicLink(linkPath, targetPath);
-        }
-        catch (Exception exception) when (exception is IOException
-                                          or UnauthorizedAccessException
-                                          or PlatformNotSupportedException
-                                          or NotSupportedException)
-        {
-            throw SkipException.ForSkip($"Symbolic link creation is unavailable: {exception.Message}");
-        }
-    }
-
-    private static void CreateFileSymlinkOrSkip(string linkPath, string targetPath)
-    {
-        try
-        {
-            File.CreateSymbolicLink(linkPath, targetPath);
-        }
-        catch (Exception exception) when (exception is IOException
-                                          or UnauthorizedAccessException
-                                          or PlatformNotSupportedException
-                                          or NotSupportedException)
-        {
-            throw SkipException.ForSkip($"Symbolic link creation is unavailable: {exception.Message}");
-        }
-    }
 
     private sealed class ThrowingWriteFaultInjector(LocalFileWriteFaultPoint faultPoint) : ILocalFileWriteFaultInjector
     {

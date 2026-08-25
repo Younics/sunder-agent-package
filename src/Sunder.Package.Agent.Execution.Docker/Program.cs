@@ -54,9 +54,14 @@ try
                 AgentRpcContractIds.WorkspaceEditor,
                 AgentWorkspaceEditorRpc.CreateHandler(
                     serviceProvider.GetRequiredService<DockerExecutionWorkspaceEditorContributor>())),
-            SunderStackContributorRpc.CreateWorkerProviderRegistration(
+            new SunderWorkerProviderRegistration(
                 "docker.stack",
-                serviceProvider.GetRequiredService<DockerImageStackContributor>()),
+                SunderStackContributorRpc.ContractId,
+                SunderStackContributorRpc.ContractVersion,
+                SunderStackContributorRpc.DescriptorSha256,
+                SunderStackContributorRpc.AbiSha256,
+                SunderStackContributorRpc.CreateHandler(
+                    serviceProvider.GetRequiredService<DockerImageStackContributor>())),
             Register(
                 DockerExecutionPresentationRpc.ProviderId,
                 DockerExecutionPresentationRpc.Descriptor,

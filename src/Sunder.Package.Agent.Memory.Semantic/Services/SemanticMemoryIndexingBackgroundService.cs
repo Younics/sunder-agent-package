@@ -1,4 +1,5 @@
 using System.Threading.Channels;
+using System.Runtime.InteropServices;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
@@ -7,7 +8,7 @@ using Sunder.Sdk.Worker;
 
 namespace Sunder.Package.Agent.Memory.Semantic.Services;
 
-public sealed class SemanticMemoryIndexingBackgroundService : ISunderWorkerLifecycleService, IAsyncDisposable
+public sealed partial class SemanticMemoryIndexingBackgroundService : ISunderWorkerLifecycleService, IAsyncDisposable
 {
     private const int DefaultQueueCapacity = 256;
     private const int MaxRetryCount = 3;
@@ -32,10 +33,13 @@ public sealed class SemanticMemoryIndexingBackgroundService : ISunderWorkerLifec
     private Task? _processingTask;
     private Task? _monitoringTask;
     private Task _generationCompletion = Task.CompletedTask;
+    private Task _abandonedWorkerObservation = Task.CompletedTask;
     private SemanticMemoryIndexWorkerStatus _status = SemanticMemoryIndexWorkerStatus.Stopped();
     private PackageRuntimeGeneration? _generation;
     private bool _prepared;
+    private bool _active;
     private bool _workersStarted;
+    private bool _workerWaitAbandoned;
     private bool _disposed;
 
     public SemanticMemoryIndexingBackgroundService(
@@ -82,13 +86,10 @@ public sealed class SemanticMemoryIndexingBackgroundService : ISunderWorkerLifec
             new PackageRuntimeGeneration(generation.ActivationId, generation.SessionGeneration),
             cancellationToken).ConfigureAwait(false);
 
-    public ValueTask ActivateAsync(
+    public async ValueTask ActivateAsync(
         SunderWorkerContext context,
         CancellationToken cancellationToken = default)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.CompletedTask;
-    }
+        => await ActivateCommittedGenerationAsync(cancellationToken).ConfigureAwait(false);
 
     public async ValueTask ShutdownAsync(
         SunderWorkerShutdownContext context,
@@ -131,10 +132,6 @@ public sealed class SemanticMemoryIndexingBackgroundService : ISunderWorkerLifec
 
             cancellationToken.ThrowIfCancellationRequested();
             _prepared = true;
-            if (_generation is not null && !_workersStarted)
-            {
-                await StartWorkersAsync(cancellationToken).ConfigureAwait(false);
-            }
         }
         finally
         {
@@ -158,26 +155,13 @@ public sealed class SemanticMemoryIndexingBackgroundService : ISunderWorkerLifec
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            if (_workersStarted)
-            {
-                if (_generation != generation)
-                {
-                    throw new InvalidOperationException(
-                        "Semantic memory indexing is already committed to another Runtime generation.");
-                }
-                return;
-            }
             if (_generation is not null && _generation != generation)
             {
                 throw new InvalidOperationException(
                     "Semantic memory indexing cannot change generation identity after commit begins.");
             }
 
-            _generation = generation;
-            if (_prepared)
-            {
-                await StartWorkersAsync(cancellationToken).ConfigureAwait(false);
-            }
+            _generation ??= generation;
         }
         finally
         {
@@ -185,73 +169,34 @@ public sealed class SemanticMemoryIndexingBackgroundService : ISunderWorkerLifec
         }
     }
 
-    public async Task StopAsync(CancellationToken cancellationToken = default)
+    internal async Task ActivateCommittedGenerationAsync(CancellationToken cancellationToken = default)
     {
         await _lifecycleGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (!_prepared)
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_active)
             {
                 return;
             }
+            if (!_prepared)
+            {
+                throw new InvalidOperationException(
+                    "Semantic memory indexing must be prepared before activation.");
+            }
+            if (_generation is null)
+            {
+                throw new InvalidOperationException(
+                    "Semantic memory indexing cannot activate before its Runtime generation is committed.");
+            }
 
-            if (_workersStarted || _processingTask is not null || _monitoringTask is not null)
-            {
-                await StopWorkersAsync().ConfigureAwait(false);
-            }
-            else
-            {
-                ResetQueue();
-                UpdateStatus(status => status with { IsRunning = false, PendingItemCount = 0 });
-            }
-            _prepared = false;
-            _workersStarted = false;
-            _generation = null;
+            await StartWorkersAsync(cancellationToken).ConfigureAwait(false);
+            _active = true;
         }
         finally
         {
             _lifecycleGate.Release();
         }
-    }
-
-    public async ValueTask DisposeAsync()
-    {
-        if (_disposed)
-        {
-            return;
-        }
-
-        await StopAsync(CancellationToken.None).ConfigureAwait(false);
-        _disposed = true;
-        lock (_queueSync)
-        {
-            _requests.Writer.TryComplete();
-            _scheduled.Clear();
-            _retryNotBefore.Clear();
-        }
-
-        _lifecycleGate.Dispose();
-        GC.SuppressFinalize(this);
-    }
-
-    private async Task StopWorkersAsync()
-    {
-        lock (_queueSync)
-        {
-            _requests.Writer.TryComplete();
-        }
-
-        _stoppingCts?.Cancel();
-        var tasks = new[] { _processingTask, _monitoringTask }.Where(task => task is not null).Cast<Task>();
-        await Task.WhenAll(tasks).ConfigureAwait(false);
-        _stoppingCts?.Dispose();
-        _stoppingCts = null;
-        _processingTask = null;
-        _monitoringTask = null;
-        Volatile.Write(ref _generationCompletion, Task.CompletedTask);
-        _workersStarted = false;
-        ResetQueue();
-        UpdateStatus(status => status with { IsRunning = false, PendingItemCount = 0 });
     }
 
     private Task StartWorkersAsync(CancellationToken cancellationToken)
@@ -276,9 +221,18 @@ public sealed class SemanticMemoryIndexingBackgroundService : ISunderWorkerLifec
         });
         _processingTask = ProcessQueueAsync(_stoppingCts.Token);
         _monitoringTask = MonitorAsync(_stoppingCts.Token);
-        Volatile.Write(ref _generationCompletion, Task.WhenAll(_processingTask, _monitoringTask));
+        Volatile.Write(
+            ref _generationCompletion,
+            ObserveWorkersAsync(_processingTask, _monitoringTask));
         _workersStarted = true;
         return Task.CompletedTask;
+    }
+
+    private static async Task ObserveWorkersAsync(Task processingTask, Task monitoringTask)
+    {
+        var first = await Task.WhenAny(processingTask, monitoringTask).ConfigureAwait(false);
+        await first.ConfigureAwait(false);
+        await Task.WhenAll(processingTask, monitoringTask).ConfigureAwait(false);
     }
 
     private bool Queue(SemanticMemoryIndexWorkItem item)
@@ -377,7 +331,7 @@ public sealed class SemanticMemoryIndexingBackgroundService : ISunderWorkerLifec
             {
                 canceled = true;
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!IsFatal(ex))
             {
                 failed = true;
                 _metricsService.RecordWorkerFailure();
@@ -503,7 +457,7 @@ public sealed class SemanticMemoryIndexingBackgroundService : ISunderWorkerLifec
                 {
                     throw;
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (!IsFatal(ex))
                 {
                     _metricsService.RecordWorkerFailure();
                     UpdateStatus(status => status with
@@ -612,6 +566,14 @@ public sealed class SemanticMemoryIndexingBackgroundService : ISunderWorkerLifec
             SingleReader = true,
             SingleWriter = false,
         });
+
+    private static bool IsFatal(Exception exception)
+        => exception is OutOfMemoryException
+            or StackOverflowException
+            or AccessViolationException
+            or SEHException
+           || exception is AggregateException aggregate && aggregate.InnerExceptions.Any(IsFatal)
+           || exception.InnerException is { } inner && IsFatal(inner);
 
 }
 

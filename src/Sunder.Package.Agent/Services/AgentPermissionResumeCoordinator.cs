@@ -192,7 +192,7 @@ public sealed class AgentPermissionResumeCoordinator(
             return FinalizeSuspension(
                        AgentPendingPermissionStatus.Expired,
                        AgentRunStatus.Interrupted,
-                       "permission-reapproval-required: Outside resource authority is not restorable; submit the tool call for explicit reapproval.")
+                       $"{AgentToolResultErrorCodes.PermissionReapprovalRequired}: Outside resource authority is not restorable; submit the tool call for explicit reapproval.")
                    ?? _sessionService.GetLatestCheckpoint(sessionId);
         }
 

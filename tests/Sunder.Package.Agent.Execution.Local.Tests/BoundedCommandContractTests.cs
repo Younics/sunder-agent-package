@@ -14,7 +14,7 @@ public sealed class BoundedCommandContractTests
         yield return ["docker"];
     }
 
-    [Theory]
+    [PlatformTheory(TestPlatform.Unix, "The command contract fixture requires a POSIX shell.")]
     [MemberData(nameof(CommandBackends))]
     public async Task CommandBackends_BoundOutput(string backend)
     {
@@ -25,7 +25,7 @@ public sealed class BoundedCommandContractTests
         Assert.InRange(result.Output.Length, 1, 51_250);
     }
 
-    [Theory]
+    [PlatformTheory(TestPlatform.Unix, "The command contract fixture requires a POSIX shell.")]
     [MemberData(nameof(CommandBackends))]
     public async Task CommandBackends_ReportTimeout(string backend)
     {
@@ -35,7 +35,7 @@ public sealed class BoundedCommandContractTests
         Assert.True(result.TimedOut);
     }
 
-    [Theory]
+    [PlatformTheory(TestPlatform.Unix, "The command contract fixture requires a POSIX shell.")]
     [MemberData(nameof(CommandBackends))]
     public async Task CommandBackends_PropagateCallerCancellation(string backend)
     {

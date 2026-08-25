@@ -2,6 +2,7 @@ using System.Text.Json;
 using Google.GenAI.Types;
 using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Provider.Gemini;
+using Sunder.Package.Agent.Provider.TestSupport;
 using Xunit;
 
 namespace Sunder.Package.Agent.Provider.Gemini.Tests;
@@ -75,6 +76,43 @@ public sealed class GeminiResponseTranslatorTests
         Assert.Equal(
             Convert.ToBase64String([3, 4]),
             Assert.IsType<TextReasoningContent>(contents[1]).ProtectedData);
+    }
+
+    [Fact]
+    public void Translate_PreservesCommonMixedTextAndToolOrdering()
+    {
+        var response = new GenerateContentResponse
+        {
+            Candidates =
+            [
+                new Candidate
+                {
+                    Content = new Content
+                    {
+                        Parts =
+                        [
+                            new Part { Text = "Before" },
+                            new Part
+                            {
+                                FunctionCall = new FunctionCall
+                                {
+                                    Id = "call-1",
+                                    Name = "read_file",
+                                    Args = new Dictionary<string, object> { ["path"] = "README.md" },
+                                },
+                            },
+                            new Part { Text = "After" },
+                        ],
+                    },
+                },
+            ],
+        };
+
+        var contents = new GeminiResponseTranslator().Translate(response, true).Contents;
+
+        ProviderConformanceHarness.VerifyToolResultOrder(
+            "Gemini",
+            contents.Select(static content => content is FunctionCallContent ? "tool" : "text"));
     }
 
     [Fact]

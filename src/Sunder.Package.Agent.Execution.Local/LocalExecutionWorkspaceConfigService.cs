@@ -14,6 +14,13 @@ namespace Sunder.Package.Agent.Execution.Local;
 public sealed class LocalExecutionWorkspaceConfigService : IAgentWorkspacePathMigrationContributor
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
+    private static readonly HashSet<string> SupportedProperties = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "SelectedShellId",
+        "PathEntries",
+        "AllowedRoots",
+        "DefaultWorkingDirectory",
+    };
     private static readonly ConditionalWeakTable<IPackageKeyValueStore, ConcurrentDictionary<string, SemaphoreSlim>> MutationGates = new();
     private readonly IPackageContext _packageContext;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _mutationGates;
@@ -40,12 +47,25 @@ public sealed class LocalExecutionWorkspaceConfigService : IAgentWorkspacePathMi
 
         try
         {
-            var config = JsonSerializer.Deserialize<LocalExecutionWorkspaceConfig>(json, JsonOptions);
-            return Normalize(config ?? new LocalExecutionWorkspaceConfig(null, []));
+            using var document = ParseAndValidateDocument(json);
+            var config = JsonSerializer.Deserialize<LocalExecutionWorkspaceConfig>(json, JsonOptions)
+                ?? throw new JsonException("Local workspace configuration is null.");
+            return Normalize(config);
         }
-        catch
+        catch (LocalExecutionDomainException)
         {
-            return new LocalExecutionWorkspaceConfig(null, []);
+            throw;
+        }
+        catch (Exception exception) when (
+            exception is JsonException
+                or NotSupportedException
+                or ArgumentException
+                or PathTooLongException)
+        {
+            throw new LocalExecutionDomainException(
+                "local.workspace-config.malformed",
+                "The stored Local workspace configuration is malformed and was left unchanged.",
+                innerException: exception);
         }
     }
 
@@ -131,11 +151,15 @@ public sealed class LocalExecutionWorkspaceConfigService : IAgentWorkspacePathMi
 
         try
         {
-            using var document = JsonDocument.Parse(json);
+            using var document = ParseAndValidateDocument(json);
             var root = document.RootElement;
-            if (!root.TryGetProperty("AllowedRoots", out var rootsElement) || rootsElement.ValueKind != JsonValueKind.Array)
+            if (!TryGetProperty(root, "AllowedRoots", out var rootsElement))
             {
                 return [];
+            }
+            if (rootsElement.ValueKind != JsonValueKind.Array)
+            {
+                throw new JsonException("The legacy Local workspace roots are not an array.");
             }
 
             var defaultWorkingDirectory = TryGetString(root, "DefaultWorkingDirectory");
@@ -148,13 +172,13 @@ public sealed class LocalExecutionWorkspaceConfigService : IAgentWorkspacePathMi
             {
                 if (item.ValueKind != JsonValueKind.String)
                 {
-                    continue;
+                    throw new JsonException("A legacy Local workspace root is not a string.");
                 }
 
                 var value = item.GetString();
                 if (string.IsNullOrWhiteSpace(value))
                 {
-                    continue;
+                    throw new JsonException("A legacy Local workspace root is empty.");
                 }
 
                 var hostPath = Path.GetFullPath(ExpandPath(value.Trim()));
@@ -164,9 +188,20 @@ public sealed class LocalExecutionWorkspaceConfigService : IAgentWorkspacePathMi
 
             return items;
         }
-        catch
+        catch (LocalExecutionDomainException)
         {
-            return [];
+            throw;
+        }
+        catch (Exception exception) when (
+            exception is JsonException
+                or NotSupportedException
+                or ArgumentException
+                or PathTooLongException)
+        {
+            throw new LocalExecutionDomainException(
+                "local.workspace-config.malformed",
+                "The stored Local workspace configuration is malformed and was left unchanged.",
+                innerException: exception);
         }
     }
 
@@ -206,8 +241,67 @@ public sealed class LocalExecutionWorkspaceConfigService : IAgentWorkspacePathMi
     internal static string BuildKey(string bindingId)
         => CurrentPackageStorageKey.Create("workspace-bindings.config", 2, bindingId);
 
+    private static JsonDocument ParseAndValidateDocument(string json)
+    {
+        var document = JsonDocument.Parse(json, new JsonDocumentOptions { MaxDepth = 16 });
+        try
+        {
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                throw new JsonException("Local workspace configuration is not an object.");
+            }
+
+            var properties = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var property in document.RootElement.EnumerateObject())
+            {
+                if (!properties.Add(property.Name))
+                {
+                    throw new JsonException(
+                        $"Local workspace configuration contains duplicate or case-colliding property '{property.Name}'.");
+                }
+                if (!SupportedProperties.Contains(property.Name))
+                {
+                    throw new LocalExecutionDomainException(
+                        "local.workspace-config.unsupported-schema",
+                        "The stored Local workspace configuration contains unsupported data and was left unchanged.");
+                }
+            }
+
+            return document;
+        }
+        catch
+        {
+            document.Dispose();
+            throw;
+        }
+    }
+
     private static string? TryGetString(JsonElement element, string propertyName)
-        => element.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.String
-            ? property.GetString()
-            : null;
+    {
+        if (!TryGetProperty(element, propertyName, out var property)
+            || property.ValueKind == JsonValueKind.Null)
+        {
+            return null;
+        }
+        if (property.ValueKind != JsonValueKind.String)
+        {
+            throw new JsonException($"Local workspace property '{propertyName}' is not a string.");
+        }
+        return property.GetString();
+    }
+
+    private static bool TryGetProperty(JsonElement element, string propertyName, out JsonElement value)
+    {
+        foreach (var property in element.EnumerateObject())
+        {
+            if (string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+            {
+                value = property.Value;
+                return true;
+            }
+        }
+
+        value = default;
+        return false;
+    }
 }

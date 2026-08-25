@@ -306,7 +306,7 @@ public sealed class AgentRuntimeCorrectnessTests
         var canceledPersistence = Assert.IsAssignableFrom<Task>(persistSelection.Invoke(
             viewModel,
             ["profile-a", "workspace-a", sessionId, 0, cancellation.Token]));
-        await blockedWrite.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await blockedWrite.Entered.WaitAsync(TimeSpan.FromSeconds(2));
         cancellation.Cancel();
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
@@ -319,7 +319,7 @@ public sealed class AgentRuntimeCorrectnessTests
         Assert.Equal("profile-b", await selectionState.GetSelectedProfileIdAsync());
         Assert.Equal("workspace-b", await selectionState.GetSelectedWorkspaceIdAsync());
         Assert.Equal(sessionId, await selectionState.GetSelectedSessionIdAsync("workspace-b"));
-        blockedWrite.Release.TrySetResult();
+        blockedWrite.Release();
     }
 
     [Fact]

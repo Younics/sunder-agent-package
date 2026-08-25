@@ -215,19 +215,6 @@
             "$ref": "#/$defs/Unit"
           }
         },
-        "legacy-file-search": {
-          "kind": "unary",
-          "idempotency": "idempotent",
-          "errors": [
-            "agent.execution.facet-unavailable"
-          ],
-          "requestSchema": {
-            "$ref": "#/$defs/ExecutionFileSearchProcessRequest"
-          },
-          "responseSchema": {
-            "$ref": "#/$defs/AgentFileSearchProcessResult"
-          }
-        },
         "structured-file-search": {
           "kind": "unary",
           "idempotency": "idempotent",
@@ -1330,73 +1317,6 @@
         "executionPath",
         "hostPath",
         "isInsideAllowedRoot"
-      ],
-      "additionalProperties": false
-    },
-    "AgentFileSearchProcessRequest": {
-      "type": "object",
-      "properties": {
-        "command": {
-          "$ref": "#/$defs/AgentProcessCommandRequest"
-        },
-        "path": {
-          "$ref": "#/$defs/PathText"
-        },
-        "pathArgumentIndex": {
-          "$ref": "#/$defs/CollectionIndex"
-        }
-      },
-      "required": [
-        "command",
-        "path",
-        "pathArgumentIndex"
-      ],
-      "additionalProperties": false
-    },
-    "ExecutionFileSearchProcessRequest": {
-      "type": "object",
-      "properties": {
-        "context": {
-          "$ref": "#/$defs/AgentExecutionTargetContextWire"
-        },
-        "request": {
-          "$ref": "#/$defs/AgentFileSearchProcessRequest"
-        }
-      },
-      "required": [
-        "context",
-        "request"
-      ],
-      "additionalProperties": false
-    },
-    "AgentFileSearchPathStyle": {
-      "type": "string",
-      "enum": [
-        "host",
-        "posix"
-      ]
-    },
-    "AgentFileSearchProcessResult": {
-      "type": "object",
-      "properties": {
-        "canonicalPath": {
-          "$ref": "#/$defs/PathText"
-        },
-        "expectedPath": {
-          "$ref": "#/$defs/PathText"
-        },
-        "pathStyle": {
-          "$ref": "#/$defs/AgentFileSearchPathStyle"
-        },
-        "processResult": {
-          "$ref": "#/$defs/AgentShellCommandResult"
-        }
-      },
-      "required": [
-        "canonicalPath",
-        "expectedPath",
-        "pathStyle",
-        "processResult"
       ],
       "additionalProperties": false
     },

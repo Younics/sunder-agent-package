@@ -15,7 +15,6 @@ using Sunder.Package.Agent.Tools.Web;
 using Sunder.Package.Agent.Tools.Web.Services;
 using Sunder.Sdk.Abstractions;
 using Xunit;
-using Xunit.Sdk;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
 
@@ -25,13 +24,12 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
     private readonly List<RegressionTestExtensionCatalog> _catalogs = [];
 
     [Fact]
-    public void PackageContextConstructor_EnablesScopedInstructionEnforcement()
+    public void Constructor_RequiresPackageContextWithoutCompatibilityShim()
     {
-        var constructor = typeof(FilesToolSource).GetConstructor([typeof(IPackageContext)]);
-        var source = new FilesToolSource(_packageScope.Context);
+        var constructor = Assert.Single(typeof(FilesToolSource).GetConstructors());
 
-        Assert.NotNull(constructor);
-        Assert.True(source.IsScopedInstructionEnforcementEnabled);
+        Assert.Equal([typeof(IPackageContext)], constructor.GetParameters().Select(static parameter => parameter.ParameterType));
+        Assert.Throws<ArgumentNullException>(() => new FilesToolSource(null!));
     }
 
     [Theory]
@@ -383,14 +381,9 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
         Assert.Equal("old second", target.Files["second.txt"]);
     }
 
-    [Fact]
+    [PlatformFact(TestPlatform.Linux, "This verifies Linux anonymous-file publication fallback.")]
     public async Task ApplyPatch_LinuxAtEmptyPathEperm_UsesPortablePublishFallback()
     {
-        if (!OperatingSystem.IsLinux())
-        {
-            return;
-        }
-
         using var scope = RegressionTestPackageScope.Create();
         var root = Path.Combine(scope.RootPath, "workspace");
         Directory.CreateDirectory(root);
@@ -712,40 +705,15 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
         Assert.DoesNotContain("file-0065.txt", result.Content, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public async Task Grep_WhenRipgrepIsMissing_UsesFallbackThatDoesNotFollowDirectorySymlinks()
-    {
-        var target = new MissingRipgrepExecutionTarget();
-        var (source, _, context) = CreateSource(target);
-
-        var result = await source.ExecuteAsync(
-            context,
-            new AgentToolRequest("grep", "{\"pattern\":\"needle\",\"path\":\"workspace\"}"));
-
-        Assert.False(result.IsError, result.Content);
-        Assert.Collection(
-            target.Commands,
-            command => Assert.Equal("rg", command.FileName),
-            command =>
-            {
-                Assert.Equal("grep", command.FileName);
-                Assert.Contains("-rIn", command.Arguments);
-                Assert.DoesNotContain("-RIn", command.Arguments);
-            });
-    }
-
-    [Theory]
+    [PlatformTheory(TestPlatform.Unix, "The fallback fixture uses a POSIX executable shim.")]
+    [System.Runtime.Versioning.SupportedOSPlatform("linux")]
+    [System.Runtime.Versioning.SupportedOSPlatform("macos")]
     [InlineData("-delete")]
     [InlineData("line\nbreak")]
     [InlineData("quote'name")]
     [InlineData("-dash-name")]
     public async Task LocalStructuredGlob_PreservesHostileDirectoryNameWithoutProcessArguments(string directoryName)
     {
-        if (OperatingSystem.IsWindows())
-        {
-            throw SkipException.ForSkip("The fallback fixture uses a POSIX executable shim.");
-        }
-
         using var scope = RegressionTestPackageScope.Create();
         var root = Path.Combine(scope.RootPath, "workspace");
         var searchDirectory = Path.Combine(root, directoryName);
@@ -773,7 +741,9 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
         Assert.Equal("sentinel", await File.ReadAllTextAsync(sibling));
     }
 
-    [Fact]
+    [FileSystemFact(
+        TestFileSystemCapability.DirectorySymbolicLinks,
+        "Linked search-path planning requires directory symbolic links.")]
     public async Task SearchOutsideApproval_RejectsLinkedPathDuringPermissionPlanning()
     {
         using var scope = RegressionTestPackageScope.Create();
@@ -787,7 +757,7 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
         await File.WriteAllTextAsync(Path.Combine(first, "approved.txt"), "approved");
         await File.WriteAllTextAsync(Path.Combine(second, "secret.txt"), "RETARGETED_SEARCH_SECRET");
         var link = Path.Combine(root, "outside-link");
-        CreateDirectorySymlinkOrSkip(link, first);
+        Directory.CreateSymbolicLink(link, first);
         var (source, baseContext) = await CreateLocalSourceAsync(scope, root);
         var request = new AgentToolRequest("glob", JsonSerializer.Serialize(new { pattern = "**/*.txt", path = link }));
         await Assert.ThrowsAsync<LocalSecurePathException>(async () =>
@@ -796,7 +766,7 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
     }
 
     [Fact]
-    public async Task SearchTargetWithoutCanonicalBinding_FailsClosedWithoutExecutingShell()
+    public async Task SearchTargetWithoutStructuredSearch_FailsClosedWithoutExecutingShell()
     {
         var target = new UnboundSearchExecutionTarget();
         var (source, context) = CreateSourceForTarget(target);
@@ -811,11 +781,11 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
     }
 
     [Fact]
-    public async Task Glob_RejectsBackendPathOutsideCanonicalSearchRoot()
+    public async Task Glob_RejectsMalformedStructuredMatch()
     {
         var target = new MemoryExecutionTarget
         {
-            ProcessOutput = Path.Combine(Path.GetTempPath(), "outside-search-result.txt") + "\0",
+            SearchResult = new AgentFileSearchResult([new AgentFileSearchMatch(string.Empty)]),
         };
         var (source, _, context) = CreateSource(target);
 
@@ -825,7 +795,6 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
 
         Assert.True(result.IsError);
         Assert.Equal("files-search-result-invalid", result.ErrorCode);
-        Assert.DoesNotContain("outside-search-result.txt", result.Content, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -989,18 +958,6 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
         _packageScope.Dispose();
     }
 
-    private static void CreateDirectorySymlinkOrSkip(string linkPath, string targetPath)
-    {
-        try
-        {
-            Directory.CreateSymbolicLink(linkPath, targetPath);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException or NotSupportedException)
-        {
-            throw SkipException.ForSkip($"Directory symbolic links are unavailable: {ex.Message}");
-        }
-    }
-
     private static string PatchArguments(string patchText)
         => JsonSerializer.Serialize(new { patchText });
 
@@ -1026,7 +983,7 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
         return markdown[fence..];
     }
 
-    private class MemoryExecutionTarget : IAgentProcessExecutionTarget, IAgentFileSearchExecutionTarget
+    private class MemoryExecutionTarget : IAgentProcessExecutionTarget, IAgentStructuredFileSearchExecutionTarget
     {
         public static string SearchRoot { get; } = Path.Combine(Path.GetTempPath(), "sunder-memory-search");
 
@@ -1063,6 +1020,8 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
 
         public string ProcessOutput { get; init; } = string.Empty;
 
+        public AgentFileSearchResult? SearchResult { get; init; }
+
         public bool ResultsTruncated { get; init; }
 
         public bool ShellTimedOut { get; init; }
@@ -1096,26 +1055,22 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
         public virtual ValueTask<AgentShellCommandResult> ExecuteProcessAsync(AgentExecutionTargetContext context, AgentProcessCommandRequest request, CancellationToken cancellationToken = default)
             => ValueTask.FromResult(new AgentShellCommandResult(0, ProcessOutput));
 
-        public async ValueTask<AgentFileSearchProcessResult> ExecuteFileSearchProcessAsync(
+        public ValueTask<AgentFileSearchResult> ExecuteFileSearchAsync(
             AgentExecutionTargetContext context,
-            AgentFileSearchProcessRequest request,
+            AgentFileSearchRequest request,
             CancellationToken cancellationToken = default)
         {
-            var canonicalPath = Path.GetFullPath(
-                Path.IsPathRooted(request.Path)
-                    ? request.Path
-                    : Path.Combine(SearchRoot, request.Path));
-            var arguments = request.Command.Arguments.ToList();
-            arguments.Insert(request.PathArgumentIndex, canonicalPath);
-            var result = await ExecuteProcessAsync(
-                context,
-                request.Command with { Arguments = arguments },
-                cancellationToken);
-            return new AgentFileSearchProcessResult(
-                result,
-                canonicalPath,
-                canonicalPath,
-                AgentFileSearchPathStyle.Host);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (SearchResult is not null)
+            {
+                return ValueTask.FromResult(SearchResult);
+            }
+
+            var matches = ProcessOutput
+                .Split(['\0', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+                .Select(static path => new AgentFileSearchMatch(path))
+                .ToArray();
+            return ValueTask.FromResult(new AgentFileSearchResult(matches, ResultsTruncated));
         }
 
         public virtual ValueTask<AgentFileReadResult> ReadFileAsync(AgentExecutionTargetContext context, AgentFileReadRequest request, CancellationToken cancellationToken = default)
@@ -1281,22 +1236,6 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
                 request.Path,
                 AgentFileReadErrorCodes.FileNotFound,
                 $"File not found: {request.Path}"));
-    }
-
-    private sealed class MissingRipgrepExecutionTarget : MemoryExecutionTarget
-    {
-        public List<AgentProcessCommandRequest> Commands { get; } = [];
-
-        public override ValueTask<AgentShellCommandResult> ExecuteProcessAsync(
-            AgentExecutionTargetContext context,
-            AgentProcessCommandRequest request,
-            CancellationToken cancellationToken = default)
-        {
-            Commands.Add(request);
-            return ValueTask.FromResult(request.FileName == "rg"
-                ? new AgentShellCommandResult(127, "rg: command not found")
-                : new AgentShellCommandResult(1, string.Empty));
-        }
     }
 
     private sealed class UnboundSearchExecutionTarget : IAgentExecutionTarget

@@ -2,7 +2,6 @@ using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Execution.Docker;
 using Sunder.Package.Agent.Execution.Local;
 using Xunit;
-using Xunit.Sdk;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
 
@@ -59,7 +58,9 @@ public sealed class ScopedInstructionDiscoveryTests : IDisposable
         Assert.Contains("12000-character limit", exception.Message, StringComparison.Ordinal);
     }
 
-    [Fact]
+    [FileSystemFact(
+        TestFileSystemCapability.DirectorySymbolicLinks,
+        "Local scoped-instruction escape checks require directory symbolic links.")]
     public async Task LocalDiscovery_UsesMostSpecificContainingRootAndRejectsOutsideAndSymlinkEscapes()
     {
         var outer = Path.Combine(_root, "outer");
@@ -80,14 +81,7 @@ public sealed class ScopedInstructionDiscoveryTests : IDisposable
         Assert.Contains(contained.Documents, document => document.Content == "inner");
 
         var escape = Path.Combine(inner, "escape");
-        try
-        {
-            Directory.CreateSymbolicLink(escape, outside);
-        }
-        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or PlatformNotSupportedException)
-        {
-            throw SkipException.ForSkip($"Symbolic links are unavailable: {ex.Message}");
-        }
+        Directory.CreateSymbolicLink(escape, outside);
 
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await DiscoverLocalAsync([outer, inner], Path.Combine(escape, "file.txt")));
@@ -113,7 +107,9 @@ public sealed class ScopedInstructionDiscoveryTests : IDisposable
         Assert.Contains("64-directory limit", exception.Message, StringComparison.Ordinal);
     }
 
-    [Theory]
+    [FileSystemTheory(
+        TestFileSystemCapability.FileSymbolicLinks,
+        "Instruction-file escape checks require file symbolic links.")]
     [InlineData("local")]
     [InlineData("docker")]
     public async Task Discovery_RejectsInstructionFileSymlinkEscapes(string targetKind)
@@ -122,14 +118,7 @@ public sealed class ScopedInstructionDiscoveryTests : IDisposable
         var outside = Path.Combine(_root, "outside-policy.md");
         Directory.CreateDirectory(workspace);
         await File.WriteAllTextAsync(outside, "outside policy");
-        try
-        {
-            File.CreateSymbolicLink(Path.Combine(workspace, "AGENTS.md"), outside);
-        }
-        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or PlatformNotSupportedException or NotSupportedException)
-        {
-            throw SkipException.ForSkip($"Symbolic links are unavailable: {ex.Message}");
-        }
+        File.CreateSymbolicLink(Path.Combine(workspace, "AGENTS.md"), outside);
 
         if (targetKind == "local")
         {
@@ -160,7 +149,9 @@ public sealed class ScopedInstructionDiscoveryTests : IDisposable
         Assert.NotEqual(first.TargetFingerprint, second.TargetFingerprint);
     }
 
-    [Theory]
+    [FileSystemTheory(
+        TestFileSystemCapability.FileSymbolicLinks,
+        "File-target parent resolution requires file symbolic links.")]
     [InlineData("local")]
     [InlineData("docker")]
     public async Task FileTargetSymlink_UsesFollowedParentWhileDeleteUsesLinkParent(string targetKind)
@@ -173,14 +164,7 @@ public sealed class ScopedInstructionDiscoveryTests : IDisposable
         var target = Path.Combine(outside, "target.txt");
         await File.WriteAllTextAsync(target, "target");
         var link = Path.Combine(workspace, "link.txt");
-        try
-        {
-            File.CreateSymbolicLink(link, target);
-        }
-        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or PlatformNotSupportedException or NotSupportedException)
-        {
-            throw SkipException.ForSkip($"Symbolic links are unavailable: {ex.Message}");
-        }
+        File.CreateSymbolicLink(link, target);
 
         var followedProbe = new AgentScopedInstructionProbe(link);
         var deleteProbe = new AgentScopedInstructionProbe(link) { FollowFinalSymbolicLink = false };

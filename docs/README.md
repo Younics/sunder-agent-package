@@ -29,9 +29,15 @@ Use the Protocol package and the Sunder SDK only. Extensions must not reference 
 | `Sunder.Package.Agent.Contracts.Models` | Immutable domain requests, descriptors, results, and enums used by those adapters |
 | `Sunder.Sdk.Rpc` | Host RPC registration, discovery, invocation, endpoint, and error contracts |
 
+The central generated namespace is intentionally public because extension
+authors implement providers and construct typed clients with its complete wire
+vocabulary. Generated bindings in package-local/owner Protocol assemblies are
+internal implementation details exposed only through maintained wrappers or to
+explicit first-party friend assemblies.
+
 Most Agent capabilities belong in an exact-RID Worker V3 executable. Pass activation-owned handlers to `SunderWorker.RunAsync` as immutable `SunderWorkerProviderRegistration` entries. Add an `ISunderAppPackageModule` only for presentation or an App-side client over owner-only RPC.
 
-`Sunder.Package.Agent.Protocol` is the shipped NuGet and assembly identity. The repository retains source folder `src/Sunder.Package.Agent.Contracts` and the `Sunder.Package.Agent.Contracts.*` namespaces for the package-local implementation interfaces and stable API types already carried by that artifact. The path and namespace do not identify another package or a cross-package CLR ABI; all 18 cross-package boundaries are the descriptors and generated bindings under the Protocol identity.
+`Sunder.Package.Agent.Protocol` is the shipped NuGet and assembly identity. The repository retains source folder `src/Sunder.Package.Agent.Contracts` and the `Sunder.Package.Agent.Contracts.*` namespaces for the package-local implementation interfaces and stable API types already carried by that artifact. The path and namespace do not identify another package or a cross-package CLR ABI. The Protocol identity bundles 19 descriptors: 18 supported third-party extension points and one reserved first-party observed-execution bridge.
 
 ## Compatibility Baseline
 

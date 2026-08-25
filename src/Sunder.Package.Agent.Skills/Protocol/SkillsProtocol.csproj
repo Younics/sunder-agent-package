@@ -12,6 +12,7 @@
                       LogicalName="Sunder.Package.Agent.Skills.Protocol.Contracts.skills-owner.rpc.json" />
     <SunderRpcBinding Include="Contracts\skills-owner.rpc.json"
                       Namespace="Sunder.Package.Agent.Skills.Protocol.Generated"
+                      Accessibility="Internal"
                       OutputFile="SkillsOwnerRpc.g.cs" />
   </ItemGroup>
 

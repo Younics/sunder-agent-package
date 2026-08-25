@@ -8,18 +8,19 @@ public sealed class AgentWorkspaceExecutionResolver(
     AgentWorkspaceService workspaceService,
     AgentExecutionTargetService executionTargetService) : IAgentWorkspaceExecutionResolver
 {
-    public IReadOnlyList<AgentWorkspaceRecord> ListWorkspaces()
-        => workspaceService.ListWorkspaces();
+    public async ValueTask<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesAsync(
+        CancellationToken cancellationToken = default)
+        => await workspaceService.ListWorkspacesAsync(cancellationToken).ConfigureAwait(false);
 
     public async ValueTask<AgentWorkspaceExecutionResolution> ResolveAsync(
         string workspaceId,
         CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-
-        var workspace = workspaceService.GetWorkspace(workspaceId)
+        var workspace = await workspaceService.GetWorkspaceAsync(workspaceId, cancellationToken)
+            .ConfigureAwait(false)
             ?? throw new InvalidOperationException("Selected workspace was not found.");
-        var binding = workspaceService.ListBindings(workspace.WorkspaceId)
+        var binding = (await workspaceService.ListBindingsAsync(workspace.WorkspaceId, cancellationToken)
+                .ConfigureAwait(false))
             .FirstOrDefault(binding => binding.IsEnabled
                                        && string.Equals(binding.Role, AgentWorkspaceBindingRoles.PrimaryExecutionTarget, StringComparison.OrdinalIgnoreCase))
             ?? throw new InvalidOperationException("Selected workspace is not bound to an execution target.");

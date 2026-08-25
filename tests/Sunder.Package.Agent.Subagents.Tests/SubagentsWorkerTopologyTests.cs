@@ -35,6 +35,7 @@ public sealed class SubagentsWorkerTopologyTests
     }
 
     [Fact]
+    [Trait("Lane", "PackageCompatibility")]
     public void ComposedManifest_ContainsSixRidAppExactRidWorkerAndOwnerProvider()
     {
         var composedRoot = ComposedOutputRoot();

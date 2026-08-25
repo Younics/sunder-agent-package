@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <RestoreLockedMode>false</RestoreLockedMode>
+    <RestorePackagesWithLockFile>false</RestorePackagesWithLockFile>
+    <SunderReleaseSdkVersion Condition="'$(SunderReleaseSdkVersion)' == ''">1.1.0</SunderReleaseSdkVersion>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(SunderUseSourceSdk)' == 'true'">
+    <ProjectReference Include="$(SunderSdkProject)"
+                      GlobalPropertiesToRemove="Version;VersionPrefix;VersionSuffix;PackageVersion;InformationalVersion" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(SunderUseSourceSdk)' == 'false'">
+    <PackageReference Include="Sunder.Sdk" Version="[$(SunderReleaseSdkVersion)]" />
+  </ItemGroup>
+</Project>
