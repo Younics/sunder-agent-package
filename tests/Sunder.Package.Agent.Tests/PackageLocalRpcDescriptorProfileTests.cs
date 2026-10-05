@@ -25,9 +25,8 @@ public sealed class PackageLocalRpcDescriptorProfileTests
     [MemberData(nameof(DescriptorPaths))]
     public void Descriptor_UsesStrictSemanticValueProfile(string relativePath)
     {
-        var path = Path.Combine(AgentPackageRepositoryInventory.RepositoryRoot.FullName, relativePath);
-        var bytes = File.ReadAllBytes(path);
-        var descriptor = SunderRpcContractDescriptor.Parse(bytes);
+        var descriptor = Assert.Single(CanonicalDescriptorInventory.Read(), value => value.HistoricalPath == relativePath).Descriptor;
+        var bytes = descriptor.GetCanonicalUtf8();
         using var document = JsonDocument.Parse(bytes);
         var root = document.RootElement;
 
@@ -48,25 +47,21 @@ public sealed class PackageLocalRpcDescriptorProfileTests
 
         if (relativePath.Contains("Mcp", StringComparison.Ordinal))
         {
-            Assert.DoesNotContain("\"chunks\"", File.ReadAllText(path), StringComparison.Ordinal);
+            Assert.DoesNotContain("\"chunks\"", document.RootElement.GetRawText(), StringComparison.Ordinal);
         }
     }
 
     [Fact]
     public void DescriptorInventory_UsesUnreleasedVersionsAndOnlySemanticFiniteBounds()
     {
-        var sourceRoot = Path.Combine(AgentPackageRepositoryInventory.RepositoryRoot.FullName, "src");
-        var paths = Directory.EnumerateFiles(sourceRoot, "*.rpc.json", SearchOption.AllDirectories)
-            .Where(AgentPackageRepositoryInventory.IsSourceFile)
-            .Order(StringComparer.Ordinal)
-            .ToArray();
+        var descriptors = CanonicalDescriptorInventory.Read();
         var retainedMaximums = new List<string>();
 
-        Assert.Equal(31, paths.Length);
-        foreach (var path in paths)
+        Assert.Equal(31, descriptors.Count);
+        foreach (var entry in descriptors)
         {
-            var bytes = File.ReadAllBytes(path);
-            var descriptor = SunderRpcContractDescriptor.Parse(bytes);
+            var descriptor = entry.Descriptor;
+            var bytes = descriptor.GetCanonicalUtf8();
             using var document = JsonDocument.Parse(bytes);
 
             Assert.Equal("1.0.0", descriptor.Version);

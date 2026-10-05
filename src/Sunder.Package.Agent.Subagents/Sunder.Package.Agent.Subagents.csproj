@@ -2,57 +2,29 @@
 
   <PropertyGroup>
     <SunderPackageFamilyId>sunder.package.agent.subagents</SunderPackageFamilyId>
-    <SunderPackageRole>worker</SunderPackageRole>
-    <SunderPackageProject>true</SunderPackageProject>
-    <SunderPackagePrimaryProject>true</SunderPackagePrimaryProject>
-    <SunderPackageAppProject>App\SubagentsApp.csproj</SunderPackageAppProject>
-    <SunderSdkWorkerReference>true</SunderSdkWorkerReference>
+    <SunderSdkAvaloniaReference>true</SunderSdkAvaloniaReference>
     <SunderSdkStacksReference>true</SunderSdkStacksReference>
-    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
-    <OutputType>Exe</OutputType>
-    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">$(NETCoreSdkRuntimeIdentifier)</RuntimeIdentifier>
-    <RuntimeIdentifiers>win-x64;win-arm64;linux-x64;linux-arm64;osx-x64;osx-arm64</RuntimeIdentifiers>
-    <SelfContained>true</SelfContained>
-    <UseAppHost>true</UseAppHost>
-    <PublishSingleFile>false</PublishSingleFile>
-    <SunderGeneratedPackageManifest>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\obj\$(Configuration)\$(TargetFramework)\$(RuntimeIdentifier)\sunder-package.json'))</SunderGeneratedPackageManifest>
-    <DefineConstants>$(DefineConstants);SUNDER_SUBAGENTS_WORKER</DefineConstants>
+    <SunderAgentSharedTranscript>true</SunderAgentSharedTranscript>
+    <DefineConstants>$(DefineConstants);SUNDER_SUBAGENTS_WORKER;SUNDER_SUBAGENTS_APP</DefineConstants>
   </PropertyGroup>
+
+  <Import Project="$(MSBuildThisFileDirectory)..\..\Sunder.Agent.Worker.props" />
+  <Import Project="..\Sunder.Package.Agent\Models\AgentExtensionSources.props" />
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
-    <ProjectReference Include="..\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
-    <ProjectReference Include="Protocol\SubagentsProtocol.csproj" PrivateAssets="all" />
-    <Compile Include="..\Sunder.Package.Agent.Shared\PackageViews\TranscriptTurnTransportProjection.cs"
-             Link="PackageViews\TranscriptTurnTransportProjection.cs" />
-    <Compile Include="..\Sunder.Package.Agent.Shared\Presentation\ProviderModelLoader.cs"
-             Link="Presentation\ProviderModelLoader.cs" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Compile Remove="App\**\*" />
-    <Compile Remove="PackageViews\**\*" />
-    <Compile Remove="Protocol\**\*" />
-    <None Remove="App\**\*" />
-    <None Remove="Protocol\**\*" />
+    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" />
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="Avalonia.Controls.ItemsRepeater" />
+    <PackageReference Include="CommunityToolkit.Mvvm" />
+    <PackageReference Include="LiveMarkdown.Avalonia" />
+    <Compile Include="@(SunderAgentSubagentsSource->Distinct())" LinkBase="Domain" />
   </ItemGroup>
 
   <ItemGroup>
     <SunderSdkCapability Include="rpc.extended-deadline.v1" />
-    <SunderContractBundle Include="Protocol\Contracts\subagents-owner.rpc.json"
-                          ContractId="sunder.package.agent.subagents.owner"
-                            Version="1.0.0"
-                          DescriptorPath="contracts/subagents-owner.rpc.json"
-                          Exposure="package" />
-    <SunderRpcProvider Include="subagents.management"
-                       ContractId="sunder.package.agent.subagents.owner"
-                        ContractVersion="1.0.0"
-                       Role="runtime"
-                       Audience="owner" />
-    <SunderPackageTarget Include="runtime/$(RuntimeIdentifier)"
-                         Role="runtime"
-                         Rid="$(RuntimeIdentifier)"
-                         Kind="worker" />
   </ItemGroup>
+
+  <Import Project="..\Sunder.Package.Agent.Shared\Sunder.Package.Agent.Shared.props" />
 
 </Project>

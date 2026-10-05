@@ -1,8 +1,10 @@
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Settings;
+using Sunder.Sdk.Worker;
 
 namespace Sunder.Package.Agent.Memory.Semantic.Services;
 
-public sealed class MemorySemanticSettingsService(IPackageContext packageContext)
+public sealed class MemorySemanticSettingsService(IPackageContext packageContext) : ISunderWorkerSettingsSchemaProvider
 {
     private const int DefaultEmbeddingBatchSize = 16;
     private const int DefaultMaxCanonicalTextChars = 1200;
@@ -11,6 +13,8 @@ public sealed class MemorySemanticSettingsService(IPackageContext packageContext
 
     private readonly IPackageContext _packageContext = packageContext;
     internal int CachedMaxCanonicalTextChars { get; private set; } = DefaultMaxCanonicalTextChars;
+
+    public PackageSettingsSchema SettingsSchema => MemorySemanticPackageConfiguration.Schema;
 
     public async Task<bool> IsSemanticRetrievalEnabledAsync(CancellationToken cancellationToken = default)
         => !bool.TryParse(await _packageContext.Settings.GetValueAsync("semantic.enabled", cancellationToken), out var enabled) || enabled;

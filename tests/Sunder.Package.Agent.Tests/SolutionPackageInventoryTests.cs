@@ -10,11 +10,7 @@ public sealed class SolutionPackageInventoryTests
     public void AgentWorker_RegistersGenerationHealthWithSdkLifecycleSupervision()
     {
         var repositoryRoot = AgentPackageRepositoryInventory.RepositoryRoot.FullName;
-        var program = File.ReadAllText(Path.Combine(
-            repositoryRoot,
-            "src",
-            "Sunder.Package.Agent",
-            "Program.cs"));
+        var program = File.ReadAllText(Path.Combine(CanonicalPackageRoles.Analysis(CanonicalPackageRoles.Source("Agent")), "roles/worker/worker-entry.g.cs"));
         var lifecycle = File.ReadAllText(Path.Combine(
             repositoryRoot,
             "src",
@@ -22,7 +18,9 @@ public sealed class SolutionPackageInventoryTests
             "Runtime",
             "AgentWorkerLifecycle.cs"));
 
-        Assert.Contains("new SunderWorkerComposition(serviceProvider, [lifecycle])", program, StringComparison.Ordinal);
+        Assert.Contains("Sunder.Sdk.Worker.SunderWorker.RunAsync(Create)", program, StringComparison.Ordinal);
+        Assert.Contains("Sunder.Sdk.Worker.SunderWorkerComposition", program, StringComparison.Ordinal);
+        Assert.Contains("DeferredLifecycle<global::Sunder.Package.Agent.Runtime.AgentWorkerLifecycle>", program, StringComparison.Ordinal);
         Assert.DoesNotContain("OnActivated = lifecycle", program, StringComparison.Ordinal);
         Assert.Contains("ISunderWorkerLifecycleService", lifecycle, StringComparison.Ordinal);
         Assert.Contains("public Task Completion", lifecycle, StringComparison.Ordinal);
@@ -36,7 +34,7 @@ public sealed class SolutionPackageInventoryTests
             "src",
             "Sunder.Package.Agent.Builder");
         var execution = File.ReadAllText(Path.Combine(builderRoot, "BuilderWorkspaceExecutionService.cs"));
-        var bridge = File.ReadAllText(Path.Combine(builderRoot, "BuilderRpcBridge.cs"));
+        var bridge = File.ReadAllText(Path.Combine(builderRoot, "Rpc/BuilderExecutionBindings.cs"));
 
         Assert.Contains("AgentExecutionFacetIds.ProcessExecution", execution, StringComparison.Ordinal);
         Assert.Contains("AgentExecutionFacetIds.ProcessExecution", bridge, StringComparison.Ordinal);
@@ -175,31 +173,16 @@ public sealed class SolutionPackageInventoryTests
     [Fact]
     public void PackageModules_MatchRuntimePackageInventoryAndCompositionCoverage()
     {
-        var sourceRoot = Path.Combine(AgentPackageRepositoryInventory.RepositoryRoot.FullName, "src");
-        var moduleProjects = Directory.EnumerateFiles(sourceRoot, "*.cs", SearchOption.AllDirectories)
-            .Where(AgentPackageRepositoryInventory.IsSourceFile)
-            .Where(module => File.ReadAllText(module).Contains("ISunderAppPackageModule", StringComparison.Ordinal))
-            .Select(static module => Path.GetDirectoryName(module)!)
-            .SelectMany(static directory => Directory.EnumerateFiles(directory, "*.csproj", SearchOption.TopDirectoryOnly))
-            .Select(Path.GetFullPath)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var appProjects = AgentPackageRepositoryInventory.GetRuntimePackageProjects()
-            .Select(static package => package.AppProjectPath)
-            .Where(static path => path is not null)
-            .Select(static path => path!)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-        Assert.NotEmpty(moduleProjects);
-        Assert.True(
-            moduleProjects.SetEquals(appProjects),
-            "Every App leaf must expose the one managed module surface exercised by PackageModuleCompositionTests.");
+        var packages = AgentPackageRepositoryInventory.GetRuntimePackageProjects();
+        Assert.Equal(12, packages.Count(package => package.HasAppRole));
         foreach (var worker in AgentPackageRepositoryInventory.GetRuntimePackageProjects())
         {
             Assert.True(File.Exists(worker.ProgramPath));
-            var workerSource = string.Join('\n', Directory.EnumerateFiles(worker.DirectoryPath, "*.cs", SearchOption.TopDirectoryOnly)
-                .Select(File.ReadAllText));
-            Assert.DoesNotContain(": ISunderRuntimePackageModule", workerSource, StringComparison.Ordinal);
-            Assert.DoesNotContain(": ISunderAppPackageModule", workerSource, StringComparison.Ordinal);
+            Assert.DoesNotContain(System.Reflection.Assembly.Load(worker.Name).GetTypes(), type =>
+                typeof(Sunder.Sdk.Abstractions.ISunderAppPackageModule).IsAssignableFrom(type));
+            if (worker.HasAppRole)
+                Assert.Single(System.Reflection.Assembly.Load(worker.AppAssemblyName!).GetTypes(), type =>
+                    !type.IsAbstract && typeof(Sunder.Sdk.Abstractions.ISunderAppPackageModule).IsAssignableFrom(type));
         }
     }
 
@@ -221,7 +204,7 @@ public sealed class SolutionPackageInventoryTests
             var packageProject = project.Descendants("SunderPackageProject")
                 .Select(static property => property.Value)
                 .SingleOrDefault();
-            if (role is "worker" or "app")
+            if (project.Descendants("SunderPackageFamilyId").Any() && role is null)
             {
                 Assert.False(string.Equals(packageProject, "false", StringComparison.OrdinalIgnoreCase));
             }
@@ -231,10 +214,7 @@ public sealed class SolutionPackageInventoryTests
             }
             if (role == "worker")
             {
-                Assert.Equal(
-                    "true",
-                    Assert.Single(project.Descendants("SunderPackagePrimaryProject")).Value,
-                    ignoreCase: true);
+                Assert.Empty(project.Descendants("SunderPackagePrimaryProject"));
             }
             Assert.Empty(project.Descendants("SunderPackageAggregateProject"));
             Assert.Empty(project.Descendants("SunderPackageWorkerProject"));
@@ -245,54 +225,90 @@ public sealed class SolutionPackageInventoryTests
     }
 
     [Fact]
+    public void WorkerProjects_UseCentralThinModuleDefaults()
+    {
+        var repositoryRoot = AgentPackageRepositoryInventory.RepositoryRoot.FullName;
+        const string expectedRids = "win-x64;win-arm64;linux-x64;linux-arm64;osx-x64;osx-arm64";
+        const string workerDefaultsFileName = "Sunder.Agent.Worker.props";
+        var workerDefaults = XDocument.Load(Path.Combine(repositoryRoot, workerDefaultsFileName));
+        var workerPropertyGroup = Assert.Single(workerDefaults.Descendants("PropertyGroup"));
+        var expectedValues = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["SunderPackageProject"] = "true",
+            ["SunderSdkWorkerReference"] = "true",
+            ["CopyLocalLockFileAssemblies"] = "true",
+            ["OutputType"] = "Library",
+            ["RuntimeIdentifiers"] = expectedRids,
+            ["SelfContained"] = "false",
+            ["UseAppHost"] = "false",
+            ["PublishSingleFile"] = "false",
+            ["PublishTrimmed"] = "false",
+        };
+        foreach (var (property, expected) in expectedValues)
+        {
+            Assert.Equal(expected, Assert.Single(workerPropertyGroup.Elements(property)).Value, ignoreCase: true);
+        }
+        Assert.Empty(workerPropertyGroup.Elements("RuntimeIdentifier"));
+        Assert.Empty(workerPropertyGroup.Elements("SunderGeneratedPackageManifest"));
+
+        var centralProperties = expectedValues.Keys
+            .Append("RuntimeIdentifier")
+            .Append("SunderGeneratedPackageManifest")
+            .ToArray();
+        var workers = AgentPackageRepositoryInventory.GetRuntimePackageProjects().Select(package => package.ProjectPath).ToArray();
+        Assert.Equal(15, workers.Length);
+        Assert.All(workers, projectPath =>
+        {
+            var project = XDocument.Load(projectPath);
+            if (Path.GetFileNameWithoutExtension(projectPath) == "Sunder.Package.Agent")
+            {
+                foreach (var (property, expected) in expectedValues.Where(pair => pair.Key != "OutputType"))
+                    Assert.Equal(expected, Assert.Single(project.Descendants(property)).Value, ignoreCase: true);
+                Assert.DoesNotContain(project.Descendants("OutputType"), item => item.Value == "Exe");
+            }
+            else
+            {
+                Assert.All(centralProperties, property => Assert.Empty(project.Descendants(property)));
+                Assert.Single(project.Descendants("Import"), import =>
+                    import.Attribute("Project")?.Value.EndsWith(workerDefaultsFileName, StringComparison.Ordinal) == true);
+            }
+        });
+    }
+
+    [Fact]
     public void AppProjects_UseCanonicalSixRidMatrix()
     {
         var repositoryRoot = AgentPackageRepositoryInventory.RepositoryRoot.FullName;
         const string expected = "win-x64;win-arm64;linux-x64;linux-arm64;osx-x64;osx-arm64";
-        var centralTargets = XDocument.Load(Path.Combine(repositoryRoot, "Directory.Build.targets"));
-        var appPropertyGroup = Assert.Single(centralTargets.Descendants("PropertyGroup"), static group =>
-            string.Equals(group.Attribute("Condition")?.Value, "'$(SunderPackageRole)' == 'app'", StringComparison.Ordinal));
-
-        Assert.Equal(expected, Assert.Single(appPropertyGroup.Elements("SunderPackageRuntimeIdentifiers")).Value);
-
-        var appProjects = EnumerateProductionProjects()
-            .Where(static project => GetProjectRole(project) == "app")
-            .ToArray();
-        Assert.NotEmpty(appProjects);
-        Assert.All(appProjects, project => Assert.Empty(
-            XDocument.Load(project).Descendants("SunderPackageRuntimeIdentifiers")));
+        var defaults = XDocument.Load(Path.Combine(repositoryRoot, "Sunder.Agent.Worker.props"));
+        Assert.Equal(expected, Assert.Single(defaults.Descendants("RuntimeIdentifiers")).Value);
+        var appProjects = AgentPackageRepositoryInventory.GetRuntimePackageProjects().Where(package => package.HasAppRole).ToArray();
+        Assert.Equal(12, appProjects.Length);
+        Assert.All(appProjects, package =>
+        {
+            var project = XDocument.Load(package.ProjectPath);
+            Assert.Empty(project.Descendants("SunderPackageAppProject"));
+            var overrides = project.Descendants("RuntimeIdentifiers").ToArray();
+            Assert.All(overrides, value => Assert.Equal(expected, value.Value));
+        });
     }
 
     [Fact]
     public void AppAndWorkerProjectReferenceClosures_DoNotCrossRoleBoundary()
     {
-        var projects = EnumerateProductionProjects()
-            .ToDictionary(Path.GetFullPath, StringComparer.OrdinalIgnoreCase);
-        var roles = projects.Keys.ToDictionary(
-            static project => project,
-            GetProjectRole,
-            StringComparer.OrdinalIgnoreCase);
-
-        foreach (var project in projects.Keys.Where(project => roles[project] is "app" or "worker"))
+        var packages = AgentPackageRepositoryInventory.GetRuntimePackageProjects();
+        Assert.Equal(15, packages.Count);
+        foreach (var package in packages)
         {
-            var role = roles[project]!;
-            var forbiddenRole = role == "app" ? "worker" : "app";
-            var pending = new Stack<string>(GetProjectReferences(project));
-            var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            while (pending.TryPop(out var referencedProject))
+            foreach (var name in package.HasAppRole ? new[] { package.Name, package.AppAssemblyName! } : [package.Name])
             {
-                if (!visited.Add(referencedProject) || !projects.ContainsKey(referencedProject))
-                {
-                    continue;
-                }
-
-                Assert.False(
-                    string.Equals(roles[referencedProject], forbiddenRole, StringComparison.Ordinal),
-                    $"{role} project '{NormalizeRepositoryPath(project)}' reaches {forbiddenRole} project '{NormalizeRepositoryPath(referencedProject)}'.");
-                foreach (var transitiveReference in GetProjectReferences(referencedProject))
-                {
-                    pending.Push(transitiveReference);
-                }
+                var references = System.Reflection.Assembly.Load(name).GetReferencedAssemblies();
+                Assert.DoesNotContain(references, reference => reference.Name!.StartsWith("Sunder.Package.Agent", StringComparison.Ordinal)
+                    || reference.Name == "Sunder.Agent.Execution.Common");
+                if (name.EndsWith(".App", StringComparison.Ordinal))
+                    Assert.DoesNotContain(references, reference => reference.Name == "Sunder.Sdk.Worker");
+                else Assert.DoesNotContain(references, reference => reference.Name!.StartsWith("Avalonia", StringComparison.Ordinal)
+                    || reference.Name == "Sunder.Sdk.Avalonia");
             }
         }
     }
@@ -333,6 +349,11 @@ public sealed class SolutionPackageInventoryTests
             ".github",
             "workflows",
             "sunder-agent-promotion.yml"));
+        var acceptanceWorkflow = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            ".github",
+            "workflows",
+            "sunder-agent-production-acceptance.yml"));
         var smokeWorkflow = File.ReadAllText(Path.Combine(repositoryRoot, ".github", "workflows", "sunder-package-smoke.yml"));
         var windowsWorkflow = File.ReadAllText(Path.Combine(repositoryRoot, ".circleci", "config.yml"));
         var testEvidenceGenerator = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "generate-test-duration-report.py"));
@@ -350,16 +371,23 @@ public sealed class SolutionPackageInventoryTests
         var nativeBuilder = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "build-native-family.ps1"));
         var nativeAssembler = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "assemble-native-family.sh"));
         var nativeRecorder = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "record-native-leaf-evidence.sh"));
+        var nativeEvidenceVerifier = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "verify-native-family-evidence.sh"));
+        var outputAuditor = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "generate-package-output-audit.sh"));
         var nativeSmokeRunner = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "run-native-runtime-smoke.sh"));
         var releasePublisher = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "publish-agent-family.sh"));
-        var signingTargets = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "Sunder.Agent.ReleaseSigning.targets"));
-        var platformSigner = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "sign-worker-apphost.ps1"));
+        var runtimeAvailabilityVerifier = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "verify-execution-runtime-availability.sh"));
+        var nativeReleaseFixture = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "native-release.fixture.sh"));
         var nativeSmoke = File.ReadAllText(Path.Combine(repositoryRoot, "tests", "fixtures", "AgentNativeReleaseSmokeTests.cs"));
         var registryPublisher = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "publish-registry-package.sh"));
         var familyPromoter = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "promote-family-dist-tag.sh"));
         var releasePromoter = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "promote-agent-family.sh"));
         var releasePromotionFixture = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "promote-agent-family.fixture.sh"));
         var acceptanceArtifactVerifier = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "verify-acceptance-artifact.sh"));
+        var publicationVerifier = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "verify-agent-publication.sh"));
+        var publicationVerifierFixture = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "verify-agent-publication.fixture.sh"));
+        var acceptanceUploader = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "upload-agent-acceptance.sh"));
+        var acceptanceDownloader = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "download-agent-acceptance.sh"));
+        var acceptanceUploadFixture = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "upload-agent-acceptance.fixture.sh"));
         var expected = AgentPackageRepositoryInventory.GetRuntimePackageProjects().ToDictionary(
             static package => GetReleaseKey(package.Name),
             StringComparer.Ordinal);
@@ -381,8 +409,8 @@ public sealed class SolutionPackageInventoryTests
         Assert.Contains("SUNDER_REQUIRE_AGENT_PACKAGE_RELEASE: \"1\"", workflow, StringComparison.Ordinal);
         Assert.Contains("SUNDER_REQUIRE_AGENT_UI_SNAPSHOT: \"1\"", workflow, StringComparison.Ordinal);
         Assert.Contains("map(select(.artifactType == \"sunderpkg\")) | sort_by(.key)[]", nativeAssembler, StringComparison.Ordinal);
-        Assert.Contains("dotnet nuget push \"$protocol_path\"", releasePublisher, StringComparison.Ordinal);
-        Assert.Contains("--skip-duplicate", releasePublisher, StringComparison.Ordinal);
+        Assert.DoesNotContain("dotnet nuget push", releasePublisher, StringComparison.Ordinal);
+        Assert.Contains("packages.json must contain exactly 15 unique canonical package archives.", releasePublisher, StringComparison.Ordinal);
         Assert.Contains("workflow_dispatch:", promotionWorkflow, StringComparison.Ordinal);
         Assert.Contains("group: sunder-agent-family-promotion", promotionWorkflow, StringComparison.Ordinal);
         Assert.Contains("environment: sunder-agent-release-promotion", promotionWorkflow, StringComparison.Ordinal);
@@ -390,13 +418,20 @@ public sealed class SolutionPackageInventoryTests
         Assert.DoesNotContain("promote transactionally", promotionWorkflow, StringComparison.Ordinal);
         Assert.Contains("actions: read", promotionWorkflow, StringComparison.Ordinal);
         Assert.Contains("contents: write", promotionWorkflow, StringComparison.Ordinal);
-        Assert.Contains("run-id: ${{ inputs.acceptance_run_id }}", promotionWorkflow, StringComparison.Ordinal);
+        Assert.Contains("release_id:", promotionWorkflow, StringComparison.Ordinal);
+        Assert.Contains("publication_run_id:", promotionWorkflow, StringComparison.Ordinal);
+        Assert.Contains("publication_run_attempt:", promotionWorkflow, StringComparison.Ordinal);
         Assert.Contains("acceptance_run_attempt:", promotionWorkflow, StringComparison.Ordinal);
-        Assert.Contains("acceptance_artifact_id:", promotionWorkflow, StringComparison.Ordinal);
-        Assert.Contains("acceptance_artifact_digest:", promotionWorkflow, StringComparison.Ordinal);
-        Assert.Contains("artifact-ids: ${{ inputs.acceptance_artifact_id }}", promotionWorkflow, StringComparison.Ordinal);
-        Assert.DoesNotContain("name: sunder-agent-production-acceptance", promotionWorkflow, StringComparison.Ordinal);
+        Assert.Contains("acceptance_workflow_sha:", promotionWorkflow, StringComparison.Ordinal);
+        Assert.DoesNotContain("acceptance_artifact_id:", promotionWorkflow, StringComparison.Ordinal);
+        Assert.DoesNotContain("acceptance_artifact_digest:", promotionWorkflow, StringComparison.Ordinal);
+        Assert.Contains("actions/download-artifact", promotionWorkflow, StringComparison.Ordinal);
+        Assert.Contains("path: promotion-policy", promotionWorkflow, StringComparison.Ordinal);
+        Assert.Contains("path: release-source", promotionWorkflow, StringComparison.Ordinal);
+        Assert.Contains("SUNDER_AGENT_PUBLICATION_EXPECTED_DRAFT: \"any\"", promotionWorkflow, StringComparison.Ordinal);
+        Assert.Contains("test \"$GITHUB_REF\" = refs/heads/main", promotionWorkflow, StringComparison.Ordinal);
         Assert.Contains("ACCEPTANCE_EVIDENCE_SHA256", promotionWorkflow, StringComparison.Ordinal);
+        Assert.Contains("bash scripts/release/download-agent-acceptance.sh", promotionWorkflow, StringComparison.Ordinal);
         Assert.Contains("bash scripts/release/verify-acceptance-artifact.sh", promotionWorkflow, StringComparison.Ordinal);
         Assert.Contains(".github/workflows/sunder-agent-production-acceptance.yml", acceptanceArtifactVerifier, StringComparison.Ordinal);
         Assert.Contains("Sunder Agent Production Acceptance", acceptanceArtifactVerifier, StringComparison.Ordinal);
@@ -407,14 +442,66 @@ public sealed class SolutionPackageInventoryTests
         Assert.Contains("(.run_attempt | tostring) == $attempt", acceptanceArtifactVerifier, StringComparison.Ordinal);
         Assert.Contains(".digest == $digest", acceptanceArtifactVerifier, StringComparison.Ordinal);
         Assert.Contains("$artifact.created_at | fromdateiso8601", acceptanceArtifactVerifier, StringComparison.Ordinal);
-        Assert.Contains(".head_sha == $source", acceptanceArtifactVerifier, StringComparison.Ordinal);
+        Assert.Contains(".head_branch == $branch", acceptanceArtifactVerifier, StringComparison.Ordinal);
+        Assert.Contains(".head_sha == $workflow_sha", acceptanceArtifactVerifier, StringComparison.Ordinal);
         Assert.Contains(".conclusion == \"success\"", acceptanceArtifactVerifier, StringComparison.Ordinal);
-        Assert.Contains("bash -n scripts/*.sh scripts/release/*.sh", workflow, StringComparison.Ordinal);
+        Assert.Contains("agent-family-acceptance.json", acceptanceUploader, StringComparison.Ordinal);
+        Assert.Contains("agent-family-acceptance-$run_id-$run_attempt.json", acceptanceUploader, StringComparison.Ordinal);
+        Assert.Contains("will not be replaced", acceptanceUploader, StringComparison.Ordinal);
+        Assert.Contains("agent-family-acceptance-$run_id-$run_attempt.json", acceptanceDownloader, StringComparison.Ordinal);
+        Assert.Contains("verify-acceptance-artifact.sh", acceptanceDownloader, StringComparison.Ordinal);
+        Assert.Contains("sha256:$expected_sha", acceptanceDownloader, StringComparison.Ordinal);
+        Assert.Contains("sunder-agent-production-acceptance-$run_id-$run_attempt", acceptanceArtifactVerifier, StringComparison.Ordinal);
+        Assert.Contains("workflow_dispatch:", acceptanceWorkflow, StringComparison.Ordinal);
+        Assert.DoesNotContain("\n  push:", acceptanceWorkflow, StringComparison.Ordinal);
+        Assert.Contains("environment: sunder-agent-production-acceptance", acceptanceWorkflow, StringComparison.Ordinal);
+        Assert.Contains("test \"$GITHUB_REF\" = refs/heads/main", acceptanceWorkflow, StringComparison.Ordinal);
+        Assert.Contains("path: acceptance-policy", acceptanceWorkflow, StringComparison.Ordinal);
+        Assert.Contains("path: release-source", acceptanceWorkflow, StringComparison.Ordinal);
+        Assert.Contains("publication_run_id:", acceptanceWorkflow, StringComparison.Ordinal);
+        Assert.Contains("publication_run_attempt:", acceptanceWorkflow, StringComparison.Ordinal);
+        Assert.Contains("sunder-agent-publication-evidence-${{ inputs.release_id }}-${{ inputs.publication_run_attempt }}", acceptanceWorkflow, StringComparison.Ordinal);
+        Assert.Contains("bash scripts/release/verify-agent-publication.sh", acceptanceWorkflow, StringComparison.Ordinal);
+        Assert.Contains("eng/execution-runtimes/production.lock.json", acceptanceWorkflow, StringComparison.Ordinal);
+        Assert.Contains("SUNDER_AGENT_ACCEPTANCE_CANDIDATE_ONLY: \"true\"", acceptanceWorkflow, StringComparison.Ordinal);
+        Assert.Contains("bash scripts/release/promote-agent-family.sh", acceptanceWorkflow, StringComparison.Ordinal);
+        Assert.Contains("bash scripts/release/upload-agent-acceptance.sh", acceptanceWorkflow, StringComparison.Ordinal);
+        Assert.Contains("bash scripts/release/download-agent-acceptance.sh", acceptanceWorkflow, StringComparison.Ordinal);
+        Assert.Contains("name: sunder-agent-production-native-${{ matrix.rid }}-${{ github.run_attempt }}", acceptanceWorkflow, StringComparison.Ordinal);
+        Assert.Contains("pattern: sunder-agent-production-native-*-${{ github.run_attempt }}", acceptanceWorkflow, StringComparison.Ordinal);
+        Assert.Contains("name: sunder-agent-production-acceptance", acceptanceWorkflow, StringComparison.Ordinal);
+        var nativeAcceptanceStart = acceptanceWorkflow.IndexOf("\n  native-acceptance:", StringComparison.Ordinal);
+        var archiveDecisionStart = acceptanceWorkflow.IndexOf("\n  archive-decision:", StringComparison.Ordinal);
+        Assert.True(nativeAcceptanceStart >= 0 && archiveDecisionStart > nativeAcceptanceStart);
+        var nativeAcceptanceJob = acceptanceWorkflow[nativeAcceptanceStart..archiveDecisionStart];
+        Assert.DoesNotContain("contents: write", nativeAcceptanceJob, StringComparison.Ordinal);
+        Assert.DoesNotContain("GH_TOKEN", nativeAcceptanceJob, StringComparison.Ordinal);
+        Assert.DoesNotContain("NUGET_API_KEY", nativeAcceptanceJob, StringComparison.Ordinal);
+        Assert.DoesNotContain("SUNDER_REGISTRY_CLI_TOKEN", nativeAcceptanceJob, StringComparison.Ordinal);
+        Assert.DoesNotContain("SUNDER_REGISTRY_PUBLISH_TOKEN", nativeAcceptanceJob, StringComparison.Ordinal);
+        Assert.DoesNotContain("id-token: write", nativeAcceptanceJob, StringComparison.Ordinal);
+        Assert.Contains("SUNDER_EXECUTION_RUNTIME_RELEASE_PUBLIC_KEYS", nativeAcceptanceJob, StringComparison.Ordinal);
+        Assert.Contains("SUNDER_EXECUTION_RUNTIME_ATTESTATION_PUBLIC_KEYS", nativeAcceptanceJob, StringComparison.Ordinal);
+        Assert.Contains("SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_SHA256", nativeAcceptanceJob, StringComparison.Ordinal);
+        Assert.Contains("--driver-sha256", nativeAcceptanceJob, StringComparison.Ordinal);
+        Assert.Contains("chmod 0555 \"$driver_snapshot_root\"", nativeAcceptanceJob, StringComparison.Ordinal);
+        Assert.Contains("contents: write", acceptanceWorkflow[archiveDecisionStart..], StringComparison.Ordinal);
+        Assert.Contains("--coordinator-sha256", acceptanceWorkflow[archiveDecisionStart..], StringComparison.Ordinal);
+        Assert.Contains("--actions-artifact-name", acceptanceWorkflow[archiveDecisionStart..], StringComparison.Ordinal);
+        foreach (var rid in new[] { "win-x64", "win-arm64", "linux-x64", "linux-arm64", "osx-x64", "osx-arm64" })
+        {
+            Assert.Contains($"- rid: {rid}", acceptanceWorkflow, StringComparison.Ordinal);
+        }
+        Assert.Contains("for script in scripts/*.sh scripts/release/*.sh; do", workflow, StringComparison.Ordinal);
+        Assert.Contains("bash -n \"$script\"", workflow, StringComparison.Ordinal);
         Assert.Contains("bash scripts/generate-test-duration-report.fixture.sh", workflow, StringComparison.Ordinal);
         Assert.Contains("bash scripts/generate-test-duration-report.fixture.sh", smokeWorkflow, StringComparison.Ordinal);
         Assert.Contains("bash ./scripts/generate-test-duration-report.fixture.sh", windowsWorkflow, StringComparison.Ordinal);
         Assert.Contains("bash scripts/release/verify-agent-release-version.sh \"$version\" \"$CORE_SDK_VERSION\"", workflow, StringComparison.Ordinal);
         Assert.Contains("bash scripts/release/verify-agent-release-version.fixture.sh", workflow, StringComparison.Ordinal);
+        Assert.Contains("bash scripts/release/verify-execution-runtime-availability.fixture.sh", workflow, StringComparison.Ordinal);
+        Assert.Contains("bash scripts/release/upload-agent-acceptance.fixture.sh", workflow, StringComparison.Ordinal);
+        Assert.Contains("bash scripts/release/verify-agent-publication.fixture.sh", workflow, StringComparison.Ordinal);
         Assert.Contains("bash scripts/release/verify-agent-release-version.fixture.sh", smokeWorkflow, StringComparison.Ordinal);
         Assert.Contains("PackageVersionRange.Parse(familyDependencyRange)", releaseVersionVerifier, StringComparison.Ordinal);
         Assert.Contains("familyRange.IsSatisfiedBy(releaseVersion)", releaseVersionVerifier, StringComparison.Ordinal);
@@ -422,8 +509,13 @@ public sealed class SolutionPackageInventoryTests
         Assert.Contains("2.0.1-preview.1", releaseVersionFixture, StringComparison.Ordinal);
         Assert.Contains("bash -n scripts/*.sh scripts/release/*.sh scripts/compatibility/*.sh", promotionWorkflow, StringComparison.Ordinal);
         Assert.Contains("bash scripts/release/promote-agent-family.sh", promotionWorkflow, StringComparison.Ordinal);
+        Assert.Contains("Sunder Agent Family Release", publicationVerifier, StringComparison.Ordinal);
+        Assert.Contains("actions/runs/$publication_run_id/attempts/$publication_run_attempt", publicationVerifier, StringComparison.Ordinal);
+        Assert.Contains("Publication handoff artifact was not created by the selected run attempt", publicationVerifier, StringComparison.Ordinal);
+        Assert.Contains("MALICIOUS_TAG_POLICY_EXECUTED", publicationVerifierFixture, StringComparison.Ordinal);
+        Assert.Contains("rerun-artifact-from-different-attempt", publicationVerifierFixture, StringComparison.Ordinal);
         Assert.DoesNotContain("group: sunder-agent-family-dist-tag-promotion", workflow, StringComparison.Ordinal);
-        Assert.Contains("bash scripts/release/verify-nuget-package.sh \"$protocol_path\" \"$remote\"", releasePublisher, StringComparison.Ordinal);
+        Assert.Contains("bash scripts/release/publish-registry-package.sh", releasePublisher, StringComparison.Ordinal);
         Assert.Contains("bash scripts/release/verify-core-sdk-release.sh \"$CORE_SDK_VERSION\" \"$EXPECTED_CORE_COMMIT\"", workflow, StringComparison.Ordinal);
         Assert.Contains("verify-core-sdk-release.sh \"$CORE_SDK_VERSION\" resolve", workflow, StringComparison.Ordinal);
         Assert.Contains("dotnet restore Sunder.AgentPackage.slnx", workflow, StringComparison.Ordinal);
@@ -474,27 +566,33 @@ public sealed class SolutionPackageInventoryTests
         Assert.Contains("windows-11-arm", workflow, StringComparison.Ordinal);
         Assert.Contains("ubuntu-24.04-arm", workflow, StringComparison.Ordinal);
         Assert.Contains("macos-15-intel", workflow, StringComparison.Ordinal);
-        Assert.Contains("environment: sunder-agent-release-signing", workflow, StringComparison.Ordinal);
-        Assert.Contains("id-token: write", workflow, StringComparison.Ordinal);
-        Assert.Contains("AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME", workflow, StringComparison.Ordinal);
-        Assert.Contains("APPLE_BUILD_CERTIFICATE_BASE64", workflow, StringComparison.Ordinal);
-        Assert.Contains("SUNDER_APPLE_SIGNING_CERTIFICATE", workflow, StringComparison.Ordinal);
-        Assert.Contains("SUNDER_APPLE_PRIOR_KEYCHAINS", workflow, StringComparison.Ordinal);
-        Assert.Contains("restore_user_keychains", workflow, StringComparison.Ordinal);
-        Assert.Contains("trap 'cleanup_signing $?' ERR", workflow, StringComparison.Ordinal);
-        Assert.True(
-            workflow.IndexOf("trap 'cleanup_signing $?' ERR", StringComparison.Ordinal)
-            < workflow.IndexOf("base64 --decode", StringComparison.Ordinal),
-            "Apple signing cleanup must be registered before certificate decoding starts.");
-        Assert.True(
-            workflow.LastIndexOf("security list-keychains -d user -s", StringComparison.Ordinal)
-            < workflow.LastIndexOf("security delete-keychain", StringComparison.Ordinal),
-            "Apple cleanup must restore the prior keychain search list before deleting the temporary keychain.");
-        Assert.Contains("SunderPackageWorkerSigningTargets=SignSunderAgentReleaseWorkerAppHost", nativeBuilder, StringComparison.Ordinal);
-        Assert.Contains("@(SunderPackageWorkerSigningFile)", signingTargets, StringComparison.Ordinal);
-        Assert.Contains("$(SunderPackageWorkerEntryPointRelativePath)", signingTargets, StringComparison.Ordinal);
-        Assert.Contains("Get-AuthenticodeSignature", platformSigner, StringComparison.Ordinal);
-        Assert.Contains("codesign --verify --strict", platformSigner, StringComparison.Ordinal);
+        Assert.DoesNotContain("sunder-agent-release-signing", workflow, StringComparison.Ordinal);
+        Assert.DoesNotContain("id-token: write", workflow, StringComparison.Ordinal);
+        Assert.DoesNotContain("AZURE_TRUSTED_SIGNING", workflow, StringComparison.Ordinal);
+        Assert.DoesNotContain("APPLE_BUILD_CERTIFICATE", workflow, StringComparison.Ordinal);
+        Assert.DoesNotContain("SunderPackageWorkerSigningTargets", nativeBuilder, StringComparison.Ordinal);
+        Assert.False(File.Exists(Path.Combine(repositoryRoot, "scripts", "release", "Sunder.Agent.ReleaseSigning.targets")));
+        Assert.False(File.Exists(Path.Combine(repositoryRoot, "scripts", "release", "sign-worker-apphost.ps1")));
+        Assert.Contains("expectedEntryPoint", nativeBuilder, StringComparison.Ordinal);
+        Assert.Contains(".runtimeconfig.json", nativeBuilder, StringComparison.Ordinal);
+        Assert.Contains("modulePath", nativeRecorder, StringComparison.Ordinal);
+        Assert.Contains("runtimeConfigSha256", nativeRecorder, StringComparison.Ordinal);
+        Assert.Contains("dependencyManifestSha256", nativeRecorder, StringComparison.Ordinal);
+        Assert.Contains(".leaf.runtimeConfigPath, .leaf.runtimeConfigSha256", workflow, StringComparison.Ordinal);
+        Assert.Contains(".leaf.dependencyManifestPath, .leaf.dependencyManifestSha256", workflow, StringComparison.Ordinal);
+        Assert.Contains("payload/runtime/shared/$logical_path", workflow, StringComparison.Ordinal);
+        Assert.Contains("payload/shared/$logical_path", workflow, StringComparison.Ordinal);
+        Assert.Contains("schemaVersion: 2", nativeRecorder, StringComparison.Ordinal);
+        Assert.Contains("schemaVersion: 2", nativeAssembler, StringComparison.Ordinal);
+        Assert.Contains("schema-version-2 native evidence and 15 exact final archives", nativeEvidenceVerifier, StringComparison.Ordinal);
+        Assert.Contains("package-output-audit.json", workflow, StringComparison.Ordinal);
+        Assert.Contains("package-output-audit.json", releasePublisher, StringComparison.Ordinal);
+        Assert.Contains("package-output-audit.json", releasePromoter, StringComparison.Ordinal);
+        Assert.Contains("generate-package-output-audit.sh", releasePromoter, StringComparison.Ordinal);
+        Assert.Contains("output-audit-tamper", releasePromotionFixture, StringComparison.Ordinal);
+        Assert.Contains("phase0BaselineBytes: 1440013254", outputAuditor, StringComparison.Ordinal);
+        Assert.Contains("maximumBytes: 360003313", outputAuditor, StringComparison.Ordinal);
+        Assert.Contains("test ! -e \"$script_dir/Sunder.Agent.ReleaseSigning.targets\"", nativeReleaseFixture, StringComparison.Ordinal);
         Assert.Contains("-p:BuildProjectReferences=false", nativeBuilder, StringComparison.Ordinal);
         Assert.Contains("-p:SunderPackageUsePrebuiltLeaves=true", nativeBuilder, StringComparison.Ordinal);
         Assert.Contains("-p:SunderPackageComposeRuntimeIdentifiers=$Rid", nativeBuilder, StringComparison.Ordinal);
@@ -504,8 +602,10 @@ public sealed class SolutionPackageInventoryTests
         Assert.DoesNotContain("SunderAgentUniversalWorkerPackage", nativeBuilder, StringComparison.Ordinal);
         Assert.DoesNotContain("SunderAgentUniversalWorkerPackage", nativeAssembler, StringComparison.Ordinal);
         Assert.Contains("native-test-evidence.json", nativeAssembler, StringComparison.Ordinal);
-        Assert.Contains("Native signed leaves and Runtime lifecycle", workflow, StringComparison.Ordinal);
+        Assert.Contains("Native framework-dependent leaves and Runtime lifecycle", workflow, StringComparison.Ordinal);
         Assert.Contains("CurrentRidArchives_ExerciseEveryNativeWorkerThroughRuntimeHost", nativeSmokeRunner, StringComparison.Ordinal);
+        Assert.Contains("SUNDER_AGENT_BUILDER_SDK_VERSION", nativeSmokeRunner, StringComparison.Ordinal);
+        Assert.Contains("SUNDER_AGENT_BUILDER_DOTNET_PATH", nativeSmokeRunner, StringComparison.Ordinal);
         Assert.Contains("WorkerReleaseMetrics.RecordAsync", nativeSmoke, StringComparison.Ordinal);
         Assert.Contains("ActivationCompletion", nativeSmoke, StringComparison.Ordinal);
         Assert.Contains("CaptureProcessParentsAsync", nativeSmoke, StringComparison.Ordinal);
@@ -517,8 +617,19 @@ public sealed class SolutionPackageInventoryTests
         Assert.Contains("workerProcessCount", nativeRecorder, StringComparison.Ordinal);
         Assert.Contains("workerRssBytes", nativeRecorder, StringComparison.Ordinal);
         Assert.Contains("VerifyOwnerUnaryAndStreamAsync", nativeSmoke, StringComparison.Ordinal);
+        Assert.Contains("VerifyBuilderProjectLifecycleAsync", nativeSmoke, StringComparison.Ordinal);
+        Assert.Contains("executionRuntimes.GetRuntimeRoot(runtimeReceipt)", nativeSmoke, StringComparison.Ordinal);
+        Assert.Contains("rollForward = \"disable\"", nativeSmoke, StringComparison.Ordinal);
+        Assert.Contains("kind = \"add-path-entry\"", nativeSmoke, StringComparison.Ordinal);
+        Assert.Contains("\"new\", \"console\"", nativeSmoke, StringComparison.Ordinal);
+        Assert.Contains("\"build\", projectRoot", nativeSmoke, StringComparison.Ordinal);
+        Assert.Contains("\"publish\", projectRoot", nativeSmoke, StringComparison.Ordinal);
+        Assert.Contains("SUNDER_AGENT_BUILDER_SDK_VERSION: ${{ env.DOTNET_VERSION }}", workflow, StringComparison.Ordinal);
         Assert.Contains("VerifyCallbackAndAuthAsync", nativeSmoke, StringComparison.Ordinal);
         Assert.Contains("VerifyCrashIsolationAsync", nativeSmoke, StringComparison.Ordinal);
+        Assert.Contains("EnsureDotNetAsync", nativeSmoke, StringComparison.Ordinal);
+        Assert.Contains("ObserveSupportedAsync", nativeSmoke, StringComparison.Ordinal);
+        Assert.Contains("AssertRuntimeLaunch", nativeSmoke, StringComparison.Ordinal);
         Assert.Contains("reinstall: true", nativeSmoke, StringComparison.Ordinal);
         Assert.Contains("SchemaMigrations", nativeSmoke, StringComparison.Ordinal);
         Assert.Contains("MemorySchemaMigrations", nativeSmoke, StringComparison.Ordinal);
@@ -528,11 +639,44 @@ public sealed class SolutionPackageInventoryTests
         Assert.Contains("max_runtime_archive_bytes=$((256 * 1024 * 1024))", workflow, StringComparison.Ordinal);
         Assert.Contains("max_runtime_payload_bytes=$((640 * 1024 * 1024))", workflow, StringComparison.Ordinal);
         Assert.Contains("max_family_archive_bytes=$((4 * 1024 * 1024 * 1024))", workflow, StringComparison.Ordinal);
+        Assert.Contains(".installedProjection.bytes <= 360003313", workflow, StringComparison.Ordinal);
+        Assert.DoesNotContain("phase4_family_payload_bytes", workflow, StringComparison.Ordinal);
         Assert.Contains(".sources[0].name == \"sunder-core\" and .sources[0].sha == $core_commit", coreSdkVerifier, StringComparison.Ordinal);
         Assert.Contains("does not resolve to provenance commit", coreSdkVerifier, StringComparison.Ordinal);
         Assert.Contains("commit=\\\"$expected_core_commit\\\"", coreSdkVerifier, StringComparison.Ordinal);
         Assert.Contains("bash \"$nuget_verifier\" \"$expected_package\" \"$published_package\"", coreSdkVerifier, StringComparison.Ordinal);
         Assert.Contains("bash scripts/release/publish-registry-package.sh", releasePublisher, StringComparison.Ordinal);
+        Assert.Contains("bash scripts/release/verify-execution-runtime-availability.sh \"$registry_api\"", releasePublisher, StringComparison.Ordinal);
+        Assert.Contains("/api/v1/execution-runtimes/resolve", runtimeAvailabilityVerifier, StringComparison.Ordinal);
+        Assert.Contains("sunder.runtime.dotnet", runtimeAvailabilityVerifier, StringComparison.Ordinal);
+        Assert.Contains(">=10.0.0 <11.0.0", runtimeAvailabilityVerifier, StringComparison.Ordinal);
+        Assert.Contains("sunder.dotnet-worker-module.v1", runtimeAvailabilityVerifier, StringComparison.Ordinal);
+        Assert.Contains("sunder.runtime-trust.v1", runtimeAvailabilityVerifier, StringComparison.Ordinal);
+        Assert.Contains(".runtimeArtifact.lifecycle.state == \"supported\"", runtimeAvailabilityVerifier, StringComparison.Ordinal);
+        Assert.Contains("/releases/$resolved_version/revisions/$resolved_revision", runtimeAvailabilityVerifier, StringComparison.Ordinal);
+        foreach (var lockField in new[]
+                 {
+                     "runtimeId",
+                     "version",
+                     "packagingRevision",
+                     "rid",
+                     "moduleAbi",
+                     "workerProtocol",
+                     "minimumHostTrustGeneration",
+                     "releaseSigningKeyId",
+                     "nativeAttestationKeyId",
+                 })
+        {
+            Assert.Contains(lockField, runtimeAvailabilityVerifier, StringComparison.Ordinal);
+        }
+        Assert.DoesNotContain("Authorization:", runtimeAvailabilityVerifier, StringComparison.Ordinal);
+        Assert.DoesNotContain("SUNDER_REGISTRY_PUBLISH_TOKEN", runtimeAvailabilityVerifier, StringComparison.Ordinal);
+        var runtimePreflight = releasePublisher.IndexOf(
+            "bash scripts/release/verify-execution-runtime-availability.sh",
+            StringComparison.Ordinal);
+        var draftCreation = releasePublisher.IndexOf("create_args=(release create", StringComparison.Ordinal);
+        var immutablePublication = releasePublisher.IndexOf("external_publication_started=true", StringComparison.Ordinal);
+        Assert.True(runtimePreflight >= 0 && runtimePreflight < draftCreation && runtimePreflight < immutablePublication);
         Assert.DoesNotContain("promote-family-dist-tag.sh", releasePublisher, StringComparison.Ordinal);
         Assert.DoesNotContain("gh release edit", releasePublisher, StringComparison.Ordinal);
         Assert.DoesNotContain("--draft=false", releasePublisher, StringComparison.Ordinal);
@@ -576,8 +720,8 @@ public sealed class SolutionPackageInventoryTests
         Assert.Contains("[--verify-only]", familyPromoter, StringComparison.Ordinal);
         Assert.Contains("capture_family_snapshot", familyPromoter, StringComparison.Ordinal);
         Assert.Contains("Discard the stale state after the guard and rebuild the complete compensation snapshot", familyPromoter, StringComparison.Ordinal);
-        Assert.Contains("publish-registry-package.sh --verify-only", releasePromoter, StringComparison.Ordinal);
-        Assert.Contains("bash scripts/release/promote-family-dist-tag.sh", releasePromoter, StringComparison.Ordinal);
+        Assert.Contains("publish-registry-package.sh\" --verify-only", releasePromoter, StringComparison.Ordinal);
+        Assert.Contains("bash \"$script_dir/promote-family-dist-tag.sh\"", releasePromoter, StringComparison.Ordinal);
         Assert.Contains("unset SUNDER_REGISTRY_CLI_TOKEN", releasePromoter, StringComparison.Ordinal);
         Assert.Contains("SUNDER_REGISTRY_CLI_TOKEN=\"$registry_cli_token\"", releasePromoter, StringComparison.Ordinal);
         Assert.Contains("git/ref/tags/$encoded_tag", releasePromoter, StringComparison.Ordinal);
@@ -592,12 +736,15 @@ public sealed class SolutionPackageInventoryTests
         Assert.Contains("env -u SUNDER_REGISTRY_CLI_TOKEN", familyPromoter, StringComparison.Ordinal);
         Assert.Contains("make the promoted family the last remote check before PATCH", releasePromoter, StringComparison.Ordinal);
         Assert.Contains("Archived acceptance evidence has the wrong trusted workflow", releasePromoter, StringComparison.Ordinal);
-        Assert.Contains("bash scripts/release/verify-acceptance-artifact.sh", releasePromoter, StringComparison.Ordinal);
+        Assert.Contains("bash \"$script_dir/verify-acceptance-artifact.sh\"", releasePromoter, StringComparison.Ordinal);
         Assert.Contains(".name == $acceptance[0].draftRelease.title", releasePromoter, StringComparison.Ordinal);
-        Assert.Contains("sunder-agent-promotion-receipt:v1", releasePromoter, StringComparison.Ordinal);
+        Assert.Contains("sunder-agent-promotion-receipt:v2", releasePromoter, StringComparison.Ordinal);
+        Assert.Contains("publicationRunId", releasePromoter, StringComparison.Ordinal);
+        Assert.Contains("promotionPolicy", releasePromoter, StringComparison.Ordinal);
         Assert.Contains("acceptedBodySha256", releasePromoter, StringComparison.Ordinal);
-        Assert.Contains("artifactDigest", releasePromoter, StringComparison.Ordinal);
-        Assert.Contains("artifactId", releasePromoter, StringComparison.Ordinal);
+        Assert.Contains("releaseAssetName", releasePromoter, StringComparison.Ordinal);
+        Assert.DoesNotContain("artifactDigest", releasePromoter, StringComparison.Ordinal);
+        Assert.DoesNotContain("artifactId", releasePromoter, StringComparison.Ordinal);
         Assert.Contains("evidenceSha256", releasePromoter, StringComparison.Ordinal);
         Assert.Contains("[\"assets\",\"body\",\"bodySha256\",\"draft\",\"id\",\"provenanceSha256\",\"title\"]", releasePromoter, StringComparison.Ordinal);
         Assert.Contains("finalized-retry-assets", releasePromoter, StringComparison.Ordinal);
@@ -611,10 +758,8 @@ public sealed class SolutionPackageInventoryTests
         Assert.Contains("wrong-workflow", releasePromotionFixture, StringComparison.Ordinal);
         Assert.Contains("wrong-run", releasePromotionFixture, StringComparison.Ordinal);
         Assert.Contains("wrong-attempt", releasePromotionFixture, StringComparison.Ordinal);
-        Assert.Contains("wrong-artifact-id", releasePromotionFixture, StringComparison.Ordinal);
-        Assert.Contains("wrong-artifact-digest", releasePromotionFixture, StringComparison.Ordinal);
-        Assert.Contains("artifact-from-wrong-attempt-window", releasePromotionFixture, StringComparison.Ordinal);
         Assert.Contains("wrong-evidence", releasePromotionFixture, StringComparison.Ordinal);
+        Assert.Contains("durable-acceptance-tamper", releasePromotionFixture, StringComparison.Ordinal);
         Assert.Contains("draft-replacement", releasePromotionFixture, StringComparison.Ordinal);
         Assert.Contains("release-title-mismatch", releasePromotionFixture, StringComparison.Ordinal);
         Assert.Contains("release-body-mismatch", releasePromotionFixture, StringComparison.Ordinal);
@@ -625,6 +770,11 @@ public sealed class SolutionPackageInventoryTests
         Assert.Contains("family-drift-before-finalization", releasePromotionFixture, StringComparison.Ordinal);
         Assert.Contains("runner-loss-retry", releasePromotionFixture, StringComparison.Ordinal);
         Assert.Contains("forged-finalized-receipt", releasePromotionFixture, StringComparison.Ordinal);
+        Assert.Contains("first upload, equal and runner-loss retry", acceptanceUploadFixture, StringComparison.Ordinal);
+        Assert.Contains("null digest metadata", acceptanceUploadFixture, StringComparison.Ordinal);
+        Assert.Contains("mismatched digest metadata", acceptanceUploadFixture, StringComparison.Ordinal);
+        Assert.Contains("finalized release", acceptanceUploadFixture, StringComparison.Ordinal);
+        Assert.Contains("New Agent acceptance attempt", acceptanceUploadFixture, StringComparison.Ordinal);
         Assert.Contains("guard-concurrent-newer", File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "promote-family-dist-tag.fixture.sh")), StringComparison.Ordinal);
         Assert.Contains("asset-tamper", releasePromotionFixture, StringComparison.Ordinal);
         Assert.Contains("registry-mismatch", releasePromotionFixture, StringComparison.Ordinal);
@@ -638,7 +788,7 @@ public sealed class SolutionPackageInventoryTests
             "pre_mutation_guard_json=",
             StringComparison.Ordinal);
         var familyMutation = releasePromoter.IndexOf(
-            "bash scripts/release/promote-family-dist-tag.sh",
+            "bash \"$script_dir/promote-family-dist-tag.sh\"",
             preMutationGuard,
             StringComparison.Ordinal);
         Assert.True(preMutationLongCheck >= 0 && preMutationLongCheck < preMutationGuard && preMutationGuard < familyMutation);
@@ -709,23 +859,9 @@ public sealed class SolutionPackageInventoryTests
 
             var canonicalPath = Path.GetFullPath(Path.Combine(repositoryRoot, releaseProject.Project));
             var canonical = XDocument.Load(canonicalPath);
-            Assert.Equal("worker", Assert.Single(canonical.Descendants("SunderPackageRole")).Value);
-            Assert.Equal("true", Assert.Single(canonical.Descendants("SunderPackagePrimaryProject")).Value, ignoreCase: true);
+            Assert.Empty(canonical.Descendants("SunderPackageRole"));
             Assert.Equal(package.FamilyId, Assert.Single(canonical.Descendants("SunderPackageFamilyId")).Value);
-            var appProject = canonical.Descendants("SunderPackageAppProject").Select(static property => property.Value).SingleOrDefault();
-            if (package.AppProjectPath is null)
-            {
-                Assert.Null(appProject);
-            }
-            else
-            {
-                Assert.Equal(
-                    package.AppProjectPath,
-                    Path.GetFullPath(Path.Combine(
-                        Path.GetDirectoryName(canonicalPath)!,
-                        appProject!.Replace('\\', Path.DirectorySeparatorChar))),
-                    ignoreCase: true);
-            }
+            Assert.Empty(canonical.Descendants("SunderPackageAppProject"));
         }
     }
 
@@ -757,75 +893,40 @@ public sealed class SolutionPackageInventoryTests
         foreach (var worker in workers)
         {
             var project = System.Xml.Linq.XDocument.Load(worker.ProjectPath);
-            Assert.Equal("worker", worker.Role);
-            Assert.Equal("true", Assert.Single(project.Descendants("SunderPackagePrimaryProject")).Value, ignoreCase: true);
-            Assert.Equal("Exe", Assert.Single(project.Descendants("OutputType")).Value);
-            Assert.Equal("true", Assert.Single(project.Descendants("SelfContained")).Value);
-            Assert.Equal("true", Assert.Single(project.Descendants("UseAppHost")).Value);
-            Assert.Equal("false", Assert.Single(project.Descendants("PublishSingleFile")).Value);
+            Assert.Null(worker.Role);
             Assert.Equal(worker.Name, Path.GetFileNameWithoutExtension(worker.ProjectPath));
             Assert.True(File.Exists(worker.ProgramPath));
             var relativeProgramPath = Path.GetRelativePath(worker.DirectoryPath, worker.ProgramPath).Replace('\\', '/');
-            Assert.Contains(relativeProgramPath, new[] { "Program.cs", "Worker/Program.cs" });
+            Assert.EndsWith("/roles/worker/worker-entry.g.cs", relativeProgramPath, StringComparison.Ordinal);
             var program = File.ReadAllText(worker.ProgramPath);
             Assert.Contains("SunderWorker.RunAsync", program, StringComparison.Ordinal);
             Assert.DoesNotContain("SunderWorkerV3.RunAsync", program, StringComparison.Ordinal);
 
-            var appProperty = project.Descendants("SunderPackageAppProject").Select(static property => property.Value).SingleOrDefault();
-            if (worker.AppProjectPath is null)
-            {
-                Assert.Null(appProperty);
-            }
-            else
-            {
-                Assert.Equal(
-                    worker.AppProjectPath,
-                    Path.GetFullPath(Path.Combine(worker.DirectoryPath, appProperty!.Replace('\\', Path.DirectorySeparatorChar))),
-                    ignoreCase: true);
-            }
-
-            if (relativeProgramPath == "Worker/Program.cs")
-            {
-                Assert.Equal("false", Assert.Single(project.Descendants("EnableDefaultCompileItems")).Value, ignoreCase: true);
-                Assert.Contains(project.Descendants("Compile"), static item =>
-                    string.Equals(item.Attribute("Include")?.Value, "Worker\\**\\*.cs", StringComparison.Ordinal));
-                Assert.DoesNotContain(project.Descendants("Compile"), static item =>
-                {
-                    var include = item.Attribute("Include")?.Value;
-                    return include?.StartsWith("App\\", StringComparison.OrdinalIgnoreCase) == true
-                           || include?.StartsWith("Shared\\", StringComparison.OrdinalIgnoreCase) == true;
-                });
-            }
+            Assert.Empty(project.Descendants("SunderPackageAppProject"));
+            Assert.DoesNotContain(project.Descendants("Compile"), item =>
+                ((string?)item.Attribute("Include"))?.Contains(".Legacy.cs", StringComparison.Ordinal) == true);
         }
 
-        Assert.Equal(12, workers.Count(static worker => worker.AppProjectPath is not null));
+        Assert.Equal(12, workers.Count(static worker => worker.HasAppRole));
         Assert.Equal(
             [
                 "sunder.package.agent.tools.files",
                 "sunder.package.agent.tools.shell",
                 "sunder.package.agent.tools.web",
             ],
-            workers.Where(static worker => worker.AppProjectPath is null).Select(static worker => worker.FamilyId).Order());
+            workers.Where(static worker => !worker.HasAppRole).Select(static worker => worker.FamilyId).Order());
 
         var centralTargets = XDocument.Load(Path.Combine(
             AgentPackageRepositoryInventory.RepositoryRoot.FullName,
             "Directory.Build.targets"));
-        var appRestoreReference = Assert.Single(centralTargets.Descendants("ProjectReference"), static reference =>
+        Assert.DoesNotContain(centralTargets.Descendants("ProjectReference"), static reference =>
             string.Equals(reference.Attribute("Include")?.Value, "$(SunderPackageAppProject)", StringComparison.Ordinal));
-        Assert.Contains("'$(SunderPackageInnerBuild)' != 'true'", appRestoreReference.Parent?.Attribute("Condition")?.Value, StringComparison.Ordinal);
-        Assert.Equal("false", appRestoreReference.Attribute("ReferenceOutputAssembly")?.Value);
-        Assert.Equal("false", appRestoreReference.Attribute("BuildReference")?.Value);
-        Assert.Equal("all", appRestoreReference.Attribute("PrivateAssets")?.Value);
 
         Assert.DoesNotContain(EnumerateProductionProjects(), static project =>
             NormalizeRepositoryPath(project).Contains("/Aggregate/", StringComparison.OrdinalIgnoreCase));
 
-        var protocolProject = System.Xml.Linq.XDocument.Load(Path.Combine(
-            AgentPackageRepositoryInventory.RepositoryRoot.FullName,
-            "src",
-            "Sunder.Package.Agent.Contracts",
-            "Sunder.Package.Agent.Contracts.csproj"));
-        Assert.Equal("protocol", Assert.Single(protocolProject.Descendants("SunderPackageRole")).Value);
+        Assert.All(workers, worker => Assert.DoesNotContain(GetProjectReferences(worker.ProjectPath),
+            reference => Path.GetFileNameWithoutExtension(reference) is "Sunder.Package.Agent.Contracts" or "Sunder.Package.Agent.Protocol"));
     }
 
     private static readonly IReadOnlySet<string> SupportOnlyTestProjects = new HashSet<string>(

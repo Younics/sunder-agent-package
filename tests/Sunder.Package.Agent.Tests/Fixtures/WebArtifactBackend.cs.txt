@@ -1,0 +1,77 @@
+using System.Net;
+using Microsoft.Extensions.DependencyInjection;
+using Sunder.Package.Agent.Tools.Web;
+using Sunder.Package.Agent.Tools.Web.Backends;
+using Sunder.Package.Agent.Tools.Web.Services;
+using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Worker;
+
+public sealed class WebArtifactBackend : IAsyncDisposable
+{
+    private SunderWorkerOptions? _options;
+    public Func<string, CancellationToken, Task<IPAddress[]>> Resolve { get; set; } = null!;
+    public Func<Uri, IReadOnlyList<IPAddress>, HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> Fetch { get; set; } = null!;
+    public Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> Search { get; set; } = null!;
+    public int FetchClients;
+    public int DisposedFetchClients;
+    public int DisposedSearchClients;
+    public TimeSpan SearchTimeout { get; set; } = TimeSpan.FromSeconds(5);
+
+    public SunderWorkerOptions CreateGenerated(IPackageContext context, ISunderRpcClient rpc)
+        => Sunder.Generated.Package.WorkerEntryPoint.Create(context, rpc);
+
+    public SunderWorkerOptions Create(IPackageContext context, ISunderRpcClient rpc)
+    {
+        Sunder.Tests.Generated.Package.WorkerEntryPoint.Configure = services =>
+        {
+            services.AddSingleton(_ => new WebUrlNetworkPolicy(new Resolver(this)));
+            services.AddSingleton(provider => new WebFetchService(provider.GetRequiredService<WebUrlNetworkPolicy>(), new FetchFactory(this)));
+            services.AddSingleton(_ => new HttpClient(new SearchHandler(this)) { Timeout = Timeout.InfiniteTimeSpan });
+            services.AddSingleton(provider => new ExaWebSearchBackend(provider.GetRequiredService<WebToolsSettingsService>(), provider.GetRequiredService<HttpClient>(), SearchTimeout));
+        };
+        try { return _options = Sunder.Tests.Generated.Package.WorkerEntryPoint.Create(context, rpc); }
+        finally { Sunder.Tests.Generated.Package.WorkerEntryPoint.Configure = null; }
+    }
+    public ValueTask DisposeAsync() => _options?.OnShutdown?.Invoke(
+        (SunderWorkerShutdownContext)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(typeof(SunderWorkerShutdownContext)),
+        CancellationToken.None) ?? ValueTask.CompletedTask;
+
+    private sealed class Resolver(WebArtifactBackend owner) : IWebHostResolver
+    {
+        public Task<IPAddress[]> GetHostAddressesAsync(string host, CancellationToken token) => owner.Resolve(host, token);
+    }
+    private sealed class FetchFactory(WebArtifactBackend owner) : IWebFetchHttpClientFactory
+    {
+        public HttpClient CreateClient(WebNetworkDestination destination)
+        {
+            Interlocked.Increment(ref owner.FetchClients);
+            return new HttpClient(new FetchHandler(owner, destination)) { Timeout = Timeout.InfiniteTimeSpan };
+        }
+    }
+    private sealed class FetchHandler(WebArtifactBackend owner, WebNetworkDestination destination) : HttpMessageHandler
+    {
+        private int _disposed;
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
+        {
+            if (request.RequestUri != destination.Uri || destination.Addresses.Count == 0 || destination.Addresses.Any(address => !WebUrlNetworkPolicy.IsGlobalUnicast(address)))
+                throw new InvalidOperationException("The fetch client did not receive a validated pinned destination.");
+            return owner.Fetch(destination.Uri, destination.Addresses, request, token);
+        }
+        protected override void Dispose(bool disposing)
+        {
+            base.Dispose(disposing);
+            if (disposing && Interlocked.Exchange(ref _disposed, 1) == 0) Interlocked.Increment(ref owner.DisposedFetchClients);
+        }
+    }
+    private sealed class SearchHandler(WebArtifactBackend owner) : HttpMessageHandler
+    {
+        private int _disposed;
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token) => owner.Search(request, token);
+        protected override void Dispose(bool disposing)
+        {
+            base.Dispose(disposing);
+            if (disposing && Interlocked.Exchange(ref _disposed, 1) == 0) Interlocked.Increment(ref owner.DisposedSearchClients);
+        }
+    }
+}

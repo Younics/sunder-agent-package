@@ -1,0 +1,14 @@
+<Project>
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)ApiKeySettingsState.cs;$(MSBuildThisFileDirectory)UtilityModelSettingsState.cs"
+             LinkBase="Provider.Shared" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\Sunder.Package.Agent.Shared\PackageViews\SunderComboBox.cs"
+             Link="PackageViews\SunderComboBox.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\Sunder.Package.Agent.Shared\Presentation\CapabilitySelectionState.cs;$(MSBuildThisFileDirectory)..\Sunder.Package.Agent.Shared\Presentation\ModelBindingEditorState.cs;$(MSBuildThisFileDirectory)..\Sunder.Package.Agent.Shared\Presentation\OperationState.cs;$(MSBuildThisFileDirectory)..\Sunder.Package.Agent.Shared\Presentation\PresentationDispatcher.cs;$(MSBuildThisFileDirectory)..\Sunder.Package.Agent.Shared\Presentation\PresentationExceptionPolicy.cs;$(MSBuildThisFileDirectory)..\Sunder.Package.Agent.Shared\Presentation\PresentationTaskScope.cs;$(MSBuildThisFileDirectory)..\Sunder.Package.Agent.Shared\Presentation\ProviderModelLoader.cs;$(MSBuildThisFileDirectory)..\Sunder.Package.Agent.Shared\Presentation\TimedStatusController.cs"
+             LinkBase="Presentation" />
+    <AvaloniaResource Include="$(MSBuildThisFileDirectory)..\Sunder.Package.Agent.Shared\Presentation\PresentationStyles.axaml"
+                      Link="Presentation\PresentationStyles.axaml" />
+    <AvaloniaResource Include="$(MSBuildThisFileDirectory)ProviderSettingsStyles.axaml"
+                      Link="Provider.Shared\ProviderSettingsStyles.axaml" />
+  </ItemGroup>
+</Project>

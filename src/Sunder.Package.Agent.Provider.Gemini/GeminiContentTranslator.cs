@@ -123,7 +123,7 @@ internal sealed class GeminiContentTranslator
                         {
                             Data = data.Data.ToArray(),
                             MimeType = data.MediaType,
-                            DisplayName = data.Name,
+                            // The Developer API rejects the Vertex-only displayName field.
                         },
                     };
                     break;

@@ -2,6 +2,7 @@ using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Provider.OpenAI;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal static class OpenAiAuthMode
 {
     public const string ConfigurationKey = "auth.mode";

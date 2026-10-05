@@ -6,6 +6,7 @@ internal readonly record struct LatestRequestTicket(
     long Generation,
     CancellationToken CancellationToken);
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.App)]
 internal sealed class LatestRequestCoordinator : IDisposable
 {
     private static long _nextCoordinatorId;
@@ -191,6 +192,7 @@ internal sealed class LatestRequestCoordinator : IDisposable
     private sealed record RequestState(long Generation, CancellationTokenSource? Cancellation);
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.App)]
 internal sealed class SerializedRefreshLoop : IDisposable
 {
     private readonly object _syncRoot = new();

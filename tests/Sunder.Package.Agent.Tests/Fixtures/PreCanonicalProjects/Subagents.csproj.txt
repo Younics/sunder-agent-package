@@ -1,0 +1,57 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <SunderPackageFamilyId>sunder.package.agent.subagents</SunderPackageFamilyId>
+    <SunderPackageRole>worker</SunderPackageRole>
+    <SunderPackageAppProject>App\SubagentsApp.csproj</SunderPackageAppProject>
+    <SunderSdkStacksReference>true</SunderSdkStacksReference>
+    <DefineConstants>$(DefineConstants);SUNDER_SUBAGENTS_WORKER</DefineConstants>
+  </PropertyGroup>
+
+  <Import Project="$(MSBuildThisFileDirectory)..\..\Sunder.Agent.Worker.props" />
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <ProjectReference Include="..\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
+    <ProjectReference Include="Protocol\SubagentsProtocol.csproj" PrivateAssets="all" />
+    <Compile Include="..\Sunder.Package.Agent.Shared\PackageViews\TranscriptTurnTransportProjection.cs"
+             Link="PackageViews\TranscriptTurnTransportProjection.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Shared\Presentation\ProviderModelLoader.cs"
+             Link="Presentation\ProviderModelLoader.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="App\**\*" />
+    <Compile Remove="PackageViews\**\*" />
+    <Compile Remove="Protocol\**\*" />
+    <Compile Remove="Rpc\ManagementService.cs;Rpc\ManagementClient.cs" />
+    <Compile Remove="Services\SubagentRecord.cs;Runtime\SubagentRuntimeContracts.cs;Runtime\TranscriptPageCursor.cs" />
+    <Compile Remove="Rpc\SubagentProviderValues.cs;Rpc\SelectableCapabilityProvider.cs;Rpc\ToolSourceProvider.cs;Rpc\PromptContextProvider.cs;Rpc\BehaviorLoopProvider.cs;Rpc\SubagentStackProvider.cs" />
+    <Compile Remove="Rpc\RunControlClient.cs" />
+    <Compile Remove="Rpc\SubagentRuntimeBindings.cs;Rpc\RuntimeCatalogClient.cs;Rpc\ChildRunClient.cs" />
+    <Compile Remove="Rpc\SubagentRuntimeBindings.Catalogs.cs;Rpc\CatalogClientInvocation.cs;Rpc\ChatCatalogClient.cs;Rpc\ToolCatalogClient.cs;Rpc\BehaviorCatalogClient.cs;Rpc\CapabilityCatalogClient.cs" />
+    <Compile Remove="Rpc\ProviderComposition.cs" />
+    <Compile Remove="Rpc\AppComposition.cs" />
+    <None Remove="App\**\*" />
+    <None Remove="Protocol\**\*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <SunderSdkCapability Include="rpc.extended-deadline.v1" />
+    <SunderContractBundle Include="Protocol\Contracts\subagents-owner.rpc.json"
+                          ContractId="sunder.package.agent.subagents.owner"
+                            Version="1.0.0"
+                          DescriptorPath="contracts/subagents-owner.rpc.json"
+                          Exposure="package" />
+    <SunderRpcProvider Include="subagents.management"
+                       ContractId="sunder.package.agent.subagents.owner"
+                        ContractVersion="1.0.0"
+                       Role="runtime"
+                       Audience="owner" />
+    <SunderPackageTarget Include="runtime/$(RuntimeIdentifier)"
+                         Role="runtime"
+                         Rid="$(RuntimeIdentifier)"
+                         Kind="worker" />
+  </ItemGroup>
+
+</Project>

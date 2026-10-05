@@ -6,7 +6,6 @@ using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Models;
-using Sunder.Package.Agent.Memory.Semantic;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
@@ -15,6 +14,9 @@ using Sunder.Sdk.Rpc;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
+
+extern alias MemoryWorker;
+using MemoryWorker::Sunder.Package.Agent.Memory.Semantic;
 
 public sealed class AgentLifecycleOutboxTests
 {
@@ -90,7 +92,7 @@ public sealed class AgentLifecycleOutboxTests
         var store = new AgentLocalStore(scope.Context);
         var catalog = new RegressionTestExtensionCatalog();
         var cleaner = new ThrowingSessionDataCleaner();
-        catalog.AddProvider(AgentRpcServices.SessionCleaners, cleaner);
+        catalog.AddProvider(RegressionTestBindings.SessionCleaners, cleaner);
         var sessions = new AgentSessionService(store, catalog);
         var workspaces = new AgentWorkspaceService(store, catalog, sessions);
         var workspace = workspaces.CreateWorkspace("Lifecycle workspace");
@@ -154,7 +156,7 @@ public sealed class AgentLifecycleOutboxTests
         CreateStartedRun(store);
         var catalog = new RegressionTestExtensionCatalog();
         var observer = new RecordingObserver("duplicate-observer") { FailuresRemaining = 1 };
-        catalog.AddProvider(AgentRpcServices.DurableLifecycleObservers, observer);
+        catalog.AddProvider(RegressionTestBindings.DurableLifecycleObservers, observer);
         await using var dispatcher = new AgentLifecycleDispatcher(store, catalog);
 
         await dispatcher.FlushAsync();
@@ -177,17 +179,17 @@ public sealed class AgentLifecycleOutboxTests
         var store = new AgentLocalStore(scope.Context);
         var catalog = new RegressionTestExtensionCatalog();
         var firstActivation = new RecordingObserver("stable-observer");
-        catalog.AddProvider(AgentRpcServices.DurableLifecycleObservers, firstActivation);
+        catalog.AddProvider(RegressionTestBindings.DurableLifecycleObservers, firstActivation);
         await using var dispatcher = new AgentLifecycleDispatcher(store, catalog);
         await dispatcher.FlushAsync();
-        catalog.RemoveProvider(AgentRpcServices.DurableLifecycleObservers, firstActivation);
+        catalog.RemoveProvider(RegressionTestBindings.DurableLifecycleObservers, firstActivation);
 
         CreateStartedRun(store);
         await dispatcher.FlushAsync();
         Assert.Equal(0, firstActivation.DeliveryCount);
 
         var secondActivation = new RecordingObserver("stable-observer");
-        catalog.AddProvider(AgentRpcServices.DurableLifecycleObservers, secondActivation);
+        catalog.AddProvider(RegressionTestBindings.DurableLifecycleObservers, secondActivation);
         await dispatcher.FlushAsync();
 
         Assert.Equal(1, secondActivation.DeliveryCount);
@@ -198,21 +200,37 @@ public sealed class AgentLifecycleOutboxTests
     {
         using var scope = RegressionTestPackageScope.Create();
         var store = new AgentLocalStore(scope.Context);
-        CreateStartedRun(store);
-        var catalog = new RegressionTestExtensionCatalog();
+        using var catalog = new RegressionTestExtensionCatalog();
         SelfRemovingDurableObserver? observer = null;
         observer = new SelfRemovingDurableObserver(
             "discovery-race-observer",
-            () => catalog.RemoveProvider(AgentRpcServices.DurableLifecycleObservers, observer!));
-        catalog.AddProvider(AgentRpcServices.DurableLifecycleObservers, observer);
-        await using var dispatcher = new AgentLifecycleDispatcher(store, catalog);
-
-        await dispatcher.FlushAsync();
+            () => catalog.RemoveProvider(RegressionTestBindings.DurableLifecycleObservers, observer!));
+        catalog.AddProvider(RegressionTestBindings.DurableLifecycleObservers, observer);
+        // Establish the durable subscription through a valid remote metadata
+        // response before there is anything to deliver. A retired first response
+        // cannot legitimately supply an observer id to the dispatcher.
+        await using (var discovery = new AgentLifecycleDispatcher(store, catalog))
+        {
+            await discovery.FlushAsync();
+        }
+        Assert.Equal(1, observer.MetadataReadCount);
 
         var subscriptionId = AgentLocalStore.BuildLifecycleSubscriptionId(
             "test.package",
             "discovery-race-observer",
             "Durable");
+        CreateStartedRun(store);
+        Assert.NotNull(store.GetLifecycleDeliveryState(subscriptionId, 1));
+
+        // A fresh consumer has no cached identity. Retire this same provider
+        // activation during rediscovery, before any delivery callback can run.
+        observer.RemoveOnMetadataRead = true;
+        using var rediscovery = AgentRpcCatalog.CreateDormant(catalog.RpcForCaller("sunder.package.agent"));
+        await using var dispatcher = new AgentLifecycleDispatcher(store, rediscovery);
+        await dispatcher.FlushAsync();
+
+        Assert.Equal(2, observer.MetadataReadCount);
+        Assert.True(observer.Removed);
         var state = Assert.IsType<AgentLifecycleDeliveryState>(store.GetLifecycleDeliveryState(subscriptionId, 1));
         Assert.Equal("Pending", state.Status);
         Assert.Equal(0, state.AttemptCount);
@@ -227,12 +245,12 @@ public sealed class AgentLifecycleOutboxTests
         CreateStartedRun(store);
         var catalog = new RegressionTestExtensionCatalog();
         var observer = new BlockingDurableObserver("blocking-durable-observer");
-        catalog.AddProvider(AgentRpcServices.DurableLifecycleObservers, observer);
+        catalog.AddProvider(RegressionTestBindings.DurableLifecycleObservers, observer);
         await using var dispatcher = new AgentLifecycleDispatcher(store, catalog);
 
         var flush = dispatcher.FlushAsync();
         await observer.Started.WaitAsync(TimeSpan.FromSeconds(2));
-        catalog.RemoveProvider(AgentRpcServices.DurableLifecycleObservers, observer);
+        catalog.RemoveProvider(RegressionTestBindings.DurableLifecycleObservers, observer);
         await flush.WaitAsync(TimeSpan.FromSeconds(2));
 
         var subscriptionId = AgentLocalStore.BuildLifecycleSubscriptionId(
@@ -253,7 +271,7 @@ public sealed class AgentLifecycleOutboxTests
         CreateStartedRun(store);
         var catalog = new RegressionTestExtensionCatalog();
         var observer = new RecordingObserver("poison-observer") { AlwaysFail = true };
-        catalog.AddProvider(AgentRpcServices.DurableLifecycleObservers, observer);
+        catalog.AddProvider(RegressionTestBindings.DurableLifecycleObservers, observer);
         await using var dispatcher = new AgentLifecycleDispatcher(store, catalog);
         await dispatcher.StartAsync();
         var subscriptionId = AgentLocalStore.BuildLifecycleSubscriptionId(
@@ -424,7 +442,7 @@ public sealed class AgentLifecycleOutboxTests
         Assert.True(failure.NextAttemptAtUtc > now.AddMinutes(1));
 
         var catalog = new RegressionTestExtensionCatalog();
-        catalog.AddProvider(AgentRpcServices.DurableLifecycleObservers, observer);
+        catalog.AddProvider(RegressionTestBindings.DurableLifecycleObservers, observer);
         await using var dispatcher = new AgentLifecycleDispatcher(store, catalog);
         await dispatcher.StartAsync();
         await WaitUntilAsync(
@@ -557,15 +575,18 @@ public sealed class AgentLifecycleOutboxTests
         Assert.Equal(rollback.DeletedTurnIds, representedIds);
 
         var semantic = new MemoryLocalStore(scope.Context);
-        Assert.Throws<AgentDurableLifecycleIntegrityException>(() =>
+        Assert.Throws<MemoryWorker::Sunder.Package.Agent.Contracts.Contracts.AgentDurableLifecycleIntegrityException>(() =>
         {
-            _ = semantic.ProcessDurableLifecycleEvent(manifest, []);
+            _ = semantic.ProcessDurableLifecycleEvent(
+                AgentRoleBoundary.As<MemoryWorker::Sunder.Package.Agent.Contracts.Models.AgentDurableLifecycleEventEnvelope>(manifest), []);
         });
         foreach (var lifecycleEvent in events)
         {
-            semantic.ProcessDurableLifecycleEvent(lifecycleEvent.ToEnvelope(), []);
+            semantic.ProcessDurableLifecycleEvent(
+                AgentRoleBoundary.As<MemoryWorker::Sunder.Package.Agent.Contracts.Models.AgentDurableLifecycleEventEnvelope>(lifecycleEvent.ToEnvelope()), []);
         }
-        Assert.True(semantic.HasLifecycleInboxReceipt(rollback.MemoryConsistencyBarrier!));
+        Assert.True(semantic.HasLifecycleInboxReceipt(
+            AgentRoleBoundary.As<MemoryWorker::Sunder.Package.Agent.Contracts.Models.AgentMemoryConsistencyBarrier>(rollback.MemoryConsistencyBarrier!)));
     }
 
     [Fact]
@@ -591,7 +612,7 @@ public sealed class AgentLifecycleOutboxTests
         AssertDatabaseHasNoCanaries(store.DatabasePath, fixture.Canaries);
 
         var catalog = new RegressionTestExtensionCatalog();
-        catalog.AddProvider(AgentRpcServices.DurableLifecycleObservers, knownObserver);
+        catalog.AddProvider(RegressionTestBindings.DurableLifecycleObservers, knownObserver);
         await using var dispatcher = new AgentLifecycleDispatcher(store, catalog);
         await dispatcher.FlushAsync();
 
@@ -606,7 +627,7 @@ public sealed class AgentLifecycleOutboxTests
             deleted => Assert.Equal(AgentLifecycleEventKind.SessionDeleted, deleted.Kind));
 
         var newObserver = new RecordingObserver("new-session-erasure-observer");
-        catalog.AddProvider(AgentRpcServices.DurableLifecycleObservers, newObserver);
+        catalog.AddProvider(RegressionTestBindings.DurableLifecycleObservers, newObserver);
         await dispatcher.FlushAsync();
 
         var replayedTombstone = Assert.Single(newObserver.Events);
@@ -638,7 +659,7 @@ public sealed class AgentLifecycleOutboxTests
         AssertDatabaseHasNoCanaries(store.DatabasePath, fixture.Canaries);
 
         var catalog = new RegressionTestExtensionCatalog();
-        catalog.AddProvider(AgentRpcServices.DurableLifecycleObservers, observer);
+        catalog.AddProvider(RegressionTestBindings.DurableLifecycleObservers, observer);
         await using var dispatcher = new AgentLifecycleDispatcher(store, catalog);
         await dispatcher.FlushAsync();
 
@@ -880,10 +901,10 @@ public sealed class AgentLifecycleOutboxTests
         var store = new AgentLocalStore(scope.Context);
         var catalog = new RegressionTestExtensionCatalog();
         var first = new RecordingSessionDataCleaner("stable-cleaner");
-        catalog.AddProvider(AgentRpcServices.SessionCleaners, first, "package.cleaner");
+        catalog.AddProvider(RegressionTestBindings.SessionCleaners, first, "package.cleaner");
         await using var dispatcher = new AgentSessionCleanupDispatcher(store, catalog);
         await dispatcher.FlushAsync();
-        catalog.RemoveProvider(AgentRpcServices.SessionCleaners, first);
+        catalog.RemoveProvider(RegressionTestBindings.SessionCleaners, first);
         var sessions = new AgentSessionService(store, catalog);
         var workspace = new AgentWorkspaceService(store).CreateWorkspace("Cleaner reactivation workspace");
         var session = sessions.CreateSession(
@@ -897,7 +918,7 @@ public sealed class AgentLifecycleOutboxTests
         Assert.Empty(first.SessionIds);
         Assert.Equal("Pending", Assert.Single(store.ListSessionCleanupJobs()).Status);
         var replacement = new RecordingSessionDataCleaner("stable-cleaner");
-        catalog.AddProvider(AgentRpcServices.SessionCleaners, replacement, "package.cleaner");
+        catalog.AddProvider(RegressionTestBindings.SessionCleaners, replacement, "package.cleaner");
         await dispatcher.FlushAsync();
         Assert.Equal([session.SessionId], replacement.SessionIds);
         Assert.Equal("Completed", Assert.Single(store.ListSessionCleanupJobs()).Status);
@@ -997,7 +1018,7 @@ public sealed class AgentLifecycleOutboxTests
         InsertLifecycleEvents(store, workspace, session, totalEventCount);
         var observer = new RecordingObserver("bounded-replay-observer");
         var catalog = new RegressionTestExtensionCatalog();
-        catalog.AddProvider(AgentRpcServices.DurableLifecycleObservers, observer);
+        catalog.AddProvider(RegressionTestBindings.DurableLifecycleObservers, observer);
         await using var dispatcher = new AgentLifecycleDispatcher(store, catalog);
 
         await dispatcher.FlushAsync();
@@ -1034,7 +1055,7 @@ public sealed class AgentLifecycleOutboxTests
         InsertLifecycleEvents(store, workspace, session, totalEventCount);
         var knownObserver = new RecordingObserver("catch-up-erasure-known-observer");
         var catalog = new RegressionTestExtensionCatalog();
-        catalog.AddProvider(AgentRpcServices.DurableLifecycleObservers, knownObserver);
+        catalog.AddProvider(RegressionTestBindings.DurableLifecycleObservers, knownObserver);
         await using var dispatcher = new AgentLifecycleDispatcher(store, catalog);
         await dispatcher.FlushAsync();
         Assert.Equal(AgentLocalStore.MaxLifecycleReconciliationBatchSize, knownObserver.DeliveryCount);
@@ -1054,7 +1075,7 @@ public sealed class AgentLifecycleOutboxTests
         Assert.Equal(AgentLifecycleEventKind.SessionDeleted, knownObserver.Events[^1].Kind);
 
         var newObserver = new RecordingObserver("catch-up-erasure-new-observer");
-        catalog.AddProvider(AgentRpcServices.DurableLifecycleObservers, newObserver);
+        catalog.AddProvider(RegressionTestBindings.DurableLifecycleObservers, newObserver);
         await dispatcher.FlushAsync();
 
         Assert.Equal(AgentLifecycleEventKind.SessionDeleted, Assert.Single(newObserver.Events).Kind);
@@ -1073,7 +1094,7 @@ public sealed class AgentLifecycleOutboxTests
             FailureMessage = secretCanary,
         };
         var catalog = new RegressionTestExtensionCatalog();
-        catalog.AddProvider(AgentRpcServices.DurableLifecycleObservers, observer);
+        catalog.AddProvider(RegressionTestBindings.DurableLifecycleObservers, observer);
         var logger = new RecordingEventLogger();
         await using var dispatcher = new AgentLifecycleDispatcher(store, catalog, logger);
 
@@ -1120,7 +1141,7 @@ public sealed class AgentLifecycleOutboxTests
                 secretCanary)),
         };
         var catalog = new RegressionTestExtensionCatalog();
-        catalog.AddProvider(AgentRpcServices.DurableLifecycleObservers, observer);
+        catalog.AddProvider(RegressionTestBindings.DurableLifecycleObservers, observer);
         var logger = new RecordingEventLogger();
         await using var dispatcher = new AgentLifecycleDispatcher(store, catalog, logger);
 
@@ -1625,12 +1646,18 @@ public sealed class AgentLifecycleOutboxTests
         : IAgentDurableLifecycleObserver
     {
         private int _removed;
+        private int _metadataReadCount;
+
+        public bool RemoveOnMetadataRead { get; set; }
+        public int MetadataReadCount => Volatile.Read(ref _metadataReadCount);
+        public bool Removed => Volatile.Read(ref _removed) != 0;
 
         public string ObserverId
         {
             get
             {
-                if (Interlocked.Exchange(ref _removed, 1) == 0)
+                Interlocked.Increment(ref _metadataReadCount);
+                if (RemoveOnMetadataRead && Interlocked.Exchange(ref _removed, 1) == 0)
                 {
                     remove();
                 }

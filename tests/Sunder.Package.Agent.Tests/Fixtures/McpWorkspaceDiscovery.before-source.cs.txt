@@ -1,0 +1,53 @@
+    private async Task<IReadOnlyList<AgentWorkspaceRecord>> ListKnownWorkspacesAsync(
+        CancellationToken cancellationToken)
+    {
+        if (_rpcCatalog is null)
+        {
+            return [];
+        }
+
+        var result = new List<AgentWorkspaceRecord>();
+        var references = await _rpcCatalog.GetServiceReferencesAsync(
+            AgentRpcServices.RuntimeCatalogs,
+            cancellationToken).ConfigureAwait(false);
+        foreach (var reference in references)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!reference.TryAcquire(out var lease))
+            {
+                continue;
+            }
+            IReadOnlyList<AgentWorkspaceRecord> workspaces;
+            using (lease)
+            using (var invocation = CancellationTokenSource.CreateLinkedTokenSource(
+                       cancellationToken,
+                       lease.RetirementToken))
+            {
+                try
+                {
+                    workspaces = (await lease.Service
+                        .ListWorkspacesAsync(invocation.Token)
+                        .ConfigureAwait(false)).ToArray();
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (lease.RetirementToken.IsCancellationRequested)
+                    {
+                        continue;
+                    }
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    continue;
+                }
+            }
+
+            result.AddRange(workspaces);
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        return result;
+    }

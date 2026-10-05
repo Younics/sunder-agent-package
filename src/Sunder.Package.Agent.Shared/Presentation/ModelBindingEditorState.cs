@@ -44,6 +44,7 @@ internal sealed record ModelModeOption(
     public bool HasDescription => !string.IsNullOrWhiteSpace(Description);
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.App)]
 internal sealed class ModelBindingEditorState : INotifyPropertyChanged, IDisposable
 {
     private readonly ProviderModelLoader _loader;

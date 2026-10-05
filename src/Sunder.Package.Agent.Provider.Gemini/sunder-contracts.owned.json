@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "authorityKind": "package",
+  "authorityId": "sunder.package.agent.provider.gemini",
+  "packageId": "sunder.package.agent.provider.gemini",
+  "contracts": {
+    "credential-settings": {
+      "contractId": "sunder.package.agent.provider.gemini.credentials",
+      "current": {
+        "state": "release-frozen",
+        "exposure": "package",
+        "contractVersion": "1.0.0",
+        "descriptorBytes": 1569,
+        "canonicalDescriptor": "{\"$defs\":{\"CredentialCommand\":{\"additionalProperties\":false,\"properties\":{\"credential\":{\"$ref\":\"#/$defs/CredentialValue\"},\"kind\":{\"$ref\":\"#/$defs/CredentialOperation\"}},\"required\":[\"kind\"],\"type\":\"object\"},\"CredentialOperation\":{\"enum\":[\"set\",\"clear\"],\"type\":\"string\"},\"CredentialQuery\":{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"},\"CredentialSnapshot\":{\"additionalProperties\":false,\"properties\":{\"hasStoredCredential\":{\"type\":\"boolean\"}},\"required\":[\"hasStoredCredential\"],\"type\":\"object\"},\"CredentialValue\":{\"minLength\":1,\"type\":\"string\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"contractId\":\"sunder.package.agent.provider.gemini.credentials\",\"descriptorVersion\":1,\"errors\":{\"provider.credential.command-invalid\":{\"description\":\"The credential command kind is not supported.\"},\"provider.credential.required\":{\"description\":\"A set command requires a non-empty credential.\"},\"provider.credential.unexpected\":{\"description\":\"A clear command must not contain a credential.\"}},\"schemaProfile\":\"sunder.rpc.values.v1\",\"services\":{\"credential-settings\":{\"methods\":{\"command\":{\"errors\":[\"provider.credential.command-invalid\",\"provider.credential.required\",\"provider.credential.unexpected\"],\"idempotency\":\"none\",\"kind\":\"unary\",\"requestSchema\":{\"$ref\":\"#/$defs/CredentialCommand\"},\"responseSchema\":{\"$ref\":\"#/$defs/CredentialSnapshot\"}},\"query\":{\"errors\":[],\"idempotency\":\"idempotent\",\"kind\":\"unary\",\"requestSchema\":{\"$ref\":\"#/$defs/CredentialQuery\"},\"responseSchema\":{\"$ref\":\"#/$defs/CredentialSnapshot\"}}}}},\"version\":\"1.0.0\"}",
+        "descriptorSha256": "a57cc0676412274bc572c74b7a22421d6d605eafd03bddfe59823c3b8e694151",
+        "abiProjectionBytes": 1309,
+        "canonicalAbiProjection": "{\"$defs\":{\"CredentialCommand\":{\"additionalProperties\":false,\"properties\":{\"credential\":{\"$ref\":\"#/$defs/CredentialValue\"},\"kind\":{\"$ref\":\"#/$defs/CredentialOperation\"}},\"required\":[\"kind\"],\"type\":\"object\"},\"CredentialOperation\":{\"enum\":[\"clear\",\"set\"],\"type\":\"string\"},\"CredentialQuery\":{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"},\"CredentialSnapshot\":{\"additionalProperties\":false,\"properties\":{\"hasStoredCredential\":{\"type\":\"boolean\"}},\"required\":[\"hasStoredCredential\"],\"type\":\"object\"},\"CredentialValue\":{\"minLength\":1,\"type\":\"string\"}},\"contractId\":\"sunder.package.agent.provider.gemini.credentials\",\"descriptorVersion\":1,\"errors\":{\"provider.credential.command-invalid\":{},\"provider.credential.required\":{},\"provider.credential.unexpected\":{}},\"schemaProfile\":\"sunder.rpc.values.v1\",\"services\":{\"credential-settings\":{\"methods\":{\"command\":{\"errors\":[\"provider.credential.command-invalid\",\"provider.credential.required\",\"provider.credential.unexpected\"],\"idempotency\":\"none\",\"kind\":\"unary\",\"requestSchema\":{\"$ref\":\"#/$defs/CredentialCommand\"},\"responseSchema\":{\"$ref\":\"#/$defs/CredentialSnapshot\"}},\"query\":{\"errors\":[],\"idempotency\":\"idempotent\",\"kind\":\"unary\",\"requestSchema\":{\"$ref\":\"#/$defs/CredentialQuery\"},\"responseSchema\":{\"$ref\":\"#/$defs/CredentialSnapshot\"}}}}}}",
+        "abiSha256": "11eec824c3ddbe49510a19eef5b627b46ce8f03eec6403bba28e6e876bfefb42",
+        "packageRelease": {
+          "packageId": "sunder.package.agent.provider.gemini",
+          "packageVersion": "2.0.0"
+        }
+      },
+      "history": []
+    }
+  }
+}

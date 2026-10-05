@@ -1,18 +1,24 @@
+extern alias LocalWorker;
+extern alias DockerWorker;
+extern alias FilesWorker;
+
 using System.Reflection;
 using System.Net.Sockets;
 using System.Runtime.Versioning;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using Sunder.Agent.Execution.Common;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Execution.Docker;
-using Sunder.Package.Agent.Execution.Local;
+using DockerWorker::Sunder.Package.Agent.Execution.Docker;
+using LocalWorker::Sunder.Package.Agent.Execution.Local;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Tests;
-using Sunder.Package.Agent.Tools.Files;
+using FilesWorker::Sunder.Package.Agent.Tools.Files;
+using DockerModels = DockerWorker::Sunder.Package.Agent.Contracts.Models;
+using LocalModels = LocalWorker::Sunder.Package.Agent.Contracts.Models;
+using HostSecurePathEngine = DockerWorker::Sunder.Agent.Execution.Common.HostSecurePathEngine;
 using Sunder.Sdk.Abstractions;
 using Xunit;
 using Xunit.Sdk;
@@ -115,11 +121,11 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
                 CancellationToken.None));
         var write = await fileSystem.WriteFileAsync(
             config,
-            new AgentFileWriteRequest(outside, "blocked"),
+            new DockerModels.AgentFileWriteRequest(outside, "blocked"),
             CancellationToken.None);
         var read = await fileSystem.ReadFileAsync(
             config,
-            new AgentFileReadRequest(outside),
+            new DockerModels.AgentFileReadRequest(outside),
             CancellationToken.None);
 
         Assert.Equal(DockerPathResolver.StructuredBindRequiredErrorCode, resolve.ErrorCode);
@@ -140,12 +146,12 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
 
         var unbound = await LocalFileSystemExecutor.WriteFileAsync(
             config,
-            new AgentFileWriteRequest(outside, "unbound"),
+            new LocalModels.AgentFileWriteRequest(outside, "unbound"),
             allowOutsideConfiguredScope: true,
             CancellationToken.None);
         var write = await LocalFileSystemExecutor.WriteFileAsync(
             config,
-            new AgentFileWriteRequest(outside, "approved"),
+            new LocalModels.AgentFileWriteRequest(outside, "approved"),
             allowOutsideConfiguredScope: true,
             CancellationToken.None,
             approvedResourceReferences: writeApproval.Context.ApprovedResourceReferences,
@@ -154,7 +160,7 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
         using var readApproval = LocalResourceAuthorityTestContext.Approve(config, outside, "files.read");
         var read = await LocalFileSystemExecutor.ReadFileAsync(
             config,
-            new AgentFileReadRequest(outside),
+            new LocalModels.AgentFileReadRequest(outside),
             allowOutsideConfiguredScope: true,
             CancellationToken.None,
             approvedResourceReferences: readApproval.Context.ApprovedResourceReferences,
@@ -233,9 +239,9 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
         await File.WriteAllTextAsync(Path.Combine(searchRoot, "match.txt"), "match");
         var result = await new DockerFileSystemExecutor().SearchAsync(
             CreateDockerConfig(hostRoot),
-            new AgentFileSearchRequest(
+            new DockerModels.AgentFileSearchRequest(
                 "/workspace/" + pathName,
-                AgentFileSearchKind.Glob,
+                DockerModels.AgentFileSearchKind.Glob,
                 "**/*.txt"),
             CancellationToken.None);
 
@@ -367,15 +373,15 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
         var target = targetKind == "local"
             ? new ResolvingExecutionTarget(
                 targetKind,
-                path => ValueTask.FromResult(LocalResourceResolver.ResolveFileResource(
+                path => ValueTask.FromResult(AgentRoleBoundary.As<AgentResolvedResource>(LocalResourceResolver.ResolveFileResource(
                     new LocalExecutionRuntimeConfig([root], root),
                     path,
-                    allowOutsideConfiguredScope: true)))
+                    allowOutsideConfiguredScope: true))))
             : CreateDockerResolvingTarget(root);
         using var packageScope = RegressionTestPackageScope.Create();
         using var catalog = new RegressionTestExtensionCatalog();
-        catalog.AddProvider(AgentRpcServices.ExecutionTargets, target);
-        var source = new FilesToolSource(packageScope.Context);
+        catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target);
+        using var source = new GeneratedToolSourceProbe(catalog, new FilesToolSource(packageScope.Context), "sunder.package.agent.tools.files");
         var now = DateTimeOffset.UtcNow;
         var workspace = new AgentWorkspaceRecord("workspace", "Workspace", null, now, now);
         var binding = new AgentWorkspaceBindingRecord(
@@ -394,7 +400,7 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
         var result = await source.ExecuteAsync(
             new AgentToolExecutionContext(null, Workspace: workspace, ExecutionBinding: binding)
             {
-                ExecutionTargetReference = catalog.GetRequiredReference(AgentRpcServices.ExecutionTargets),
+                ExecutionTargetReference = catalog.GetRequiredReference(RegressionTestBindings.ExecutionTargets),
             },
             new AgentToolRequest("apply_patch", JsonSerializer.Serialize(new { patchText = patch })));
 
@@ -434,7 +440,7 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
 
             var result = await new DockerFileSystemExecutor().ReadFileAsync(
                 config,
-                new AgentFileReadRequest("service.sock"),
+                new DockerModels.AgentFileReadRequest("service.sock"),
                 CancellationToken.None);
 
             AssertReadError(result, AgentFileReadErrorCodes.PathCanonicalizationFailed);
@@ -499,11 +505,11 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
 
         var rootDelete = await executor.DeleteFileAsync(
             config,
-            new AgentFileDeleteRequest("/workspace", Recursive: true),
+            new DockerModels.AgentFileDeleteRequest("/workspace", Recursive: true),
             CancellationToken.None);
         var ancestorDelete = await executor.DeleteFileAsync(
             config,
-            new AgentFileDeleteRequest("/workspace/parent", Recursive: true),
+            new DockerModels.AgentFileDeleteRequest("/workspace/parent", Recursive: true),
             CancellationToken.None);
 
         Assert.Equal(DockerPathResolver.StructuredRootDeleteErrorCode, rootDelete.ErrorCode);
@@ -525,7 +531,7 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
 
         var result = await fileSystem.WriteFileAsync(
             config,
-            new AgentFileWriteRequest("file.txt", "content"),
+            new DockerModels.AgentFileWriteRequest("file.txt", "content"),
             CancellationToken.None);
 
         AssertMutationError(result, AgentFileReadErrorCodes.PathCanonicalizationFailed);
@@ -540,7 +546,7 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
         var config = CreateDockerConfig(root);
         var result = await new DockerFileSystemExecutor().ReadFileAsync(
             config,
-            new AgentFileReadRequest("/WORKSPACE/file.txt"),
+            new DockerModels.AgentFileReadRequest("/WORKSPACE/file.txt"),
             CancellationToken.None);
 
         AssertReadError(result, DockerPathResolver.StructuredBindRequiredErrorCode);
@@ -556,7 +562,7 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
 
         var read = await fileSystem.ReadFileAsync(
             config,
-            new AgentFileReadRequest("/outside-override.txt"),
+            new DockerModels.AgentFileReadRequest("/outside-override.txt"),
             CancellationToken.None);
 
         AssertReadError(read, DockerPathResolver.StructuredBindRequiredErrorCode);
@@ -601,7 +607,7 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
             new DockerFileSystemExecutor().ReadFileAsync(
                 config,
-                new AgentFileReadRequest("large.txt"),
+                new DockerModels.AgentFileReadRequest("large.txt"),
                 cancellation.Token).AsTask());
 
         var bounded = await fixture.ReadAsync(new AgentFileReadRequest("large.txt"));
@@ -681,8 +687,8 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
     {
         var targetAssemblies = new[] { typeof(LocalExecutionTarget).Assembly, typeof(DockerExecutionTarget).Assembly };
         var implementations = targetAssemblies
-            .SelectMany(assembly => assembly.GetTypes())
-            .Where(type => !type.IsAbstract && typeof(IAgentRangedFileExecutionTarget).IsAssignableFrom(type))
+            .SelectMany(assembly => assembly.GetTypes().Where(type => !type.IsAbstract
+                && assembly.GetType(typeof(IAgentRangedFileExecutionTarget).FullName!, throwOnError: true)!.IsAssignableFrom(type)))
             .Select(type => type.FullName!)
             .OrderBy(name => name, StringComparer.Ordinal)
             .ToArray();
@@ -733,9 +739,12 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
         var config = new LocalExecutionRuntimeConfig([root], root);
         return new FileFixture(
             root,
-            request => LocalFileSystemExecutor.ReadFileAsync(config, request, allowOutsideConfiguredScope: false, CancellationToken.None),
-            request => LocalFileSystemExecutor.WriteFileAsync(config, request, allowOutsideConfiguredScope: false, CancellationToken.None),
-            request => LocalFileSystemExecutor.DeleteFileAsync(config, request, allowOutsideConfiguredScope: false));
+            async request => AgentRoleBoundary.As<AgentFileReadResult>(await LocalFileSystemExecutor.ReadFileAsync(config,
+                AgentRoleBoundary.As<LocalModels.AgentFileReadRequest>(request), allowOutsideConfiguredScope: false, CancellationToken.None)),
+            async request => AgentRoleBoundary.As<AgentFileMutationResult>(await LocalFileSystemExecutor.WriteFileAsync(config,
+                AgentRoleBoundary.As<LocalModels.AgentFileWriteRequest>(request), allowOutsideConfiguredScope: false, CancellationToken.None)),
+            async request => AgentRoleBoundary.As<AgentFileMutationResult>(await LocalFileSystemExecutor.DeleteFileAsync(config,
+                AgentRoleBoundary.As<LocalModels.AgentFileDeleteRequest>(request), allowOutsideConfiguredScope: false)));
     }
 
     private DockerFileFixture CreateDockerFixture()
@@ -746,9 +755,12 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
         var fileSystem = new DockerFileSystemExecutor();
         return new DockerFileFixture(
             root,
-            request => fileSystem.ReadFileAsync(config, request, CancellationToken.None),
-            request => fileSystem.WriteFileAsync(config, request, CancellationToken.None),
-            request => fileSystem.DeleteFileAsync(config, request, CancellationToken.None));
+            async request => AgentRoleBoundary.As<AgentFileReadResult>(await fileSystem.ReadFileAsync(config,
+                AgentRoleBoundary.As<DockerModels.AgentFileReadRequest>(request), CancellationToken.None)),
+            async request => AgentRoleBoundary.As<AgentFileMutationResult>(await fileSystem.WriteFileAsync(config,
+                AgentRoleBoundary.As<DockerModels.AgentFileWriteRequest>(request), CancellationToken.None)),
+            async request => AgentRoleBoundary.As<AgentFileMutationResult>(await fileSystem.DeleteFileAsync(config,
+                AgentRoleBoundary.As<DockerModels.AgentFileDeleteRequest>(request), CancellationToken.None)));
     }
 
     private static DockerExecutionRuntimeConfig CreateDockerConfig(string root)
@@ -760,26 +772,28 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
         var config = CreateDockerConfig(root);
         return new ResolvingExecutionTarget(
             "docker",
-            path => ValueTask.FromResult(fileSystem.ResolveFileResource(
+            path => ValueTask.FromResult(AgentRoleBoundary.As<AgentResolvedResource>(fileSystem.ResolveFileResource(
                 config,
                 path,
                 "namespace",
-                CancellationToken.None)));
+                CancellationToken.None))));
     }
 
     private static string ContentHash(string content)
         => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(content))).ToLowerInvariant();
 
-    private static void AssertReadError(AgentFileReadResult result, string expectedCode)
+    private static void AssertReadError(object roleResult, string expectedCode)
     {
+        var result = AgentRoleBoundary.As<AgentFileReadResult>(roleResult);
         Assert.True(result.IsError);
         Assert.Equal(expectedCode, result.ErrorCode);
         Assert.Empty(result.Content);
         Assert.False(string.IsNullOrWhiteSpace(result.ErrorMessage));
     }
 
-    private static void AssertMutationError(AgentFileMutationResult result, string expectedCode)
+    private static void AssertMutationError(object roleResult, string expectedCode)
     {
+        var result = AgentRoleBoundary.As<AgentFileMutationResult>(roleResult);
         Assert.True(result.IsError);
         Assert.Equal(expectedCode, result.ErrorCode);
         Assert.False(string.IsNullOrWhiteSpace(result.Summary));

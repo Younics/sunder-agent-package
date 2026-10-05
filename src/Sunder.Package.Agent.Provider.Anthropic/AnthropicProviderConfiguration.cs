@@ -3,6 +3,7 @@ using Sunder.Package.Agent.Provider.Shared;
 
 namespace Sunder.Package.Agent.Provider.Anthropic;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 public static class AnthropicProviderConfiguration
 {
     public const string ApiKeySecretKey = "auth.apiKey";

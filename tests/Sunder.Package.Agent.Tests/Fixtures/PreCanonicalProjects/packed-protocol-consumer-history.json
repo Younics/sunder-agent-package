@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "scope": "Out-of-solution packed Protocol consumer retirement; independent of the frozen 57-project RPC inventory.",
+  "entries": [
+    {
+      "path": "fixtures/PackedProtocolConsumer/PackedProtocolConsumer.csproj",
+      "kind": "retired-fixture-project",
+      "fixture": "PackedProtocolConsumer/fixtures/PackedProtocolConsumer/PackedProtocolConsumer.csproj.txt",
+      "captureSha256": "48e43b6e6f7180c73bb640a70d06d9b3f725b4679043e538d9831764d2341b86",
+      "rawSha256": "48e43b6e6f7180c73bb640a70d06d9b3f725b4679043e538d9831764d2341b86",
+      "provenance": "git-index-and-HEAD:3f57e8129299d0dfc44064389fe26d43b5451c3b",
+      "text": "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>\n    <AgentProtocolPackageVersion Condition=\"'$(AgentProtocolPackageVersion)' == ''\">2.0.0</AgentProtocolPackageVersion>\n  </PropertyGroup>\n\n  <ItemGroup>\n    <PackageReference Include=\"Sunder.Package.Agent.Protocol\" Version=\"$(AgentProtocolPackageVersion)\" />\n  </ItemGroup>\n</Project>\n",
+      "inFrozenProjectInventory": false,
+      "inOriginalSolution": false
+    },
+    {
+      "path": "fixtures/PackedProtocolConsumer/Program.cs",
+      "kind": "retired-fixture-source",
+      "fixture": "PackedProtocolConsumer/fixtures/PackedProtocolConsumer/Program.cs.txt",
+      "captureSha256": "1475836cb17373aaaacbde6cf42a58c04c1e20a332f7b84fc760d263a4d305e7",
+      "rawSha256": "1475836cb17373aaaacbde6cf42a58c04c1e20a332f7b84fc760d263a4d305e7",
+      "provenance": "git-index-and-HEAD:f12d40164bba5856ab7a13d30827792859b81aaf",
+      "text": "using Sunder.Package.Agent.Protocol;\nusing Sunder.Package.Agent.Protocol.Generated.ToolSource;\n\n_ = typeof(IToolSourceProvider);\n_ = typeof(ToolSourceClient);\n_ = typeof(Sunder.Package.Agent.Protocol.Generated.ToolSource.ToolInvocationRequest);\n\nvar descriptor = AgentRpcContractDescriptors.Get(AgentRpcContractIds.ExecutionTarget);\nif (descriptor.Services.SelectMany(static service => service.Methods)\n    .Any(static method => method.MethodId == \"legacy-file-search\"))\n{\n    throw new InvalidOperationException(\"The packed execution-target descriptor retained legacy file search.\");\n}\n\nvar protocolAssembly = typeof(AgentRpcContractIds).Assembly;\nvar removedTypes = new[]\n{\n    \"Sunder.Package.Agent.Contracts.Contracts.IAgentFileSearchExecutionTarget\",\n    \"Sunder.Package.Agent.Contracts.Models.AgentFileSearchProcessRequest\",\n    \"Sunder.Package.Agent.Contracts.Models.AgentFileSearchProcessResult\",\n    \"Sunder.Package.Agent.Protocol.Generated.ExecutionTarget.AgentFileSearchProcessRequest\",\n    \"Sunder.Package.Agent.Protocol.Generated.ExecutionTarget.AgentFileSearchProcessResult\",\n};\nforeach (var removedType in removedTypes)\n{\n    if (protocolAssembly.GetType(removedType, throwOnError: false) is not null)\n    {\n        throw new InvalidOperationException($\"The packed Protocol retained obsolete type '{removedType}'.\");\n    }\n}\n\nConsole.WriteLine($\"Verified packed {protocolAssembly.GetName().Name} {protocolAssembly.GetName().Version}.\");\n",
+      "inFrozenProjectInventory": false,
+      "inOriginalSolution": false
+    },
+    {
+      "path": "scripts/compatibility/verify-packed-protocol.sh",
+      "kind": "retired-fixture-tool",
+      "fixture": "PackedProtocolConsumer/scripts/compatibility/verify-packed-protocol.sh.txt",
+      "captureSha256": "cd537ca7c27711de80a86c217762709a6d10dc7445f368380b87d516da350210",
+      "rawSha256": "cd537ca7c27711de80a86c217762709a6d10dc7445f368380b87d516da350210",
+      "provenance": "git-index-and-HEAD:db3340831ad7a492afc7774c02aae4c451ff946f",
+      "text": "#!/usr/bin/env bash\nset -euo pipefail\n\nif [[ $# -lt 1 || $# -gt 3 ]]; then\n  printf 'Usage: verify-packed-protocol.sh <protocol-nupkg> [version] [repository-root]\\n' >&2\n  exit 2\nfi\n\npackage_path=\"$(cd \"$(dirname \"$1\")\" && pwd)/$(basename \"$1\")\"\nversion=\"${2:-2.0.0}\"\nrepository_root=\"${3:-.}\"\nrepository_root=\"$(cd \"$repository_root\" && pwd)\"\nfixture=\"$repository_root/fixtures/PackedProtocolConsumer/PackedProtocolConsumer.csproj\"\n\n[[ -f \"$package_path\" ]] || { printf 'Packed Protocol was not found: %s\\n' \"$package_path\" >&2; exit 1; }\n[[ -f \"$fixture\" ]] || { printf 'Packed Protocol consumer was not found: %s\\n' \"$fixture\" >&2; exit 1; }\n[[ \"$version\" =~ ^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$ ]] \\\n  || { printf 'Protocol version is not valid SemVer: %s\\n' \"$version\" >&2; exit 2; }\n\nwork=\"$(mktemp -d \"${TMPDIR:-/tmp}/sunder-agent-packed-protocol.XXXXXX\")\"\ntrap 'rm -rf \"$work\"' EXIT\n\nsources=(--source \"$(dirname \"$package_path\")\")\ncore_feed=\"$repository_root/../sunder-core/languages/csharp/dotnet/packages/Sunder.Sdk/bin/Debug\"\nif [[ -d \"${SUNDER_CORE_PACKAGE_SOURCE:-$core_feed}\" ]]; then\n  sources+=(--source \"${SUNDER_CORE_PACKAGE_SOURCE:-$core_feed}\")\nfi\nsources+=(--source \"${NUGET_SOURCE:-https://api.nuget.org/v3/index.json}\")\n\nproperties=(\n  -p:AgentProtocolPackageVersion=\"$version\"\n  -p:SunderUseSourceSdk=true\n  -p:RestorePackagesPath=\"$work/packages\"\n  -p:BaseIntermediateOutputPath=\"$work/obj/\"\n  -p:BaseOutputPath=\"$work/bin/\"\n)\n\ndotnet restore \"$fixture\" --force-evaluate \"${properties[@]}\" \"${sources[@]}\"\ndotnet build \"$fixture\" -c Release --no-restore \"${properties[@]}\"\n\nrestored_dll=\"$work/packages/sunder.package.agent.protocol/$version/lib/net10.0/Sunder.Package.Agent.Protocol.dll\"\n[[ -f \"$restored_dll\" ]] || { printf 'Restored Protocol assembly was not found: %s\\n' \"$restored_dll\" >&2; exit 1; }\nunzip -p \"$package_path\" lib/net10.0/Sunder.Package.Agent.Protocol.dll > \"$work/packed-protocol.dll\"\ncmp \"$work/packed-protocol.dll\" \"$restored_dll\"\n\ndotnet \"$work/bin/Release/net10.0/PackedProtocolConsumer.dll\"\n",
+      "inFrozenProjectInventory": false,
+      "inOriginalSolution": false
+    }
+  ],
+  "replacements": [
+    "src/Sunder.Package.Agent/Sunder.Package.Agent.csproj",
+    "src/Sunder.Package.Agent/sunder-contracts.owned.json",
+    "tests/Sunder.Package.Agent.Tests/AgentSourceArtifactMigrationTests.cs",
+    "scripts/compatibility/check-protocol-retirement.mjs"
+  ],
+  "requiredTests": [
+    "AgentCompatibilityCandidateTestsRpcMigrationBaseline.PackedProtocolConsumerHistory_PreservesAuthenticOutOfSolutionEvidence",
+    "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+    "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+  ]
+}

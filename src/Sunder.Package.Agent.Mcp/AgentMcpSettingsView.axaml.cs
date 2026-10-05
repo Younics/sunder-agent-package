@@ -11,6 +11,7 @@ using TextMateSharp.Grammars;
 
 namespace Sunder.Package.Agent.Mcp;
 
+[Sunder.Sdk.Packaging.SunderPackageSettingsView(ViewModel = typeof(AgentMcpSettingsViewModel))]
 public partial class AgentMcpSettingsView : UserControl, IDisposable
 {
     private readonly AdaptiveMasterDetail _adaptiveLayout;
@@ -51,9 +52,12 @@ public partial class AgentMcpSettingsView : UserControl, IDisposable
         DataContext = viewModel;
     }
 
-    internal void ConfigureOperationObserver(
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
+    public AgentMcpSettingsView(
+        AgentMcpSettingsViewModel viewModel,
         IPackageContext packageContext,
         IPackageNotificationService notifications)
+        : this(viewModel)
     {
         _operations.Dispose();
         _operations = new PresentationOperationObserver(

@@ -2,6 +2,17 @@
 set -euo pipefail
 
 repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+project_references="$(dotnet msbuild "$repository_root/tests/Sunder.Package.Agent.Provider.OpenAI.Tests/Sunder.Package.Agent.Provider.OpenAI.Tests.csproj" \
+  -p:ExcludeRestorePackageImports=true -getProperty:IsTestProject -getItem:ProjectReference)"
+if [[ "$project_references" != *'"IsTestProject": "true"'* || "$project_references" != *'Sunder.Package.Agent.TestAnalyzers.csproj'* || "$project_references" != *'"OutputItemType": "Analyzer"'* ]]; then
+  printf 'Test analyzer reference is absent before the first NuGet restore.\n' >&2
+  exit 1
+fi
+if [[ "$(dotnet msbuild "$repository_root/tests/Sunder.Package.Agent.TestAnalyzers/Sunder.Package.Agent.TestAnalyzers.csproj" \
+  -p:ExcludeRestorePackageImports=true -getProperty:IsTestProject)" == 'true' ]]; then
+  printf 'The analyzer must not be classified as a test project or reference itself.\n' >&2
+  exit 1
+fi
 fixture_root="$(mktemp -d "${TMPDIR:-/tmp}/sunder-silent-return.XXXXXX")"
 trap 'rm -rf "$fixture_root"' EXIT
 

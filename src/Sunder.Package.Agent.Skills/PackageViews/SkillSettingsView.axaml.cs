@@ -8,6 +8,7 @@ using Sunder.Sdk.Notifications;
 
 namespace Sunder.Package.Agent.Skills.PackageViews;
 
+[Sunder.Sdk.Packaging.SunderPackageSettingsView(ViewModel = typeof(SkillSettingsViewModel))]
 public partial class SkillSettingsView : UserControl, IDisposable
 {
     private readonly AdaptiveMasterDetail _adaptiveLayout;
@@ -40,6 +41,7 @@ public partial class SkillSettingsView : UserControl, IDisposable
         DataContext = viewModel;
     }
 
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
     public SkillSettingsView(
         SkillSettingsViewModel viewModel,
         IPackageContext packageContext,

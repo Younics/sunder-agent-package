@@ -25,6 +25,7 @@ public sealed class LMStudioAgentProvider : IAgentChatProvider, IAgentUtilityMod
         Descriptor = CreateDescriptor(packageContext.PackageId);
     }
 
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
     internal LMStudioAgentProvider(
         IPackageContext packageContext,
         LMStudioConnection connection,

@@ -1,10 +1,11 @@
 extern alias AnthropicApp;
 
 using System.Text.Json;
-using Sunder.Package.Agent.Provider.Anthropic.Protocol.Generated;
+using Sunder.Package.Agent.Provider.Anthropic.Rpc;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Package.Agent.Provider.TestSupport;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Storage;
 using Xunit;
 using AnthropicSettingsViewModel = AnthropicApp::Sunder.Package.Agent.Provider.Anthropic.AnthropicSettingsViewModel;
@@ -109,51 +110,37 @@ public sealed class AnthropicSettingsStateTests
 
     private sealed class CredentialOwnerClientFake : IProviderCredentialOwnerClient
     {
-        private readonly ProviderCredentialRpcProvider _provider;
+        private readonly ISunderRpcServiceHandler _provider;
         private readonly List<CredentialOwnerInvocation> _invocations = [];
 
         internal CredentialOwnerClientFake(ProviderTestPackageContext context)
         {
-            _provider = new ProviderCredentialRpcProvider(new ProviderCredentialAccessor(
+            _provider = new CredentialSettingsService(new ProviderCredentialAccessor(
                 context.Secrets,
-                AnthropicProviderConfiguration.ApiKeySecretKey));
+                AnthropicProviderConfiguration.ApiKeySecretKey)).CreateSunderRpcProviderRegistration().Handler;
         }
 
         internal IReadOnlyList<CredentialOwnerInvocation> Invocations => _invocations;
 
-        public async ValueTask<ProviderCredentialSnapshot> GetStatusAsync(
+        public ValueTask<ProviderCredentialSnapshot> GetStatusAsync(
             CancellationToken cancellationToken = default)
-        {
-            var request = new CredentialQuery();
-            var response = await _provider.QueryAsync(null!, request, cancellationToken);
-            Record("query", request, response);
-            return new ProviderCredentialSnapshot(response.HasStoredCredential);
-        }
+            => InvokeAsync("query", JsonSerializer.SerializeToElement(new { }), cancellationToken);
 
-        public async ValueTask<ProviderCredentialSnapshot> SetAsync(
+        public ValueTask<ProviderCredentialSnapshot> SetAsync(
             string credential,
             CancellationToken cancellationToken = default)
-        {
-            var request = new CredentialCommand { Kind = CredentialOperation.Set, Credential = credential };
-            var response = await _provider.CommandAsync(null!, request, cancellationToken);
-            Record("command", request, response);
-            return new ProviderCredentialSnapshot(response.HasStoredCredential);
-        }
+            => InvokeAsync("command", JsonSerializer.SerializeToElement(new { kind = "set", credential }), cancellationToken);
 
-        public async ValueTask<ProviderCredentialSnapshot> ClearAsync(
+        public ValueTask<ProviderCredentialSnapshot> ClearAsync(
             CancellationToken cancellationToken = default)
-        {
-            var request = new CredentialCommand { Kind = CredentialOperation.Clear };
-            var response = await _provider.CommandAsync(null!, request, cancellationToken);
-            Record("command", request, response);
-            return new ProviderCredentialSnapshot(response.HasStoredCredential);
-        }
+            => InvokeAsync("command", JsonSerializer.SerializeToElement(new { kind = "clear" }), cancellationToken);
 
-        private void Record<TRequest, TResponse>(string methodId, TRequest request, TResponse response)
-            => _invocations.Add(new CredentialOwnerInvocation(
-                methodId,
-                JsonSerializer.Serialize(request),
-                JsonSerializer.Serialize(response)));
+        private async ValueTask<ProviderCredentialSnapshot> InvokeAsync(string methodId, JsonElement request, CancellationToken cancellationToken)
+        {
+            var response = await _provider.InvokeUnaryAsync(null!, "credential-settings", methodId, request, cancellationToken);
+            _invocations.Add(new CredentialOwnerInvocation(methodId, request.GetRawText(), response.GetRawText()));
+            return new ProviderCredentialSnapshot(response.GetProperty("hasStoredCredential").GetBoolean());
+        }
     }
 
     private sealed class ThrowingSecrets : IPackageSecrets

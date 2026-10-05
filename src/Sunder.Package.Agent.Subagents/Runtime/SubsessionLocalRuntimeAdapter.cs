@@ -1,20 +1,19 @@
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Protocol;
 
 namespace Sunder.Package.Agent.Subagents.Runtime;
 
-internal sealed class SubsessionLocalRuntimeAdapter :
+internal sealed partial class SubsessionLocalRuntimeAdapter :
     ISubsessionSessionReader,
     ISubsessionCheckpointReader,
     ISubsessionTranscriptPageReader,
     ISubsessionChangeNotifications,
     IDisposable
 {
-    private readonly AgentRpcReference<IAgentRuntimeCatalog> _runtimeReference;
+    private readonly SubagentProviderReference<IAgentRuntimeCatalog> _runtimeReference;
     private readonly SemaphoreSlim _readGate = new(1, 1);
     private readonly object _eventSync = new();
-    private AgentRpcLease<IAgentRuntimeCatalog>? _eventLease;
+    private SubagentProviderLease<IAgentRuntimeCatalog>? _eventLease;
     private CancellationTokenRegistration _eventRetirement;
     private Action<Guid>? _sessionChanged;
     private Action<Guid, AgentTurnRecord>? _turnChanged;
@@ -22,7 +21,7 @@ internal sealed class SubsessionLocalRuntimeAdapter :
     private int _disposed;
 
     internal SubsessionLocalRuntimeAdapter(
-        AgentRpcReference<IAgentRuntimeCatalog> runtimeReference)
+        SubagentProviderReference<IAgentRuntimeCatalog> runtimeReference)
     {
         _runtimeReference = runtimeReference;
     }

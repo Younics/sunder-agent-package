@@ -6,6 +6,7 @@ using Sunder.Sdk.Notifications;
 
 namespace Sunder.Package.Agent.PackageViews;
 
+[Sunder.Sdk.Packaging.SunderPackageSettingsView]
 public partial class AgentPermissionsView : UserControl, IDisposable
 {
     private AgentPermissionsViewModel? _viewModel;

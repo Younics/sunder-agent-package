@@ -3,18 +3,24 @@ extern alias AgentCore;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
-using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.HistorySearch;
-using Sunder.Package.Agent.Models;
+using AgentCore::Sunder.Package.Agent.Contracts.Models;
+using AgentCore::Sunder.Package.Agent.HistorySearch;
+using AgentCore::Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.Protocol;
-using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Services;
-using Sunder.Package.Agent.Subagents.Runtime;
 using Sunder.Sdk.Rpc;
 using Xunit;
 using AgentRuntimePayloadLimits = AgentCore::Sunder.Package.Agent.Runtime.AgentRuntimePayloadLimits;
 
 namespace Sunder.Package.Agent.Tests;
+
+extern alias SubagentsApp;
+extern alias SubagentsWorker;
+extern alias AgentApp;
+using AgentApp::Sunder.Package.Agent.Runtime;
+using SubagentsWorker::Sunder.Package.Agent.Subagents.Runtime;
+using SubagentModels = SubagentsWorker::Sunder.Package.Agent.Contracts.Models;
+using WorkerRuntime = Sunder.Package.Agent.Runtime;
 
 public sealed class AgentRuntimeTransportLimitTests
 {
@@ -37,7 +43,7 @@ public sealed class AgentRuntimeTransportLimitTests
         Assert.Equal(8 * 1024 * 1024, AgentRuntimePayloadLimits.StandardFallbackProfile.EventValueBytes);
         Assert.Equal(64 * 1024 * 1024, AgentRuntimePayloadLimits.StandardFallbackProfile.ContentReferenceBytes);
 
-        var budgets = new AgentRuntimeTransportBudgetState();
+        var budgets = new WorkerBudgetProbe();
         Assert.Equal(AgentRuntimePayloadLimits.StandardFallbackProfile, budgets.Current);
         var negotiated = budgets.Negotiate(new AgentTransportProfileRequest(
             TestProfile.RequestValueBytes,
@@ -59,7 +65,7 @@ public sealed class AgentRuntimeTransportLimitTests
     {
         using var rpcState = new RegressionTestRpcState();
         var workerProfile = ResourceProfile(4 * Mebibyte, 128 * Mebibyte);
-        var budgets = new AgentRuntimeTransportBudgetState(new RegressionTestRpcClient(
+        var budgets = new WorkerBudgetProbe(new RegressionTestRpcClient(
             rpcState,
             "sunder.package.agent",
             workerProfile));
@@ -103,7 +109,7 @@ public sealed class AgentRuntimeTransportLimitTests
         using var rpcState = new RegressionTestRpcState();
         var valueBytes = valueMebibytes * Mebibyte;
         var contentBytes = contentMebibytes * Mebibyte;
-        var budgets = new AgentRuntimeTransportBudgetState(new RegressionTestRpcClient(
+        var budgets = new WorkerBudgetProbe(new RegressionTestRpcClient(
             rpcState,
             "sunder.package.agent",
             ResourceProfile(valueBytes, contentBytes)));
@@ -133,7 +139,7 @@ public sealed class AgentRuntimeTransportLimitTests
         int contentBytes)
     {
         using var rpcState = new RegressionTestRpcState();
-        var budgets = new AgentRuntimeTransportBudgetState(new RegressionTestRpcClient(
+        var budgets = new WorkerBudgetProbe(new RegressionTestRpcClient(
             rpcState,
             "sunder.package.agent",
             ResourceProfile(valueBytes, contentBytes)));
@@ -154,7 +160,7 @@ public sealed class AgentRuntimeTransportLimitTests
     [Fact]
     public void RuntimeTransportBudgets_UseFallbackForMissingSidesAndRequireBothReports()
     {
-        var appOnly = new AgentRuntimeTransportBudgetState().Negotiate(new AgentTransportProfileRequest(
+        var appOnly = new WorkerBudgetProbe().Negotiate(new AgentTransportProfileRequest(
             16 * Mebibyte,
             16 * Mebibyte,
             16 * Mebibyte,
@@ -163,7 +169,7 @@ public sealed class AgentRuntimeTransportLimitTests
         Assert.Equal(AgentRuntimePayloadLimits.StandardFallbackProfile, appOnly);
 
         using var rpcState = new RegressionTestRpcState();
-        var workerOnlyBudgets = new AgentRuntimeTransportBudgetState(new RegressionTestRpcClient(
+        var workerOnlyBudgets = new WorkerBudgetProbe(new RegressionTestRpcClient(
             rpcState,
             "sunder.package.agent",
             ResourceProfile(2 * Mebibyte, 4 * Mebibyte)));
@@ -182,7 +188,7 @@ public sealed class AgentRuntimeTransportLimitTests
                 RuntimeReported: false),
             workerOnly);
 
-        var neither = new AgentRuntimeTransportBudgetState().Negotiate(new AgentTransportProfileRequest(
+        var neither = new WorkerBudgetProbe().Negotiate(new AgentTransportProfileRequest(
             AgentRuntimePayloadLimits.StandardFallbackProfile.RequestValueBytes,
             AgentRuntimePayloadLimits.StandardFallbackProfile.ResponseValueBytes,
             AgentRuntimePayloadLimits.StandardFallbackProfile.EventValueBytes,
@@ -194,7 +200,7 @@ public sealed class AgentRuntimeTransportLimitTests
     [Fact]
     public void RuntimeTransportBudgets_RejectNonPositiveAppProposalDimensions()
     {
-        var budgets = new AgentRuntimeTransportBudgetState();
+        var budgets = new WorkerBudgetProbe();
         var valid = new AgentTransportProfileRequest(
             1,
             1,
@@ -202,37 +208,34 @@ public sealed class AgentRuntimeTransportLimitTests
             1,
             RuntimeReported: false);
 
-        Assert.Throws<AgentOwnerOperationException>(() => budgets.Negotiate(valid with
+        Assert.Throws<WorkerRuntime.AgentOwnerOperationException>(() => budgets.Negotiate(valid with
         {
             RequestValueBytes = 0,
         }));
-        Assert.Throws<AgentOwnerOperationException>(() => budgets.Negotiate(valid with
+        Assert.Throws<WorkerRuntime.AgentOwnerOperationException>(() => budgets.Negotiate(valid with
         {
             ResponseValueBytes = -1,
         }));
-        Assert.Throws<AgentOwnerOperationException>(() => budgets.Negotiate(valid with
+        Assert.Throws<WorkerRuntime.AgentOwnerOperationException>(() => budgets.Negotiate(valid with
         {
             EventValueBytes = 0,
         }));
-        Assert.Throws<AgentOwnerOperationException>(() => budgets.Negotiate(valid with
+        Assert.Throws<WorkerRuntime.AgentOwnerOperationException>(() => budgets.Negotiate(valid with
         {
             ContentReferenceBytes = 0,
         }));
     }
 
     [Fact]
-    public void PackageModule_WiresWorkerRpcResourceProfileAndAllowsMissingClient()
+    public void GeneratedComposition_WiresWorkerRpcResourceProfileAndAllowsMissingProfile()
     {
         using var scope = RegressionTestPackageScope.Create();
         using var rpcState = new RegressionTestRpcState();
         var workerProfile = ResourceProfile(16 * Mebibyte, 256 * Mebibyte);
-        var profiledServices = new ServiceCollection();
-        profiledServices.AddSingleton<ISunderRpcClient>(new RegressionTestRpcClient(
+        using var profiledProvider = RegressionTestRuntime.Create(scope.Context, new RegressionTestRpcClient(
             rpcState,
             "sunder.package.agent",
             workerProfile));
-        new PackageModule().ConfigureRuntimeServices(profiledServices, scope.Context);
-        using var profiledProvider = profiledServices.BuildServiceProvider();
 
         Assert.Equal(
             new AgentTransportProfile(
@@ -241,14 +244,21 @@ public sealed class AgentRuntimeTransportLimitTests
                 16 * Mebibyte,
                 256 * Mebibyte,
                 RuntimeReported: true),
-            profiledProvider.GetRequiredService<AgentRuntimeTransportBudgetState>().Current);
+            AgentRoleBoundary.As<AgentTransportProfile>(profiledProvider.GetRequiredService<WorkerRuntime.AgentRuntimeTransportBudgetState>().Current));
 
-        var fallbackServices = new ServiceCollection();
-        new PackageModule().ConfigureRuntimeServices(fallbackServices, scope.Context);
-        using var fallbackProvider = fallbackServices.BuildServiceProvider();
+        using var fallbackProvider = RegressionTestRuntime.Create(scope.Context);
         Assert.Equal(
             AgentRuntimePayloadLimits.StandardFallbackProfile,
-            fallbackProvider.GetRequiredService<AgentRuntimeTransportBudgetState>().Current);
+            AgentRoleBoundary.As<AgentTransportProfile>(fallbackProvider.GetRequiredService<WorkerRuntime.AgentRuntimeTransportBudgetState>().Current));
+    }
+
+    private sealed class WorkerBudgetProbe(ISunderRpcClient? rpc = null)
+    {
+        private readonly WorkerRuntime.AgentRuntimeTransportBudgetState _worker = new(rpc);
+        internal AgentTransportProfile Current => AgentRoleBoundary.As<AgentTransportProfile>(_worker.Current);
+        internal AgentTransportProfile Negotiate(AgentTransportProfileRequest proposal)
+            => AgentRoleBoundary.As<AgentTransportProfile>(_worker.Negotiate(
+                AgentRoleBoundary.As<WorkerRuntime.AgentTransportProfileRequest>(proposal)));
     }
 
     [Theory]
@@ -396,7 +406,7 @@ public sealed class AgentRuntimeTransportLimitTests
         Assert.Contains(Assert.Single(fitted.Turns).Items, item => item.ItemId == requestedItemId);
 
         var subsession = SubsessionAroundTurnPayload.Fit(
-            new SubsessionAroundTurnPage([turn], true, true, turnId),
+            new SubsessionAroundTurnPage([AgentRoleBoundary.As<SubagentModels.AgentTurnRecord>(turn)], true, true, turnId),
             requestedItemId);
         Assert.True(JsonSerializer.SerializeToUtf8Bytes(subsession).Length
                     <= SubsessionAroundTurnPayload.MaximumResponseBytes);
@@ -444,12 +454,9 @@ public sealed class AgentRuntimeTransportLimitTests
     {
         using var scope = RegressionTestPackageScope.Create();
         using var catalog = new RegressionTestExtensionCatalog();
-        var serviceCollection = new ServiceCollection();
-        serviceCollection.AddSingleton<AgentRpcCatalog>(catalog);
-        new PackageModule().ConfigureRuntimeServices(serviceCollection, scope.Context);
-        await using var services = serviceCollection.BuildServiceProvider();
+        await using var services = RegressionTestRuntime.Create(scope.Context, catalog);
         var client = catalog.AddOwnerRuntimeProvider(
-            services.GetRequiredService<AgentOwnerRuntimeProvider>());
+            services.GetRequiredService<WorkerRuntime.AgentOwnerRuntimeProvider>());
         var uploads = services.GetRequiredService<AgentAttachmentTransferService>();
         var attachments = services.GetRequiredService<AgentAttachmentService>();
         var content = CreateBytes((2 * 1024 * 1024) + 137);
@@ -459,7 +466,8 @@ public sealed class AgentRuntimeTransportLimitTests
             content);
 
         var handle = await client.UploadAttachmentAsync(request, CancellationToken.None);
-        var adoption = uploads.BeginAdoption([handle]);
+        var workerHandle = AgentRoleBoundary.As<WorkerRuntime.AgentAttachmentUploadHandle>(handle);
+        var adoption = uploads.BeginAdoption([workerHandle]);
         try
         {
             Assert.Equal(content, await File.ReadAllBytesAsync(Assert.Single(adoption.Uploads).SourcePath));
@@ -469,12 +477,12 @@ public sealed class AgentRuntimeTransportLimitTests
             uploads.ReleaseAdoption(adoption);
         }
 
-        var stored = await attachments.StoreAttachmentAsync(Guid.NewGuid(), request);
-        var downloaded = await client.DownloadAttachmentAsync(stored.Metadata, CancellationToken.None);
+        var stored = await attachments.StoreAttachmentAsync(Guid.NewGuid(), AgentRoleBoundary.As<Sunder.Package.Agent.Contracts.Models.AgentAttachmentUploadRequest>(request));
+        var downloaded = await client.DownloadAttachmentAsync(AgentRoleBoundary.As<AgentAttachmentMetadata>(stored.Metadata), CancellationToken.None);
 
         Assert.Equal(content, downloaded);
         await client.DiscardAttachmentAsync(handle, CancellationToken.None);
-        Assert.Throws<AgentAttachmentTransferOperationException>(() => uploads.BeginAdoption([handle]));
+        Assert.Throws<AgentAttachmentTransferOperationException>(() => uploads.BeginAdoption([workerHandle]));
     }
 
     [Fact]
@@ -536,7 +544,7 @@ public sealed class AgentRuntimeTransportLimitTests
             9,
             SubagentChangeKind.Turn,
             SessionId: turn.SessionId,
-            Turn: turn,
+            Turn: AgentRoleBoundary.As<SubagentModels.AgentTurnRecord>(turn),
             RuntimeInstanceId: "subagent-runtime"));
         Assert.Equal(SubagentChangeKind.ResnapshotRequired, subsessionChange.Kind);
         Assert.True(
@@ -610,7 +618,7 @@ public sealed class AgentRuntimeTransportLimitTests
             Revision: 42);
 
         var agent = AgentRuntimePayloadLimits.FitToolDetail(detail, ResponsePayloadBytes);
-        var subsession = SubsessionAroundTurnPayload.FitToolDetail(detail);
+        var subsession = SubsessionAroundTurnPayload.FitToolDetail(AgentRoleBoundary.As<SubagentModels.AgentTranscriptToolDetailRecord>(detail));
 
         Assert.True(agent.WasTransportTruncated);
         Assert.Equal(sessionId, agent.SessionId);
@@ -659,7 +667,7 @@ public sealed class AgentRuntimeTransportLimitTests
                      SubagentQueryKind.TurnsAfter,
                  })
         {
-            var page = SubsessionLocalRuntimeAdapter.BuildTranscriptPage([turn], 30, direction);
+            var page = SubsessionLocalRuntimeAdapter.BuildTranscriptPage([AgentRoleBoundary.As<SubagentModels.AgentTurnRecord>(turn)], 30, direction);
 
             AssertProjectedTurn(page.Turns, page.HasMore, page.Continuation?.TurnId, turn.TurnId);
             Assert.True(SubsessionAroundTurnPayload.Size(page)
@@ -705,15 +713,15 @@ public sealed class AgentRuntimeTransportLimitTests
         Assert.Equal(agentAfter.Turns[^1].TurnId, agentAfter.Continuation?.TurnId);
 
         var subsessionRecent = SubsessionLocalRuntimeAdapter.BuildTranscriptPage(
-            turns,
+            AgentRoleBoundary.As<IReadOnlyList<SubagentModels.AgentTurnRecord>>(turns),
             30,
             SubagentQueryKind.RecentTurns);
         var subsessionBefore = SubsessionLocalRuntimeAdapter.BuildTranscriptPage(
-            turns,
+            AgentRoleBoundary.As<IReadOnlyList<SubagentModels.AgentTurnRecord>>(turns),
             30,
             SubagentQueryKind.TurnsBefore);
         var subsessionAfter = SubsessionLocalRuntimeAdapter.BuildTranscriptPage(
-            turns,
+            AgentRoleBoundary.As<IReadOnlyList<SubagentModels.AgentTurnRecord>>(turns),
             30,
             SubagentQueryKind.TurnsAfter);
         AssertDirectionalPage(
@@ -740,11 +748,12 @@ public sealed class AgentRuntimeTransportLimitTests
     }
 
     private static void AssertProjectedTurn(
-        IReadOnlyList<AgentTurnRecord> turns,
+        object roleTurns,
         bool hasMore,
         Guid? continuationTurnId,
         Guid expectedTurnId)
     {
+        var turns = AgentRoleBoundary.As<IReadOnlyList<AgentTurnRecord>>(roleTurns);
         Assert.True(hasMore);
         var turn = Assert.Single(turns);
         Assert.Equal(expectedTurnId, turn.TurnId);
@@ -755,10 +764,11 @@ public sealed class AgentRuntimeTransportLimitTests
     }
 
     private static void AssertDirectionalPage(
-        IReadOnlyList<AgentTurnRecord> turns,
+        object roleTurns,
         bool hasMore,
         Guid cursorAdjacentTurnId)
     {
+        var turns = AgentRoleBoundary.As<IReadOnlyList<AgentTurnRecord>>(roleTurns);
         Assert.True(hasMore);
         Assert.InRange(turns.Count, 1, 29);
         Assert.Contains(turns, turn => turn.TurnId == cursorAdjacentTurnId);
@@ -822,14 +832,14 @@ public sealed class AgentRuntimeTransportLimitTests
         handler = new TransportProfileRpcHandler(response);
         state.Add(
             "sunder.package.agent",
-            AgentOwnerRuntimeRpc.Descriptor,
+            RegressionTestRpcDescriptors.Get("sunder.agent.owner.runtime"),
             handler,
             handler,
             handler,
-            AgentOwnerRuntimeRpc.ProviderId);
+            "agent.owner.runtime", packageVersion: "2.0.0");
         return new AgentOwnerRpcClient(new RegressionTestRpcClient(
             state,
-            "sunder.package.agent.app",
+            "sunder.package.agent",
             resourceProfile));
     }
 

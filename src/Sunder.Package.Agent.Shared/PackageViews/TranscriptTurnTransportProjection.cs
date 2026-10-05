@@ -3,6 +3,7 @@ using Sunder.Package.Agent.Contracts.Models;
 
 namespace Sunder.Package.Agent.Shared.PackageViews;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal static class TranscriptTurnTransportProjection
 {
     internal const string ContentTruncatedNotice =

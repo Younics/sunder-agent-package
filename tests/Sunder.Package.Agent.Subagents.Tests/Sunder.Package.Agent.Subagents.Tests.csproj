@@ -12,8 +12,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Subagents\Sunder.Package.Agent.Subagents.csproj" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Subagents\Protocol\SubagentsProtocol.csproj" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Subagents\Sunder.Package.Agent.Subagents.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="global,SubagentsWorker" />
     <ProjectReference Include="..\Sunder.Package.Agent.TestSupport\Sunder.Package.Agent.TestSupport.csproj" />
   </ItemGroup>
 

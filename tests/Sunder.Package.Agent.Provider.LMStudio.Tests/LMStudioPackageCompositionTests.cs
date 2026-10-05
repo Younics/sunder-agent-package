@@ -2,12 +2,11 @@ extern alias LMStudioApp;
 
 using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Contracts.Contracts;
-using Sunder.Package.Agent.Provider.LMStudio.Protocol.Generated;
+using Sunder.Package.Agent.Provider.LMStudio.Rpc;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Package.Agent.Provider.TestSupport;
 using Sunder.Package.Agent.TestSupport.Avalonia;
 using Xunit;
-using LMStudioAppPackageModule = LMStudioApp::Sunder.Package.Agent.Provider.LMStudio.AppPackageModule;
 using LMStudioSettingsView = LMStudioApp::Sunder.Package.Agent.Provider.LMStudio.LMStudioSettingsView;
 using LMStudioSettingsViewModel = LMStudioApp::Sunder.Package.Agent.Provider.LMStudio.LMStudioSettingsViewModel;
 using LMStudioCredentialOwnerRpcClient = LMStudioApp::Sunder.Package.Agent.Provider.LMStudio.ProviderCredentialOwnerRpcClient;
@@ -27,8 +26,8 @@ public sealed class LMStudioPackageCompositionTests
         var connection = new LMStudioConnection(context, credentials);
         var catalog = new LMStudioModelCatalogService(connection);
 
-        Assert.IsAssignableFrom<ICredentialSettingsProvider>(
-            new ProviderCredentialRpcProvider(credentials));
+        Assert.IsAssignableFrom<Sunder.Sdk.Rpc.ISunderRpcServiceHandler>(
+            new CredentialSettingsService(credentials).CreateSunderRpcProviderRegistration().Handler);
         Assert.IsAssignableFrom<IAgentChatProvider>(
             new LMStudioAgentProvider(context, connection, catalog));
         Assert.IsAssignableFrom<IAgentEmbeddingProvider>(
@@ -36,12 +35,12 @@ public sealed class LMStudioPackageCompositionTests
         Assert.NotNull(LMStudioProviderConfiguration.Schema);
 
         var appServices = new ServiceCollection();
-        var appModule = new LMStudioAppPackageModule();
+        var appModule = GeneratedProviderComposition.App(typeof(LMStudioSettingsViewModel).Assembly);
         appModule.ConfigureAppServices(appServices, context);
         Assert.Contains(appServices, descriptor => descriptor.ServiceType == typeof(LMStudioSettingsViewModel));
         Assert.Contains(appServices, descriptor => descriptor.ServiceType == typeof(LMStudioCredentialOwnerRpcClient));
         Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(ProviderCredentialAccessor));
-        Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(ProviderCredentialRpcProvider));
+        Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(CredentialSettingsService));
         Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(LMStudioConnection));
         Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(LMStudioModelCatalogService));
         Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(LMStudioAgentProvider));

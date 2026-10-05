@@ -1,11 +1,15 @@
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Execution.Docker;
-using Sunder.Package.Agent.Execution.Local;
 using Sunder.Sdk.Abstractions;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
+
+extern alias DockerWorker;
+extern alias LocalWorker;
+extern alias AgentApp;
+using DockerWorker::Sunder.Package.Agent.Execution.Docker;
+using LocalWorker::Sunder.Package.Agent.Execution.Local;
 
 public sealed class WorkspaceEditorConfigPreservationTests
 {
@@ -17,9 +21,9 @@ public sealed class WorkspaceEditorConfigPreservationTests
         var pathEntries = new[] { Path.Combine(scope.RootPath, "bin") };
         var configService = new LocalExecutionWorkspaceConfigService(scope.Context);
         await configService.SaveConfigAsync(bindingId, new LocalExecutionWorkspaceConfig("bash", pathEntries));
-        var contributor = new LocalExecutionWorkspaceEditorContributor(
+        var contributor = AgentRoleBoundary.As<IAgentWorkspaceEditorContributor>(new LocalExecutionWorkspaceEditorContributor(
             configService,
-            new LocalShellCatalogService(scope.Context));
+            new LocalShellCatalogService(scope.Context)));
 
         var result = await contributor.SaveSectionAsync(
             CreateContext("local", bindingId),
@@ -52,7 +56,7 @@ public sealed class WorkspaceEditorConfigPreservationTests
                 "preserved-container",
                 "/bin/sh",
                 ["/opt/tools", "/usr/local/bin"]));
-        var contributor = new DockerExecutionWorkspaceEditorContributor(configService, imageCatalog);
+        var contributor = AgentRoleBoundary.As<IAgentWorkspaceEditorContributor>(new DockerExecutionWorkspaceEditorContributor(configService, imageCatalog));
 
         var result = await contributor.SaveSectionAsync(
             CreateContext("docker", bindingId),
@@ -75,7 +79,7 @@ public sealed class WorkspaceEditorConfigPreservationTests
     private static AgentWorkspaceEditorContext CreateContext(string targetId, string bindingId)
     {
         var now = DateTimeOffset.UtcNow;
-        var workspace = new AgentWorkspaceRecord("workspace", "Workspace", null, now, now);
+        var workspace = new AgentApp::Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord("workspace", "Workspace", null, now, now);
         return new AgentWorkspaceEditorContext(workspace, targetId, bindingId);
     }
 

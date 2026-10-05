@@ -1,12 +1,21 @@
 # Contributing to Sunder Agent Packages
 
-Thanks for helping improve the Sunder Agent package family. This repository contains the first-party Agent package, Agent Protocol, providers, tools, execution targets, memory, MCP, skills, subagents, and package builder integration.
+Thanks for helping improve the Sunder Agent package family. This repository contains the first-party Agent package, providers, tools, execution targets, memory, MCP, skills, subagents, package builder integration, and the pre-cutover Protocol migration corpus.
+
+The final V1 authoring model derives RPC contracts and package-local bindings
+from ordinary implementation and declaration source. Do not add new dependencies
+on the Protocol project/package or treat its current API as a final release
+surface; see [`compatibility/README.md`](compatibility/README.md) for migration
+status.
 
 ## Before You Start
 
 For small fixes, documentation improvements, and tests, open a pull request directly.
 
-For larger changes, open an issue first. Please discuss changes to `Sunder.Package.Agent.Protocol`, package dependencies, permission surfaces, execution behavior, provider behavior, and package architecture before implementation.
+For larger changes, open an issue first. Please discuss changes to Agent RPC
+contracts or their migration corpus, package dependencies, permission surfaces,
+execution behavior, provider behavior, and package architecture before
+implementation.
 
 ## Local Development
 
@@ -40,7 +49,7 @@ Package projects must not reference `Sunder.App` or `Sunder.Runtime.Host` direct
 | Area | Owns |
 | --- | --- |
 | `Sunder.Package.Agent` | Core sessions, chat, profiles, workspaces, permissions, orchestration |
-| `Sunder.Package.Agent.Protocol` | Public RPC descriptors and generated bindings used by Agent extension packages |
+| Agent RPC contracts | Implementation-derived public contracts and package-local generated bindings; the current Protocol project is migration-only |
 | Provider packages | Chat and embedding provider integrations |
 | Tool packages | File, shell, web, MCP, and native tool capabilities |
 | Execution packages | Local and Docker execution targets |

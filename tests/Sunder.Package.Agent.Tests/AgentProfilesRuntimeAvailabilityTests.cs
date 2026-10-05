@@ -2,9 +2,15 @@ extern alias AgentCore;
 
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
-using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.PackageViews;
-using Sunder.Package.Agent.Runtime;
+using AgentCore::Sunder.Package.Agent.Contracts.Models;
+using AgentCore::Sunder.Package.Agent.PackageViews;
+using AgentCore::Sunder.Package.Agent.Runtime;
+using WorkerRuntime = Sunder.Package.Agent.Runtime;
+using AgentRuntimeChangeHub = Sunder.Package.Agent.Runtime.AgentRuntimeChangeHub;
+using AgentDashboardHandler = Sunder.Package.Agent.Runtime.AgentDashboardHandler;
+using AgentCatalogHandler = Sunder.Package.Agent.Runtime.AgentCatalogHandler;
+using AgentProfileCommandHandler = Sunder.Package.Agent.Runtime.AgentProfileCommandHandler;
+using AgentToolCatalogEntry = AgentCore::Sunder.Package.Agent.Services.AgentToolCatalogEntry;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
 using Xunit;
@@ -569,9 +575,9 @@ public sealed class AgentProfilesRuntimeAvailabilityTests
             if (operation.Is(AgentRuntimeOperations.Dashboard))
             {
                 var response = await dashboard.HandleAsync(
-                    (AgentDashboardRequest)(object)request,
+                    AgentRoleBoundary.As<WorkerRuntime.AgentDashboardRequest>(request),
                     cancellationToken);
-                return (TResponse)(object)response;
+                return AgentRoleBoundary.As<TResponse>(response);
             }
             if (operation.Is(AgentRuntimeOperations.Profiles))
             {
@@ -580,16 +586,16 @@ public sealed class AgentProfilesRuntimeAvailabilityTests
                     throw profileFailure;
                 }
                 var response = await profiles.HandleAsync(
-                    (AgentProfileCommand)(object)request,
+                    AgentRoleBoundary.As<WorkerRuntime.AgentProfileCommand>(request),
                     cancellationToken);
-                return (TResponse)(object)response;
+                return AgentRoleBoundary.As<TResponse>(response);
             }
             if (operation.Is(AgentRuntimeOperations.Catalog))
             {
                 var response = await catalog.HandleAsync(
-                    (AgentCatalogRequest)(object)request,
+                    AgentRoleBoundary.As<WorkerRuntime.AgentCatalogRequest>(request),
                     cancellationToken);
-                return (TResponse)(object)response;
+                return AgentRoleBoundary.As<TResponse>(response);
             }
 
             throw new NotSupportedException(operation.Describe());
@@ -608,10 +614,10 @@ public sealed class AgentProfilesRuntimeAvailabilityTests
             }
 
             await foreach (var change in changes.SubscribeAsync(
-                               (AgentChangeSubscription)(object)request,
+                               AgentRoleBoundary.As<WorkerRuntime.AgentChangeSubscription>(request),
                                cancellationToken))
             {
-                yield return (TEvent)(object)change;
+                yield return AgentRoleBoundary.As<TEvent>(change);
             }
         }
     }

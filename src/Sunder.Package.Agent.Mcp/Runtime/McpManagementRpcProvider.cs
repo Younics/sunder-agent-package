@@ -1,90 +1,10 @@
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
-using Sunder.Package.Agent.Mcp.Protocol.Generated;
 using Sunder.Package.Agent.Mcp.Services;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Mcp.Runtime;
-
-internal sealed class McpManagementRpcProvider(
-    McpRuntimeHandler operations,
-    McpRuntimeChangeStream changes) : IManagementProvider
-{
-    public async ValueTask<ManagementContent> QueryAsync(
-        SunderRpcInvocationContext context,
-        ManagementContent request,
-        CancellationToken cancellationToken = default)
-    {
-        try
-        {
-            var query = await McpManagementPayload.ReadRequestAsync<McpQuery>(
-                context,
-                request,
-                cancellationToken);
-            var result = await operations.HandleAsync(query, cancellationToken);
-            return await McpManagementPayload.RegisterResponseAsync(
-                context,
-                result,
-                "mcp-projection.json",
-                cancellationToken);
-        }
-        catch (Exception exception) when (ShouldMap(exception))
-        {
-            throw Failure((McpManagementOperationException)exception);
-        }
-    }
-
-    public async ValueTask<ManagementContent> CommandAsync(
-        SunderRpcInvocationContext context,
-        ManagementContent request,
-        CancellationToken cancellationToken = default)
-    {
-        try
-        {
-            var command = await McpManagementPayload.ReadRequestAsync<McpCommand>(
-                context,
-                request,
-                cancellationToken);
-            var result = await operations.HandleAsync(command, cancellationToken);
-            return await McpManagementPayload.RegisterResponseAsync(
-                context,
-                result,
-                "mcp-projection.json",
-                cancellationToken);
-        }
-        catch (Exception exception) when (ShouldMap(exception))
-        {
-            throw Failure((McpManagementOperationException)exception);
-        }
-    }
-
-    public async IAsyncEnumerable<ManagementChange> ChangesAsync(
-        SunderRpcInvocationContext context,
-        ChangeSubscription request,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
-        yield return new ManagementChange { Kind = ManagementChangeKind.Servers };
-        await foreach (var change in changes.WatchAsync(cancellationToken))
-        {
-            yield return new ManagementChange
-            {
-                Kind = change.Kind == McpChangeKind.Servers
-                    ? ManagementChangeKind.Servers
-                    : ManagementChangeKind.Status,
-            };
-        }
-    }
-
-    internal static bool ShouldMap(Exception exception)
-        => exception is McpManagementOperationException;
-
-    private static SunderRpcException Failure(McpManagementOperationException exception)
-        => new(new SunderRpcError(
-            SunderRpcErrorKind.Domain,
-            "mcp.management.failed",
-            exception.Message));
-}
 
 internal sealed class McpLocalManagementGateway(
     McpSettingsEditorService editor,

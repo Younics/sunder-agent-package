@@ -1,0 +1,909 @@
+name: Sunder Agent Production Acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_id:
+        description: Positive numeric GitHub draft release ID
+        required: true
+        type: string
+      tag:
+        description: Exact immutable Agent family tag (agent/vX.Y.Z)
+        required: true
+        type: string
+      source_sha:
+        description: Exact 40-character Agent commit selected by the tag
+        required: true
+        type: string
+      publication_run_id:
+        description: Successful Sunder Agent Family Release tag-push workflow run ID
+        required: true
+        type: string
+      publication_run_attempt:
+        description: Exact successful publication run attempt bound by release provenance
+        required: true
+        type: string
+      confirmation:
+        description: Enter accept-exact-agent-family after external approval
+        required: true
+        type: string
+      phase:
+        description: Pre-visibility while Yanked, or post-visibility after the retained atomic cohort
+        required: true
+        type: choice
+        options: [pre-visibility, post-visibility]
+      publication_evidence_commit:
+        description: Untagged evidence-only direct child of source_sha
+        required: true
+        type: string
+      cohort_request_sha256:
+        description: Retained cohort request digest (required only for post-visibility)
+        required: false
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: sunder-agent-production-acceptance-${{ inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  CORE_SDK_VERSION: "1.1.0"
+  DOTNET_VERSION: "10.0.100"
+  NUGET_FLAT_CONTAINER: https://api.nuget.org/v3-flatcontainer
+  PRODUCTION_LOCK: eng/execution-runtimes/production.lock.json
+  ACCEPTANCE_PHASE: ${{ inputs.phase }}
+  PUBLICATION_EVIDENCE_COMMIT: ${{ inputs.publication_evidence_commit }}
+  COHORT_REQUEST_SHA256: ${{ inputs.cohort_request_sha256 }}
+
+jobs:
+  verify-release:
+    name: Bind exact Agent, Core, draft, runtime lock, and Registry policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    environment: sunder-agent-production-acceptance
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      core_commit: ${{ steps.core.outputs.commit }}
+      version: ${{ steps.release.outputs.version }}
+    env:
+      REGISTRY_API_URL: ${{ vars.SUNDER_REGISTRY_API_URL }}
+      SUNDER_AGENT_PRODUCTION_ACCEPTANCE_APPROVED: ${{ vars.SUNDER_AGENT_PRODUCTION_ACCEPTANCE_APPROVED }}
+      SUNDER_AGENT_PRODUCTION_ACCEPTANCE_APPROVAL_REFERENCE: ${{ vars.SUNDER_AGENT_PRODUCTION_ACCEPTANCE_APPROVAL_REFERENCE }}
+      SUNDER_AGENT_PRODUCTION_ACCEPTANCE_COORDINATOR: ${{ vars.SUNDER_AGENT_PRODUCTION_ACCEPTANCE_COORDINATOR }}
+      SUNDER_AGENT_PRODUCTION_ACCEPTANCE_COORDINATOR_SHA256: ${{ vars.SUNDER_AGENT_PRODUCTION_ACCEPTANCE_COORDINATOR_SHA256 }}
+      SUNDER_AGENT_PRODUCTION_ACCEPTANCE_COORDINATOR_RUNNER: ${{ vars.SUNDER_AGENT_PRODUCTION_ACCEPTANCE_COORDINATOR_RUNNER }}
+      SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_WIN_X64: ${{ vars.SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_WIN_X64 }}
+      SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_WIN_ARM64: ${{ vars.SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_WIN_ARM64 }}
+      SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_LINUX_X64: ${{ vars.SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_LINUX_X64 }}
+      SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_LINUX_ARM64: ${{ vars.SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_LINUX_ARM64 }}
+      SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_OSX_X64: ${{ vars.SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_OSX_X64 }}
+      SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_OSX_ARM64: ${{ vars.SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_OSX_ARM64 }}
+      SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_SHA256_WIN_X64: ${{ vars.SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_SHA256_WIN_X64 }}
+      SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_SHA256_WIN_ARM64: ${{ vars.SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_SHA256_WIN_ARM64 }}
+      SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_SHA256_LINUX_X64: ${{ vars.SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_SHA256_LINUX_X64 }}
+      SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_SHA256_LINUX_ARM64: ${{ vars.SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_SHA256_LINUX_ARM64 }}
+      SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_SHA256_OSX_X64: ${{ vars.SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_SHA256_OSX_X64 }}
+      SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_SHA256_OSX_ARM64: ${{ vars.SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_SHA256_OSX_ARM64 }}
+      SUNDER_EXECUTION_RUNTIME_SOURCES_APPROVED: ${{ vars.SUNDER_EXECUTION_RUNTIME_SOURCES_APPROVED }}
+      SUNDER_EXECUTION_RUNTIME_SOURCES_APPROVAL_REFERENCE: ${{ vars.SUNDER_EXECUTION_RUNTIME_SOURCES_APPROVAL_REFERENCE }}
+      SUNDER_EXECUTION_RUNTIME_SIGNERS_APPROVED: ${{ vars.SUNDER_EXECUTION_RUNTIME_SIGNERS_APPROVED }}
+      SUNDER_EXECUTION_RUNTIME_SIGNERS_APPROVAL_REFERENCE: ${{ vars.SUNDER_EXECUTION_RUNTIME_SIGNERS_APPROVAL_REFERENCE }}
+      SUNDER_EXECUTION_RUNTIME_RUNNERS_APPROVED: ${{ vars.SUNDER_EXECUTION_RUNTIME_RUNNERS_APPROVED }}
+      SUNDER_EXECUTION_RUNTIME_RUNNERS_APPROVAL_REFERENCE: ${{ vars.SUNDER_EXECUTION_RUNTIME_RUNNERS_APPROVAL_REFERENCE }}
+      SUNDER_EXECUTION_RUNTIME_PUBLICATION_APPROVED: ${{ vars.SUNDER_EXECUTION_RUNTIME_PUBLICATION_APPROVED }}
+      SUNDER_EXECUTION_RUNTIME_PUBLICATION_APPROVAL_REFERENCE: ${{ vars.SUNDER_EXECUTION_RUNTIME_PUBLICATION_APPROVAL_REFERENCE }}
+      SUNDER_EXECUTION_RUNTIME_RELEASE_SIGNER_ADAPTER: ${{ vars.SUNDER_EXECUTION_RUNTIME_RELEASE_SIGNER_ADAPTER }}
+      SUNDER_EXECUTION_RUNTIME_ATTESTATION_SIGNER_ADAPTER: ${{ vars.SUNDER_EXECUTION_RUNTIME_ATTESTATION_SIGNER_ADAPTER }}
+      SUNDER_EXECUTION_RUNTIME_RELEASE_PUBLIC_KEYS: ${{ vars.SUNDER_EXECUTION_RUNTIME_RELEASE_PUBLIC_KEYS }}
+      SUNDER_EXECUTION_RUNTIME_ATTESTATION_PUBLIC_KEYS: ${{ vars.SUNDER_EXECUTION_RUNTIME_ATTESTATION_PUBLIC_KEYS }}
+      SUNDER_EXECUTION_RUNTIME_RUNNER_WIN_X64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RUNNER_WIN_X64 }}
+      SUNDER_EXECUTION_RUNTIME_RUNNER_WIN_ARM64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RUNNER_WIN_ARM64 }}
+      SUNDER_EXECUTION_RUNTIME_RUNNER_LINUX_X64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RUNNER_LINUX_X64 }}
+      SUNDER_EXECUTION_RUNTIME_RUNNER_LINUX_ARM64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RUNNER_LINUX_ARM64 }}
+      SUNDER_EXECUTION_RUNTIME_RUNNER_OSX_X64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RUNNER_OSX_X64 }}
+      SUNDER_EXECUTION_RUNTIME_RUNNER_OSX_ARM64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RUNNER_OSX_ARM64 }}
+      SUNDER_EXECUTION_RUNTIME_RUNNER_PROFILE_WIN_X64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RUNNER_PROFILE_WIN_X64 }}
+      SUNDER_EXECUTION_RUNTIME_RUNNER_PROFILE_WIN_ARM64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RUNNER_PROFILE_WIN_ARM64 }}
+      SUNDER_EXECUTION_RUNTIME_RUNNER_PROFILE_LINUX_X64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RUNNER_PROFILE_LINUX_X64 }}
+      SUNDER_EXECUTION_RUNTIME_RUNNER_PROFILE_LINUX_ARM64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RUNNER_PROFILE_LINUX_ARM64 }}
+      SUNDER_EXECUTION_RUNTIME_RUNNER_PROFILE_OSX_X64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RUNNER_PROFILE_OSX_X64 }}
+      SUNDER_EXECUTION_RUNTIME_RUNNER_PROFILE_OSX_ARM64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RUNNER_PROFILE_OSX_ARM64 }}
+      SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_WIN_X64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_WIN_X64 }}
+      SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_WIN_ARM64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_WIN_ARM64 }}
+      SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_LINUX_X64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_LINUX_X64 }}
+      SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_LINUX_ARM64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_LINUX_ARM64 }}
+      SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_OSX_X64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_OSX_X64 }}
+      SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_OSX_ARM64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_OSX_ARM64 }}
+      SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_SHA256_WIN_X64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_SHA256_WIN_X64 }}
+      SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_SHA256_WIN_ARM64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_SHA256_WIN_ARM64 }}
+      SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_SHA256_LINUX_X64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_SHA256_LINUX_X64 }}
+      SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_SHA256_LINUX_ARM64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_SHA256_LINUX_ARM64 }}
+      SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_SHA256_OSX_X64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_SHA256_OSX_X64 }}
+      SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_SHA256_OSX_ARM64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_SHA256_OSX_ARM64 }}
+    steps:
+      - name: Require protected main, exact coordinates, and externally approved production system
+        id: release
+        shell: bash
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+          PUBLICATION_RUN_ATTEMPT: ${{ inputs.publication_run_attempt }}
+          PUBLICATION_RUN_ID: ${{ inputs.publication_run_id }}
+          RELEASE_ID: ${{ inputs.release_id }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          python3 -c 'import sys; assert sys.version_info >= (3, 9), "Python 3.9+ is required"'
+          test "$GITHUB_REPOSITORY" = Younics/sunder-agent-package
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_WORKFLOW" = 'Sunder Agent Production Acceptance'
+          test "$GITHUB_WORKFLOW_REF" = "$GITHUB_REPOSITORY/.github/workflows/sunder-agent-production-acceptance.yml@refs/heads/main"
+          test "$CONFIRMATION" = accept-exact-agent-family
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$PUBLICATION_EVIDENCE_COMMIT" =~ ^[0-9a-f]{40}$ && "$PUBLICATION_EVIDENCE_COMMIT" != "$SOURCE_SHA" ]]
+          if [[ "$ACCEPTANCE_PHASE" == pre-visibility ]]; then
+            test -z "$COHORT_REQUEST_SHA256"
+          else
+            test "$ACCEPTANCE_PHASE" = post-visibility
+            [[ "$COHORT_REQUEST_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          fi
+          [[ "$RELEASE_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$PUBLICATION_RUN_ID" =~ ^[1-9][0-9]*$ && "$PUBLICATION_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          [[ "$TAG" =~ ^agent/v((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?)$ ]]
+          version="${BASH_REMATCH[1]}"
+          [[ "$REGISTRY_API_URL" =~ ^https://[^/@?#]+$ ]]
+          [[ "$SUNDER_AGENT_PRODUCTION_ACCEPTANCE_APPROVED" == approved ]]
+          [[ "$SUNDER_AGENT_PRODUCTION_ACCEPTANCE_APPROVAL_REFERENCE" =~ ^https://[^/?#]+/[^[:space:]#]+$ ]]
+          required_configuration=(
+            SUNDER_AGENT_PRODUCTION_ACCEPTANCE_COORDINATOR
+            SUNDER_AGENT_PRODUCTION_ACCEPTANCE_COORDINATOR_SHA256
+            SUNDER_AGENT_PRODUCTION_ACCEPTANCE_COORDINATOR_RUNNER
+            SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_WIN_X64
+            SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_WIN_ARM64
+            SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_LINUX_X64
+            SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_LINUX_ARM64
+            SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_OSX_X64
+            SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_OSX_ARM64
+            SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_SHA256_WIN_X64
+            SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_SHA256_WIN_ARM64
+            SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_SHA256_LINUX_X64
+            SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_SHA256_LINUX_ARM64
+            SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_SHA256_OSX_X64
+            SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_SHA256_OSX_ARM64
+          )
+          for name in "${required_configuration[@]}"; do
+            [[ -n "${!name:-}" ]] || { echo "External Agent acceptance configuration '$name' is required." >&2; exit 1; }
+          done
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout trusted acceptance policy from protected main
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          path: acceptance-policy
+          persist-credentials: false
+
+      - name: Checkout exact immutable Agent release source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          path: release-source
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Verify Agent version and resolve the final Core SDK commit
+        id: core
+        working-directory: release-source
+        shell: bash
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          test "$(git -C ../acceptance-policy rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "${{ inputs.source_sha }}"
+          bash ../acceptance-policy/scripts/release/verify-agent-release-version.sh "$VERSION" "$CORE_SDK_VERSION"
+          test "$VERSION" = "$(jq -er '.releaseVersion' packages.json)"
+          commit="$(bash ../acceptance-policy/scripts/release/verify-core-sdk-release.sh "$CORE_SDK_VERSION" resolve)"
+          [[ "$commit" =~ ^[0-9a-f]{40}$ ]]
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout exact Core provenance commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Younics/sunder-core
+          ref: ${{ steps.core.outputs.commit }}
+          path: sunder-core
+          persist-credentials: false
+
+      - name: Download exact run-specific Agent publication handoff
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: sunder-agent-publication-evidence-${{ inputs.release_id }}-${{ inputs.publication_run_attempt }}
+          path: publication-evidence
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.publication_run_id }}
+
+      - name: Verify exact successful publication workflow, attempt, provenance, and bytes
+        working-directory: acceptance-policy
+        shell: bash
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          bash scripts/release/verify-agent-publication.sh \
+            "${{ inputs.release_id }}" "${{ inputs.tag }}" "${{ inputs.source_sha }}" \
+            "${{ inputs.publication_run_id }}" "${{ inputs.publication_run_attempt }}" \
+            ../release-source ../publication-evidence
+          python3 -B scripts/release/agent_release.py verify-evidence-commit \
+            ../release-source ../publication-evidence "$PUBLICATION_EVIDENCE_COMMIT"
+
+      - name: Require the retained atomic result before post-visibility work
+        if: inputs.phase == 'post-visibility'
+        working-directory: acceptance-policy
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 -B scripts/release/agent_cohort_receipt.py download \
+            "$GITHUB_REPOSITORY" "${{ inputs.release_id }}" "${{ inputs.tag }}" \
+            "$COHORT_REQUEST_SHA256" "$GITHUB_WORKSPACE/cohort-evidence.json"
+
+      - name: Require the exact numeric Agent draft before native work
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ inputs.release_id }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          release="$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID")"
+          jq -e --argjson id "$RELEASE_ID" --arg tag "$TAG" --arg source "$SOURCE_SHA" '
+            .id == $id and .tag_name == $tag and .draft == true
+            and (.body | capture("(?m)^Agent source commit: (?<sha>[0-9a-f]{40})$").sha) == $source
+          ' <<< "$release" >/dev/null
+
+      - name: Restore Core runtime lock validator
+        working-directory: sunder-core
+        run: dotnet restore languages/csharp/dotnet/tools/Sunder.ExecutionRuntime.Build/Sunder.ExecutionRuntime.Build.csproj --locked-mode
+
+      - name: Require approved production lock, signer identities, and native profiles
+        working-directory: sunder-core
+        shell: bash
+        run: bash scripts/execution-runtimes/native-release-preflight.sh --lock "$PRODUCTION_LOCK"
+
+      - name: Require all six exact lock-bound runtimes to be Supported
+        working-directory: acceptance-policy
+        shell: bash
+        run: >-
+          bash scripts/release/verify-execution-runtime-availability.sh
+          "$REGISTRY_API_URL"
+          "$GITHUB_WORKSPACE/sunder-core/$PRODUCTION_LOCK"
+
+  native-acceptance:
+    name: Agent ${{ inputs.phase }} acceptance (${{ matrix.rid }})
+    needs: verify-release
+    runs-on: ${{ vars[matrix.runner_variable] }}
+    timeout-minutes: 360
+    environment: sunder-agent-production-acceptance
+    permissions:
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: win-x64
+            runner_variable: SUNDER_EXECUTION_RUNTIME_RUNNER_WIN_X64
+            profile_variable: SUNDER_EXECUTION_RUNTIME_RUNNER_PROFILE_WIN_X64
+            release_driver_variable: SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_WIN_X64
+            release_driver_sha_variable: SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_SHA256_WIN_X64
+            acceptance_driver_variable: SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_WIN_X64
+            acceptance_driver_sha_variable: SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_SHA256_WIN_X64
+          - rid: win-arm64
+            runner_variable: SUNDER_EXECUTION_RUNTIME_RUNNER_WIN_ARM64
+            profile_variable: SUNDER_EXECUTION_RUNTIME_RUNNER_PROFILE_WIN_ARM64
+            release_driver_variable: SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_WIN_ARM64
+            release_driver_sha_variable: SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_SHA256_WIN_ARM64
+            acceptance_driver_variable: SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_WIN_ARM64
+            acceptance_driver_sha_variable: SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_SHA256_WIN_ARM64
+          - rid: linux-x64
+            runner_variable: SUNDER_EXECUTION_RUNTIME_RUNNER_LINUX_X64
+            profile_variable: SUNDER_EXECUTION_RUNTIME_RUNNER_PROFILE_LINUX_X64
+            release_driver_variable: SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_LINUX_X64
+            release_driver_sha_variable: SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_SHA256_LINUX_X64
+            acceptance_driver_variable: SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_LINUX_X64
+            acceptance_driver_sha_variable: SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_SHA256_LINUX_X64
+          - rid: linux-arm64
+            runner_variable: SUNDER_EXECUTION_RUNTIME_RUNNER_LINUX_ARM64
+            profile_variable: SUNDER_EXECUTION_RUNTIME_RUNNER_PROFILE_LINUX_ARM64
+            release_driver_variable: SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_LINUX_ARM64
+            release_driver_sha_variable: SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_SHA256_LINUX_ARM64
+            acceptance_driver_variable: SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_LINUX_ARM64
+            acceptance_driver_sha_variable: SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_SHA256_LINUX_ARM64
+          - rid: osx-x64
+            runner_variable: SUNDER_EXECUTION_RUNTIME_RUNNER_OSX_X64
+            profile_variable: SUNDER_EXECUTION_RUNTIME_RUNNER_PROFILE_OSX_X64
+            release_driver_variable: SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_OSX_X64
+            release_driver_sha_variable: SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_SHA256_OSX_X64
+            acceptance_driver_variable: SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_OSX_X64
+            acceptance_driver_sha_variable: SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_SHA256_OSX_X64
+          - rid: osx-arm64
+            runner_variable: SUNDER_EXECUTION_RUNTIME_RUNNER_OSX_ARM64
+            profile_variable: SUNDER_EXECUTION_RUNTIME_RUNNER_PROFILE_OSX_ARM64
+            release_driver_variable: SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_OSX_ARM64
+            release_driver_sha_variable: SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_SHA256_OSX_ARM64
+            acceptance_driver_variable: SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_OSX_ARM64
+            acceptance_driver_sha_variable: SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_SHA256_OSX_ARM64
+    env:
+      REGISTRY_API_URL: ${{ vars.SUNDER_REGISTRY_API_URL }}
+      RUNNER_PROFILE: ${{ vars[matrix.profile_variable] }}
+      SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER: ${{ vars[matrix.acceptance_driver_variable] }}
+      SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_SHA256: ${{ vars[matrix.acceptance_driver_sha_variable] }}
+      SUNDER_EXECUTION_RUNTIME_SOURCES_APPROVED: ${{ vars.SUNDER_EXECUTION_RUNTIME_SOURCES_APPROVED }}
+      SUNDER_EXECUTION_RUNTIME_SOURCES_APPROVAL_REFERENCE: ${{ vars.SUNDER_EXECUTION_RUNTIME_SOURCES_APPROVAL_REFERENCE }}
+      SUNDER_EXECUTION_RUNTIME_SIGNERS_APPROVED: ${{ vars.SUNDER_EXECUTION_RUNTIME_SIGNERS_APPROVED }}
+      SUNDER_EXECUTION_RUNTIME_SIGNERS_APPROVAL_REFERENCE: ${{ vars.SUNDER_EXECUTION_RUNTIME_SIGNERS_APPROVAL_REFERENCE }}
+      SUNDER_EXECUTION_RUNTIME_RUNNERS_APPROVED: ${{ vars.SUNDER_EXECUTION_RUNTIME_RUNNERS_APPROVED }}
+      SUNDER_EXECUTION_RUNTIME_RUNNERS_APPROVAL_REFERENCE: ${{ vars.SUNDER_EXECUTION_RUNTIME_RUNNERS_APPROVAL_REFERENCE }}
+      SUNDER_EXECUTION_RUNTIME_PUBLICATION_APPROVED: ${{ vars.SUNDER_EXECUTION_RUNTIME_PUBLICATION_APPROVED }}
+      SUNDER_EXECUTION_RUNTIME_PUBLICATION_APPROVAL_REFERENCE: ${{ vars.SUNDER_EXECUTION_RUNTIME_PUBLICATION_APPROVAL_REFERENCE }}
+      SUNDER_EXECUTION_RUNTIME_RELEASE_SIGNER_ADAPTER: ${{ vars.SUNDER_EXECUTION_RUNTIME_RELEASE_SIGNER_ADAPTER }}
+      SUNDER_EXECUTION_RUNTIME_ATTESTATION_SIGNER_ADAPTER: ${{ vars.SUNDER_EXECUTION_RUNTIME_ATTESTATION_SIGNER_ADAPTER }}
+      SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER: ${{ vars[matrix.release_driver_variable] }}
+      SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_SHA256: ${{ vars[matrix.release_driver_sha_variable] }}
+      SUNDER_EXECUTION_RUNTIME_RELEASE_PUBLIC_KEYS: ${{ vars.SUNDER_EXECUTION_RUNTIME_RELEASE_PUBLIC_KEYS }}
+      SUNDER_EXECUTION_RUNTIME_ATTESTATION_PUBLIC_KEYS: ${{ vars.SUNDER_EXECUTION_RUNTIME_ATTESTATION_PUBLIC_KEYS }}
+      SUNDER_EXECUTION_RUNTIME_RUNNER_WIN_X64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RUNNER_WIN_X64 }}
+      SUNDER_EXECUTION_RUNTIME_RUNNER_WIN_ARM64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RUNNER_WIN_ARM64 }}
+      SUNDER_EXECUTION_RUNTIME_RUNNER_LINUX_X64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RUNNER_LINUX_X64 }}
+      SUNDER_EXECUTION_RUNTIME_RUNNER_LINUX_ARM64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RUNNER_LINUX_ARM64 }}
+      SUNDER_EXECUTION_RUNTIME_RUNNER_OSX_X64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RUNNER_OSX_X64 }}
+      SUNDER_EXECUTION_RUNTIME_RUNNER_OSX_ARM64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RUNNER_OSX_ARM64 }}
+      SUNDER_EXECUTION_RUNTIME_RUNNER_PROFILE_WIN_X64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RUNNER_PROFILE_WIN_X64 }}
+      SUNDER_EXECUTION_RUNTIME_RUNNER_PROFILE_WIN_ARM64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RUNNER_PROFILE_WIN_ARM64 }}
+      SUNDER_EXECUTION_RUNTIME_RUNNER_PROFILE_LINUX_X64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RUNNER_PROFILE_LINUX_X64 }}
+      SUNDER_EXECUTION_RUNTIME_RUNNER_PROFILE_LINUX_ARM64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RUNNER_PROFILE_LINUX_ARM64 }}
+      SUNDER_EXECUTION_RUNTIME_RUNNER_PROFILE_OSX_X64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RUNNER_PROFILE_OSX_X64 }}
+      SUNDER_EXECUTION_RUNTIME_RUNNER_PROFILE_OSX_ARM64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RUNNER_PROFILE_OSX_ARM64 }}
+      SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_WIN_X64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_WIN_X64 }}
+      SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_WIN_ARM64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_WIN_ARM64 }}
+      SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_LINUX_X64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_LINUX_X64 }}
+      SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_LINUX_ARM64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_LINUX_ARM64 }}
+      SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_OSX_X64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_OSX_X64 }}
+      SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_OSX_ARM64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_OSX_ARM64 }}
+      SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_SHA256_WIN_X64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_SHA256_WIN_X64 }}
+      SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_SHA256_WIN_ARM64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_SHA256_WIN_ARM64 }}
+      SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_SHA256_LINUX_X64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_SHA256_LINUX_X64 }}
+      SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_SHA256_LINUX_ARM64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_SHA256_LINUX_ARM64 }}
+      SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_SHA256_OSX_X64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_SHA256_OSX_X64 }}
+      SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_SHA256_OSX_ARM64: ${{ vars.SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_SHA256_OSX_ARM64 }}
+    steps:
+      - name: Checkout trusted acceptance policy from protected main
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          path: acceptance-policy
+          persist-credentials: false
+
+      - name: Checkout exact immutable Agent release source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          path: release-source
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout exact Core source and production lock
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Younics/sunder-core
+          ref: ${{ needs.verify-release.outputs.core_commit }}
+          path: sunder-core
+          persist-credentials: false
+
+      - name: Setup .NET for lock validation and acceptance tooling
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore Core runtime lock validator
+        working-directory: sunder-core
+        run: dotnet restore languages/csharp/dotnet/tools/Sunder.ExecutionRuntime.Build/Sunder.ExecutionRuntime.Build.csproj --locked-mode
+
+      - name: Bind this native lane to the approved lock runner profile
+        working-directory: sunder-core
+        shell: bash
+        run: |
+          python3 -c 'import sys; assert sys.version_info >= (3, 9), "Python 3.9+ is required"'
+          bash scripts/execution-runtimes/native-release-preflight.sh \
+            --lock "$PRODUCTION_LOCK" --rid "${{ matrix.rid }}" --runner-profile "$RUNNER_PROFILE"
+
+      - name: Reverify exact signed runtime availability before lifecycle work
+        working-directory: acceptance-policy
+        shell: bash
+        run: >-
+          bash scripts/release/verify-execution-runtime-availability.sh
+          "$REGISTRY_API_URL"
+          "$GITHUB_WORKSPACE/sunder-core/$PRODUCTION_LOCK"
+
+      - name: Download the exact cohort receipt for post-visibility scenarios
+        if: inputs.phase == 'post-visibility'
+        working-directory: acceptance-policy
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 -B scripts/release/agent_cohort_receipt.py download \
+            "$GITHUB_REPOSITORY" "${{ inputs.release_id }}" "${{ inputs.tag }}" \
+            "$COHORT_REQUEST_SHA256" "$GITHUB_WORKSPACE/cohort-evidence.json"
+
+      - name: Run approved phase-specific full-family scenarios
+        working-directory: acceptance-policy
+        shell: bash
+        env:
+          RID: ${{ matrix.rid }}
+        run: |
+          set -euo pipefail
+          driver="$SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER"
+          [[ -f "$driver" && -x "$driver" && ! -L "$driver" ]] \
+            || { echo "Approved Agent production acceptance driver is unavailable: $driver" >&2; exit 1; }
+          [[ "$SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_SHA256" =~ ^[0-9a-f]{64}$ ]] \
+            || { echo "Approved Agent production acceptance driver SHA-256 is invalid." >&2; exit 1; }
+          hash_file() {
+            if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d ' ' -f 1
+            else shasum -a 256 "$1" | cut -d ' ' -f 1; fi
+          }
+          [[ "$(hash_file "$driver")" == "$SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_SHA256" ]] \
+            || { echo "Approved Agent production acceptance driver SHA-256 does not match." >&2; exit 1; }
+          driver_snapshot_root="$(mktemp -d "${RUNNER_TEMP}/sunder-agent-acceptance-driver.XXXXXX")"
+          cleanup_driver_snapshot() {
+            chmod 0755 "$driver_snapshot_root" 2>/dev/null || true
+            rm -rf "$driver_snapshot_root"
+          }
+          trap cleanup_driver_snapshot EXIT
+          driver_snapshot="$driver_snapshot_root/$(basename "$driver")"
+          cp -p "$driver" "$driver_snapshot"
+          chmod 0555 "$driver_snapshot"
+          chmod 0555 "$driver_snapshot_root"
+          [[ ! -w "$driver_snapshot_root" && ! -w "$driver_snapshot" \
+              && "$(hash_file "$driver_snapshot")" == "$SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_SHA256" ]] \
+            || { echo "Approved Agent production acceptance driver snapshot is not immutable or hash-matching." >&2; exit 1; }
+          mkdir -p "$GITHUB_WORKSPACE/native-output"
+          receipt="$GITHUB_WORKSPACE/native-output/agent-production-$RID.json"
+          [[ ! -e "$receipt" ]]
+          phase_args=(--phase "$ACCEPTANCE_PHASE" --publication-evidence-commit "$PUBLICATION_EVIDENCE_COMMIT")
+          if [[ "$ACCEPTANCE_PHASE" == post-visibility ]]; then
+            phase_args+=(--cohort-evidence "$GITHUB_WORKSPACE/cohort-evidence.json" --cohort-request-sha256 "$COHORT_REQUEST_SHA256")
+          fi
+          "$driver_snapshot" \
+            "${phase_args[@]}" \
+            --release-id "${{ inputs.release_id }}" \
+            --tag "${{ inputs.tag }}" \
+            --version "${{ needs.verify-release.outputs.version }}" \
+            --source-sha "${{ inputs.source_sha }}" \
+            --release-source "$GITHUB_WORKSPACE/release-source" \
+            --core-source-sha "${{ needs.verify-release.outputs.core_commit }}" \
+            --publication-run-id "${{ inputs.publication_run_id }}" \
+            --publication-run-attempt "${{ inputs.publication_run_attempt }}" \
+            --workflow-ref "$GITHUB_REF" \
+            --workflow-sha "$GITHUB_SHA" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --driver-sha256 "$SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_SHA256" \
+            --rid "$RID" \
+            --runner-profile "$RUNNER_PROFILE" \
+            --runtime-lock "$GITHUB_WORKSPACE/sunder-core/$PRODUCTION_LOCK" \
+            --registry-api "$REGISTRY_API_URL" \
+            --output "$receipt"
+          [[ "$(hash_file "$driver_snapshot")" == "$SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_SHA256" \
+              && "$(hash_file "$driver")" == "$SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_SHA256" ]] \
+            || { echo "Approved Agent production acceptance driver changed during execution." >&2; exit 1; }
+          [[ -f "$receipt" && ! -L "$receipt" && -s "$receipt" ]]
+
+      - name: Validate full-family native receipt and durable evidence
+        shell: bash
+        env:
+          CORE_SOURCE_SHA: ${{ needs.verify-release.outputs.core_commit }}
+          RELEASE_ID: ${{ inputs.release_id }}
+          RID: ${{ matrix.rid }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          TAG: ${{ inputs.tag }}
+          VERSION: ${{ needs.verify-release.outputs.version }}
+        run: |
+          set -euo pipefail
+          hash_file() {
+            if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d ' ' -f 1
+            else shasum -a 256 "$1" | cut -d ' ' -f 1; fi
+          }
+          receipt="native-output/agent-production-$RID.json"
+          lock="sunder-core/$PRODUCTION_LOCK"
+          required_checks='[
+            "released-byte-provenance", "runtime-lock-and-signatures", "clean-production-install",
+            "production-activation", "production-rpc", "native-package-assets", "offline-restart",
+            "production-update", "production-uninstall-cleanup", "production-browser-path",
+            "agent-production-path", "shared-runtime-deduplication", "bounded-dependency-activation",
+            "provider-contract-inventory", "sqlite-native-behavior", "execution-packages",
+            "app-views", "warm-restart-performance", "projection-reuse", "agent-security-acceptance"
+          ]'
+          if [[ "$ACCEPTANCE_PHASE" == pre-visibility ]]; then
+            required_checks='[
+              "released-byte-provenance", "runtime-lock-and-signatures", "native-package-assets",
+              "provider-contract-inventory", "sqlite-native-behavior", "execution-packages", "app-views",
+              "warm-restart-performance", "projection-reuse", "agent-security-acceptance",
+              "ordinary-resolution-excludes-yanked", "retained-artifact-reproduction", "publication-evidence-only"
+            ]'
+          else
+            required_checks="$(jq '. + ["ordinary-fresh-resolution"]' <<< "$required_checks")"
+          fi
+          expected_packages="$(jq -c --arg version "$VERSION" '
+            [.packages[] | select(.artifactType == "sunderpkg") | {packageId,version:$version}] | sort_by(.packageId)
+          ' release-source/packages.json)"
+          jq -e \
+            --arg repository "$GITHUB_REPOSITORY" --argjson release_id "$RELEASE_ID" --arg tag "$TAG" \
+            --arg version "$VERSION" --arg source "$SOURCE_SHA" --arg core "$CORE_SOURCE_SHA" \
+            --arg publication_run_id "${{ inputs.publication_run_id }}" \
+            --arg publication_run_attempt "${{ inputs.publication_run_attempt }}" \
+            --arg workflow_sha "$GITHUB_SHA" --arg run_id "$GITHUB_RUN_ID" --arg run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg driver_sha "$SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_SHA256" \
+            --arg phase "$ACCEPTANCE_PHASE" --arg evidence_commit "$PUBLICATION_EVIDENCE_COMMIT" \
+            --arg cohort_sha "$COHORT_REQUEST_SHA256" \
+            --arg lock_set "$(python3 -B acceptance-policy/scripts/release/agent_release.py lock-set release-source)" \
+            --arg rid "$RID" --arg runner_profile "$RUNNER_PROFILE" --arg lock_sha "$(hash_file "$lock")" \
+            --argjson required_checks "$required_checks" --argjson expected_packages "$expected_packages" --slurpfile lock "$lock" '
+              ($lock[0].entries | map(select(.id == "sunder.runtime.dotnet" and .rid == $rid)) | if length == 1 then .[0] else null end) as $locked
+              | ([.checks[].id] | sort) as $check_ids
+              | ([.evidence[].id] | sort) as $evidence_ids
+              | .schemaVersion == 2
+              and .kind == "https://sunderapp.io/acceptance/agent-native/v2"
+              and .phase == $phase
+              and .releaseEvidence == {artifactSourceCommit:$source,publicationEvidenceCommit:$evidence_commit,lockSetSha256:$lock_set}
+              and .cohortRequestSha256 == (if $phase == "pre-visibility" then null else $cohort_sha end)
+              and .decision == "accepted"
+              and .release == {
+                repository:$repository,releaseId:$release_id,tag:$tag,version:$version,
+                sourceSha:$source,coreSourceSha:$core,
+                publicationRunId:$publication_run_id,publicationRunAttempt:$publication_run_attempt
+              }
+              and .invocation == {
+                workflowPath:".github/workflows/sunder-agent-production-acceptance.yml",
+                workflowRef:"refs/heads/main",workflowSha:$workflow_sha,runId:$run_id,runAttempt:$run_attempt,
+                driverSha256:$driver_sha
+              }
+              and .rid == $rid and .runnerProfile == $runner_profile and .runtimeLockSha256 == $lock_sha
+              and $locked != null
+              and .executionRuntime.identity == {
+                runtimeId:$locked.id,version:$locked.version,packagingRevision:$locked.packagingRevision,
+                rid:$locked.rid,moduleAbi:$locked.profile.moduleAbi
+              }
+              and .executionRuntime.signingKeyId == $locked.trust.releaseSigningKeyId
+              and .executionRuntime.nativeAttestationKeyId == $locked.trust.attestationSigningKeyId
+              and .executionRuntime.workerProtocol == $locked.profile.workerProtocol
+              and .executionRuntime.minimumHostTrustGeneration == $locked.minimumHostTrustGeneration
+              and (.executionRuntime.manifestSha256 | test("^[0-9a-f]{64}$"))
+              and (.executionRuntime.artifactSha256 | test("^[0-9a-f]{64}$"))
+              and (.executionRuntime.nativeAttestationSha256 | test("^[0-9a-f]{64}$"))
+              and .executionRuntime.releaseSignatureVerified == true
+              and .executionRuntime.nativeAttestationVerified == true
+              and .executionRuntime.ambientRuntimeCleared == true
+              and .executionRuntime.installedRuntimePathVerified == true
+              and ([.packages[] | {packageId,version}] | sort_by(.packageId)) == $expected_packages
+              and all(.packages[];
+                type == "object" and keys == ["canonicalSha256","packageId","version"]
+                and (.canonicalSha256 | test("^[0-9a-f]{64}$")))
+              and (.checks | type == "array" and length >= ($required_checks | length))
+              and ([.checks[].id] | length) == ($check_ids | unique | length)
+              and ($required_checks | all(. as $id | $check_ids | index($id) != null))
+              and all(.checks[]; .status == "passed" and (.evidenceIds | type == "array" and length > 0))
+              and (.evidence | type == "array" and length > 0)
+              and ([.evidence[].id] | length) == ($evidence_ids | unique | length)
+              and all(.evidence[];
+                (.id | test("^[a-z][a-z0-9.-]+$")) and (.uri | test("^https://"))
+                and (.sha256 | test("^[0-9a-f]{64}$")) and (.size | type == "number" and floor == . and . > 0))
+              and ([.checks[].evidenceIds[]] | unique | sort) == $evidence_ids
+              and ([.prerequisites[].id] | sort) == ["docker", "web-search"]
+              and all(.prerequisites[];
+                (.mode == "real" or .mode == "deterministic-fake")
+                and (.evidenceIds | type == "array" and length > 0)
+                and all(.evidenceIds[]; . as $id | $evidence_ids | index($id) != null))
+            ' "$receipt" >/dev/null
+
+      - name: Upload exact native full-family receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sunder-agent-production-native-${{ matrix.rid }}-${{ github.run_attempt }}
+          path: native-output/agent-production-${{ matrix.rid }}.json
+          if-no-files-found: error
+          retention-days: 90
+
+  archive-decision:
+    name: Verify and archive exact Agent family acceptance
+    needs:
+      - verify-release
+      - native-acceptance
+    runs-on: ${{ vars.SUNDER_AGENT_PRODUCTION_ACCEPTANCE_COORDINATOR_RUNNER }}
+    timeout-minutes: 180
+    environment: sunder-agent-production-acceptance
+    permissions:
+      actions: read
+      contents: write
+      id-token: write
+    env:
+      REGISTRY_API_URL: ${{ vars.SUNDER_REGISTRY_API_URL }}
+      SUNDER_AGENT_PRODUCTION_ACCEPTANCE_COORDINATOR: ${{ vars.SUNDER_AGENT_PRODUCTION_ACCEPTANCE_COORDINATOR }}
+      SUNDER_AGENT_PRODUCTION_ACCEPTANCE_COORDINATOR_SHA256: ${{ vars.SUNDER_AGENT_PRODUCTION_ACCEPTANCE_COORDINATOR_SHA256 }}
+    steps:
+      - name: Checkout trusted acceptance policy from protected main
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          path: acceptance-policy
+          persist-credentials: false
+
+      - name: Checkout exact immutable Agent release source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          path: release-source
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download exact publication handoff again after native acceptance
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: sunder-agent-publication-evidence-${{ inputs.release_id }}-${{ inputs.publication_run_attempt }}
+          path: publication-evidence
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.publication_run_id }}
+
+      - name: Reverify immutable publication immediately before the decision
+        working-directory: acceptance-policy
+        shell: bash
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 -B scripts/release/release_inputs.py check-python
+          bash scripts/release/verify-agent-publication.sh \
+            "${{ inputs.release_id }}" "${{ inputs.tag }}" "${{ inputs.source_sha }}" \
+            "${{ inputs.publication_run_id }}" "${{ inputs.publication_run_attempt }}" \
+            ../release-source ../publication-evidence
+
+      - name: Download every exact native receipt from this run
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: sunder-agent-production-native-*-${{ github.run_attempt }}
+          path: native-input
+          merge-multiple: true
+
+      - name: Retain the exact committed cohort as decision input
+        if: inputs.phase == 'post-visibility'
+        working-directory: acceptance-policy
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 -B scripts/release/agent_cohort_receipt.py download \
+            "$GITHUB_REPOSITORY" "${{ inputs.release_id }}" "${{ inputs.tag }}" \
+            "$COHORT_REQUEST_SHA256" "$GITHUB_WORKSPACE/cohort-evidence.json"
+
+      - name: Require six accepted receipts and real prerequisite coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          rids=(win-x64 win-arm64 linux-x64 linux-arm64 osx-x64 osx-arm64)
+          for rid in "${rids[@]}"; do test -f "native-input/agent-production-$rid.json"; done
+          test "$(find native-input -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d '[:space:]')" = 6
+          test -z "$(find native-input -mindepth 1 -maxdepth 1 ! -type f -print -quit)"
+          jq -s -e \
+            --argjson release_id "${{ inputs.release_id }}" --arg tag "${{ inputs.tag }}" \
+            --arg version "${{ needs.verify-release.outputs.version }}" --arg source "${{ inputs.source_sha }}" \
+            --arg core "${{ needs.verify-release.outputs.core_commit }}" \
+            --arg publication_run_id "${{ inputs.publication_run_id }}" \
+            --arg publication_run_attempt "${{ inputs.publication_run_attempt }}" \
+            --arg workflow_sha "$GITHUB_SHA" \
+            --arg phase "$ACCEPTANCE_PHASE" --arg evidence_commit "$PUBLICATION_EVIDENCE_COMMIT" \
+            --arg cohort_sha "$COHORT_REQUEST_SHA256" \
+            --arg lock_set "$(python3 -B acceptance-policy/scripts/release/agent_release.py lock-set release-source)" \
+            --arg run_id "$GITHUB_RUN_ID" --arg run_attempt "$GITHUB_RUN_ATTEMPT" '
+            ([.[].rid] | sort) == ["linux-arm64","linux-x64","osx-arm64","osx-x64","win-arm64","win-x64"]
+            and all(.[];
+              .decision == "accepted"
+              and .schemaVersion == 2 and .phase == $phase
+              and .releaseEvidence == {artifactSourceCommit:$source,publicationEvidenceCommit:$evidence_commit,lockSetSha256:$lock_set}
+              and .cohortRequestSha256 == (if $phase == "pre-visibility" then null else $cohort_sha end)
+              and .release == {
+                repository:"Younics/sunder-agent-package",releaseId:$release_id,tag:$tag,version:$version,
+                sourceSha:$source,coreSourceSha:$core,
+                publicationRunId:$publication_run_id,publicationRunAttempt:$publication_run_attempt
+              }
+              and .invocation == {
+                workflowPath:".github/workflows/sunder-agent-production-acceptance.yml",
+                workflowRef:"refs/heads/main",workflowSha:$workflow_sha,runId:$run_id,runAttempt:$run_attempt,
+                driverSha256:.invocation.driverSha256
+              })
+            and all(.[]; (.invocation.driverSha256 | test("^[0-9a-f]{64}$")))
+            and ([.[] | .prerequisites[] | select(.id == "docker" and .mode == "real")] | length) >= 1
+            and ([.[] | .prerequisites[] | select(.id == "web-search" and .mode == "real")] | length) >= 1
+          ' native-input/agent-production-*.json >/dev/null
+
+      - name: Produce one exact acceptance document from proven receipts
+        working-directory: acceptance-policy
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          driver="$SUNDER_AGENT_PRODUCTION_ACCEPTANCE_COORDINATOR"
+          [[ -f "$driver" && -x "$driver" && ! -L "$driver" ]] \
+            || { echo "Approved Agent production acceptance coordinator is unavailable: $driver" >&2; exit 1; }
+          [[ "$SUNDER_AGENT_PRODUCTION_ACCEPTANCE_COORDINATOR_SHA256" =~ ^[0-9a-f]{64}$ ]] \
+            || { echo "Approved Agent production acceptance coordinator SHA-256 is invalid." >&2; exit 1; }
+          hash_file() {
+            if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d ' ' -f 1
+            else shasum -a 256 "$1" | cut -d ' ' -f 1; fi
+          }
+          [[ "$(hash_file "$driver")" == "$SUNDER_AGENT_PRODUCTION_ACCEPTANCE_COORDINATOR_SHA256" ]] \
+            || { echo "Approved Agent production acceptance coordinator SHA-256 does not match." >&2; exit 1; }
+          driver_snapshot_root="$(mktemp -d "${RUNNER_TEMP}/sunder-agent-acceptance-coordinator.XXXXXX")"
+          cleanup_driver_snapshot() {
+            chmod 0755 "$driver_snapshot_root" 2>/dev/null || true
+            rm -rf "$driver_snapshot_root"
+          }
+          trap cleanup_driver_snapshot EXIT
+          driver_snapshot="$driver_snapshot_root/$(basename "$driver")"
+          cp -p "$driver" "$driver_snapshot"
+          chmod 0555 "$driver_snapshot"
+          chmod 0555 "$driver_snapshot_root"
+          [[ ! -w "$driver_snapshot_root" && ! -w "$driver_snapshot" \
+              && "$(hash_file "$driver_snapshot")" == "$SUNDER_AGENT_PRODUCTION_ACCEPTANCE_COORDINATOR_SHA256" ]] \
+            || { echo "Approved Agent production acceptance coordinator snapshot is not immutable or hash-matching." >&2; exit 1; }
+          output="$GITHUB_WORKSPACE/agent-acceptance"
+          test ! -e "$output"
+          mkdir "$output"
+          actions_artifact_name="sunder-agent-production-acceptance-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          phase_args=(--phase "$ACCEPTANCE_PHASE" --publication-evidence-commit "$PUBLICATION_EVIDENCE_COMMIT")
+          if [[ "$ACCEPTANCE_PHASE" == post-visibility ]]; then
+            phase_args+=(--cohort-evidence "$GITHUB_WORKSPACE/cohort-evidence.json" --cohort-request-sha256 "$COHORT_REQUEST_SHA256")
+          fi
+          "$driver_snapshot" \
+            "${phase_args[@]}" \
+            --repository "$GITHUB_REPOSITORY" \
+            --release-id "${{ inputs.release_id }}" \
+            --tag "${{ inputs.tag }}" \
+            --version "${{ needs.verify-release.outputs.version }}" \
+            --source-sha "${{ inputs.source_sha }}" \
+            --release-source "$GITHUB_WORKSPACE/release-source" \
+            --core-source-sha "${{ needs.verify-release.outputs.core_commit }}" \
+            --publication-run-id "${{ inputs.publication_run_id }}" \
+            --publication-run-attempt "${{ inputs.publication_run_attempt }}" \
+            --publication-artifact-name "sunder-agent-publication-evidence-${{ inputs.release_id }}-${{ inputs.publication_run_attempt }}" \
+            --publication-evidence "$GITHUB_WORKSPACE/publication-evidence" \
+            --workflow-ref "$GITHUB_REF" \
+            --workflow-sha "$GITHUB_SHA" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --coordinator-sha256 "$SUNDER_AGENT_PRODUCTION_ACCEPTANCE_COORDINATOR_SHA256" \
+            --actions-artifact-name "$actions_artifact_name" \
+            --registry-api "$REGISTRY_API_URL" \
+            --native-evidence "$GITHUB_WORKSPACE/native-input" \
+            --output "$output/agent-family-acceptance.json"
+          [[ "$(hash_file "$driver_snapshot")" == "$SUNDER_AGENT_PRODUCTION_ACCEPTANCE_COORDINATOR_SHA256" \
+              && "$(hash_file "$driver")" == "$SUNDER_AGENT_PRODUCTION_ACCEPTANCE_COORDINATOR_SHA256" ]] \
+            || { echo "Approved Agent production acceptance coordinator changed during execution." >&2; exit 1; }
+          test -f "$output/agent-family-acceptance.json"
+          test ! -L "$output/agent-family-acceptance.json"
+          jq -e --arg phase "$ACCEPTANCE_PHASE" --arg commit "$PUBLICATION_EVIDENCE_COMMIT" '
+            .schemaVersion == 4 and .phase == $phase and .releaseEvidence.publicationEvidenceCommit == $commit
+          ' "$output/agent-family-acceptance.json" >/dev/null
+          if [[ "$ACCEPTANCE_PHASE" == post-visibility ]]; then
+            jq -e --slurpfile cohort "$GITHUB_WORKSPACE/cohort-evidence.json" '
+              .cohort == {request:$cohort[0].request,result:$cohort[0].result}
+            ' "$output/agent-family-acceptance.json" >/dev/null
+          fi
+          test "$(find "$output" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d '[:space:]')" = 1
+          jq -s -e --slurpfile acceptance "$output/agent-family-acceptance.json" '
+            ($acceptance[0].registryPackages | sort_by(.packageId)) as $accepted
+            | length == 6
+            and all(.[]; (.packages | sort_by(.packageId)) == $accepted)
+          ' "$GITHUB_WORKSPACE"/native-input/agent-production-*.json >/dev/null
+
+          native_receipts='[]'
+          for receipt in "$GITHUB_WORKSPACE"/native-input/agent-production-*.json; do
+            native_receipts="$(jq -cn \
+              --argjson receipts "$native_receipts" \
+              --arg rid "$(jq -er '.rid' "$receipt")" \
+              --arg sha256 "$(hash_file "$receipt")" \
+              --arg driver_sha256 "$(jq -er '.invocation.driverSha256' "$receipt")" \
+              '$receipts + [{rid:$rid,sha256:$sha256,driverSha256:$driver_sha256}] | sort_by(.rid)')"
+          done
+          jq -e \
+            --arg artifact_name "$actions_artifact_name" \
+            --arg coordinator_sha "$SUNDER_AGENT_PRODUCTION_ACCEPTANCE_COORDINATOR_SHA256" \
+            --arg policy_ref "$GITHUB_REF" \
+            --arg policy_sha "$GITHUB_SHA" \
+            --arg publication_artifact "sunder-agent-publication-evidence-${{ inputs.release_id }}-${{ inputs.publication_run_attempt }}" \
+            --arg publication_run_id "${{ inputs.publication_run_id }}" \
+            --arg publication_run_attempt "${{ inputs.publication_run_attempt }}" \
+            --argjson native_receipts "$native_receipts" '
+              .acceptanceWorkflow.artifactName == $artifact_name
+              and .acceptanceWorkflow.coordinatorSha256 == $coordinator_sha
+              and .acceptanceWorkflow.workflowRef == $policy_ref
+              and .acceptanceWorkflow.workflowSha == $policy_sha
+              and .publicationRunId == $publication_run_id
+              and .publicationRunAttempt == $publication_run_attempt
+              and .publicationWorkflow == {
+                name:"Sunder Agent Family Release",
+                path:".github/workflows/sunder-package-release.yml",
+                event:"push",
+                artifactName:$publication_artifact
+              }
+              and .nativeReceipts == $native_receipts
+            ' "$output/agent-family-acceptance.json" >/dev/null \
+            || { echo "Agent acceptance document did not preserve coordinator and native-driver digest bindings." >&2; exit 1; }
+
+      - name: Reverify exact draft, assets, provenance, and Registry bytes
+        working-directory: acceptance-policy
+        shell: bash
+        env:
+          ACCEPTANCE_WORKFLOW_SHA: ${{ github.sha }}
+          ACCEPTANCE_RUN_ATTEMPT: ${{ github.run_attempt }}
+          ACCEPTANCE_RUN_ID: ${{ github.run_id }}
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PUBLICATION_EVIDENCE_DIRECTORY: ${{ github.workspace }}/publication-evidence
+          PUBLICATION_RUN_ATTEMPT: ${{ inputs.publication_run_attempt }}
+          PUBLICATION_RUN_ID: ${{ inputs.publication_run_id }}
+          SUNDER_AGENT_ACCEPTANCE_CANDIDATE_ONLY: "true"
+          SUNDER_AGENT_POLICY_SHA: ${{ github.sha }}
+          SUNDER_AGENT_POLICY_WORKFLOW_PATH: .github/workflows/sunder-agent-production-acceptance.yml
+          SUNDER_AGENT_RELEASE_SOURCE_DIRECTORY: ${{ github.workspace }}/release-source
+        run: |
+          bash scripts/release/promote-agent-family.sh \
+            "${{ inputs.tag }}" "${{ inputs.source_sha }}" "$REGISTRY_API_URL" \
+            "$GITHUB_WORKSPACE/agent-acceptance/agent-family-acceptance.json" \
+            "$RUNNER_TEMP/agent-acceptance-verification"
+
+      - name: Persist and byte-verify durable Agent acceptance on the numeric draft
+        working-directory: acceptance-policy
+        shell: bash
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          acceptance="$GITHUB_WORKSPACE/agent-acceptance/agent-family-acceptance.json"
+          hash_file() {
+            if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d ' ' -f 1
+            else shasum -a 256 "$1" | cut -d ' ' -f 1; fi
+          }
+          acceptance_sha="$(hash_file "$acceptance")"
+          bash scripts/release/upload-agent-acceptance.sh \
+            "${{ inputs.release_id }}" "${{ inputs.tag }}" \
+            "${{ inputs.publication_run_id }}" "${{ inputs.publication_run_attempt }}" \
+            "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_SHA" "$acceptance"
+          SUNDER_AGENT_ACCEPTANCE_CANDIDATE_ONLY=true \
+            bash scripts/release/download-agent-acceptance.sh \
+              "${{ inputs.release_id }}" "${{ inputs.tag }}" "${{ inputs.source_sha }}" \
+              "${{ inputs.publication_run_id }}" "${{ inputs.publication_run_attempt }}" \
+              "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_SHA" "$acceptance_sha" \
+              "$RUNNER_TEMP/durable-agent-family-acceptance.json"
+          cmp "$acceptance" "$RUNNER_TEMP/durable-agent-family-acceptance.json"
+
+      - name: Upload a redundant 90-day production acceptance copy
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sunder-agent-production-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: agent-acceptance/agent-family-acceptance.json
+          if-no-files-found: error
+          retention-days: 90

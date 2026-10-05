@@ -1,14 +1,14 @@
-using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Protocol;
 
 namespace Sunder.Package.Agent.Shared.Presentation;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record ProviderCatalogOption(string? Id, string Label, string? PackageId = null)
 {
     public string? ProviderId => Id;
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record ProviderModelCatalogOption(
     string Id,
     string Label,
@@ -19,6 +19,7 @@ internal sealed record ProviderModelCatalogOption(
     public string ModelId => Id;
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record ProviderModelCatalogResult(
     IReadOnlyList<ProviderModelCatalogOption> Models,
     string StatusText,
@@ -34,7 +35,7 @@ internal interface IProviderModelCatalog
         CancellationToken cancellationToken);
 }
 
-internal sealed class ProviderModelCatalogAdapter(
+internal sealed partial class ProviderModelCatalogAdapter(
     Func<CancellationToken, Task<IReadOnlyList<ProviderCatalogOption>>> listProviders,
     Func<string, CancellationToken, Task<ProviderModelCatalogResult>> load) : IProviderModelCatalog
 {
@@ -48,101 +49,6 @@ internal sealed class ProviderModelCatalogAdapter(
         string providerId,
         CancellationToken cancellationToken) => _load(providerId, cancellationToken);
 
-    public static IProviderModelCatalog ForChatProviders(AgentRpcCatalog rpcCatalog)
-    {
-        return new ProviderModelCatalogAdapter(
-            cancellationToken =>
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                return Task.FromResult<IReadOnlyList<ProviderCatalogOption>>(
-                    SnapshotChatProviders(rpcCatalog)
-                        .OrderBy(provider => provider.Descriptor.DisplayName, StringComparer.OrdinalIgnoreCase)
-                        .Select(provider => new ProviderCatalogOption(
-                            provider.Descriptor.ProviderId,
-                            provider.Descriptor.DisplayName,
-                            provider.PackageId))
-                        .ToArray());
-            },
-            (providerId, cancellationToken) => LoadChatProviderAsync(
-                rpcCatalog,
-                providerId,
-                cancellationToken));
-    }
-
-    private static IReadOnlyList<OwnedChatProviderReference> SnapshotChatProviders(
-        AgentRpcCatalog rpcCatalog)
-    {
-        var providers = new List<OwnedChatProviderReference>();
-        foreach (var reference in rpcCatalog.GetServiceReferences(AgentRpcServices.ChatProviders))
-        {
-            if (!reference.TryAcquire(out var lease))
-            {
-                continue;
-            }
-            using (lease)
-            {
-                var descriptor = lease.Service.Descriptor;
-                if (!lease.RetirementToken.IsCancellationRequested)
-                {
-                    providers.Add(new OwnedChatProviderReference(reference, lease.PackageId, descriptor));
-                }
-            }
-        }
-
-        return providers;
-    }
-
-    private static async Task<ProviderModelCatalogResult> LoadChatProviderAsync(
-        AgentRpcCatalog rpcCatalog,
-        string providerId,
-        CancellationToken cancellationToken)
-    {
-        var provider = SnapshotChatProviders(rpcCatalog)
-            .FirstOrDefault(candidate => string.Equals(
-                candidate.Descriptor.ProviderId,
-                providerId,
-                StringComparison.OrdinalIgnoreCase));
-        if (provider is null || !provider.Reference.TryAcquire(out var lease))
-        {
-            return new ProviderModelCatalogResult([], "Chat provider is no longer installed.");
-        }
-
-        using (lease)
-        {
-            var retirementToken = lease.RetirementToken;
-            using var invocation = CancellationTokenSource.CreateLinkedTokenSource(
-                cancellationToken,
-                retirementToken);
-            try
-            {
-                var modelsTask = lease.Service.GetAvailableModelsAsync(invocation.Token).AsTask();
-                var readinessTask = lease.Service.GetReadinessAsync(invocation.Token).AsTask();
-                await Task.WhenAll(modelsTask, readinessTask).ConfigureAwait(false);
-                if (retirementToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
-                {
-                    return new ProviderModelCatalogResult([], "Chat provider is no longer installed.");
-                }
-
-                var readiness = await readinessTask.ConfigureAwait(false);
-                return new ProviderModelCatalogResult(
-                    (await modelsTask.ConfigureAwait(false))
-                        .OrderNewestFirst()
-                        .Select(ToCatalogOption)
-                        .ToArray(),
-                    $"Chat provider status: {readiness.Status} - {readiness.Message}",
-                    readiness.Status == AgentProviderReadinessStatus.Ready
-                        ? null
-                        : readiness.Message);
-            }
-            catch (OperationCanceledException) when (
-                retirementToken.IsCancellationRequested
-                && !cancellationToken.IsCancellationRequested)
-            {
-                return new ProviderModelCatalogResult([], "Chat provider is no longer installed.");
-            }
-        }
-    }
-
     public static ProviderModelCatalogOption ToCatalogOption(AgentModelDescriptor model)
         => new(
             model.ModelId,
@@ -154,10 +60,6 @@ internal sealed class ProviderModelCatalogAdapter(
     public static ProviderModelCatalogOption ToCatalogOption(AgentEmbeddingModelDescriptor model)
         => new(model.ModelId, model.DisplayName);
 
-    private sealed record OwnedChatProviderReference(
-        AgentRpcReference<IAgentChatProvider> Reference,
-        string PackageId,
-        AgentProviderDescriptor Descriptor);
 }
 
 internal sealed class ProviderModelLoader(IProviderModelCatalog catalog) : IDisposable

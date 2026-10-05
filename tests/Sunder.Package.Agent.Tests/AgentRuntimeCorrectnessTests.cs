@@ -3,19 +3,29 @@ extern alias AgentCore;
 using System.Runtime.CompilerServices;
 using System.Collections.Concurrent;
 using System.Reflection;
-using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.HistorySearch;
-using Sunder.Package.Agent.Models;
-using Sunder.Package.Agent.PackageViews;
-using Sunder.Package.Agent.Runtime;
+using AgentCore::Sunder.Package.Agent.Contracts.Models;
+using AgentCore::Sunder.Package.Agent.HistorySearch;
+using AgentCore::Sunder.Package.Agent.Models;
+using AgentCore::Sunder.Package.Agent.PackageViews;
+using AgentCore::Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
+using Sunder.Package.Agent.TestSupport;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Storage;
 using Xunit;
 using CorePresentation = AgentCore::Sunder.Package.Agent.Shared.PackageViews;
 using AgentAppRuntimePayloadLimits = AgentCore::Sunder.Package.Agent.Runtime.AgentRuntimePayloadLimits;
+using AgentPresentationDispatcher = AgentCore::Sunder.Package.Agent.Shared.Presentation.IPresentationDispatcher;
+using AgentChatSelectionStateService = AgentCore::Sunder.Package.Agent.Services.AgentChatSelectionStateService;
+using AgentPackageUnavailableException = AgentCore::Sunder.Package.Agent.Services.AgentPackageUnavailableException;
+using AgentChatSnapshotHandler = Sunder.Package.Agent.Runtime.AgentChatSnapshotHandler;
+using AgentRuntimeChangeHub = Sunder.Package.Agent.Runtime.AgentRuntimeChangeHub;
+using AgentRuntimeTransportBudgetState = Sunder.Package.Agent.Runtime.AgentRuntimeTransportBudgetState;
+using AgentPermissionCommandHandler = Sunder.Package.Agent.Runtime.AgentPermissionCommandHandler;
+using WorkerRuntime = Sunder.Package.Agent.Runtime;
+using WorkerModels = Sunder.Package.Agent.Contracts.Models;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -70,17 +80,17 @@ public sealed class AgentRuntimeCorrectnessTests
         var checkpoint = sessions.SaveCheckpoint(
             rootSession.SessionId,
             1,
-            AgentRunStatus.Completed,
+            WorkerModels.AgentRunStatus.Completed,
             "Snapshot complete.");
         var transcriptContent = new string('x', 10_000);
         sessions.AppendTextTurn(
             rootSession.SessionId,
-            AgentMessageRole.Assistant,
+            WorkerModels.AgentMessageRole.Assistant,
             transcriptContent);
         permissions.SetSessionUnrestrictedMode(rootSession.SessionId, true);
         var handler = new AgentChatSnapshotHandler(store, changes);
 
-        var snapshot = await handler.HandleAsync(new AgentChatSnapshotRequest(
+        var snapshot = await handler.HandleAsync(new WorkerRuntime.AgentChatSnapshotRequest(
             PreferredProfileId: "missing-preferred-profile",
             PreferredWorkspaceId: "missing-preferred-workspace",
             PreferredSessionId: Guid.NewGuid()));
@@ -131,7 +141,7 @@ public sealed class AgentRuntimeCorrectnessTests
             workspaceId: preferredWorkspace.WorkspaceId);
         var handler = new AgentChatSnapshotHandler(store, changes);
 
-        var snapshot = await handler.HandleAsync(new AgentChatSnapshotRequest(
+        var snapshot = await handler.HandleAsync(new WorkerRuntime.AgentChatSnapshotRequest(
             PreferredProfileId: preferredProfile.ProfileId,
             PreferredWorkspaceId: preferredWorkspace.WorkspaceId,
             PreferredSessionId: preferredSession.SessionId));
@@ -167,14 +177,14 @@ public sealed class AgentRuntimeCorrectnessTests
             profileId: profile.ProfileId,
             workspaceId: workspace.WorkspaceId);
         var handler = new AgentChatSnapshotHandler(store, changes);
-        var request = new AgentChatSnapshotRequest(
+        var request = new WorkerRuntime.AgentChatSnapshotRequest(
             PreferredProfileId: profile.ProfileId,
             PreferredWorkspaceId: workspace.WorkspaceId,
             PreferredSessionId: session.SessionId);
 
         var first = await handler.HandleAsync(request);
         var cached = await handler.HandleAsync(request);
-        sessions.AppendTextTurn(session.SessionId, AgentMessageRole.User, "Invalidate the cache.");
+        sessions.AppendTextTurn(session.SessionId, WorkerModels.AgentMessageRole.User, "Invalidate the cache.");
         var refreshed = await handler.HandleAsync(request);
 
         Assert.Same(first, cached);
@@ -203,7 +213,7 @@ public sealed class AgentRuntimeCorrectnessTests
         var firstSession = sessions.CreateSession("First session", workspaceId: workspace.WorkspaceId);
         var secondSession = sessions.CreateSession("Second session", workspaceId: workspace.WorkspaceId);
         var handler = new AgentChatSnapshotHandler(store, changes);
-        var firstRequest = new AgentChatSnapshotRequest(
+        var firstRequest = new WorkerRuntime.AgentChatSnapshotRequest(
             PreferredWorkspaceId: workspace.WorkspaceId,
             PreferredSessionId: firstSession.SessionId);
         var secondRequest = firstRequest with { PreferredSessionId = secondSession.SessionId };
@@ -708,9 +718,9 @@ public sealed class AgentRuntimeCorrectnessTests
             workspaceId: workspace.WorkspaceId);
         var permissions = new RacingPermissionGateway(session.SessionId);
         using var viewModel = new AgentChatViewModel(
-            profiles,
-            runtime.Workspaces,
-            runtime.Sessions,
+            AgentRoleBoundary.As<IAgentProfileGateway>(profiles),
+            AgentRoleBoundary.As<IAgentWorkspaceGateway>(runtime.Workspaces),
+            AgentRoleBoundary.As<IAgentSessionGateway>(runtime.Sessions),
             permissions,
             NoOpRunGateway.Instance);
         await viewModel.InitializeAsync();
@@ -751,9 +761,9 @@ public sealed class AgentRuntimeCorrectnessTests
             writeRevision: 10,
             readEnabled: false);
         using var viewModel = new AgentChatViewModel(
-            profiles,
-            runtime.Workspaces,
-            runtime.Sessions,
+            AgentRoleBoundary.As<IAgentProfileGateway>(profiles),
+            AgentRoleBoundary.As<IAgentWorkspaceGateway>(runtime.Workspaces),
+            AgentRoleBoundary.As<IAgentSessionGateway>(runtime.Sessions),
             permissions,
             NoOpRunGateway.Instance);
         await viewModel.InitializeAsync();
@@ -788,9 +798,9 @@ public sealed class AgentRuntimeCorrectnessTests
             workspaceId: workspace.WorkspaceId);
         var permissions = new DelayedPermissionMutationGateway(session.SessionId);
         using var viewModel = new AgentChatViewModel(
-            profiles,
-            runtime.Workspaces,
-            runtime.Sessions,
+            AgentRoleBoundary.As<IAgentProfileGateway>(profiles),
+            AgentRoleBoundary.As<IAgentWorkspaceGateway>(runtime.Workspaces),
+            AgentRoleBoundary.As<IAgentSessionGateway>(runtime.Sessions),
             permissions,
             NoOpRunGateway.Instance);
         await viewModel.InitializeAsync();
@@ -819,8 +829,8 @@ public sealed class AgentRuntimeCorrectnessTests
         var permissions = new AgentPermissionService(runtime.Store, catalog);
         var handler = new AgentPermissionCommandHandler(permissions, runtime.Changes);
 
-        var exception = await Assert.ThrowsAsync<AgentOwnerOperationException>(() => handler.HandleAsync(
-            new AgentPermissionCommand((AgentPermissionCommandKind)int.MaxValue)).AsTask());
+        var exception = await Assert.ThrowsAsync<WorkerRuntime.AgentOwnerOperationException>(() => handler.HandleAsync(
+            new WorkerRuntime.AgentPermissionCommand((WorkerRuntime.AgentPermissionCommandKind)int.MaxValue)).AsTask());
 
         Assert.Equal("Unknown permission command.", exception.Message);
     }
@@ -1196,7 +1206,7 @@ public sealed class AgentRuntimeCorrectnessTests
         try
         {
             await mutationReached.Task.WaitAsync(TimeSpan.FromSeconds(10));
-            var snapshot = await handler.HandleAsync(new AgentChatSnapshotRequest());
+            var snapshot = await handler.HandleAsync(new WorkerRuntime.AgentChatSnapshotRequest());
 
             Assert.Equal("Before mutation", snapshot.SelectedWorkspace?.DisplayName);
             Assert.EndsWith(
@@ -1228,18 +1238,18 @@ public sealed class AgentRuntimeCorrectnessTests
         var checkpoint = runtime.Sessions.SaveCheckpoint(
             session.SessionId,
             7,
-            AgentRunStatus.Running,
+            WorkerModels.AgentRunStatus.Running,
             "Running now.");
         var handler = new AgentChatSnapshotHandler(
             runtime.Store,
             changes);
 
-        var snapshot = await handler.HandleAsync(new AgentChatSnapshotRequest(
+        var snapshot = await handler.HandleAsync(new WorkerRuntime.AgentChatSnapshotRequest(
             PreferredWorkspaceId: workspace.WorkspaceId,
             PreferredSessionId: session.SessionId));
 
         Assert.Equal(checkpoint, snapshot.SelectedSession?.Checkpoint);
-        Assert.Equal(AgentRunStatus.Running, snapshot.SelectedSession?.Checkpoint?.Status);
+        Assert.Equal(WorkerModels.AgentRunStatus.Running, snapshot.SelectedSession?.Checkpoint?.Status);
     }
 
     [Fact]
@@ -1277,7 +1287,7 @@ public sealed class AgentRuntimeCorrectnessTests
             runtime.Store,
             changes);
 
-        var snapshot = await handler.HandleAsync(new AgentChatSnapshotRequest(
+        var snapshot = await handler.HandleAsync(new WorkerRuntime.AgentChatSnapshotRequest(
             InitialTranscriptLimit: 500,
             PreferredWorkspaceId: workspace.WorkspaceId,
             PreferredSessionId: session.SessionId));
@@ -1323,10 +1333,10 @@ public sealed class AgentRuntimeCorrectnessTests
             workspaceId: workspace.WorkspaceId);
         var turn = runtime.Sessions.AppendTextTurn(
             session.SessionId,
-            AgentMessageRole.Assistant,
+            WorkerModels.AgentMessageRole.Assistant,
             new string('x', 6 * 1024 * 1024));
         var transportBudgets = new AgentRuntimeTransportBudgetState();
-        _ = transportBudgets.Negotiate(new AgentTransportProfileRequest(
+        _ = transportBudgets.Negotiate(new WorkerRuntime.AgentTransportProfileRequest(
             1024 * 1024,
             1024 * 1024,
             1024 * 1024,
@@ -1337,7 +1347,7 @@ public sealed class AgentRuntimeCorrectnessTests
             changes,
             transportBudgets);
 
-        var snapshot = await handler.HandleAsync(new AgentChatSnapshotRequest(
+        var snapshot = await handler.HandleAsync(new WorkerRuntime.AgentChatSnapshotRequest(
             InitialTranscriptLimit: 1,
             PreferredWorkspaceId: workspace.WorkspaceId,
             PreferredSessionId: session.SessionId));
@@ -1354,7 +1364,7 @@ public sealed class AgentRuntimeCorrectnessTests
             StringComparison.Ordinal);
         Assert.True(
             AgentChatSnapshotPayload.GetSerializedByteCount(snapshot)
-            <= AgentAppRuntimePayloadLimits.GetResponsePayloadBytes(transportBudgets.Current));
+            <= AgentAppRuntimePayloadLimits.GetResponsePayloadBytes(AgentRoleBoundary.As<AgentTransportProfile>(transportBudgets.Current)));
         var roundTrip = AgentChatSnapshotPayload.RoundTrip(snapshot);
         Assert.Equal(turn.TurnId, roundTrip.InitialTranscript.Continuation?.TurnId);
     }
@@ -1378,7 +1388,7 @@ public sealed class AgentRuntimeCorrectnessTests
             runtime.Store,
             changes);
 
-        _ = await handler.HandleAsync(new AgentChatSnapshotRequest(
+        _ = await handler.HandleAsync(new WorkerRuntime.AgentChatSnapshotRequest(
             PreferredWorkspaceId: workspace.WorkspaceId));
 
         Assert.Equal(baselineCalls, catalog.InvocationCount);
@@ -1758,13 +1768,13 @@ public sealed class AgentRuntimeCorrectnessTests
         runtime.Workspaces.CreateWorkspace("second");
 
         await using var subscription = runtime.Hub.SubscribeAsync(
-            new AgentChangeSubscription(firstRevision)).GetAsyncEnumerator();
+            new WorkerRuntime.AgentChangeSubscription(firstRevision)).GetAsyncEnumerator();
 
         Assert.True(await subscription.MoveNextAsync());
-        Assert.Equal(AgentRuntimeChangeKind.Workspace, subscription.Current.Kind);
+        Assert.Equal(WorkerRuntime.AgentRuntimeChangeKind.Workspace, subscription.Current.Kind);
         Assert.Equal(firstRevision + 1, subscription.Current.Revision);
         Assert.True(await subscription.MoveNextAsync());
-        Assert.Equal(AgentRuntimeChangeKind.Connected, subscription.Current.Kind);
+        Assert.Equal(WorkerRuntime.AgentRuntimeChangeKind.Connected, subscription.Current.Kind);
     }
 
     [Fact]
@@ -1777,26 +1787,26 @@ public sealed class AgentRuntimeCorrectnessTests
             workspaceId: workspace.WorkspaceId);
         var revision = runtime.Hub.Revision;
         await using var legacy = runtime.Hub.SubscribeAsync(
-            new AgentChangeSubscription(revision)).GetAsyncEnumerator();
+            new WorkerRuntime.AgentChangeSubscription(revision)).GetAsyncEnumerator();
         await using var current = runtime.Hub.SubscribeAsync(
-            new AgentChangeSubscription(revision, SupportsTurnMutations: true)).GetAsyncEnumerator();
+            new WorkerRuntime.AgentChangeSubscription(revision, SupportsTurnMutations: true)).GetAsyncEnumerator();
         Assert.True(await legacy.MoveNextAsync());
-        Assert.Equal(AgentRuntimeChangeKind.Connected, legacy.Current.Kind);
+        Assert.Equal(WorkerRuntime.AgentRuntimeChangeKind.Connected, legacy.Current.Kind);
         Assert.True(await current.MoveNextAsync());
-        Assert.Equal(AgentRuntimeChangeKind.Connected, current.Current.Kind);
+        Assert.Equal(WorkerRuntime.AgentRuntimeChangeKind.Connected, current.Current.Kind);
 
         var turn = runtime.Sessions.AppendTextTurn(
             session.SessionId,
-            AgentMessageRole.Assistant,
+            WorkerModels.AgentMessageRole.Assistant,
             "stream compatibility");
 
         Assert.True(await legacy.MoveNextAsync());
-        Assert.Equal(AgentRuntimeChangeKind.Turn, legacy.Current.Kind);
+        Assert.Equal(WorkerRuntime.AgentRuntimeChangeKind.Turn, legacy.Current.Kind);
         Assert.Equal(turn.TurnId, legacy.Current.Turn?.TurnId);
         Assert.Equal("stream compatibility", legacy.Current.Turn?.Items.Single().TextContent);
         Assert.Null(legacy.Current.TurnMutation);
         Assert.True(await current.MoveNextAsync());
-        Assert.Equal(AgentRuntimeChangeKind.TurnMutation, current.Current.Kind);
+        Assert.Equal(WorkerRuntime.AgentRuntimeChangeKind.TurnMutation, current.Current.Kind);
         Assert.Null(current.Current.Turn);
         Assert.Equal(turn.TurnId, current.Current.TurnMutation?.TurnId);
     }
@@ -1811,10 +1821,10 @@ public sealed class AgentRuntimeCorrectnessTests
         }
 
         await using var subscription = runtime.Hub.SubscribeAsync(
-            new AgentChangeSubscription(0)).GetAsyncEnumerator();
+            new WorkerRuntime.AgentChangeSubscription(0)).GetAsyncEnumerator();
 
         Assert.True(await subscription.MoveNextAsync());
-        Assert.Equal(AgentRuntimeChangeKind.ResnapshotRequired, subscription.Current.Kind);
+        Assert.Equal(WorkerRuntime.AgentRuntimeChangeKind.ResnapshotRequired, subscription.Current.Kind);
         Assert.Equal(runtime.Hub.Revision, subscription.Current.Revision);
     }
 
@@ -1823,23 +1833,23 @@ public sealed class AgentRuntimeCorrectnessTests
     {
         using var runtime = ChangeHubRuntime.Create();
         await using var subscription = runtime.Hub.SubscribeAsync(
-            new AgentChangeSubscription(runtime.Hub.Revision)).GetAsyncEnumerator();
+            new WorkerRuntime.AgentChangeSubscription(runtime.Hub.Revision)).GetAsyncEnumerator();
         Assert.True(await subscription.MoveNextAsync());
-        Assert.Equal(AgentRuntimeChangeKind.Connected, subscription.Current.Kind);
+        Assert.Equal(WorkerRuntime.AgentRuntimeChangeKind.Connected, subscription.Current.Kind);
 
         for (var index = 0; index < 80; index++)
         {
             runtime.Workspaces.CreateWorkspace($"slow-{index}");
         }
 
-        AgentRuntimeChange? terminal = null;
+        WorkerRuntime.AgentRuntimeChange? terminal = null;
         while (await subscription.MoveNextAsync())
         {
             terminal = subscription.Current;
         }
 
         Assert.NotNull(terminal);
-        Assert.Equal(AgentRuntimeChangeKind.ResnapshotRequired, terminal!.Kind);
+        Assert.Equal(WorkerRuntime.AgentRuntimeChangeKind.ResnapshotRequired, terminal!.Kind);
         Assert.Equal(runtime.Hub.Revision, terminal.Revision);
     }
 
@@ -1853,31 +1863,31 @@ public sealed class AgentRuntimeCorrectnessTests
             "byte-bounded-subscriber",
             workspaceId: workspace.WorkspaceId);
         await using var subscription = runtime.Hub.SubscribeAsync(
-            new AgentChangeSubscription(runtime.Hub.Revision, SupportsTurnMutations: true)).GetAsyncEnumerator();
+            new WorkerRuntime.AgentChangeSubscription(runtime.Hub.Revision, SupportsTurnMutations: true)).GetAsyncEnumerator();
         Assert.True(await subscription.MoveNextAsync());
-        Assert.Equal(AgentRuntimeChangeKind.Connected, subscription.Current.Kind);
+        Assert.Equal(WorkerRuntime.AgentRuntimeChangeKind.Connected, subscription.Current.Kind);
 
         for (var index = 0; index < 3; index++)
         {
             runtime.Sessions.AppendTextTurn(
                 session.SessionId,
-                AgentMessageRole.Assistant,
+                WorkerModels.AgentMessageRole.Assistant,
                 new string((char)('a' + index), 750_000));
         }
 
         var deliveredChanges = 0;
-        AgentRuntimeChange? terminal = null;
+        WorkerRuntime.AgentRuntimeChange? terminal = null;
         while (await subscription.MoveNextAsync())
         {
             terminal = subscription.Current;
-            if (terminal.Kind == AgentRuntimeChangeKind.TurnMutation)
+            if (terminal.Kind == WorkerRuntime.AgentRuntimeChangeKind.TurnMutation)
             {
                 deliveredChanges++;
             }
         }
 
         Assert.Equal(2, deliveredChanges);
-        Assert.Equal(AgentRuntimeChangeKind.ResnapshotRequired, terminal?.Kind);
+        Assert.Equal(WorkerRuntime.AgentRuntimeChangeKind.ResnapshotRequired, terminal?.Kind);
         Assert.Equal(runtime.Hub.Revision, terminal?.Revision);
     }
 
@@ -1896,15 +1906,15 @@ public sealed class AgentRuntimeCorrectnessTests
         {
             runtime.Sessions.AppendTextTurn(
                 session.SessionId,
-                AgentMessageRole.Assistant,
+                WorkerModels.AgentMessageRole.Assistant,
                 new string((char)('a' + index), 750_000));
         }
 
         await using var subscription = runtime.Hub.SubscribeAsync(
-            new AgentChangeSubscription(beforeLargeChanges)).GetAsyncEnumerator();
+            new WorkerRuntime.AgentChangeSubscription(beforeLargeChanges)).GetAsyncEnumerator();
 
         Assert.True(await subscription.MoveNextAsync());
-        Assert.Equal(AgentRuntimeChangeKind.ResnapshotRequired, subscription.Current.Kind);
+        Assert.Equal(WorkerRuntime.AgentRuntimeChangeKind.ResnapshotRequired, subscription.Current.Kind);
         Assert.Equal(runtime.Hub.Revision, subscription.Current.Revision);
     }
 
@@ -1912,7 +1922,7 @@ public sealed class AgentRuntimeCorrectnessTests
     {
         const int valueBytes = 1024 * 1024;
         var budgets = new AgentRuntimeTransportBudgetState();
-        _ = budgets.Negotiate(new AgentTransportProfileRequest(
+        _ = budgets.Negotiate(new WorkerRuntime.AgentTransportProfileRequest(
             valueBytes,
             valueBytes,
             valueBytes,
@@ -2131,14 +2141,38 @@ public sealed class AgentRuntimeCorrectnessTests
     public async Task PermissionsViewModel_StartsRuntimeObservation()
     {
         var client = new PermissionRuntimeClient();
-        using var gateway = new AgentAppRuntimeGateway(client);
-        using var viewModel = new AgentPermissionsViewModel(gateway);
+        using var dispatcher = new PermissionPresentationDispatcher();
+        await using var gateway = new AgentAppRuntimeGateway(client);
+        AgentPermissionsViewModel? viewModel = null;
+        var populated = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            // With no Avalonia application, the default dispatcher executes inline.
+            // Initialization and Connected can reload concurrently; model the actual
+            // serialized UI boundary for both publication and collection assertions.
+            await dispatcher.InvokeAsync(() =>
+            {
+                viewModel = new AgentPermissionsViewModel(gateway, dispatcher);
+                viewModel.Rows.CollectionChanged += (_, _) => ObserveRows();
+                ObserveRows();
+            });
+            await WaitUntilAsync(() => client.SubscriptionCount > 0);
+            Assert.Equal(dispatcher.ThreadId, await populated.Task.WaitAsync(TimeSpan.FromSeconds(10)));
+            await dispatcher.InvokeAsync(() =>
+            {
+                Assert.Single(viewModel!.Rows);
+                Assert.Equal("test.mutate", viewModel.Rows[0].ActionId);
+            });
+        }
+        finally
+        {
+            if (viewModel is not null) await dispatcher.InvokeAsync(viewModel.Dispose);
+        }
 
-        await WaitUntilAsync(() => client.SubscriptionCount > 0);
-        await WaitUntilAsync(() => viewModel.Rows.Count > 0);
-
-        Assert.Single(viewModel.Rows);
-        Assert.Equal("test.mutate", viewModel.Rows[0].ActionId);
+        void ObserveRows()
+        {
+            if (viewModel!.Rows.Count > 0) populated.TrySetResult(Environment.CurrentManagedThreadId);
+        }
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition)
@@ -2587,12 +2621,12 @@ public sealed class AgentRuntimeCorrectnessTests
             await selections.GetSelectedSessionIdAsync(secondWorkspace.WorkspaceId));
     }
 
-    private static AgentWorkspacePathRecord CreateWorkspacePath(
+    private static WorkerModels.AgentWorkspacePathRecord CreateWorkspacePath(
         string workspaceId,
         string name)
     {
         var now = DateTimeOffset.UtcNow;
-        return new AgentWorkspacePathRecord(
+        return new WorkerModels.AgentWorkspacePathRecord(
             Guid.NewGuid().ToString("N"),
             workspaceId,
             Path.Combine(Path.GetTempPath(), name),
@@ -3731,9 +3765,9 @@ public sealed class AgentRuntimeCorrectnessTests
             CancellationToken cancellationToken = default)
             => Task.FromResult<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>>([]);
 
-        public Task<IReadOnlyList<AgentToolCatalogEntry>> ListInstalledLocalToolsAsync(
+        public Task<IReadOnlyList<AgentCore::Sunder.Package.Agent.Services.AgentToolCatalogEntry>> ListInstalledLocalToolsAsync(
             CancellationToken cancellationToken = default)
-            => Task.FromResult<IReadOnlyList<AgentToolCatalogEntry>>([]);
+            => Task.FromResult<IReadOnlyList<AgentCore::Sunder.Package.Agent.Services.AgentToolCatalogEntry>>([]);
 
         public Task<IReadOnlyList<AgentModelDescriptor>> ListChatModelsAsync(
             string? providerId,
@@ -4608,6 +4642,15 @@ public sealed class AgentRuntimeCorrectnessTests
             yield return (TEvent)(object)new AgentRuntimeChange(2, AgentRuntimeChangeKind.Connected);
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
         }
+    }
+
+    private sealed class PermissionPresentationDispatcher : AgentPresentationDispatcher, IDisposable
+    {
+        private readonly DedicatedThreadDispatcher _dispatcher = new("Permission observation test dispatcher");
+        public int ThreadId => _dispatcher.ThreadId;
+        public bool CheckAccess() => _dispatcher.CheckAccess();
+        public Task InvokeAsync(Action action) => _dispatcher.InvokeAsync(action);
+        public void Dispose() => _dispatcher.Dispose();
     }
 
     private sealed class PermissionRuntimeClient : IAgentOwnerClient

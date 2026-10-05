@@ -1,12 +1,16 @@
+extern alias DockerWorker;
+extern alias ShellWorker;
+extern alias LocalWorker;
+
 using System.Diagnostics;
-using Sunder.Agent.Execution.Common;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Execution.Docker;
+using DockerWorker::Sunder.Package.Agent.Execution.Docker;
+using LocalWorker::Sunder.Package.Agent.Execution.Local;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Tests;
-using Sunder.Package.Agent.Tools.Shell;
+using ShellWorker::Sunder.Package.Agent.Tools.Shell;
 using Xunit;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
@@ -24,8 +28,8 @@ public sealed class ProcessExecutionHardeningTests : IDisposable
     {
         var target = new RecordingExecutionTarget();
         using var catalog = new RegressionTestExtensionCatalog();
-        catalog.AddProvider(AgentRpcServices.ExecutionTargets, target);
-        var source = new ShellToolSource();
+        catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target);
+        using var source = new GeneratedToolSourceProbe(catalog, new ShellToolSource(), "sunder.package.agent.tools.shell");
         var now = DateTimeOffset.UtcNow;
         var workspace = new AgentWorkspaceRecord("workspace", "Workspace", null, now, now);
         var binding = new AgentWorkspaceBindingRecord(
@@ -42,7 +46,7 @@ public sealed class ProcessExecutionHardeningTests : IDisposable
         var result = await source.ExecuteAsync(
             new AgentToolExecutionContext(null, Workspace: workspace, ExecutionBinding: binding)
             {
-                ExecutionTargetReference = catalog.GetRequiredReference(AgentRpcServices.ExecutionTargets),
+                ExecutionTargetReference = catalog.GetRequiredReference(RegressionTestBindings.ExecutionTargets),
             },
             new AgentToolRequest("shell", $$"""{"command":"echo unsafe","timeoutSeconds":{{timeoutSeconds}}}"""));
 

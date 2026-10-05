@@ -1,0 +1,25 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using Sunder.Package.Agent.Contracts.Contracts;
+using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Sdk.Rpc;
+
+public sealed class RoleLocalWorkspaceMigrator(
+    string contributorId,
+    Func<string, bool> canMigrate,
+    Func<string, CancellationToken, Task<string>> paths,
+    Func<string, CancellationToken, Task> complete) : IAgentWorkspacePathMigrationContributor
+{
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
+    {
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        Converters = { new SunderRpcJsonConverterFactory(), new JsonStringEnumConverter(JsonNamingPolicy.KebabCaseLower, allowIntegerValues: false) },
+    };
+    public string ContributorId => contributorId;
+    public bool CanMigrate(AgentWorkspacePathMigrationContext context) => canMigrate(JsonSerializer.Serialize(context, Json));
+    public async Task<IReadOnlyList<AgentWorkspacePathMigrationItem>> GetLegacyWorkspacePathsAsync(
+        AgentWorkspacePathMigrationContext context, CancellationToken token = default)
+        => JsonSerializer.Deserialize<AgentWorkspacePathMigrationItem[]>(await paths(JsonSerializer.Serialize(context, Json), token), Json)!;
+    public Task CompleteWorkspacePathMigrationAsync(AgentWorkspacePathMigrationContext context, CancellationToken token = default)
+        => complete(JsonSerializer.Serialize(context, Json), token);
+}

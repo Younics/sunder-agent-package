@@ -8,14 +8,9 @@ using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Builder;
 
-public sealed class BuilderWorkspaceExecutionService
+public sealed partial class BuilderWorkspaceExecutionService
 {
     private readonly IBuilderRpcGateway _rpc;
-
-    public BuilderWorkspaceExecutionService(ISunderRpcClient rpcClient)
-        : this(new BuilderAppRpcGateway(rpcClient))
-    {
-    }
 
     public BuilderWorkspaceExecutionService()
         : this(EmptyBuilderRpcGateway.Instance)

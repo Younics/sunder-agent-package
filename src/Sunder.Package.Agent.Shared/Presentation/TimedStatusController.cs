@@ -1,5 +1,6 @@
 namespace Sunder.Package.Agent.Shared.Presentation;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.App)]
 internal sealed class TimedStatusController : IDisposable
 {
     private readonly object _syncRoot = new();

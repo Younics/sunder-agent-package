@@ -15,6 +15,7 @@ public sealed partial class SkillImportService
     private readonly SkillSourceAcquirer _sourceAcquirer;
     private readonly TimeSpan _gitHubImportTimeout;
 
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
     public SkillImportService(SkillStore store, IGitHubSkillClient gitHubClient, IPackageContext packageContext)
         : this(store, gitHubClient, packageContext, null, null)
     {

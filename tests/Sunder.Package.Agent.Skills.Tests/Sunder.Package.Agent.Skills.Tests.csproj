@@ -12,9 +12,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Sunder.Package.Agent.TestSupport\Sunder.Package.Agent.TestSupport.csproj" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Skills\Sunder.Package.Agent.Skills.csproj" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Skills\App\SkillsApp.csproj" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Skills\Protocol\SkillsProtocol.csproj" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Skills\Sunder.Package.Agent.Skills.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="global,SkillsWorker" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Skills\Sunder.Package.Agent.Skills.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=app" Aliases="SkillsApp" />
   </ItemGroup>
 
   <ItemGroup>

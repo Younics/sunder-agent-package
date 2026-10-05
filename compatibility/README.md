@@ -6,6 +6,13 @@ metadata, release locks, public API files, live SQLite schemas, document schema
 policies, configuration/environment/telemetry vocabulary, and the checked-in
 public release evidence.
 
+`agent-rpc-migration-baseline.json` is the implementation-first migration
+oracle. It freezes canonical descriptor and ABI bytes, service/method/error
+inventories, bindings, providers, uses, audiences, bundles, and the exhaustive
+source disposition for the central Contracts boundary plus all twelve local
+Protocol/Shared boundaries. It is evidence only, never a package build input or
+publication authorization.
+
 Regenerate it only after reviewing the intended compatibility delta:
 
 ```sh
@@ -18,24 +25,31 @@ candidate differs. The generator also asserts the architectural inventory:
 
 - 31 Agent RPC descriptors: 19 public bundled descriptors and 12 package-local
   owner descriptors;
-- descriptor schema version 2 and current Agent contract semantic version
+- descriptor schema version 1 and current Agent contract semantic version
   `1.0.0`;
 - 18 supported third-party extension points plus the reserved first-party
   `sunder.agent.tool.execution.observed` bridge;
 - 63 provider declarations and 46 consumer declarations;
-- 15 Worker V3 runtime package families plus the Protocol NuGet artifact.
+- exactly 15 Worker V1 runtime package families. The obsolete Protocol project is
+  physically removed and is not a sixteenth Agent runtime or release artifact.
 
-All 19 central Protocol bindings explicitly generate public DTO, provider,
-client, and handler types. This is intentional extension-authoring API: external
-providers and consumers need the complete generated vocabulary. All 12
-package-local/owner bindings generate internal top-level types. Their worker,
-App, and test consumers use maintained public wrappers or explicit friend
-assemblies; no package-local generated binding remains public.
+The unchanged migration baseline records the original 19 central public bindings
+and 12 package-local bindings. Phase 5 relocated genuine business source to its
+owner and physically removed the exact 26 obsolete projects and authorized support/
+wrapper files. Historical source is authenticated data under
+[`PreCanonicalProjects`](../tests/Sunder.Package.Agent.Tests/Fixtures/PreCanonicalProjects/RETIREMENT.md),
+never compiled replacement code. Current history guards/inverses and the final full
+required Main/source run pass (**1,835/0/6 scoped skips**, including actual all-family
+artifact acceptance), and all 26 project retirements are recorded. Final source-SDK
+artifacts, parallel workspace Build/Rebuild and three isolated local NuGet-mode
+representatives also pass. These local results do not constitute remote Core release,
+Registry publication, native or performance acceptance.
 
-Smoke and release workflows run `verify-packed-protocol.sh` against the produced
-NuGet package. Its isolated external consumer compiles current generated author
-types from the restored package, verifies those restored DLL bytes came from the
-input `.nupkg`, and rejects the removed legacy file-search method and types.
+The obsolete `verify-packed-protocol.sh` and `PackedProtocolConsumer` fixture are
+physically removed with their authenticated captures retained. Smoke/release
+workflows target fifteen canonical archives and no Protocol NuGet. Keep the actual
+`check-protocol-retirement.mjs` feed/residue gate. Physical cleanup and passing
+historical oracles do not imply final integration or publication qualification.
 
 Release and Windows CI run the complete unfiltered source-mode behavioral
 solution before the focused package-mode compatibility lane. Package identity
@@ -47,8 +61,10 @@ must match its exact project, owner, fully qualified and display identities, and
 TRX reason.
 
 The Stack contributor is a separate Core contract at semantic version `2.0.0`.
-Agent runtime packages are Worker-only authoring surfaces; optional App projects
-are role-isolated build inputs and do not create a second Runtime API.
+Agent packages use one authored project with generated, isolated Worker and optional
+App roles. Local archives and a local Core catalog support unpublished-family API
+selection without Registry access; local selections omit `registryOrigin` and do
+not supply publication evidence.
 
 ## Release Evidence
 
@@ -74,12 +90,10 @@ adopt pre-V1 package records.
 
 ## Stable Boundary
 
-This ledger is the Agent component of the immutable local Sunder 1.0
-compatibility freeze. It does not authorize tagging or publication. The
-reviewed central Protocol baseline is in `PublicAPI.Shipped.txt`;
-`PublicAPI.Unshipped.txt` contains only its nullable header because the six
-synchronous workspace API removals and six async replacements are finalized in
-the pre-release 2.0 shipped baseline.
+These ledgers are pre-cutover migration evidence. They do not authorize tagging,
+publication, or retention of a public Protocol package. Existing public API
+snapshots remain inputs only until the feed audit and implementation-first parity
+gate determine their historical disposition.
 Release preparation must still resolve the exact immutable Core `sdk/v*` tag
 and package provenance; smoke tracking of a mutable Core branch is not release
 evidence.

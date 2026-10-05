@@ -6,16 +6,7 @@
     "bytes": "Every published sunder.package.agent 1.0.x artifact was downloaded, matched to its GitHub sha256 digest, and its payload/lib/Sunder.Package.Agent.Contracts.dll was inspected.",
     "artifactCoverage": "The base Agent artifact is the authoritative released carrier of the shared Agent Contracts assembly; latest artifacts for all 15 package families were also digest-verified."
   },
-  "allowedFutureDeltas": [
-    {
-      "phase": 6,
-      "implementationStatus": "implemented",
-      "surface": "Agent workspace discovery public CLR API",
-      "change": "Replace synchronous workspace listing and metadata-hydration entry points with async, cancellation-aware contracts and update all first-party consumers atomically.",
-      "expectedLedgerEffect": "Agent public CLR API snapshots change signatures; descriptor schema, semantic contract versions, and persisted workspace records remain unchanged.",
-      "acceptance": "Public API and packed Protocol consumer tests pass, workspace discovery propagates cancellation without blocking, and source/package-mode Agent matrices pass."
-    }
-  ],
+  "allowedFutureDeltas": [],
   "agentArtifacts": [
     {
       "version": "1.0.0",

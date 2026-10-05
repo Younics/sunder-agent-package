@@ -1,0 +1,86 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <SunderPackageFamilyId>sunder.package.agent</SunderPackageFamilyId>
+    <SunderPackageRole>worker</SunderPackageRole>
+    <SunderPackageAppProject>App\Sunder.Package.Agent.App.csproj</SunderPackageAppProject>
+    <SunderSdkStacksReference>true</SunderSdkStacksReference>
+  </PropertyGroup>
+
+  <Import Project="$(MSBuildThisFileDirectory)..\..\Sunder.Agent.Worker.props" />
+  <Import Project="Models\AgentSemanticSources.props" />
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="Microsoft.Extensions.AI" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="Microsoft.Extensions.Http.Resilience" />
+    <ProjectReference Include="..\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
+    <ProjectReference Include="OwnerProtocol\Sunder.Package.Agent.OwnerProtocol.csproj" />
+    <Compile Include="..\Sunder.Package.Agent.Shared\Composition\PackageServiceCollectionExtensions.cs"
+             Link="Composition\PackageServiceCollectionExtensions.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Shared\Threading\ReferenceCountedKeyedLock.cs"
+             Link="Threading\ReferenceCountedKeyedLock.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Shared\Storage\SqliteWalCheckpointMaintenance.cs"
+             Link="Storage\SqliteWalCheckpointMaintenance.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Shared\PackageViews\TranscriptTurnTransportProjection.cs"
+             Link="PackageViews\TranscriptTurnTransportProjection.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="App\**\*" />
+    <Compile Remove="@(SunderAgentSemanticSource)" />
+    <Compile Remove="Rpc\Public\AgentRpcValues.cs;Rpc\Public\WorkspaceModels.cs;Rpc\Public\WorkspaceExecutionResolver.cs;Rpc\Public\WorkspacePathMigrator.cs;Rpc\Public\ExecutionTarget.cs;Rpc\Public\ExecutionContextModels.cs;Rpc\Public\ExecutionOperationModels.cs;Rpc\Public\ExecutionResourceModels.cs;Rpc\Public\WorkspaceEditor.cs;Rpc\Public\PermissionSurface.cs;Rpc\Public\ProfileCapabilityConsumer.cs;Rpc\Public\SelectableCapabilityProvider.cs;Rpc\Public\EmbeddingProvider.cs;Rpc\Public\ToolSource.cs;Rpc\Public\ToolModels.cs;Rpc\Public\ToolExecutionObserved.cs;Rpc\Public\ConversationModels.cs;Rpc\Public\DurableLifecycleObserver.cs;Rpc\Public\SystemPromptContributor.cs;Rpc\Public\ChatProvider.cs;Rpc\Public\ChatValueModels.cs;Rpc\Public\ChatMessageModels.cs;Rpc\Public\SessionCleaner.cs;Rpc\Public\RuntimeCatalog.cs;Rpc\Public\RuntimeCatalogModels.cs;Rpc\Public\RuntimeCatalogTranscriptModels.cs;Rpc\Public\RuntimeCatalogMapping.cs" />
+    <Compile Remove="Rpc\Public\RunControl.cs;Rpc\Public\RunControl.Chat.cs;Rpc\Public\RunControlModels.cs;Rpc\Public\RunControlChatModels.cs;Rpc\Public\PromptContextModels.cs;Rpc\Public\BehaviorLoopModels.cs;Rpc\Public\RunControlMapping.cs;Rpc\Public\RunControlMapping.Context.cs;Rpc\Public\RunControlMapping.Tools.cs;Rpc\Public\RunControlMapping.Chat.cs" />
+    <Compile Remove="Rpc\Public\BehaviorLoop.cs" />
+    <Compile Remove="Rpc\Public\ChildRunExecutor.cs" />
+    <Compile Remove="Rpc\Public\PromptContextContributor.cs;Rpc\Public\PromptContextRequestModels.cs;Rpc\Public\PromptContextMapping.cs" />
+    <Compile Remove="Rpc\Owner\OwnerValues.cs;Rpc\Owner\OwnerWorkspaceModels.cs;Rpc\Owner\OwnerTranscriptModels.cs;Rpc\Owner\OwnerCatalogModels.cs;Rpc\Owner\OwnerPermissionModels.cs;Rpc\Owner\OwnerCommandModels.cs;Rpc\Owner\OwnerProjectionModels.cs;Rpc\Owner\OwnerAttachmentModels.cs;Rpc\Owner\OwnerHistoryModels.cs;Rpc\Owner\OwnerValueMapper.cs;Rpc\Owner\OwnerRuntimeService.cs" />
+    <Compile Remove="Rpc\Owner\OwnerRuntimeGateway.cs" />
+    <Compile Remove="Rpc\Owner\AgentStackProviders.cs" />
+    <Compile Remove="Rpc\Owner\AgentWorkerProviderCatalog.cs" />
+    <Compile Remove="Rpc\Owner\AgentOwnerRpcClient.cs" />
+    <Compile Remove="Rpc\Owner\AgentRuntimeOperations.cs" />
+    <Compile Remove="Rpc\Consumers\**\*.cs" />
+    <Compile Remove="Runtime\IAgentOwnerRuntimeProvider.cs" />
+    <Compile Remove="Services\AgentExecutionTargetWarmupResult.cs;Services\AgentToolCatalogEntry.cs;Services\AgentWorkspaceBindingRoles.cs;Runtime\AgentTranscriptPageCursor.cs;Runtime\AgentWorkspaceDefaults.cs;Runtime\AgentOwnerOperationException.cs" />
+    <Compile Remove="OwnerProtocol\**\*" />
+    <Compile Remove="PackageViews\**\*" />
+    <Compile Remove="HistorySearch\HistorySearchModels.cs" />
+    <Compile Remove="HistorySearch\HistorySearchNavigation.cs" />
+    <Compile Remove="HistorySearch\HistorySearchText.cs" />
+    <Compile Remove="HistorySearch\HistorySecretRedactor.cs" />
+    <Compile Remove="Models\AgentPendingPermissionRequestRecord.cs" />
+    <Compile Remove="Models\AgentRunActivityUpdate.cs" />
+    <Compile Remove="Runtime\AgentAppRuntimeGateway*.cs" />
+    <Compile Remove="Runtime\AgentPresentationGateways.cs" />
+    <Compile Remove="Runtime\AgentRuntimeContracts.cs" />
+    <Compile Remove="Runtime\AgentTranscriptAnchorContracts.cs" />
+    <Compile Remove="Services\AgentChatSelectionStateService.cs" />
+    <Compile Remove="Services\AgentAttachmentUploadRules.cs" />
+    <Compile Remove="Services\AgentRpcInvocation.cs" />
+    <Compile Remove="Services\AgentSessionTitleDefaults.cs" />
+    <Compile Remove="Services\AgentToolPresentationService.cs" />
+    <None Remove="App\**\*" />
+    <None Remove="OwnerProtocol\**\*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <SunderSdkCapability Include="rpc.extended-deadline.v1" />
+    <SunderContractBundle Include="OwnerProtocol\Contracts\agent-owner-runtime.rpc.json"
+                          ContractId="sunder.agent.owner.runtime"
+                           Version="1.0.0"
+                          DescriptorPath="contracts/agent-owner-runtime.rpc.json"
+                          Exposure="package" />
+    <SunderRpcProvider Include="agent.owner.runtime"
+                       ContractId="sunder.agent.owner.runtime"
+                        ContractVersion="1.0.0"
+                       Role="runtime"
+                       Audience="owner" />
+    <SunderPackageTarget Include="runtime/$(RuntimeIdentifier)"
+                         Role="runtime"
+                         Rid="$(RuntimeIdentifier)"
+                         Kind="worker" />
+  </ItemGroup>
+
+</Project>

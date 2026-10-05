@@ -1,3 +1,4 @@
+using Anthropic;
 using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
@@ -10,6 +11,7 @@ public sealed class AnthropicAgentProvider : IAgentChatProvider, IAgentUtilityMo
 {
     private readonly IPackageContext _packageContext;
     private readonly ProviderCredentialAccessor _credentials;
+    private readonly Func<string, IAnthropicClient> _clientFactory;
 
     public AnthropicAgentProvider(IPackageContext packageContext)
         : this(
@@ -18,10 +20,16 @@ public sealed class AnthropicAgentProvider : IAgentChatProvider, IAgentUtilityMo
     {
     }
 
-    internal AnthropicAgentProvider(IPackageContext packageContext, ProviderCredentialAccessor credentials)
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
+    internal AnthropicAgentProvider(IPackageContext packageContext, ProviderSettings settings)
+        : this(packageContext, settings.Credentials) { }
+
+    internal AnthropicAgentProvider(IPackageContext packageContext, ProviderCredentialAccessor credentials,
+        Func<string, IAnthropicClient>? clientFactory = null)
     {
         _packageContext = packageContext;
         _credentials = credentials;
+        _clientFactory = clientFactory ?? (apiKey => new AnthropicClient { ApiKey = apiKey });
         Descriptor = new AgentProviderDescriptor(
             "anthropic",
             "Anthropic",
@@ -77,6 +85,6 @@ public sealed class AnthropicAgentProvider : IAgentChatProvider, IAgentUtilityMo
     public ValueTask<IChatClient> CreateChatClientAsync(AgentChatClientContext context, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult<IChatClient>(new AnthropicChatClient(context, _credentials));
+        return ValueTask.FromResult<IChatClient>(new AnthropicChatClient(context, _credentials, _clientFactory));
     }
 }

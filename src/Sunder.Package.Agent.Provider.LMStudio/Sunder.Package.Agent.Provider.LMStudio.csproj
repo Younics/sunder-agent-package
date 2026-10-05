@@ -2,33 +2,20 @@
 
   <PropertyGroup>
     <SunderPackageFamilyId>sunder.package.agent.provider.lmstudio</SunderPackageFamilyId>
-    <SunderPackageRole>worker</SunderPackageRole>
-    <SunderPackageProject>true</SunderPackageProject>
-    <SunderPackagePrimaryProject>true</SunderPackagePrimaryProject>
-    <SunderPackageAppProject>App\Sunder.Package.Agent.Provider.LMStudio.App.csproj</SunderPackageAppProject>
-    <SunderSdkWorkerReference>true</SunderSdkWorkerReference>
-    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
-    <OutputType>Exe</OutputType>
-    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">$(NETCoreSdkRuntimeIdentifier)</RuntimeIdentifier>
-    <RuntimeIdentifiers>win-x64;win-arm64;linux-x64;linux-arm64;osx-x64;osx-arm64</RuntimeIdentifiers>
-    <SelfContained>true</SelfContained>
-    <UseAppHost>true</UseAppHost>
-    <PublishSingleFile>false</PublishSingleFile>
-    <SunderGeneratedPackageManifest>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\obj\$(Configuration)\$(TargetFramework)\$(RuntimeIdentifier)\sunder-package.json'))</SunderGeneratedPackageManifest>
+    <SunderSdkAvaloniaReference>true</SunderSdkAvaloniaReference>
   </PropertyGroup>
+
+  <Import Project="$(MSBuildThisFileDirectory)..\..\Sunder.Agent.Worker.props" />
+  <Import Project="..\Sunder.Package.Agent\Models\AgentExtensionSources.props" />
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
     <PackageReference Include="OpenAI" />
-    <ProjectReference Include="..\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
-    <ProjectReference Include="Protocol\Sunder.Package.Agent.Provider.LMStudio.Protocol.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Compile Remove="App\**\*" />
-    <Compile Remove="Protocol\**\*" />
-    <None Remove="App\**\*" />
-    <None Remove="Protocol\**\*" />
+    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" />
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="CommunityToolkit.Mvvm" />
+    <_ProviderDomainSource Include="@(SunderAgentProviderRuntimeSource);@(SunderAgentProviderAppSource)" />
+    <Compile Include="@(_ProviderDomainSource->Distinct())" LinkBase="Domain" />
   </ItemGroup>
 
   <ItemGroup>
@@ -44,23 +31,9 @@
     <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderResponseUpdates.cs" Link="Provider.Shared\ProviderResponseUpdates.cs" />
     <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderStreamTelemetry.cs" Link="Provider.Shared\ProviderStreamTelemetry.cs" />
     <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderToolResult.cs" Link="Provider.Shared\ProviderToolResult.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderUtilityModelSelection.cs" Link="Provider.Shared\ProviderUtilityModelSelection.cs" />
   </ItemGroup>
 
-  <ItemGroup>
-    <SunderPackageTarget Include="runtime/$(RuntimeIdentifier)"
-                         Role="runtime"
-                         Rid="$(RuntimeIdentifier)"
-                         Kind="worker" />
-    <SunderContractBundle Include="Protocol\Contracts\credential-settings.rpc.json"
-                          ContractId="sunder.package.agent.provider.lmstudio.credentials"
-                            Version="1.0.0"
-                          DescriptorPath="contracts/credential-settings.rpc.json"
-                          Exposure="package" />
-    <SunderRpcProvider Include="lmstudio.credentials"
-                       ContractId="sunder.package.agent.provider.lmstudio.credentials"
-                        ContractVersion="1.0.0"
-                       Role="runtime"
-                       Audience="owner" />
-  </ItemGroup>
+  <Import Project="..\Sunder.Package.Agent.Provider.Shared\ProviderSettingsSources.props" />
 
 </Project>

@@ -1,6 +1,8 @@
+extern alias McpWorker;
+
 using System.Text.Json;
-using Sunder.Package.Agent.Mcp;
-using Sunder.Package.Agent.Mcp.Services;
+using McpWorker::Sunder.Package.Agent.Mcp;
+using McpWorker::Sunder.Package.Agent.Mcp.Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;

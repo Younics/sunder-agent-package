@@ -12,7 +12,7 @@ using AIChatToolMode = Microsoft.Extensions.AI.ChatToolMode;
 
 namespace Sunder.Package.Agent.Provider.OpenAI.Transport;
 
-public sealed class CodexConnectedTransport(CodexConnectedAuthStrategy codexConnectedAuthStrategy, HttpClient httpClient)
+public sealed class CodexConnectedTransport(CodexConnectedAuthStrategy codexConnectedAuthStrategy, HttpClient httpClient) : IDisposable
 {
     private const string Originator = "sunder";
     private const string ResponsesLiteHeader = "x-openai-internal-codex-responses-lite";
@@ -22,6 +22,16 @@ public sealed class CodexConnectedTransport(CodexConnectedAuthStrategy codexConn
         $"{Originator}/{ClientVersion} ({Environment.OSVersion.Platform}; {Environment.OSVersion.VersionString}; {System.Runtime.InteropServices.RuntimeInformation.OSArchitecture})";
     private readonly CodexConnectedAuthStrategy _codexConnectedAuthStrategy = codexConnectedAuthStrategy;
     private readonly HttpClient _httpClient = httpClient;
+    private readonly bool _ownsHttpClient;
+
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
+    internal CodexConnectedTransport(CodexConnectedAuthStrategy auth) : this(auth, CodexHttpClientFactory.CreateBackendClient())
+        => _ownsHttpClient = true;
+
+    public void Dispose()
+    {
+        if (_ownsHttpClient) _httpClient.Dispose();
+    }
 
     public string TransportId { get; } = "codex-connected";
 

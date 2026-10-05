@@ -1,11 +1,11 @@
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Protocol;
+using Sunder.Package.Agent.Subagents.Runtime;
 using Sunder.Package.Agent.Subagents.Models;
 
 namespace Sunder.Package.Agent.Subagents.Services;
 
-internal sealed class SubagentPermissionStatusAdapter(AgentRpcCatalog rpcCatalog)
+internal sealed partial class SubagentPermissionStatusAdapter(ISubagentRuntimeBindings runtimeBindings)
 {
     public async ValueTask<bool> IsReadOnlySubagentAsync(
         SubagentRecord subagent,
@@ -142,7 +142,7 @@ internal sealed class SubagentPermissionStatusAdapter(AgentRpcCatalog rpcCatalog
         CancellationToken cancellationToken)
     {
         var context = new AgentToolSourceContext(SessionId: null, Profile: null, Workspace: null, ExecutionBinding: null);
-        foreach (var reference in rpcCatalog.GetServiceReferences(AgentRpcServices.ToolSources))
+        foreach (var reference in runtimeBindings.GetToolSources())
         {
             if (!reference.TryAcquire(out var lease))
             {

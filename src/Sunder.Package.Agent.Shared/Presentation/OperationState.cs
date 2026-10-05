@@ -14,6 +14,7 @@ internal enum OperationSeverity
 
 internal readonly record struct OperationGeneration(long Id, CancellationToken CancellationToken);
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.App)]
 internal sealed class OperationState : INotifyPropertyChanged, IDisposable
 {
     private readonly object _syncRoot = new();
@@ -250,6 +251,7 @@ internal sealed class OperationState : INotifyPropertyChanged, IDisposable
         => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.App)]
 internal sealed class OperationState<TOperation> : INotifyPropertyChanged, IDisposable
     where TOperation : struct, Enum
 {

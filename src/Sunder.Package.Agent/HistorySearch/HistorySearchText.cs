@@ -3,6 +3,7 @@ using System.Text;
 
 namespace Sunder.Package.Agent.HistorySearch;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal static class HistorySearchText
 {
     internal static string ToValidScalars(string? value, out bool hadNonWhitespaceInput)

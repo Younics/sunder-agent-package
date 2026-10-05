@@ -1,0 +1,22 @@
+{
+  "lockVersion": 1,
+  "packageArtifacts": {},
+  "packageImports": {},
+  "providerImports": {},
+  "platformImports": {
+    "stackContributor": {
+      "authorityKind": "platform",
+      "authorityId": "sunder.core",
+      "authorityReleaseRange": ">=1.1.0 <1.2.0",
+      "includePrerelease": false,
+      "selectedAuthorityRelease": "1.1.0",
+      "selectedAuthorityContentIdentity": "7c79ee38af47a3b7c45fb9b9715233887a9f581bea354d6d874144e545fa6210",
+      "contractId": "sunder.stack.contributor",
+      "resolvedContractVersion": "2.0.0",
+      "descriptorBytes": 11553,
+      "descriptorSha256": "38c8f49840f951aec29398d3641ff2306c906aee12ea80c2277db734bce49898",
+      "abiSha256": "6ca6d6385c720290548592de890f3e3ceb86f3d999167f4e80c6afb15f8a02d8",
+      "etag": "\"38c8f49840f951aec29398d3641ff2306c906aee12ea80c2277db734bce49898\""
+    }
+  }
+}

@@ -4,6 +4,7 @@ using Sunder.Sdk.Settings;
 
 namespace Sunder.Package.Agent.Provider.OpenAI;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal static class OpenAiModelCatalog
 {
     private static readonly IReadOnlySet<string> LowTextVerbosityModels = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -196,6 +197,7 @@ internal static class OpenAiModelCatalog
     }
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal readonly record struct OpenAiModelCapabilities(
     bool SupportsReasoning,
     bool UseLowTextVerbosity,

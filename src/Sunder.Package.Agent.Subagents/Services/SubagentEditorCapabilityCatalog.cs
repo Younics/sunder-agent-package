@@ -1,25 +1,27 @@
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Protocol;
+using Sunder.Package.Agent.Subagents.Runtime;
 using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Subagents.Services;
 
-internal sealed class SubagentEditorCapabilityCatalog : IDisposable
+internal sealed partial class SubagentEditorCapabilityCatalog : IDisposable
 {
-    private readonly AgentRpcCatalog _rpcCatalog;
+    private readonly ISubagentRuntimeBindings _bindings;
     private readonly object _subscriptionGate = new();
     private readonly List<ProviderSubscription> _providerSubscriptions = [];
     private bool _disposed;
 
-    public SubagentEditorCapabilityCatalog(AgentRpcCatalog rpcCatalog)
+    public SubagentEditorCapabilityCatalog(ISubagentRuntimeBindings bindings)
     {
-        _rpcCatalog = rpcCatalog;
-        _rpcCatalog.Changed += OnCatalogChanged;
+        _bindings = bindings;
+        _bindings.CatalogChanged += OnCatalogChanged;
         RefreshProviderSubscriptions();
     }
 
     public event Action? Changed;
+
+    internal void RefreshSubscriptions() => RefreshProviderSubscriptions();
 
     public async Task<IReadOnlyList<AgentToolDescriptor>> ListLocalToolsAsync(
         CancellationToken cancellationToken = default)
@@ -31,8 +33,7 @@ internal sealed class SubagentEditorCapabilityCatalog : IDisposable
             ExecutionBinding: null);
         var descriptors = new List<AgentToolDescriptor>();
         var sources = SubagentCatalogRpcInvocation.Snapshot(
-            _rpcCatalog,
-            AgentRpcServices.ToolSources,
+            _bindings.GetToolSources,
             cancellationToken,
             static source => source.DisplayName);
         foreach (var source in sources.OrderBy(
@@ -76,8 +77,7 @@ internal sealed class SubagentEditorCapabilityCatalog : IDisposable
         var request = new AgentProfileSelectableCapabilityRequest(Profile: null);
         var capabilities = new List<AgentProfileSelectableCapabilityDescriptor>();
         var providers = SubagentCatalogRpcInvocation.Snapshot(
-            _rpcCatalog,
-            AgentRpcServices.SelectableCapabilityProviders,
+            _bindings.GetSelectableCapabilityProviders,
             cancellationToken,
             static provider => provider.DisplayName);
         foreach (var provider in providers
@@ -110,17 +110,15 @@ internal sealed class SubagentEditorCapabilityCatalog : IDisposable
             .ToArray();
     }
 
-    private void OnCatalogChanged(object? sender, AgentRpcCatalogChangedEventArgs e)
+    private void OnCatalogChanged(SubagentCatalogChange change)
     {
-        if (!e.IncludesContract(AgentRpcContractIds.ChatProvider)
-            && !e.IncludesContract(AgentRpcContractIds.ToolSource)
-            && !e.IncludesContract(AgentRpcContractIds.SelectableCapabilityProvider)
-            && !e.IncludesContract(AgentRpcContractIds.RuntimeCatalog))
+        if ((change & (SubagentCatalogChange.ChatProviders | SubagentCatalogChange.Tools
+            | SubagentCatalogChange.SelectableCapabilities | SubagentCatalogChange.RuntimeCatalog)) == 0)
         {
             return;
         }
 
-        if (e.IncludesContract(AgentRpcContractIds.SelectableCapabilityProvider))
+        if ((change & SubagentCatalogChange.SelectableCapabilities) != 0)
         {
             RefreshProviderSubscriptions();
         }
@@ -137,8 +135,7 @@ internal sealed class SubagentEditorCapabilityCatalog : IDisposable
             }
 
             var currentSubscriptions = new HashSet<ProviderSubscription>();
-            foreach (var reference in _rpcCatalog.GetServiceReferences(
-                         AgentRpcServices.SelectableCapabilityProviders))
+            foreach (var reference in _bindings.GetSelectableCapabilityProviders())
             {
                 if (!reference.TryAcquire(out var lease))
                 {
@@ -165,6 +162,7 @@ internal sealed class SubagentEditorCapabilityCatalog : IDisposable
                 notifier.SelectableCapabilitiesChanged += OnSelectableCapabilitiesChanged;
                 _providerSubscriptions.Add(added);
                 currentSubscriptions.Add(added);
+                added.ObserveRetirement(() => OnProviderRetired(added));
             }
 
             foreach (var subscription in _providerSubscriptions
@@ -181,6 +179,16 @@ internal sealed class SubagentEditorCapabilityCatalog : IDisposable
     private void OnSelectableCapabilitiesChanged()
         => Changed?.Invoke();
 
+    private void OnProviderRetired(ProviderSubscription subscription)
+    {
+        lock (_subscriptionGate)
+        {
+            if (!_providerSubscriptions.Remove(subscription)) return;
+            subscription.Notifier.SelectableCapabilitiesChanged -= OnSelectableCapabilitiesChanged;
+            subscription.Dispose();
+        }
+    }
+
     public void Dispose()
     {
         lock (_subscriptionGate)
@@ -191,7 +199,7 @@ internal sealed class SubagentEditorCapabilityCatalog : IDisposable
             }
 
             _disposed = true;
-            _rpcCatalog.Changed -= OnCatalogChanged;
+            _bindings.CatalogChanged -= OnCatalogChanged;
             foreach (var subscription in _providerSubscriptions)
             {
                 subscription.Notifier.SelectableCapabilitiesChanged -= OnSelectableCapabilitiesChanged;
@@ -202,13 +210,24 @@ internal sealed class SubagentEditorCapabilityCatalog : IDisposable
     }
 
     private sealed class ProviderSubscription(
-        AgentRpcLease<IAgentProfileSelectableCapabilityProvider> lease,
+        SubagentProviderLease<IAgentProfileSelectableCapabilityProvider> lease,
         IAgentProfileSelectableCapabilityChangeNotifier notifier) : IDisposable
     {
-        private AgentRpcLease<IAgentProfileSelectableCapabilityProvider>? _lease = lease;
+        private SubagentProviderLease<IAgentProfileSelectableCapabilityProvider>? _lease = lease;
+        private readonly CancellationToken _retirementToken = lease.RetirementToken;
+        private CancellationTokenRegistration _retirement;
 
         internal IAgentProfileSelectableCapabilityChangeNotifier Notifier { get; } = notifier;
 
-        public void Dispose() => Interlocked.Exchange(ref _lease, null)?.Dispose();
+        internal void ObserveRetirement(Action retired)
+        {
+            _retirement = _retirementToken.Register(retired);
+            if (_lease is null) _retirement.Unregister();
+        }
+        public void Dispose()
+        {
+            _retirement.Unregister();
+            Interlocked.Exchange(ref _lease, null)?.Dispose();
+        }
     }
 }

@@ -1,8 +1,10 @@
-using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Memory.Semantic;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
+
+extern alias MemoryWorker;
+using MemoryWorker::Sunder.Package.Agent.Contracts.Models;
+using MemoryWorker::Sunder.Package.Agent.Memory.Semantic;
 
 public sealed class SemanticMemoryLimitsTests
 {

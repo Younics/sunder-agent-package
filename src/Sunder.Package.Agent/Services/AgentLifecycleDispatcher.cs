@@ -28,6 +28,10 @@ public sealed class AgentLifecycleDispatcher : IAsyncDisposable
     private bool _startupRecoveryPending;
     private bool _disposed;
 
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
+    internal AgentLifecycleDispatcher(AgentLocalStore store, AgentRpcCatalog catalog, IPackageContext context)
+        : this(store, catalog, context.Logging.Events) { }
+
     public AgentLifecycleDispatcher(
         AgentLocalStore store,
         AgentRpcCatalog rpcCatalog,
@@ -111,9 +115,10 @@ public sealed class AgentLifecycleDispatcher : IAsyncDisposable
 
     internal async Task FlushAsync(CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         _store.EnsureRuntimeGenerationCurrent();
         var recoveryPending = RecoverStartupDeliveries();
-        var replayPending = ReconcileSubscriptions();
+        var replayPending = ReconcileSubscriptions(cancellationToken);
         var maintenancePending = _store.MaintainLifecycleState(DateTimeOffset.UtcNow);
         var dispatchPending = false;
         await _dispatchGate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -257,29 +262,31 @@ public sealed class AgentLifecycleDispatcher : IAsyncDisposable
         return true;
     }
 
-    private bool ReconcileSubscriptions()
+    private bool ReconcileSubscriptions(CancellationToken cancellationToken)
     {
         var now = DateTimeOffset.UtcNow;
         var replayPending = false;
         var active = new Dictionary<string, ActiveLifecycleSubscription>(StringComparer.Ordinal);
-        foreach (var reference in _rpcCatalog.GetServiceReferences(AgentRpcServices.DurableLifecycleObservers))
+        var observers = AgentRpcInvocation.Snapshot(
+            _rpcCatalog,
+            Sunder.Package.Agent.Runtime.Rpc.AgentCleanupBindings.DurableLifecycleObservers,
+            static observer => (observer.ObserverId, observer.DisplayName),
+            cancellationToken,
+            omitUnavailable: true);
+        foreach (var observer in observers)
         {
-            if (reference.TryAcquire(out var lease))
-            {
-                using (lease)
-                {
-                    replayPending |= AddSubscription(
-                        active,
-                        lease.PackageId,
-                        lease.Service.ObserverId,
-                        lease.Service.DisplayName,
-                        "Durable",
-                        subscription => new DurableLifecycleSubscription(subscription, reference),
-                        now);
-                }
-            }
+            cancellationToken.ThrowIfCancellationRequested();
+            replayPending |= AddSubscription(
+                active,
+                observer.PackageId,
+                observer.Metadata.ObserverId,
+                observer.Metadata.DisplayName,
+                "Durable",
+                subscription => new DurableLifecycleSubscription(subscription, observer.Reference),
+                now);
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         lock (_syncRoot)
         {
             _activeSubscriptions = active;

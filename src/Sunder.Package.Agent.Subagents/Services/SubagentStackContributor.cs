@@ -1,16 +1,16 @@
 using System.Text.Json;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Protocol;
+using Sunder.Package.Agent.Subagents.Runtime;
 using Sunder.Package.Agent.Subagents.Models;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Stacks;
 
 namespace Sunder.Package.Agent.Subagents.Services;
 
-internal sealed class SubagentStackContributor(
+internal sealed partial class SubagentStackContributor(
     SubagentService subagentService,
     IPackageContext packageContext,
-    AgentRpcCatalog rpcCatalog) : IPackageStackExporter, IPackageStackImporter, IPackageStackImportAppliedHandler
+    ISubagentRuntimeBindings runtimeBindings) : IPackageStackExporter, IPackageStackImporter, IPackageStackImportAppliedHandler
 {
     private const string SchemaId = "sunder.package.agent.subagents/subagent";
     private const string DetailDescription = "description";
@@ -179,7 +179,7 @@ internal sealed class SubagentStackContributor(
         if (providerIds.Count > 0)
         {
             foreach (var contribution in SnapshotOwnedIdentities(
-                         AgentRpcServices.ChatProviders,
+                         runtimeBindings.GetChatProviders(),
                          static provider => provider.Descriptor.ProviderId))
             {
                 if (providerIds.Contains(contribution.Identity))
@@ -198,7 +198,7 @@ internal sealed class SubagentStackContributor(
         if (sourceIds.Count > 0)
         {
             foreach (var contribution in SnapshotOwnedIdentities(
-                         AgentRpcServices.SelectableCapabilityProviders,
+                         runtimeBindings.GetSelectableCapabilityProviders(),
                          static provider => provider.ProviderId))
             {
                 if (sourceIds.Contains(contribution.Identity))
@@ -220,12 +220,12 @@ internal sealed class SubagentStackContributor(
     }
 
     private IReadOnlyList<OwnedIdentity> SnapshotOwnedIdentities<TContract>(
-        AgentRpcService<TContract> service,
+        IReadOnlyList<SubagentProviderReference<TContract>> references,
         Func<TContract, string> selectIdentity)
         where TContract : class
     {
         var identities = new List<OwnedIdentity>();
-        foreach (var reference in rpcCatalog.GetServiceReferences(service))
+        foreach (var reference in references)
         {
             if (!reference.TryAcquire(out var lease))
             {

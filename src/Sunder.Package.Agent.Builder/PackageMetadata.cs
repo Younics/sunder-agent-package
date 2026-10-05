@@ -6,7 +6,3 @@ using Sunder.Sdk.Packaging;
     Summary = "Creates, builds, and publishes Sunder package projects from Agent workspaces.",
     Icon = "assets/icon.png"
 )]
-
-[assembly: SunderPackageDependency(
-    PackageId = "sunder.package.agent",
-    VersionRange = ">=2.0.0 <3.0.0")]

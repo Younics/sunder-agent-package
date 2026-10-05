@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <SunderSdkReference>true</SunderSdkReference>
+    <SunderSdkWorkerReference>true</SunderSdkWorkerReference>
   </PropertyGroup>
 
   <ItemGroup>

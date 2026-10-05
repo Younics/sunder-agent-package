@@ -1,3 +1,5 @@
+extern alias AgentApp;
+
 using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
 using Avalonia.Threading;
@@ -6,7 +8,7 @@ using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.PackageViews;
+using AgentApp::Sunder.Package.Agent.PackageViews;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
@@ -25,7 +27,7 @@ public sealed class ProfileHydrationTests
         var provider = new DelayedChatProvider();
         using var profileService = CreateProfileService(scope, extensions);
         var profile = await profileService.CreateProfileAsync("Profile");
-        extensions.AddProvider(AgentRpcServices.ChatProviders, provider);
+        extensions.AddProvider(RegressionTestBindings.ChatProviders, provider);
         profileService.SaveProfile(
             profile.ProfileId,
             profile.DisplayName,
@@ -35,7 +37,7 @@ public sealed class ProfileHydrationTests
             "model",
             embeddingProviderId: null,
             embeddingModelId: null);
-        using var viewModel = new AgentProfilesViewModel(profileService);
+        using var viewModel = RegressionTestAppViews.Profiles(profileService);
         var initialization = viewModel.InitializeAsync();
         var concurrentInitialization = viewModel.InitializeAsync();
         await provider.LoadStarted.Task.WaitAsync(TestContext.Current.CancellationToken);
@@ -69,7 +71,7 @@ public sealed class ProfileHydrationTests
         var provider = new DelayedChatProvider();
         using var profileService = CreateProfileService(scope, extensions);
         var profile = await profileService.CreateProfileAsync("Profile");
-        extensions.AddProvider(AgentRpcServices.ChatProviders, provider);
+        extensions.AddProvider(RegressionTestBindings.ChatProviders, provider);
         profileService.SaveProfile(
             profile.ProfileId,
             profile.DisplayName,
@@ -79,7 +81,7 @@ public sealed class ProfileHydrationTests
             "model",
             embeddingProviderId: null,
             embeddingModelId: null);
-        using var viewModel = new AgentProfilesViewModel(profileService);
+        using var viewModel = RegressionTestAppViews.Profiles(profileService);
         var initialization = viewModel.InitializeAsync();
         await provider.LoadStarted.Task.WaitAsync(TestContext.Current.CancellationToken);
         Assert.True(viewModel.IsHydrating);
@@ -108,7 +110,7 @@ public sealed class ProfileHydrationTests
         using var extensions = new RegressionTestExtensionCatalog();
         using var profileService = CreateProfileService(scope, extensions);
         var profile = await profileService.CreateProfileAsync("Profile");
-        using var viewModel = new AgentProfilesViewModel(profileService);
+        using var viewModel = RegressionTestAppViews.Profiles(profileService);
         using var view = new AgentProfilesView { DataContext = viewModel };
         var window = new Window { Width = 480, Height = 640, Content = view };
         window.Show();

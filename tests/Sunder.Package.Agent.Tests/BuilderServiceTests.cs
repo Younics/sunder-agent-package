@@ -1,7 +1,9 @@
+extern alias BuilderWorker;
+extern alias BuilderApp;
+
 using System.Text.Json;
-using Sunder.Package.Agent.Builder;
-using Sunder.Package.Agent.Builder.Protocol;
-using Sunder.Package.Agent.Builder.Protocol.Generated;
+using BuilderApp::Sunder.Package.Agent.Builder;
+using BuilderWorker::Sunder.Package.Agent.Builder.Rpc;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
@@ -233,7 +235,7 @@ public sealed class BuilderServiceTests
         {
             var result = service.ValidateProject(
                 CreateInitializedRecord(projectLink),
-                [workspace],
+                [AgentRoleBoundary.As<BuilderApp::Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord>(workspace)],
                 requireExistingFolder: true,
                 requireInitializedPaths: true);
 
@@ -252,7 +254,7 @@ public sealed class BuilderServiceTests
         var workspace = CreateWorkspace(Path.GetTempPath());
         var target = new TestExecutionTarget(output: "Runtime output");
         using var runtime = CreateBuilderRpcClient(workspace, target);
-        var service = new BuilderWorkspaceExecutionService(runtime);
+        var service = new BuilderWorkspaceExecutionService(new BuilderRpcGateway(runtime));
 
         Assert.Equal(
             workspace.WorkspaceId,
@@ -278,7 +280,7 @@ public sealed class BuilderServiceTests
         var target = new ShellOnlyExecutionTarget();
         using var runtime = new LoopbackBuilderRpcClient(
             new ShellOnlyWorkspaceExecutionResolver(workspace, target));
-        var execution = await new BuilderWorkspaceExecutionService(runtime)
+        var execution = await new BuilderWorkspaceExecutionService(new BuilderRpcGateway(runtime))
             .ResolveAsync(workspace.WorkspaceId);
 
         var exception = await Assert.ThrowsAsync<NotSupportedException>(() => execution.RunProcessAsync(
@@ -297,7 +299,7 @@ public sealed class BuilderServiceTests
         var workspace = CreateWorkspace(Path.GetTempPath());
         var target = new TestExecutionTarget(output: new string('x', (512 * 1024) + 1));
         using var runtime = CreateBuilderRpcClient(workspace, target);
-        var execution = await new BuilderWorkspaceExecutionService(runtime).ResolveAsync(workspace.WorkspaceId);
+        var execution = await new BuilderWorkspaceExecutionService(new BuilderRpcGateway(runtime)).ResolveAsync(workspace.WorkspaceId);
 
         var result = await execution.RunShellAsync("dotnet build");
 
@@ -340,7 +342,7 @@ public sealed class BuilderServiceTests
         using var runtime = new LoopbackBuilderRpcClient(
             new ListOnlyWorkspaceExecutionResolver(workspaces));
 
-        var projected = await new BuilderWorkspaceExecutionService(runtime).ListWorkspacesAsync();
+        var projected = await new BuilderWorkspaceExecutionService(new BuilderRpcGateway(runtime)).ListWorkspacesAsync();
 
         Assert.Equal(workspaces.Length, projected.Count);
         var first = projected[0];
@@ -357,10 +359,10 @@ public sealed class BuilderServiceTests
     {
         var resolver = new BlockingWorkspaceExecutionResolver();
         using var runtime = new LoopbackBuilderRpcClient(resolver);
-        var service = new BuilderWorkspaceExecutionService(runtime);
+        var service = new BuilderWorkspaceExecutionService(new BuilderRpcGateway(runtime));
         using var cancellation = new CancellationTokenSource();
         using var allowCallerToExit = new ManualResetEventSlim();
-        var callReturned = new TaskCompletionSource<Task<IReadOnlyList<AgentWorkspaceRecord>>>(
+        var callReturned = new TaskCompletionSource<Task<IReadOnlyList<BuilderApp::Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord>>>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var callerThread = new Thread(() =>
         {
@@ -415,7 +417,7 @@ public sealed class BuilderServiceTests
     {
         var resolver = new CancellationAwareWorkspaceExecutionResolver();
         using var runtime = new LoopbackBuilderRpcClient(resolver);
-        var service = new BuilderWorkspaceExecutionService(runtime);
+        var service = new BuilderWorkspaceExecutionService(new BuilderRpcGateway(runtime));
         using var cancellation = new CancellationTokenSource();
 
         var listing = service.ListWorkspacesAsync(cancellation.Token);
@@ -465,6 +467,41 @@ public sealed class BuilderServiceTests
     }
 
     [Theory]
+    [InlineData(null)]
+    [InlineData("restore")]
+    [InlineData("accept")]
+    public async Task InitializeProject_UsesOneRootAndExplicitInitialContractWorkflow(string? failStep)
+    {
+        var root = CreateProjectFolder();
+        try
+        {
+            var target = new TestExecutionTarget(prerequisitesInstalled: true, failInitializationStep: failStep);
+            var workspace = CreateWorkspace(root);
+            var service = CreateApplicationService(workspace, target, new RecordingProjectStore());
+            var project = CreateRecord("sample") with { WorkspacePathId = "workspace.path" };
+            var initialize = service.InitializeProjectAsync(project,
+                AgentRoleBoundary.As<BuilderApp::Sunder.Package.Agent.Contracts.Models.AgentWorkspacePathRecord>(Assert.Single(workspace.Paths)), CreateContext());
+            if (failStep is null)
+            {
+                var initialized = await initialize;
+                Assert.EndsWith("sample", initialized.Project.ExecutionProjectFolder, StringComparison.Ordinal);
+            }
+            else
+            {
+                var error = await Assert.ThrowsAsync<InvalidOperationException>(() => initialize);
+                Assert.Contains(failStep + " failed", error.Message, StringComparison.Ordinal);
+            }
+            var create = Assert.Single(target.Requests, request => request.Arguments.Count > 1 && request.Arguments[1] == "sunder-package");
+            Assert.DoesNotContain("--createInPlace", create.Arguments);
+            Assert.Single(target.Requests, request => request.Arguments[0] == "restore");
+            var accepts = target.Requests.Where(request => request.Arguments.Contains("-t:AcceptSunderContracts")).ToArray();
+            if (failStep == "restore") Assert.Empty(accepts);
+            else Assert.Equal(new[] { "msbuild", "-t:AcceptSunderContracts", "-p:SunderContractKey=sample", "-p:SunderContractNextVersion=2.0.0" }, Assert.Single(accepts).Arguments);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task BuildAndPublish_PropagateProcessCancellation(bool publish)
@@ -486,7 +523,9 @@ public sealed class BuilderServiceTests
             cancellation.Cancel();
 
             await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await operation);
-            Assert.Equal(publish ? "publish" : "build", target.LastProjectOperation);
+            Assert.Equal(publish ? "msbuild" : "build", target.LastProjectOperation);
+            if (publish)
+                Assert.Equal(new[] { "msbuild", "-t:CheckSunderContracts;FreezeSunderContracts;PackSunderPackage", "-p:Configuration=Release" }, target.LastProjectArguments);
         }
         finally
         {
@@ -515,7 +554,7 @@ public sealed class BuilderServiceTests
                 pathService,
                 dispatcher);
             var project = new BuilderProjectViewModel(CreateInitializedRecord(root));
-            viewModel.Workspaces.Add(workspace);
+            viewModel.Workspaces.Add(AgentRoleBoundary.As<BuilderApp::Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord>(workspace));
             viewModel.Projects.Add(project);
             viewModel.ActivateProject(project);
             await viewModel.BuildSelectedProjectAsync();
@@ -559,7 +598,7 @@ public sealed class BuilderServiceTests
         pathService ??= new BuilderPathService();
         return new BuilderProjectApplicationService(
             new BuilderSetupService(),
-            new BuilderWorkspaceExecutionService(CreateBuilderRpcClient(workspace, target)),
+            new BuilderWorkspaceExecutionService(new BuilderRpcGateway(CreateBuilderRpcClient(workspace, target))),
             store,
             pathService);
     }
@@ -809,10 +848,10 @@ public sealed class BuilderServiceTests
         {
             if (resolver is ITestWorkspaceExecutionResolverBinding testResolver)
             {
-                AddProvider(AgentRpcServices.ExecutionTargets, testResolver.Target);
-                testResolver.BindTargetReference(GetRequiredReference(AgentRpcServices.ExecutionTargets));
+                AddProvider(RegressionTestBindings.ExecutionTargets, testResolver.Target);
+                testResolver.BindTargetReference(GetRequiredReference(RegressionTestBindings.ExecutionTargets));
             }
-            AddProvider(AgentRpcServices.WorkspaceExecutionResolvers, resolver);
+            AddProvider(AgentRpcContractIds.WorkspaceExecutionResolver, resolver, "sunder.package.agent");
         }
     }
 
@@ -829,8 +868,8 @@ public sealed class BuilderServiceTests
         {
             _workspace = workspace;
             _target = target;
-            _targetCatalog.AddProvider(AgentRpcServices.ExecutionTargets, target);
-            _targetReference = _targetCatalog.GetRequiredReference(AgentRpcServices.ExecutionTargets);
+            _targetCatalog.AddProvider(RegressionTestBindings.ExecutionTargets, target);
+            _targetReference = _targetCatalog.GetRequiredReference(RegressionTestBindings.ExecutionTargets);
         }
 
         public TestExecutionTarget Target => _target;
@@ -949,7 +988,9 @@ public sealed class BuilderServiceTests
 
     private sealed class TestExecutionTarget(
         bool blockProjectOperations = false,
-        string output = "") : IAgentProcessExecutionTarget
+        string output = "",
+        bool prerequisitesInstalled = false,
+        string? failInitializationStep = null) : IAgentProcessExecutionTarget
     {
         public AgentExecutionTargetDescriptor Descriptor { get; } = new(
             "local",
@@ -965,6 +1006,8 @@ public sealed class BuilderServiceTests
         public TaskCompletionSource ProjectOperationStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public string? LastProjectOperation { get; private set; }
+        public IReadOnlyList<string>? LastProjectArguments { get; private set; }
+        public List<AgentProcessCommandRequest> Requests { get; } = [];
 
         public ValueTask<AgentExecutionTargetReadiness> GetReadinessAsync(
             AgentExecutionTargetContext context,
@@ -993,9 +1036,19 @@ public sealed class BuilderServiceTests
             AgentProcessCommandRequest request,
             CancellationToken cancellationToken = default)
         {
+            Requests.Add(request);
+            if (prerequisitesInstalled && request.Arguments.SequenceEqual(["--list-sdks"]))
+                return new AgentShellCommandResult(0, "10.0.100 [test-sdk]");
+            if (prerequisitesInstalled && request.Arguments.SequenceEqual(["new", "list", "sunder-package"]))
+                return new AgentShellCommandResult(0, "sunder-package");
+            if (failInitializationStep == "restore" && request.Arguments[0] == "restore")
+                return new AgentShellCommandResult(1, "restore failed");
+            if (failInitializationStep == "accept" && request.Arguments.Contains("-t:AcceptSunderContracts"))
+                return new AgentShellCommandResult(1, "accept failed");
             LastProjectOperation = request.Arguments.FirstOrDefault();
+            LastProjectArguments = request.Arguments.ToArray();
             ProjectOperationStarted.TrySetResult();
-            if (blockProjectOperations && LastProjectOperation is "build" or "publish")
+            if (blockProjectOperations && LastProjectOperation is "build" or "msbuild")
             {
                 await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             }
@@ -1140,49 +1193,31 @@ public sealed class BuilderServiceTests
 
     internal sealed class LoopbackBuilderRpcClient : ISunderRpcClient, IDisposable
     {
-        private readonly RegressionTestRpcState _state = new();
+        private readonly RegressionTestExtensionCatalog _catalog = new();
+        private readonly BuilderExecutionBindings _bindings;
+        private readonly RegressionTestRpcState _state;
         private readonly RegressionTestRpcClient _client;
 
         public LoopbackBuilderRpcClient(IAgentWorkspaceExecutionResolver resolver)
         {
-            _client = new RegressionTestRpcClient(_state, "sunder.package.agent.builder");
-            var rpcCatalog = AgentRpcCatalog.CreateDormant(_client);
+            _client = (RegressionTestRpcClient)_catalog.RpcForCaller("sunder.package.agent.builder");
+            _state = _client.State;
             if (resolver is ITestWorkspaceExecutionResolverBinding testResolver)
             {
-                _state.Add(
-                    "test.execution-target",
-                    AgentRpcContractIds.ExecutionTarget,
-                    testResolver.Target,
-                    AgentExecutionTargetRpc.CreateHandler(testResolver.Target),
-                    NoopDisposable.Instance);
+                _catalog.AddProvider(RegressionTestBindings.ExecutionTargets, testResolver.Target, "test.execution.target");
                 testResolver.BindTargetReference(
-                    Assert.Single(rpcCatalog.GetServiceReferences(AgentRpcServices.ExecutionTargets)));
+                    _catalog.GetRequiredReference(RegressionTestBindings.ExecutionTargets));
             }
-            _state.Add(
-                "sunder.package.agent",
-                AgentRpcContractIds.WorkspaceExecutionResolver,
-                resolver,
-                AgentWorkspaceExecutionResolverRpc.CreateHandler(resolver),
-                NoopDisposable.Instance);
-
-            var providerType = System.Reflection.Assembly.Load("Sunder.Package.Agent.Builder").GetType(
-                "Sunder.Package.Agent.Builder.BuilderRpcProvider",
-                throwOnError: true)!;
-            var provider = Activator.CreateInstance(
-                providerType,
-                System.Reflection.BindingFlags.Instance
-                | System.Reflection.BindingFlags.Public
-                | System.Reflection.BindingFlags.NonPublic,
-                binder: null,
-                args: [rpcCatalog],
-                culture: null)!;
-            var recordingProvider = new RecordingBuilderRuntimeProvider(this, provider);
-            _state.Add(
+            _catalog.AddProvider(AgentRpcContractIds.WorkspaceExecutionResolver, resolver, "sunder.package.agent");
+            _bindings = new BuilderExecutionBindings(_client);
+            _bindings.StartAsync().GetAwaiter().GetResult();
+            var provider = new BuilderWorker::Sunder.Package.Agent.Builder.BuilderRuntimeService(_bindings);
+            var recordingProvider = new RecordingBuilderRuntimeHandler(this, provider.CreateSunderRpcProviderRegistration().Handler);
+            _state.AddGenerated(
                 "sunder.package.agent.builder",
-                BuilderRpcProtocol.Descriptor,
                 recordingProvider,
-                new SunderPackageAgentBuilderRuntimeRpcHandler(recordingProvider),
-                rpcCatalog,
+                BuilderWorker::Sunder.Package.Agent.Builder.BuilderRuntimeService.DeclareSunderRpcProvider(recordingProvider),
+                NoopDisposable.Instance,
                 "builder.runtime");
         }
 
@@ -1235,33 +1270,39 @@ public sealed class BuilderServiceTests
             CancellationToken cancellationToken = default)
             => _client.SubscribeAsync(endpoint, serviceId, methodId, request, options, cancellationToken);
 
-        public void Dispose() => _state.Dispose();
-
-        private sealed class RecordingBuilderRuntimeProvider(
-            LoopbackBuilderRpcClient owner,
-            object provider) : IBuilderRuntimeProvider
+        public void Dispose()
         {
-            private readonly System.Reflection.MethodInfo _execute = provider.GetType().GetMethod(
-                nameof(ExecuteAsync),
-                System.Reflection.BindingFlags.Instance
-                | System.Reflection.BindingFlags.Public
-                | System.Reflection.BindingFlags.NonPublic)!;
+            try { Task.Run(async () => await _bindings.DisposeAsync().ConfigureAwait(false)).GetAwaiter().GetResult(); }
+            finally { _catalog.Dispose(); }
+        }
 
-            public async ValueTask<BuilderResultContent> ExecuteAsync(
+        private sealed class RecordingBuilderRuntimeHandler(
+            LoopbackBuilderRpcClient owner,
+            ISunderRpcServiceHandler provider) : ISunderRpcServiceHandler, ISunderRpcDeclaredErrorMetadata
+        {
+            public IReadOnlyDictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>> DeclaredErrors
+                => ((ISunderRpcDeclaredErrorMetadata)provider).DeclaredErrors;
+
+            public async ValueTask<JsonElement> InvokeUnaryAsync(
                 SunderRpcInvocationContext context,
-                BuilderExecuteRequest request,
+                string serviceId,
+                string methodId,
+                JsonElement request,
                 CancellationToken cancellationToken = default)
             {
-                owner.RequestKinds.Add(request.Kind.ToString());
-                var invocation = (ValueTask<BuilderResultContent>)_execute.Invoke(
-                    provider,
-                    [context, request, cancellationToken])!;
-                var response = await invocation.ConfigureAwait(false);
+                owner.RequestKinds.Add(Enum.Parse<BuilderRpcOperationKind>(request.GetProperty("kind").GetString()!.Replace("-", "", StringComparison.Ordinal), ignoreCase: true).ToString());
+                var response = await provider.InvokeUnaryAsync(context, serviceId, methodId, request, cancellationToken).ConfigureAwait(false);
+                var options = new JsonSerializerOptions(JsonSerializerDefaults.Web) { Converters = { new SunderRpcJsonConverterFactory() } };
+                var content = response.GetProperty("content").Deserialize<SunderRpcContentReference>(options)!;
                 owner.MaximumResponseBytes = Math.Max(
                     owner.MaximumResponseBytes,
-                    checked((int)response.Content.Length));
+                    checked((int)content.Length));
                 return response;
             }
+
+            public IAsyncEnumerable<JsonElement> InvokeServerStreamAsync(SunderRpcInvocationContext context, string serviceId,
+                string methodId, JsonElement request, CancellationToken cancellationToken = default)
+                => provider.InvokeServerStreamAsync(context, serviceId, methodId, request, cancellationToken);
         }
 
         private sealed class NoopDisposable : IDisposable

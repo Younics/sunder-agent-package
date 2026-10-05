@@ -92,14 +92,14 @@ public sealed partial class AgentToolService
         };
         var sourceReferences = await AgentRpcInvocation.SnapshotAsync(
                 _rpcCatalog,
-                AgentRpcServices.ToolSources,
+                Sunder.Package.Agent.Runtime.Rpc.AgentToolBindings.Service,
                 static (source, token) => DescribeToolSourceAsync(source, token),
                 cancellationToken,
                 omitUnavailableSources)
             .ConfigureAwait(false);
         var observedExecutionReferences = await AgentRpcInvocation.SnapshotAsync(
                 _rpcCatalog,
-                AgentRpcServices.ObservedToolExecutions,
+                Sunder.Package.Agent.Runtime.Rpc.AgentObservedToolBindings.Service,
                 static (execution, _) => ValueTask.FromResult(execution.SourceId),
                 cancellationToken,
                 omitUnavailable: true)
@@ -177,9 +177,7 @@ public sealed partial class AgentToolService
         IAgentToolSource source,
         CancellationToken cancellationToken)
     {
-        var description = source is AgentToolSourceRpcClient rpcSource
-            ? await rpcSource.DescribeAsync(cancellationToken).ConfigureAwait(false)
-            : new ToolSourceDescription(source.SourceId, source.DisplayName, source.SourceKind);
+        var description = await Sunder.Package.Agent.Runtime.Rpc.AgentToolBindings.DescribeAsync(source, cancellationToken).ConfigureAwait(false);
         return new AgentToolSourceMetadata(
             description.SourceId,
             description.DisplayName,

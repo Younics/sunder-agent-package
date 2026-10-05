@@ -19,6 +19,10 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
     private readonly AgentProfileSelectableCapabilityChangeObserver _capabilityChangeObserver;
     private bool _disposed;
 
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
+    internal AgentProfileService(AgentLocalStore store, AgentToolService tools, AgentRpcCatalog catalog, Runtime.Rpc.AgentBehaviorServices behaviors)
+        : this(store, tools, catalog, behaviors.Service, refreshProviderSubscriptions: false) { }
+
     public AgentProfileService(
         AgentLocalStore store,
         AgentToolService toolService,
@@ -41,7 +45,8 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
         _behaviorLoops = behaviorLoops;
         _capabilityChangeObserver = new AgentProfileSelectableCapabilityChangeObserver(
             rpcCatalog,
-            refreshProviderSubscriptions);
+            refreshProviderSubscriptions,
+            Sunder.Package.Agent.Runtime.Rpc.AgentSelectableBindings.Service);
         _capabilityChangeObserver.Changed += OnSelectableCapabilitiesChanged;
     }
 
@@ -217,7 +222,7 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
 
         foreach (var consumer in AgentRpcInvocation.Snapshot(
                      _rpcCatalog,
-                     AgentRpcServices.ProfileCapabilityConsumers,
+                     Sunder.Package.Agent.Runtime.Rpc.AgentMetadataBindings.ProfileCapabilityConsumers,
                      static instance => instance.ListConsumedCapabilities().ToArray(),
                      omitUnavailable: true))
         {
@@ -249,7 +254,7 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
         var capabilities = new List<AgentProfileSelectableCapabilityDescriptor>();
         var providers = AgentRpcInvocation.Snapshot(
             _rpcCatalog,
-            AgentRpcServices.SelectableCapabilityProviders,
+            Sunder.Package.Agent.Runtime.Rpc.AgentSelectableBindings.Service,
             static provider => provider.DisplayName,
             cancellationToken,
             omitUnavailable: true);
@@ -474,7 +479,7 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
             bool omitUnavailable = false)
         => AgentRpcInvocation.Snapshot(
             _rpcCatalog,
-            AgentRpcServices.ChatProviders,
+            Sunder.Package.Agent.Runtime.Rpc.AgentChatBindings.Service,
             static provider => provider.Descriptor with
             {
                 SupportedAuthModes = provider.Descriptor.SupportedAuthModes.ToArray(),
@@ -488,7 +493,7 @@ public sealed class AgentProfileService : IDisposable, IAgentProfileGateway
             bool omitUnavailable = false)
         => AgentRpcInvocation.Snapshot(
             _rpcCatalog,
-            AgentRpcServices.EmbeddingProviders,
+            Sunder.Package.Agent.Runtime.Rpc.AgentEmbeddingBindings.Service,
             static provider => provider.Descriptor,
             cancellationToken,
             omitUnavailable);

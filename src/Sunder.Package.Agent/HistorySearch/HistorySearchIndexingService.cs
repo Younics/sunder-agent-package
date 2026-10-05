@@ -106,6 +106,9 @@ internal sealed partial class HistorySearchIndexingService :
         // Provider discovery is intentionally disabled for local-only History Search.
     }
 
+    // Concurrency tests can pause work at an owned resource boundary without relying on scheduler timing.
+    internal Func<ValueTask>? BeforeTurnProjectionWriteAsync { get; set; }
+
     internal void ReportSemanticUnavailable(string failureCode, string message)
     {
         try

@@ -1,6 +1,8 @@
+extern alias DockerWorker;
+
 using System.Collections.Concurrent;
 using System.Text.Json;
-using Sunder.Package.Agent.Execution.Docker;
+using DockerWorker::Sunder.Package.Agent.Execution.Docker;
 using Sunder.Package.Agent.Tests;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Logging;

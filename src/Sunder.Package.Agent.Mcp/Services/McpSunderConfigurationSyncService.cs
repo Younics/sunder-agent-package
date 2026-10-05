@@ -1,17 +1,16 @@
-using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Protocol;
+using Sunder.Package.Agent.Mcp.Runtime;
 
 namespace Sunder.Package.Agent.Mcp.Services;
 
-public sealed class McpSunderConfigurationSyncService(
+public sealed partial class McpSunderConfigurationSyncService(
     McpEcosystemConfigurationImporter importer,
-    AgentRpcCatalog? rpcCatalog = null,
+    IMcpWorkspaceCatalog workspaceCatalog,
     string? userProfilePath = null,
     string? applicationDataPath = null)
 {
     private readonly McpEcosystemConfigurationImporter _importer = importer;
-    private readonly AgentRpcCatalog? _rpcCatalog = rpcCatalog;
+    private readonly IMcpWorkspaceCatalog _workspaceCatalog = workspaceCatalog;
     private readonly string? _userProfilePath = userProfilePath;
     private readonly string? _applicationDataPath = applicationDataPath;
     private readonly SemaphoreSlim _syncGate = new(1, 1);
@@ -137,59 +136,8 @@ public sealed class McpSunderConfigurationSyncService(
         }
     }
 
-    private async Task<IReadOnlyList<AgentWorkspaceRecord>> ListKnownWorkspacesAsync(
-        CancellationToken cancellationToken)
-    {
-        if (_rpcCatalog is null)
-        {
-            return [];
-        }
-
-        var result = new List<AgentWorkspaceRecord>();
-        var references = await _rpcCatalog.GetServiceReferencesAsync(
-            AgentRpcServices.RuntimeCatalogs,
-            cancellationToken).ConfigureAwait(false);
-        foreach (var reference in references)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (!reference.TryAcquire(out var lease))
-            {
-                continue;
-            }
-            IReadOnlyList<AgentWorkspaceRecord> workspaces;
-            using (lease)
-            using (var invocation = CancellationTokenSource.CreateLinkedTokenSource(
-                       cancellationToken,
-                       lease.RetirementToken))
-            {
-                try
-                {
-                    workspaces = (await lease.Service
-                        .ListWorkspacesAsync(invocation.Token)
-                        .ConfigureAwait(false)).ToArray();
-                    cancellationToken.ThrowIfCancellationRequested();
-                    if (lease.RetirementToken.IsCancellationRequested)
-                    {
-                        continue;
-                    }
-                }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    continue;
-                }
-            }
-
-            result.AddRange(workspaces);
-        }
-
-        cancellationToken.ThrowIfCancellationRequested();
-        return result;
-    }
+    private Task<IReadOnlyList<AgentWorkspaceRecord>> ListKnownWorkspacesAsync(CancellationToken cancellationToken)
+        => _workspaceCatalog.ListKnownWorkspacesAsync(cancellationToken);
 
     private static IEnumerable<string> EnumerateWorkspaceConfigurationPaths(AgentWorkspaceRecord workspace)
     {

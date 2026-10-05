@@ -41,7 +41,7 @@ internal static class AgentFailurePresentationPolicy
             if (current is SunderRpcException rpcException
                 && string.Equals(
                     rpcException.Error.Code,
-                    AgentChatProviderRpc.StreamQueueLimitErrorCode,
+                    AgentChatFailureProjection.StreamQueueLimitErrorCode,
                     StringComparison.Ordinal))
             {
                 return true;

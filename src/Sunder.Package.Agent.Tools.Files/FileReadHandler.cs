@@ -41,7 +41,7 @@ internal static class FileReadHandler
         }
 
         var legacyTruncated = false;
-        var supportsRangedRead = AgentExecutionTargetRpc.SupportsFacet(
+        var supportsRangedRead = FilesExecutionFacets.SupportsFacet(
             target,
             AgentExecutionFacetIds.RangedFileRead);
         var content = supportsRangedRead

@@ -1,6 +1,8 @@
-using Sunder.Package.Agent.Skills.PackageViews;
-using Sunder.Package.Agent.Skills.Runtime;
-using Sunder.Package.Agent.Skills.Services;
+extern alias SkillsApp;
+
+using SkillsApp::Sunder.Package.Agent.Skills.PackageViews;
+using SkillsApp::Sunder.Package.Agent.Skills.Runtime;
+using SkillsApp::Sunder.Package.Agent.Skills.Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;

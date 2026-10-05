@@ -6,6 +6,7 @@ using Sunder.Sdk.Notifications;
 
 namespace Sunder.Package.Agent.Execution.Local;
 
+[Sunder.Sdk.Packaging.SunderPackageSettingsView(ViewModel = typeof(LocalExecutionSettingsViewModel))]
 public partial class LocalExecutionSettingsView : UserControl, IDisposable
 {
     private LocalExecutionSettingsViewModel? _viewModel;
@@ -25,6 +26,7 @@ public partial class LocalExecutionSettingsView : UserControl, IDisposable
         DataContext = viewModel;
     }
 
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
     public LocalExecutionSettingsView(
         LocalExecutionSettingsViewModel viewModel,
         IPackageContext packageContext,

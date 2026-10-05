@@ -15,9 +15,9 @@ public sealed class SubagentHydrationTests
     public async Task HydrationDisablesSaveAndNeverMarksConcurrentEditClean()
     {
         using var scope = RegressionTestPackageScope.Create();
-        var extensions = new RegressionTestExtensionCatalog();
+        using var extensions = new RegressionTestExtensionCatalog();
         var provider = new DelayedChatProvider();
-        extensions.AddProvider(AgentRpcServices.ChatProviders, provider);
+        extensions.AddProvider(RegressionTestBindings.ChatProviders, provider);
         var service = new SubagentService(new SubagentStore(scope.Context));
         var subagent = service.CreateSubagent("Subagent");
         service.SaveSubagent(
@@ -60,9 +60,9 @@ public sealed class SubagentHydrationTests
     public async Task BackRetiresNonCooperativeHydrationWithoutWaitingForProvider()
     {
         using var scope = RegressionTestPackageScope.Create();
-        var extensions = new RegressionTestExtensionCatalog();
+        using var extensions = new RegressionTestExtensionCatalog();
         var provider = new DelayedChatProvider();
-        extensions.AddProvider(AgentRpcServices.ChatProviders, provider);
+        extensions.AddProvider(RegressionTestBindings.ChatProviders, provider);
         var service = new SubagentService(new SubagentStore(scope.Context));
         var subagent = service.CreateSubagent("Subagent");
         service.SaveSubagent(
@@ -78,11 +78,24 @@ public sealed class SubagentHydrationTests
 
         var initialization = viewModel.InitializeAsync();
         await provider.LoadStarted.Task.WaitAsync(TestContext.Current.CancellationToken);
-        await AdaptiveEditorLifecycleContract.RetiredWorkCannotPublishAsync(
-            Adapt(viewModel),
-            () => viewModel.BackToSubagentListCommand.Execute(null),
-            () => provider.Models.TrySetResult([new AgentModelDescriptor("model", "Model", 16_000, 2_000)]),
-            initialization.WaitAsync(TimeSpan.FromSeconds(2)));
+        var lateChanges = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        var retired = false;
+        viewModel.PropertyChanged += (_, change) =>
+        {
+            if (Volatile.Read(ref retired)) lateChanges.Enqueue($"{change.PropertyName ?? "*"}: {Environment.StackTrace}");
+        };
+        try
+        {
+            await AdaptiveEditorLifecycleContract.RetiredWorkCannotPublishAsync(
+                Adapt(viewModel),
+                () => { viewModel.BackToSubagentListCommand.Execute(null); Volatile.Write(ref retired, true); },
+                () => provider.Models.TrySetResult([new AgentModelDescriptor("model", "Model", 16_000, 2_000)]),
+                initialization.WaitAsync(TimeSpan.FromSeconds(2)));
+        }
+        catch (AdaptiveEditorContractException error)
+        {
+            throw new InvalidOperationException($"{error.Message} Properties: {string.Join(", ", lateChanges)}. Status: {viewModel.StatusText}", error);
+        }
         Assert.Null(viewModel.SelectedSubagent);
         Assert.False(viewModel.IsHydrating);
         Assert.False(viewModel.IsBusy);

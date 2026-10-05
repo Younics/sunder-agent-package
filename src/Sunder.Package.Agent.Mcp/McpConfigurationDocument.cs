@@ -5,11 +5,13 @@ using Sunder.Package.Agent.Mcp.Services;
 
 namespace Sunder.Package.Agent.Mcp;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record ParsedMcpServerConfiguration(
     ConfiguredMcpServerRecord Server,
     IReadOnlyDictionary<string, string> Headers,
     IReadOnlyDictionary<string, string> EnvironmentVariables);
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal static class McpConfigurationDocument
 {
     private static readonly JsonDocumentOptions JsonDocumentOptions = new()

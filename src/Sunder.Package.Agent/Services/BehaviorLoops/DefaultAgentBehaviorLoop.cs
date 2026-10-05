@@ -36,6 +36,10 @@ public sealed class DefaultAgentBehaviorLoop : IAgentBehaviorLoop
         _budgetLimits = AgentRunBudgetLimits.Default;
     }
 
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
+    internal DefaultAgentBehaviorLoop(AgentPromptPreparationPipeline prompt, AgentProviderCycleRunner provider, AgentToolCycleCoordinator tools, AgentLoopTerminalHandler terminal)
+        : this(prompt, provider, tools, terminal, budgetLimits: null) { }
+
     internal DefaultAgentBehaviorLoop(
         AgentPromptPreparationPipeline promptPreparationPipeline,
         AgentProviderCycleRunner providerCycleRunner,

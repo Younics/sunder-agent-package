@@ -1,15 +1,17 @@
 using Microsoft.Extensions.Logging.Abstractions;
-using Sunder.Package.Agent.Contracts;
-using Sunder.Package.Agent.Contracts.Contracts;
-using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Memory.Semantic;
-using Sunder.Package.Agent.Memory.Semantic.Services;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
 using Xunit;
 using Xunit.Abstractions;
 
 namespace Sunder.Package.Agent.Tests;
+
+extern alias MemoryWorker;
+using MemoryWorker::Sunder.Package.Agent.Contracts;
+using MemoryWorker::Sunder.Package.Agent.Contracts.Contracts;
+using MemoryWorker::Sunder.Package.Agent.Contracts.Models;
+using MemoryWorker::Sunder.Package.Agent.Memory.Semantic;
+using MemoryWorker::Sunder.Package.Agent.Memory.Semantic.Services;
 
 public sealed class MemoryEvaluationTests
 {
@@ -334,14 +336,14 @@ public sealed class MemoryEvaluationTests
             Store = new MemoryLocalStore(_packageContext);
             Settings = new MemorySemanticSettingsService(_packageContext);
 
-            _extensionCatalog.AddProvider(AgentRpcServices.RuntimeCatalogs, _runtimeCatalog);
+            _extensionCatalog.AddRuntimeCatalog(_runtimeCatalog);
             if (enableEmbeddings)
             {
-                _extensionCatalog.AddProvider(AgentRpcServices.EmbeddingProviders, new EvaluationEmbeddingProvider("test-embeddings"));
+                _extensionCatalog.AddProvider(RegressionTestBindings.EmbeddingProviders, new EvaluationEmbeddingProvider("test-embeddings"));
             }
 
             var metrics = new SemanticMemoryMetricsService();
-            var resolver = new SemanticModelRuntimeResolver(_extensionCatalog, Settings);
+            var resolver = new SemanticModelRuntimeResolver(_extensionCatalog.Memory(), Settings);
             RetrievalBackend = new SemanticMemoryRetrievalBackend(Store, resolver, Settings);
             _indexingBackgroundService = new SemanticMemoryIndexingBackgroundService(Store, resolver, Settings, RetrievalBackend, metrics);
             _feature = new MemorySemanticFeature(

@@ -1,3 +1,5 @@
+extern alias AgentApp;
+
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
@@ -5,8 +7,8 @@ using Avalonia.Headless.XUnit;
 using Avalonia.Input;
 using Avalonia.Threading;
 using LiveMarkdown.Avalonia;
-using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Shared.PackageViews;
+using AgentApp::Sunder.Package.Agent.Contracts.Models;
+using AgentApp::Sunder.Package.Agent.Shared.PackageViews;
 using Xunit;
 
 namespace Sunder.Package.Agent.Presentation.Tests;

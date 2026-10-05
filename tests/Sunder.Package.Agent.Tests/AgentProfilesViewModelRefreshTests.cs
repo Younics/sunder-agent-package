@@ -1,8 +1,10 @@
+extern alias AgentApp;
+
 using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.PackageViews;
+using AgentApp::Sunder.Package.Agent.PackageViews;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
@@ -20,7 +22,7 @@ public sealed class AgentProfilesViewModelRefreshTests
         using (profileService)
         {
             var profile = await profileService.CreateProfileAsync("Profile");
-            using var viewModel = new AgentProfilesViewModel(profileService);
+            using var viewModel = RegressionTestAppViews.Profiles(profileService);
             await viewModel.InitializeAsync();
             await WaitUntilAsync(() =>
                 viewModel.SelectedProfile?.ProfileId == profile.ProfileId
@@ -53,7 +55,7 @@ public sealed class AgentProfilesViewModelRefreshTests
         using (profileService)
         {
             var profile = await profileService.CreateProfileAsync("Profile");
-            using var viewModel = new AgentProfilesViewModel(profileService);
+            using var viewModel = RegressionTestAppViews.Profiles(profileService);
             await viewModel.InitializeAsync();
             await WaitUntilAsync(() =>
                 viewModel.SelectedProfile?.ProfileId == profile.ProfileId
@@ -78,7 +80,7 @@ public sealed class AgentProfilesViewModelRefreshTests
     {
         var extensionCatalog = new RegressionTestExtensionCatalog();
         provider = new OptionProvider();
-        extensionCatalog.AddProvider(AgentRpcServices.ChatProviders, provider);
+        extensionCatalog.AddProvider(RegressionTestBindings.ChatProviders, provider);
         var store = new AgentLocalStore(scope.Context);
         var sessionService = new AgentSessionService(store, extensionCatalog);
         var workspaceService = new AgentWorkspaceService(store, extensionCatalog, sessionService);

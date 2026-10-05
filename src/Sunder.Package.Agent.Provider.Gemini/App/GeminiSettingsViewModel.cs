@@ -28,6 +28,7 @@ public sealed partial class GeminiSettingsViewModel : ObservableObject,
     {
     }
 
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
     internal GeminiSettingsViewModel(
         IPackageContext packageContext,
         IProviderCredentialOwnerClient credentials)

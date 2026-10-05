@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 
 namespace Sunder.Package.Agent.HistorySearch;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal static partial class HistorySecretRedactor
 {
     internal static string Redact(string? value)

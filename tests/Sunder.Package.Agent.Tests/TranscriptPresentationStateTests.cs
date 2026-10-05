@@ -1,10 +1,10 @@
 extern alias AgentCore;
 
-using Sunder.Package.Agent.Contracts.Models;
+using AgentCore::Sunder.Package.Agent.Contracts.Models;
 using Xunit;
 using CorePresentation = AgentCore::Sunder.Package.Agent.Shared.PackageViews;
 using CoreViews = AgentCore::Sunder.Package.Agent.PackageViews;
-using TranscriptPageCursor = Sunder.Package.Agent.Runtime.TranscriptPageCursor;
+using TranscriptPageCursor = AgentCore::Sunder.Package.Agent.Runtime.TranscriptPageCursor;
 
 namespace Sunder.Package.Agent.Tests;
 

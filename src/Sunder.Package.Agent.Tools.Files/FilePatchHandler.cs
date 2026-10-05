@@ -387,7 +387,7 @@ internal static class FilePatchHandler
         IAgentExecutionTarget target,
         FilePatchPlan plan)
     {
-        if (!AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.ResourceAuthority)
+        if (!FilesExecutionFacets.SupportsFacet(target, AgentExecutionFacetIds.ResourceAuthority)
             || target is not IAgentResourceAuthorityExecutionTarget authorityTarget)
         {
             return;

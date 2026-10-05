@@ -41,6 +41,7 @@ public sealed partial class GitHubSkillClient : IGitHubSkillClient, IDisposable
     private readonly TimeSpan _timeout;
     private readonly bool _disposeHttpClient;
 
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
     public GitHubSkillClient()
         : this(CreateHttpClient(), DefaultTimeout, disposeHttpClient: true)
     {

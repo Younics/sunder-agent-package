@@ -31,9 +31,9 @@ internal sealed partial class ScopedInstructionContextService(IPackageContext pa
         {
             return [];
         }
-        if (!AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.ScopedInstructionDiscovery)
+        if (!FilesExecutionFacets.SupportsFacet(target, AgentExecutionFacetIds.ScopedInstructionDiscovery)
             || target is not IAgentScopedInstructionDiscoveryTarget discoveryTarget
-            || !AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.ExecutionScope)
+            || !FilesExecutionFacets.SupportsFacet(target, AgentExecutionFacetIds.ExecutionScope)
             || target is not IAgentExecutionScopeProvider scopeProvider)
         {
             throw new InvalidOperationException("The selected execution target does not provide the scoped-instruction discovery required by first-party Files enforcement.");
@@ -184,7 +184,7 @@ internal sealed partial class ScopedInstructionContextService(IPackageContext pa
         {
             return null;
         }
-        if (!AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.ScopedInstructionDiscovery)
+        if (!FilesExecutionFacets.SupportsFacet(target, AgentExecutionFacetIds.ScopedInstructionDiscovery)
             || target is not IAgentScopedInstructionDiscoveryTarget discoveryTarget)
         {
             return DeferredError(
@@ -329,7 +329,7 @@ internal sealed partial class ScopedInstructionContextService(IPackageContext pa
         {
             throw new InvalidOperationException($"Scoped instruction discovery supports at most {MaxMutationPaths} probes per batch.");
         }
-        if (!AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.ScopedInstructionDiscovery)
+        if (!FilesExecutionFacets.SupportsFacet(target, AgentExecutionFacetIds.ScopedInstructionDiscovery)
             || target is not IAgentScopedInstructionDiscoveryTarget discoveryTarget)
         {
             throw new InvalidOperationException("The selected execution target does not support required scoped-instruction discovery.");

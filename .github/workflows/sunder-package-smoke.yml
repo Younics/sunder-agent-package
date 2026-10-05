@@ -2,6 +2,7 @@ name: Sunder Agent Package Smoke
 
 on:
   pull_request:
+  merge_group:
   push:
     branches: [main]
 
@@ -72,6 +73,8 @@ jobs:
           set -euo pipefail
           version="$(jq -er '.releaseVersion' packages.json)"
           mkdir -p artifacts/reports
+          node --test scripts/compatibility/check-protocol-retirement.test.mjs
+          node scripts/compatibility/check-protocol-retirement.mjs
           bash scripts/generate-test-inventory.sh > artifacts/reports/test-inventory.json
           test "$(jq '.projects | length' artifacts/reports/test-inventory.json)" -eq 11
           bash scripts/test-silent-return-analyzer.fixture.sh
@@ -201,7 +204,7 @@ jobs:
             and .evidenceViolations == []
           ' artifacts/reports/required-test-duration-report.json >/dev/null
 
-      - name: Pack Protocol and every runtime archive once
+      - name: Pack all 15 canonical package archives once
         working-directory: sunder-agent-package
         shell: bash
         run: |
@@ -210,12 +213,7 @@ jobs:
           mkdir -p "$output"
           version="$(jq -er '.releaseVersion' packages.json)"
 
-          dotnet pack src/Sunder.Package.Agent.Contracts/Sunder.Package.Agent.Contracts.csproj \
-            -c Release --no-build --no-restore -o "$output" \
-            -p:SunderUseSourceSdk=true -p:SunderAgentVersion="$version" \
-            -p:ContinuousIntegrationBuild=true
-          bash scripts/compatibility/verify-packed-protocol.sh \
-            "$output/Sunder.Package.Agent.Protocol.$version.nupkg" "$version"
+          jq -e '.packages | length == 15 and all(.[]; .artifactType == "sunderpkg") and ([.[].packageId] | unique | length) == 15' packages.json >/dev/null
 
           while IFS=$'\t' read -r package_id project_path; do
             output_path="$output/$package_id.$version.sunderpkg"
@@ -228,14 +226,7 @@ jobs:
 
           runtime_count="$(jq '[.packages[] | select(.artifactType == "sunderpkg")] | length' packages.json)"
           test "$(find "$output" -maxdepth 1 -name '*.sunderpkg' -type f | wc -l)" -eq "$runtime_count"
-          test -f "$output/Sunder.Package.Agent.Protocol.$version.nupkg"
-          test "$(find "$output" -maxdepth 1 -type f | wc -l)" -eq "$((runtime_count + 1))"
-
-          protocol_nuspec="$(unzip -p "$output/Sunder.Package.Agent.Protocol.$version.nupkg" '*.nuspec')"
-          if ! grep -Eq 'id="Sunder\.Sdk" version="\[1\.1\.0, ?1\.2\.0\)"' <<< "$protocol_nuspec"; then
-            echo "Agent Protocol does not bound its Sunder.Sdk dependency to the published 1.1 line." >&2
-            exit 1
-          fi
+          test "$(find "$output" -maxdepth 1 -type f | wc -l)" -eq 15
 
           while IFS=$'\t' read -r package_id provider_ids; do
             archive="$output/$package_id.$version.sunderpkg"
@@ -250,9 +241,9 @@ jobs:
                 $app_rids == [] or $app_rids == supported_rids) and
               all(.targets[];
                 if .role == "runtime" then
-                  .kind == "worker" and (.requiredHostCapabilities | index("worker-protocol.v3") != null)
+                  .kind == "worker" and (.requiredHostCapabilities | index("worker-protocol.v1") != null)
                 elif .role == "app" then
-                  .kind == "avalonia" and (.requiredHostCapabilities | index("worker-protocol.v3") == null)
+                  .kind == "avalonia" and (.requiredHostCapabilities | index("worker-protocol.v1") == null)
                 else false end) and
               all(.dependsOn[]; .versionRange == ">=2.0.0 <3.0.0") and
               ([.provides[].providerId] | sort) == ($provider_ids | sort)
@@ -323,6 +314,11 @@ jobs:
           discovered="$(dotnet test languages/csharp/dotnet/tests/Sunder.App.Tests/Sunder.App.Tests.csproj -c Release --no-build --no-restore --list-tests --filter "FullyQualifiedName=$test_fqn")"
           grep -Fqx "    $test_fqn" <<< "$discovered"
           dotnet test languages/csharp/dotnet/tests/Sunder.App.Tests/Sunder.App.Tests.csproj -c Release --no-build --no-restore --filter "FullyQualifiedName=$test_fqn"
+
+      - name: Refresh Protocol retirement evidence
+        working-directory: sunder-agent-package
+        shell: bash
+        run: node scripts/compatibility/check-protocol-retirement.mjs
 
       - name: Upload verified family artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

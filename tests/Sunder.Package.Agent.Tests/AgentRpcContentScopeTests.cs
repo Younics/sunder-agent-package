@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
+using Sunder.Package.Agent.Runtime.Rpc;
 using Sunder.Sdk.Rpc;
 using Xunit;
 
@@ -17,8 +18,8 @@ public sealed class AgentRpcContentScopeTests
     public async Task ChatClient_UsesCallerScopeForBinaryContentAndDisposesIt()
     {
         var client = new ScopeCreatingRpcClient();
-        var endpoint = new SunderRpcEndpointReference("rpc1_chat_provider");
-        var provider = new AgentChatProviderRpcClient(client, endpoint);
+        var endpoint = client.Scope.Provider.Endpoint;
+        await using var provider = new GeneratedChatProviderClient(client, client.Scope.Provider);
         using var chat = await provider.CreateChatClientAsync(new AgentChatClientContext("provider", "model"));
         var updates = new List<ChatResponseUpdate>();
 
@@ -37,12 +38,10 @@ public sealed class AgentRpcContentScopeTests
     }
 
     [Fact]
-    public async Task ChatClient_DoesNotCreateScopeForTextOnlyContent()
+    public async Task ChatClient_TextOnlyStreamDisposesScopeWithoutRegisteringBinaryContent()
     {
         var client = new ScopeCreatingRpcClient();
-        var provider = new AgentChatProviderRpcClient(
-            client,
-            new SunderRpcEndpointReference("rpc1_chat_provider"));
+        await using var provider = new GeneratedChatProviderClient(client, client.Scope.Provider);
         using var chat = await provider.CreateChatClientAsync(new AgentChatClientContext("provider", "model"));
 
         await foreach (var _ in chat.GetStreamingResponseAsync(
@@ -50,9 +49,10 @@ public sealed class AgentRpcContentScopeTests
         {
         }
 
-        Assert.Equal(0, client.ScopeCreationCount);
-        Assert.True(client.DirectSubscriptionUsed);
-        Assert.False(client.Scope.Disposed);
+        Assert.Equal(1, client.ScopeCreationCount);
+        Assert.Null(client.Scope.RegisteredContent);
+        Assert.False(client.DirectSubscriptionUsed);
+        Assert.True(client.Scope.Disposed);
     }
 
     private sealed class ScopeCreatingRpcClient : ISunderRpcClient
@@ -118,10 +118,18 @@ public sealed class AgentRpcContentScopeTests
 
     private sealed class RecordingCallScope : ISunderRpcCallScope
     {
+        public SunderRpcProviderSnapshot Provider { get; } = CreateProvider();
         public DateTimeOffset DeadlineUtc { get; } = DateTimeOffset.UtcNow.AddMinutes(1);
         public byte[]? RegisteredContent { get; private set; }
         public SunderRpcEndpointReference? RegisteredEndpoint { get; private set; }
         public bool Disposed { get; private set; }
+
+        private static SunderRpcProviderSnapshot CreateProvider()
+        {
+            var descriptor = RegressionTestRpcDescriptors.Get(AgentRpcContractIds.ChatProvider);
+            return new("test.package", "2.0.0", "test.provider", descriptor.ContractId, descriptor.Version,
+                descriptor.Sha256, descriptor.AbiSha256!, Guid.NewGuid(), 1, 1, new("rpc1_chat_provider"), 1, SunderRpcProviderState.Active);
+        }
 
         public ValueTask<ISunderRpcCallScope> CreateCallScopeAsync(
             SunderRpcCallOptions? options = null,
@@ -163,7 +171,7 @@ public sealed class AgentRpcContentScopeTests
         public ValueTask<SunderRpcProviderSnapshot?> GetProviderAsync(
             SunderRpcEndpointReference endpoint,
             CancellationToken cancellationToken = default)
-            => throw new NotSupportedException();
+            => ValueTask.FromResult<SunderRpcProviderSnapshot?>(Provider);
 
         public ValueTask<bool> TryReportInvariantViolationAsync(
             SunderRpcEndpointReference endpoint,
@@ -199,14 +207,18 @@ public sealed class AgentRpcContentScopeTests
             SunderRpcCallOptions? options = null,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
-            Assert.Equal(AgentChatProviderRpc.ServiceId, serviceId);
+            Assert.Equal("chat-provider", serviceId);
             Assert.Equal("stream-chat", methodId);
-            Assert.Equal("rpc-content-test", request
-                .GetProperty("messages")[0]
-                .GetProperty("contents")[0]
-                .GetProperty("contentReference")
-                .GetProperty("id")
-                .GetString());
+            var content = request.GetProperty("messages")[0].GetProperty("contents")[0];
+            if (RegisteredContent is not null)
+            {
+                Assert.Equal("rpc-content-test", content.GetProperty("contentReference").GetProperty("id").GetString());
+            }
+            else
+            {
+                Assert.Equal("hello", content.GetProperty("text").GetString());
+                Assert.False(content.TryGetProperty("contentReference", out _));
+            }
             await Task.Yield();
             cancellationToken.ThrowIfCancellationRequested();
             yield return ResponseEvent();

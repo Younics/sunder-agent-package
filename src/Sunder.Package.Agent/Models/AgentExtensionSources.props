@@ -1,0 +1,90 @@
+<Project>
+  <!-- Domain source is compiled into each consuming role. These items carry no
+       protocol assembly or generated wire implementation across package boundaries. -->
+  <PropertyGroup>
+    <_AgentSource>$(MSBuildThisFileDirectory)..\</_AgentSource>
+    <_AgentModels>$(MSBuildThisFileDirectory)</_AgentModels>
+    <_AgentShared>$(MSBuildThisFileDirectory)..\..\Sunder.Package.Agent.Shared\</_AgentShared>
+    <_AgentExecution>$(MSBuildThisFileDirectory)..\..\Sunder.Agent.Execution.Common\</_AgentExecution>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <SunderAgentProviderCatalogSource Include="$(_AgentModels)Providers\AgentAuthMode.cs;$(_AgentModels)Providers\AgentModelDescriptor.cs;$(_AgentModels)Providers\AgentModelOrdering.cs;$(_AgentModels)Providers\AgentModelCapabilityKinds.cs" />
+    <SunderAgentProviderCatalogSource Include="$(_AgentModels)Providers\AgentChatModelOptionKeys.cs;$(_AgentModels)Providers\AgentChatModelSettings.cs;$(_AgentModels)Providers\AgentChatModelSettingsJson.cs" />
+    <SunderAgentProviderCatalogSource Include="$(_AgentModels)Providers\AgentProviderDescriptor.cs;$(_AgentModels)Providers\AgentProviderReadiness.cs;$(_AgentModels)Providers\AgentProviderReadinessStatus.cs" />
+    <SunderAgentProviderCatalogSource Include="$(_AgentModels)Providers\AgentEmbeddingGenerationResult.cs;$(_AgentModels)Providers\AgentEmbeddingModelDescriptor.cs;$(_AgentModels)Providers\AgentEmbeddingProviderDescriptor.cs;$(_AgentModels)Providers\AgentEmbeddingProviderReadiness.cs" />
+    <SunderAgentProviderAppSource Include="@(SunderAgentProviderCatalogSource)" />
+    <SunderAgentProviderAppSource Include="$(_AgentModels)AgentProfileRecord.cs;$(_AgentModels)AgentProfileModelBindingRecord.cs" />
+    <SunderAgentProviderAppSource Include="$(_AgentModels)Extensions\AgentProfileSelectableCapabilityAssignmentRecord.cs;$(_AgentModels)Extensions\AgentProfileSelectableCapabilityDescriptor.cs;$(_AgentModels)Extensions\AgentProfileSelectableCapabilityKinds.cs" />
+    <SunderAgentProviderAppSource Include="$(_AgentModels)Tools\AgentToolDescriptor.cs;$(_AgentModels)Tools\AgentToolActivationRequirement.cs;$(_AgentModels)Tools\AgentToolPriority.cs;$(_AgentModels)Tools\AgentToolSelectionScope.cs" />
+    <SunderAgentProviderRuntimeSource Include="@(SunderAgentProviderCatalogSource)" />
+    <SunderAgentProviderRuntimeSource Include="$(_AgentModels)Providers\AgentChatClientContext.cs;$(_AgentModels)Providers\AgentChatProviderException.cs;$(_AgentModels)Providers\AgentProviderRunCapabilities.cs" />
+    <SunderAgentProviderRuntimeSource Include="$(_AgentModels)Tools\AgentToolArgumentObject.cs;$(_AgentModels)Tools\AgentToolCallRequest.cs;$(_AgentModels)Tools\AgentPayloadLimits.cs" />
+    <SunderAgentProviderRuntimeSource Include="$(MSBuildThisFileDirectory)..\..\Sunder.Package.Agent.Provider.Shared\Models\ProviderChatModels.cs" />
+    <SunderAgentProviderRuntimeSource Include="$(_AgentModels)Providers\IAgentChatProvider.cs;$(_AgentModels)Providers\IAgentUtilityModelProvider.cs;$(_AgentModels)Providers\IAgentEmbeddingProvider.cs;$(_AgentModels)Providers\IAgentEmbeddingSpaceIdentityProvider.cs;$(_AgentSource)Runtime\IAgentSessionDataCleaner.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <SunderAgentToolSource Include="$(_AgentModels)Tools\IAgentToolSource.cs;$(_AgentModels)Tools\IAgentPermissionAwareToolSource.cs;$(_AgentModels)Tools\IAgentToolPresentationResolver.cs;$(_AgentModels)Execution\IAgentExecutionTarget.cs" />
+    <SunderAgentToolSource Include="$(_AgentSource)Runtime\Rpc\AgentRpcCatalog.cs;$(_AgentSource)Runtime\Rpc\AgentRpcCatalog.Async.cs" />
+    <SunderAgentToolSource Include="$(_AgentModels)AgentProfileRecord.cs;$(_AgentModels)AgentProfileModelBindingRecord.cs;$(_AgentModels)AgentWorkspaceRecord.cs;$(_AgentModels)Extensions\AgentProfileSelectableCapabilityAssignmentRecord.cs" />
+    <SunderAgentToolSource Include="$(_AgentModels)Execution\AgentWorkspaceBindingRecord.cs;$(_AgentModels)Execution\AgentExecutionTargetContext.cs;$(_AgentModels)Execution\AgentExecutionTargetDescriptor.cs;$(_AgentModels)Execution\AgentExecutionTargetReadiness.cs;$(_AgentModels)Execution\AgentExecutionTargetReadinessStatus.cs;$(_AgentModels)Execution\AgentExecutionShellDescriptor.cs" />
+    <SunderAgentToolSource Include="$(_AgentModels)Tools\IAgentTool.cs;$(_AgentModels)Tools\IAgentPermissionAwareTool.cs;$(_AgentModels)Tools\AgentToolDescriptor.cs;$(_AgentModels)Tools\AgentToolActivationRequirement.cs;$(_AgentModels)Tools\AgentToolPriority.cs;$(_AgentModels)Tools\AgentToolSelectionScope.cs" />
+    <SunderAgentToolSource Include="$(_AgentModels)Tools\AgentToolReadiness.cs;$(_AgentModels)Tools\AgentToolReadinessStatus.cs;$(_AgentModels)Tools\AgentToolRequest.cs;$(_AgentModels)Tools\AgentToolResult.cs;$(_AgentModels)Tools\AgentToolSourceItem.cs;$(_AgentModels)Tools\AgentToolPresentation.cs" />
+    <SunderAgentToolSource Include="$(_AgentModels)Tools\AgentToolArgumentObject.cs;$(_AgentModels)Tools\AgentPayloadLimits.cs;$(_AgentModels)Tools\AgentToolExecutionContext.cs;$(_AgentModels)Tools\AgentToolSourceContext.cs;$(_AgentModels)Tools\AgentPermissionRequest.cs" />
+    <SunderAgentToolSource Include="$(_AgentModels)Tools\AgentResourceClaim.cs;$(_AgentModels)Tools\AgentResolvedResource.cs;$(_AgentModels)Tools\AgentFileDeleteRequest.cs;$(_AgentModels)Tools\AgentFileMutationResult.cs;$(_AgentModels)Tools\AgentFileReadRequest.cs;$(_AgentModels)Tools\AgentFileReadResult.cs;$(_AgentModels)Tools\AgentFileWriteRequest.cs;$(_AgentModels)Tools\AgentShellCommandRequest.cs;$(_AgentModels)Tools\AgentShellCommandResult.cs" />
+    <SunderAgentExecutionToolSource Include="@(SunderAgentToolSource)" />
+    <SunderAgentExecutionToolSource Include="$(_AgentShared)Execution\AgentExecutionFacetIds.cs" />
+    <SunderAgentExecutionToolSource Include="$(_AgentModels)Tools\AgentToolResultErrorCodes.cs;$(_AgentModels)Tools\AgentPermissionActionDescriptor.cs;$(_AgentModels)Tools\AgentPermissionDecision.cs;$(_AgentModels)Tools\AgentPermissionMatcherKind.cs" />
+    <SunderAgentExecutionToolSource Include="$(_AgentModels)Extensions\AgentContextProvenance.cs;$(_AgentModels)Extensions\AgentContextTrust.cs;$(_AgentModels)Extensions\AgentMemoryConsistencyBarrier.cs;$(_AgentModels)Extensions\AgentPromptContextAuthority.cs;$(_AgentModels)Extensions\AgentPromptContextBlock.cs;$(_AgentModels)Extensions\AgentPromptContextContribution.cs;$(_AgentModels)Extensions\AgentPromptContextPlan.cs;$(_AgentModels)Extensions\AgentPromptContextReceipt.cs;$(_AgentModels)Extensions\AgentPromptContextRequest.cs;$(_AgentModels)Extensions\AgentPromptContextScope.cs;$(_AgentModels)Extensions\AgentPromptContextUsage.cs" />
+    <SunderAgentExecutionToolSource Include="$(_AgentSource)Runtime\AgentSessionContext.cs;$(_AgentSource)Runtime\AgentSessionState.cs;$(_AgentSource)Runtime\AgentRunContext.cs;$(_AgentSource)Runtime\AgentRunStatus.cs;$(_AgentSource)Runtime\AgentTurnContext.cs;$(_AgentSource)Runtime\AgentTurnRecord.cs;$(_AgentSource)Runtime\AgentTurnItemRecord.cs;$(_AgentSource)Runtime\AgentTurnItemKind.cs;$(_AgentSource)Runtime\AgentTurnKind.cs;$(_AgentSource)Runtime\AgentMessageRole.cs;$(_AgentSource)Runtime\AgentToolExecutionStatus.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <SunderAgentFilesSource Include="@(SunderAgentExecutionToolSource)" />
+    <SunderAgentFilesSource Include="$(_AgentExecution)BoundedValue.cs;$(_AgentExecution)FileOperation.cs;$(_AgentExecution)FileSearchRequestValidation.cs" />
+    <SunderAgentFilesSource Include="$(_AgentModels)Execution\AgentFileSearchModels.cs;$(_AgentModels)Execution\AgentScopedInstructionDiscoveryModels.cs;$(_AgentModels)Execution\AgentExecutionScopeDescriptor.cs" />
+    <SunderAgentFilesSource Include="$(_AgentModels)Execution\IAgentRangedFileExecutionTarget.cs;$(_AgentModels)Execution\IAgentStructuredFileSearchExecutionTarget.cs;$(_AgentModels)Execution\IAgentScopedInstructionDiscoveryTarget.cs;$(_AgentModels)Execution\IAgentExecutionScopeProvider.cs;$(_AgentModels)Execution\IAgentResourceAuthorityExecutionTarget.cs;$(_AgentSource)Runtime\IAgentSessionDataCleaner.cs" />
+    <SunderAgentShellSource Include="@(SunderAgentExecutionToolSource);$(_AgentExecution)BoundedValue.cs;$(_AgentExecution)ProcessExecutionLimits.cs" />
+    <SunderAgentWebSource Include="@(SunderAgentToolSource);$(_AgentExecution)BoundedValue.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <SunderAgentBuilderSource Include="@(SunderAgentProviderAppSource);$(_AgentShared)Execution\AgentExecutionFacetIds.cs" />
+    <SunderAgentBuilderSource Include="$(_AgentModels)AgentWorkspaceRecord.cs;$(_AgentModels)Execution\AgentWorkspaceBindingRecord.cs;$(_AgentModels)Execution\AgentExecutionTargetDescriptor.cs;$(_AgentModels)Execution\AgentExecutionTargetContext.cs;$(_AgentModels)Execution\AgentExecutionScopeDescriptor.cs;$(_AgentModels)Execution\AgentExecutionShellDescriptor.cs;$(_AgentModels)Execution\AgentExecutionPathMapping.cs;$(_AgentModels)Execution\AgentProcessCommandRequest.cs" />
+    <SunderAgentBuilderSource Include="$(_AgentModels)Tools\AgentResourceClaim.cs;$(_AgentModels)Tools\AgentShellCommandRequest.cs;$(_AgentModels)Tools\AgentShellCommandResult.cs" />
+    <SunderAgentBuilderSource Include="$(_AgentModels)Execution\IAgentExecutionTarget.cs;$(_AgentModels)Execution\IAgentProcessExecutionTarget.cs;$(_AgentModels)Execution\IAgentExecutionPathMapper.cs;$(_AgentModels)Execution\IAgentExecutionPathEnvironment.cs" />
+    <SunderAgentBuilderSource Include="$(_AgentModels)Execution\AgentExecutionTargetReadiness.cs;$(_AgentModels)Execution\AgentExecutionTargetReadinessStatus.cs;$(_AgentModels)Tools\AgentResolvedResource.cs;$(_AgentModels)Tools\AgentFileReadRequest.cs;$(_AgentModels)Tools\AgentFileReadResult.cs;$(_AgentModels)Tools\AgentFileWriteRequest.cs;$(_AgentModels)Tools\AgentFileDeleteRequest.cs;$(_AgentModels)Tools\AgentFileMutationResult.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <SunderAgentExecutionSource Include="@(SunderAgentBuilderSource)" />
+    <SunderAgentExecutionSource Include="$(_AgentModels)Execution\AgentExecutionResourceDescriptor.cs;$(_AgentModels)Execution\AgentFileSearchModels.cs;$(_AgentModels)Execution\AgentScopedInstructionDiscoveryModels.cs;$(_AgentModels)Execution\AgentWorkspaceEditorContext.cs;$(_AgentModels)Execution\AgentWorkspacePathMigrationModels.cs;$(_AgentModels)Extensions\AgentEditorModels.cs;$(_AgentModels)Tools\AgentToolResultErrorCodes.cs" />
+    <SunderAgentExecutionSource Include="$(_AgentModels)Execution\IAgentExecutionScopeProvider.cs;$(_AgentModels)Execution\IAgentExecutionResourceResolver.cs;$(_AgentModels)Execution\IAgentResourceAuthorityExecutionTarget.cs;$(_AgentModels)Execution\IAgentRangedFileExecutionTarget.cs;$(_AgentModels)Execution\IAgentStructuredFileSearchExecutionTarget.cs;$(_AgentModels)Execution\IAgentScopedInstructionDiscoveryTarget.cs;$(_AgentModels)Execution\IAgentWorkspaceEditorContributor.cs;$(_AgentModels)Execution\IAgentWorkspacePathMigrationContributor.cs" />
+    <SunderAgentExecutionSource Include="$(_AgentExecution)BoundedProcessRunner.cs;$(_AgentExecution)BoundedValue.cs;$(_AgentExecution)ChildProcessEnvironment.cs;$(_AgentExecution)ExecutableResolver.cs;$(_AgentExecution)FileOperation.cs;$(_AgentExecution)FileSearchRequestValidation.cs" />
+    <SunderAgentExecutionSource Include="$(_AgentExecution)HostApprovalLeaseStore.cs;$(_AgentExecution)HostFileSystemExecutor.cs;$(_AgentExecution)HostFileSystemLimits.cs;$(_AgentExecution)HostMutationGate.cs;$(_AgentExecution)HostPath.cs;$(_AgentExecution)HostResourceClaim.cs;$(_AgentExecution)HostScopedInstructionDiscovery.cs;$(_AgentExecution)HostSecureFileSearch.cs;$(_AgentExecution)HostSecureMountChallenge.cs;$(_AgentExecution)HostSecurePathEngine.cs" />
+    <SunderAgentExecutionSource Include="$(_AgentExecution)LocalGlobMatcher.cs;$(_AgentExecution)LocalSecureFileSystemModels.cs;$(_AgentExecution)LocalSecureNative.cs;$(_AgentExecution)LocalSecurePathSession.cs;$(_AgentExecution)LocalUnixFileSystemPlatform.cs;$(_AgentExecution)LocalUnixFileSystemPlatform.TemporaryFiles.cs;$(_AgentExecution)LocalUnixNative.cs;$(_AgentExecution)LocalWindowsFileSystemPlatform.cs;$(_AgentExecution)LocalWindowsNative.cs;$(_AgentExecution)PathEnvironment.cs;$(_AgentExecution)ProcessExecutionLimits.cs;$(_AgentExecution)ProcessOutput.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <SunderAgentMcpSource Include="@(SunderAgentToolSource);@(SunderAgentProviderAppSource)" />
+    <SunderAgentMcpSource Include="$(_AgentModels)AgentMcpServerDescriptor.cs;$(_AgentModels)Tools\AgentRuntimeTool.cs;$(_AgentModels)Tools\AgentToolResultErrorCodes.cs" />
+    <SunderAgentMcpSource Include="$(_AgentModels)Extensions\IAgentProfileSelectableCapabilityProvider.cs;$(_AgentModels)Extensions\IAgentProfileSelectableCapabilityChangeNotifier.cs;$(_AgentModels)Tools\IAgentNativeToolSource.cs;$(_AgentModels)Tools\IAgentToolExecutionPreflightSource.cs;$(_AgentSource)Runtime\IAgentSessionDataCleaner.cs" />
+    <SunderAgentSkillsSource Include="@(SunderAgentExecutionToolSource);@(SunderAgentProviderAppSource)" />
+    <SunderAgentSkillsSource Include="$(_AgentModels)Execution\AgentExecutionResourceDescriptor.cs" />
+    <SunderAgentSkillsSource Include="$(_AgentModels)Extensions\IAgentProfileSelectableCapabilityProvider.cs;$(_AgentModels)Extensions\IAgentProfileSelectableCapabilityChangeNotifier.cs;$(_AgentModels)Extensions\IAgentPromptContextContributor.cs;$(_AgentModels)Extensions\IAgentPromptContextAcknowledgmentSink.cs;$(_AgentModels)Tools\IAgentToolExecutionPreflightSource.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <SunderAgentSessionSource Include="$(_AgentSource)Runtime\AgentSessionRecord.cs;$(_AgentSource)Runtime\AgentSessionState.cs;$(_AgentSource)Runtime\AgentSessionContextCheckpointRecord.cs;$(_AgentSource)Runtime\AgentWorkingSummaryRecord.cs" />
+    <SunderAgentMemorySource Include="@(SunderAgentExecutionToolSource);@(SunderAgentProviderAppSource);@(SunderAgentSessionSource)" />
+    <SunderAgentMemorySource Include="$(_AgentModels)AgentMemoryProvenance.cs;$(_AgentModels)AgentMemoryMatchReason.cs;$(_AgentModels)AgentMemoryRecallEntry.cs;$(_AgentModels)AgentMemoryRecallIntent.cs;$(_AgentModels)AgentMemoryRecallPlan.cs;$(_AgentModels)AgentMemoryRecallRequest.cs;$(_AgentModels)AgentMemoryRecallResult.cs;$(_AgentModels)AgentMemoryTrustState.cs" />
+    <SunderAgentMemorySource Include="$(_AgentModels)Extensions\AgentDurableLifecycleEventEnvelope.cs;$(_AgentModels)Extensions\AgentDurableLifecycleIntegrityException.cs;$(_AgentModels)Extensions\AgentLifecycleEvent.cs;$(_AgentModels)Extensions\AgentLifecycleEventKind.cs;$(_AgentModels)Extensions\AgentProfileCapabilityConsumerDescriptor.cs;$(_AgentSource)Runtime\AgentRunCheckpointRecord.cs;$(_AgentSource)Runtime\PackageRuntimeGeneration.cs" />
+    <SunderAgentMemorySource Include="$(_AgentSource)Runtime\IAgentRuntimeCatalog.cs;$(_AgentSource)Runtime\IAgentSessionDataCleaner.cs;$(_AgentModels)Providers\IAgentEmbeddingProvider.cs;$(_AgentModels)Providers\IAgentEmbeddingSpaceIdentityProvider.cs;$(_AgentModels)Extensions\IAgentProfileCapabilityConsumer.cs;$(_AgentModels)Extensions\IAgentDurableLifecycleObserver.cs;$(_AgentModels)Extensions\IAgentPromptContextContributor.cs;$(_AgentModels)Extensions\IAgentPromptContextAcknowledgmentSink.cs" />
+    <SunderAgentSubagentsSource Include="@(SunderAgentExecutionToolSource);@(SunderAgentProviderAppSource);@(SunderAgentSessionSource)" />
+    <SunderAgentSubagentsSource Include="$(_AgentSource)Runtime\AgentRunCheckpointRecord.cs;$(_AgentSource)Runtime\AgentRunActivityKind.cs;$(_AgentSource)Runtime\AgentTurnMutation.cs;$(_AgentSource)Runtime\AgentTranscriptToolDetailRecord.cs;$(_AgentSource)Runtime\AgentTranscriptTurnWindow.cs;$(_AgentSource)Runtime\IAgentTranscriptCatalog.cs" />
+    <SunderAgentSubagentsSource Include="$(_AgentModels)Extensions\AgentLifecycleEventKind.cs;$(_AgentModels)Providers\AgentChatClientContext.cs;$(_AgentModels)Providers\AgentProviderRunCapabilities.cs;$(_AgentModels)Tools\AgentRuntimeTool.cs;$(_AgentModels)Tools\AgentToolCallRequest.cs;$(_AgentModels)Tools\AgentToolCallOutcome.cs;$(_AgentModels)Tools\AgentToolCallOutcomeKind.cs" />
+    <SunderAgentSubagentsSource Include="$(_AgentSource)Runtime\AgentBehaviorInstructionContext.cs;$(_AgentSource)Runtime\AgentBehaviorLoopContext.cs;$(_AgentSource)Runtime\AgentBehaviorLoopDescriptor.cs;$(_AgentSource)Runtime\AgentBehaviorLoopIds.cs;$(_AgentSource)Runtime\AgentBehaviorLoopResult.cs;$(_AgentSource)Runtime\AgentBehaviorLoopCompletionKind.cs;$(_AgentSource)Runtime\AgentChildRunRequest.cs" />
+    <SunderAgentSubagentsSource Include="$(_AgentSource)Runtime\IAgentRuntimeCatalog.cs;$(_AgentSource)Runtime\IAgentChildRunExecutor.cs;$(_AgentSource)Runtime\IAgentBehaviorLoop.cs;$(_AgentSource)Runtime\IAgentBehaviorLoopRuntime.cs;$(_AgentSource)Runtime\IAgentInnerBehaviorLoopRuntime.cs;$(_AgentModels)Extensions\IAgentProfileSelectableCapabilityProvider.cs;$(_AgentModels)Extensions\IAgentProfileSelectableCapabilityChangeNotifier.cs;$(_AgentModels)Extensions\IAgentPromptContextContributor.cs;$(_AgentModels)Extensions\IAgentPromptContextAcknowledgmentSink.cs;$(_AgentModels)Tools\IAgentToolExecutionPreflightSource.cs" />
+  </ItemGroup>
+</Project>

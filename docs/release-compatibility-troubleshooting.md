@@ -1,26 +1,40 @@
 # Release, Compatibility, And Troubleshooting
 
+> **Canonical migration in progress:** packages use one authored project with
+> generated role-local bindings and reviewed API locks. The release contains no
+> Protocol NuGet. Qualified prebuilt role inputs and native/release acceptance remain
+> open; passing shell fixtures does not enable publication. See
+> [`../compatibility/README.md`](../compatibility/README.md).
+
 This guide is for extension authors. Maintainers releasing the complete first-party Agent family should also follow [`RELEASES.md`](RELEASES.md).
 
 ## Compatibility Contract
 
-Agent 2.x defines one schema-first RPC compatibility surface. It contains 31 RPC descriptors: 19 public bundled descriptors and 12 package-local owner descriptors. Cross-package behavior is limited to the public descriptors, generated bindings, and manifest-declared providers; 18 third-party extension points remain supported.
+Agent 2.x derives its RPC compatibility surface from ordinary implementation and declaration source. It contains 31 RPC descriptors: 19 public descriptors and 12 package-local owner descriptors. Cross-package behavior is limited to public contracts, generated role-local bindings and manifest-declared providers; 18 third-party extension points remain supported.
 
-Use these coordinated ranges:
+Use the coordinated Core SDK range:
 
 ```xml
 <PackageReference Include="Sunder.Sdk" Version="[1.1.0,1.2.0)" />
 <PackageReference Include="Sunder.Package.Build" Version="[1.1.0,1.2.0)" PrivateAssets="all" />
-<PackageReference Include="Sunder.Package.Agent.Protocol" Version="[2.0.0,3.0.0)" />
 ```
 
-```csharp
-[assembly: SunderPackageDependency(
-    PackageId = "sunder.package.agent",
-    VersionRange = ">=2.0.0 <3.0.0")]
-```
+Select `sunder.package.agent` with the reviewed runtime range `>=2.0.0 <3.0.0`
+through the ordinary package API/provider-import commands. The resulting lock owns
+the imported dependency; do not duplicate it with an authored dependency attribute.
+Provider-only imports select the contracts they implement; ordinary API imports
+select the complete public package API.
 
-NuGet and Sunder Runtime ranges use different syntax. The Protocol and Runtime ranges accept compatible 2.x releases and reject 3.0. Sunder SDK packages keep their independent Core version range.
+Unpublished local families use validated local `.sunderpkg` candidates and the
+canonical local Core catalog without a Registry. These selections omit
+`registryOrigin`. Published dependencies use an explicitly selected pinned Registry;
+publication evidence is a separate operation. Local restore may combine exact
+archive/catalog inputs or reuse complete verified cache evidence, and never rewrites
+the lock or silently falls back to a Registry.
+
+NuGet and Sunder Runtime ranges use different syntax. Runtime dependencies accept
+compatible 2.x releases and reject 3.0; contract versions/hashes remain exact and
+independent. Sunder SDK packages keep their independent Core version range.
 
 Do not use an unbounded `>=2.0.0` runtime dependency. A future major may intentionally change descriptors or behavioral invariants even when binary loading appears possible.
 
@@ -31,17 +45,21 @@ An independent extension can use its own package version, but every released bui
 - Patch release: fixes behavior without changing extension package contracts or Agent range.
 - Minor release: adds backward-compatible extension features while retaining the same Agent range.
 - Major release: breaks the extension's own persisted/public behavior.
-- Agent-major update: compile against the new Protocol package and change both NuGet and runtime upper/lower bounds in a deliberate release.
+- Agent-major update: explicitly select and review the new Agent API/provider inputs and runtime range, regenerate role-local bindings, and retest in a deliberate release.
 
 Do not publish different bytes for an existing package id/version. Sunder package versions are immutable artifacts.
 
-## Protocol Surface
+## Contract Surface
 
-For this repository, `src/Sunder.Package.Agent.Contracts/PublicAPI.Shipped.txt` is the immutable stable API ledger. `PublicAPI.Unshipped.txt` tracks reviewed changes before the next stable boundary. Stable family releases require no unshipped entries.
+Canonical packages retain a root-owned contract baseline and reviewed import lock.
+Accept reviewed source changes and freeze owned contracts before Pack; packing checks
+source/baseline/lock agreement. Published contract history is immutable. The retained
+central Protocol public-API ledgers are migration evidence, not the current release
+baseline, and their retirement still requires the feed/parity checks.
 
 Extension authors should:
 
-- Compile against public Protocol and SDK types only.
+- Compile against generated package-local bindings and supported SDK types.
 - Avoid reflection into concrete first-party assemblies.
 - Treat optional interfaces as capability checks.
 - Persist stable ids rather than CLR type/assembly names.
@@ -53,17 +71,25 @@ Binary compatibility is not the only requirement. Descriptor ids, permission bou
 ## Release Checklist
 
 1. Set an immutable extension version.
-2. Confirm Agent Protocol references use `[2.0.0,3.0.0)` and runtime dependencies use the fixed `>=2.0.0 <3.0.0` family range, including patch and prerelease family releases.
+2. Confirm reviewed API/provider locks use the fixed `>=2.0.0 <3.0.0` Agent family range and exact imported contract identities, including the intended prerelease policy.
 3. Restore/build/test in standalone NuGet mode, not only source-reference mode.
 4. Inspect generated manifest capabilities and runtime dependencies.
-5. Publish the project and validate the exact `.sunderpkg` bytes.
+5. Check/freeze owned contracts, invoke `PackSunderPackage` on the canonical project and validate the exact `.sunderpkg` bytes.
 6. Run clean install/activation, configuration, success/failure, unload/reload, and same-version reinstall smoke.
 7. Validate App snapshot behavior when an App module exists.
 8. Check logs/results/archive for secrets and local files.
 9. Exercise migration from the previous extension version with a backup of test data.
 10. Publish immutable bytes, then move a Registry dist tag only after verification.
 
-The first-party family releases all 15 runtime packages and `Sunder.Package.Agent.Protocol` from one Agent commit. For a new release, the workflow resolves Core `main` once at workflow start and reuses that full SHA for every Core checkout. A recovery rerun reuses the Core SHA from preserved release evidence instead of resolving `main` again. Third-party extensions should not assume a mixed family patch set is valid.
+The first-party family releases exactly fifteen `.sunderpkg` archives from one Agent
+commit, with no Protocol NuGet. Release CI resolves the immutable Core
+`sdk/v<CORE_SDK_VERSION>` release and requires its tag, package provenance and all
+Core checkouts to identify one commit; smoke CI alone tracks Core `main`. Recovery
+reuses that same immutable identity and tested bytes. Publication has 17 primary
+files and 21 release assets; the Actions-only handoff adds a twenty-second file.
+The separate first-party native, authenticated publication and cohort-promotion
+requirements remain in [`RELEASES.md`](RELEASES.md). Third-party extensions should
+not assume a mixed family patch set is valid.
 
 ## Troubleshooting
 
@@ -71,10 +97,10 @@ The first-party family releases all 15 runtime packages and `Sunder.Package.Agen
 
 | Symptom | Check |
 | --- | --- |
-| Protocol types missing | Directly reference `Sunder.Package.Agent.Protocol` with `[2.0.0,3.0.0)`. Generated bindings are under `Sunder.Package.Agent.Protocol.Generated.*`. |
-| SDK/module types missing | Add a direct `Sunder.Sdk` reference; do not rely on the Protocol package's transitive dependency. |
+| Generated API/provider types missing | Inspect the root import lock and generation diagnostics; restore its exact local candidate/catalog or pinned Registry evidence and build the canonical project. |
+| SDK/module types missing | Add the required direct supported SDK references; implementation assemblies are not an SDK substitute. |
 | Manifest/build targets missing | Add `Sunder.Package.Build` with `PrivateAssets="all"`. |
-| Mixed package downgrade/conflict | Inspect transitive packages and align the Agent Protocol/runtime family to 2.x while preserving the supported Core SDK range. |
+| Mixed package downgrade/conflict | Inspect reviewed dependency ranges and exact imported contract identities; align the Agent runtime family to 2.x while preserving the supported Core SDK range. |
 | Works only in private workspace | Force standalone/NuGet mode and restore in a clean checkout; remove accidental project/implementation references. |
 
 Useful commands:
@@ -100,10 +126,10 @@ Runtime validates the package graph before worker launch. A dependency-range or 
 
 ### RPC Provider Is Missing
 
-- Confirm the Worker V3 configuration creates the service and handler.
-- Confirm the project declares the provider id and contract with `SunderRpcProvider`.
-- Confirm `SunderWorkerOptions` publishes that same provider id with `SunderWorkerProviderRegistration`.
-- Confirm the provider code is in the worker executable, not only an `ISunderAppPackageModule`.
+- Confirm ordinary source/provider-import declarations select the intended service and contract.
+- Confirm the generated role plan, binding receipt, manifest and Worker advertisement agree on the provider id and exact contract identity.
+- Inspect generated Worker composition for service construction and handler registration; do not recreate a central Protocol assembly or hand-authored default bootstrap.
+- Confirm the provider code is in the Worker module, not only an `ISunderAppPackageModule`.
 - For App presentation, confirm the inverse: the App contribution is registered in the App role and calls Runtime through typed owner RPC.
 - Confirm stable semantic ids do not collide with another active contribution.
 - Use RPC discovery in a diagnostic fixture to verify the contract id, owner package, provider id, and active endpoint.

@@ -178,7 +178,7 @@ internal static class AgentWorkspaceEditorInvocation
         AgentWorkspaceEditorContext context,
         CancellationToken cancellationToken)
     {
-        if (!contributor.CanEdit(context))
+        if (!await Sunder.Package.Agent.Runtime.Rpc.AgentWorkspaceEditorBindings.CanEditAsync(contributor, context, cancellationToken).ConfigureAwait(false))
         {
             return Array.Empty<AgentEditorSection>();
         }

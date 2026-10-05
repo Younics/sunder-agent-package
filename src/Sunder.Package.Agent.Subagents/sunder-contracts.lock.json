@@ -1,0 +1,301 @@
+{
+  "lockVersion": 1,
+  "packageArtifacts": {
+    "sunder.package.agent": {
+      "requestedVersionRange": ">=2.0.0 <3.0.0",
+      "includePrerelease": false,
+      "selectedPackageVersion": "2.0.0",
+      "selectedPackageContentIdentity": "0cf38969354fb8db776e7c52b6ea37e7a24be41f6edc7935d9740de42b520d38",
+      "publicContractCount": 20,
+      "publicInventorySha256": "2d3a3c5139d21a3d95673034d83cafd41709b01e9e2d0c3c6a57b0c6887ed6e1",
+      "contracts": {
+        "sunder.agent.behavior.loop": {
+          "artifactSource": "owned",
+          "authorityKind": "package",
+          "authorityId": "sunder.package.agent",
+          "selectedAuthorityRelease": "2.0.0",
+          "selectedAuthorityContentIdentity": "0cf38969354fb8db776e7c52b6ea37e7a24be41f6edc7935d9740de42b520d38",
+          "resolvedContractVersion": "1.0.0",
+          "descriptorBytes": 11820,
+          "descriptorSha256": "4dc81c63ef4a45a64e2480229d4690c2210b646b381638da5bb187e47aea66f7",
+          "abiSha256": "c28bdf697a3664559718d3f558869096adc04db9ece92a71d5942053cebe1763",
+          "etag": "\"4dc81c63ef4a45a64e2480229d4690c2210b646b381638da5bb187e47aea66f7\""
+        },
+        "sunder.agent.chat.provider": {
+          "artifactSource": "owned",
+          "authorityKind": "package",
+          "authorityId": "sunder.package.agent",
+          "selectedAuthorityRelease": "2.0.0",
+          "selectedAuthorityContentIdentity": "0cf38969354fb8db776e7c52b6ea37e7a24be41f6edc7935d9740de42b520d38",
+          "resolvedContractVersion": "1.0.0",
+          "descriptorBytes": 10369,
+          "descriptorSha256": "c6a1a870a284725ce59536aaa1d3ec3cbf12b50b9909cf1bb8dcc586b5314c72",
+          "abiSha256": "43872bd38b25104499ff1cba52767190088e9015dd83d69e625b76e2ce9509db",
+          "etag": "\"c6a1a870a284725ce59536aaa1d3ec3cbf12b50b9909cf1bb8dcc586b5314c72\""
+        },
+        "sunder.agent.child.run.executor": {
+          "artifactSource": "owned",
+          "authorityKind": "package",
+          "authorityId": "sunder.package.agent",
+          "selectedAuthorityRelease": "2.0.0",
+          "selectedAuthorityContentIdentity": "0cf38969354fb8db776e7c52b6ea37e7a24be41f6edc7935d9740de42b520d38",
+          "resolvedContractVersion": "1.0.0",
+          "descriptorBytes": 3967,
+          "descriptorSha256": "d5e153b17714eabf425aa3fa5728d8810eb3f774730445bd285246d6bc9ebeac",
+          "abiSha256": "1885862bedcb08cec9a8d65c1205c8dbdf78107a5edb2865d0e3d8cf4154557d",
+          "etag": "\"d5e153b17714eabf425aa3fa5728d8810eb3f774730445bd285246d6bc9ebeac\""
+        },
+        "sunder.agent.durable.lifecycle.observer": {
+          "artifactSource": "owned",
+          "authorityKind": "package",
+          "authorityId": "sunder.package.agent",
+          "selectedAuthorityRelease": "2.0.0",
+          "selectedAuthorityContentIdentity": "0cf38969354fb8db776e7c52b6ea37e7a24be41f6edc7935d9740de42b520d38",
+          "resolvedContractVersion": "1.0.0",
+          "descriptorBytes": 8382,
+          "descriptorSha256": "68a9c908358b8ff607f528c3779d58b9040e64818ac2f45621b36177e7611b21",
+          "abiSha256": "bd385af872f26796ecd33d3ce66268d3c642c8e924f6c90e4ee717eb5b727f24",
+          "etag": "\"68a9c908358b8ff607f528c3779d58b9040e64818ac2f45621b36177e7611b21\""
+        },
+        "sunder.agent.embedding.provider": {
+          "artifactSource": "owned",
+          "authorityKind": "package",
+          "authorityId": "sunder.package.agent",
+          "selectedAuthorityRelease": "2.0.0",
+          "selectedAuthorityContentIdentity": "0cf38969354fb8db776e7c52b6ea37e7a24be41f6edc7935d9740de42b520d38",
+          "resolvedContractVersion": "1.0.0",
+          "descriptorBytes": 4227,
+          "descriptorSha256": "cd0992243e8eb038124965c0b51d559d555b984459bd7246ca23e2d61cec6cab",
+          "abiSha256": "c8e646ba1457b3b0cce307aa465ff1ce53724d083c65af6bde5393c39dcbbb40",
+          "etag": "\"cd0992243e8eb038124965c0b51d559d555b984459bd7246ca23e2d61cec6cab\""
+        },
+        "sunder.agent.execution.target": {
+          "artifactSource": "owned",
+          "authorityKind": "package",
+          "authorityId": "sunder.package.agent",
+          "selectedAuthorityRelease": "2.0.0",
+          "selectedAuthorityContentIdentity": "0cf38969354fb8db776e7c52b6ea37e7a24be41f6edc7935d9740de42b520d38",
+          "resolvedContractVersion": "1.0.0",
+          "descriptorBytes": 24555,
+          "descriptorSha256": "e9aac73111d41b661fd95a461cc71cc131884fed2dafd44a752237920fcd8390",
+          "abiSha256": "bbec3990bf9b88ffbe4707166bc58d9112e9df6ee9c9ffa11d0cee80f7673438",
+          "etag": "\"e9aac73111d41b661fd95a461cc71cc131884fed2dafd44a752237920fcd8390\""
+        },
+        "sunder.agent.permission.surface": {
+          "artifactSource": "owned",
+          "authorityKind": "package",
+          "authorityId": "sunder.package.agent",
+          "selectedAuthorityRelease": "2.0.0",
+          "selectedAuthorityContentIdentity": "0cf38969354fb8db776e7c52b6ea37e7a24be41f6edc7935d9740de42b520d38",
+          "resolvedContractVersion": "1.0.0",
+          "descriptorBytes": 1931,
+          "descriptorSha256": "a4fdf925ca509da5e4be8a28a3e790c973a2d3f7a7da1fdd79b21bf91864f7f6",
+          "abiSha256": "305a6656e50d62e52ea327753bde3151970b0923fc819332e6dd87dc4e8b9d47",
+          "etag": "\"a4fdf925ca509da5e4be8a28a3e790c973a2d3f7a7da1fdd79b21bf91864f7f6\""
+        },
+        "sunder.agent.profile.capability.consumer": {
+          "artifactSource": "owned",
+          "authorityKind": "package",
+          "authorityId": "sunder.package.agent",
+          "selectedAuthorityRelease": "2.0.0",
+          "selectedAuthorityContentIdentity": "0cf38969354fb8db776e7c52b6ea37e7a24be41f6edc7935d9740de42b520d38",
+          "resolvedContractVersion": "1.0.0",
+          "descriptorBytes": 1403,
+          "descriptorSha256": "9aa38121fe4fa67ceb9cb1332d1f3a4829d1db62242597eb54a6ade8c9fe10ed",
+          "abiSha256": "db8148cfdbe1f3e50e134f6e900dd360ca9af8fe1eb263df2f11bf907b3fe5e4",
+          "etag": "\"9aa38121fe4fa67ceb9cb1332d1f3a4829d1db62242597eb54a6ade8c9fe10ed\""
+        },
+        "sunder.agent.prompt.context.contributor": {
+          "artifactSource": "owned",
+          "authorityKind": "package",
+          "authorityId": "sunder.package.agent",
+          "selectedAuthorityRelease": "2.0.0",
+          "selectedAuthorityContentIdentity": "0cf38969354fb8db776e7c52b6ea37e7a24be41f6edc7935d9740de42b520d38",
+          "resolvedContractVersion": "1.0.0",
+          "descriptorBytes": 16859,
+          "descriptorSha256": "95f76fbab4aba10a06eab8e3410743be5e98b8f9d91eeb81f7c7be104729a7b3",
+          "abiSha256": "e32be8205c41e1e4227e7a4f9007ceb379d100a2c8be511024a36fbdcac661bd",
+          "etag": "\"95f76fbab4aba10a06eab8e3410743be5e98b8f9d91eeb81f7c7be104729a7b3\""
+        },
+        "sunder.agent.run.control": {
+          "artifactSource": "owned",
+          "authorityKind": "package",
+          "authorityId": "sunder.package.agent",
+          "selectedAuthorityRelease": "2.0.0",
+          "selectedAuthorityContentIdentity": "0cf38969354fb8db776e7c52b6ea37e7a24be41f6edc7935d9740de42b520d38",
+          "resolvedContractVersion": "1.0.0",
+          "descriptorBytes": 33976,
+          "descriptorSha256": "2ed3085b36e7c825ef937cdd83fbe1ce0ed8a9baf00289c91787503b6467aa1e",
+          "abiSha256": "95daf0091c5ecdeba030a07221370040d988ebaa7c167e42d1a9c35057cb60b2",
+          "etag": "\"2ed3085b36e7c825ef937cdd83fbe1ce0ed8a9baf00289c91787503b6467aa1e\""
+        },
+        "sunder.agent.runtime.catalog": {
+          "artifactSource": "owned",
+          "authorityKind": "package",
+          "authorityId": "sunder.package.agent",
+          "selectedAuthorityRelease": "2.0.0",
+          "selectedAuthorityContentIdentity": "0cf38969354fb8db776e7c52b6ea37e7a24be41f6edc7935d9740de42b520d38",
+          "resolvedContractVersion": "1.0.0",
+          "descriptorBytes": 18920,
+          "descriptorSha256": "dd6245bee39a521c1c3b288ad28bf2c23a118cd360e8e617b3e2d4ec4432703c",
+          "abiSha256": "e6da2ed724d23c5d0d309f3ebe1a36b57808a1b3537fc70fe3bbd3eee5ace1b4",
+          "etag": "\"dd6245bee39a521c1c3b288ad28bf2c23a118cd360e8e617b3e2d4ec4432703c\""
+        },
+        "sunder.agent.selectable.capability.provider": {
+          "artifactSource": "owned",
+          "authorityKind": "package",
+          "authorityId": "sunder.package.agent",
+          "selectedAuthorityRelease": "2.0.0",
+          "selectedAuthorityContentIdentity": "0cf38969354fb8db776e7c52b6ea37e7a24be41f6edc7935d9740de42b520d38",
+          "resolvedContractVersion": "1.0.0",
+          "descriptorBytes": 4659,
+          "descriptorSha256": "8d51b029826f5f9340de91b60b32404a62345074cc37f1dcf2901716d5e7881a",
+          "abiSha256": "b52793dac4c103576164d66420274481a34f0f06aebe263b9d3b330f33d06bdf",
+          "etag": "\"8d51b029826f5f9340de91b60b32404a62345074cc37f1dcf2901716d5e7881a\""
+        },
+        "sunder.agent.session.cleaner": {
+          "artifactSource": "owned",
+          "authorityKind": "package",
+          "authorityId": "sunder.package.agent",
+          "selectedAuthorityRelease": "2.0.0",
+          "selectedAuthorityContentIdentity": "0cf38969354fb8db776e7c52b6ea37e7a24be41f6edc7935d9740de42b520d38",
+          "resolvedContractVersion": "1.0.0",
+          "descriptorBytes": 1119,
+          "descriptorSha256": "2df009ae5253633c434bc1dde894978f6b83bd0503aaea1889307287b090d2e2",
+          "abiSha256": "74e6274596c87d937531d2bcdbf30572a0ab614a9812d28497f43c59525ee5f8",
+          "etag": "\"2df009ae5253633c434bc1dde894978f6b83bd0503aaea1889307287b090d2e2\""
+        },
+        "sunder.agent.system.prompt.contributor": {
+          "artifactSource": "owned",
+          "authorityKind": "package",
+          "authorityId": "sunder.package.agent",
+          "selectedAuthorityRelease": "2.0.0",
+          "selectedAuthorityContentIdentity": "0cf38969354fb8db776e7c52b6ea37e7a24be41f6edc7935d9740de42b520d38",
+          "resolvedContractVersion": "1.0.0",
+          "descriptorBytes": 13453,
+          "descriptorSha256": "954dabe043ff5b591bdec78b1a6ea4a55c2a154c47e49016879fde2a27f3a03a",
+          "abiSha256": "83622fbc8c16bc257dfb7b39a4712811d58dc00b6ed9d4cf2b03f1b1dcd7a16d",
+          "etag": "\"954dabe043ff5b591bdec78b1a6ea4a55c2a154c47e49016879fde2a27f3a03a\""
+        },
+        "sunder.agent.tool.execution.observed": {
+          "artifactSource": "owned",
+          "authorityKind": "package",
+          "authorityId": "sunder.package.agent",
+          "selectedAuthorityRelease": "2.0.0",
+          "selectedAuthorityContentIdentity": "0cf38969354fb8db776e7c52b6ea37e7a24be41f6edc7935d9740de42b520d38",
+          "resolvedContractVersion": "1.0.0",
+          "descriptorBytes": 10000,
+          "descriptorSha256": "1e80a60bbba1d0bbfdcd20992b3ad6e6b6d9166fc987056d6945316a611bbee2",
+          "abiSha256": "1a34bc8a004d854ae180dd9ac5a9fb4c346de4bd3360c0ec53821d74e361657d",
+          "etag": "\"1e80a60bbba1d0bbfdcd20992b3ad6e6b6d9166fc987056d6945316a611bbee2\""
+        },
+        "sunder.agent.tool.source": {
+          "artifactSource": "owned",
+          "authorityKind": "package",
+          "authorityId": "sunder.package.agent",
+          "selectedAuthorityRelease": "2.0.0",
+          "selectedAuthorityContentIdentity": "0cf38969354fb8db776e7c52b6ea37e7a24be41f6edc7935d9740de42b520d38",
+          "resolvedContractVersion": "1.0.0",
+          "descriptorBytes": 18100,
+          "descriptorSha256": "d3b481e2f4b9d8a0ae9362f9770dd557a1513f87b33f96925081b7653a6fd4b3",
+          "abiSha256": "21b8195d6ede07c53513184fed6feaadf2546e0314045e4819ab0c6d29a2148a",
+          "etag": "\"d3b481e2f4b9d8a0ae9362f9770dd557a1513f87b33f96925081b7653a6fd4b3\""
+        },
+        "sunder.agent.workspace.editor": {
+          "artifactSource": "owned",
+          "authorityKind": "package",
+          "authorityId": "sunder.package.agent",
+          "selectedAuthorityRelease": "2.0.0",
+          "selectedAuthorityContentIdentity": "0cf38969354fb8db776e7c52b6ea37e7a24be41f6edc7935d9740de42b520d38",
+          "resolvedContractVersion": "1.0.0",
+          "descriptorBytes": 7344,
+          "descriptorSha256": "2f3bfe7f9c2a4cb32bf629797616c6061d78d14c2027912f32eac3cbb7c1e157",
+          "abiSha256": "f5c581cd4a5fd005ea3fd001dd4966f854d97bbeaeb3993e89b032201d9ae200",
+          "etag": "\"2f3bfe7f9c2a4cb32bf629797616c6061d78d14c2027912f32eac3cbb7c1e157\""
+        },
+        "sunder.agent.workspace.execution.resolver": {
+          "artifactSource": "owned",
+          "authorityKind": "package",
+          "authorityId": "sunder.package.agent",
+          "selectedAuthorityRelease": "2.0.0",
+          "selectedAuthorityContentIdentity": "0cf38969354fb8db776e7c52b6ea37e7a24be41f6edc7935d9740de42b520d38",
+          "resolvedContractVersion": "1.0.0",
+          "descriptorBytes": 5797,
+          "descriptorSha256": "110f0cc5ee549de495af7211cb2146c57ce59b26fea0f22c9330c6d6981d0714",
+          "abiSha256": "90144d8d520d4373d4abd46bd69727e3fd63b847246d604a75d81c92c6572ff6",
+          "etag": "\"110f0cc5ee549de495af7211cb2146c57ce59b26fea0f22c9330c6d6981d0714\""
+        },
+        "sunder.agent.workspace.path.migrator": {
+          "artifactSource": "owned",
+          "authorityKind": "package",
+          "authorityId": "sunder.package.agent",
+          "selectedAuthorityRelease": "2.0.0",
+          "selectedAuthorityContentIdentity": "0cf38969354fb8db776e7c52b6ea37e7a24be41f6edc7935d9740de42b520d38",
+          "resolvedContractVersion": "1.0.0",
+          "descriptorBytes": 4401,
+          "descriptorSha256": "671e522803ab5b2932787dee390b4c75420771951d8c5645c42b92ea6fb049c2",
+          "abiSha256": "1f07223e762b7240715ef8f02826094c75ebb42d8cb778721b08c044f637735c",
+          "etag": "\"671e522803ab5b2932787dee390b4c75420771951d8c5645c42b92ea6fb049c2\""
+        },
+        "sunder.stack.contributor": {
+          "artifactSource": "imported",
+          "authorityKind": "platform",
+          "authorityId": "sunder.core",
+          "selectedAuthorityRelease": "1.1.0",
+          "selectedAuthorityContentIdentity": "7c79ee38af47a3b7c45fb9b9715233887a9f581bea354d6d874144e545fa6210",
+          "resolvedContractVersion": "2.0.0",
+          "descriptorBytes": 11553,
+          "descriptorSha256": "38c8f49840f951aec29398d3641ff2306c906aee12ea80c2277db734bce49898",
+          "abiSha256": "6ca6d6385c720290548592de890f3e3ceb86f3d999167f4e80c6afb15f8a02d8",
+          "etag": "\"38c8f49840f951aec29398d3641ff2306c906aee12ea80c2277db734bce49898\""
+        }
+      }
+    }
+  },
+  "packageImports": {
+    "sunder.package.agent": {
+      "localName": "agent",
+      "presence": "required",
+      "requiredContracts": [
+        "sunder.agent.behavior.loop",
+        "sunder.agent.child.run.executor",
+        "sunder.agent.run.control",
+        "sunder.agent.runtime.catalog"
+      ]
+    }
+  },
+  "providerImports": {
+    "behaviorLoop": {
+      "packageId": "sunder.package.agent",
+      "contractId": "sunder.agent.behavior.loop"
+    },
+    "promptContext": {
+      "packageId": "sunder.package.agent",
+      "contractId": "sunder.agent.prompt.context.contributor"
+    },
+    "selectableCapabilities": {
+      "packageId": "sunder.package.agent",
+      "contractId": "sunder.agent.selectable.capability.provider"
+    },
+    "tools": {
+      "packageId": "sunder.package.agent",
+      "contractId": "sunder.agent.tool.source"
+    }
+  },
+  "platformImports": {
+    "stackContributor": {
+      "authorityKind": "platform",
+      "authorityId": "sunder.core",
+      "authorityReleaseRange": ">=1.1.0 <1.2.0",
+      "includePrerelease": false,
+      "selectedAuthorityRelease": "1.1.0",
+      "selectedAuthorityContentIdentity": "7c79ee38af47a3b7c45fb9b9715233887a9f581bea354d6d874144e545fa6210",
+      "contractId": "sunder.stack.contributor",
+      "resolvedContractVersion": "2.0.0",
+      "descriptorBytes": 11553,
+      "descriptorSha256": "38c8f49840f951aec29398d3641ff2306c906aee12ea80c2277db734bce49898",
+      "abiSha256": "6ca6d6385c720290548592de890f3e3ceb86f3d999167f4e80c6afb15f8a02d8",
+      "etag": "\"38c8f49840f951aec29398d3641ff2306c906aee12ea80c2277db734bce49898\""
+    }
+  }
+}

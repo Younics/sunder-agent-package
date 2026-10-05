@@ -10,6 +10,8 @@ using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.PackageViews;
 
+[Sunder.Sdk.Packaging.SunderPackageView("sunder.package.agent.profiles", "Agents",
+    IconPath = "Assets/profile-icon.png", DefaultPlacement = PackageViewPlacement.RightTop)]
 public partial class AgentProfilesView : UserControl, IDisposable, IPackageViewWarmupTarget, IPackageViewNavigationTarget
 {
     private readonly AdaptiveMasterDetail _adaptiveLayout;

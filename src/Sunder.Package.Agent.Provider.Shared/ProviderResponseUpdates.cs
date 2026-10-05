@@ -84,13 +84,13 @@ internal static class ProviderResponseUpdates
             ? Create(modelId, responseId, messageId, CreateUsageContent(usage))
             : null;
 
-    public static UsageContent CreateUsageContent(ProviderUsageSnapshot usage)
+    public static UsageContent CreateUsageContent(ProviderUsageSnapshot usage, bool inferTotalTokenCount = true)
         => new(new UsageDetails
         {
             InputTokenCount = usage.InputTokenCount,
             OutputTokenCount = usage.OutputTokenCount,
             TotalTokenCount = usage.TotalTokenCount
-                              ?? AddIfBothPresent(usage.InputTokenCount, usage.OutputTokenCount),
+                              ?? (inferTotalTokenCount ? AddIfBothPresent(usage.InputTokenCount, usage.OutputTokenCount) : null),
             CachedInputTokenCount = usage.CachedInputTokenCount,
             ReasoningTokenCount = usage.ReasoningTokenCount,
         });

@@ -7,6 +7,7 @@ using Microsoft.Win32.SafeHandles;
 
 namespace Sunder.Package.Agent.Shared.Importing;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record ImportTreeLimits(
     int MaxFiles,
     int MaxDirectories,
@@ -14,6 +15,7 @@ internal sealed record ImportTreeLimits(
     long MaxFileBytes,
     long MaxTotalBytes);
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record ImportTreeFile(
     string RelativePath,
     string SourcePath,
@@ -22,11 +24,13 @@ internal sealed record ImportTreeFile(
     ImportNodeIdentity Identity,
     IReadOnlyList<ImportDirectorySnapshot> Ancestors);
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record ImportDirectorySnapshot(
     string Path,
     ImportNodeIdentity Identity,
     bool TrackChanges);
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal enum ImportReadCheckpoint
 {
     BeforeSourceOpen,
@@ -34,12 +38,14 @@ internal enum ImportReadCheckpoint
     AfterSourceRead,
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal enum ImportNodeKind
 {
     RegularFile,
     Directory,
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal readonly record struct ImportNodeIdentity(
     ulong Volume,
     ulong FileId,
@@ -52,6 +58,7 @@ internal readonly record struct ImportNodeIdentity(
     long ChangeSeconds,
     long ChangeNanoseconds);
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal static partial class BoundedImportIO
 {
     private const int BufferSize = 64 * 1024;

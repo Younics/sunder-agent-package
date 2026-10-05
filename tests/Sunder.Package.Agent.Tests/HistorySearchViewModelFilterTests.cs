@@ -1,5 +1,7 @@
-using Sunder.Package.Agent.HistorySearch;
-using Sunder.Package.Agent.Services;
+extern alias AgentApp;
+
+using AgentApp::Sunder.Package.Agent.HistorySearch;
+using AgentApp::Sunder.Package.Agent.Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -180,9 +182,9 @@ public sealed class HistorySearchViewModelFilterTests
             "History daylight time",
             [rule]);
 
-        var invalidBoundary = Sunder.Package.Agent.PackageViews.AgentHistorySearchViewModel
+        var invalidBoundary = AgentApp::Sunder.Package.Agent.PackageViews.AgentHistorySearchViewModel
             .ResolveLocalBoundaryUtc(new DateTime(2026, 3, 10), timeZone);
-        var ambiguousBoundary = Sunder.Package.Agent.PackageViews.AgentHistorySearchViewModel
+        var ambiguousBoundary = AgentApp::Sunder.Package.Agent.PackageViews.AgentHistorySearchViewModel
             .ResolveLocalBoundaryUtc(new DateTime(2026, 11, 1), timeZone);
 
         Assert.Equal(new DateTimeOffset(2026, 3, 10, 5, 0, 0, TimeSpan.Zero), invalidBoundary);
@@ -280,7 +282,7 @@ public sealed class HistorySearchViewModelFilterTests
                     ? []
                     : [new(request.WorkspaceId, request.WorkspaceId == "workspace-a" ? "Workspace A" : "Workspace B")]),
         };
-        using var viewModel = new Sunder.Package.Agent.PackageViews.AgentHistorySearchViewModel(
+        using var viewModel = new AgentApp::Sunder.Package.Agent.PackageViews.AgentHistorySearchViewModel(
             gateway,
             selection,
             new CapturingHistoryShellViewService());
@@ -306,7 +308,7 @@ public sealed class HistorySearchViewModelFilterTests
         var selection = new AgentChatSelectionStateService(scope.Context);
         await selection.SaveSelectedWorkspaceIdAsync("workspace-a");
         var gateway = CreateFilterGateway(sessionA, sessionB);
-        using var viewModel = new Sunder.Package.Agent.PackageViews.AgentHistorySearchViewModel(
+        using var viewModel = new AgentApp::Sunder.Package.Agent.PackageViews.AgentHistorySearchViewModel(
             gateway,
             selection,
             new CapturingHistoryShellViewService());
@@ -349,7 +351,7 @@ public sealed class HistorySearchViewModelFilterTests
         var selection = new AgentChatSelectionStateService(scope.Context);
         await selection.SaveSelectedWorkspaceIdAsync("workspace-a");
         var gateway = CreateFilterGateway(sessionA, sessionB);
-        using var viewModel = new Sunder.Package.Agent.PackageViews.AgentHistorySearchViewModel(
+        using var viewModel = new AgentApp::Sunder.Package.Agent.PackageViews.AgentHistorySearchViewModel(
             gateway,
             selection,
             new CapturingHistoryShellViewService());
@@ -399,7 +401,7 @@ public sealed class HistorySearchViewModelFilterTests
                         ? []
                         : [new(request.WorkspaceId, request.WorkspaceId)]),
         };
-        using var viewModel = new Sunder.Package.Agent.PackageViews.AgentHistorySearchViewModel(
+        using var viewModel = new AgentApp::Sunder.Package.Agent.PackageViews.AgentHistorySearchViewModel(
             gateway,
             selection,
             new CapturingHistoryShellViewService());
@@ -435,7 +437,7 @@ public sealed class HistorySearchViewModelFilterTests
                 ? Task.FromException<HistorySearchState>(new InvalidOperationException("expected"))
                 : Task.FromResult(HistoryViewModelTestData.State()),
         };
-        using var viewModel = new Sunder.Package.Agent.PackageViews.AgentHistorySearchViewModel(
+        using var viewModel = new AgentApp::Sunder.Package.Agent.PackageViews.AgentHistorySearchViewModel(
             gateway,
             selection,
             new CapturingHistoryShellViewService());

@@ -1,9 +1,4 @@
 <Project>
-  <PropertyGroup Condition="'$(SunderPackageRole)' == 'worker'">
-    <SunderPackageProject Condition="'$(SunderPackageProject)' == ''">true</SunderPackageProject>
-    <SunderSdkWorkerReference Condition="'$(SunderSdkWorkerReference)' == ''">true</SunderSdkWorkerReference>
-  </PropertyGroup>
-
   <ItemGroup Condition="'$(SunderAgentCurrentPackageStorageKey)' == 'true'">
     <Compile Include="$(MSBuildThisFileDirectory)src/Sunder.Package.Agent.Shared/Storage/CurrentPackageStorageKey.cs"
              Link="Storage/CurrentPackageStorageKey.cs" />
@@ -15,26 +10,6 @@
                       ReferenceOutputAssembly="false"
                       PrivateAssets="all" />
   </ItemGroup>
-
-  <ItemGroup Condition="'$(SunderPackageRole)' == 'worker' and '$(SunderPackagePrimaryProject)' == 'true' and '$(SunderPackageAppProject)' != '' and '$(SunderPackageInnerBuild)' != 'true'">
-    <ProjectReference Include="$(SunderPackageAppProject)"
-                      ReferenceOutputAssembly="false"
-                      Private="false"
-                      BuildReference="false"
-                      PrivateAssets="all" />
-  </ItemGroup>
-
-  <PropertyGroup Condition="'$(SunderPackageRole)' == 'app'">
-    <SunderPackageProject Condition="'$(SunderPackageProject)' == ''">true</SunderPackageProject>
-    <SunderSdkAvaloniaReference Condition="'$(SunderSdkAvaloniaReference)' == ''">true</SunderSdkAvaloniaReference>
-    <SunderPackageRuntimeIdentifiers>win-x64;win-arm64;linux-x64;linux-arm64;osx-x64;osx-arm64</SunderPackageRuntimeIdentifiers>
-  </PropertyGroup>
-
-  <PropertyGroup Condition="'$(SunderPackageRole)' == 'protocol'">
-    <SunderPackageProject Condition="'$(SunderPackageProject)' == ''">false</SunderPackageProject>
-    <SunderSdkReference Condition="'$(SunderSdkReference)' == ''">true</SunderSdkReference>
-    <SunderPackageBuildReference Condition="'$(SunderPackageBuildReference)' == ''">true</SunderPackageBuildReference>
-  </PropertyGroup>
 
   <ItemGroup Condition="('$(SunderPackageProject)' == 'true' or '$(SunderSdkReference)' == 'true') and '$(SunderUseSourceSdk)' == 'true'">
     <ProjectReference Include="$(SunderSdkProject)"
@@ -51,7 +26,7 @@
   </ItemGroup>
 
   <ItemGroup Condition="'$(SunderSdkStacksReference)' == 'true' and '$(SunderUseSourceSdk)' == 'false'">
-    <PackageReference Include="Sunder.Sdk.Stacks" />
+    <PackageReference Include="Sunder.Sdk.Stacks" ExcludeAssets="buildTransitive" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(SunderSdkAvaloniaReference)' == 'true' and '$(SunderUseSourceSdk)' == 'true'">
@@ -76,169 +51,12 @@
     <PackageReference Include="Sunder.Package.Build" PrivateAssets="all" />
   </ItemGroup>
 
-  <ItemGroup Condition="'$(SunderPackageProject)' == 'true'">
-    <SunderContractBundle Include="$([System.IO.Path]::GetDirectoryName('$(SunderSdkStacksProject)'))\Contracts\sunder.stack.contributor.rpc.json" ContractId="sunder.stack.contributor" Version="2.0.0" DescriptorPath="contracts/sunder.stack.contributor.rpc.json" Exposure="public" Condition="'$(SunderUseSourceSdk)' == 'true' and '$(SunderSdkStacksReference)' == 'true'" />
-    <SunderContractBundle Include="$(MSBuildThisFileDirectory)src/Sunder.Package.Agent.Contracts/Contracts/chat-provider.rpc.json" ContractId="sunder.agent.chat.provider" Version="1.0.0" DescriptorPath="contracts/chat-provider.rpc.json" Exposure="public" />
-    <SunderContractBundle Include="$(MSBuildThisFileDirectory)src/Sunder.Package.Agent.Contracts/Contracts/embedding-provider.rpc.json" ContractId="sunder.agent.embedding.provider" Version="1.0.0" DescriptorPath="contracts/embedding-provider.rpc.json" Exposure="public" />
-    <SunderContractBundle Include="$(MSBuildThisFileDirectory)src/Sunder.Package.Agent.Contracts/Contracts/runtime-catalog.rpc.json" ContractId="sunder.agent.runtime.catalog" Version="1.0.0" DescriptorPath="contracts/runtime-catalog.rpc.json" Exposure="public" />
-    <SunderContractBundle Include="$(MSBuildThisFileDirectory)src/Sunder.Package.Agent.Contracts/Contracts/workspace-execution-resolver.rpc.json" ContractId="sunder.agent.workspace.execution.resolver" Version="1.0.0" DescriptorPath="contracts/workspace-execution-resolver.rpc.json" Exposure="public" />
-    <SunderContractBundle Include="$(MSBuildThisFileDirectory)src/Sunder.Package.Agent.Contracts/Contracts/child-run-executor.rpc.json" ContractId="sunder.agent.child.run.executor" Version="1.0.0" DescriptorPath="contracts/child-run-executor.rpc.json" Exposure="public" />
-    <SunderContractBundle Include="$(MSBuildThisFileDirectory)src/Sunder.Package.Agent.Contracts/Contracts/session-cleaner.rpc.json" ContractId="sunder.agent.session.cleaner" Version="1.0.0" DescriptorPath="contracts/session-cleaner.rpc.json" Exposure="public" />
-    <SunderContractBundle Include="$(MSBuildThisFileDirectory)src/Sunder.Package.Agent.Contracts/Contracts/system-prompt-contributor.rpc.json" ContractId="sunder.agent.system.prompt.contributor" Version="1.0.0" DescriptorPath="contracts/system-prompt-contributor.rpc.json" Exposure="public" />
-    <SunderContractBundle Include="$(MSBuildThisFileDirectory)src/Sunder.Package.Agent.Contracts/Contracts/tool-source.rpc.json" ContractId="sunder.agent.tool.source" Version="1.0.0" DescriptorPath="contracts/tool-source.rpc.json" Exposure="public" />
-    <SunderContractBundle Include="$(MSBuildThisFileDirectory)src/Sunder.Package.Agent.Contracts/Contracts/tool-execution-observed.rpc.json" ContractId="sunder.agent.tool.execution.observed" Version="1.0.0" DescriptorPath="contracts/tool-execution-observed.rpc.json" Exposure="public" />
-    <SunderContractBundle Include="$(MSBuildThisFileDirectory)src/Sunder.Package.Agent.Contracts/Contracts/permission-surface.rpc.json" ContractId="sunder.agent.permission.surface" Version="1.0.0" DescriptorPath="contracts/permission-surface.rpc.json" Exposure="public" />
-    <SunderContractBundle Include="$(MSBuildThisFileDirectory)src/Sunder.Package.Agent.Contracts/Contracts/prompt-context-contributor.rpc.json" ContractId="sunder.agent.prompt.context.contributor" Version="1.0.0" DescriptorPath="contracts/prompt-context-contributor.rpc.json" Exposure="public" />
-    <SunderContractBundle Include="$(MSBuildThisFileDirectory)src/Sunder.Package.Agent.Contracts/Contracts/durable-lifecycle-observer.rpc.json" ContractId="sunder.agent.durable.lifecycle.observer" Version="1.0.0" DescriptorPath="contracts/durable-lifecycle-observer.rpc.json" Exposure="public" />
-    <SunderContractBundle Include="$(MSBuildThisFileDirectory)src/Sunder.Package.Agent.Contracts/Contracts/profile-capability-consumer.rpc.json" ContractId="sunder.agent.profile.capability.consumer" Version="1.0.0" DescriptorPath="contracts/profile-capability-consumer.rpc.json" Exposure="public" />
-    <SunderContractBundle Include="$(MSBuildThisFileDirectory)src/Sunder.Package.Agent.Contracts/Contracts/selectable-capability-provider.rpc.json" ContractId="sunder.agent.selectable.capability.provider" Version="1.0.0" DescriptorPath="contracts/selectable-capability-provider.rpc.json" Exposure="public" />
-    <SunderContractBundle Include="$(MSBuildThisFileDirectory)src/Sunder.Package.Agent.Contracts/Contracts/behavior-loop.rpc.json" ContractId="sunder.agent.behavior.loop" Version="1.0.0" DescriptorPath="contracts/behavior-loop.rpc.json" Exposure="public" />
-    <SunderContractBundle Include="$(MSBuildThisFileDirectory)src/Sunder.Package.Agent.Contracts/Contracts/run-control.rpc.json" ContractId="sunder.agent.run.control" Version="1.0.0" DescriptorPath="contracts/run-control.rpc.json" Exposure="public" />
-    <SunderContractBundle Include="$(MSBuildThisFileDirectory)src/Sunder.Package.Agent.Contracts/Contracts/execution-target.rpc.json" ContractId="sunder.agent.execution.target" Version="1.0.0" DescriptorPath="contracts/execution-target.rpc.json" Exposure="public" />
-    <SunderContractBundle Include="$(MSBuildThisFileDirectory)src/Sunder.Package.Agent.Contracts/Contracts/workspace-path-migrator.rpc.json" ContractId="sunder.agent.workspace.path.migrator" Version="1.0.0" DescriptorPath="contracts/workspace-path-migrator.rpc.json" Exposure="public" />
-    <SunderContractBundle Include="$(MSBuildThisFileDirectory)src/Sunder.Package.Agent.Contracts/Contracts/workspace-editor.rpc.json" ContractId="sunder.agent.workspace.editor" Version="1.0.0" DescriptorPath="contracts/workspace-editor.rpc.json" Exposure="public" />
-  </ItemGroup>
-
-  <ItemGroup Condition="'$(SunderPackageFamilyId)' == 'sunder.package.agent' and '$(SunderPackageRole)' == 'worker'">
-    <SunderUsesContract Include="sunder.agent.chat.provider" Role="runtime" ContractVersion="1.0.0" Required="false" Actions="discover;invoke;subscribe" />
-    <SunderUsesContract Include="sunder.agent.embedding.provider" Role="runtime" ContractVersion="1.0.0" Required="false" Actions="discover;invoke" />
-    <SunderUsesContract Include="sunder.agent.runtime.catalog" Role="runtime" ContractVersion="1.0.0" Required="true" Actions="discover;invoke;subscribe" />
-    <SunderUsesContract Include="sunder.agent.session.cleaner" Role="runtime" ContractVersion="1.0.0" Required="false" Actions="discover;invoke" />
-    <SunderUsesContract Include="sunder.agent.system.prompt.contributor" Role="runtime" ContractVersion="1.0.0" Required="false" Actions="discover;invoke" />
-    <SunderUsesContract Include="sunder.agent.tool.source" Role="runtime" ContractVersion="1.0.0" Required="false" Actions="discover;invoke" />
-    <SunderUsesContract Include="sunder.agent.tool.execution.observed" Role="runtime" ContractVersion="1.0.0" Required="false" Actions="discover;invoke;subscribe" />
-    <SunderUsesContract Include="sunder.agent.permission.surface" Role="runtime" ContractVersion="1.0.0" Required="false" Actions="discover;invoke" />
-    <SunderUsesContract Include="sunder.agent.prompt.context.contributor" Role="runtime" ContractVersion="1.0.0" Required="false" Actions="discover;invoke" />
-    <SunderUsesContract Include="sunder.agent.durable.lifecycle.observer" Role="runtime" ContractVersion="1.0.0" Required="false" Actions="discover;invoke" />
-    <SunderUsesContract Include="sunder.agent.profile.capability.consumer" Role="runtime" ContractVersion="1.0.0" Required="false" Actions="discover;invoke" />
-    <SunderUsesContract Include="sunder.agent.selectable.capability.provider" Role="runtime" ContractVersion="1.0.0" Required="false" Actions="discover;invoke;subscribe" />
-    <SunderUsesContract Include="sunder.agent.behavior.loop" Role="runtime" ContractVersion="1.0.0" Required="true" Actions="discover;invoke" />
-    <SunderUsesContract Include="sunder.agent.run.control" Role="runtime" ContractVersion="1.0.0" Required="true" Actions="discover;invoke;subscribe" />
-    <SunderUsesContract Include="sunder.agent.execution.target" Role="runtime" ContractVersion="1.0.0" Required="false" Actions="discover;invoke" />
-    <SunderUsesContract Include="sunder.agent.workspace.path.migrator" Role="runtime" ContractVersion="1.0.0" Required="false" Actions="discover;invoke" />
-    <SunderRpcProvider Include="agent.runtime.catalog" ContractId="sunder.agent.runtime.catalog" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-    <SunderRpcProvider Include="agent.workspace.execution.resolver" ContractId="sunder.agent.workspace.execution.resolver" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-    <SunderRpcProvider Include="agent.child.runs" ContractId="sunder.agent.child.run.executor" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-    <SunderRpcProvider Include="agent.attachment.cleaner" ContractId="sunder.agent.session.cleaner" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-    <SunderRpcProvider Include="agent.history.cleaner" ContractId="sunder.agent.session.cleaner" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-    <SunderRpcProvider Include="agent.run.control" ContractId="sunder.agent.run.control" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-    <SunderRpcProvider Include="agent.behavior.loop" ContractId="sunder.agent.behavior.loop" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-    <SunderRpcProvider Include="agent.workspace.documentation" ContractId="sunder.agent.prompt.context.contributor" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-    <SunderRpcProvider Include="agent.stack.profiles" ContractId="sunder.stack.contributor" ContractVersion="2.0.0" Role="runtime" Audience="public" />
-    <SunderRpcProvider Include="agent.stack.workspaces" ContractId="sunder.stack.contributor" ContractVersion="2.0.0" Role="runtime" Audience="public" />
-  </ItemGroup>
-
-  <ItemGroup Condition="'$(SunderPackageFamilyId)' == 'sunder.package.agent.subagents' and '$(SunderPackageRole)' == 'worker'">
-    <SunderUsesContract Include="sunder.agent.chat.provider" Role="runtime" ContractVersion="1.0.0" Required="false" Actions="discover;invoke;subscribe" />
-    <SunderUsesContract Include="sunder.agent.behavior.loop" Role="runtime" ContractVersion="1.0.0" Required="true" Actions="discover;invoke" />
-    <SunderUsesContract Include="sunder.agent.runtime.catalog" Role="runtime" ContractVersion="1.0.0" Required="true" Actions="discover;invoke;subscribe" />
-    <SunderUsesContract Include="sunder.agent.child.run.executor" Role="runtime" ContractVersion="1.0.0" Required="true" Actions="discover;invoke" />
-    <SunderUsesContract Include="sunder.agent.tool.source" Role="runtime" ContractVersion="1.0.0" Required="false" Actions="discover;invoke" />
-    <SunderUsesContract Include="sunder.agent.selectable.capability.provider" Role="runtime" ContractVersion="1.0.0" Required="false" Actions="discover;invoke;subscribe" />
-    <SunderUsesContract Include="sunder.agent.run.control" Role="runtime" ContractVersion="1.0.0" Required="true" Actions="discover;invoke;subscribe" />
-    <SunderRpcProvider Include="subagents.selectable.capabilities" ContractId="sunder.agent.selectable.capability.provider" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-    <SunderRpcProvider Include="subagents.tools" ContractId="sunder.agent.tool.source" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-    <SunderRpcProvider Include="subagents.prompt.context" ContractId="sunder.agent.prompt.context.contributor" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-    <SunderRpcProvider Include="subagents.behavior.loop" ContractId="sunder.agent.behavior.loop" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-    <SunderRpcProvider Include="subagents.stack" ContractId="sunder.stack.contributor" ContractVersion="2.0.0" Role="runtime" Audience="public" />
-  </ItemGroup>
-
-  <ItemGroup Condition="'$(SunderPackageFamilyId)' == 'sunder.package.agent.skills' and '$(SunderPackageRole)' == 'worker'">
-    <SunderUsesContract Include="sunder.agent.runtime.catalog" Role="runtime" ContractVersion="1.0.0" Required="true" Actions="discover;invoke;subscribe" />
-    <SunderUsesContract Include="sunder.agent.execution.target" Role="runtime" ContractVersion="1.0.0" Required="false" Actions="discover;invoke" />
-    <SunderRpcProvider Include="skills.selectable.capabilities" ContractId="sunder.agent.selectable.capability.provider" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-    <SunderRpcProvider Include="skills.tools" ContractId="sunder.agent.tool.source" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-    <SunderRpcProvider Include="skills.prompt.context" ContractId="sunder.agent.prompt.context.contributor" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-    <SunderRpcProvider Include="skills.stack" ContractId="sunder.stack.contributor" ContractVersion="2.0.0" Role="runtime" Audience="public" />
-  </ItemGroup>
-
-  <ItemGroup Condition="'$(SunderPackageFamilyId)' == 'sunder.package.agent.memory.semantic' and '$(SunderPackageRole)' == 'worker'">
-    <SunderUsesContract Include="sunder.agent.runtime.catalog" Role="runtime" ContractVersion="1.0.0" Required="true" Actions="discover;invoke;subscribe" />
-    <SunderUsesContract Include="sunder.agent.embedding.provider" Role="runtime" ContractVersion="1.0.0" Required="false" Actions="discover;invoke" />
-    <SunderRpcProvider Include="semantic.memory.prompt.context" ContractId="sunder.agent.prompt.context.contributor" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-    <SunderRpcProvider Include="semantic.memory.lifecycle" ContractId="sunder.agent.durable.lifecycle.observer" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-    <SunderRpcProvider Include="semantic.memory.profile.capabilities" ContractId="sunder.agent.profile.capability.consumer" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-    <SunderRpcProvider Include="semantic.memory.session.cleaner" ContractId="sunder.agent.session.cleaner" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-  </ItemGroup>
-
-  <ItemGroup Condition="'$(SunderPackageFamilyId)' == 'sunder.package.agent.tools.files' and '$(SunderPackageRole)' == 'worker'">
-    <SunderUsesContract Include="sunder.agent.execution.target" Role="runtime" ContractVersion="1.0.0" Required="false" Actions="discover;invoke" />
-    <SunderRpcProvider Include="files.tools" ContractId="sunder.agent.tool.source" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-    <SunderRpcProvider Include="files.permissions" ContractId="sunder.agent.permission.surface" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-    <SunderRpcProvider Include="files.prompt.context" ContractId="sunder.agent.prompt.context.contributor" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-    <SunderRpcProvider Include="files.session.cleaner" ContractId="sunder.agent.session.cleaner" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-  </ItemGroup>
-
-  <ItemGroup Condition="'$(SunderPackageFamilyId)' == 'sunder.package.agent.tools.shell' and '$(SunderPackageRole)' == 'worker'">
-    <SunderUsesContract Include="sunder.agent.execution.target" Role="runtime" ContractVersion="1.0.0" Required="false" Actions="discover;invoke" />
-    <SunderRpcProvider Include="shell.tools" ContractId="sunder.agent.tool.source" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-    <SunderRpcProvider Include="shell.permissions" ContractId="sunder.agent.permission.surface" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-    <SunderRpcProvider Include="shell.prompt.context" ContractId="sunder.agent.prompt.context.contributor" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-  </ItemGroup>
-
-  <ItemGroup Condition="'$(SunderPackageFamilyId)' == 'sunder.package.agent.tools.web' and '$(SunderPackageRole)' == 'worker'">
-    <SunderRpcProvider Include="web.tools" ContractId="sunder.agent.tool.source" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-  </ItemGroup>
-
-  <ItemGroup Condition="'$(SunderPackageFamilyId)' == 'sunder.package.agent.mcp' and '$(SunderPackageRole)' == 'worker'">
-    <SunderUsesContract Include="sunder.agent.runtime.catalog" Role="runtime" ContractVersion="1.0.0" Required="false" Actions="discover;invoke;subscribe" />
-    <SunderRpcProvider Include="mcp.tools" ContractId="sunder.agent.tool.source" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-    <SunderRpcProvider Include="mcp.tools.observed" ContractId="sunder.agent.tool.execution.observed" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-    <SunderRpcProvider Include="mcp.selectable.capabilities" ContractId="sunder.agent.selectable.capability.provider" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-    <SunderRpcProvider Include="mcp.session.cleaner" ContractId="sunder.agent.session.cleaner" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-    <SunderRpcProvider Include="mcp.stack" ContractId="sunder.stack.contributor" ContractVersion="2.0.0" Role="runtime" Audience="public" />
-  </ItemGroup>
-
-  <ItemGroup Condition="'$(SunderPackageFamilyId)' == 'sunder.package.agent.execution.local' and '$(SunderPackageRole)' == 'worker'">
-    <SunderRpcProvider Include="local.execution.target" ContractId="sunder.agent.execution.target" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-    <SunderRpcProvider Include="local.workspace.path.migrator" ContractId="sunder.agent.workspace.path.migrator" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-    <SunderRpcProvider Include="local.workspace.editor" ContractId="sunder.agent.workspace.editor" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-  </ItemGroup>
-
-  <ItemGroup Condition="'$(SunderPackageFamilyId)' == 'sunder.package.agent.execution.docker' and '$(SunderPackageRole)' == 'worker'">
-    <SunderRpcProvider Include="docker.execution.target" ContractId="sunder.agent.execution.target" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-    <SunderRpcProvider Include="docker.workspace.path.migrator" ContractId="sunder.agent.workspace.path.migrator" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-    <SunderRpcProvider Include="docker.workspace.editor" ContractId="sunder.agent.workspace.editor" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-    <SunderRpcProvider Include="docker.stack" ContractId="sunder.stack.contributor" ContractVersion="2.0.0" Role="runtime" Audience="public" />
-  </ItemGroup>
-
-  <ItemGroup Condition="'$(SunderPackageFamilyId)' == 'sunder.package.agent.provider.openai' and '$(SunderPackageRole)' == 'worker'">
-    <SunderRpcProvider Include="openai.chat" ContractId="sunder.agent.chat.provider" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-    <SunderRpcProvider Include="openai.embedding" ContractId="sunder.agent.embedding.provider" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-    <SunderRpcProvider Include="openai.continuation.cleaner" ContractId="sunder.agent.session.cleaner" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-  </ItemGroup>
-
-  <ItemGroup Condition="'$(SunderPackageFamilyId)' == 'sunder.package.agent.provider.anthropic' and '$(SunderPackageRole)' == 'worker'">
-    <SunderRpcProvider Include="anthropic.chat" ContractId="sunder.agent.chat.provider" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-  </ItemGroup>
-
-  <ItemGroup Condition="'$(SunderPackageFamilyId)' == 'sunder.package.agent.provider.gemini' and '$(SunderPackageRole)' == 'worker'">
-    <SunderRpcProvider Include="gemini.chat" ContractId="sunder.agent.chat.provider" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-    <SunderRpcProvider Include="gemini.embedding" ContractId="sunder.agent.embedding.provider" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-  </ItemGroup>
-
-  <ItemGroup Condition="'$(SunderPackageFamilyId)' == 'sunder.package.agent.provider.lmstudio' and '$(SunderPackageRole)' == 'worker'">
-    <SunderRpcProvider Include="lmstudio.chat" ContractId="sunder.agent.chat.provider" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-    <SunderRpcProvider Include="lmstudio.embedding" ContractId="sunder.agent.embedding.provider" ContractVersion="1.0.0" Role="runtime" Audience="public" />
-  </ItemGroup>
-
-  <ItemGroup Condition="'$(SunderPackageFamilyId)' == 'sunder.package.agent.builder' and '$(SunderPackageRole)' == 'worker'">
-    <SunderUsesContract Include="sunder.agent.workspace.execution.resolver" Role="runtime" ContractVersion="1.0.0" Required="true" Actions="discover;invoke" />
-    <SunderUsesContract Include="sunder.agent.execution.target" Role="runtime" ContractVersion="1.0.0" Required="false" Actions="discover;invoke" />
-  </ItemGroup>
-
   <Target Name="ValidateSunderSdkMode"
           BeforeTargets="_GenerateRestoreProjectPathWalk;CollectPackageReferences;PrepareForBuild">
-    <Error Condition="'$(SunderPackageRole)' != '' and '$(SunderPackageRole)' != 'worker' and '$(SunderPackageRole)' != 'app' and '$(SunderPackageRole)' != 'protocol' and '$(SunderPackageRole)' != 'test'"
-           Text="SunderPackageRole must be worker, app, protocol, or test, but was '$(SunderPackageRole)'." />
+    <Error Condition="'$(SunderPackageRole)' != '' and '$(SunderPackageRole)' != 'test'"
+           Text="SunderPackageRole must be unset for canonical package projects or 'test' for test projects, but was '$(SunderPackageRole)'." />
     <Error Condition="'$(SunderPackageRole)' != '' and '$(SunderPackageFamilyId)' == ''"
            Text="SunderPackageFamilyId is required when SunderPackageRole is set." />
-    <Error Condition="'$(SunderPackageRole)' == 'worker' and ('$(SunderPackageProject)' != 'true' or '$(SunderPackagePrimaryProject)' != 'true' or '$(SunderSdkWorkerReference)' != 'true')"
-           Text="A worker role must be the primary package project and enable SunderPackageProject and SunderSdkWorkerReference." />
-    <Error Condition="'$(SunderPackageRole)' == 'worker' and ('$(OutputType)' != 'Exe' or '$(SelfContained)' != 'true' or '$(UseAppHost)' != 'true' or '$(PublishSingleFile)' == 'true')"
-           Text="A worker role must be an unpacked self-contained apphost executable." />
-    <Error Condition="'$(SunderPackageRole)' == 'protocol' and '$(SunderPackageProject)' != 'false'"
-           Text="A protocol role must not be a runtime package project." />
     <Error Condition="'$(SunderUseSourceSdk)' != 'true' and '$(SunderUseSourceSdk)' != 'false'"
            Text="SunderUseSourceSdk must be 'true' or 'false', but was '$(SunderUseSourceSdk)'." />
     <Error Condition="'$(SunderUseSourceSdk)' == 'true' and ('$(SunderPackageProject)' == 'true' or '$(SunderSdkReference)' == 'true') and !Exists('$(SunderSdkProject)')"

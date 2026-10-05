@@ -3,6 +3,7 @@ using Avalonia.Controls;
 
 namespace Sunder.Package.Agent.Shared.Presentation;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.App)]
 internal sealed class AdaptiveMasterDetail : IDisposable
 {
     internal const double DefaultWideMinimumWidth = 820;

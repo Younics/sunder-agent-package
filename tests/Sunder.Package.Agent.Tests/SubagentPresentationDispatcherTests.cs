@@ -1,10 +1,10 @@
 extern alias SubagentsPackage;
 
 using System.Collections.Concurrent;
-using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Subagents.Models;
-using Sunder.Package.Agent.Subagents.PackageViews;
-using Sunder.Package.Agent.Subagents.Runtime;
+using SubagentsPackage::Sunder.Package.Agent.Contracts.Models;
+using SubagentsPackage::Sunder.Package.Agent.Subagents.Models;
+using SubagentsPackage::Sunder.Package.Agent.Subagents.PackageViews;
+using SubagentsPackage::Sunder.Package.Agent.Subagents.Runtime;
 using Xunit;
 using SubagentPresentationDispatcher = SubagentsPackage::Sunder.Package.Agent.Shared.Presentation.IPresentationDispatcher;
 using SubagentAdaptiveDetailPhase = SubagentsPackage::Sunder.Package.Agent.Shared.Presentation.AdaptiveDetailPhase;

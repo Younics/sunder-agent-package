@@ -11,10 +11,10 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.LMStudio\Sunder.Package.Agent.Provider.LMStudio.csproj" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.LMStudio\App\Sunder.Package.Agent.Provider.LMStudio.App.csproj"
-                      Aliases="LMStudioApp" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.LMStudio\Sunder.Package.Agent.Provider.LMStudio.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="global,LMStudioWorker" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.LMStudio\Sunder.Package.Agent.Provider.LMStudio.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=app" Aliases="LMStudioApp" />
     <ProjectReference Include="..\Sunder.Package.Agent.Provider.TestSupport\Sunder.Package.Agent.Provider.TestSupport.csproj" />
     <ProjectReference Include="..\Sunder.Package.Agent.TestSupport\Sunder.Package.Agent.TestSupport.csproj" />
     <ProjectReference Include="..\Sunder.Package.Agent.TestSupport.Avalonia\Sunder.Package.Agent.TestSupport.Avalonia.csproj" />

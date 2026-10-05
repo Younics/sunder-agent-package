@@ -317,9 +317,7 @@ public sealed partial class AgentToolService
                    cancellationToken,
                    lease.RetirementToken))
         {
-            var descriptor = lease.Service is AgentExecutionTargetRpcClient rpcTarget
-                ? await rpcTarget.DescribeAsync(invocation.Token).ConfigureAwait(false)
-                : lease.Service.Descriptor;
+            var descriptor = await Sunder.Package.Agent.Runtime.Rpc.AgentExecutionBindings.DescribeAsync(lease.Service, invocation.Token).ConfigureAwait(false);
             return lease.RetirementToken.IsCancellationRequested
                 ? null
                 : new ExecutionTargetSnapshot(descriptor, lease.PackageId);
@@ -336,7 +334,7 @@ public sealed partial class AgentToolService
             return null;
         }
 
-        foreach (var reference in _rpcCatalog.GetServiceReferences(AgentRpcServices.RuntimeCatalogs))
+        foreach (var reference in _rpcCatalog.GetServiceReferences(Sunder.Package.Agent.Runtime.Rpc.AgentToolProfileBindings.Service))
         {
             if (!reference.TryAcquire(out var lease))
             {
@@ -442,7 +440,7 @@ public sealed partial class AgentToolService
         using (targetLease)
         {
             if (!targetLease.RetirementToken.IsCancellationRequested
-                && AgentExecutionTargetRpc.SupportsFacet(
+                && Sunder.Package.Agent.Runtime.Rpc.AgentExecutionBindings.SupportsFacet(
                     targetLease.Service,
                     AgentExecutionFacetIds.ResourceAuthority)
                 && targetLease.Service is IAgentResourceAuthorityExecutionTarget authorityTarget)

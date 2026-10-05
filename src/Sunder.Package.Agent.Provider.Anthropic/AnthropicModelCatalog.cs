@@ -4,6 +4,7 @@ using Sunder.Sdk.Settings;
 
 namespace Sunder.Package.Agent.Provider.Anthropic;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal static class AnthropicModelCatalog
 {
     private static readonly IReadOnlyList<AgentModelVariantDescriptor> StandardReasoningVariants =

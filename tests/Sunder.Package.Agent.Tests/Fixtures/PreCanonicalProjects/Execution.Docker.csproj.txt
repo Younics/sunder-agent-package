@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <SunderPackageFamilyId>sunder.package.agent.execution.docker</SunderPackageFamilyId>
+    <SunderPackageRole>worker</SunderPackageRole>
+    <SunderPackageAppProject>App\DockerApp.csproj</SunderPackageAppProject>
+    <SunderSdkStacksReference>true</SunderSdkStacksReference>
+    <SunderAgentCurrentPackageStorageKey>true</SunderAgentCurrentPackageStorageKey>
+  </PropertyGroup>
+
+  <Import Project="$(MSBuildThisFileDirectory)..\..\Sunder.Agent.Worker.props" />
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <ProjectReference Include="..\Sunder.Agent.Execution.Common\Sunder.Agent.Execution.Common.csproj" />
+    <ProjectReference Include="..\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
+    <ProjectReference Include="Protocol\DockerProtocol.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="App\**\*" />
+    <Compile Remove="Protocol\**\*" />
+    <Compile Remove="Rpc\ManagementService.cs;Rpc\ManagementClient.cs;Rpc\ImageCatalogContent.cs" />
+    <Compile Remove="Models\DockerExecutionPresentationModels.cs;Runtime\DockerExecutionPresentationDefaults.cs" />
+    <Compile Remove="Rpc\ExecutionValues.cs;Rpc\ExecutionTargetProvider.cs;Rpc\WorkspaceEditorProvider.cs;Rpc\WorkspacePathMigratorProvider.cs;Rpc\DockerStackProvider.cs;Rpc\DockerWorkerBindings.cs" />
+    <Compile Remove="Rpc\ProviderComposition.cs" />
+    <Compile Remove="Rpc\AppComposition.cs" />
+    <None Remove="App\**\*" />
+    <None Remove="Protocol\**\*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <SunderSdkCapability Include="docker-environment.v1" />
+    <SunderContractBundle Include="Protocol\Contracts\docker-execution-presentation.rpc.json"
+                          ContractId="sunder.package.agent.execution.docker.presentation"
+                            Version="1.0.0"
+                          DescriptorPath="contracts/docker-execution-presentation.rpc.json"
+                          Exposure="package" />
+    <SunderRpcProvider Include="docker.presentation"
+                       Role="runtime"
+                       ContractId="sunder.package.agent.execution.docker.presentation"
+                        ContractVersion="1.0.0"
+                       Audience="owner" />
+    <SunderPackageTarget Include="runtime/$(RuntimeIdentifier)"
+                         Role="runtime"
+                         Rid="$(RuntimeIdentifier)"
+                         Kind="worker" />
+  </ItemGroup>
+
+</Project>

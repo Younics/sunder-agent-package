@@ -41,7 +41,7 @@ internal static class FileSystemPromptBuilder
             || request.Workspace is null
             || request.ExecutionBinding is null
             || target is null
-            || !AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.ExecutionScope)
+            || !FilesExecutionFacets.SupportsFacet(target, AgentExecutionFacetIds.ExecutionScope)
             || target is not IAgentExecutionScopeProvider scopeProvider)
         {
             return null;

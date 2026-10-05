@@ -6,7 +6,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 publisher="$script_dir/publish-registry-package.sh"
 [[ -f "$publisher" ]] || { printf 'Registry publisher not found: %s\n' "$publisher" >&2; exit 1; }
 
-for required_command in cat cp cut grep jq mktemp mv tr unzip wc zip; do
+for required_command in cat cp cut grep jq mktemp mv python3 tr unzip wc zip; do
   command -v "$required_command" >/dev/null 2>&1 \
     || { printf '%s is required to run the Registry publication fixture.\n' "$required_command" >&2; exit 127; }
 done
@@ -84,11 +84,11 @@ canonical_root="$fixture_dir/canonical"
 mkdir -p \
   "$canonical_root/manifest" \
   "$canonical_root/payload/shared" \
-  "$canonical_root/payload/runtime/linux-x64/bin"
+  "$canonical_root/payload/runtime/linux-x64/lib"
 jq -cn '
   {
     archiveFormatVersion: 1,
-    manifestVersion: 3,
+    manifestVersion: 1,
     id: "fixture.package",
     name: "Fixture Package",
     summary: "Registry release fixture",
@@ -99,10 +99,15 @@ jq -cn '
       role: "runtime",
       rid: "linux-x64",
       kind: "worker",
-      entryPoint: "bin/worker",
+      entryPoint: "lib/worker.dll",
       targetFramework: "net10.0",
       sdkVersion: "1.1.0",
-      requiredHostCapabilities: ["rpc.v2", "sdk-baseline-1-1.v1", "worker-protocol.v3"],
+      requiredHostCapabilities: ["execution-runtime.v1", "rpc.v1", "sdk-baseline-1-1.v1", "worker-protocol.v1"],
+      executionRuntime: {
+        id: "sunder.runtime.dotnet",
+        versionRange: ">=10.0.0 <11.0.0",
+        moduleAbi: "sunder.dotnet-worker-module.v1"
+      },
       views: []
     }],
     contractBundles: [],
@@ -111,13 +116,13 @@ jq -cn '
   }
 ' > "$canonical_root/manifest/sunder-package.json"
 printf 'shared projection bytes\n' > "$canonical_root/payload/shared/content.txt"
-printf 'runtime projection bytes\n' > "$canonical_root/payload/runtime/linux-x64/bin/worker"
+printf 'runtime projection bytes\n' > "$canonical_root/payload/runtime/linux-x64/lib/worker.dll"
 manifest_sha="$(hash_file "$canonical_root/manifest/sunder-package.json")"
 manifest_size="$(file_size "$canonical_root/manifest/sunder-package.json")"
 shared_payload_sha="$(hash_file "$canonical_root/payload/shared/content.txt")"
 shared_payload_size="$(file_size "$canonical_root/payload/shared/content.txt")"
-runtime_payload_sha="$(hash_file "$canonical_root/payload/runtime/linux-x64/bin/worker")"
-runtime_payload_size="$(file_size "$canonical_root/payload/runtime/linux-x64/bin/worker")"
+runtime_payload_sha="$(hash_file "$canonical_root/payload/runtime/linux-x64/lib/worker.dll")"
+runtime_payload_size="$(file_size "$canonical_root/payload/runtime/linux-x64/lib/worker.dll")"
 jq -cn \
   --arg manifest_sha "$manifest_sha" \
   --argjson manifest_size "$manifest_size" \
@@ -130,7 +135,7 @@ jq -cn \
       files: [
         {path: "manifest/sunder-package.json", sha256: $manifest_sha, size: $manifest_size},
         {path: "payload/shared/content.txt", sha256: $shared_sha, size: $shared_size},
-        {path: "payload/runtime/linux-x64/bin/worker", sha256: $runtime_sha, size: $runtime_size}
+        {path: "payload/runtime/linux-x64/lib/worker.dll", sha256: $runtime_sha, size: $runtime_size}
       ] | sort_by(.path)
     }
   ' > "$canonical_root/manifest/content-index.json"
@@ -139,7 +144,7 @@ jq -cn \
   zip -q -X "$archive" \
     manifest/content-index.json \
     manifest/sunder-package.json \
-    payload/runtime/linux-x64/bin/worker \
+    payload/runtime/linux-x64/lib/worker.dll \
     payload/shared/content.txt
 )
 canonical_sha="$(hash_file "$archive")"
@@ -166,7 +171,7 @@ write_projection() {
       payload_relative='payload/shared/content.txt'
       ;;
     runtime)
-      payload_relative="payload/runtime/$rid/bin/worker"
+      payload_relative="payload/runtime/$rid/lib/worker.dll"
       ;;
     *)
       printf 'Unsupported fixture projection kind: %s\n' "$kind" >&2
@@ -252,6 +257,12 @@ export MOCK_EXPECTED_VERSION=1.2.3
 export MOCK_EXPECTED_PUBLISH_TOKEN=sunder_pub_v1_0123456789012345678901234567890123456789012
 export SUNDER_REGISTRY_PUBLISH_TOKEN="$MOCK_EXPECTED_PUBLISH_TOKEN"
 
+expected_publication="$fixture_dir/expected-publication.json"
+jq -n '{
+  package: {packageId:"fixture.package", version:"1.2.3", packageContentIdentity:("2" * 64)},
+  ownerPrincipalId:("1" * 32), publicInventorySha256:("3" * 64), initialAvailability:"Yanked"
+}' > "$expected_publication"
+
 write_details() {
   local advertised_canonical_sha="${1:-$canonical_sha}"
   local advertised_shared_sha="${2:-$(hash_file "$MOCK_SHARED_PROJECTION")}"
@@ -323,6 +334,7 @@ expected_resource=''
 set_latest_header=''
 package_form=''
 set_latest_form=''
+initial_availability_form=''
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -o)
@@ -346,6 +358,7 @@ while [[ $# -gt 0 ]]; do
       case "$2" in
         package=*) package_form="$2" ;;
         setLatest=*) set_latest_form="$2" ;;
+        initialAvailability=*) initial_availability_form="$2" ;;
       esac
       shift 2
       ;;
@@ -392,7 +405,24 @@ if [[ "$method" == POST && "$url" == */api/v1/packages/publish ]]; then
     || { printf 'Publish request omitted the multipart package.\n' >&2; exit 2; }
   [[ "$set_latest_form" == setLatest=false ]] \
     || { printf 'Publish request omitted multipart setLatest=false.\n' >&2; exit 2; }
+  if [[ "${MOCK_EXPECT_INITIAL_YANKED:-false}" == true ]]; then
+    [[ "$initial_availability_form" == initialAvailability=Yanked ]] \
+      || { printf 'Initial-Yanked publication omitted its exact multipart availability.\n' >&2; exit 2; }
+  else
+    [[ -z "$initial_availability_form" ]] \
+      || { printf 'Legacy publication unexpectedly changed its availability mode.\n' >&2; exit 2; }
+  fi
+  [[ "${MOCK_UPLOAD_OUTCOME:-success}" != fail-before-commit ]] || exit 28
   printf 'published\n' > "$MOCK_REGISTRY_STATE"
+  case "${MOCK_UPLOAD_OUTCOME:-success}" in
+    fail-after-commit) exit 28 ;;
+    malformed-after-commit) printf '{incomplete response\n'; exit 0 ;;
+    conflict-after-commit)
+      jq '.publication.ownerPrincipalId = ("4" * 32)' "$MOCK_REGISTRY_DETAILS" > "$MOCK_REGISTRY_DETAILS.next"
+      mv "$MOCK_REGISTRY_DETAILS.next" "$MOCK_REGISTRY_DETAILS"
+      exit 28
+      ;;
+  esac
   jq -cn --arg package_id "$MOCK_EXPECTED_PACKAGE_ID" --arg version "$MOCK_EXPECTED_VERSION" \
     '{success: true, packageId: $package_id, version: $version}'
   exit 0
@@ -421,6 +451,7 @@ MOCK_CURL
 chmod +x "$mock_bin/curl"
 
 reset_fixture() {
+  unset MOCK_EXPECT_INITIAL_YANKED MOCK_UPLOAD_OUTCOME
   printf '%s\n' "$1" > "$MOCK_REGISTRY_STATE"
   : > "$MOCK_REGISTRY_CALLS"
   export MOCK_SHARED_PROJECTION="$projection_shared"
@@ -435,6 +466,24 @@ run_publisher() {
 
 run_verifier() {
   env -u SUNDER_REGISTRY_PUBLISH_TOKEN PATH="$mock_bin:$PATH" bash "$publisher" --verify-only \
+    https://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION"
+}
+
+write_yanked_details() {
+  write_details
+  jq --slurpfile expected "$expected_publication" '.isYanked = true | .publication = $expected[0]' \
+    "$MOCK_REGISTRY_DETAILS" > "$MOCK_REGISTRY_DETAILS.next"
+  mv "$MOCK_REGISTRY_DETAILS.next" "$MOCK_REGISTRY_DETAILS"
+}
+
+run_yanked_publisher() {
+  PATH="$mock_bin:$PATH" bash "$publisher" --initial-yanked "$expected_publication" \
+    https://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION"
+}
+
+run_yanked_verifier() {
+  env -u SUNDER_REGISTRY_PUBLISH_TOKEN PATH="$mock_bin:$PATH" bash "$publisher" \
+    --verify-only --initial-yanked "$expected_publication" \
     https://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION"
 }
 
@@ -610,4 +659,126 @@ if SUNDER_REGISTRY_PUBLISH_TOKEN=sunder_pub_v1_invalid \
 fi
 grep -Fq 'valid scoped sunder_pub_v1' "$fixture_dir/invalid-token.log"
 
-printf 'Registry publication fixture passed: publish and read-only verification enforce canonical bytes, projections, scoped headers, and no implicit promotion.\n'
+reset_fixture absent
+write_yanked_details
+export MOCK_EXPECT_INITIAL_YANKED=true
+run_yanked_publisher > "$fixture_dir/initial-yanked.log"
+[[ "$(grep -c '^PUBLISH$' "$MOCK_REGISTRY_CALLS")" -eq 1 ]]
+[[ "$(grep -c '^DETAILS$' "$MOCK_REGISTRY_CALLS")" -eq 2 ]]
+[[ "$(grep -c '^PROJECTION ' "$MOCK_REGISTRY_CALLS")" -eq 2 ]]
+
+reset_fixture published
+write_yanked_details
+run_yanked_verifier > "$fixture_dir/initial-yanked-verify.log"
+! grep -q '^PUBLISH$' "$MOCK_REGISTRY_CALLS"
+
+for outcome in fail-after-commit malformed-after-commit; do
+  reset_fixture absent
+  write_yanked_details
+  export MOCK_EXPECT_INITIAL_YANKED=true MOCK_UPLOAD_OUTCOME="$outcome"
+  run_yanked_publisher > "$fixture_dir/$outcome.log" 2>&1
+  grep -Fq 'Recovered exact initial-Yanked publication' "$fixture_dir/$outcome.log"
+  [[ "$(grep -c '^PUBLISH$' "$MOCK_REGISTRY_CALLS")" -eq 1 ]]
+  [[ "$(grep -c '^DETAILS$' "$MOCK_REGISTRY_CALLS")" -eq 2 ]]
+  : > "$MOCK_REGISTRY_CALLS"
+  run_yanked_publisher > "$fixture_dir/$outcome-retry.log"
+  ! grep -q '^PUBLISH$' "$MOCK_REGISTRY_CALLS"
+done
+
+for outcome in fail-before-commit conflict-after-commit; do
+  reset_fixture absent
+  write_yanked_details
+  export MOCK_EXPECT_INITIAL_YANKED=true MOCK_UPLOAD_OUTCOME="$outcome"
+  if run_yanked_publisher > "$fixture_dir/$outcome.log" 2>&1; then
+    printf 'Initial-Yanked recovery accepted %s.\n' "$outcome" >&2
+    exit 1
+  fi
+  [[ "$(grep -c '^PUBLISH$' "$MOCK_REGISTRY_CALLS")" -eq 1 ]]
+  [[ "$(grep -c '^DETAILS$' "$MOCK_REGISTRY_CALLS")" -eq 2 ]]
+done
+
+for mutation in missing-publication owner content inventory initial-state current-state extra-member; do
+  reset_fixture published
+  write_yanked_details
+  case "$mutation" in
+    missing-publication) filter='del(.publication)' ;;
+    owner) filter='.publication.ownerPrincipalId = ("4" * 32)' ;;
+    content) filter='.publication.package.packageContentIdentity = ("4" * 64)' ;;
+    inventory) filter='.publication.publicInventorySha256 = ("4" * 64)' ;;
+    initial-state) filter='.publication.initialAvailability = "Listed"' ;;
+    current-state) filter='.isYanked = false' ;;
+    extra-member) filter='.publication.unreviewed = true' ;;
+  esac
+  jq "$filter" "$MOCK_REGISTRY_DETAILS" > "$MOCK_REGISTRY_DETAILS.next"
+  mv "$MOCK_REGISTRY_DETAILS.next" "$MOCK_REGISTRY_DETAILS"
+  if run_yanked_publisher > "$fixture_dir/yanked-$mutation.log" 2>&1; then
+    printf 'Initial-Yanked verification accepted mismatched %s.\n' "$mutation" >&2
+    exit 1
+  fi
+  grep -Fq 'publication owner/content/inventory/initial availability or current Yanked state differs' \
+    "$fixture_dir/yanked-$mutation.log"
+  ! grep -q '^PUBLISH$' "$MOCK_REGISTRY_CALLS"
+done
+
+reset_fixture absent
+cp "$expected_publication" "$fixture_dir/expected-publication-valid.json"
+jq '.package.version = "1.2.4"' "$fixture_dir/expected-publication-valid.json" > "$expected_publication"
+if run_yanked_publisher > "$fixture_dir/invalid-expected-publication.log" 2>&1; then
+  printf 'Initial-Yanked publication accepted mismatched expected version.\n' >&2
+  exit 1
+fi
+[[ ! -s "$MOCK_REGISTRY_CALLS" ]]
+cp "$fixture_dir/expected-publication-valid.json" "$expected_publication"
+python3 - "$expected_publication" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+text = path.read_text()
+path.write_text('{"initialAvailability":"Listed",' + text.lstrip()[1:])
+PY
+if run_yanked_publisher > "$fixture_dir/duplicate-expected-publication.log" 2>&1; then
+  printf 'Initial-Yanked publication accepted duplicate evidence members.\n' >&2
+  exit 1
+fi
+[[ ! -s "$MOCK_REGISTRY_CALLS" ]]
+cp "$fixture_dir/expected-publication-valid.json" "$expected_publication"
+
+reset_fixture published
+write_yanked_details
+jq '.isYanked = false' "$MOCK_REGISTRY_DETAILS" > "$MOCK_REGISTRY_DETAILS.next"
+mv "$MOCK_REGISTRY_DETAILS.next" "$MOCK_REGISTRY_DETAILS"
+PATH="$mock_bin:$PATH" env -u SUNDER_REGISTRY_PUBLISH_TOKEN \
+  bash "$publisher" --verify-only --initial-yanked "$expected_publication" --current-availability Listed \
+    https://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION" > "$fixture_dir/listed-readback.log"
+! grep -q '^PUBLISH$' "$MOCK_REGISTRY_CALLS"
+
+reset_fixture published
+write_yanked_details
+python3 - "$MOCK_REGISTRY_DETAILS" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+path.write_text('{"isYanked":false,' + path.read_text().lstrip()[1:])
+PY
+if run_yanked_verifier > "$fixture_dir/duplicate-readback.log" 2>&1; then
+  printf 'Publication readback accepted duplicate state fields.\n' >&2
+  exit 1
+fi
+! grep -q '^PUBLISH$' "$MOCK_REGISTRY_CALLS"
+
+reset_fixture published
+write_yanked_details
+jq '.publishedAtUtc = "2026-10-05T00:00:00.1230000+00:00"' "$MOCK_REGISTRY_DETAILS" > "$MOCK_REGISTRY_DETAILS.next"
+mv "$MOCK_REGISTRY_DETAILS.next" "$MOCK_REGISTRY_DETAILS"
+env -u SUNDER_REGISTRY_PUBLISH_TOKEN PATH="$mock_bin:$PATH" bash "$publisher" \
+  --verify-only --initial-yanked "$expected_publication" --published-at-utc 2026-10-05T00:00:00.123Z \
+  https://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION" > "$fixture_dir/time-readback.log"
+if env -u SUNDER_REGISTRY_PUBLISH_TOKEN PATH="$mock_bin:$PATH" bash "$publisher" \
+    --verify-only --initial-yanked "$expected_publication" --published-at-utc 2026-10-05T00:00:00.124Z \
+    https://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION" > "$fixture_dir/time-mismatch.log" 2>&1; then
+  printf 'Publication readback accepted a forged evidence-commit timestamp.\n' >&2
+  exit 1
+fi
+! grep -q '^PUBLISH$' "$MOCK_REGISTRY_CALLS"
+
+printf 'Registry publication fixture passed: original canonical/projection/security cases plus exact initial-Yanked identity, read-only checks, lost-response recovery, idempotent retry and mismatch rejection; no implicit promotion.\n'

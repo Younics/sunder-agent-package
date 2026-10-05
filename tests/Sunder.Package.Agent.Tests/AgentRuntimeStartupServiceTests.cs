@@ -24,7 +24,7 @@ public sealed class AgentRuntimeStartupServiceTests
 {
     private static readonly TimeSpan TestTimeout = TimeSpan.FromSeconds(15);
     private static readonly SunderRpcContractDescriptor DeferredTestDescriptor =
-        AgentRpcContractDescriptors.Get(AgentRpcContractIds.SessionCleaner);
+        RegressionTestRpcDescriptors.Get(AgentRpcContractIds.SessionCleaner);
 
     [Fact]
     public async Task WorkerActivation_DoesNotWaitForPreActivationCatalogDiscovery()
@@ -32,11 +32,7 @@ public sealed class AgentRuntimeStartupServiceTests
         using var scope = RegressionTestPackageScope.Create();
         var client = new BlockingActivationRpcClient();
         var catalog = AgentRpcCatalog.CreateDormant(client);
-        var services = new ServiceCollection();
-        services.AddSingleton<IPackageContext>(scope.Context);
-        services.AddSingleton(catalog);
-        new PackageModule().ConfigureRuntimeServices(services, scope.Context);
-        await using var provider = services.BuildServiceProvider();
+        await using var provider = RegressionTestRuntime.Create(scope.Context, catalog);
         var deferred = new DeferredAgentRpcServiceHandler(
             "test.deferred",
             DeferredTestDescriptor,
@@ -60,11 +56,7 @@ public sealed class AgentRuntimeStartupServiceTests
         using var scope = RegressionTestPackageScope.Create();
         var catalog = AgentRpcCatalog.CreateDormant(
             new RegressionTestRpcClient(new RegressionTestRpcState(), "sunder.package.agent"));
-        var services = new ServiceCollection();
-        services.AddSingleton<IPackageContext>(scope.Context);
-        services.AddSingleton(catalog);
-        new PackageModule().ConfigureRuntimeServices(services, scope.Context);
-        await using var provider = services.BuildServiceProvider();
+        await using var provider = RegressionTestRuntime.Create(scope.Context, catalog);
         var handlerActivated = false;
         var deferred = new DeferredAgentRpcServiceHandler("test.deferred", DeferredTestDescriptor, _ =>
         {
@@ -105,11 +97,7 @@ public sealed class AgentRuntimeStartupServiceTests
         using var scope = RegressionTestPackageScope.Create();
         var catalog = AgentRpcCatalog.CreateDormant(
             new RegressionTestRpcClient(new RegressionTestRpcState(), "sunder.package.agent"));
-        var services = new ServiceCollection();
-        services.AddSingleton<IPackageContext>(scope.Context);
-        services.AddSingleton(catalog);
-        new PackageModule().ConfigureRuntimeServices(services, scope.Context);
-        await using var provider = services.BuildServiceProvider();
+        await using var provider = RegressionTestRuntime.Create(scope.Context, catalog);
         var first = new DeferredAgentRpcServiceHandler(
             "test.first",
             DeferredTestDescriptor,
@@ -142,11 +130,7 @@ public sealed class AgentRuntimeStartupServiceTests
         using var scope = RegressionTestPackageScope.Create();
         var catalog = AgentRpcCatalog.CreateDormant(
             new RegressionTestRpcClient(new RegressionTestRpcState(), "sunder.package.agent"));
-        var services = new ServiceCollection();
-        services.AddSingleton<IPackageContext>(scope.Context);
-        services.AddSingleton(catalog);
-        new PackageModule().ConfigureRuntimeServices(services, scope.Context);
-        await using var provider = services.BuildServiceProvider();
+        await using var provider = RegressionTestRuntime.Create(scope.Context, catalog);
         var deferred = new DeferredAgentRpcServiceHandler(
             "test.deferred",
             DeferredTestDescriptor,
@@ -197,11 +181,7 @@ public sealed class AgentRuntimeStartupServiceTests
         using var scope = RegressionTestPackageScope.Create();
         var catalog = AgentRpcCatalog.CreateDormant(
             new RegressionTestRpcClient(new RegressionTestRpcState(), "sunder.package.agent"));
-        var services = new ServiceCollection();
-        services.AddSingleton<IPackageContext>(scope.Context);
-        services.AddSingleton(catalog);
-        new PackageModule().ConfigureRuntimeServices(services, scope.Context);
-        var provider = services.BuildServiceProvider();
+        var provider = RegressionTestRuntime.Create(scope.Context, catalog);
         var deferred = new DeferredAgentRpcServiceHandler(
             "test.deferred",
             DeferredTestDescriptor,
@@ -257,13 +237,9 @@ public sealed class AgentRuntimeStartupServiceTests
         using var scope = RegressionTestPackageScope.Create();
         var catalog = new RegressionTestExtensionCatalog();
         catalog.AddProvider(
-            AgentRpcServices.DurableLifecycleObservers,
+            RegressionTestBindings.DurableLifecycleObservers,
             new NoOpDurableObserver());
-        var services = new ServiceCollection();
-        services.AddSingleton<IPackageContext>(scope.Context);
-        services.AddSingleton<Sunder.Package.Agent.Protocol.AgentRpcCatalog>(catalog);
-        new PackageModule().ConfigureRuntimeServices(services, scope.Context);
-        await using var provider = services.BuildServiceProvider();
+        await using var provider = RegressionTestRuntime.Create(scope.Context, catalog);
         var projection = provider.GetRequiredService<HistorySearchStore>();
         var semanticConfiguration = projection.ChangeConfiguration(
             true,
@@ -331,13 +307,9 @@ public sealed class AgentRuntimeStartupServiceTests
         var catalog = new RegressionTestExtensionCatalog();
         var cleaner = new BlockingSessionDataCleaner();
         var observer = new BlockingLifecycleObserver();
-        catalog.AddProvider(AgentRpcServices.SessionCleaners, cleaner);
-        catalog.AddProvider(AgentRpcServices.DurableLifecycleObservers, observer);
-        var services = new ServiceCollection();
-        services.AddSingleton<IPackageContext>(scope.Context);
-        services.AddSingleton<Sunder.Package.Agent.Protocol.AgentRpcCatalog>(catalog);
-        new PackageModule().ConfigureRuntimeServices(services, scope.Context);
-        await using var provider = services.BuildServiceProvider();
+        catalog.AddProvider(RegressionTestBindings.SessionCleaners, cleaner);
+        catalog.AddProvider(RegressionTestBindings.DurableLifecycleObservers, observer);
+        await using var provider = RegressionTestRuntime.Create(scope.Context, catalog);
         var startup = provider.GetRequiredService<AgentRuntimeStartupService>();
         var backgroundWork = provider.GetRequiredService<AgentBackgroundWorkService>();
         var store = provider.GetRequiredService<AgentLocalStore>();
@@ -935,19 +907,21 @@ public sealed class AgentRuntimeStartupServiceTests
         return Convert.ToString(command.ExecuteScalar())!;
     }
 
-    private static ServiceProvider CreateProvider(
+    private static RegressionTestRuntime CreateProvider(
         IPackageContext context,
         AgentRuntimeGenerationOptions? generationOptions = null)
     {
-        var services = new ServiceCollection();
-        services.AddSingleton<IPackageContext>(context);
-        services.AddSingleton<Sunder.Package.Agent.Protocol.AgentRpcCatalog>(new RegressionTestExtensionCatalog());
-        new PackageModule().ConfigureRuntimeServices(services, context);
+        var runtime = RegressionTestRuntime.Create(context);
         if (generationOptions is not null)
         {
-            services.AddSingleton(generationOptions);
+            // Configure the generated graph's options before its lazy startup
+            // service is constructed; retain the fixture's controlled lease clock.
+            var configured = runtime.GetRequiredService<AgentRuntimeGenerationOptions>();
+            foreach (var property in typeof(AgentRuntimeGenerationOptions).GetProperties(
+                         BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic).Where(property => property.SetMethod is not null))
+                property.SetValue(configured, property.GetValue(generationOptions));
         }
-        return services.BuildServiceProvider();
+        return runtime;
     }
 
     private static AgentRuntimeGenerationOptions CreateFastLeaseOptions(
@@ -1112,7 +1086,7 @@ public sealed class AgentRuntimeStartupServiceTests
         internal static NoOpRpcHandler Instance { get; } = new();
 
         public IReadOnlyDictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>> DeclaredErrors
-            => AgentRpcServiceHandler.CreateDeclaredErrorMap(DeferredTestDescriptor);
+            => RegressionTestRpcDescriptors.ErrorMap(DeferredTestDescriptor);
 
         public ValueTask<JsonElement> InvokeUnaryAsync(
             SunderRpcInvocationContext context,

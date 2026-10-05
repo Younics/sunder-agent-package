@@ -69,7 +69,7 @@ public sealed class AgentFailurePresentationTests
         var exception = new SunderRpcException(new SunderRpcError(
             SunderRpcErrorKind.ResourceExhausted,
             "rpc.worker.some-other-limit",
-            $"{AgentChatProviderRpc.StreamQueueLimitErrorCode}: response stream queue limit"));
+            $"{AgentChatFailureProjection.StreamQueueLimitErrorCode}: response stream queue limit"));
 
         var presentation = AgentFailurePresentationPolicy.Create(exception);
 
@@ -319,7 +319,7 @@ public sealed class AgentFailurePresentationTests
     private static SunderRpcException StreamQueueFailure(string diagnostic)
         => new(new SunderRpcError(
             SunderRpcErrorKind.ResourceExhausted,
-            AgentChatProviderRpc.StreamQueueLimitErrorCode,
+            AgentChatFailureProjection.StreamQueueLimitErrorCode,
             diagnostic,
             SunderRpcDispatchState.PossiblyDispatched,
             SunderRpcRetrySafety.Unsafe));

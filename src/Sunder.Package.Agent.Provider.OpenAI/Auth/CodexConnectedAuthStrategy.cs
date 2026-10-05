@@ -17,6 +17,7 @@ public sealed class CodexConnectedAuthStrategy : IDisposable
     private CancellationTokenSource _lifecycleCancellation = new();
     private long _sessionGeneration;
 
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
     public CodexConnectedAuthStrategy(IPackageContext packageContext)
         : this(
             packageContext,

@@ -23,6 +23,12 @@ public sealed class OrchestratedAgentBehaviorLoop : IAgentBehaviorLoop
             return ValueTask.FromResult(new AgentBehaviorLoopResult(checkpoint, AgentBehaviorLoopCompletionKind.Failed));
         }
 
-        return innerRuntime.RunDefaultLoopAsync(context, cancellationToken);
+        return RunWithDefaultLoopAsync(context, innerRuntime, cancellationToken);
     }
+
+    internal ValueTask<AgentBehaviorLoopResult> RunWithDefaultLoopAsync(
+        AgentBehaviorLoopContext context,
+        IAgentInnerBehaviorLoopRuntime host,
+        CancellationToken cancellationToken)
+        => host.RunDefaultLoopAsync(context, cancellationToken);
 }

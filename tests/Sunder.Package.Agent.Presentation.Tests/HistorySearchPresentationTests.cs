@@ -1,3 +1,5 @@
+extern alias AgentApp;
+
 using System.Text.Json;
 using Avalonia;
 using Avalonia.Automation;
@@ -11,12 +13,11 @@ using Avalonia.Styling;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Microsoft.Extensions.DependencyInjection;
-using Sunder.Package.Agent.Contracts;
-using Sunder.Package.Agent.Contracts.Contracts;
-using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.PackageViews;
-using Sunder.Package.Agent.Protocol;
-using Sunder.Package.Agent.Runtime;
+using AgentApp::Sunder.Package.Agent.Contracts;
+using AgentApp::Sunder.Package.Agent.Contracts.Contracts;
+using AgentApp::Sunder.Package.Agent.Contracts.Models;
+using AgentApp::Sunder.Package.Agent.PackageViews;
+using AgentApp::Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Tests;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Notifications;
@@ -33,7 +34,7 @@ public sealed class HistorySearchPresentationTests
     {
         using var scope = RegressionTestPackageScope.Create();
         await using var provider = CreateServices(scope, new PresentationHistoryRuntimeClient());
-        using var view = ActivatorUtilities.CreateInstance<AgentHistorySearchView>(provider);
+        using var view = provider.GetRequiredService<AgentHistorySearchView>();
         var viewModel = Assert.IsType<AgentHistorySearchViewModel>(view.DataContext);
         var window = new Window { Width = 180, Height = 1000, Content = view };
         window.Show();
@@ -118,7 +119,7 @@ public sealed class HistorySearchPresentationTests
     {
         using var scope = RegressionTestPackageScope.Create();
         await using var provider = CreateServices(scope, new PresentationHistoryRuntimeClient());
-        using var view = ActivatorUtilities.CreateInstance<AgentHistorySearchView>(provider);
+        using var view = provider.GetRequiredService<AgentHistorySearchView>();
         var viewModel = Assert.IsType<AgentHistorySearchViewModel>(view.DataContext);
         var window = new Window { Width = 520, Height = 700, Content = view };
         window.Show();
@@ -165,7 +166,7 @@ public sealed class HistorySearchPresentationTests
     {
         using var scope = RegressionTestPackageScope.Create();
         await using var provider = CreateServices(scope, new PresentationHistoryRuntimeClient());
-        using var view = ActivatorUtilities.CreateInstance<AgentHistorySearchView>(provider);
+        using var view = provider.GetRequiredService<AgentHistorySearchView>();
         var viewModel = Assert.IsType<AgentHistorySearchViewModel>(view.DataContext);
         viewModel.QueryText = "history query";
         await view.WarmupAsync();
@@ -200,11 +201,11 @@ public sealed class HistorySearchPresentationTests
         services.AddSingleton<IPackageContext>(scope.Context);
         services.AddSingleton(runtime);
         services.AddSingleton<IAgentOwnerClient>(runtime);
-        services.AddSingleton<AgentRpcCatalog>(new RegressionTestExtensionCatalog());
+        services.AddSingleton(new AgentAppRuntimeGateway(runtime));
         services.AddSingleton<IPackageShellViewService, PresentationShellViewService>();
         services.AddSingleton<IPackageNotificationService>(NullPackageNotificationService.Instance);
         services.AddSingleton<IBackgroundProcessQueue, PresentationBackgroundProcessQueue>();
-        new AppPackageModule().ConfigureAppServices(services, scope.Context);
+        new AgentApp::Sunder.Generated.Package.AppModule().ConfigureAppServices(services, scope.Context);
         return services.BuildServiceProvider();
     }
 

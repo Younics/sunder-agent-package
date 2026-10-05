@@ -1,3 +1,5 @@
+extern alias LocalWorker;
+
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.Loader;
@@ -5,7 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Execution.Local;
+using LocalWorker::Sunder.Package.Agent.Execution.Local;
 using Sunder.Package.Agent.Tests;
 using Sunder.Sdk.Abstractions;
 using Xunit;
@@ -158,8 +160,9 @@ public sealed class LocalPackageActivationUnloadTests
                 type.FullName,
                 "Sunder.Package.Agent.Execution.Local.LocalExecutionTarget",
                 StringComparison.Ordinal));
-        var target = Assert.IsAssignableFrom<IAgentExecutionTarget>(provider.GetRequiredService(targetType));
-        var authority = Assert.IsAssignableFrom<IAgentResourceAuthorityExecutionTarget>(target);
+        var implementation = provider.GetRequiredService(targetType);
+        var target = AgentRoleBoundary.As<IAgentExecutionTarget>(implementation);
+        var authority = AgentRoleBoundary.As<IAgentResourceAuthorityExecutionTarget>(implementation);
         return new CollectibleLocalActivation(loadContext, provider, target, authority);
     }
 

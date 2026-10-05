@@ -5,7 +5,3 @@ using Sunder.Sdk.Packaging;
     Name = "Sunder Agent Execution Docker",
     Summary = "Adds Docker-backed execution targets for Sunder Agent.",
     Icon = "assets/icon.png")]
-
-[assembly: SunderPackageDependency(
-    PackageId = "sunder.package.agent",
-    VersionRange = ">=2.0.0 <3.0.0")]

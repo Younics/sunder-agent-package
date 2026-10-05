@@ -2,16 +2,16 @@ using System.Security.Cryptography;
 using System.Text;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Protocol;
+using Sunder.Package.Agent.Memory.Semantic.Runtime;
 using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Memory.Semantic.Services;
 
-public sealed class SemanticModelRuntimeResolver : IDisposable
+public sealed partial class SemanticModelRuntimeResolver : IDisposable
 {
     private static readonly TimeSpan DefaultConfigurationCacheDuration = TimeSpan.FromMinutes(5);
 
-    private readonly AgentRpcCatalog _rpcCatalog;
+    private readonly ISemanticMemoryRpcCatalog _rpcCatalog;
     private readonly MemorySemanticSettingsService _settingsService;
     private readonly TimeSpan _configurationCacheDuration;
     private readonly object _configurationCacheSync = new();
@@ -20,7 +20,7 @@ public sealed class SemanticModelRuntimeResolver : IDisposable
     private bool _disposed;
 
     public SemanticModelRuntimeResolver(
-        AgentRpcCatalog rpcCatalog,
+        ISemanticMemoryRpcCatalog rpcCatalog,
         MemorySemanticSettingsService settingsService,
         TimeSpan? configurationCacheDuration = null)
     {
@@ -198,7 +198,7 @@ public sealed class SemanticModelRuntimeResolver : IDisposable
         Func<IAgentRuntimeCatalog, TResult> callback,
         TResult fallback)
     {
-        foreach (var reference in _rpcCatalog.GetServiceReferences(AgentRpcServices.RuntimeCatalogs))
+        foreach (var reference in _rpcCatalog.GetRuntimeCatalogs())
         {
             if (!reference.TryAcquire(out var lease))
             {
@@ -236,7 +236,7 @@ public sealed class SemanticModelRuntimeResolver : IDisposable
         Action<IAgentRuntimeCatalog> subscribe,
         Action<IAgentRuntimeCatalog> unsubscribe)
     {
-        foreach (var reference in _rpcCatalog.GetServiceReferences(AgentRpcServices.RuntimeCatalogs))
+        foreach (var reference in _rpcCatalog.GetRuntimeCatalogs())
         {
             if (reference.TryAcquire(out var lease))
             {
@@ -256,12 +256,15 @@ public sealed class SemanticModelRuntimeResolver : IDisposable
 
         _disposed = true;
         _rpcCatalog.Changed -= OnCatalogChanged;
+        DisposeOwnedCatalogAdapter();
         lock (_configurationCacheSync)
         {
             _configurationCache.Clear();
         }
         GC.SuppressFinalize(this);
     }
+
+    partial void DisposeOwnedCatalogAdapter();
 
     private async Task<ResolvedEmbeddingProvider?> ResolveConfigurationAsync(
         string profileId,
@@ -294,7 +297,7 @@ public sealed class SemanticModelRuntimeResolver : IDisposable
             }
         }
 
-        foreach (var reference in _rpcCatalog.GetServiceReferences(AgentRpcServices.EmbeddingProviders))
+        foreach (var reference in _rpcCatalog.GetEmbeddingProviders())
         {
             if (!reference.TryAcquire(out var lease))
             {
@@ -353,7 +356,7 @@ public sealed class SemanticModelRuntimeResolver : IDisposable
                         binding,
                         lease.PackageId,
                         providerId,
-                        reference.ToHandle(),
+                        reference.Provider,
                         providerSpaceIdentity));
                 lock (_configurationCacheSync)
                 {
@@ -374,7 +377,7 @@ public sealed class SemanticModelRuntimeResolver : IDisposable
         AgentProfileModelBindingRecord binding,
         string ownerPackageId,
         string providerId,
-        AgentRpcProviderHandle provider,
+        SunderRpcProviderSnapshot provider,
         string? providerSpaceIdentity)
     {
         var source = string.Join('\n',
@@ -402,14 +405,8 @@ public sealed class SemanticModelRuntimeResolver : IDisposable
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(source))).ToLowerInvariant();
     }
 
-    private void OnCatalogChanged(object? sender, AgentRpcCatalogChangedEventArgs e)
+    private void OnCatalogChanged()
     {
-        if (!e.IncludesContract(AgentRpcContractIds.EmbeddingProvider)
-            && !e.IncludesContract(AgentRpcContractIds.RuntimeCatalog))
-        {
-            return;
-        }
-
         Interlocked.Increment(ref _catalogRevision);
         lock (_configurationCacheSync)
         {
@@ -448,12 +445,12 @@ public sealed class SemanticModelRuntimeResolver : IDisposable
     private sealed class RuntimeCatalogSubscription : IDisposable
     {
         private readonly Action<IAgentRuntimeCatalog> _unsubscribe;
-        private AgentRpcLease<IAgentRuntimeCatalog>? _lease;
+        private SemanticProviderLease<IAgentRuntimeCatalog>? _lease;
         private CancellationTokenRegistration _retirementRegistration;
         private int _disposed;
 
         public RuntimeCatalogSubscription(
-            AgentRpcLease<IAgentRuntimeCatalog> lease,
+            SemanticProviderLease<IAgentRuntimeCatalog> lease,
             Action<IAgentRuntimeCatalog> subscribe,
             Action<IAgentRuntimeCatalog> unsubscribe)
         {
@@ -511,10 +508,10 @@ public sealed class SemanticModelRuntimeResolver : IDisposable
 
 public sealed class ResolvedEmbeddingProvider
 {
-    private readonly AgentRpcReference<IAgentEmbeddingProvider> _reference;
+    private readonly SemanticProviderReference<IAgentEmbeddingProvider> _reference;
 
     internal ResolvedEmbeddingProvider(
-        AgentRpcReference<IAgentEmbeddingProvider> reference,
+        SemanticProviderReference<IAgentEmbeddingProvider> reference,
         string ownerPackageId,
         string providerId,
         string modelId,

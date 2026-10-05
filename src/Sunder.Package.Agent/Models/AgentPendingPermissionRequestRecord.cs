@@ -2,6 +2,7 @@ using Sunder.Package.Agent.Contracts.Models;
 
 namespace Sunder.Package.Agent.Models;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 public sealed record AgentPendingPermissionRequestRecord(
     string RequestId,
     Guid SessionId,
@@ -48,6 +49,7 @@ public sealed record AgentPendingPermissionRequestRecord(
     public IReadOnlyList<AgentResourceClaim> ResourceClaims { get; init; } = [];
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 public enum AgentPendingPermissionStatus
 {
     Pending = 0,

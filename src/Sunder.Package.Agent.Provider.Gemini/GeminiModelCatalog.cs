@@ -4,6 +4,7 @@ using Sunder.Sdk.Settings;
 
 namespace Sunder.Package.Agent.Provider.Gemini;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal static class GeminiModelCatalog
 {
     private static readonly IReadOnlyList<AgentModelVariantDescriptor> ThinkingLevelVariants =

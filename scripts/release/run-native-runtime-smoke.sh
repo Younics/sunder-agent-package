@@ -35,6 +35,12 @@ native_path() {
 
 test_source_native="$(native_path "$test_source")"
 injection_targets_native="$(native_path "$injection_targets")"
+builder_sdk_version="${SUNDER_AGENT_BUILDER_SDK_VERSION:-$(dotnet --version)}"
+builder_dotnet_path="$(command -v dotnet)"
+[[ "$builder_sdk_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+  || { printf 'The selected Builder SDK version must be an exact stable three-part version.\n' >&2; exit 1; }
+[[ -f "$builder_dotnet_path" ]] \
+  || { printf 'The selected Builder dotnet executable was not found.\n' >&2; exit 1; }
 injection_properties=(
   "-p:CustomAfterMicrosoftCommonTargets=$injection_targets_native"
   "-p:SunderAgentNativeReleaseTestSource=$test_source_native"
@@ -49,6 +55,8 @@ grep -Fqx "    $test_fqn" <<< "$discovered" \
 
 SUNDER_AGENT_NATIVE_ARCHIVE_DIR="$(native_path "$archive_directory")" \
 SUNDER_AGENT_NATIVE_METRICS_DIR="$(native_path "$metrics_directory")" \
+SUNDER_AGENT_BUILDER_SDK_VERSION="$builder_sdk_version" \
+SUNDER_AGENT_BUILDER_DOTNET_PATH="$(native_path "$builder_dotnet_path")" \
   dotnet test "$test_project" -c Release --no-restore -p:GeneratePackageOnBuild=false \
     "${injection_properties[@]}" \
     --filter "FullyQualifiedName=$test_fqn"

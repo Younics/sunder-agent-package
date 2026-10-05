@@ -9,7 +9,7 @@ internal sealed class MemorySchemaMigrator(string databasePath)
 
     private static readonly Version MinimumFtsSecureDeleteVersion = new(3, 42, 0);
 
-    private const string BaselineSql = """
+    internal const string BaselineSql = """
         CREATE TABLE MemorySchemaMigrations (
             Version INTEGER PRIMARY KEY,
             Name TEXT NOT NULL,
@@ -187,7 +187,7 @@ internal sealed class MemorySchemaMigrator(string databasePath)
             ON SemanticDeletionMaintenance (State, CreatedAtUtc);
         """;
 
-    internal const string BaselineChecksum = "72c53e869dbc6dcbd56c6376ce8b1721b3b9152b58c1191e3151968f7d921a";
+    internal const string BaselineChecksum = "ed3e1696f550d4f3b16bf440806d60fbfc8a90d7004c5605621f4963bbbb2de1";
 
     private readonly string _databasePath = databasePath;
 

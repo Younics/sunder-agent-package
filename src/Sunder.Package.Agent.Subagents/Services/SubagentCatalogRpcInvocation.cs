@@ -1,4 +1,4 @@
-using Sunder.Package.Agent.Protocol;
+using Sunder.Package.Agent.Subagents.Runtime;
 using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Subagents.Services;
@@ -6,18 +6,17 @@ namespace Sunder.Package.Agent.Subagents.Services;
 internal static class SubagentCatalogRpcInvocation
 {
     internal static IReadOnlyList<SubagentCatalogRpcReference<TService, TMetadata>> Snapshot<TService, TMetadata>(
-        AgentRpcCatalog catalog,
-        AgentRpcService<TService> service,
+        Func<IReadOnlyList<SubagentProviderReference<TService>>> discover,
         CancellationToken cancellationToken,
         Func<TService, TMetadata> metadataSelector)
         where TService : class
     {
         var snapshots = new List<SubagentCatalogRpcReference<TService, TMetadata>>();
         cancellationToken.ThrowIfCancellationRequested();
-        IReadOnlyList<AgentRpcReference<TService>> references;
+        IReadOnlyList<SubagentProviderReference<TService>> references;
         try
         {
-            references = catalog.GetServiceReferences(service);
+            references = discover();
         }
         catch (SunderRpcException exception) when (exception.Error.Kind == SunderRpcErrorKind.Cancelled)
         {
@@ -26,7 +25,7 @@ internal static class SubagentCatalogRpcInvocation
         foreach (var reference in references)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            AgentRpcLease<TService>? lease;
+            SubagentProviderLease<TService>? lease;
             try
             {
                 if (!reference.TryAcquire(out lease)) continue;
@@ -78,7 +77,7 @@ internal static class SubagentCatalogRpcInvocation
         where TResult : notnull
     {
         cancellationToken.ThrowIfCancellationRequested();
-        AgentRpcLease<TService>? lease;
+        SubagentProviderLease<TService>? lease;
         try
         {
             if (!reference.Reference.TryAcquire(out lease)) return SubagentCatalogRpcResult<TResult>.Unavailable;
@@ -157,7 +156,7 @@ internal static class SubagentCatalogRpcInvocation
 }
 
 internal sealed record SubagentCatalogRpcReference<TService, TMetadata>(
-    AgentRpcReference<TService> Reference,
+    SubagentProviderReference<TService> Reference,
     string PackageId,
     TMetadata Metadata)
     where TService : class;

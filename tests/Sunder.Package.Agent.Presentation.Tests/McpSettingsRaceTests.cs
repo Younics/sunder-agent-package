@@ -1,13 +1,14 @@
 extern alias McpApp;
+extern alias McpWorker;
 
 using System.Collections.Concurrent;
 using System.Reflection;
 using Avalonia.Headless.XUnit;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using Sunder.Package.Agent.Mcp;
-using Sunder.Package.Agent.Mcp.Runtime;
-using Sunder.Package.Agent.Mcp.Services;
+using McpWorker::Sunder.Package.Agent.Mcp;
+using McpWorker::Sunder.Package.Agent.Mcp.Runtime;
+using McpWorker::Sunder.Package.Agent.Mcp.Services;
 using Sunder.Package.Agent.Tests;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Logging;
@@ -134,7 +135,7 @@ public sealed class McpSettingsRaceTests
         await staleStatus;
 
         Assert.Equal("gamma", viewModel.SelectedServer?.ServerId);
-        Assert.Equal(McpConnectionStatusKind.Idle, viewModel.ConnectionStatusKind);
+        Assert.Equal(McpApp::Sunder.Package.Agent.Mcp.Services.McpConnectionStatusKind.Idle, viewModel.ConnectionStatusKind);
         Assert.Equal("Configured but not connected yet.", viewModel.ConnectionStatusText);
     }
 
@@ -181,7 +182,7 @@ public sealed class McpSettingsRaceTests
         await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance);
         using var viewModel = CreateViewModel(catalog, manager);
         await GetTask(viewModel, "Initialization");
-        var selected = Assert.IsType<ConfiguredMcpServerRecord>(viewModel.SelectedServer);
+        var selected = Assert.IsType<McpApp::Sunder.Package.Agent.Mcp.ConfiguredMcpServerRecord>(viewModel.SelectedServer);
         viewModel.EditorText = """
             {
               "type": "remote",
@@ -287,13 +288,13 @@ public sealed class McpSettingsRaceTests
         McpClientConnectionManager manager,
         McpOAuthService? oauth = null)
         => new(
-            new McpLocalManagementGateway(
+            AgentRoleBoundary.As<McpApp::Sunder.Package.Agent.Mcp.Runtime.IMcpManagementGateway>(new McpLocalManagementGateway(
                 new McpSettingsEditorService(catalog),
                 new McpConfigurationCoordinator(
                     new McpEcosystemConfigurationImporter(catalog),
                     syncService: null),
                 new McpServerConnectionService(catalog, manager, oauth),
-                 new McpOAuthCoordinator(oauth, manager)));
+                 new McpOAuthCoordinator(oauth, manager))));
 
     private static IAdaptiveEditorLifecycleAdapter Adapt(
         AgentMcpSettingsViewModel viewModel,

@@ -1,5 +1,10 @@
 # Extension Quickstart
 
+> **Pre-cutover guide:** this currently exercises the descriptor-first migration
+> tree. Do not use the Protocol package/project shape as a final V1 template;
+> implementation-first generation replaces it before public release. See
+> [`../compatibility/README.md`](../compatibility/README.md).
+
 This quickstart creates a headless Runtime package with one fixed, read-only Agent tool.
 
 ## 1. Create The Project
@@ -64,7 +69,7 @@ await SunderWorker.RunAsync(_ =>
         "acme",
         [new CurrentUtcTimeTool()]);
     var descriptor = AgentRpcContractDescriptors.Get(AgentRpcContractIds.ToolSource);
-    return new SunderWorkerV3Options(
+    return new SunderWorkerOptions(
     [
         new SunderWorkerProviderRegistration(
             "acme.tools",

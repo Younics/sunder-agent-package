@@ -20,6 +20,8 @@ using Sunder.Sdk.Notifications;
 
 namespace Sunder.Package.Agent.PackageViews;
 
+[Sunder.Sdk.Packaging.SunderPackageView("sunder.package.agent.chat", "Agent Chat",
+    IconPath = "Assets/chat-icon.png", DefaultPlacement = PackageViewPlacement.Middle)]
 public partial class AgentChatView : UserControl,
     IDisposable,
     IPackageViewNavigationTarget,

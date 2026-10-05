@@ -7,10 +7,7 @@ using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Tools.Files;
 
-public sealed class FilesToolSource
-    : IAgentToolSource, IAgentPermissionAwareToolSource, IAgentPermissionSurface, IAgentPromptContextContributor,
-        IAgentToolPresentationResolver, IAgentToolExecutionPreflightSource, IAgentSessionDataCleaner,
-        IAgentPromptContextAcknowledgmentSink
+public sealed partial class FilesToolSource
 {
     private const int MaxPostAccessScopePaths = 64;
     private readonly Lazy<ScopedInstructionContextService> _scopedInstructions;
@@ -51,9 +48,10 @@ public sealed class FilesToolSource
         return ValueTask.FromResult(FileToolDescriptorRegistry.Descriptors);
     }
 
-    public async ValueTask<AgentToolReadiness?> GetReadinessAsync(
+    internal async ValueTask<AgentToolReadiness?> GetReadinessAsync(
         string toolId,
         AgentToolSourceContext context,
+        FileExecutionReference? selectedTarget,
         CancellationToken cancellationToken = default)
     {
         if (!FileToolDescriptorRegistry.Contains(toolId))
@@ -71,7 +69,7 @@ public sealed class FilesToolSource
             return new AgentToolReadiness(toolId, AgentToolReadinessStatus.Failed, "The selected workspace is not bound to an installed execution target.");
         }
         var targetLease = await AcquireTargetAsync(
-                context.ExecutionTargetReference,
+                selectedTarget,
                 context.ExecutionBinding,
                 cancellationToken)
             .ConfigureAwait(false);
@@ -87,7 +85,7 @@ public sealed class FilesToolSource
             {
                 if ((toolId.Equals("grep", StringComparison.OrdinalIgnoreCase)
                      || toolId.Equals("glob", StringComparison.OrdinalIgnoreCase))
-                    && !AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.StructuredFileSearch))
+                    && !FilesExecutionFacets.SupportsFacet(target, AgentExecutionFacetIds.StructuredFileSearch))
                 {
                     return new AgentToolReadiness(
                         toolId,
@@ -95,8 +93,8 @@ public sealed class FilesToolSource
                         "The selected target does not support governed structured file search.");
                 }
 
-                if (!AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.ScopedInstructionDiscovery)
-                    || !AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.ExecutionScope))
+                if (!FilesExecutionFacets.SupportsFacet(target, AgentExecutionFacetIds.ScopedInstructionDiscovery)
+                    || !FilesExecutionFacets.SupportsFacet(target, AgentExecutionFacetIds.ExecutionScope))
                 {
                     return new AgentToolReadiness(
                         toolId,
@@ -123,9 +121,10 @@ public sealed class FilesToolSource
                 "The selected execution target became unavailable while readiness was being checked."));
     }
 
-    public async ValueTask<AgentToolResult> ExecuteAsync(
+    internal async ValueTask<AgentToolResult> ExecuteAsync(
         AgentToolExecutionContext context,
         AgentToolRequest request,
+        FileExecutionReference? selectedTarget,
         CancellationToken cancellationToken = default)
     {
         if (context.Workspace is null)
@@ -138,7 +137,7 @@ public sealed class FilesToolSource
             return FileToolResult.Error(request.ToolId, "The selected workspace is not bound to an installed execution target.", "files-target-required");
         }
         var targetLease = await AcquireTargetAsync(
-                context.ExecutionTargetReference,
+                selectedTarget,
                 context.ExecutionBinding,
                 cancellationToken)
             .ConfigureAwait(false);
@@ -168,7 +167,7 @@ public sealed class FilesToolSource
                 try
                 {
                     if (IsMutation(request.ToolId)
-                        && await PreflightExecutionAsync(context, request, invocationToken) is { } deferred)
+                        && await PreflightExecutionAsync(context, request, selectedTarget, invocationToken) is { } deferred)
                     {
                         return deferred;
                     }
@@ -281,7 +280,7 @@ public sealed class FilesToolSource
                 }
                 finally
                 {
-                    if (AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.ResourceAuthority)
+                    if (FilesExecutionFacets.SupportsFacet(target, AgentExecutionFacetIds.ResourceAuthority)
                         && target is IAgentResourceAuthorityExecutionTarget authorityTarget)
                     {
                         authorityTarget.ReleaseResourceAuthority(targetContext.ApprovedResourceCapabilities);
@@ -294,9 +293,10 @@ public sealed class FilesToolSource
                 AgentToolResultErrorCodes.PackageUnavailable));
     }
 
-    public async ValueTask<AgentPermissionRequest?> BuildPermissionRequestAsync(
+    internal async ValueTask<AgentPermissionRequest?> BuildPermissionRequestAsync(
         AgentToolExecutionContext context,
         AgentToolRequest request,
+        FileExecutionReference? selectedTarget,
         CancellationToken cancellationToken = default)
     {
         if (context.ExecutionBinding is null)
@@ -304,7 +304,7 @@ public sealed class FilesToolSource
             return await FilePermissionPlanner.BuildAsync(null, context, request, cancellationToken);
         }
         var targetLease = await AcquireTargetAsync(
-                context.ExecutionTargetReference,
+                selectedTarget,
                 context.ExecutionBinding,
                 cancellationToken)
             .ConfigureAwait(false);
@@ -323,8 +323,9 @@ public sealed class FilesToolSource
     public IReadOnlyList<AgentPermissionActionDescriptor> ListActions()
         => FilePermissionPlanner.Actions;
 
-    public async ValueTask<AgentPromptContextContribution?> ContributeContextAsync(
+    internal async ValueTask<AgentPromptContextContribution?> ContributeContextAsync(
         AgentPromptContextRequest request,
+        FileExecutionReference? selectedTarget,
         CancellationToken cancellationToken = default)
     {
         if (request.ExecutionBinding is null)
@@ -332,7 +333,7 @@ public sealed class FilesToolSource
             return null;
         }
         var targetLease = await AcquireTargetAsync(
-                request.ExecutionTargetReference,
+                selectedTarget,
                 request.ExecutionBinding,
                 cancellationToken)
             .ConfigureAwait(false);
@@ -355,9 +356,10 @@ public sealed class FilesToolSource
             static () => null);
     }
 
-    public async ValueTask<AgentToolResult?> PreflightExecutionAsync(
+    internal async ValueTask<AgentToolResult?> PreflightExecutionAsync(
         AgentToolExecutionContext context,
         AgentToolRequest request,
+        FileExecutionReference? selectedTarget,
         CancellationToken cancellationToken = default)
     {
         if (!TryValidateArguments(request, out var validationError))
@@ -370,7 +372,7 @@ public sealed class FilesToolSource
             return null;
         }
         var targetLease = await AcquireTargetAsync(
-                context.ExecutionTargetReference,
+                selectedTarget,
                 context.ExecutionBinding,
                 cancellationToken)
             .ConfigureAwait(false);
@@ -397,7 +399,7 @@ public sealed class FilesToolSource
                     ResourceOperation = context.ResourceOperation,
                     ExpectedConfigurationGeneration = context.ExecutionTargetConfigurationGeneration,
                 };
-                if (AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.ResourceAuthority)
+                if (FilesExecutionFacets.SupportsFacet(target, AgentExecutionFacetIds.ResourceAuthority)
                     && target is IAgentResourceAuthorityExecutionTarget authorityTarget)
                 {
                     var validation = await authorityTarget.ValidateResourceAuthorityAsync(
@@ -447,8 +449,8 @@ public sealed class FilesToolSource
 
     private ScopedInstructionContextService ScopedInstructions => _scopedInstructions.Value;
 
-    private static async ValueTask<AgentRpcLease<IAgentExecutionTarget>?> AcquireTargetAsync(
-        AgentRpcReference<IAgentExecutionTarget>? selectedReference,
+    private static async ValueTask<FileExecutionLease?> AcquireTargetAsync(
+        FileExecutionReference? selectedReference,
         AgentWorkspaceBindingRecord binding,
         CancellationToken cancellationToken)
     {
@@ -469,12 +471,10 @@ public sealed class FilesToolSource
             retirementToken);
         try
         {
-            var descriptor = lease.Service is AgentExecutionTargetRpcClient rpcTarget
-                ? await rpcTarget.DescribeAsync(invocation.Token).ConfigureAwait(false)
-                : lease.Service.Descriptor;
+            var descriptor = await lease.DescribeAsync(invocation.Token).ConfigureAwait(false);
             if (retirementToken.IsCancellationRequested || !IsBindingMatch(descriptor, binding))
             {
-                lease.Dispose();
+                await lease.DisposeAsync().ConfigureAwait(false);
                 return null;
             }
 
@@ -485,12 +485,12 @@ public sealed class FilesToolSource
             retirementToken,
             cancellationToken))
         {
-            lease.Dispose();
+            await lease.DisposeAsync().ConfigureAwait(false);
             return null;
         }
         catch
         {
-            lease.Dispose();
+            await lease.DisposeAsync().ConfigureAwait(false);
             throw;
         }
     }
@@ -502,12 +502,12 @@ public sealed class FilesToolSource
            || string.Equals(descriptor.TargetKind, binding.ContributionId, StringComparison.OrdinalIgnoreCase);
 
     private static async ValueTask<TResult> InvokeTargetAsync<TResult>(
-        AgentRpcLease<IAgentExecutionTarget> lease,
+        FileExecutionLease lease,
         CancellationToken cancellationToken,
         Func<IAgentExecutionTarget, CancellationToken, ValueTask<TResult>> callback,
         Func<TResult> unavailableResult)
     {
-        using (lease)
+        await using (lease.ConfigureAwait(false))
         {
             var retirementToken = lease.RetirementToken;
             using var invocation = CancellationTokenSource.CreateLinkedTokenSource(
@@ -516,6 +516,8 @@ public sealed class FilesToolSource
             try
             {
                 var result = await callback(lease.Service, invocation.Token).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!await lease.IsCurrentAsync(invocation.Token).ConfigureAwait(false)) return unavailableResult();
                 if (retirementToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                 {
                     return unavailableResult();
@@ -704,7 +706,7 @@ public sealed class FilesToolSource
                 {
                     return false;
                 }
-                return HostSecureFileSearch.TryValidateRequest(
+                return FileSearchRequestValidation.TryValidateRequest(
                     new AgentFileSearchRequest(
                         string.IsNullOrWhiteSpace(grep.Path) ? "." : grep.Path,
                         AgentFileSearchKind.Grep,
@@ -716,7 +718,7 @@ public sealed class FilesToolSource
                 {
                     return false;
                 }
-                return HostSecureFileSearch.TryValidateRequest(
+                return FileSearchRequestValidation.TryValidateRequest(
                     new AgentFileSearchRequest(
                         string.IsNullOrWhiteSpace(glob.Path) ? "." : glob.Path,
                         AgentFileSearchKind.Glob,

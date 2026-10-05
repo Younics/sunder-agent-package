@@ -1,4 +1,5 @@
-using System.Diagnostics;
+using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
@@ -43,7 +44,7 @@ public sealed partial class ProviderArchitectureTests
     }
 
     [Fact]
-    public async Task ProviderApps_EvaluatedCompileItemsUseExactSharedSourceAllowlists()
+    public void ProviderApps_GeneratedRolePlansUseExactSharedSourceAllowlists()
     {
         var repositoryRoot = GetRepositoryRoot();
         var agentSharedRoot = Path.GetFullPath(Path.Combine(
@@ -72,15 +73,8 @@ public sealed partial class ProviderArchitectureTests
                 repositoryRoot,
                 "src",
                 $"Sunder.Package.Agent.Provider.{provider.Key}",
-                "App",
-                $"Sunder.Package.Agent.Provider.{provider.Key}.App.csproj");
+                $"Sunder.Package.Agent.Provider.{provider.Key}.csproj");
             var project = XDocument.Load(projectPath);
-            var broadImports = project.Descendants("Import")
-                .Select(static element => element.Attribute("Project")?.Value.Replace('\\', '/'))
-                .Where(static path => path?.EndsWith(
-                    "Sunder.Package.Agent.Shared/Sunder.Package.Agent.Shared.props",
-                    StringComparison.OrdinalIgnoreCase) == true)
-                .ToArray();
             var broadCompileIncludes = project.Descendants("Compile")
                 .Select(static element => element.Attribute("Include")?.Value)
                 .Where(static include => include is not null
@@ -88,11 +82,16 @@ public sealed partial class ProviderArchitectureTests
                                          && include.Contains('*'))
                 .ToArray();
 
-            Assert.Empty(broadImports);
             Assert.Empty(broadCompileIncludes);
 
-            var evaluatedCompilePaths = await GetEvaluatedCompilePathsAsync(repositoryRoot, projectPath);
-            var duplicatePaths = evaluatedCompilePaths
+            var projectRoot = Path.GetDirectoryName(projectPath)!;
+            var configuration = typeof(ProviderArchitectureTests).Assembly.GetCustomAttribute<AssemblyConfigurationAttribute>()!.Configuration;
+            using var plan = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(projectRoot, "obj", configuration,
+                "net10.0/sunder-analysis", RuntimeInformation.RuntimeIdentifier, "sunder-rpc/package-role-plan.v1.json")));
+            Assert.True(plan.RootElement.GetProperty("hasApp").GetBoolean());
+            var appCompile = plan.RootElement.GetProperty("appCompile").EnumerateArray().Select(item => item.GetProperty("path").GetString()!).ToArray();
+            Assert.NotEmpty(appCompile);
+            var duplicatePaths = appCompile
                 .GroupBy(static path => path, StringComparer.OrdinalIgnoreCase)
                 .Where(static group => group.Count() > 1)
                 .Select(static group => group.Key)
@@ -102,7 +101,10 @@ public sealed partial class ProviderArchitectureTests
                 duplicatePaths.Length == 0,
                 $"{provider.Key} App links duplicate Compile sources: [{string.Join(", ", duplicatePaths)}].");
 
-            var actualSharedSources = evaluatedCompilePaths
+            var actualSharedSources = plan.RootElement.GetProperty("types").EnumerateArray()
+                .Where(type => type.GetProperty("roles").GetString() is "app" or "shared")
+                .SelectMany(type => type.GetProperty("sources").EnumerateArray())
+                .Select(source => Path.GetFullPath(source.GetString()!, projectRoot))
                 .Where(path => path.StartsWith(agentSharedPrefix, StringComparison.OrdinalIgnoreCase))
                 .Select(path => Path.GetRelativePath(agentSharedRoot, path).Replace('\\', '/'))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -191,7 +193,7 @@ public sealed partial class ProviderArchitectureTests
     }
 
     [Fact]
-    public void VendorTestProjects_ReferenceOnlyTheirWorkerAppContractsAndTestSupport()
+    public void VendorTestProjects_ReferenceOnlyTheirCanonicalRolesAndTestSupport()
     {
         var testsDirectory = Path.Combine(GetRepositoryRoot(), "tests");
         var testProjects = Directory.EnumerateDirectories(testsDirectory, "Sunder.Package.Agent.Provider.*.Tests")
@@ -205,22 +207,13 @@ public sealed partial class ProviderArchitectureTests
             var vendor = projectName["Sunder.Package.Agent.Provider.".Length..^".Tests".Length];
             var expectedReferences = new HashSet<string>(StringComparer.Ordinal)
             {
-                "Sunder.Package.Agent.Contracts",
+                $"Sunder.Package.Agent.Provider.{vendor}",
                 "Sunder.Package.Agent.Provider.TestSupport",
                 "Sunder.Package.Agent.TestSupport",
                 "Sunder.Package.Agent.TestSupport.Avalonia",
             };
-            if (string.Equals(vendor, "OpenAI", StringComparison.Ordinal))
-            {
-                expectedReferences.Add("Sunder.Package.Agent.Provider.OpenAI");
-                expectedReferences.Add("Sunder.Package.Agent.Provider.OpenAI.App");
-            }
-            else
-            {
-                expectedReferences.Add($"Sunder.Package.Agent.Provider.{vendor}");
-                expectedReferences.Add($"Sunder.Package.Agent.Provider.{vendor}.App");
-            }
-            var actualReferences = XDocument.Load(projectPath).Descendants("ProjectReference")
+            var references = XDocument.Load(projectPath).Descendants("ProjectReference").ToArray();
+            var actualReferences = references
                 .Select(element => (string)element.Attribute("Include")!)
                 .Select(include => include.Replace('\\', Path.DirectorySeparatorChar))
                 .Select(path => Path.GetFileNameWithoutExtension(path)!)
@@ -229,6 +222,14 @@ public sealed partial class ProviderArchitectureTests
             Assert.True(
                 expectedReferences.SetEquals(actualReferences),
                 $"{projectName} references [{string.Join(", ", actualReferences.Order())}].");
+            var roles = references.Where(reference => ((string)reference.Attribute("Include")!)
+                .Replace('\\', '/').EndsWith($"/Sunder.Package.Agent.Provider.{vendor}.csproj", StringComparison.Ordinal)).ToArray();
+            Assert.Equal(2, roles.Length);
+            Assert.All(roles, role => Assert.Equal("GetSunderPackageRoleReference", (string?)role.Attribute("Targets")));
+            var worker = Assert.Single(roles, role => (string?)role.Attribute("AdditionalProperties") == "SunderPackageReferenceRole=worker");
+            var app = Assert.Single(roles, role => (string?)role.Attribute("AdditionalProperties") == "SunderPackageReferenceRole=app");
+            Assert.Contains("global", ((string)worker.Attribute("Aliases")!).Split(','));
+            Assert.DoesNotContain("global", ((string)app.Attribute("Aliases")!).Split(','));
         }
     }
 
@@ -299,44 +300,6 @@ public sealed partial class ProviderArchitectureTests
 
         throw new DirectoryNotFoundException(
             "Could not locate the Sunder Agent package repository root from SUNDER_AGENT_REPOSITORY_ROOT, the test output, or the working directory.");
-    }
-
-    private static async Task<string[]> GetEvaluatedCompilePathsAsync(
-        string repositoryRoot,
-        string projectPath)
-    {
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = Environment.GetEnvironmentVariable("DOTNET_HOST_PATH") ?? "dotnet",
-            WorkingDirectory = repositoryRoot,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        };
-        startInfo.ArgumentList.Add("msbuild");
-        startInfo.ArgumentList.Add(projectPath);
-        startInfo.ArgumentList.Add("-nologo");
-        startInfo.ArgumentList.Add("-getItem:Compile");
-        startInfo.ArgumentList.Add("-property:Configuration=Release");
-
-        using var process = new Process { StartInfo = startInfo };
-        Assert.True(process.Start(), $"Could not start MSBuild evaluation for {projectPath}.");
-        var standardOutput = process.StandardOutput.ReadToEndAsync();
-        var standardError = process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync();
-        var output = await standardOutput;
-        var error = await standardError;
-        Assert.True(
-            process.ExitCode == 0,
-            $"MSBuild evaluation failed for {projectPath} with exit code {process.ExitCode}:{Environment.NewLine}{error}{Environment.NewLine}{output}");
-
-        using var result = JsonDocument.Parse(output);
-        return result.RootElement
-            .GetProperty("Items")
-            .GetProperty("Compile")
-            .EnumerateArray()
-            .Select(static item => Path.GetFullPath(item.GetProperty("FullPath").GetString()!))
-            .ToArray();
     }
 
     private static readonly IReadOnlySet<string> ProviderSettingsSharedSources = new HashSet<string>(

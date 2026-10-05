@@ -69,7 +69,7 @@ public sealed class PackageModuleCompositionTests
 
     public static IEnumerable<object[]> AppPackageNames
         => AgentPackageRepositoryInventory.GetRuntimePackageProjects()
-            .Where(static package => package.AppProjectPath is not null)
+            .Where(static package => package.HasAppRole)
             .Select(static package => new object[] { package.Name });
 
     [Theory]
@@ -79,7 +79,7 @@ public sealed class PackageModuleCompositionTests
     {
         using var packageScope = RegressionTestPackageScope.Create();
         using var rpcState = new RegressionTestRpcState();
-        var extensionCatalog = new RegressionTestExtensionCatalog();
+        using var extensionCatalog = new RegressionTestExtensionCatalog();
         var services = new ServiceCollection();
         services.AddSingleton<IPackageContext>(packageScope.Context);
         services.AddSingleton<Sunder.Package.Agent.Protocol.AgentRpcCatalog>(extensionCatalog);
@@ -87,6 +87,8 @@ public sealed class PackageModuleCompositionTests
             new RegressionTestRpcClient(rpcState, packageName));
         services.AddSingleton<IBackgroundProcessQueue, CompositionBackgroundProcessQueue>();
         services.AddSingleton<IPackageNotificationService>(NullPackageNotificationService.Instance);
+        services.AddSingleton<IPackageSettingsNavigationService>(NullPackageSettingsNavigationService.Instance);
+        services.AddSingleton<IPackageShellViewService>(new CapturingHistoryShellViewService());
 
         var appModule = CreateAppPackageModule(packageName);
         appModule.ConfigureAppServices(services, packageScope.Context);
@@ -103,7 +105,12 @@ public sealed class PackageModuleCompositionTests
         Assert.Equal(
             ExpectedRegistrations[packageName].Order(StringComparer.Ordinal),
             registry.Registrations.Order(StringComparer.Ordinal));
-
+        if (packageName == "Sunder.Package.Agent.Builder")
+        {
+            var modelType = appModule.GetType().Assembly.GetType("Sunder.Package.Agent.Builder.BuilderViewModel", true)!;
+            var model = serviceProvider.GetRequiredService(modelType);
+            Assert.Same(model, serviceProvider.GetRequiredService(modelType));
+        }
     }
 
     [Theory]
@@ -125,7 +132,7 @@ public sealed class PackageModuleCompositionTests
     {
         Assert.Equal(
             AgentPackageRepositoryInventory.GetRuntimePackageProjects()
-                .Where(static package => package.AppProjectPath is not null)
+                .Where(static package => package.HasAppRole)
                 .Select(static package => package.Name),
             ExpectedRegistrations.Keys.Order(StringComparer.Ordinal));
     }

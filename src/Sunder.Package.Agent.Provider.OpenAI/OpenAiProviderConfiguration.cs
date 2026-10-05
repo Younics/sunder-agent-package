@@ -2,6 +2,7 @@ using Sunder.Sdk.Settings;
 
 namespace Sunder.Package.Agent.Provider.OpenAI;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 public static class OpenAiProviderConfiguration
 {
     public const string ApiKeySecretKey = "auth.apiKey";

@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "authorityKind": "package",
+  "authorityId": "sunder.package.agent.execution.docker",
+  "packageId": "sunder.package.agent.execution.docker",
+  "contracts": {
+    "management": {
+      "contractId": "sunder.package.agent.execution.docker.presentation",
+      "current": {
+        "state": "release-frozen",
+        "exposure": "package",
+        "contractVersion": "1.0.0",
+        "descriptorBytes": 2047,
+        "canonicalDescriptor": "{\"$defs\":{\"CatalogRevision\":{\"minimum\":0,\"type\":\"integer\"},\"ContentReference\":{\"logicalType\":\"content-reference\",\"type\":\"object\"},\"DiagnosticCode\":{\"minLength\":1,\"type\":\"string\"},\"DockerExecutionOperationError\":{\"additionalProperties\":false,\"properties\":{\"code\":{\"$ref\":\"#/$defs/DiagnosticCode\"},\"correlationId\":{\"$ref\":\"#/$defs/DiagnosticCode\"},\"isTransient\":{\"type\":\"boolean\"},\"message\":{\"$ref\":\"#/$defs/OperationMessage\"}},\"required\":[\"code\",\"message\",\"isTransient\",\"correlationId\"],\"type\":\"object\"},\"DockerExecutionOperationRequest\":{\"additionalProperties\":false,\"properties\":{\"dockerCliPath\":{\"$ref\":\"#/$defs/ExecutablePath\"},\"imageReference\":{\"$ref\":\"#/$defs/ImageReference\"},\"kind\":{\"$ref\":\"#/$defs/DockerOperation\"},\"timeoutSeconds\":{\"$ref\":\"#/$defs/TimeoutText\"}},\"required\":[\"kind\"],\"type\":\"object\"},\"DockerExecutionOperationResponse\":{\"additionalProperties\":false,\"properties\":{\"catalogRevision\":{\"$ref\":\"#/$defs/CatalogRevision\"},\"dockerCliPath\":{\"$ref\":\"#/$defs/ExecutablePath\"},\"error\":{\"$ref\":\"#/$defs/DockerExecutionOperationError\"},\"imageCatalog\":{\"$ref\":\"#/$defs/ContentReference\"},\"message\":{\"$ref\":\"#/$defs/OperationMessage\"},\"success\":{\"type\":\"boolean\"},\"timeoutSeconds\":{\"$ref\":\"#/$defs/TimeoutText\"}},\"required\":[\"success\"],\"type\":\"object\"},\"DockerOperation\":{\"enum\":[\"get-settings\",\"save-settings\",\"add-image\",\"delete-image\",\"refresh-image\",\"refresh-images\",\"pull-image\",\"test-docker\"],\"type\":\"string\"},\"ExecutablePath\":{\"type\":\"string\"},\"ImageReference\":{\"minLength\":1,\"type\":\"string\"},\"OperationMessage\":{\"minLength\":1,\"type\":\"string\"},\"TimeoutText\":{\"type\":\"string\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"contractId\":\"sunder.package.agent.execution.docker.presentation\",\"descriptorVersion\":1,\"errors\":{},\"schemaProfile\":\"sunder.rpc.values.v1\",\"services\":{\"presentation\":{\"methods\":{\"execute\":{\"errors\":[],\"idempotency\":\"none\",\"kind\":\"unary\",\"requestSchema\":{\"$ref\":\"#/$defs/DockerExecutionOperationRequest\"},\"responseSchema\":{\"$ref\":\"#/$defs/DockerExecutionOperationResponse\"}}}}},\"version\":\"1.0.0\"}",
+        "descriptorSha256": "30bd687f31c2555c5106f2e1eec81ec5b558c74b297f1e0b62f06a52d81f799a",
+        "abiProjectionBytes": 1972,
+        "canonicalAbiProjection": "{\"$defs\":{\"CatalogRevision\":{\"minimum\":0,\"type\":\"integer\"},\"ContentReference\":{\"logicalType\":\"content-reference\",\"type\":\"object\"},\"DiagnosticCode\":{\"minLength\":1,\"type\":\"string\"},\"DockerExecutionOperationError\":{\"additionalProperties\":false,\"properties\":{\"code\":{\"$ref\":\"#/$defs/DiagnosticCode\"},\"correlationId\":{\"$ref\":\"#/$defs/DiagnosticCode\"},\"isTransient\":{\"type\":\"boolean\"},\"message\":{\"$ref\":\"#/$defs/OperationMessage\"}},\"required\":[\"code\",\"correlationId\",\"isTransient\",\"message\"],\"type\":\"object\"},\"DockerExecutionOperationRequest\":{\"additionalProperties\":false,\"properties\":{\"dockerCliPath\":{\"$ref\":\"#/$defs/ExecutablePath\"},\"imageReference\":{\"$ref\":\"#/$defs/ImageReference\"},\"kind\":{\"$ref\":\"#/$defs/DockerOperation\"},\"timeoutSeconds\":{\"$ref\":\"#/$defs/TimeoutText\"}},\"required\":[\"kind\"],\"type\":\"object\"},\"DockerExecutionOperationResponse\":{\"additionalProperties\":false,\"properties\":{\"catalogRevision\":{\"$ref\":\"#/$defs/CatalogRevision\"},\"dockerCliPath\":{\"$ref\":\"#/$defs/ExecutablePath\"},\"error\":{\"$ref\":\"#/$defs/DockerExecutionOperationError\"},\"imageCatalog\":{\"$ref\":\"#/$defs/ContentReference\"},\"message\":{\"$ref\":\"#/$defs/OperationMessage\"},\"success\":{\"type\":\"boolean\"},\"timeoutSeconds\":{\"$ref\":\"#/$defs/TimeoutText\"}},\"required\":[\"success\"],\"type\":\"object\"},\"DockerOperation\":{\"enum\":[\"add-image\",\"delete-image\",\"get-settings\",\"pull-image\",\"refresh-image\",\"refresh-images\",\"save-settings\",\"test-docker\"],\"type\":\"string\"},\"ExecutablePath\":{\"type\":\"string\"},\"ImageReference\":{\"minLength\":1,\"type\":\"string\"},\"OperationMessage\":{\"minLength\":1,\"type\":\"string\"},\"TimeoutText\":{\"type\":\"string\"}},\"contractId\":\"sunder.package.agent.execution.docker.presentation\",\"descriptorVersion\":1,\"errors\":{},\"schemaProfile\":\"sunder.rpc.values.v1\",\"services\":{\"presentation\":{\"methods\":{\"execute\":{\"errors\":[],\"idempotency\":\"none\",\"kind\":\"unary\",\"requestSchema\":{\"$ref\":\"#/$defs/DockerExecutionOperationRequest\"},\"responseSchema\":{\"$ref\":\"#/$defs/DockerExecutionOperationResponse\"}}}}}}",
+        "abiSha256": "9ebf6ad511bdfc132683bad98f5eb7c07b5838e09843a7cd70da8f718bff012c",
+        "packageRelease": {
+          "packageId": "sunder.package.agent.execution.docker",
+          "packageVersion": "2.0.0"
+        }
+      },
+      "history": []
+    }
+  }
+}

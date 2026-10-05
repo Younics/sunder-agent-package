@@ -4,6 +4,7 @@ using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Shared.Presentation;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal static class PresentationExceptionPolicy
 {
     public static bool IsFatal(Exception exception)
@@ -65,6 +66,7 @@ internal static class PresentationExceptionPolicy
     }
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed class PresentationOperationException : InvalidOperationException
 {
     public PresentationOperationException(string message)

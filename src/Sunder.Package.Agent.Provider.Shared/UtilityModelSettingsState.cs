@@ -111,13 +111,7 @@ internal sealed partial class UtilityModelSettingsState : ObservableObject, IDis
         string? configuredModelId,
         string defaultModelId,
         IEnumerable<string> knownModelIds)
-    {
-        var configured = configuredModelId?.Trim();
-        return !string.IsNullOrWhiteSpace(configured)
-               && knownModelIds.Any(modelId => ModelIdsEqual(modelId, configured))
-            ? configured
-            : defaultModelId;
-    }
+        => ProviderUtilityModelSelection.ResolveModelId(configuredModelId, defaultModelId, knownModelIds);
 
     public void Dispose()
     {

@@ -29,43 +29,54 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent\Sunder.Package.Agent.csproj" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent\App\Sunder.Package.Agent.App.csproj" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Builder\Sunder.Package.Agent.Builder.csproj" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Builder\App\Sunder.Package.Agent.Builder.App.csproj" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Execution.Docker\Sunder.Package.Agent.Execution.Docker.csproj" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Execution.Docker\App\DockerApp.csproj" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Execution.Local\Sunder.Package.Agent.Execution.Local.csproj" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Execution.Local\App\LocalApp.csproj" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Mcp\Sunder.Package.Agent.Mcp.csproj" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Mcp\App\Sunder.Package.Agent.Mcp.App.csproj"
-                      Aliases="McpApp" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Memory.Semantic\Sunder.Package.Agent.Memory.Semantic.csproj" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Memory.Semantic\App\Sunder.Package.Agent.Memory.Semantic.App.csproj"
-                      Aliases="MemoryApp" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Memory.Semantic\Protocol\Sunder.Package.Agent.Memory.Semantic.Protocol.csproj" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.Anthropic\Sunder.Package.Agent.Provider.Anthropic.csproj" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.Anthropic\App\Sunder.Package.Agent.Provider.Anthropic.App.csproj"
-                      Aliases="AnthropicApp" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.Gemini\Sunder.Package.Agent.Provider.Gemini.csproj" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.Gemini\App\Sunder.Package.Agent.Provider.Gemini.App.csproj"
-                      Aliases="GeminiApp" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.LMStudio\Sunder.Package.Agent.Provider.LMStudio.csproj" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.LMStudio\App\Sunder.Package.Agent.Provider.LMStudio.App.csproj"
-                      Aliases="LMStudioApp" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.OpenAI\Sunder.Package.Agent.Provider.OpenAI.csproj" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.OpenAI\App\Sunder.Package.Agent.Provider.OpenAI.App.csproj"
-                      Aliases="OpenAiApp" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent\Sunder.Package.Agent.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="global,AgentWorker" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent\Sunder.Package.Agent.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=app" Aliases="AgentApp" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Builder\Sunder.Package.Agent.Builder.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="BuilderWorker" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Builder\Sunder.Package.Agent.Builder.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=app" Aliases="BuilderApp" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Execution.Docker\Sunder.Package.Agent.Execution.Docker.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="DockerWorker" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Execution.Docker\Sunder.Package.Agent.Execution.Docker.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=app" Aliases="DockerApp" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Execution.Local\Sunder.Package.Agent.Execution.Local.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="LocalWorker" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Execution.Local\Sunder.Package.Agent.Execution.Local.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=app" Aliases="LocalApp" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Mcp\Sunder.Package.Agent.Mcp.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="McpWorker" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Mcp\Sunder.Package.Agent.Mcp.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=app" Aliases="McpApp" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Memory.Semantic\Sunder.Package.Agent.Memory.Semantic.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="MemoryWorker" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Memory.Semantic\Sunder.Package.Agent.Memory.Semantic.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=app" Aliases="MemoryApp" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.Anthropic\Sunder.Package.Agent.Provider.Anthropic.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="AnthropicWorker" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.Anthropic\Sunder.Package.Agent.Provider.Anthropic.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=app" Aliases="AnthropicApp" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.Gemini\Sunder.Package.Agent.Provider.Gemini.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="GeminiWorker" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.Gemini\Sunder.Package.Agent.Provider.Gemini.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=app" Aliases="GeminiApp" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.LMStudio\Sunder.Package.Agent.Provider.LMStudio.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="LMStudioWorker" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.LMStudio\Sunder.Package.Agent.Provider.LMStudio.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=app" Aliases="LMStudioApp" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.OpenAI\Sunder.Package.Agent.Provider.OpenAI.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="OpenAiWorker" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.OpenAI\Sunder.Package.Agent.Provider.OpenAI.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=app" Aliases="OpenAiApp" />
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Skills\Sunder.Package.Agent.Skills.csproj"
-                      Aliases="global,SkillsWorker" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Skills\App\SkillsApp.csproj"
-                      Aliases="SkillsApp" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Skills\Protocol\SkillsProtocol.csproj" />
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="SkillsWorker" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Skills\Sunder.Package.Agent.Skills.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=app" Aliases="SkillsApp" />
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Subagents\Sunder.Package.Agent.Subagents.csproj"
-                      Aliases="SubagentsWorker" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Subagents\App\SubagentsApp.csproj"
-                      Aliases="SubagentsApp" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Subagents\Protocol\SubagentsProtocol.csproj" />
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="SubagentsWorker" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Subagents\Sunder.Package.Agent.Subagents.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=app" Aliases="SubagentsApp" />
     <ProjectReference Include="$(SunderAppProject)"
                       Condition="'$(SunderUseSourceSdk)' == 'true'" />
     <ProjectReference Include="$(SunderRuntimeClientProject)"
@@ -85,15 +96,20 @@
   <ItemGroup>
     <Compile Include="..\Sunder.Package.Agent.Tests\AgentOwnerOperationTestExtensions.cs"
              Link="TestSupport\AgentOwnerOperationTestExtensions.cs" />
-    <Compile Include="..\Sunder.Package.Agent.Tests\RegressionTestInfrastructure.cs"
-             Link="TestSupport\RegressionTestInfrastructure.cs" />
     <Compile Include="..\Sunder.Package.Agent.Tests\RegressionTestPackageContext.cs"
              Link="TestSupport\RegressionTestPackageContext.cs" />
     <Compile Include="..\Sunder.Package.Agent.Tests\RegressionTestPackageScope.cs"
-             Link="TestSupport\RegressionTestPackageScope.cs" />
+              Link="TestSupport\RegressionTestPackageScope.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Tests\RegressionTestAppViews.cs"
+             Link="TestSupport\RegressionTestAppViews.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Tests\RegressionTestAppInfrastructure.cs"
+             Link="TestSupport\RegressionTestAppInfrastructure.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Tests\RegressionTestFamilyConsumers.Memory.cs"
+             Link="TestSupport\RegressionTestFamilyConsumers.Memory.cs" />
     <Compile Include="..\Sunder.Package.Agent.Tests\TestPackageStorageFakes.cs"
              Link="TestSupport\TestPackageStorageFakes.cs" />
     <Compile Include="..\Sunder.Package.Agent.TestSupport.Avalonia\WorkerBackedSubagentManagementGateway.cs"
              Link="TestSupport\WorkerBackedSubagentManagementGateway.cs" />
   </ItemGroup>
+  <Import Project="../RegressionTestHarness.props" />
 </Project>

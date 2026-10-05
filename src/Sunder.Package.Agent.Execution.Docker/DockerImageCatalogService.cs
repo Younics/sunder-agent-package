@@ -50,6 +50,7 @@ public sealed class DockerImageCatalogService
     {
     }
 
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
     internal DockerImageCatalogService(
         IPackageContext packageContext,
         DockerCliRunner dockerCliRunner,

@@ -5,6 +5,7 @@ using Sunder.Package.Agent.Shared.PackageViews;
 
 namespace Sunder.Package.Agent.Runtime;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal static class AgentRuntimePayloadLimits
 {
     internal const int EnvelopeReserveBytes = 64 * 1024;

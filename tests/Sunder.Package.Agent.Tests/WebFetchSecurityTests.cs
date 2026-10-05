@@ -1,5 +1,7 @@
+extern alias WebWorker;
+
 using System.Net;
-using Sunder.Package.Agent.Tools.Web.Services;
+using WebWorker::Sunder.Package.Agent.Tools.Web.Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;

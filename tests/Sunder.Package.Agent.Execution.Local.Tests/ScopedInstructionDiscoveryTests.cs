@@ -1,6 +1,11 @@
-using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Execution.Docker;
-using Sunder.Package.Agent.Execution.Local;
+extern alias LocalWorker;
+extern alias DockerWorker;
+
+using LocalWorker::Sunder.Package.Agent.Contracts.Models;
+using DockerWorker::Sunder.Package.Agent.Execution.Docker;
+using LocalWorker::Sunder.Package.Agent.Execution.Local;
+using DockerModels = DockerWorker::Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Tests;
 using Xunit;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
@@ -259,8 +264,8 @@ public sealed class ScopedInstructionDiscoveryTests : IDisposable
 
         var result = await new DockerFileSystemExecutor().DiscoverScopedInstructionsAsync(
             config,
-            new AgentScopedInstructionDiscoveryRequest(
-                [new AgentScopedInstructionProbe("/workspace/outer/inner/target", IsDirectory: true)]),
+            new DockerModels.AgentScopedInstructionDiscoveryRequest(
+                [new DockerModels.AgentScopedInstructionProbe("/workspace/outer/inner/target", IsDirectory: true)]),
             "namespace",
             CancellationToken.None);
 
@@ -312,12 +317,12 @@ public sealed class ScopedInstructionDiscoveryTests : IDisposable
             [],
             [new DockerExecutionMount(workspace, workspace)],
             workspace);
-        return await new DockerFileSystemExecutor()
+        return AgentRoleBoundary.As<AgentScopedInstructionDiscoveryResult>(await new DockerFileSystemExecutor()
             .DiscoverScopedInstructionsAsync(
                 config,
-                new AgentScopedInstructionDiscoveryRequest(probes),
+                AgentRoleBoundary.As<DockerModels.AgentScopedInstructionDiscoveryRequest>(new AgentScopedInstructionDiscoveryRequest(probes)),
                 namespaceFingerprint,
-                CancellationToken.None);
+                CancellationToken.None));
     }
 
     private static string Physical(string path)

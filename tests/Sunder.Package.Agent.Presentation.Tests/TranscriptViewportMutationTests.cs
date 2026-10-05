@@ -1,3 +1,5 @@
+extern alias AgentApp;
+
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
@@ -8,7 +10,7 @@ using Avalonia.Threading;
 using Avalonia.VisualTree;
 using LiveMarkdown.Avalonia;
 using Markdig;
-using Sunder.Package.Agent.Shared.PackageViews;
+using AgentApp::Sunder.Package.Agent.Shared.PackageViews;
 using Xunit;
 
 namespace Sunder.Package.Agent.Presentation.Tests;

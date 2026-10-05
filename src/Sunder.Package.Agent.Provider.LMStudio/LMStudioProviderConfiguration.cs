@@ -3,6 +3,7 @@ using Sunder.Package.Agent.Provider.Shared;
 
 namespace Sunder.Package.Agent.Provider.LMStudio;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 public static class LMStudioProviderConfiguration
 {
     public const string DefaultBaseUrl = "http://127.0.0.1:1234/v1";

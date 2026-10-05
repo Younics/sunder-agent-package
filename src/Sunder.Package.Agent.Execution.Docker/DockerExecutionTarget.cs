@@ -32,6 +32,7 @@ public sealed partial class DockerExecutionTarget
     private readonly ConcurrentDictionary<string, string> _verifiedContainerSignatures = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _verifiedImageIdentities = new(StringComparer.Ordinal);
 
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
     public DockerExecutionTarget(
         IPackageContext packageContext,
         DockerExecutionWorkspaceConfigService configService,

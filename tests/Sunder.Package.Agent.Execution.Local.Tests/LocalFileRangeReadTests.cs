@@ -1,5 +1,7 @@
-using Sunder.Agent.Execution.Common;
-using Sunder.Package.Agent.Contracts.Models;
+extern alias LocalWorker;
+
+using LocalWorker::Sunder.Package.Agent.Contracts.Models;
+using LocalWorker::Sunder.Package.Agent.Execution.Local;
 using Xunit;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;

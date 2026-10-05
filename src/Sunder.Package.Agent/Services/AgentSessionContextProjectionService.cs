@@ -25,6 +25,7 @@ public sealed class AgentSessionContextProjectionService
     {
     }
 
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
     internal AgentSessionContextProjectionService(
         AgentSessionService sessionService,
         IAgentSessionContinuityModelRefiner? modelRefiner)

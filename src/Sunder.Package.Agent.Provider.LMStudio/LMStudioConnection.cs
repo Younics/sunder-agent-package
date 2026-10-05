@@ -33,6 +33,10 @@ internal sealed class LMStudioConnection : IDisposable
     {
     }
 
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
+    internal LMStudioConnection(IPackageContext packageContext, ProviderSettings settings)
+        : this(packageContext, settings.Credentials) { }
+
     internal LMStudioConnection(
         IPackageContext packageContext,
         ProviderCredentialAccessor credentials,

@@ -2,6 +2,7 @@ using Avalonia.Controls;
 
 namespace Sunder.Package.Agent.Provider.LMStudio;
 
+[Sunder.Sdk.Packaging.SunderPackageSettingsView(ViewModel = typeof(LMStudioSettingsViewModel))]
 public partial class LMStudioSettingsView : UserControl, IDisposable
 {
     private LMStudioSettingsViewModel? _viewModel;
@@ -11,6 +12,7 @@ public partial class LMStudioSettingsView : UserControl, IDisposable
         InitializeComponent();
     }
 
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
     public LMStudioSettingsView(LMStudioSettingsViewModel viewModel)
         : this()
     {

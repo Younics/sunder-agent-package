@@ -3,10 +3,12 @@ using Sunder.Sdk.Settings;
 
 namespace Sunder.Package.Agent.Provider.Shared;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record ProviderModelCatalogSnapshot(
     IReadOnlyList<AgentModelDescriptor> Models,
     IReadOnlyList<PackageSettingsOption> UtilityModelOptions);
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal static class ProviderModelCatalog
 {
     public static IReadOnlyList<AgentModelDescriptor> ApplyReleaseDates(

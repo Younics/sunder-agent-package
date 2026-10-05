@@ -1,8 +1,14 @@
+extern alias OpenAiApp;
+
 using Microsoft.Extensions.DependencyInjection;
-using Sunder.Package.Agent.Protocol;
+using OpenAiSettingsViewModel = OpenAiApp::Sunder.Package.Agent.Provider.OpenAI.OpenAiSettingsViewModel;
+using OpenAiSettingsView = OpenAiApp::Sunder.Package.Agent.Provider.OpenAI.OpenAiSettingsView;
+using OpenAiAuthPresentationService = OpenAiApp::Sunder.Package.Agent.Provider.OpenAI.OpenAiAuthPresentationService;
+using OpenAiOwnerManagementRpcClient = OpenAiApp::Sunder.Package.Agent.Provider.OpenAI.OpenAiOwnerManagementRpcClient;
+using ProviderCredentialOwnerClient = OpenAiApp::Sunder.Package.Agent.Provider.Shared.ProviderCredentialOwnerClient;
 using Sunder.Package.Agent.Provider.OpenAI.Auth;
 using Sunder.Package.Agent.Provider.OpenAI.Transport;
-using Sunder.Package.Agent.Provider.OpenAI.Worker;
+using Sunder.Package.Agent.Provider.OpenAI.Rpc;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Package.Agent.Provider.TestSupport;
 using Sunder.Package.Agent.TestSupport.Avalonia;
@@ -20,16 +26,16 @@ public sealed class OpenAiPackageCompositionTests
     public async Task WorkerAndAppComposition_KeepProvidersCredentialsAndAuthWorkerOnly()
     {
         var context = new ProviderTestPackageContext("sunder.package.agent.provider.openai");
-        var options = OpenAiWorkerConfiguration.CreateCore(context);
+        var options = GeneratedProviderComposition.Worker(typeof(OpenAiAgentProvider).Assembly, context);
         await using var composition = Assert.IsType<Sunder.Sdk.Worker.SunderWorkerComposition>(options.Composition);
         var workerServices = composition.Services;
 
-        Assert.NotNull(workerServices.GetService<ProviderCredentialAccessor>());
+        Assert.NotNull(workerServices.GetRequiredService<ApiKeyAuthStrategy>().Credentials);
         Assert.NotNull(workerServices.GetService<ApiKeyAuthStrategy>());
         Assert.NotNull(workerServices.GetService<CodexConnectedAuthStrategy>());
         Assert.NotNull(workerServices.GetService<OpenAiPackageAuthHandler>());
         Assert.NotNull(workerServices.GetService<OpenAiAuthOperationHandler>());
-        Assert.NotNull(workerServices.GetService<OpenAiManagementRpcProvider>());
+        Assert.NotNull(workerServices.GetService<ManagementService>());
         Assert.NotNull(workerServices.GetService<OpenAiAgentProvider>());
         Assert.NotNull(workerServices.GetService<OpenAiEmbeddingProvider>());
         Assert.Null(workerServices.GetService<OpenAiSettingsViewModel>());
@@ -38,9 +44,9 @@ public sealed class OpenAiPackageCompositionTests
         Assert.Equal(
             [
                 "openai.chat",
-                "openai.embedding",
                 "openai.continuation.cleaner",
-                OpenAiManagementProtocol.ProviderId,
+                "openai.embedding",
+                "openai.management",
             ],
             options.Providers.Select(provider => provider.ProviderId));
         Assert.All(options.Providers, provider => Assert.IsAssignableFrom<ISunderRpcServiceHandler>(provider.Handler));
@@ -49,9 +55,9 @@ public sealed class OpenAiPackageCompositionTests
         Assert.Empty(options.CallbackHandlers);
 
         var appServices = new ServiceCollection();
-        var appModule = new AppPackageModule();
+        var appModule = GeneratedProviderComposition.App(typeof(OpenAiSettingsViewModel).Assembly);
         appModule.ConfigureAppServices(appServices, context);
-        Assert.Contains(appServices, descriptor => descriptor.ServiceType == typeof(IOpenAiOwnerManagementClient));
+        Assert.Contains(appServices, descriptor => descriptor.ServiceType == typeof(OpenAiOwnerManagementRpcClient));
         Assert.Contains(appServices, descriptor => descriptor.ServiceType == typeof(OpenAiSettingsViewModel));
         Assert.Contains(appServices, descriptor => descriptor.ServiceType == typeof(OpenAiAuthPresentationService));
         Assert.Contains(appServices, descriptor => descriptor.ServiceType == typeof(ProviderCredentialOwnerClient));
@@ -59,7 +65,7 @@ public sealed class OpenAiPackageCompositionTests
         Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(ApiKeyAuthStrategy));
         Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(CodexConnectedAuthStrategy));
         Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(OpenAiPackageAuthHandler));
-        Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(OpenAiManagementRpcProvider));
+        Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(ManagementService));
         Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(OpenAiAgentProvider));
         Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(OpenAiEmbeddingProvider));
 

@@ -11,6 +11,8 @@ using Sunder.Sdk.Notifications;
 
 namespace Sunder.Package.Agent.Subagents.PackageViews;
 
+[Sunder.Sdk.Packaging.SunderPackageView(Sunder.Package.Agent.Subagents.Services.SubagentConstants.SubsessionsViewId, "Subsessions",
+    ViewModel = typeof(SubsessionsViewModel), IconPath = "assets/sub-session-icon.png", DefaultPlacement = PackageViewPlacement.LeftTop)]
 public partial class SubsessionsView : UserControl,
     IDisposable,
     IPackageViewWarmupTarget,
@@ -87,6 +89,7 @@ public partial class SubsessionsView : UserControl,
         DataContext = viewModel;
     }
 
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
     public SubsessionsView(
         SubsessionsViewModel viewModel,
         IPackageContext packageContext,

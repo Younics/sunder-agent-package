@@ -1,0 +1,2613 @@
+[
+  {
+    "path": "src/Sunder.Package.Agent/App/PackageModule.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/Rpc/Owner/ProviderComposition.cs",
+      "src/Sunder.Package.Agent/Rpc/Owner/AppComposition.cs",
+      "src/Sunder.Package.Agent/Rpc/Owner/OwnerRuntimeService.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent/App/Runtime/AgentOwnerRpcClient.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/Rpc/Owner/AgentOwnerRpcClient.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent/App/Runtime/AgentRuntimeOperations.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/Rpc/Owner/AgentRuntimeOperations.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent/App/Runtime/AgentWorkspaceEditorBindings.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/Rpc/Consumers/AgentWorkspaceEditorBindings.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent/PackageModule.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/Rpc/Owner/ProviderComposition.cs",
+      "src/Sunder.Package.Agent/Rpc/Owner/AppComposition.cs",
+      "src/Sunder.Package.Agent/Rpc/Owner/OwnerRuntimeService.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent/Program.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/Rpc/Owner/ProviderComposition.cs",
+      "src/Sunder.Package.Agent/Rpc/Owner/AppComposition.cs",
+      "src/Sunder.Package.Agent/Rpc/Owner/OwnerRuntimeService.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent/Runtime/AgentWorkerComposition.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/Rpc/Owner/ProviderComposition.cs",
+      "src/Sunder.Package.Agent/Rpc/Owner/AppComposition.cs",
+      "src/Sunder.Package.Agent/Rpc/Owner/OwnerRuntimeService.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent/Runtime/AgentWorkerProviderCatalog.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/Rpc/Owner/ProviderComposition.cs",
+      "src/Sunder.Package.Agent/Rpc/Owner/AppComposition.cs",
+      "src/Sunder.Package.Agent/Rpc/Owner/OwnerRuntimeService.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent/Runtime/Rpc/AgentBehaviorBindings.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/Rpc/Consumers/AgentBehaviorBindings.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent/Runtime/Rpc/AgentChatBindings.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/Rpc/Consumers/AgentChatBindings.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent/Runtime/Rpc/AgentCleanupBindings.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/Rpc/Consumers/AgentCleanupBindings.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent/Runtime/Rpc/AgentEmbeddingBindings.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/Rpc/Consumers/AgentEmbeddingBindings.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent/Runtime/Rpc/AgentExecutionBindings.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/Rpc/Consumers/AgentExecutionBindings.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent/Runtime/Rpc/AgentMetadataBindings.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/Rpc/Consumers/AgentMetadataBindings.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent/Runtime/Rpc/AgentObservedToolBindings.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/Rpc/Consumers/AgentObservedToolBindings.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent/Runtime/Rpc/AgentPromptContextBindings.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/Rpc/Consumers/AgentPromptContextBindings.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent/Runtime/Rpc/AgentSelectableBindings.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/Rpc/Consumers/AgentSelectableBindings.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent/Runtime/Rpc/AgentToolBindings.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/Rpc/Consumers/AgentToolBindings.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent/Runtime/Rpc/AgentToolProfileBindings.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/Rpc/Consumers/AgentToolProfileBindings.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent/Runtime/Rpc/AgentWorkspacePathBindings.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/Rpc/Consumers/AgentWorkspacePathBindings.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Builder/App/BuilderAppRpcGateway.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Builder/Rpc/BuilderRuntimeService.cs",
+      "src/Sunder.Package.Agent.Builder/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Builder/App/BuilderWorkspaceExecutionService.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Builder/BuilderWorkspaceExecutionService.cs",
+      "src/Sunder.Package.Agent.Builder/Rpc/BuilderRpcGateway.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Builder/App/PackageModule.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Builder/Rpc/BuilderRuntimeService.cs",
+      "src/Sunder.Package.Agent.Builder/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Builder/BuilderRpcBridge.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Builder/Rpc/BuilderRuntimeService.cs",
+      "src/Sunder.Package.Agent.Builder/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Builder/BuilderRpcProvider.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Builder/Rpc/BuilderRuntimeService.cs",
+      "src/Sunder.Package.Agent.Builder/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Builder/PackageDependency.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Builder/sunder-contracts.lock.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Builder/Program.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Builder/Rpc/BuilderRuntimeService.cs",
+      "src/Sunder.Package.Agent.Builder/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Builder/Rpc/BuilderRuntimeService.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Builder/Rpc/BuilderRuntimeService.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Builder/Runtime/BuilderWorkerBindings.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Builder/Rpc/BuilderRuntimeService.cs",
+      "src/Sunder.Package.Agent.Builder/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Builder/Runtime/BuilderWorkerComposition.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Builder/Rpc/BuilderRuntimeService.cs",
+      "src/Sunder.Package.Agent.Builder/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Contracts/Extensions/AgentProfileSelectableCapabilityChangeObserver.Compatibility.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/Models/Extensions/AgentProfileSelectableCapabilityChangeObserver.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Contracts/Rpc/AgentBehaviorLoopRpcBinding.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/Rpc/Consumers/AgentBehaviorBindings.cs",
+      "src/Sunder.Package.Agent/Rpc/Consumers/AgentRunControlRegistry.cs",
+      "src/Sunder.Package.Agent/Rpc/Public/BehaviorLoop.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Contracts/Rpc/AgentChatProviderRpcBinding.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/Rpc/Consumers/AgentChatBindings.cs",
+      "src/Sunder.Package.Agent/Rpc/Consumers/AgentChatWireMapper.cs",
+      "src/Sunder.Package.Agent/Rpc/Consumers/AgentChatFailureProjection.cs",
+      "src/Sunder.Package.Agent/Rpc/Public/ChatProvider.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Contracts/Rpc/AgentExecutionTargetRpcBinding.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/Rpc/Consumers/AgentExecutionBindings.cs",
+      "src/Sunder.Package.Agent/Rpc/Public/ExecutionTarget.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Contracts/Rpc/AgentObservedToolExecutionRpcBinding.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/Rpc/Consumers/AgentObservedToolBindings.cs",
+      "src/Sunder.Package.Agent/Rpc/Public/ToolExecutionObserved.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Contracts/Rpc/AgentRpcContractDescriptors.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/sunder-contracts.owned.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Contracts/Rpc/AgentRpcSimpleBindings.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/Rpc/Consumers/AgentRpcContractIds.cs",
+      "src/Sunder.Package.Agent/Rpc/Consumers/AgentSelectableBindings.cs",
+      "src/Sunder.Package.Agent/Rpc/Consumers/AgentPromptContextBindings.cs",
+      "src/Sunder.Package.Agent/Rpc/Consumers/AgentCleanupBindings.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Contracts/Rpc/AgentRpcWire.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/Rpc/Public/AgentRpcValues.cs",
+      "src/Sunder.Package.Agent/Rpc/Public/ToolModels.cs",
+      "src/Sunder.Package.Agent/Rpc/Public/ExecutionOperationModels.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Contracts/Rpc/AgentRuntimeCatalogRpcBinding.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/Rpc/Public/RuntimeCatalog.cs",
+      "src/Sunder.Package.Agent/Services/AgentRuntimeCatalog.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Contracts/Rpc/AgentToolSourceRpcBinding.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/Rpc/Public/ToolSource.cs",
+      "src/Sunder.Package.Agent/Rpc/Consumers/AgentToolBindings.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Contracts/Rpc/AgentWorkspaceResolverRpcBinding.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/Rpc/Public/WorkspaceExecutionResolver.cs",
+      "src/Sunder.Package.Agent/Services/AgentWorkspaceExecutionResolver.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Contracts/Runtime/InternalsVisibleTo.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/Sunder.Package.Agent.csproj"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Execution.Docker/App/AppPackageModule.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Execution.Docker/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Execution.Docker/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Execution.Docker/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Execution.Docker/App/DockerAppBindings.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Execution.Docker/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Execution.Docker/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Execution.Docker/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Execution.Docker/PackageDependency.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Execution.Docker/sunder-contracts.lock.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Execution.Docker/Program.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Execution.Docker/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Execution.Docker/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Execution.Docker/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Execution.Docker/Rpc/DockerWorkerBindings.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Execution.Docker/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Execution.Docker/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Execution.Docker/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Execution.Docker/Runtime/DockerWorkerBindings.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Execution.Docker/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Execution.Docker/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Execution.Docker/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Execution.Docker/Runtime/DockerWorkerConfiguration.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Execution.Docker/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Execution.Docker/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Execution.Docker/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Execution.Local/App/AppPackageModule.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Execution.Local/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Execution.Local/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Execution.Local/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Execution.Local/App/LocalAppBindings.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Execution.Local/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Execution.Local/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Execution.Local/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Execution.Local/PackageDependency.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Execution.Local/sunder-contracts.lock.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Execution.Local/Program.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Execution.Local/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Execution.Local/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Execution.Local/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Execution.Local/Runtime/LocalWorkerBindings.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Execution.Local/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Execution.Local/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Execution.Local/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Execution.Local/Runtime/LocalWorkerConfiguration.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Execution.Local/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Execution.Local/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Execution.Local/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Mcp/App/PackageModule.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Mcp/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Mcp/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Mcp/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Mcp/PackageDependency.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Mcp/sunder-contracts.lock.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Mcp/Rpc/McpWorkerBindings.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Mcp/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Mcp/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Mcp/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Mcp/Runtime/LegacyMcpWorkspaceCatalog.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Mcp/Rpc/RuntimeWorkspaceCatalog.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Mcp/Runtime/McpManagementPayload.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Mcp/Runtime/McpManagementModels.cs",
+      "src/Sunder.Package.Agent.Mcp/Rpc/ManagementService.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Mcp/Runtime/McpManagementRpcProvider.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Mcp/Runtime/McpManagementRpcProvider.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Mcp/Runtime/McpOwnerManagementRpcClient.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Mcp/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Mcp/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Mcp/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Mcp/Services/McpSunderConfigurationSyncService.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Mcp/Services/McpSunderConfigurationSyncService.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Mcp/Shared/Properties/AssemblyInfo.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Mcp/Sunder.Package.Agent.Mcp.csproj"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Mcp/Worker/McpWorkerBindings.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Mcp/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Mcp/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Mcp/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Mcp/Worker/McpWorkerConfiguration.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Mcp/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Mcp/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Mcp/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Mcp/Worker/Program.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Mcp/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Mcp/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Mcp/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Memory.Semantic/App/MemoryAppRuntimeGateway.Transport.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Memory.Semantic/Rpc/MemoryAppRuntimeGateway.Transport.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Memory.Semantic/App/PackageModule.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Memory.Semantic/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Memory.Semantic/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Memory.Semantic/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Memory.Semantic/PackageDependency.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Memory.Semantic/sunder-contracts.lock.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Memory.Semantic/Program.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Memory.Semantic/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Memory.Semantic/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Memory.Semantic/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Memory.Semantic/Rpc/MemoryProviderCatalog.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Memory.Semantic/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Memory.Semantic/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Memory.Semantic/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Memory.Semantic/Runtime/LegacySemanticMemoryRpcCatalog.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Memory.Semantic/Rpc/SemanticMemoryRpcCatalog.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Memory.Semantic/Runtime/MemoryWorkerBindings.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Memory.Semantic/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Memory.Semantic/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Memory.Semantic/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Memory.Semantic/Runtime/MemoryWorkerComposition.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Memory.Semantic/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Memory.Semantic/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Memory.Semantic/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Memory.Semantic/Services/SemanticModelRuntimeResolver.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Memory.Semantic/Services/SemanticModelRuntimeResolver.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.Anthropic/App/PackageModule.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.Anthropic/Rpc/ChatProvider.cs",
+      "src/Sunder.Package.Agent.Provider.Anthropic/Rpc/CredentialSettings.cs",
+      "src/Sunder.Package.Agent.Provider.Anthropic/Rpc/CredentialSettings.Composition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.Anthropic/App/ProviderCredentialOwnerRpcClient.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.Anthropic/Rpc/ChatProvider.cs",
+      "src/Sunder.Package.Agent.Provider.Anthropic/Rpc/CredentialSettings.cs",
+      "src/Sunder.Package.Agent.Provider.Anthropic/Rpc/CredentialSettings.Composition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.Anthropic/PackageDependency.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.Anthropic/sunder-contracts.lock.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.Anthropic/Program.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.Anthropic/Rpc/ChatProvider.cs",
+      "src/Sunder.Package.Agent.Provider.Anthropic/Rpc/CredentialSettings.cs",
+      "src/Sunder.Package.Agent.Provider.Anthropic/Rpc/CredentialSettings.Composition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.Anthropic/Protocol/Properties/AssemblyInfo.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.Anthropic/Sunder.Package.Agent.Provider.Anthropic.csproj"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.Anthropic/ProviderCredentialRpcProvider.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.Anthropic/Rpc/ChatProvider.cs",
+      "src/Sunder.Package.Agent.Provider.Anthropic/Rpc/CredentialSettings.cs",
+      "src/Sunder.Package.Agent.Provider.Anthropic/Rpc/CredentialSettings.Composition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.Anthropic/Rpc/AnthropicWorkerBindings.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.Anthropic/Rpc/ChatProvider.cs",
+      "src/Sunder.Package.Agent.Provider.Anthropic/Rpc/CredentialSettings.cs",
+      "src/Sunder.Package.Agent.Provider.Anthropic/Rpc/CredentialSettings.Composition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.Anthropic/Runtime/AnthropicWorkerBindings.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.Anthropic/Rpc/ChatProvider.cs",
+      "src/Sunder.Package.Agent.Provider.Anthropic/Rpc/CredentialSettings.cs",
+      "src/Sunder.Package.Agent.Provider.Anthropic/Rpc/CredentialSettings.Composition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.Anthropic/Runtime/AnthropicWorkerComposition.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.Anthropic/Rpc/ChatProvider.cs",
+      "src/Sunder.Package.Agent.Provider.Anthropic/Rpc/CredentialSettings.cs",
+      "src/Sunder.Package.Agent.Provider.Anthropic/Rpc/CredentialSettings.Composition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.Gemini/App/PackageModule.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.Gemini/Rpc/ChatProvider.cs",
+      "src/Sunder.Package.Agent.Provider.Gemini/Rpc/CredentialSettings.cs",
+      "src/Sunder.Package.Agent.Provider.Gemini/Rpc/CredentialSettings.Composition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.Gemini/App/ProviderCredentialOwnerRpcClient.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.Gemini/Rpc/ChatProvider.cs",
+      "src/Sunder.Package.Agent.Provider.Gemini/Rpc/CredentialSettings.cs",
+      "src/Sunder.Package.Agent.Provider.Gemini/Rpc/CredentialSettings.Composition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.Gemini/PackageDependency.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.Gemini/sunder-contracts.lock.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.Gemini/Program.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.Gemini/Rpc/ChatProvider.cs",
+      "src/Sunder.Package.Agent.Provider.Gemini/Rpc/CredentialSettings.cs",
+      "src/Sunder.Package.Agent.Provider.Gemini/Rpc/CredentialSettings.Composition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.Gemini/Protocol/Properties/AssemblyInfo.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.Gemini/Sunder.Package.Agent.Provider.Gemini.csproj"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.Gemini/ProviderCredentialRpcProvider.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.Gemini/Rpc/ChatProvider.cs",
+      "src/Sunder.Package.Agent.Provider.Gemini/Rpc/CredentialSettings.cs",
+      "src/Sunder.Package.Agent.Provider.Gemini/Rpc/CredentialSettings.Composition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.Gemini/Rpc/GeminiWorkerBindings.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.Gemini/Rpc/ChatProvider.cs",
+      "src/Sunder.Package.Agent.Provider.Gemini/Rpc/CredentialSettings.cs",
+      "src/Sunder.Package.Agent.Provider.Gemini/Rpc/CredentialSettings.Composition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.Gemini/Runtime/GeminiWorkerBindings.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.Gemini/Rpc/ChatProvider.cs",
+      "src/Sunder.Package.Agent.Provider.Gemini/Rpc/CredentialSettings.cs",
+      "src/Sunder.Package.Agent.Provider.Gemini/Rpc/CredentialSettings.Composition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.Gemini/Runtime/GeminiWorkerComposition.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.Gemini/Rpc/ChatProvider.cs",
+      "src/Sunder.Package.Agent.Provider.Gemini/Rpc/CredentialSettings.cs",
+      "src/Sunder.Package.Agent.Provider.Gemini/Rpc/CredentialSettings.Composition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.LMStudio/App/PackageModule.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.LMStudio/Rpc/ChatProvider.cs",
+      "src/Sunder.Package.Agent.Provider.LMStudio/Rpc/CredentialSettings.cs",
+      "src/Sunder.Package.Agent.Provider.LMStudio/Rpc/CredentialSettings.Composition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.LMStudio/App/ProviderCredentialOwnerRpcClient.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.LMStudio/Rpc/ChatProvider.cs",
+      "src/Sunder.Package.Agent.Provider.LMStudio/Rpc/CredentialSettings.cs",
+      "src/Sunder.Package.Agent.Provider.LMStudio/Rpc/CredentialSettings.Composition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.LMStudio/PackageDependency.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.LMStudio/sunder-contracts.lock.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.LMStudio/Program.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.LMStudio/Rpc/ChatProvider.cs",
+      "src/Sunder.Package.Agent.Provider.LMStudio/Rpc/CredentialSettings.cs",
+      "src/Sunder.Package.Agent.Provider.LMStudio/Rpc/CredentialSettings.Composition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.LMStudio/Protocol/Properties/AssemblyInfo.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.LMStudio/Sunder.Package.Agent.Provider.LMStudio.csproj"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.LMStudio/ProviderCredentialRpcProvider.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.LMStudio/Rpc/ChatProvider.cs",
+      "src/Sunder.Package.Agent.Provider.LMStudio/Rpc/CredentialSettings.cs",
+      "src/Sunder.Package.Agent.Provider.LMStudio/Rpc/CredentialSettings.Composition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.LMStudio/Rpc/LMStudioWorkerBindings.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.LMStudio/Rpc/ChatProvider.cs",
+      "src/Sunder.Package.Agent.Provider.LMStudio/Rpc/CredentialSettings.cs",
+      "src/Sunder.Package.Agent.Provider.LMStudio/Rpc/CredentialSettings.Composition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.LMStudio/Runtime/LMStudioWorkerBindings.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.LMStudio/Rpc/ChatProvider.cs",
+      "src/Sunder.Package.Agent.Provider.LMStudio/Rpc/CredentialSettings.cs",
+      "src/Sunder.Package.Agent.Provider.LMStudio/Rpc/CredentialSettings.Composition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.LMStudio/Runtime/LMStudioWorkerComposition.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.LMStudio/Rpc/ChatProvider.cs",
+      "src/Sunder.Package.Agent.Provider.LMStudio/Rpc/CredentialSettings.cs",
+      "src/Sunder.Package.Agent.Provider.LMStudio/Rpc/CredentialSettings.Composition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.OpenAI/App/PackageModule.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.OpenAI/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Provider.OpenAI/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Provider.OpenAI/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.OpenAI/Management/OpenAiManagementRpcProvider.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.OpenAI/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Provider.OpenAI/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Provider.OpenAI/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.OpenAI/Management/OpenAiOwnerManagementRpcClient.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.OpenAI/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Provider.OpenAI/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Provider.OpenAI/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.OpenAI/PackageDependency.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.OpenAI/sunder-contracts.lock.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.OpenAI/Rpc/OpenAiWorkerBindings.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.OpenAI/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Provider.OpenAI/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Provider.OpenAI/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.OpenAI/Shared/Properties/AssemblyInfo.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.OpenAI/Sunder.Package.Agent.Provider.OpenAI.csproj"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.OpenAI/Worker/OpenAiWorkerBindings.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.OpenAI/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Provider.OpenAI/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Provider.OpenAI/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.OpenAI/Worker/OpenAiWorkerConfiguration.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.OpenAI/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Provider.OpenAI/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Provider.OpenAI/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.OpenAI/Worker/Program.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.OpenAI/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Provider.OpenAI/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Provider.OpenAI/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Skills/App/PackageModule.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Skills/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Skills/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Skills/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Skills/PackageDependency.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Skills/sunder-contracts.lock.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Skills/Program.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Skills/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Skills/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Skills/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Skills/Runtime/LegacySkillsRuntimeBindings.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Skills/Rpc/SkillsRuntimeBindings.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Skills/Runtime/SkillOwnerRpc.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Skills/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Skills/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Skills/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Skills/Runtime/SkillsWorkerBindings.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Skills/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Skills/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Skills/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Skills/Runtime/SkillsWorkerComposition.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Skills/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Skills/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Skills/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Skills/Services/SkillsFeature.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Skills/Services/SkillsFeature.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Subagents/App/PackageModule.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Subagents/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Subagents/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Subagents/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Subagents/PackageDependency.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Subagents/sunder-contracts.lock.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Subagents/Program.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Subagents/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Subagents/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Subagents/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Subagents/Runtime/LegacySubagentRuntimeBindings.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Subagents/Rpc/SubagentRuntimeBindings.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Subagents/Runtime/ProviderModelCatalogAdapter.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Shared/Presentation/ProviderModelLoader.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Subagents/Runtime/SubagentLocalManagementGateway.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Subagents/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Subagents/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Subagents/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Subagents/Runtime/SubagentOwnerRpc.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Subagents/Runtime/SubagentOwnerRpc.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Subagents/Runtime/SubagentRuntimeChangeStream.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Subagents/Runtime/SubagentRuntimeChangeStream.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Subagents/Runtime/SubagentRuntimeHandler.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Subagents/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Subagents/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Subagents/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Subagents/Runtime/SubagentsWorkerBindings.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Subagents/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Subagents/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Subagents/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Subagents/Runtime/SubagentsWorkerComposition.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Subagents/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Subagents/Rpc/ProviderComposition.cs",
+      "src/Sunder.Package.Agent.Subagents/Rpc/AppComposition.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Subagents/Runtime/SubsessionLocalRuntimeAdapter.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Subagents/Runtime/SubsessionLocalRuntimeAdapter.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Subagents/Services/SubagentChildRunCoordinator.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Subagents/Services/SubagentChildRunCoordinator.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Subagents/Services/SubagentDescriptorSchema.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Subagents/Services/SubagentDescriptorSchema.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Subagents/Services/SubagentEditorCapabilityCatalog.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Subagents/Services/SubagentEditorCapabilityCatalog.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Subagents/Services/SubagentFeature.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Subagents/Services/SubagentFeature.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Subagents/Services/SubagentPermissionStatusAdapter.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Subagents/Services/SubagentPermissionStatusAdapter.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Subagents/Services/SubagentStackContributor.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Subagents/Services/SubagentStackContributor.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Tools.Files/FilesToolSource.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Tools.Files/FilesToolSource.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Tools.Files/PackageDependency.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Tools.Files/sunder-contracts.lock.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Tools.Files/Program.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Tools.Files/Rpc/ToolSourceProvider.cs",
+      "src/Sunder.Package.Agent.Tools.Files/Rpc/FilesExecutionBindings.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Tools.Files/Runtime/FilesExecutionFacets.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Tools.Files/Rpc/FilesExecutionFacets.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Tools.Files/Runtime/FilesWorkerBindings.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Tools.Files/Rpc/ToolSourceProvider.cs",
+      "src/Sunder.Package.Agent.Tools.Files/Rpc/FilesExecutionBindings.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Tools.Files/Runtime/FilesWorkerComposition.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Tools.Files/Rpc/ToolSourceProvider.cs",
+      "src/Sunder.Package.Agent.Tools.Files/Rpc/FilesExecutionBindings.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Tools.Shell/PackageDependency.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Tools.Shell/sunder-contracts.lock.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Tools.Shell/Program.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Tools.Shell/Rpc/ToolSourceProvider.cs",
+      "src/Sunder.Package.Agent.Tools.Shell/Rpc/ShellExecutionBindings.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Tools.Shell/Runtime/ShellWorkerBindings.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Tools.Shell/Rpc/ToolSourceProvider.cs",
+      "src/Sunder.Package.Agent.Tools.Shell/Rpc/ShellExecutionBindings.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Tools.Shell/Runtime/ShellWorkerComposition.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Tools.Shell/Rpc/ToolSourceProvider.cs",
+      "src/Sunder.Package.Agent.Tools.Shell/Rpc/ShellExecutionBindings.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Tools.Shell/ShellToolSource.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Tools.Shell/ShellToolSource.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Tools.Web/PackageDependency.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Tools.Web/sunder-contracts.lock.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Tools.Web/Program.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Tools.Web/Rpc/ToolSourceProvider.cs",
+      "src/Sunder.Package.Agent.Tools.Web/Services/WebToolSource.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Tools.Web/Rpc/WebWorkerBindings.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Tools.Web/Rpc/ToolSourceProvider.cs",
+      "src/Sunder.Package.Agent.Tools.Web/Services/WebToolSource.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Tools.Web/Runtime/WebWorkerBindings.Legacy.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Tools.Web/Rpc/ToolSourceProvider.cs",
+      "src/Sunder.Package.Agent.Tools.Web/Services/WebToolSource.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Tools.Web/Runtime/WebWorkerComposition.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Tools.Web/Rpc/ToolSourceProvider.cs",
+      "src/Sunder.Package.Agent.Tools.Web/Services/WebToolSource.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Builder/Protocol/AssemblyInfo.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Builder/Sunder.Package.Agent.Builder.csproj"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Builder/Protocol/BuilderRpcProtocol.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Builder/Sunder.Package.Agent.Builder.csproj"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Builder/Protocol/BuilderRpcWireMapper.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Builder/Sunder.Package.Agent.Builder.csproj"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Builder/Protocol/Contracts/builder-runtime.rpc.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Builder/sunder-contracts.owned.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Builder/Protocol/packages.release.lock.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Builder/Sunder.Package.Agent.Builder.csproj"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Contracts/Contracts/behavior-loop.rpc.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/sunder-contracts.owned.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Contracts/Contracts/chat-provider.rpc.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/sunder-contracts.owned.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Contracts/Contracts/child-run-executor.rpc.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/sunder-contracts.owned.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Contracts/Contracts/durable-lifecycle-observer.rpc.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/sunder-contracts.owned.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Contracts/Contracts/embedding-provider.rpc.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/sunder-contracts.owned.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Contracts/Contracts/execution-target.rpc.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/sunder-contracts.owned.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Contracts/Contracts/permission-surface.rpc.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/sunder-contracts.owned.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Contracts/Contracts/profile-capability-consumer.rpc.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/sunder-contracts.owned.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Contracts/Contracts/prompt-context-contributor.rpc.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/sunder-contracts.owned.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Contracts/Contracts/run-control.rpc.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/sunder-contracts.owned.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Contracts/Contracts/runtime-catalog.rpc.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/sunder-contracts.owned.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Contracts/Contracts/selectable-capability-provider.rpc.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/sunder-contracts.owned.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Contracts/Contracts/session-cleaner.rpc.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/sunder-contracts.owned.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Contracts/Contracts/system-prompt-contributor.rpc.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/sunder-contracts.owned.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Contracts/Contracts/tool-execution-observed.rpc.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/sunder-contracts.owned.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Contracts/Contracts/tool-source.rpc.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/sunder-contracts.owned.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Contracts/Contracts/workspace-editor.rpc.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/sunder-contracts.owned.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Contracts/Contracts/workspace-execution-resolver.rpc.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/sunder-contracts.owned.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Contracts/Contracts/workspace-path-migrator.rpc.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/sunder-contracts.owned.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Contracts/PublicAPI.Shipped.txt",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/Sunder.Package.Agent.csproj"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Contracts/PublicAPI.Unshipped.txt",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/Sunder.Package.Agent.csproj"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Contracts/README.md",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/Sunder.Package.Agent.csproj"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Contracts/buildTransitive/Sunder.Package.Agent.Protocol.props",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/Sunder.Package.Agent.csproj"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Contracts/packages.release.lock.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/Sunder.Package.Agent.csproj"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Execution.Docker/Protocol/Contracts/docker-execution-presentation.rpc.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Execution.Docker/sunder-contracts.owned.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Execution.Docker/Protocol/DockerExecutionPresentationRpc.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Execution.Docker/Models/DockerExecutionPresentationModels.cs",
+      "src/Sunder.Package.Agent.Execution.Docker/Runtime/DockerExecutionPresentationDefaults.cs",
+      "src/Sunder.Package.Agent.Execution.Docker/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Execution.Docker/Rpc/ManagementClient.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Execution.Docker/Protocol/packages.release.lock.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Execution.Docker/Sunder.Package.Agent.Execution.Docker.csproj"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Execution.Local/Protocol/Contracts/local-execution-presentation.rpc.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Execution.Local/sunder-contracts.owned.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Execution.Local/Protocol/LocalExecutionPresentationRpc.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Execution.Local/Models/LocalExecutionPresentationModels.cs",
+      "src/Sunder.Package.Agent.Execution.Local/Runtime/LocalExecutionPresentationDefaults.cs",
+      "src/Sunder.Package.Agent.Execution.Local/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Execution.Local/Rpc/ManagementClient.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Execution.Local/Protocol/packages.release.lock.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Execution.Local/Sunder.Package.Agent.Execution.Local.csproj"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Mcp/Shared/Contracts/mcp-management.rpc.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Mcp/sunder-contracts.owned.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Mcp/Shared/McpManagementProtocol.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Mcp/Services/McpOAuthConstants.cs",
+      "src/Sunder.Package.Agent.Mcp/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Mcp/Rpc/ManagementClient.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Mcp/Shared/packages.release.lock.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Mcp/Sunder.Package.Agent.Mcp.csproj"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Memory.Semantic/Protocol/AssemblyInfo.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Memory.Semantic/Sunder.Package.Agent.Memory.Semantic.csproj"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Memory.Semantic/Protocol/Contracts/memory-inspector.rpc.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Memory.Semantic/sunder-contracts.owned.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Memory.Semantic/Protocol/MemoryInspectorRpc.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Memory.Semantic/Rpc/ManagementModels.cs",
+      "src/Sunder.Package.Agent.Memory.Semantic/Rpc/ManagementService.cs",
+      "src/Sunder.Package.Agent.Memory.Semantic/Rpc/ManagementClient.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Memory.Semantic/Protocol/MemorySemanticProtocol.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Memory.Semantic/Sunder.Package.Agent.Memory.Semantic.csproj"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Memory.Semantic/Protocol/packages.release.lock.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Memory.Semantic/Sunder.Package.Agent.Memory.Semantic.csproj"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.Anthropic/Protocol/AnthropicCredentialProtocol.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.Anthropic/Sunder.Package.Agent.Provider.Anthropic.csproj"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.Anthropic/Protocol/Contracts/credential-settings.rpc.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.Anthropic/sunder-contracts.owned.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.Anthropic/Protocol/packages.release.lock.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.Anthropic/Sunder.Package.Agent.Provider.Anthropic.csproj"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.Gemini/Protocol/Contracts/credential-settings.rpc.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.Gemini/sunder-contracts.owned.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.Gemini/Protocol/GeminiCredentialProtocol.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.Gemini/Sunder.Package.Agent.Provider.Gemini.csproj"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.Gemini/Protocol/packages.release.lock.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.Gemini/Sunder.Package.Agent.Provider.Gemini.csproj"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.LMStudio/Protocol/Contracts/credential-settings.rpc.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.LMStudio/sunder-contracts.owned.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.LMStudio/Protocol/LMStudioCredentialProtocol.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.LMStudio/Sunder.Package.Agent.Provider.LMStudio.csproj"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.LMStudio/Protocol/packages.release.lock.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.LMStudio/Sunder.Package.Agent.Provider.LMStudio.csproj"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.OpenAI/Shared/Contracts/openai-management.rpc.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.OpenAI/sunder-contracts.owned.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.OpenAI/Shared/OpenAiManagementProtocol.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.OpenAI/Sunder.Package.Agent.Provider.OpenAI.csproj"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Provider.OpenAI/Shared/packages.release.lock.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Provider.OpenAI/Sunder.Package.Agent.Provider.OpenAI.csproj"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Skills/Protocol/AssemblyInfo.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Skills/Sunder.Package.Agent.Skills.csproj"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Skills/Protocol/Contracts/skills-owner.rpc.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Skills/sunder-contracts.owned.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Skills/Protocol/SkillsOwnerProtocol.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Skills/Sunder.Package.Agent.Skills.csproj"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Skills/Protocol/packages.release.lock.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Skills/Sunder.Package.Agent.Skills.csproj"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Subagents/Protocol/AssemblyInfo.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Subagents/Sunder.Package.Agent.Subagents.csproj"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Subagents/Protocol/Contracts/subagents-owner.rpc.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Subagents/sunder-contracts.owned.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Subagents/Protocol/SubagentsOwnerProtocol.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Subagents/Sunder.Package.Agent.Subagents.csproj"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent.Subagents/Protocol/packages.release.lock.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent.Subagents/Sunder.Package.Agent.Subagents.csproj"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent/OwnerProtocol/AgentOwnerRuntimeRpc.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/Rpc/Owner/OwnerRuntimeService.cs",
+      "src/Sunder.Package.Agent/Rpc/Owner/AgentOwnerRpcClient.cs",
+      "src/Sunder.Package.Agent/Runtime/AgentOwnerOperationException.cs",
+      "src/Sunder.Package.Agent/Runtime/IAgentOwnerRuntimeProvider.cs",
+      "src/Sunder.Package.Agent/App/Runtime/IAgentOwnerClient.cs"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent/OwnerProtocol/AssemblyInfo.cs",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/Sunder.Package.Agent.csproj"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent/OwnerProtocol/Contracts/agent-owner-runtime.rpc.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/sunder-contracts.owned.json"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  },
+  {
+    "path": "src/Sunder.Package.Agent/OwnerProtocol/packages.release.lock.json",
+    "disposition": "canonical-generated-behavior",
+    "replacements": [
+      "src/Sunder.Package.Agent/Sunder.Package.Agent.csproj"
+    ],
+    "requiredTests": [
+      "AgentCompatibilityCandidateTestsRpcMigrationBaseline.RpcMigrationBaseline_MatchesDescriptorAndSourceInventory",
+      "AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+    ]
+  }
+]

@@ -1,9 +1,11 @@
+extern alias LocalWorker;
+extern alias DockerWorker;
+
 using System.Security.Cryptography;
 using System.Text;
-using Sunder.Agent.Execution.Common;
-using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Execution.Docker;
-using Sunder.Package.Agent.Execution.Local;
+using LocalWorker::Sunder.Package.Agent.Contracts.Models;
+using DockerWorker::Sunder.Package.Agent.Execution.Docker;
+using LocalWorker::Sunder.Package.Agent.Execution.Local;
 using Xunit;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
@@ -232,7 +234,7 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
         Directory.CreateSymbolicLink(Path.Combine(workspace, "escape"), outside);
         var config = CreateDockerConfig(workspace);
 
-        Assert.Throws<LocalSecurePathException>(() => DockerPathResolver.MapToHostPath(config, "/workspace/escape/project"));
+        Assert.Throws<DockerWorker::Sunder.Agent.Execution.Common.LocalSecurePathException>(() => DockerPathResolver.MapToHostPath(config, "/workspace/escape/project"));
     }
 
     [FileSystemFact(TestFileSystemCapability.DirectorySymbolicLinks, "Docker contained-link checks require symbolic links.")]
@@ -243,7 +245,7 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
         Directory.CreateDirectory(target);
         Directory.CreateSymbolicLink(Path.Combine(workspace, "link"), target);
 
-        Assert.Throws<LocalSecurePathException>(() =>
+        Assert.Throws<DockerWorker::Sunder.Agent.Execution.Common.LocalSecurePathException>(() =>
             DockerPathResolver.MapToHostPath(CreateDockerConfig(workspace), "/workspace/link/project"));
     }
 

@@ -97,14 +97,6 @@
           "Microsoft.Extensions.Logging.Abstractions": "10.0.3"
         }
       },
-      "Microsoft.Extensions.Logging.Abstractions": {
-        "type": "Transitive",
-        "resolved": "10.0.8",
-        "contentHash": "fdVadZmsC8jRP0KvKy8mO8f6GV/HyBvElfcSxEhd+5FM5boAw/01iSaCto5G3G37ApJira4A3pNaVvBv8cUiLQ==",
-        "dependencies": {
-          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.8"
-        }
-      },
       "Microsoft.Extensions.Options": {
         "type": "Transitive",
         "resolved": "10.0.3",
@@ -194,47 +186,25 @@
           "xunit.extensibility.core": "[2.9.3]"
         }
       },
-      "Sunder.Package.Agent.Protocol": {
-        "type": "Project",
-        "dependencies": {
-          "Microsoft.Extensions.AI.Abstractions": "[10.5.2, )",
-          "Sunder.Sdk": "[1.1.0, 1.2.0)"
-        }
-      },
       "sunder.package.agent.provider.openai": {
-        "type": "Project",
-        "dependencies": {
-          "Microsoft.Extensions.AI.OpenAI": "[10.5.2, )",
-          "Microsoft.Extensions.DependencyInjection": "[10.0.8, )",
-          "OpenAI": "[2.10.0, )",
-          "Sunder.Package.Agent.Protocol": "[2.0.0, )",
-          "Sunder.Package.Agent.Provider.OpenAI.Shared": "[2.0.0, )",
-          "Sunder.Sdk": "[1.1.0, 1.2.0)",
-          "Sunder.Sdk.Worker": "[1.1.0, 1.1.0]"
-        }
-      },
-      "sunder.package.agent.provider.openai.app": {
         "type": "Project",
         "dependencies": {
           "Avalonia": "[12.0.3, )",
           "CommunityToolkit.Mvvm": "[8.4.2, )",
-          "Sunder.Package.Agent.Provider.OpenAI.Shared": "[2.0.0, )",
+          "Microsoft.Extensions.AI.OpenAI": "[10.5.2, )",
+          "Microsoft.Extensions.DependencyInjection": "[10.0.8, )",
+          "OpenAI": "[2.10.0, )",
           "Sunder.Sdk": "[1.1.0, 1.2.0)",
-          "Sunder.Sdk.Avalonia": "[1.1.0, 1.2.0)"
-        }
-      },
-      "sunder.package.agent.provider.openai.shared": {
-        "type": "Project",
-        "dependencies": {
-          "Sunder.Package.Agent.Protocol": "[2.0.0, )",
-          "Sunder.Sdk": "[1.1.0, 1.2.0)"
+          "Sunder.Sdk.Avalonia": "[1.1.0, 1.2.0)",
+          "Sunder.Sdk.Worker": "[1.1.0, 1.1.0]"
         }
       },
       "sunder.package.agent.provider.testsupport": {
         "type": "Project",
         "dependencies": {
           "Sunder.Package.Agent.TestSupport": "[2.0.0, )",
-          "Sunder.Sdk": "[1.1.0, 1.2.0)"
+          "Sunder.Sdk": "[1.1.0, 1.2.0)",
+          "Sunder.Sdk.Worker": "[1.1.0, 1.1.0]"
         }
       },
       "sunder.package.agent.testsupport": {
@@ -287,6 +257,15 @@
           "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.8"
         }
       },
+      "Microsoft.Extensions.Logging.Abstractions": {
+        "type": "CentralTransitive",
+        "requested": "[10.0.8, )",
+        "resolved": "10.0.8",
+        "contentHash": "fdVadZmsC8jRP0KvKy8mO8f6GV/HyBvElfcSxEhd+5FM5boAw/01iSaCto5G3G37ApJira4A3pNaVvBv8cUiLQ==",
+        "dependencies": {
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.8"
+        }
+      },
       "OpenAI": {
         "type": "CentralTransitive",
         "requested": "[2.10.0, )",
@@ -300,7 +279,7 @@
         "type": "CentralTransitive",
         "requested": "[1.1.0, 1.2.0)",
         "resolved": "1.1.0",
-        "contentHash": "X6TIxu2cP/8doVvGtjz2NgA7IOZkuyH6k0gfOTOXYFKggN8aDy7qoWqH0DqStOdsGDL/4fYphwlvF91gEqmWyQ==",
+        "contentHash": "J23vCBbnsxgImNKeJ4SmCo1SuYT88TmHN/u+wpLA7jRlgHtNeyO81fDsqST4YUHR6yCLteHOryJWbgOhkJsm8g==",
         "dependencies": {
           "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.8",
           "Microsoft.Extensions.Logging.Abstractions": "10.0.8"
@@ -310,7 +289,7 @@
         "type": "CentralTransitive",
         "requested": "[1.1.0, 1.2.0)",
         "resolved": "1.1.0",
-        "contentHash": "3lglWwD0IH95c6wrOxqGu3jWo9KTDmpNAYUwMvl0IWT995NRPTJ13V3F4kFqqepgTQsub3i88sTAQlcoB6EEPg==",
+        "contentHash": "Nx/7cdhheWK8bqFePfs9KzLfm94TT8Xdn7Dz9NtepUqNdZrlG0YQ2zAHLWqCj7JMr/UL1tHcdqpOrp5w9kbSKg==",
         "dependencies": {
           "Avalonia": "12.0.3",
           "Sunder.Sdk": "[1.1.0, 1.2.0)"
@@ -320,8 +299,9 @@
         "type": "CentralTransitive",
         "requested": "[1.1.0, 1.1.0]",
         "resolved": "1.1.0",
-        "contentHash": "nPqH28jP6rOcAftBUapaijUQGZ6iIPWR8P1CD97HxWgq3t6jUZ4mYOfj2QZlV0KTjXGass7A3aKWk/j2PIuLjg==",
+        "contentHash": "0xUXgkMLi2u03IaUFmkdeGMm+Gik4PMEA28XbgaCX0mUNZd2lD837rTsPGbxzkBGhVaqDZoZ2FdcOAG9+nykew==",
         "dependencies": {
+          "Microsoft.Extensions.DependencyInjection": "10.0.8",
           "Sunder.Sdk": "[1.1.0]"
         }
       }

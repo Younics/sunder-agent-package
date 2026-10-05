@@ -4,6 +4,8 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <IsPackable>false</IsPackable>
+        <!-- Restore must see test analyzer references before NuGet's test props exist. -->
+        <IsTestProject Condition="$([System.String]::Copy('$(MSBuildProjectName)').EndsWith('.Tests'))">true</IsTestProject>
         <LangVersion>14.0</LangVersion>
         <Deterministic>true</Deterministic>
         <ContinuousIntegrationBuild Condition="'$(CI)' == 'true' or '$(GITHUB_ACTIONS)' == 'true' or '$(CIRCLECI)' == 'true'">true</ContinuousIntegrationBuild>

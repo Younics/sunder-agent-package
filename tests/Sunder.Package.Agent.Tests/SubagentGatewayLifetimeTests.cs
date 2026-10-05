@@ -1,5 +1,7 @@
-using Sunder.Package.Agent.Subagents.Runtime;
-using Sunder.Package.Agent.Subagents.PackageViews;
+extern alias SubagentsApp;
+
+using SubagentsApp::Sunder.Package.Agent.Subagents.Runtime;
+using SubagentsApp::Sunder.Package.Agent.Subagents.PackageViews;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;

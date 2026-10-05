@@ -199,16 +199,8 @@ public sealed class HistorySearchPagingRankingTests
             Reasons: ["All words match"],
             laneRanks);
 
-    private static ServiceProvider CreateRuntime(RegressionTestPackageScope scope)
-    {
-        var services = new ServiceCollection();
-        services.AddSingleton(scope.Context);
-        services.AddSingleton<IPackageContext>(scope.Context);
-        services.AddSingleton<Sunder.Package.Agent.Protocol.AgentRpcCatalog>(new RegressionTestExtensionCatalog());
-        services.AddSingleton<IBackgroundProcessQueue, CompositionBackgroundProcessQueue>();
-        new PackageModule().ConfigureRuntimeServices(services, scope.Context);
-        return services.BuildServiceProvider();
-    }
+    private static RegressionTestRuntime CreateRuntime(RegressionTestPackageScope scope)
+        => RegressionTestRuntime.Create(scope.Context);
 
     private static async Task WaitUntilAsync(Func<bool> condition)
     {

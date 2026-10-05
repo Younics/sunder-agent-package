@@ -1,0 +1,30 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using Sunder.Package.Agent.Contracts.Contracts;
+using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Sdk.Rpc;
+
+public sealed class RoleLocalSelectableProbe(
+    string providerId,
+    string displayName,
+    Func<string, CancellationToken, ValueTask<string>> list,
+    Action<Action> subscribe,
+    Action<Action> unsubscribe) : IAgentProfileSelectableCapabilityProvider, IAgentProfileSelectableCapabilityChangeNotifier
+{
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
+    {
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        Converters = { new SunderRpcJsonConverterFactory(), new JsonStringEnumConverter(JsonNamingPolicy.KebabCaseLower, allowIntegerValues: false) },
+    };
+
+    public string ProviderId => providerId;
+    public string DisplayName => displayName;
+    public event Action? SelectableCapabilitiesChanged
+    {
+        add { if (value is not null) subscribe(value); }
+        remove { if (value is not null) unsubscribe(value); }
+    }
+    public async ValueTask<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>> ListCapabilitiesAsync(
+        AgentProfileSelectableCapabilityRequest request, CancellationToken token = default)
+        => JsonSerializer.Deserialize<AgentProfileSelectableCapabilityDescriptor[]>(await list(JsonSerializer.Serialize(request, Json), token), Json)!;
+}

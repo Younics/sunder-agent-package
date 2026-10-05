@@ -6,8 +6,6 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Execution.Docker;
-using Sunder.Package.Agent.Execution.Local;
 using Sunder.Package.Agent.HistorySearch;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Runtime;
@@ -18,6 +16,11 @@ using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
 
+extern alias DockerWorker;
+extern alias LocalWorker;
+using DockerWorker::Sunder.Package.Agent.Execution.Docker;
+using LocalWorker::Sunder.Package.Agent.Execution.Local;
+
 #pragma warning disable MEAI001
 
 public sealed class AgentRpcProviderConformanceTests
@@ -27,60 +30,48 @@ public sealed class AgentRpcProviderConformanceTests
     {
         using var scope = RegressionTestPackageScope.Create();
         using var rpcCatalog = new RegressionTestExtensionCatalog();
-        var services = new ServiceCollection();
-        services.AddSingleton<IPackageContext>(scope.Context);
-        services.AddSingleton<AgentRpcCatalog>(rpcCatalog);
-        new PackageModule().ConfigureRuntimeServices(services, scope.Context);
-        await using var serviceProvider = services.BuildServiceProvider(new ServiceProviderOptions
-        {
-            ValidateOnBuild = true,
-            ValidateScopes = true,
-        });
-        var deferred = new List<DeferredAgentRpcServiceHandler>();
-        var registrations = global::AgentWorkerProviderCatalog.CreateRegistrations(deferred);
+        var generated = AgentSourceArtifactMigrationTests.CreateGeneratedWorker(typeof(Rpc.Public.RunControlService).Assembly,
+            scope.Context, rpcCatalog.RpcForCaller("sunder.package.agent"));
+        await using var lifetime = generated.Lifetime;
+        var serviceProvider = generated.Services;
+        var registrations = generated.Options.Providers;
         var manifestProviders = ReadManifestProviders("Sunder.Package.Agent");
 
-        Assert.Equal(11, global::AgentWorkerProviderCatalog.Definitions.Count);
         Assert.Equal(11, registrations.Count);
-        Assert.Equal(11, deferred.Count);
+        Assert.Empty(Directory.EnumerateFiles(scope.RootPath, "*", SearchOption.AllDirectories));
         Assert.Equal(
             manifestProviders.Keys.Order(StringComparer.Ordinal),
             registrations.Select(static registration => registration.ProviderId).Order(StringComparer.Ordinal));
 
-        foreach (var definition in global::AgentWorkerProviderCatalog.Definitions)
+        foreach (var registration in registrations)
         {
-            var registration = Assert.Single(
-                registrations,
-                candidate => string.Equals(candidate.ProviderId, definition.ProviderId, StringComparison.Ordinal));
-            AssertRegistrationConforms(registration, definition.Descriptor);
+            var descriptor = registration.ContractId == "sunder.stack.contributor"
+                ? ReadBundledDescriptor("Sunder.Package.Agent", registration.ContractId)
+                : RegressionTestRpcDescriptors.Get(registration.ContractId);
+            AssertRegistrationConforms(registration, descriptor);
             AssertManifestIdentity(registration, manifestProviders[registration.ProviderId]);
-            var deferredHandler = Assert.IsType<DeferredAgentRpcServiceHandler>(registration.Handler);
-            Assert.False(deferredHandler.IsActive);
-            AssertDeclaredErrors(definition.Descriptor, deferredHandler.DeclaredErrors);
         }
 
+        var lifecycle = serviceProvider.GetRequiredService<AgentWorkerLifecycle>();
+        var background = serviceProvider.GetRequiredService<Services.AgentBackgroundWorkService>();
+        Assert.False(background.IsRunning);
+        lifecycle.CommitGeneration(new Contracts.PackageRuntimeGeneration(Guid.NewGuid(), 1));
         try
         {
-            foreach (var handler in deferred)
-            {
-                handler.Activate(serviceProvider);
-                Assert.True(handler.IsActive);
-            }
+            await lifecycle.ActivateAsync(static (_, _, _) => ValueTask.CompletedTask, CancellationToken.None);
+            Assert.True(background.IsRunning);
         }
         finally
         {
-            foreach (var handler in deferred)
-            {
-                handler.Deactivate();
-            }
+            await lifecycle.StopAsync(CancellationToken.None);
         }
 
         var runControl = Assert.Single(
             registrations,
-            static registration => registration.ProviderId == AgentRunControlRpc.ProviderId);
+            static registration => registration.ProviderId == "agent.run.control");
         Assert.Contains(
             "agent.run-control.capability-unavailable",
-            runControl.DeclaredErrors[AgentRunControlRpc.ServiceId]["select-session-context"]);
+            runControl.DeclaredErrors["run-control"]["select-session-context"]);
         Assert.DoesNotContain(
             "agent.run-control.undeclared",
             runControl.DeclaredErrors.Values.SelectMany(static methods => methods.Values).SelectMany(static errors => errors));
@@ -89,23 +80,26 @@ public sealed class AgentRpcProviderConformanceTests
     [Fact]
     public async Task LocalAndDockerCustomHandlers_ConformToManifestAndProductionSchemas()
     {
-        var executionDescriptor = AgentRpcContractDescriptors.Get(AgentRpcContractIds.ExecutionTarget);
-        var migratorDescriptor = AgentRpcContractDescriptors.Get(AgentRpcContractIds.WorkspacePathMigrator);
-        var editorDescriptor = AgentRpcContractDescriptors.Get(AgentRpcContractIds.WorkspaceEditor);
-        var executionHandler = AgentExecutionTargetRpc.CreateHandler(new ExecutionTargetProbe());
-        var migratorHandler = AgentWorkspacePathMigratorRpc.CreateHandler(new WorkspacePathMigratorProbe());
-        var editorHandler = AgentWorkspaceEditorRpc.CreateHandler(new WorkspaceEditorProbe());
-        var localHandler = LocalExecutionPresentationRpc.CreateHandler(new LocalPresentationProbe());
-        var localRegistration = Register(
-            LocalExecutionPresentationRpc.ProviderId,
-            LocalExecutionPresentationRpc.Descriptor,
-            localHandler);
+        using var roles = new RegressionTestProviderRoles();
+        using var scope = RegressionTestPackageScope.Create();
+        using var localTarget = new LocalExecutionTarget(scope.Context, new LocalExecutionWorkspaceConfigService(scope.Context),
+            new LocalShellCatalogService(scope.Context));
+        using var dockerLifecycle = new DockerContainerLifecycleService();
+        var dockerTarget = new DockerExecutionTarget(scope.Context, new DockerExecutionWorkspaceConfigService(scope.Context), dockerLifecycle);
+        var executionDescriptor = RegressionTestRpcDescriptors.Get(AgentRpcContractIds.ExecutionTarget);
+        var migratorDescriptor = RegressionTestRpcDescriptors.Get(AgentRpcContractIds.WorkspacePathMigrator);
+        var editorDescriptor = RegressionTestRpcDescriptors.Get(AgentRpcContractIds.WorkspaceEditor);
+        var localDescriptor = RegressionTestRpcDescriptors.Get("sunder.package.agent.execution.local.presentation");
+        var dockerDescriptor = RegressionTestRpcDescriptors.Get("sunder.package.agent.execution.docker.presentation");
+        var localRegistration = new LocalWorker::Sunder.Package.Agent.Execution.Local.Rpc.ManagementService(new LocalPresentationProbe())
+            .CreateSunderRpcProviderRegistration();
+        var localHandler = localRegistration.Handler;
         var localRegistrations = new[]
         {
             localRegistration,
-            Register("local.execution.target", executionDescriptor, executionHandler),
-            Register("local.workspace.path.migrator", migratorDescriptor, migratorHandler),
-            Register("local.workspace.editor", editorDescriptor, editorHandler),
+            new LocalWorker::Sunder.Package.Agent.Execution.Local.Rpc.ExecutionTargetProvider(localTarget).CreateSunderRpcProviderRegistration(),
+            roles.Create("Execution.Local", "Rpc.WorkspacePathMigratorProvider", new WorkspacePathMigratorProbe()),
+            roles.Create("Execution.Local", "Rpc.WorkspaceEditorProvider", new WorkspaceEditorProbe()),
         };
         var localManifest = ReadManifestProviders("Sunder.Package.Agent.Execution.Local");
         Assert.Equal(
@@ -118,33 +112,31 @@ public sealed class AgentRpcProviderConformanceTests
                 "local.execution.target" => executionDescriptor,
                 "local.workspace.path.migrator" => migratorDescriptor,
                 "local.workspace.editor" => editorDescriptor,
-                _ => LocalExecutionPresentationRpc.Descriptor,
+                _ => localDescriptor,
             };
             AssertRegistrationConforms(registration, descriptor);
             AssertManifestIdentity(registration, localManifest[registration.ProviderId]);
         }
         var localResponse = await localHandler.InvokeUnaryAsync(
             null!,
-            LocalExecutionPresentationRpc.ServiceId,
+            "presentation",
             "execute",
             Parse("{\"kind\":\"get-settings\"}"));
         AssertMethodOutputSchemaValid(
-            LocalExecutionPresentationRpc.Descriptor,
-            LocalExecutionPresentationRpc.ServiceId,
+            localDescriptor,
+            "presentation",
             "execute",
             localResponse);
 
-        var dockerHandler = DockerExecutionPresentationRpc.CreateHandler(new DockerPresentationProbe());
-        var dockerRegistration = Register(
-            DockerExecutionPresentationRpc.ProviderId,
-            DockerExecutionPresentationRpc.Descriptor,
-            dockerHandler);
+        var dockerRegistration = new DockerWorker::Sunder.Package.Agent.Execution.Docker.Rpc.ManagementService(new DockerPresentationProbe())
+            .CreateSunderRpcProviderRegistration();
+        var dockerHandler = dockerRegistration.Handler;
         var dockerRegistrations = new[]
         {
             dockerRegistration,
-            Register("docker.execution.target", executionDescriptor, executionHandler),
-            Register("docker.workspace.path.migrator", migratorDescriptor, migratorHandler),
-            Register("docker.workspace.editor", editorDescriptor, editorHandler),
+            new DockerWorker::Sunder.Package.Agent.Execution.Docker.Rpc.ExecutionTargetProvider(dockerTarget).CreateSunderRpcProviderRegistration(),
+            roles.Create("Execution.Docker", "Rpc.WorkspacePathMigratorProvider", new WorkspacePathMigratorProbe()),
+            roles.Create("Execution.Docker", "Rpc.WorkspaceEditorProvider", new WorkspaceEditorProbe()),
         };
         var dockerManifest = ReadManifestProviders("Sunder.Package.Agent.Execution.Docker");
         Assert.Equal(
@@ -157,64 +149,62 @@ public sealed class AgentRpcProviderConformanceTests
                 "docker.execution.target" => executionDescriptor,
                 "docker.workspace.path.migrator" => migratorDescriptor,
                 "docker.workspace.editor" => editorDescriptor,
-                _ => DockerExecutionPresentationRpc.Descriptor,
+                _ => dockerDescriptor,
             };
             AssertRegistrationConforms(registration, descriptor);
             AssertManifestIdentity(registration, dockerManifest[registration.ProviderId]);
         }
         var dockerResponse = await dockerHandler.InvokeUnaryAsync(
             null!,
-            DockerExecutionPresentationRpc.ServiceId,
+            "presentation",
             "execute",
             Parse("{\"kind\":\"get-settings\"}"));
         AssertMethodOutputSchemaValid(
-            DockerExecutionPresentationRpc.Descriptor,
-            DockerExecutionPresentationRpc.ServiceId,
+            dockerDescriptor,
+            "presentation",
             "execute",
             dockerResponse);
     }
 
     [Fact]
-    public void DescriptorBackedBuilder_RejectsWrongMethodRouteKind()
+    public async Task GeneratedHandler_RejectsWrongMethodRouteKind()
     {
-        var descriptor = AgentRpcContractDescriptors.Get(AgentRpcContractIds.ObservedToolExecution);
-
-        var exception = Assert.Throws<InvalidOperationException>(() => AgentRpcServiceHandler.Create(descriptor)
-            .AddUnary<AgentRpcEmpty, AgentRpcEmpty>(
-                AgentObservedToolExecutionRpc.ServiceId,
-                "describe",
-                static (_, _, _) => ValueTask.FromResult(new AgentRpcEmpty()))
-            .AddUnary<AgentRpcEmpty, AgentRpcEmpty>(
-                AgentObservedToolExecutionRpc.ServiceId,
-                "execute",
-                static (_, _, _) => ValueTask.FromResult(new AgentRpcEmpty()))
-            .Build());
-
-        Assert.Contains("tool-execution-observed/execute must be server-stream", exception.Message, StringComparison.Ordinal);
+        using var roles = new RegressionTestProviderRoles();
+        var registration = roles.Create("Mcp", "Rpc.ObservedExecutionProvider", new ToolSourceProbe());
+        var descriptor = RegressionTestRpcDescriptors.Get(registration.ContractId);
+        Assert.Equal(SunderRpcMethodKind.ServerStream, descriptor.FindService("tool-execution-observed")!.FindMethod("execute")!.Kind);
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => registration.Handler.InvokeUnaryAsync(null!,
+            "tool-execution-observed", "execute", RegressionTestRpcValues.ToolInvocation(new(Guid.NewGuid()), new("read_file", "{}"))).AsTask());
+        Assert.Contains("does not implement unary method 'tool-execution-observed/execute'", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
     public void RemainingGeneratedStyleFactories_ConformToExactDescriptorRoutesAndErrors()
     {
-        var handlers = new (string ContractId, ISunderRpcServiceHandler Handler)[]
+        using var sources = new RegressionTestSourceProviders();
+        using var catalog = new RegressionTestExtensionCatalog();
+        var providers = new (string ContractId, object Implementation)[]
         {
             (AgentRpcContractIds.EmbeddingProvider,
-                AgentEmbeddingProviderRpc.CreateHandler(InterfaceProbe.Create<IAgentEmbeddingProvider>())),
+                InterfaceProbe.Create<IAgentEmbeddingProvider>()),
             (AgentRpcContractIds.SystemPromptContributor,
-                AgentSystemPromptContributorRpc.CreateHandler(InterfaceProbe.Create<IAgentSystemPromptContributor>())),
+                InterfaceProbe.Create<IAgentSystemPromptContributor>()),
             (AgentRpcContractIds.PermissionSurface,
-                AgentPermissionSurfaceRpc.CreateHandler(InterfaceProbe.Create<IAgentPermissionSurface>())),
+                InterfaceProbe.Create<IAgentPermissionSurface>()),
             (AgentRpcContractIds.DurableLifecycleObserver,
-                AgentDurableLifecycleObserverRpc.CreateHandler(InterfaceProbe.Create<IAgentDurableLifecycleObserver>())),
+                InterfaceProbe.Create<IAgentDurableLifecycleObserver>()),
             (AgentRpcContractIds.ProfileCapabilityConsumer,
-                AgentProfileCapabilityConsumerRpc.CreateHandler(InterfaceProbe.Create<IAgentProfileCapabilityConsumer>())),
+                InterfaceProbe.Create<IAgentProfileCapabilityConsumer>()),
             (AgentRpcContractIds.SelectableCapabilityProvider,
-                AgentSelectableCapabilityProviderRpc.CreateHandler(InterfaceProbe.Create<IAgentProfileSelectableCapabilityProvider>())),
+                InterfaceProbe.Create<IAgentProfileSelectableCapabilityProvider>()),
         };
 
-        foreach (var (contractId, handler) in handlers)
+        foreach (var (contractId, implementation) in providers)
         {
-            var descriptor = AgentRpcContractDescriptors.Get(contractId);
+            var generated = sources.Create(contractId, implementation, catalog, catalog.RpcForCaller("test.package"));
+            using var lifetime = generated.Lifetime;
+            var handler = generated.Registration.Handler;
+            var descriptor = RegressionTestRpcDescriptors.Get(contractId);
             var metadata = Assert.IsAssignableFrom<ISunderRpcDeclaredErrorMetadata>(handler);
             AssertDeclaredErrors(descriptor, metadata.DeclaredErrors);
         }
@@ -269,15 +259,15 @@ public sealed class AgentRpcProviderConformanceTests
                     updatedAt,
                     RuntimeRevision: 12),
                 RuntimeInstanceId: "runtime-1"));
-        var handler = AgentOwnerRuntimeRpc.CreateHandler(provider);
+        var handler = new Rpc.Owner.OwnerRuntimeService(provider).CreateSunderRpcProviderRegistration().Handler;
 
         var toolDetail = await handler.InvokeUnaryAsync(
             null!,
             "agent-runtime",
             "transcript-tool-detail",
-            Parse(AgentRpcServiceHandler.Serialize(new AgentTranscriptToolDetailRequest(sessionId))));
+            JsonSerializer.SerializeToElement(new AgentTranscriptToolDetailRequest(sessionId), RegressionTestRpcValues.Json));
         AssertMethodOutputSchemaValid(
-            AgentOwnerRuntimeRpc.Descriptor,
+            RegressionTestRpcDescriptors.Get("sunder.agent.owner.runtime"),
             "agent-runtime",
             "transcript-tool-detail",
             toolDetail);
@@ -287,9 +277,9 @@ public sealed class AgentRpcProviderConformanceTests
             handler,
             "agent-runtime",
             "changes",
-            Parse(AgentRpcServiceHandler.Serialize(new AgentChangeSubscription(11, SupportsTurnMutations: true))));
+            JsonSerializer.SerializeToElement(new AgentChangeSubscription(11, SupportsTurnMutations: true), RegressionTestRpcValues.Json));
         var change = Assert.Single(changes);
-        AssertMethodOutputSchemaValid(AgentOwnerRuntimeRpc.Descriptor, "agent-runtime", "changes", change);
+        AssertMethodOutputSchemaValid(RegressionTestRpcDescriptors.Get("sunder.agent.owner.runtime"), "agent-runtime", "changes", change);
         Assert.Equal(" world", change.GetProperty("turnMutation").GetProperty("text").GetString());
         Assert.Equal("2026-08-20T12:34:56Z", change.GetProperty("turnMutation").GetProperty("updatedAtUtc").GetString());
     }
@@ -297,53 +287,55 @@ public sealed class AgentRpcProviderConformanceTests
     [Fact]
     public async Task ProviderHandlers_ProductionSerializerEmitsSchemaValidChatAndToolEvents()
     {
-        var chatHandler = AgentChatProviderRpc.CreateHandler(new ChatProviderProbe());
-        var chatRequest = new AgentChatStreamRequest(
-            "schema.chat",
-            "schema-model",
-            [],
-            EmptyChatOptions());
+        using var roles = new RegressionTestProviderRoles();
+        var chatHandler = roles.Create("Provider.Gemini", "Rpc.ChatProvider", new ChatProviderProbe()).Handler;
+        var chatRequest = new
+        {
+            providerId = "schema.chat", modelId = "schema-model", messages = Array.Empty<object>(), options = EmptyChatOptions(),
+        };
         var chatEvents = await ReadStreamAsync(
             chatHandler,
-            AgentChatProviderRpc.ServiceId,
+            "chat-provider",
             "stream-chat",
-            Parse(AgentRpcServiceHandler.Serialize(chatRequest)));
+            JsonSerializer.SerializeToElement(chatRequest, RegressionTestRpcValues.Json));
         Assert.Equal(2, chatEvents.Count);
         Assert.All(chatEvents, item => AssertMethodOutputSchemaValid(
-            AgentRpcContractDescriptors.Get(AgentRpcContractIds.ChatProvider),
-            AgentChatProviderRpc.ServiceId,
+            RegressionTestRpcDescriptors.Get(AgentRpcContractIds.ChatProvider),
+            "chat-provider",
             "stream-chat",
             item));
         Assert.Equal("tool-call", chatEvents[0].GetProperty("contentItems")[0].GetProperty("kind").GetString());
         Assert.Equal("tool-result", chatEvents[1].GetProperty("contentItems")[0].GetProperty("kind").GetString());
 
         var source = new ToolSourceProbe();
-        var request = new ToolInvocationRequest(
-            AgentToolSourceRpc.ToWire(new AgentToolExecutionContext(Guid.NewGuid())),
+        var requestJson = RegressionTestRpcValues.ToolInvocation(new AgentToolExecutionContext(Guid.NewGuid()),
             new AgentToolRequest("read_file", "{\"path\":\"README.md\"}"));
-        var requestJson = Parse(AgentRpcServiceHandler.Serialize(request));
-        var toolHandler = AgentToolSourceRpc.CreateHandler(source);
+        using var sources = new RegressionTestSourceProviders();
+        using var catalog = new RegressionTestExtensionCatalog();
+        var generated = sources.Create(AgentRpcContractIds.ToolSource, source, catalog, catalog.RpcForCaller("test.package"));
+        using var lifetime = generated.Lifetime;
+        var toolHandler = generated.Registration.Handler;
         var toolResult = await toolHandler.InvokeUnaryAsync(
             null!,
-            AgentToolSourceRpc.ServiceId,
+            "tool-source",
             "execute",
             requestJson);
         AssertMethodOutputSchemaValid(
-            AgentRpcContractDescriptors.Get(AgentRpcContractIds.ToolSource),
-            AgentToolSourceRpc.ServiceId,
+            RegressionTestRpcDescriptors.Get(AgentRpcContractIds.ToolSource),
+            "tool-source",
             "execute",
             toolResult);
 
-        var observedHandler = AgentObservedToolExecutionRpc.CreateHandler(source);
+        var observedHandler = roles.Create("Mcp", "Rpc.ObservedExecutionProvider", source).Handler;
         var observedEvents = await ReadStreamAsync(
             observedHandler,
-            AgentObservedToolExecutionRpc.ServiceId,
+            "tool-execution-observed",
             "execute",
             requestJson);
         Assert.Equal(["dispatched", "result"], observedEvents.Select(static item => item.GetProperty("kind").GetString()));
         Assert.All(observedEvents, item => AssertMethodOutputSchemaValid(
-            AgentRpcContractDescriptors.Get(AgentRpcContractIds.ObservedToolExecution),
-            AgentObservedToolExecutionRpc.ServiceId,
+            RegressionTestRpcDescriptors.Get(AgentRpcContractIds.ObservedToolExecution),
+            "tool-execution-observed",
             "execute",
             item));
     }
@@ -382,7 +374,8 @@ public sealed class AgentRpcProviderConformanceTests
         SunderRpcContractDescriptor descriptor,
         IReadOnlyDictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>> actual)
     {
-        var expected = AgentRpcServiceHandler.CreateDeclaredErrorMap(descriptor);
+        var expected = descriptor.Services.ToDictionary(service => service.ServiceId,
+            service => service.Methods.ToDictionary(method => method.MethodId, method => method.Errors, StringComparer.Ordinal), StringComparer.Ordinal);
         Assert.Equal(expected.Keys.Order(StringComparer.Ordinal), actual.Keys.Order(StringComparer.Ordinal));
         foreach (var (serviceId, expectedMethods) in expected)
         {
@@ -406,7 +399,20 @@ public sealed class AgentRpcProviderConformanceTests
         Assert.Equal(registration.AbiSha256, manifestProvider.GetProperty("abiSha256").GetString());
     }
 
-    private static IReadOnlyDictionary<string, JsonElement> ReadManifestProviders(string projectDirectoryName)
+    private static SunderRpcContractDescriptor ReadBundledDescriptor(string projectDirectoryName, string contractId)
+    {
+        var manifestPath = ManifestPath(projectDirectoryName);
+        using var document = JsonDocument.Parse(File.ReadAllBytes(manifestPath));
+        var bundle = Assert.Single(document.RootElement.GetProperty("contractBundles").EnumerateArray(),
+            value => value.GetProperty("contractId").GetString() == contractId);
+        var descriptor = SunderRpcContractDescriptor.Parse(File.ReadAllBytes(Path.Combine(
+            Path.GetDirectoryName(Path.GetDirectoryName(manifestPath))!, "payload", "shared", bundle.GetProperty("descriptorPath").GetString()!)));
+        Assert.Equal(bundle.GetProperty("descriptorSha256").GetString(), descriptor.Sha256);
+        Assert.Equal(bundle.GetProperty("abiSha256").GetString(), descriptor.AbiSha256);
+        return descriptor;
+    }
+
+    private static string ManifestPath(string projectDirectoryName)
     {
         var output = new DirectoryInfo(
             AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
@@ -416,13 +422,17 @@ public sealed class AgentRpcProviderConformanceTests
             AgentPackageRepositoryInventory.RepositoryRoot.FullName,
             "src",
             projectDirectoryName,
-            "obj",
+            "bin",
             configuration,
             targetFramework,
-            RuntimeInformation.RuntimeIdentifier,
-            "sunder-package.json");
+            "sunder-dev", "manifest", "sunder-package.json");
         Assert.True(File.Exists(path), $"Generated manifest was not found: {path}");
-        using var document = JsonDocument.Parse(File.ReadAllBytes(path));
+        return path;
+    }
+
+    private static IReadOnlyDictionary<string, JsonElement> ReadManifestProviders(string projectDirectoryName)
+    {
+        using var document = JsonDocument.Parse(File.ReadAllBytes(ManifestPath(projectDirectoryName)));
         return document.RootElement.GetProperty("provides")
             .EnumerateArray()
             .ToDictionary(

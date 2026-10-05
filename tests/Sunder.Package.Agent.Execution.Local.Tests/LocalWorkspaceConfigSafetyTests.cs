@@ -1,5 +1,7 @@
-using Sunder.Package.Agent.Execution.Local;
-using Sunder.Package.Agent.Contracts.Models;
+extern alias LocalWorker;
+
+using LocalWorker::Sunder.Package.Agent.Execution.Local;
+using LocalWorker::Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Tests;
 using Xunit;
@@ -47,7 +49,7 @@ public sealed class LocalWorkspaceConfigSafetyTests
     {
         using var scope = RegressionTestPackageScope.Create();
         var state = Assert.IsType<RegressionTestKeyValueStore>(scope.Context.Storage.State);
-        var binding = new Sunder.Package.Agent.Contracts.Models.AgentWorkspaceBindingRecord(
+        var binding = new AgentWorkspaceBindingRecord(
             "binding",
             "workspace",
             "contract",
@@ -61,13 +63,13 @@ public sealed class LocalWorkspaceConfigSafetyTests
         const string json = "{\"AllowedRoots\":[42]}";
         await state.SetValueAsync(key, json);
         var service = new LocalExecutionWorkspaceConfigService(scope.Context);
-        var workspace = new Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord(
+        var workspace = new AgentWorkspaceRecord(
             "workspace",
             "Workspace",
             null,
             DateTimeOffset.UtcNow,
             DateTimeOffset.UtcNow);
-        var context = new Sunder.Package.Agent.Contracts.Models.AgentWorkspacePathMigrationContext(
+        var context = new AgentWorkspacePathMigrationContext(
             workspace,
             binding);
 
@@ -106,17 +108,18 @@ public sealed class LocalWorkspaceConfigSafetyTests
             new LocalShellCatalogService(scope.Context));
         using var catalog = new RegressionTestExtensionCatalog();
         catalog.AddProvider(
-            AgentRpcServices.ExecutionTargets,
+            RegressionTestBindings.ExecutionTargets,
             restartedTarget,
             "sunder.package.agent.execution.local");
-        var reference = catalog.GetRequiredReference(AgentRpcServices.ExecutionTargets);
+        var reference = catalog.GetRequiredReference(RegressionTestBindings.ExecutionTargets);
         Assert.True(reference.TryAcquire(out var lease));
 
         AgentExecutionTargetReadiness readiness;
         using (lease)
         {
-            readiness = await lease.Service.GetReadinessAsync(
-                new AgentExecutionTargetContext(null, null, workspace, binding));
+            readiness = AgentRoleBoundary.As<AgentExecutionTargetReadiness>(await lease.Service.GetReadinessAsync(
+                AgentRoleBoundary.As<Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetContext>(
+                    new AgentExecutionTargetContext(null, null, workspace, binding))));
         }
 
         Assert.Equal(AgentExecutionTargetReadinessStatus.Failed, readiness.Status);

@@ -1,8 +1,10 @@
-using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Memory.Semantic;
-using Sunder.Package.Agent.Memory.Semantic.PackageViews;
-using Sunder.Package.Agent.Memory.Semantic.Runtime;
-using Sunder.Package.Agent.Memory.Semantic.Services;
+extern alias MemoryApp;
+
+using MemoryApp::Sunder.Package.Agent.Contracts.Models;
+using MemoryApp::Sunder.Package.Agent.Memory.Semantic;
+using MemoryApp::Sunder.Package.Agent.Memory.Semantic.PackageViews;
+using MemoryApp::Sunder.Package.Agent.Memory.Semantic.Runtime;
+using MemoryApp::Sunder.Package.Agent.Memory.Semantic.Services;
 using Sunder.Sdk.Rpc;
 using Xunit;
 

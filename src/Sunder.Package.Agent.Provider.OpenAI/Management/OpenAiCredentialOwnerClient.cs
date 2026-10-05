@@ -17,7 +17,7 @@ internal interface IProviderCredentialOwnerClient
         CancellationToken cancellationToken = default);
 }
 
-internal sealed class ProviderCredentialOwnerClient(
+internal sealed partial class ProviderCredentialOwnerClient(
     IOpenAiOwnerManagementClient management) : IProviderCredentialOwnerClient
 {
     public async ValueTask<ProviderCredentialSnapshot> GetStatusAsync(

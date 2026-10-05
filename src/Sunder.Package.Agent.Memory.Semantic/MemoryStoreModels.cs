@@ -2,6 +2,7 @@ using Sunder.Package.Agent.Contracts.Models;
 
 namespace Sunder.Package.Agent.Memory.Semantic;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 public sealed record StoredMemoryRecord(
     Guid MemoryId,
     Guid SessionId,
@@ -25,6 +26,7 @@ public sealed record StoredMemoryRecord(
     public bool IsManual { get; init; } = true;
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 public sealed record MemoryCorrectionResult(
     StoredMemoryRecord CorrectedMemory,
     StoredMemoryRecord UpdatedSourceMemory,
@@ -42,6 +44,7 @@ public sealed record MemoryUpsertRequest(
     float Confidence,
     AgentMemoryProvenance Provenance = AgentMemoryProvenance.Unknown);
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 public sealed record StoredMemoryEvidenceRecord(
     Guid EvidenceId,
     Guid MemoryId,

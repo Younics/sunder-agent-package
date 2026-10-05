@@ -1,7 +1,10 @@
+extern alias SkillsWorker;
+extern alias SkillsApp;
+
 using System.Reflection;
 using Avalonia.Headless.XUnit;
-using Sunder.Package.Agent.Skills.Runtime;
-using Sunder.Package.Agent.Skills.Services;
+using SkillsWorker::Sunder.Package.Agent.Skills.Runtime;
+using SkillsWorker::Sunder.Package.Agent.Skills.Services;
 using Sunder.Package.Agent.Tests;
 using Xunit;
 
@@ -15,9 +18,9 @@ public sealed class SkillFolderPickerLifecycleTests
         using var scope = RegressionTestPackageScope.Create();
         var store = new SkillStore(scope.Context);
         var viewModel = new SkillSettingsViewModel(
-            new SkillLocalManagementGateway(
+            AgentRoleBoundary.As<SkillsApp::Sunder.Package.Agent.Skills.Runtime.ISkillManagementGateway>(new SkillLocalManagementGateway(
                 store,
-                new SkillImportService(store, new NoOpGitHubSkillClient(), scope.Context)));
+                new SkillImportService(store, new NoOpGitHubSkillClient(), scope.Context))));
         await viewModel.InitializeAsync();
         var view = new SkillSettingsView(viewModel);
         var picker = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -41,9 +44,9 @@ public sealed class SkillFolderPickerLifecycleTests
         using var scope = RegressionTestPackageScope.Create();
         var store = new SkillStore(scope.Context);
         var viewModel = new SkillSettingsViewModel(
-            new SkillLocalManagementGateway(
+            AgentRoleBoundary.As<SkillsApp::Sunder.Package.Agent.Skills.Runtime.ISkillManagementGateway>(new SkillLocalManagementGateway(
                 store,
-                new SkillImportService(store, new NoOpGitHubSkillClient(), scope.Context)));
+                new SkillImportService(store, new NoOpGitHubSkillClient(), scope.Context))));
         await viewModel.InitializeAsync();
         using var view = new SkillSettingsView(viewModel);
 

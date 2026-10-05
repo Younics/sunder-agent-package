@@ -1,8 +1,11 @@
+extern alias DockerWorker;
+
 using System.Diagnostics;
-using Sunder.Agent.Execution.Common;
-using Sunder.Package.Agent.Execution.Docker;
+using DockerWorker::Sunder.Package.Agent.Execution.Docker;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
+
+using DockerWorker::Sunder.Agent.Execution.Common;
 
 internal sealed class ShellDockerCommandExecutor : IDockerCommandExecutor
 {

@@ -1,5 +1,6 @@
 namespace Sunder.Package.Agent.Provider.Shared;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal static class ProviderModelId
 {
     public static string EnsurePrefix(string modelId, string providerId)

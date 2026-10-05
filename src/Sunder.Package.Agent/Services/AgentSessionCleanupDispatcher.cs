@@ -258,7 +258,7 @@ internal sealed class AgentSessionCleanupDispatcher : IAsyncDisposable
         var active = new Dictionary<
             AgentSessionDataCleanerIdentity,
             AgentRpcReference<IAgentSessionDataCleaner>>();
-        foreach (var reference in _rpcCatalog.GetServiceReferences(AgentRpcServices.SessionCleaners))
+        foreach (var reference in _rpcCatalog.GetServiceReferences(Sunder.Package.Agent.Runtime.Rpc.AgentCleanupBindings.SessionCleaners))
         {
             if (!reference.TryAcquire(out var lease))
             {

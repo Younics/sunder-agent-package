@@ -22,6 +22,7 @@ public sealed class WebFetchService
     {
     }
 
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
     internal WebFetchService(WebUrlNetworkPolicy networkPolicy, IWebFetchHttpClientFactory httpClientFactory)
     {
         _networkPolicy = networkPolicy;

@@ -1,10 +1,10 @@
 extern alias AgentCore;
 
 using System.Collections.Concurrent;
-using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.PackageViews;
-using Sunder.Package.Agent.Runtime;
-using Sunder.Package.Agent.Services;
+using AgentCore::Sunder.Package.Agent.Contracts.Models;
+using AgentCore::Sunder.Package.Agent.PackageViews;
+using AgentCore::Sunder.Package.Agent.Runtime;
+using AgentCore::Sunder.Package.Agent.Services;
 using Xunit;
 using AgentPresentationDispatcher = AgentCore::Sunder.Package.Agent.Shared.Presentation.IPresentationDispatcher;
 
@@ -42,7 +42,7 @@ public sealed class WorkspacePresentationFailureDispatcherTests
         using var viewModel = new AgentWorkspacesViewModel(
             workspaceGateway,
             executionGateway,
-            catalog,
+            catalog.AppCatalog,
             settingsNavigationService: null,
             uiDispatcher: dispatcher);
         await viewModel.InitializeAsync().WaitAsync(TimeSpan.FromSeconds(2));

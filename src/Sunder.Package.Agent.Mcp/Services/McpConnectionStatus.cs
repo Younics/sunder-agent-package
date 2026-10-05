@@ -1,5 +1,6 @@
 namespace Sunder.Package.Agent.Mcp.Services;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 public enum McpConnectionStatusKind
 {
     Disabled = 0,
@@ -11,6 +12,7 @@ public enum McpConnectionStatusKind
     Disconnected,
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 public sealed record McpConnectionStatus(
     string ServerId,
     McpConnectionStatusKind Kind,

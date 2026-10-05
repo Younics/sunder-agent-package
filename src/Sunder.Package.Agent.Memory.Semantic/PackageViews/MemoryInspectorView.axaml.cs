@@ -3,6 +3,8 @@ using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Memory.Semantic.PackageViews;
 
+[Sunder.Sdk.Packaging.SunderPackageView("sunder.package.agent.memory.semantic.inspector", "Memory Inspector",
+    ViewModel = typeof(MemoryInspectorViewModel), IconPath = "assets/memory-icon.png", DefaultPlacement = PackageViewPlacement.LeftBottom)]
 public partial class MemoryInspectorView : UserControl, IDisposable, IPackageViewWarmupTarget, IPackageViewNavigationTarget
 {
     private MemoryInspectorViewModel? _viewModel;
@@ -13,6 +15,7 @@ public partial class MemoryInspectorView : UserControl, IDisposable, IPackageVie
         InitializeComponent();
     }
 
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
     public MemoryInspectorView(MemoryInspectorViewModel viewModel)
         : this()
     {

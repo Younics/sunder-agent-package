@@ -6,7 +6,6 @@
       "key": "agent",
       "packageId": "sunder.package.agent",
       "projectPath": "src/Sunder.Package.Agent/Sunder.Package.Agent.csproj",
-      "appProjectPath": "src/Sunder.Package.Agent/App/Sunder.Package.Agent.App.csproj",
       "providerIds": ["agent.attachment.cleaner", "agent.behavior.loop", "agent.child.runs", "agent.history.cleaner", "agent.owner.runtime", "agent.run.control", "agent.runtime.catalog", "agent.stack.profiles", "agent.stack.workspaces", "agent.workspace.documentation", "agent.workspace.execution.resolver"],
       "releaseTitle": "Sunder Agent",
       "artifactName": "sunder-agent-package",
@@ -16,25 +15,15 @@
       "key": "agent-builder",
       "packageId": "sunder.package.agent.builder",
       "projectPath": "src/Sunder.Package.Agent.Builder/Sunder.Package.Agent.Builder.csproj",
-      "appProjectPath": "src/Sunder.Package.Agent.Builder/App/Sunder.Package.Agent.Builder.App.csproj",
       "providerIds": ["builder.runtime"],
       "releaseTitle": "Sunder Agent Builder",
       "artifactName": "sunder-agent-builder-package",
       "artifactType": "sunderpkg"
     },
     {
-      "key": "agent-protocol",
-      "packageId": "Sunder.Package.Agent.Protocol",
-      "projectPath": "src/Sunder.Package.Agent.Contracts/Sunder.Package.Agent.Contracts.csproj",
-      "releaseTitle": "Sunder Agent Protocol",
-      "artifactName": "sunder-agent-protocol",
-      "artifactType": "nuget"
-    },
-    {
       "key": "agent-execution-docker",
       "packageId": "sunder.package.agent.execution.docker",
       "projectPath": "src/Sunder.Package.Agent.Execution.Docker/Sunder.Package.Agent.Execution.Docker.csproj",
-      "appProjectPath": "src/Sunder.Package.Agent.Execution.Docker/App/DockerApp.csproj",
       "providerIds": ["docker.execution.target", "docker.presentation", "docker.stack", "docker.workspace.editor", "docker.workspace.path.migrator"],
       "releaseTitle": "Sunder Agent Execution Docker",
       "artifactName": "sunder-agent-execution-docker-package",
@@ -44,7 +33,6 @@
       "key": "agent-execution-local",
       "packageId": "sunder.package.agent.execution.local",
       "projectPath": "src/Sunder.Package.Agent.Execution.Local/Sunder.Package.Agent.Execution.Local.csproj",
-      "appProjectPath": "src/Sunder.Package.Agent.Execution.Local/App/LocalApp.csproj",
       "providerIds": ["local.execution.target", "local.presentation", "local.workspace.editor", "local.workspace.path.migrator"],
       "releaseTitle": "Sunder Agent Execution Local",
       "artifactName": "sunder-agent-execution-local-package",
@@ -54,7 +42,6 @@
       "key": "agent-mcp",
       "packageId": "sunder.package.agent.mcp",
       "projectPath": "src/Sunder.Package.Agent.Mcp/Sunder.Package.Agent.Mcp.csproj",
-      "appProjectPath": "src/Sunder.Package.Agent.Mcp/App/Sunder.Package.Agent.Mcp.App.csproj",
       "providerIds": ["mcp.management", "mcp.selectable.capabilities", "mcp.session.cleaner", "mcp.stack", "mcp.tools", "mcp.tools.observed"],
       "releaseTitle": "Sunder Agent MCP",
       "artifactName": "sunder-agent-mcp-package",
@@ -64,7 +51,6 @@
       "key": "agent-memory-semantic",
       "packageId": "sunder.package.agent.memory.semantic",
       "projectPath": "src/Sunder.Package.Agent.Memory.Semantic/Sunder.Package.Agent.Memory.Semantic.csproj",
-      "appProjectPath": "src/Sunder.Package.Agent.Memory.Semantic/App/Sunder.Package.Agent.Memory.Semantic.App.csproj",
       "providerIds": ["semantic.memory.inspector", "semantic.memory.lifecycle", "semantic.memory.profile.capabilities", "semantic.memory.prompt.context", "semantic.memory.session.cleaner"],
       "releaseTitle": "Sunder Agent Memory Semantic",
       "artifactName": "sunder-agent-memory-semantic-package",
@@ -74,7 +60,6 @@
       "key": "agent-provider-anthropic",
       "packageId": "sunder.package.agent.provider.anthropic",
       "projectPath": "src/Sunder.Package.Agent.Provider.Anthropic/Sunder.Package.Agent.Provider.Anthropic.csproj",
-      "appProjectPath": "src/Sunder.Package.Agent.Provider.Anthropic/App/Sunder.Package.Agent.Provider.Anthropic.App.csproj",
       "providerIds": ["anthropic.chat", "anthropic.credentials"],
       "releaseTitle": "Sunder Agent Provider Anthropic",
       "artifactName": "sunder-agent-provider-anthropic-package",
@@ -84,7 +69,6 @@
       "key": "agent-provider-gemini",
       "packageId": "sunder.package.agent.provider.gemini",
       "projectPath": "src/Sunder.Package.Agent.Provider.Gemini/Sunder.Package.Agent.Provider.Gemini.csproj",
-      "appProjectPath": "src/Sunder.Package.Agent.Provider.Gemini/App/Sunder.Package.Agent.Provider.Gemini.App.csproj",
       "providerIds": ["gemini.chat", "gemini.credentials", "gemini.embedding"],
       "releaseTitle": "Sunder Agent Provider Gemini",
       "artifactName": "sunder-agent-provider-gemini-package",
@@ -94,7 +78,6 @@
       "key": "agent-provider-lmstudio",
       "packageId": "sunder.package.agent.provider.lmstudio",
       "projectPath": "src/Sunder.Package.Agent.Provider.LMStudio/Sunder.Package.Agent.Provider.LMStudio.csproj",
-      "appProjectPath": "src/Sunder.Package.Agent.Provider.LMStudio/App/Sunder.Package.Agent.Provider.LMStudio.App.csproj",
       "providerIds": ["lmstudio.chat", "lmstudio.credentials", "lmstudio.embedding"],
       "releaseTitle": "Sunder Agent Provider LM Studio",
       "artifactName": "sunder-agent-provider-lmstudio-package",
@@ -104,7 +87,6 @@
       "key": "agent-provider-openai",
       "packageId": "sunder.package.agent.provider.openai",
       "projectPath": "src/Sunder.Package.Agent.Provider.OpenAI/Sunder.Package.Agent.Provider.OpenAI.csproj",
-      "appProjectPath": "src/Sunder.Package.Agent.Provider.OpenAI/App/Sunder.Package.Agent.Provider.OpenAI.App.csproj",
       "providerIds": ["openai.chat", "openai.continuation.cleaner", "openai.embedding", "openai.management"],
       "releaseTitle": "Sunder Agent Provider OpenAI",
       "artifactName": "sunder-agent-provider-openai-package",
@@ -114,7 +96,6 @@
       "key": "agent-skills",
       "packageId": "sunder.package.agent.skills",
       "projectPath": "src/Sunder.Package.Agent.Skills/Sunder.Package.Agent.Skills.csproj",
-      "appProjectPath": "src/Sunder.Package.Agent.Skills/App/SkillsApp.csproj",
       "providerIds": ["skills.management", "skills.prompt.context", "skills.selectable.capabilities", "skills.stack", "skills.tools"],
       "releaseTitle": "Sunder Agent Skills",
       "artifactName": "sunder-agent-skills-package",
@@ -124,7 +105,6 @@
       "key": "agent-subagents",
       "packageId": "sunder.package.agent.subagents",
       "projectPath": "src/Sunder.Package.Agent.Subagents/Sunder.Package.Agent.Subagents.csproj",
-      "appProjectPath": "src/Sunder.Package.Agent.Subagents/App/SubagentsApp.csproj",
       "providerIds": ["subagents.behavior.loop", "subagents.management", "subagents.prompt.context", "subagents.selectable.capabilities", "subagents.stack", "subagents.tools"],
       "releaseTitle": "Sunder Agent Subagents",
       "artifactName": "sunder-agent-subagents-package",
@@ -160,78 +140,78 @@
   ],
   "capabilities": {
     "sunder.package.agent": [
-      "background-services.v1", "contributions.v1", "core.v1", "logging.v1",
-      "notifications.v1", "packaging.v1", "role-local-workspace.v1", "rpc.extended-deadline.v1", "rpc.v2", "runtime-generations.v1",
+      "background-services.v1", "contributions.v1", "core.v1", "execution-runtime.v1", "logging.v1",
+      "notifications.v1", "packaging.v1", "role-local-workspace.v1", "rpc.extended-deadline.v1", "rpc.v1", "runtime-generations.v1",
       "sdk-baseline-1-1.v1", "settings-navigation.v1", "settings-views.v1", "shell-view.v1",
-      "stacks.rpc.v1", "stacks.v1", "storage.v1", "theming.v1", "view-navigation-preparation.v1", "views.v1", "worker-protocol.v3"
+      "stacks.rpc.v1", "stacks.v1", "storage.v1", "theming.v1", "view-navigation-preparation.v1", "views.v1", "worker-protocol.v1"
     ],
     "sunder.package.agent.builder": [
-      "background-processes.v1", "contributions.v1", "core.v1", "logging.v1", "notifications.v1", "packaging.v1", "rpc.v2",
-      "sdk-baseline-1-1.v1", "shell-view.v1", "storage.v1", "theming.v1", "views.v1", "worker-protocol.v3"
+      "background-processes.v1", "contributions.v1", "core.v1", "execution-runtime.v1", "logging.v1", "notifications.v1", "packaging.v1", "rpc.v1",
+      "sdk-baseline-1-1.v1", "shell-view.v1", "storage.v1", "theming.v1", "views.v1", "worker-protocol.v1"
     ],
     "sunder.package.agent.execution.docker": [
-      "background-processes.v1", "background-services.v1", "contributions.v1", "core.v1", "docker-environment.v1", "logging.v1", "notifications.v1", "packaging.v1", "role-local-workspace.v1",
-      "rpc.v2", "runtime-generations.v1", "sdk-baseline-1-1.v1", "settings-views.v1", "settings.schema.v1",
-      "settings.v1", "shell-view.v1", "stacks.rpc.v1", "stacks.v1", "storage.v1", "theming.v1", "view-navigation-preparation.v1", "worker-protocol.v3"
+      "background-processes.v1", "background-services.v1", "contributions.v1", "core.v1", "docker-environment.v1", "execution-runtime.v1", "logging.v1", "notifications.v1", "packaging.v1", "role-local-workspace.v1",
+      "rpc.v1", "runtime-generations.v1", "sdk-baseline-1-1.v1", "settings-views.v1", "settings.schema.v1",
+      "settings.v1", "shell-view.v1", "stacks.rpc.v1", "stacks.v1", "storage.v1", "theming.v1", "view-navigation-preparation.v1", "worker-protocol.v1"
     ],
     "sunder.package.agent.execution.local": [
-      "background-services.v1", "contributions.v1", "core.v1", "logging.v1", "notifications.v1",
-      "packaging.v1", "rpc.v2", "runtime-generations.v1", "sdk-baseline-1-1.v1", "settings-views.v1",
-      "settings.schema.v1", "settings.v1", "shell-view.v1", "storage.v1", "theming.v1", "view-navigation-preparation.v1", "worker-protocol.v3"
+      "background-services.v1", "contributions.v1", "core.v1", "execution-runtime.v1", "logging.v1", "notifications.v1",
+      "packaging.v1", "rpc.v1", "runtime-generations.v1", "sdk-baseline-1-1.v1", "settings-views.v1",
+      "settings.schema.v1", "settings.v1", "shell-view.v1", "storage.v1", "theming.v1", "view-navigation-preparation.v1", "worker-protocol.v1"
     ],
     "sunder.package.agent.mcp": [
-      "background-services.v1", "callbacks.v1", "contributions.v1", "core.v1",
-      "logging.v1", "notifications.v1", "packaging.v1", "role-local-workspace.v1", "rpc.extended-deadline.v1", "rpc.v2", "runtime-generations.v1",
+      "background-services.v1", "callbacks.v1", "contributions.v1", "core.v1", "execution-runtime.v1",
+      "logging.v1", "notifications.v1", "packaging.v1", "role-local-workspace.v1", "rpc.extended-deadline.v1", "rpc.v1", "runtime-generations.v1",
       "sdk-baseline-1-1.v1", "secrets.v1", "settings-views.v1", "shell-view.v1",
-      "stacks.rpc.v1", "stacks.v1", "storage.v1", "theming.v1", "view-navigation-preparation.v1", "worker-protocol.v3"
+      "stacks.rpc.v1", "stacks.v1", "storage.v1", "theming.v1", "view-navigation-preparation.v1", "worker-protocol.v1"
     ],
     "sunder.package.agent.memory.semantic": [
-      "background-services.v1", "contributions.v1", "core.v1", "logging.v1", "notifications.v1", "packaging.v1", "role-local-workspace.v1",
-      "rpc.v2", "runtime-generations.v1", "sdk-baseline-1-1.v1", "settings.schema.v1", "settings.v1",
-      "shell-view.v1", "storage.v1", "theming.v1", "views.v1", "worker-protocol.v3"
+      "background-services.v1", "contributions.v1", "core.v1", "execution-runtime.v1", "logging.v1", "notifications.v1", "packaging.v1", "role-local-workspace.v1",
+      "rpc.v1", "runtime-generations.v1", "sdk-baseline-1-1.v1", "settings.schema.v1", "settings.v1",
+      "shell-view.v1", "storage.v1", "theming.v1", "views.v1", "worker-protocol.v1"
     ],
     "sunder.package.agent.provider.anthropic": [
-      "contributions.v1", "core.v1", "logging.v1",
-      "packaging.v1", "rpc.v2", "sdk-baseline-1-1.v1", "secrets.v1", "settings-views.v1",
-      "settings.schema.v1", "settings.v1", "shell-view.v1", "theming.v1", "view-navigation-preparation.v1", "worker-protocol.v3"
+      "contributions.v1", "core.v1", "execution-runtime.v1", "logging.v1",
+      "packaging.v1", "rpc.v1", "sdk-baseline-1-1.v1", "secrets.v1", "settings-views.v1",
+      "settings.schema.v1", "settings.v1", "shell-view.v1", "theming.v1", "view-navigation-preparation.v1", "worker-protocol.v1"
     ],
     "sunder.package.agent.provider.gemini": [
-      "contributions.v1", "core.v1", "logging.v1",
-      "packaging.v1", "rpc.v2", "sdk-baseline-1-1.v1", "secrets.v1", "settings-views.v1",
-      "settings.schema.v1", "settings.v1", "shell-view.v1", "theming.v1", "view-navigation-preparation.v1", "worker-protocol.v3"
+      "contributions.v1", "core.v1", "execution-runtime.v1", "logging.v1",
+      "packaging.v1", "rpc.v1", "sdk-baseline-1-1.v1", "secrets.v1", "settings-views.v1",
+      "settings.schema.v1", "settings.v1", "shell-view.v1", "theming.v1", "view-navigation-preparation.v1", "worker-protocol.v1"
     ],
     "sunder.package.agent.provider.lmstudio": [
-      "contributions.v1", "core.v1", "logging.v1",
-      "packaging.v1", "rpc.v2", "sdk-baseline-1-1.v1", "secrets.v1", "settings-views.v1",
-      "settings.schema.v1", "settings.v1", "shell-view.v1", "theming.v1", "view-navigation-preparation.v1", "worker-protocol.v3"
+      "contributions.v1", "core.v1", "execution-runtime.v1", "logging.v1",
+      "packaging.v1", "rpc.v1", "sdk-baseline-1-1.v1", "secrets.v1", "settings-views.v1",
+      "settings.schema.v1", "settings.v1", "shell-view.v1", "theming.v1", "view-navigation-preparation.v1", "worker-protocol.v1"
     ],
     "sunder.package.agent.provider.openai": [
-      "auth.v1", "background-services.v1", "callbacks.v1", "contributions.v1", "core.v1",
-      "logging.v1", "notifications.v1", "packaging.v1", "rpc.v2", "runtime-generations.v1",
+      "auth.v1", "background-services.v1", "callbacks.v1", "contributions.v1", "core.v1", "execution-runtime.v1",
+      "logging.v1", "notifications.v1", "packaging.v1", "rpc.v1", "runtime-generations.v1",
       "sdk-baseline-1-1.v1", "secrets.v1", "settings-views.v1", "settings.schema.v1",
-      "settings.v1", "shell-view.v1", "theming.v1", "view-navigation-preparation.v1", "worker-protocol.v3"
+      "settings.v1", "shell-view.v1", "theming.v1", "view-navigation-preparation.v1", "worker-protocol.v1"
     ],
     "sunder.package.agent.skills": [
-      "contributions.v1", "core.v1", "logging.v1", "notifications.v1",
-      "packaging.v1", "role-local-workspace.v1", "rpc.v2", "sdk-baseline-1-1.v1",
-      "settings-views.v1", "shell-view.v1", "stacks.rpc.v1", "stacks.v1", "storage.v1", "theming.v1", "view-navigation-preparation.v1", "worker-protocol.v3"
+      "contributions.v1", "core.v1", "execution-runtime.v1", "logging.v1", "notifications.v1",
+      "packaging.v1", "role-local-workspace.v1", "rpc.v1", "sdk-baseline-1-1.v1",
+      "settings-views.v1", "shell-view.v1", "stacks.rpc.v1", "stacks.v1", "storage.v1", "theming.v1", "view-navigation-preparation.v1", "worker-protocol.v1"
     ],
     "sunder.package.agent.subagents": [
-      "contributions.v1", "core.v1", "logging.v1", "notifications.v1",
-      "packaging.v1", "role-local-workspace.v1", "rpc.extended-deadline.v1", "rpc.v2", "sdk-baseline-1-1.v1",
-      "settings-navigation.v1", "shell-view.v1", "stacks.rpc.v1", "stacks.v1", "storage.v1", "theming.v1", "view-navigation-preparation.v1", "views.v1", "worker-protocol.v3"
+      "contributions.v1", "core.v1", "execution-runtime.v1", "logging.v1", "notifications.v1",
+      "packaging.v1", "role-local-workspace.v1", "rpc.extended-deadline.v1", "rpc.v1", "sdk-baseline-1-1.v1",
+      "settings-navigation.v1", "shell-view.v1", "stacks.rpc.v1", "stacks.v1", "storage.v1", "theming.v1", "view-navigation-preparation.v1", "views.v1", "worker-protocol.v1"
     ],
     "sunder.package.agent.tools.files": [
-      "contributions.v1", "core.v1", "logging.v1",
-      "packaging.v1", "role-local-workspace.v1", "rpc.v2", "sdk-baseline-1-1.v1", "storage.v1", "worker-protocol.v3"
+      "contributions.v1", "core.v1", "execution-runtime.v1", "logging.v1",
+      "packaging.v1", "role-local-workspace.v1", "rpc.v1", "sdk-baseline-1-1.v1", "storage.v1", "worker-protocol.v1"
     ],
     "sunder.package.agent.tools.shell": [
-      "contributions.v1", "core.v1", "logging.v1",
-      "packaging.v1", "rpc.v2", "sdk-baseline-1-1.v1", "worker-protocol.v3"
+      "contributions.v1", "core.v1", "execution-runtime.v1", "logging.v1",
+      "packaging.v1", "rpc.v1", "sdk-baseline-1-1.v1", "worker-protocol.v1"
     ],
     "sunder.package.agent.tools.web": [
-      "contributions.v1", "core.v1", "logging.v1",
-      "packaging.v1", "rpc.v2", "sdk-baseline-1-1.v1", "secrets.v1", "settings.schema.v1", "settings.v1", "worker-protocol.v3"
+      "contributions.v1", "core.v1", "execution-runtime.v1", "logging.v1",
+      "packaging.v1", "rpc.v1", "sdk-baseline-1-1.v1", "secrets.v1", "settings.schema.v1", "settings.v1", "worker-protocol.v1"
     ]
   }
 }

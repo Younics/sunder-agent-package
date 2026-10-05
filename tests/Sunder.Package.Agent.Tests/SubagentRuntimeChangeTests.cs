@@ -1,11 +1,16 @@
+extern alias SubagentsWorker;
+extern alias SubagentsApp;
+
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
-using Sunder.Package.Agent.Contracts.Contracts;
-using Sunder.Package.Agent.Contracts.Models;
+using SubagentsWorker::Sunder.Package.Agent.Contracts.Contracts;
+using SubagentsWorker::Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
-using Sunder.Package.Agent.Subagents.PackageViews;
-using Sunder.Package.Agent.Subagents.Runtime;
-using Sunder.Package.Agent.Subagents.Services;
+using SubagentsApp::Sunder.Package.Agent.Subagents.PackageViews;
+using SubagentsWorker::Sunder.Package.Agent.Subagents.Runtime;
+using SubagentsWorker::Sunder.Package.Agent.Subagents.Services;
+using SubagentAppRuntimeGateway = SubagentsApp::Sunder.Package.Agent.Subagents.Runtime.SubagentAppRuntimeGateway;
+using AppRuntime = SubagentsApp::Sunder.Package.Agent.Subagents.Runtime;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -19,7 +24,7 @@ public sealed class SubagentRuntimeChangeTests
         using var catalog = new RegressionTestExtensionCatalog();
         var service = new SubagentService(new SubagentStore(scope.Context));
         service.SubagentsChanged += static () => throw new InvalidOperationException("Injected listener failure.");
-        using var stream = new SubagentRuntimeChangeStream(service, catalog);
+        using var stream = new SubagentRuntimeChangeStream(service, catalog.Subagents());
         await using var subscription = stream.SubscribeAsync(
             new SubagentChangeSubscription(stream.Revision)).GetAsyncEnumerator();
         _ = await ReadUntilAsync(subscription, change => change.Kind == SubagentChangeKind.Connected);
@@ -57,7 +62,7 @@ public sealed class SubagentRuntimeChangeTests
         var service = new SubagentService(new SubagentStore(scope.Context));
         using var stream = new SubagentRuntimeChangeStream(
             service,
-            catalog);
+            catalog.Subagents());
         await using var subscription = stream.SubscribeAsync(
             new SubagentChangeSubscription(stream.Revision)).GetAsyncEnumerator();
         Assert.Equal(
@@ -86,7 +91,7 @@ public sealed class SubagentRuntimeChangeTests
         using var scope = RegressionTestPackageScope.Create();
         using var catalog = new RegressionTestExtensionCatalog();
         var service = new SubagentService(new SubagentStore(scope.Context));
-        using var stream = new SubagentRuntimeChangeStream(service, catalog);
+        using var stream = new SubagentRuntimeChangeStream(service, catalog.Subagents());
         using var subscriptionCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await using var subscription = stream.SubscribeAsync(
             new SubagentChangeSubscription(stream.Revision),
@@ -96,7 +101,7 @@ public sealed class SubagentRuntimeChangeTests
             (await ReadUntilAsync(subscription, change => change.Kind == SubagentChangeKind.Connected)).Kind);
 
         var firstRuntime = new TestRuntimeCatalog();
-        catalog.AddProvider(AgentRpcServices.RuntimeCatalogs, firstRuntime);
+        catalog.AddRuntimeCatalog(firstRuntime);
         await firstRuntime.SessionSubscription.Task.WaitAsync(TimeSpan.FromSeconds(3));
         var firstSessionId = Guid.NewGuid();
         firstRuntime.RaiseSessionChanged(firstSessionId);
@@ -114,7 +119,7 @@ public sealed class SubagentRuntimeChangeTests
             subscription,
             change => change.Kind == SubagentChangeKind.Catalog);
         var replacementRuntime = new TestRuntimeCatalog();
-        catalog.AddProvider(AgentRpcServices.RuntimeCatalogs, replacementRuntime);
+        catalog.AddRuntimeCatalog(replacementRuntime);
         await replacementRuntime.SessionSubscription.Task.WaitAsync(TimeSpan.FromSeconds(3));
         _ = await ReadUntilAsync(
             subscription,
@@ -137,14 +142,14 @@ public sealed class SubagentRuntimeChangeTests
         using var scope = RegressionTestPackageScope.Create();
         using var catalog = new RegressionTestExtensionCatalog();
         var service = new SubagentService(new SubagentStore(scope.Context));
-        using var stream = new SubagentRuntimeChangeStream(service, catalog);
+        using var stream = new SubagentRuntimeChangeStream(service, catalog.Subagents());
         using var subscriptionCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await using var subscription = stream.SubscribeAsync(
             new SubagentChangeSubscription(stream.Revision),
             subscriptionCancellation.Token).GetAsyncEnumerator();
         _ = await ReadUntilAsync(subscription, change => change.Kind == SubagentChangeKind.Connected);
         var runtime = new TestRuntimeCatalog();
-        catalog.AddProvider(AgentRpcServices.RuntimeCatalogs, runtime);
+        catalog.AddRuntimeCatalog(runtime);
         await runtime.SessionSubscription.Task.WaitAsync(TimeSpan.FromSeconds(3));
         _ = await ReadUntilAsync(subscription, change => change.Kind == SubagentChangeKind.Catalog);
 
@@ -160,7 +165,7 @@ public sealed class SubagentRuntimeChangeTests
     public async Task AppGateway_ReconnectsFromLastRevisionAndNewRuntimeRequiresResnapshot()
     {
         var client = new ReconnectingSubagentRuntimeClient();
-        using var gateway = new SubagentAppRuntimeGateway(client);
+        using var gateway = new SubagentAppRuntimeGateway(AgentRoleBoundary.As<AppRuntime.ISubagentOwnerClient>(client));
         var sessionChanged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var resnapshot = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         gateway.SessionChanged += _ => sessionChanged.TrySetResult();
@@ -178,7 +183,7 @@ public sealed class SubagentRuntimeChangeTests
     public async Task AppGateway_OverflowResnapshotResumesFromTerminalRevision()
     {
         var client = new OverflowResnapshotRuntimeClient();
-        using var gateway = new SubagentAppRuntimeGateway(client);
+        using var gateway = new SubagentAppRuntimeGateway(AgentRoleBoundary.As<AppRuntime.ISubagentOwnerClient>(client));
         var resnapshot = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var turnChanged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         gateway.ResnapshotRequired += () => resnapshot.TrySetResult();
@@ -195,7 +200,7 @@ public sealed class SubagentRuntimeChangeTests
     public async Task AppGateway_FailedChangeProcessingReconnectsBeforeAdvancingRevision()
     {
         var client = new FailingCatalogRefreshRuntimeClient();
-        using var gateway = new SubagentAppRuntimeGateway(client);
+        using var gateway = new SubagentAppRuntimeGateway(AgentRoleBoundary.As<AppRuntime.ISubagentOwnerClient>(client));
         var catalogChanged = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
         gateway.CatalogChanged += static () => throw new InvalidOperationException("Injected app listener failure.");
@@ -213,7 +218,7 @@ public sealed class SubagentRuntimeChangeTests
     public async Task AppGateway_MalformedChangeResnapshotsAndViewModelTracksAvailability()
     {
         var client = new MalformedChangeRuntimeClient();
-        using var gateway = new SubagentAppRuntimeGateway(client);
+        using var gateway = new SubagentAppRuntimeGateway(AgentRoleBoundary.As<AppRuntime.ISubagentOwnerClient>(client));
         using var viewModel = new SubagentsViewModel(gateway);
         var resnapshot = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         gateway.ResnapshotRequired += () => resnapshot.TrySetResult();
@@ -231,7 +236,9 @@ public sealed class SubagentRuntimeChangeTests
     public async Task ResnapshotRequired_ReloadsSelectedTranscriptAcrossRowMoveAndAcceptsLaterChange()
     {
         var gateway = new ResnapshotSubsessionGateway();
-        using var viewModel = new SubsessionsViewModel(gateway, gateway, gateway, gateway);
+        using var viewModel = new SubsessionsViewModel(AgentRoleBoundary.As<AppRuntime.ISubsessionSessionReader>(gateway),
+            AgentRoleBoundary.As<AppRuntime.ISubsessionCheckpointReader>(gateway), AgentRoleBoundary.As<AppRuntime.ISubsessionTranscriptPageReader>(gateway),
+            AgentRoleBoundary.As<AppRuntime.ISubsessionChangeNotifications>(gateway));
         await viewModel.InitializeAsync();
         Assert.Equal("initial", Assert.Single(
             viewModel.Messages.OfType<SubsessionTextTranscriptRowViewModel>()).Content);
@@ -266,7 +273,7 @@ public sealed class SubagentRuntimeChangeTests
     [Fact]
     public async Task InitialTranscriptTransportFailureSurfacesActionableStatus()
     {
-        using var gateway = new SubagentAppRuntimeGateway(new MissingPageSubagentRuntimeClient());
+        using var gateway = new SubagentAppRuntimeGateway(AgentRoleBoundary.As<AppRuntime.ISubagentOwnerClient>(new MissingPageSubagentRuntimeClient()));
         using var viewModel = new SubsessionsViewModel(gateway, gateway, gateway, gateway);
 
         await viewModel.InitializeAsync();

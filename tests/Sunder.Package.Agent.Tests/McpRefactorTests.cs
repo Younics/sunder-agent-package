@@ -1,3 +1,6 @@
+extern alias McpWorker;
+extern alias McpApp;
+
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
@@ -8,10 +11,12 @@ using Microsoft.Extensions.Logging.Abstractions;
 using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
-using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Mcp;
-using Sunder.Package.Agent.Mcp.Runtime;
-using Sunder.Package.Agent.Mcp.Services;
+using McpWorker::Sunder.Package.Agent.Contracts.Models;
+using McpWorker::Sunder.Package.Agent.Mcp;
+using McpWorker::Sunder.Package.Agent.Mcp.Runtime;
+using McpWorker::Sunder.Package.Agent.Mcp.Services;
+using AgentMcpSettingsViewModel = McpApp::Sunder.Package.Agent.Mcp.AgentMcpSettingsViewModel;
+using McpAppRuntimeGateway = McpApp::Sunder.Package.Agent.Mcp.Runtime.McpAppRuntimeGateway;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Logging;
 using Sunder.Sdk.Callbacks;
@@ -137,7 +142,9 @@ public sealed class McpRefactorTests
                 NullLogger.Instance,
                 TimeSpan.FromSeconds(5),
                 CancellationToken.None);
-            await WaitUntilAsync(() => File.Exists(fixture.ProcessIdsPath));
+            // Source-build fixtures can delay shell startup beyond the default
+            // polling budget. Keep the five-second probe timeout and drain limits.
+            await WaitUntilAsync(() => File.Exists(fixture.ProcessIdsPath), TimeSpan.FromSeconds(10));
             fixture.ProcessIds.AddRange(ReadProcessIds(fixture.ProcessIdsPath));
 
             Assert.Null(await probe.WaitAsync(TimeSpan.FromSeconds(10)));
@@ -163,7 +170,10 @@ public sealed class McpRefactorTests
                 NullLogger.Instance,
                 TimeSpan.FromSeconds(30),
                 cancellation.Token);
-            await WaitUntilAsync(() => File.Exists(fixture.ProcessIdsPath));
+            // Process startup competes with source-build fixtures in the full
+            // suite. Give readiness its own bounded budget; cancellation and
+            // process-tree drain assertions below retain their existing limits.
+            await WaitUntilAsync(() => File.Exists(fixture.ProcessIdsPath), TimeSpan.FromSeconds(10));
             fixture.ProcessIds.AddRange(ReadProcessIds(fixture.ProcessIdsPath));
 
             await cancellation.CancelAsync();
@@ -1237,7 +1247,7 @@ public sealed class McpRefactorTests
             oauth: null!,
             context);
         using var appGateway = new McpAppRuntimeGateway(
-            new McpHandlerManagementClient(handler),
+            AgentRoleBoundary.As<McpApp::Sunder.Package.Agent.Mcp.Runtime.IMcpOwnerManagementClient>(new McpHandlerManagementClient(handler)),
             NullPackageCallbackClient.Instance);
 
         var remoteDocument = (await appGateway.LoadDocumentAsync(remote.Server.ServerId))!;
@@ -1603,7 +1613,10 @@ public sealed class McpRefactorTests
             var context = new TestPackageContext(state);
             var catalog = new McpServerCatalogService(context);
             var importer = new McpEcosystemConfigurationImporter(catalog);
-            var sync = new McpSunderConfigurationSyncService(importer, userProfilePath: root);
+            using var extensions = new RegressionTestExtensionCatalog();
+            await using var workspaces = new McpWorker::Sunder.Package.Agent.Mcp.Rpc.RuntimeWorkspaceCatalog(extensions.RpcForCaller("sunder.package.agent.mcp"));
+            await workspaces.StartAsync();
+            var sync = new McpSunderConfigurationSyncService(importer, workspaces, userProfilePath: root);
             var coordinator = new McpConfigurationCoordinator(importer, sync);
             await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance, new FakeConnectionFactory());
             var source = new McpToolSource(catalog, manager, coordinator);
@@ -1665,7 +1678,10 @@ public sealed class McpRefactorTests
         var context = new TestPackageContext();
         var catalog = new McpServerCatalogService(context);
         var importer = new McpEcosystemConfigurationImporter(catalog);
-        var sync = new McpSunderConfigurationSyncService(importer);
+        using var extensions = new RegressionTestExtensionCatalog();
+        await using var workspaces = new McpWorker::Sunder.Package.Agent.Mcp.Rpc.RuntimeWorkspaceCatalog(extensions.RpcForCaller("sunder.package.agent.mcp"));
+        await workspaces.StartAsync();
+        var sync = new McpSunderConfigurationSyncService(importer, workspaces);
         var path = Path.Combine(Path.GetTempPath(), "sunder-mcp-sync-" + Guid.NewGuid().ToString("N") + ".json");
         try
         {
@@ -1948,13 +1964,13 @@ public sealed class McpRefactorTests
         McpServerCatalogService catalog,
         McpClientConnectionManager connections)
         => new(
-            new McpLocalManagementGateway(
+            AgentRoleBoundary.As<McpApp::Sunder.Package.Agent.Mcp.Runtime.IMcpManagementGateway>(new McpLocalManagementGateway(
                 new McpSettingsEditorService(catalog),
                 new McpConfigurationCoordinator(
                     new McpEcosystemConfigurationImporter(catalog),
                     syncService: null),
                 new McpServerConnectionService(catalog, connections, oauthService: null),
-                new McpOAuthCoordinator(oauthService: null, connections)));
+                new McpOAuthCoordinator(oauthService: null, connections))));
 
     private static ConfiguredMcpServerRecord CreateServer(string id, string name)
         => new()
@@ -1969,12 +1985,13 @@ public sealed class McpRefactorTests
             UpdatedAtUtc = DateTimeOffset.UtcNow,
         };
 
-    private static async Task WaitUntilAsync(Func<bool> predicate)
+    private static async Task WaitUntilAsync(Func<bool> predicate, TimeSpan? maximumWait = null)
     {
-        var timeout = DateTime.UtcNow.AddSeconds(3);
+        var started = Stopwatch.StartNew();
+        var timeout = maximumWait ?? TimeSpan.FromSeconds(3);
         while (!predicate())
         {
-            if (DateTime.UtcNow >= timeout)
+            if (started.Elapsed >= timeout)
             {
                 throw new TimeoutException("Condition was not reached.");
             }

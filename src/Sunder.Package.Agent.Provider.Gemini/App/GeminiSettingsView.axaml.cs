@@ -2,6 +2,7 @@ using Avalonia.Controls;
 
 namespace Sunder.Package.Agent.Provider.Gemini;
 
+[Sunder.Sdk.Packaging.SunderPackageSettingsView(ViewModel = typeof(GeminiSettingsViewModel))]
 public partial class GeminiSettingsView : UserControl, IDisposable
 {
     private GeminiSettingsViewModel? _viewModel;
@@ -11,6 +12,7 @@ public partial class GeminiSettingsView : UserControl, IDisposable
         InitializeComponent();
     }
 
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
     public GeminiSettingsView(GeminiSettingsViewModel viewModel)
         : this()
     {

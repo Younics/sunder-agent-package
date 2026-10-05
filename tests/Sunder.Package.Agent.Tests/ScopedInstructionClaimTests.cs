@@ -1,12 +1,16 @@
+extern alias LocalWorker;
+extern alias FilesWorker;
+extern alias ShellWorker;
+
 using System.Text;
 using System.Text.Json;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Execution.Local;
+using LocalWorker::Sunder.Package.Agent.Execution.Local;
 using Sunder.Package.Agent.Protocol;
-using Sunder.Package.Agent.Tools.Files;
-using Sunder.Package.Agent.Tools.Shell;
+using FilesWorker::Sunder.Package.Agent.Tools.Files;
+using ShellWorker::Sunder.Package.Agent.Tools.Shell;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -533,9 +537,10 @@ public sealed class ScopedInstructionClaimTests
         using var fixture = await Fixture.CreateAsync();
         var target = new IncompleteDiscoveryExecutionTarget(fixture.Root);
         var catalog = new RegressionTestExtensionCatalog();
-        catalog.AddProvider(AgentRpcServices.ExecutionTargets, target);
-        var targetReference = catalog.GetRequiredReference(AgentRpcServices.ExecutionTargets);
-        var source = new FilesToolSource(fixture.PackageContext);
+        catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target);
+        var targetReference = catalog.GetRequiredReference(RegressionTestBindings.ExecutionTargets);
+        using var source = new GeneratedToolSourceProbe(catalog, new FilesToolSource(fixture.PackageContext),
+            "sunder.package.agent.tools.files", withPromptContext: true, withSessionCleaner: true);
         await PresentAsync(source, fixture.PromptRequest(epoch: 1) with
         {
             ExecutionTargetReference = targetReference,
@@ -552,7 +557,8 @@ public sealed class ScopedInstructionClaimTests
         Assert.DoesNotContain("INCOMPLETE_DISCOVERY_SECRET", withheld.Content, StringComparison.Ordinal);
 
         target.ReturnIncompleteDiscovery = false;
-        var restarted = new FilesToolSource(fixture.PackageContext);
+        using var restarted = new GeneratedToolSourceProbe(catalog, new FilesToolSource(fixture.PackageContext),
+            "sunder.package.agent.tools.files", withPromptContext: true, withSessionCleaner: true);
         await PresentAsync(restarted, fixture.PromptRequest(epoch: 1) with
         {
             ExecutionTargetReference = targetReference,
@@ -759,7 +765,7 @@ public sealed class ScopedInstructionClaimTests
            ?? [];
 
     private static async Task<IReadOnlyList<AgentPromptContextBlock>> PresentAsync(
-        FilesToolSource source,
+        GeneratedToolSourceProbe source,
         AgentPromptContextRequest request)
     {
         var blocks = ScopedBlocks(await source.ContributeContextAsync(request));
@@ -768,7 +774,7 @@ public sealed class ScopedInstructionClaimTests
     }
 
     private static async Task AcknowledgeAsync(
-        FilesToolSource source,
+        GeneratedToolSourceProbe source,
         AgentPromptContextRequest request,
         IReadOnlyList<AgentPromptContextBlock> blocks)
     {
@@ -807,6 +813,7 @@ public sealed class ScopedInstructionClaimTests
         private readonly LocalExecutionWorkspaceConfigService _configService;
         private readonly RegressionTestExtensionCatalog _catalog;
         private readonly LocalExecutionTarget _target;
+        private readonly List<GeneratedToolSourceProbe> _sources = [];
 
         private Fixture(
             RegressionTestPackageScope scope,
@@ -879,7 +886,7 @@ public sealed class ScopedInstructionClaimTests
                     configService,
                     new LocalShellCatalogService(scope.Context));
                 catalog.AddProvider(
-                    AgentRpcServices.ExecutionTargets,
+                    RegressionTestBindings.ExecutionTargets,
                     target);
                 return new Fixture(scope, roots, workspace, binding, configService, catalog, target);
             }
@@ -890,12 +897,20 @@ public sealed class ScopedInstructionClaimTests
             }
         }
 
-        public FilesToolSource CreateSource() => new(_scope.Context);
+        public GeneratedToolSourceProbe CreateSource()
+        {
+            var source = new GeneratedToolSourceProbe(_catalog, new FilesToolSource(_scope.Context),
+                "sunder.package.agent.tools.files", withPromptContext: true, withSessionCleaner: true);
+            _sources.Add(source);
+            return source;
+        }
 
-        public async Task<ShellToolSource> CreateShellSourceAsync()
+        public async Task<GeneratedToolSourceProbe> CreateShellSourceAsync()
         {
             await _configService.SaveConfigAsync(Binding.BindingId, new LocalExecutionWorkspaceConfig(null, []));
-            return new ShellToolSource();
+            var source = new GeneratedToolSourceProbe(_catalog, new ShellToolSource(), "sunder.package.agent.tools.shell");
+            _sources.Add(source);
+            return source;
         }
 
         public async Task<AgentWorkspaceBindingRecord> CreateBindingAsync(string bindingId)
@@ -931,7 +946,7 @@ public sealed class ScopedInstructionClaimTests
                 ExecutionBinding = binding ?? Binding,
                 AvailableTools = [FilesTool],
                 TranscriptEpoch = epoch,
-                ExecutionTargetReference = _catalog.GetRequiredReference(AgentRpcServices.ExecutionTargets),
+                ExecutionTargetReference = _catalog.GetRequiredReference(RegressionTestBindings.ExecutionTargets),
             };
         }
 
@@ -953,7 +968,7 @@ public sealed class ScopedInstructionClaimTests
                 AllowOutsideConfiguredScope: allowOutsideConfiguredScope)
             {
                 TranscriptEpoch = epoch,
-                ExecutionTargetReference = _catalog.GetRequiredReference(AgentRpcServices.ExecutionTargets),
+                ExecutionTargetReference = _catalog.GetRequiredReference(RegressionTestBindings.ExecutionTargets),
             };
 
         public async Task<AgentToolExecutionContext> ApprovedToolContextAsync(
@@ -984,8 +999,8 @@ public sealed class ScopedInstructionClaimTests
                 RunRevision = 1,
                 ToolCallId = toolCallId,
             };
-            var resource = await _target.ResolveFileResourceAsync(
-                new AgentExecutionTargetContext(
+            var resource = AgentRoleBoundary.As<AgentResolvedResource>(await _target.ResolveFileResourceAsync(
+                AgentRoleBoundary.As<LocalWorker::Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetContext>(new AgentExecutionTargetContext(
                     sessionId,
                     null,
                     Workspace,
@@ -993,8 +1008,8 @@ public sealed class ScopedInstructionClaimTests
                     AllowOutsideConfiguredScope: true)
                 {
                     ResourceOperation = operation,
-                },
-                path);
+                }),
+                path));
             return context with
             {
                 ApprovedResourceReferences = new[]
@@ -1031,10 +1046,14 @@ public sealed class ScopedInstructionClaimTests
             string capability,
             AgentResourceClaim claim,
             AgentResourceOperationContext operation)
-            => _target.ResourceReferences.IsCurrent(capability, claim, operation);
+            => _target.ResourceReferences.IsCurrent(capability,
+                AgentRoleBoundary.As<LocalWorker::Sunder.Package.Agent.Contracts.Models.AgentResourceClaim>(claim),
+                AgentRoleBoundary.As<LocalWorker::Sunder.Package.Agent.Contracts.Models.AgentResourceOperationContext>(operation));
 
         public void Dispose()
         {
+            foreach (var source in _sources) source.Dispose();
+            _catalog.Dispose();
             _target.Dispose();
             _scope.Dispose();
         }

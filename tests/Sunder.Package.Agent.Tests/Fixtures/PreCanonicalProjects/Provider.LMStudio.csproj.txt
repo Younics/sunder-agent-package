@@ -1,0 +1,60 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <SunderPackageFamilyId>sunder.package.agent.provider.lmstudio</SunderPackageFamilyId>
+    <SunderPackageRole>worker</SunderPackageRole>
+    <SunderPackageAppProject>App\Sunder.Package.Agent.Provider.LMStudio.App.csproj</SunderPackageAppProject>
+  </PropertyGroup>
+
+  <Import Project="$(MSBuildThisFileDirectory)..\..\Sunder.Agent.Worker.props" />
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="OpenAI" />
+    <ProjectReference Include="..\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
+    <ProjectReference Include="Protocol\Sunder.Package.Agent.Provider.LMStudio.Protocol.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="App\**\*" />
+    <Compile Remove="Protocol\**\*" />
+    <Compile Remove="Rpc\CredentialSettings.cs;Rpc\CredentialSettings.Composition.cs;Rpc\CredentialClient.cs" />
+    <Compile Remove="Rpc\LMStudioWorkerBindings.cs;Rpc\LMStudioProviderValues.cs;Rpc\ChatProvider.cs;Rpc\ChatStream.cs;Rpc\ChatValues.cs;Rpc\EmbeddingProvider.cs" />
+    <None Remove="App\**\*" />
+    <None Remove="Protocol\**\*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderChatResponseAggregator.cs" Link="Provider.Shared\ProviderChatResponseAggregator.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderConfigurationSections.cs" Link="Provider.Shared\ProviderConfigurationSections.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderContextWindowFailureClassifier.cs" Link="Provider.Shared\ProviderContextWindowFailureClassifier.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderCredentialAccessor.cs" Link="Provider.Shared\ProviderCredentialAccessor.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderEmbeddingBatch.cs" Link="Provider.Shared\ProviderEmbeddingBatch.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderErrorDiagnosticExtractor.cs" Link="Provider.Shared\ProviderErrorDiagnosticExtractor.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderJson.cs" Link="Provider.Shared\ProviderJson.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderModelCatalog.cs" Link="Provider.Shared\ProviderModelCatalog.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderModelId.cs" Link="Provider.Shared\ProviderModelId.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderResponseUpdates.cs" Link="Provider.Shared\ProviderResponseUpdates.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderStreamTelemetry.cs" Link="Provider.Shared\ProviderStreamTelemetry.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderToolResult.cs" Link="Provider.Shared\ProviderToolResult.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderUtilityModelSelection.cs" Link="Provider.Shared\ProviderUtilityModelSelection.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <SunderPackageTarget Include="runtime/$(RuntimeIdentifier)"
+                         Role="runtime"
+                         Rid="$(RuntimeIdentifier)"
+                         Kind="worker" />
+    <SunderContractBundle Include="Protocol\Contracts\credential-settings.rpc.json"
+                          ContractId="sunder.package.agent.provider.lmstudio.credentials"
+                            Version="1.0.0"
+                          DescriptorPath="contracts/credential-settings.rpc.json"
+                          Exposure="package" />
+    <SunderRpcProvider Include="lmstudio.credentials"
+                       ContractId="sunder.package.agent.provider.lmstudio.credentials"
+                        ContractVersion="1.0.0"
+                       Role="runtime"
+                       Audience="owner" />
+  </ItemGroup>
+
+</Project>

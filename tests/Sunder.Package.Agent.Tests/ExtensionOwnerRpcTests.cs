@@ -1,15 +1,22 @@
+extern alias SkillsWorker;
+extern alias SkillsApp;
+extern alias SubagentsWorker;
+extern alias SubagentsApp;
+
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Protocol;
-using Sunder.Package.Agent.Skills.Protocol;
-using Sunder.Package.Agent.Skills.Runtime;
-using Sunder.Package.Agent.Skills.Services;
-using Sunder.Package.Agent.Subagents.Protocol;
-using Sunder.Package.Agent.Subagents.Runtime;
-using Sunder.Package.Agent.Subagents.Services;
+using SkillsApp::Sunder.Package.Agent.Skills.Runtime;
+using SkillsWorker::Sunder.Package.Agent.Skills.Services;
+using SubagentsApp::Sunder.Package.Agent.Subagents.Runtime;
+using SubagentsWorker::Sunder.Package.Agent.Subagents.Services;
+using SkillRuntimeHandler = SkillsWorker::Sunder.Package.Agent.Skills.Runtime.SkillRuntimeHandler;
+using SkillRuntimeChangeStream = SkillsWorker::Sunder.Package.Agent.Skills.Runtime.SkillRuntimeChangeStream;
+using SkillRuntimeOwnerClient = SkillsWorker::Sunder.Package.Agent.Skills.Runtime.SkillRuntimeOwnerClient;
+using SubagentRuntimeOwnerClient = SubagentsWorker::Sunder.Package.Agent.Subagents.Runtime.SubagentRuntimeOwnerClient;
+using SkillsManagementService = SkillsWorker::Sunder.Package.Agent.Skills.Rpc.ManagementService;
+using SubagentsManagementService = SubagentsWorker::Sunder.Package.Agent.Subagents.Rpc.ManagementService;
 using Sunder.Sdk.Rpc;
 using Xunit;
-using SkillsGenerated = Sunder.Package.Agent.Skills.Protocol.Generated;
-using SubagentsGenerated = Sunder.Package.Agent.Subagents.Protocol.Generated;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -39,12 +46,12 @@ public sealed class ExtensionOwnerRpcTests
             new Dictionary<string, string>(),
             []));
         var importer = new SkillImportService(store, new UnusedGitHubSkillClient(), scope.Context);
-        var provider = new SkillOwnerProvider(
+        var provider = new SkillsManagementService(new SkillRuntimeOwnerClient(
             new SkillRuntimeHandler(store, importer, scope.Context),
-            new SkillRuntimeChangeStream(store));
+            new SkillRuntimeChangeStream(store)));
         using var state = new RegressionTestRpcState();
         AddSkillsProvider(state, provider, "skills.unrelated");
-        AddSkillsProvider(state, provider, SkillsOwnerProtocol.ProviderId);
+        AddSkillsProvider(state, provider, "skills.management");
         var client = new SkillOwnerClient(new RegressionTestRpcClient(state, SkillConstants.PackageId));
 
         Assert.Equal("rpc-skill", Assert.Single((await client.QueryAsync()).Skills).SkillId);
@@ -66,12 +73,12 @@ public sealed class ExtensionOwnerRpcTests
         var store = new SubagentStore(scope.Context);
         store.Activate();
         var service = new SubagentService(store);
-        using var handler = new SubagentRuntimeHandler(service, catalog);
-        using var changes = new SubagentRuntimeChangeStream(service, catalog);
-        var provider = new SubagentOwnerProvider(handler, changes);
+        using var handler = new SubagentRuntimeHandler(service, catalog.Subagents());
+        using var changes = new SubagentRuntimeChangeStream(service, catalog.Subagents());
+        var provider = new SubagentsManagementService(new SubagentRuntimeOwnerClient(handler, changes));
         using var state = new RegressionTestRpcState();
         AddSubagentsProvider(state, provider, "subagents.unrelated");
-        AddSubagentsProvider(state, provider, SubagentsOwnerProtocol.ProviderId);
+        AddSubagentsProvider(state, provider, "subagents.management");
         var client = new SubagentOwnerClient(new RegressionTestRpcClient(state, "sunder.package.agent.subagents"));
 
         Assert.Empty((await client.QueryAsync(new(SubagentQueryKind.Management))).Subagents ?? []);
@@ -180,7 +187,7 @@ public sealed class ExtensionOwnerRpcTests
         try
         {
             boundary.Catalog.AddProvider(
-                AgentRpcServices.SessionCleaners,
+                RegressionTestBindings.SessionCleaners,
                 new NoOpSessionDataCleaner());
             await observed.Task.WaitAsync(TimeSpan.FromSeconds(5));
         }
@@ -211,25 +218,23 @@ public sealed class ExtensionOwnerRpcTests
 
     private static void AddSkillsProvider(
         RegressionTestRpcState state,
-        SkillOwnerProvider provider,
+        SkillsManagementService provider,
         string providerId)
-        => state.Add(
+        => state.AddGenerated(
             SkillConstants.PackageId,
-            SkillsOwnerProtocol.Descriptor,
             provider,
-            new SkillsGenerated.SunderPackageAgentSkillsOwnerRpcHandler(provider),
+            provider.CreateSunderRpcProviderRegistration(),
             new NoOpDisposable(),
             providerId);
 
     private static void AddSubagentsProvider(
         RegressionTestRpcState state,
-        SubagentOwnerProvider provider,
+        SubagentsManagementService provider,
         string providerId)
-        => state.Add(
+        => state.AddGenerated(
             "sunder.package.agent.subagents",
-            SubagentsOwnerProtocol.Descriptor,
             provider,
-            new SubagentsGenerated.SunderPackageAgentSubagentsOwnerRpcHandler(provider),
+            provider.CreateSunderRpcProviderRegistration(),
             new NoOpDisposable(),
             providerId);
 
@@ -278,11 +283,11 @@ public sealed class ExtensionOwnerRpcTests
             var store = new SubagentStore(_scope.Context);
             store.Activate();
             Service = new SubagentService(store);
-            _handler = new SubagentRuntimeHandler(Service, _catalog);
-            Changes = new SubagentRuntimeChangeStream(Service, _catalog);
-            var provider = new SubagentOwnerProvider(_handler, Changes);
+            _handler = new SubagentRuntimeHandler(Service, _catalog.Subagents());
+            Changes = new SubagentRuntimeChangeStream(Service, _catalog.Subagents());
+            var provider = new SubagentsManagementService(new SubagentRuntimeOwnerClient(_handler, Changes));
             State = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-            AddSubagentsProvider(State, provider, SubagentsOwnerProtocol.ProviderId);
+            AddSubagentsProvider(State, provider, "subagents.management");
             Client = new SubagentOwnerClient(new RegressionTestRpcClient(
                 State,
                 "sunder.package.agent.subagents"));

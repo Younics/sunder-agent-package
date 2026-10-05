@@ -31,6 +31,7 @@ internal readonly record struct AdaptiveDetailTicket<TKey>(
     LatestRequestTicket Request)
     where TKey : notnull;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.App)]
 internal sealed class KeyedAdaptiveListDetailState<TKey, TItem> : INotifyPropertyChanged, IDisposable
     where TKey : notnull
     where TItem : class

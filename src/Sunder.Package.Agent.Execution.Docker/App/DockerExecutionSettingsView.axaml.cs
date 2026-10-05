@@ -6,6 +6,7 @@ using Sunder.Sdk.Notifications;
 
 namespace Sunder.Package.Agent.Execution.Docker;
 
+[Sunder.Sdk.Packaging.SunderPackageSettingsView(ViewModel = typeof(DockerExecutionSettingsViewModel))]
 public partial class DockerExecutionSettingsView : UserControl, IDisposable
 {
     private DockerExecutionSettingsViewModel? _viewModel;
@@ -25,6 +26,7 @@ public partial class DockerExecutionSettingsView : UserControl, IDisposable
         DataContext = viewModel;
     }
 
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
     public DockerExecutionSettingsView(
         DockerExecutionSettingsViewModel viewModel,
         IPackageContext packageContext,

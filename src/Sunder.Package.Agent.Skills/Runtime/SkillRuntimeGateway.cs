@@ -8,8 +8,6 @@ using Sunder.Package.Agent.Shared.Importing;
 #if SUNDER_SKILLS_APP
 using Sunder.Package.Agent.Shared.Presentation;
 #endif
-using Sunder.Package.Agent.Skills.Protocol;
-using Sunder.Package.Agent.Skills.Protocol.Generated;
 using Sunder.Package.Agent.Skills.Services;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Rpc;
@@ -50,6 +48,7 @@ internal sealed class SkillLocalManagementGateway(SkillStore store, SkillImportS
 }
 #endif
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal static class SkillRuntimeExceptionPolicy
 {
     public static bool IsFatal(Exception exception)
@@ -273,9 +272,10 @@ internal sealed partial class SkillRuntimeHandler(
 {
     private readonly ILogger<SkillRuntimeHandler> _logger = context.Logging.LoggerFactory
         .CreateLogger<SkillRuntimeHandler>();
-    private readonly Task _orphanedTransferCleanup = CleanupOrphanedTransferStagingAsync(context);
+    private readonly Lazy<Task> _orphanedTransferCleanup = new(() => CleanupOrphanedTransferStagingAsync(context));
 
-    internal Task OrphanedTransferCleanup => _orphanedTransferCleanup;
+    internal Task OrphanedTransferCleanup => _orphanedTransferCleanup.Value;
+    internal Task StartedTransferCleanup => _orphanedTransferCleanup.IsValueCreated ? _orphanedTransferCleanup.Value : Task.CompletedTask;
 
     public ValueTask<SkillProjection> HandleAsync(SkillQuery request, CancellationToken cancellationToken = default)
     {
@@ -314,7 +314,7 @@ internal sealed partial class SkillRuntimeHandler(
             throw new SkillOwnerOperationException("The skill transfer id is invalid.");
         }
 
-        await _orphanedTransferCleanup.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await OrphanedTransferCleanup.WaitAsync(cancellationToken).ConfigureAwait(false);
 
         var root = $"skill-import-transfers/{transferId}";
         try
@@ -573,195 +573,6 @@ internal sealed class SkillRuntimeChangeStream
     }
 }
 
-#endif
-
-#if SUNDER_SKILLS_APP
-internal sealed class SkillOwnerClient(ISunderRpcClient rpc) : ISkillOwnerClient
-{
-    public async ValueTask<SkillProjection> QueryAsync(CancellationToken cancellationToken = default)
-    {
-        var endpoint = await ResolveEndpointAsync(cancellationToken).ConfigureAwait(false);
-        await using var scope = await rpc.CreateCallScopeAsync(cancellationToken: cancellationToken)
-            .ConfigureAwait(false);
-        var client = new SkillsManagementClient(scope, endpoint);
-        var response = await client.QueryAsync(new OwnerEmpty(), cancellationToken).ConfigureAwait(false);
-        return await ReadContentAsync<SkillProjection>(scope, response, cancellationToken).ConfigureAwait(false);
-    }
-
-    public async ValueTask<SkillProjection> CommandAsync(
-        SkillCommand command,
-        CancellationToken cancellationToken = default)
-    {
-        var endpoint = await ResolveEndpointAsync(cancellationToken).ConfigureAwait(false);
-        await using var scope = await rpc.CreateCallScopeAsync(cancellationToken: cancellationToken)
-            .ConfigureAwait(false);
-        var client = new SkillsManagementClient(scope, endpoint);
-        var request = await RegisterContentAsync(
-            scope,
-            endpoint,
-            command,
-            "skills-command.json",
-            cancellationToken).ConfigureAwait(false);
-        var response = await client.CommandAsync(request, cancellationToken).ConfigureAwait(false);
-        return await ReadContentAsync<SkillProjection>(scope, response, cancellationToken).ConfigureAwait(false);
-    }
-
-    public async IAsyncEnumerable<SkillChanged> SubscribeChangesAsync(
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
-        var endpoint = await ResolveEndpointAsync(cancellationToken).ConfigureAwait(false);
-        await using var scope = await rpc.CreateCallScopeAsync(cancellationToken: cancellationToken)
-            .ConfigureAwait(false);
-        var client = new SkillsManagementClient(scope, endpoint);
-        await foreach (var _ in client.ChangesAsync(new OwnerEmpty(), cancellationToken).ConfigureAwait(false))
-        {
-            yield return new SkillChanged();
-        }
-    }
-
-    private async ValueTask<SunderRpcEndpointReference> ResolveEndpointAsync(
-        CancellationToken cancellationToken)
-    {
-        var descriptor = SkillsOwnerProtocol.Descriptor;
-        var catalog = await rpc.DiscoverAsync(descriptor.ContractId, cancellationToken).ConfigureAwait(false);
-        return catalog.Providers.SingleOrDefault(provider =>
-                   string.Equals(provider.ProviderId, SkillsOwnerProtocol.ProviderId, StringComparison.Ordinal)
-                   && provider.State == SunderRpcProviderState.Active
-                   && string.Equals(provider.AbiSha256, descriptor.AbiSha256, StringComparison.Ordinal))
-               ?.Endpoint
-               ?? throw new InvalidOperationException("The Skills runtime is unavailable.");
-    }
-
-    private static async ValueTask<OwnerContent> RegisterContentAsync<T>(
-        ISunderRpcCallScope scope,
-        SunderRpcEndpointReference endpoint,
-        T value,
-        string fileName,
-        CancellationToken cancellationToken)
-        where T : notnull
-    {
-        var bytes = JsonSerializer.SerializeToUtf8Bytes(value, OwnerJson.Options);
-        await using var stream = new MemoryStream(bytes, writable: false);
-        var content = await scope.RegisterContentAsync(
-            endpoint,
-            stream,
-            new SunderRpcContentRegistrationOptions(
-                "application/json",
-                fileName,
-                bytes.LongLength,
-                Repeatability: SunderRpcContentRepeatability.SingleUse,
-                MaximumUses: 1),
-            cancellationToken).ConfigureAwait(false);
-        return new OwnerContent { Content = content };
-    }
-
-    private static async ValueTask<T> ReadContentAsync<T>(
-        ISunderRpcCallScope scope,
-        OwnerContent response,
-        CancellationToken cancellationToken)
-        where T : notnull
-    {
-        await using var stream = await scope.OpenContentAsync(response.Content, cancellationToken)
-            .ConfigureAwait(false);
-        return await JsonSerializer.DeserializeAsync<T>(stream, OwnerJson.Options, cancellationToken)
-                   .ConfigureAwait(false)
-               ?? throw new InvalidDataException("The Skills runtime returned an empty response.");
-    }
-}
-#endif
-
-#if SUNDER_SKILLS_WORKER
-internal sealed class SkillOwnerProvider(
-    SkillRuntimeHandler handler,
-    SkillRuntimeChangeStream changes) : ISkillsManagementProvider
-{
-    public async ValueTask<OwnerContent> QueryAsync(
-        SunderRpcInvocationContext context,
-        OwnerEmpty request,
-        CancellationToken cancellationToken = default)
-    {
-        try
-        {
-            return await WriteContentAsync(
-                context,
-                await handler.HandleAsync(new SkillQuery(), cancellationToken).ConfigureAwait(false),
-                "skills-projection.json",
-                cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception exception) when (OwnerJson.ShouldMap(exception))
-        {
-            throw OwnerJson.Map((SkillOwnerOperationException)exception);
-        }
-    }
-
-    public async ValueTask<OwnerContent> CommandAsync(
-        SunderRpcInvocationContext context,
-        OwnerContent request,
-        CancellationToken cancellationToken = default)
-    {
-        try
-        {
-            var command = await ReadContentAsync<SkillCommand>(context, request, cancellationToken)
-                .ConfigureAwait(false);
-            return await WriteContentAsync(
-                context,
-                await handler.HandleAsync(command, cancellationToken).ConfigureAwait(false),
-                "skills-projection.json",
-                cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception exception) when (OwnerJson.ShouldMap(exception))
-        {
-            throw OwnerJson.Map((SkillOwnerOperationException)exception);
-        }
-    }
-
-    public async IAsyncEnumerable<OwnerEmpty> ChangesAsync(
-        SunderRpcInvocationContext context,
-        OwnerEmpty request,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
-        await foreach (var _ in changes.SubscribeAsync(
-                           new SkillChangeSubscription(),
-                           cancellationToken).ConfigureAwait(false))
-        {
-            yield return new OwnerEmpty();
-        }
-    }
-
-    private static async ValueTask<T> ReadContentAsync<T>(
-        SunderRpcInvocationContext context,
-        OwnerContent request,
-        CancellationToken cancellationToken)
-        where T : notnull
-    {
-        await using var stream = await context.OpenContentAsync(request.Content, cancellationToken)
-            .ConfigureAwait(false);
-        return await JsonSerializer.DeserializeAsync<T>(stream, OwnerJson.Options, cancellationToken)
-                   .ConfigureAwait(false)
-               ?? throw new SkillOwnerOperationException("The Skills owner request is invalid.");
-    }
-
-    private static async ValueTask<OwnerContent> WriteContentAsync<T>(
-        SunderRpcInvocationContext context,
-        T value,
-        string fileName,
-        CancellationToken cancellationToken)
-        where T : notnull
-    {
-        var bytes = JsonSerializer.SerializeToUtf8Bytes(value, OwnerJson.Options);
-        await using var stream = new MemoryStream(bytes, writable: false);
-        var content = await context.RegisterContentAsync(
-            stream,
-            new SunderRpcContentRegistrationOptions(
-                "application/json",
-                fileName,
-                bytes.LongLength,
-                Repeatability: SunderRpcContentRepeatability.SingleUse,
-                MaximumUses: 1),
-            cancellationToken).ConfigureAwait(false);
-        return new OwnerContent { Content = content };
-    }
-}
 #endif
 
 internal static class OwnerJson

@@ -1,8 +1,12 @@
+extern alias McpWorker;
+extern alias AgentApp;
+
 using System.Text;
 using System.Text.Json;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Mcp;
-using Sunder.Package.Agent.Services;
+using McpWorker::Sunder.Package.Agent.Mcp;
+using AgentToolPresentationRequest = McpWorker::Sunder.Package.Agent.Contracts.Models.AgentToolPresentationRequest;
+using AgentApp::Sunder.Package.Agent.Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;

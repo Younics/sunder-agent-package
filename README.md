@@ -21,7 +21,13 @@
 
 Sunder Agent is the first-party AI agent package family for [Sunder Core](https://github.com/Younics/sunder-core). It is intentionally modular: install the core agent package, then add only the providers, tools, memory, execution targets, and integrations you want.
 
-The packages in this repository are normal Sunder runtime packages built with `Sunder.Sdk` and `Sunder.Package.Build`. Extension packages depend on `sunder.package.agent` at runtime and publish capabilities through the schema-first contracts in `Sunder.Package.Agent.Protocol`.
+The packages in this repository are normal Sunder runtime packages built with
+`Sunder.Sdk` and `Sunder.Package.Build`. Extension packages depend on
+`sunder.package.agent` at runtime and publish capabilities through exact public
+contract locks. The obsolete descriptor-first projects are physically removed;
+their immutable migration captures remain test evidence. V1 contracts, clients
+and provider bindings are generated package-locally from ordinary implementation
+and declaration source.
 
 ## What You Get
 
@@ -58,7 +64,6 @@ The Agent workspace includes [local History Search](docs/history-search.md): it 
 | Package | Identifier | Role |
 | --- | --- | --- |
 | Sunder Agent | `sunder.package.agent` | Core sessions, chat, profiles, workspaces, permissions, and orchestration |
-| Agent Protocol | `Sunder.Package.Agent.Protocol` | RPC descriptors plus generated DTO, client, and provider bindings |
 | OpenAI Provider | `sunder.package.agent.provider.openai` | OpenAI chat and embedding providers |
 | Anthropic Provider | `sunder.package.agent.provider.anthropic` | Anthropic chat provider |
 | Gemini Provider | `sunder.package.agent.provider.gemini` | Gemini chat and embedding providers |
@@ -100,11 +105,16 @@ sunder.package.agent
   +-- orchestration: behavior loops, subagents, child runs
 ```
 
-Extension packages use `Sunder.Package.Agent.Protocol` to publish schema-validated capabilities to the core Agent package. Worker V3 targets pass immutable `SunderWorkerProviderRegistration` entries in `SunderWorkerV3Options` to `SunderWorker.RunAsync`. This keeps providers, tools, execution targets, and memory features independently installable without sharing live extension objects across package activations.
+Extension packages implement or declare RPC contracts in ordinary package source;
+the build derives canonical descriptors, role-local clients/providers, and exact
+contract uses. Cross-package consumers restore exact owner-contract locks without
+referencing another package's Worker assembly. Worker V1 targets pass immutable
+`SunderWorkerProviderRegistration` entries in `SunderWorkerOptions` to
+`SunderWorker.RunAsync`.
 
 Extension ownership is mandatory. Stack exporters use owned catalog contributions to include provider, execution-target, behavior-loop, skill, and subagent package dependencies; an ownerless catalog result is rejected by the SDK.
 
-Builder supports project creation, prerequisite setup, build, and publish. Runtime package activation and reload remain host-owned operations outside Builder.
+Builder supports project creation, prerequisite setup, build, and publish. Its Worker runs on the same host-managed shared .NET runtime as the rest of the family, while project `dotnet` commands use the SDK/toolchain explicitly selected for the workspace execution target. Build SDKs never enter the Worker execution-runtime store. Runtime package activation and reload remain host-owned operations outside Builder.
 
 Core session continuity is owned by `sunder.package.agent`: the default behavior loop projects long transcripts into the provider prompt, stores session context checkpoints for omitted turns, and preserves active tool call/result pairs. Semantic memory remains durable, recallable knowledge and should not own active working summaries.
 
@@ -124,7 +134,12 @@ Browser callbacks are host-owned; packages never bind callback ports. OpenAI Cod
 
 ## 2.x Compatibility Policy
 
-Every Agent runtime package and `Sunder.Package.Agent.Protocol` ships at one 2.x family version. Protocol references use `[2.0.0,3.0.0)` and extension runtime dependencies use `>=2.0.0 <3.0.0`. Rebuild and release the complete family together. Cross-package capabilities use only the 18 schema-first descriptors, generated bindings, and manifest-declared RPC providers; Runtime rejects mixed package baselines before activation.
+Exactly 15 Agent runtime packages ship at one 2.x family version; there is no
+Agent Protocol release artifact. Extension runtime dependencies use
+`>=2.0.0 <3.0.0`, while public RPC contracts retain independent semantic
+versions and exact authority locks. Rebuild and release the complete family
+together. The repository remains pre-release while the coordinated
+implementation-first migration is incomplete.
 
 Agent 2.0 creates the complete current SQLite schema from one checksummed `agent-2.0-baseline` entry. Startup accepts only an absent or empty database, or the exact current one-entry ledger; old, partial, ledgerless nonempty, and checksum-mismatched databases fail without mutation. Semantic Memory applies the same policy with its own `semantic-memory-2.0-baseline`. Do not edit or delete ledger rows.
 
@@ -144,7 +159,35 @@ Package projects support two development modes:
 | Inside the private `sunder` workspace | Local source references to `repos/sunder-core` |
 | Standalone public clone | NuGet references to `Sunder.Sdk` and `Sunder.Package.Build` |
 
-Each runtime family has one root, unsuffixed canonical Worker/package project with `SunderPackagePrimaryProject=true`, an optional build-only App selected by `SunderPackageAppProject`, and an optional package-local Protocol project. A normal canonical build composes the current RID at `bin/<configuration>/<tfm>/sunder-dev`; invoke `PackSunderPackage` directly on that same project to build and package all six RIDs. There are no wrapper packaging projects.
+Each runtime family has one root, unsuffixed authored Library package project.
+Core generates isolated Worker and optional App roles; `packages.json` lists only
+the fifteen canonical roots. The 26 obsolete App/helper/central/packed-consumer
+projects are physically removed and recorded after local canonical/source acceptance.
+A normal canonical build composes the current RID at
+`bin/<configuration>/<tfm>/sunder-dev`; invoke `PackSunderPackage` directly on
+that same project to build and package all six RIDs.
+
+Local unpublished families select validated local `.sunderpkg` candidates and the
+canonical local Core catalog through ordinary package-tool operations. These locks
+omit `registryOrigin`; missing local evidence never falls back to a Registry.
+Published dependencies use the explicitly selected Registry. Publication evidence
+is acquired separately and is not required to create a local family.
+
+All fifteen final post-cleanup artifacts passed qualification on **osx-arm64:
+75 commands, zero failures**, plus an audit of **180 managed assemblies**. All eleven actual test projects compiled
+with zero warnings and the recorded functional scopes passed with existing Docker/
+platform skips. The exact 249-file cleanup and twelve orphan App release locks are
+removed; Execution.Common remains retained.
+
+Workspace force-evaluate/locked restore and normal parallel **Build/Rebuild passed,
+zero warnings/errors, 3m43.74s / 4m38.15s**, after the Core lease fix. Local candidate
+NuGet qualification also verified **31 release locks** and isolated Release/osx-arm64
+Build/Pack/CLI for Tools.Shell, Anthropic and Agent. Final required Main/source
+acceptance passed **1,835/0/6 scoped skips**, including the actual all-family canonical
+artifact test; all 26 project retirements are recorded. The skips are five archive-
+directory prerequisites and one opt-in Docker case. Local canonical/local-first
+migration is complete; remote Core publication, native/prebuilt, performance and
+production release qualification remain separate open gates.
 
 GitHub smoke CI resolves `Younics/sunder-core` `main` once at workflow start and reuses that full commit SHA for every Core checkout in the run. Release CI instead resolves the immutable `sdk/v<CORE_SDK_VERSION>` release and requires its tag, provenance, repository-signed NuGet packages, Agent locks, and every Core validation checkout to identify one commit. A recovery rerun accepts only that same Core identity from the preserved Agent draft. Land coordinated Core changes on `main` before expecting smoke CI to consume them, and publish the required final Core SDK release before creating an Agent release tag; see [`docs/RELEASES.md`](docs/RELEASES.md).
 
@@ -158,9 +201,26 @@ dotnet test tests/Sunder.Package.Agent.Provider.OpenAI.Tests/Sunder.Package.Agen
 
 ## Release Tags
 
-`agent/vX.Y.Z` publishes `Sunder.Package.Agent.Protocol` and all 15 exact runtime versions as one immutable family. Six native jobs build every Worker against final locked remote Core packages; Windows and macOS apphosts are signed and verified before Core Runtime lifecycle and metric-budget gates run. Prebuilt fan-in composes only those exact signed leaves without rebuilding them, records the immutable Core SDK tag/package/commit provenance, validates the final archives through Package Format, Runtime lifecycle, and App snapshot activation, publishes every Registry version with `setLatest=false`, and leaves a byte-verified GitHub draft. A separate protected, globally serialized promotion dispatch consumes an exact GitHub artifact id/digest from a specific production-acceptance run attempt, re-verifies all draft and Registry bytes without rebuilding, applies a monotonic family mutation with guarded compensation on failure, and only then finalizes the accepted numeric GitHub release and re-verifies it. Registry state is fully refreshed after the pre-mutation guard, and the complete promoted family is the last remote check before finalization. The atomic numeric PATCH writes a deterministic handoff-bound receipt with `draft=false`, allowing a runner-loss retry to succeed only against that exact receipt, unchanged assets, and the fully promoted family.
+The release inventory is exactly **15 `.sunderpkg` archives**. With native evidence,
+the output audit and four release-evidence files, publication carries **21 assets**;
+the Actions-only handoff adds one file. Generated App roles travel with the native
+RID leaves. Core still rejects canonical prebuilt packing until qualified role-input
+evidence exists; rebuilding tested/signed leaves is not an acceptable fallback.
+The publication/promotion/handoff shell fixtures pass with the corrected inventory;
+qualified prebuilt/native evidence, performance and final V1 publication/
+promotion integration remain open. See [`docs/RELEASES.md`](docs/RELEASES.md).
 
-Stable releases require `PublicAPI.Unshipped.txt` to contain no API entries. The 2.x baseline belongs to the `Sunder.Package.Agent.Protocol` package and assembly identity. The retained `Sunder.Package.Agent.Contracts.*` source namespaces are types inside that artifact, not a second package. Full operator steps and required repository configuration are in [`docs/RELEASES.md`](docs/RELEASES.md).
+<details>
+<summary>Historical descriptor-first release workflow (superseded inventory)</summary>
+
+`agent/vX.Y.Z` publishes `Sunder.Package.Agent.Protocol` and all 15 exact runtime versions as one immutable family. Six native jobs build every Worker as an exact-RID framework-dependent .NET 10 managed module against final locked remote Core packages, then run Core Runtime lifecycle, Builder toolchain-boundary, and metric-budget gates. Prebuilt fan-in composes only those exact DLL/runtimeconfig/deps leaves without rebuilding them, records schema-version-2 native evidence plus a deterministic package-output audit, enforces the 360,003,313-byte selected-current-RID installed-family ceiling, validates the final archives through Package Format, Runtime lifecycle, and App snapshot activation, and requires the public Registry to resolve the exact supported shared .NET runtime profile for all six RIDs before any external publication. It then publishes every Registry version with `setLatest=false`, leaves a byte-verified 22-asset GitHub draft, and archives an attempt-specific publication handoff. Protected-main production acceptance and promotion execute only protected policy checkouts, treat the tagged release checkout as immutable data, and revalidate the exact successful publication run/attempt, artifact, workflow, source, tag, numeric release, provenance, and bytes. Acceptance adds an immutable, SHA-bound `agent-family-acceptance-<run-id>-<run-attempt>.json` asset carrying both publication coordinates and the protected acceptance workflow ref/SHA; retries reuse equal bytes and new attempts use new names without replacing prior evidence. A separate globally serialized protected-main promotion dispatch downloads that selected durable evidence, regenerates the output audit, re-verifies all draft and Registry bytes without rebuilding, applies a monotonic family mutation with guarded compensation on failure, and only then finalizes the accepted numeric GitHub release and re-verifies it. Registry state is fully refreshed after the pre-mutation guard, and the complete promoted family is the last remote check before finalization. The atomic numeric PATCH writes a deterministic handoff- and policy-bound receipt with `draft=false`, allowing a runner-loss retry to succeed only against that exact receipt, unchanged assets, and the fully promoted family.
+
+</details>
+
+Protocol public-API and package metadata history is preserved in authenticated test
+captures, not active release projects. The live feed/retirement audit remains a
+separate required check. Full operator steps and repository configuration are
+in [`docs/RELEASES.md`](docs/RELEASES.md).
 
 ## Related Projects
 

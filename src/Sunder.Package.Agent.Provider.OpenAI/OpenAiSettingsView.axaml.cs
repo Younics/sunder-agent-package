@@ -2,6 +2,7 @@ using Avalonia.Controls;
 
 namespace Sunder.Package.Agent.Provider.OpenAI;
 
+[Sunder.Sdk.Packaging.SunderPackageSettingsView(ViewModel = typeof(OpenAiSettingsViewModel))]
 public partial class OpenAiSettingsView : UserControl, IDisposable
 {
     private OpenAiSettingsViewModel? _viewModel;
@@ -11,6 +12,7 @@ public partial class OpenAiSettingsView : UserControl, IDisposable
         InitializeComponent();
     }
 
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
     public OpenAiSettingsView(OpenAiSettingsViewModel viewModel)
         : this()
     {

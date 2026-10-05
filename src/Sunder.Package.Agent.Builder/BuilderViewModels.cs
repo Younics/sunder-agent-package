@@ -1,8 +1,11 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Shared.Presentation;
+using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Notifications;
 
 namespace Sunder.Package.Agent.Builder;
 
@@ -52,6 +55,20 @@ public sealed partial class BuilderViewModel : INotifyPropertyChanged, IAsyncDis
             pathService,
             uiDispatcher,
             PresentationOperationObserver.CreateUnreported("Package Builder"))
+    {
+    }
+
+    [ActivatorUtilitiesConstructor]
+    public BuilderViewModel(
+        BuilderProjectApplicationService applicationService,
+        BuilderOperationQueue operationQueue,
+        BuilderProjectPersistence persistence,
+        BuilderPathService pathService,
+        IBuilderUiDispatcher uiDispatcher,
+        IPackageContext packageContext,
+        IPackageNotificationService notifications)
+        : this(applicationService, operationQueue, persistence, pathService, uiDispatcher,
+            new PresentationOperationObserver(packageContext, notifications, "Package Builder"))
     {
     }
 

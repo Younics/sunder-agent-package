@@ -3,14 +3,14 @@ using System.Text;
 using System.Text.Json;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Protocol;
+using Sunder.Package.Agent.Subagents.Runtime;
 using Sunder.Package.Agent.Subagents.Models;
 using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Subagents.Services;
 
-internal sealed class SubagentChildRunCoordinator(
-    AgentRpcCatalog rpcCatalog,
+internal sealed partial class SubagentChildRunCoordinator(
+    ISubagentRuntimeBindings runtimeBindings,
     SubagentDescriptorSchema descriptors,
     SubagentPermissionStatusAdapter permissionStatusAdapter,
     SubagentBatchResultRenderer resultRenderer)
@@ -34,7 +34,7 @@ internal sealed class SubagentChildRunCoordinator(
         }
 
         AgentProfileRecord? parentProfile = null;
-        foreach (var reference in rpcCatalog.GetServiceReferences(AgentRpcServices.RuntimeCatalogs))
+        foreach (var reference in runtimeBindings.GetRuntimeCatalogs())
         {
             if (!reference.TryAcquire(out var lease))
             {
@@ -58,8 +58,8 @@ internal sealed class SubagentChildRunCoordinator(
             return false;
         }
 
-        var childRunExecutorReference = rpcCatalog
-            .GetServiceReferences(AgentRpcServices.ChildRunExecutors)
+        var childRunExecutorReference = runtimeBindings
+            .GetChildRunExecutors()
             .FirstOrDefault(IsAvailable);
         if (childRunExecutorReference is null)
         {
@@ -195,7 +195,7 @@ internal sealed class SubagentChildRunCoordinator(
         => profile.ModelBindings?.FirstOrDefault(binding =>
             string.Equals(binding.CapabilityKind, capabilityKind, StringComparison.OrdinalIgnoreCase));
 
-    private static bool IsAvailable(AgentRpcReference<IAgentChildRunExecutor> reference)
+    private static bool IsAvailable(SubagentProviderReference<IAgentChildRunExecutor> reference)
     {
         if (!reference.TryAcquire(out var lease))
         {
@@ -233,7 +233,7 @@ internal sealed class SubagentChildRunCoordinator(
     }
 }
 
-internal sealed record SubagentChildRunEnvironment(
+internal sealed partial record SubagentChildRunEnvironment(
     AgentToolExecutionContext Context,
     AgentProfileRecord ParentProfile,
-    AgentRpcReference<IAgentChildRunExecutor> ChildRunExecutorReference);
+    SubagentProviderReference<IAgentChildRunExecutor> ChildRunExecutorReference);

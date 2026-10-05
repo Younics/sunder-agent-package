@@ -9,8 +9,8 @@ internal sealed class McpOAuthCallbackHandler(
     McpOAuthService oauth,
     IPackageContext packageContext) : IPackageCallbackHandler
 {
-    internal const string HandlerId = McpManagementProtocol.OAuthCallbackHandlerId;
-    internal const string ServerIdParameter = McpManagementProtocol.OAuthServerIdParameter;
+    internal const string HandlerId = McpOAuthConstants.HandlerId;
+    internal const string ServerIdParameter = McpOAuthConstants.ServerIdParameter;
 
     public string CallbackHandlerId => HandlerId;
 

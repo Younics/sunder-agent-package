@@ -29,7 +29,7 @@ public sealed class GeminiChatClientWireTests
             new(AIChatRole.User,
             [
                 new TextContent("before"),
-                new DataContent(new byte[] { 1 }, "image/png"),
+                new DataContent(new byte[] { 1 }, "image/png") { Name = "image.png" },
                 new TextContent("after"),
                 new DataContent(new byte[] { 2 }, "application/pdf"),
                 new DataContent(new byte[] { 3 }, "audio/mpeg"),
@@ -70,6 +70,7 @@ public sealed class GeminiChatClientWireTests
         var userParts = contents[0].GetProperty("parts").EnumerateArray().ToArray();
         Assert.Equal("before", userParts[0].GetProperty("text").GetString());
         Assert.Equal("image/png", userParts[1].GetProperty("inlineData").GetProperty("mimeType").GetString());
+        Assert.False(userParts[1].GetProperty("inlineData").TryGetProperty("displayName", out _));
         Assert.Equal("after", userParts[2].GetProperty("text").GetString());
         Assert.Equal("application/pdf", userParts[3].GetProperty("inlineData").GetProperty("mimeType").GetString());
         Assert.Equal("audio/mpeg", userParts[4].GetProperty("inlineData").GetProperty("mimeType").GetString());

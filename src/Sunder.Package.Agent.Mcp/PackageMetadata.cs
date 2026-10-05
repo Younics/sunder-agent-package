@@ -5,7 +5,3 @@ using Sunder.Sdk.Packaging;
     Name = "Sunder Agent MCP",
     Summary = "Adds Model Context Protocol tool integration for Sunder Agent.",
     Icon = "assets/icon.png")]
-
-[assembly: SunderPackageDependency(
-    PackageId = "sunder.package.agent",
-    VersionRange = ">=2.0.0 <3.0.0")]

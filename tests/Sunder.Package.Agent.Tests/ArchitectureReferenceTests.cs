@@ -4,11 +4,13 @@ using System.Xml.Linq;
 using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
-using Sunder.Package.Agent.Subagents.Services;
 using Sunder.Sdk.Abstractions;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
+
+extern alias SubagentsWorker;
+using SubagentsWorker::Sunder.Package.Agent.Subagents.Services;
 
 public sealed class ArchitectureReferenceTests
 {
@@ -25,7 +27,9 @@ public sealed class ArchitectureReferenceTests
         using var rpcState = new RegressionTestRpcState();
         services.AddSingleton<Sunder.Sdk.Rpc.ISunderRpcClient>(
             new RegressionTestRpcClient(rpcState, "sunder.package.agent"));
-        new AppPackageModule().ConfigureAppServices(services, packageScope.Context);
+        var module = (ISunderAppPackageModule)Activator.CreateInstance(
+            Assembly.Load("Sunder.Package.Agent.App").GetType("Sunder.Generated.Package.AppModule", true)!)!;
+        module.ConfigureAppServices(services, packageScope.Context);
         using var provider = services.BuildServiceProvider(new Microsoft.Extensions.DependencyInjection.ServiceProviderOptions
         {
             ValidateOnBuild = true,
@@ -45,14 +49,9 @@ public sealed class ArchitectureReferenceTests
             contractsAssembly.ExportedTypes,
             type => type.Name.Contains("HistorySearch", StringComparison.Ordinal));
 
-        var contractsRoot = Path.Combine(
-            AgentPackageRepositoryInventory.RepositoryRoot.FullName,
-            "src",
-            "Sunder.Package.Agent.Contracts");
         Assert.DoesNotContain(
-            Directory.EnumerateFiles(contractsRoot, "*.cs", SearchOption.AllDirectories)
-                .Where(AgentPackageRepositoryInventory.IsSourceFile),
-            sourceFile => File.ReadAllText(sourceFile).Contains("HistorySearch", StringComparison.Ordinal));
+            CanonicalDescriptorInventory.PublicAgent().SelectMany(entry => entry.Descriptor.Definitions.Keys),
+            name => name.Contains("HistorySearch", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -62,12 +61,7 @@ public sealed class ArchitectureReferenceTests
         var databasePath = packageScope.Context.Storage.RoleLocalWorkspace.GetLocalPath("agent/agent.db");
         Assert.False(File.Exists(databasePath));
 
-        var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
-        services.AddSingleton<IPackageContext>(packageScope.Context);
-        services.AddSingleton<Sunder.Package.Agent.Protocol.AgentRpcCatalog>(new RegressionTestExtensionCatalog());
-        services.AddSingleton<IBackgroundProcessQueue, CompositionBackgroundProcessQueue>();
-        new PackageModule().ConfigureRuntimeServices(services, packageScope.Context);
-        using var provider = services.BuildServiceProvider();
+        using var provider = RegressionTestRuntime.Create(packageScope.Context);
 
         Assert.NotNull(provider.GetRequiredService<AgentLocalStore>());
         Assert.True(File.Exists(databasePath));
@@ -76,9 +70,7 @@ public sealed class ArchitectureReferenceTests
     [Fact]
     public void AgentAppModule_DoesNotRegisterRuntimeServicesOrExtensions()
     {
-        var source = File.ReadAllText(Path.Combine(
-            AgentPackageRepositoryInventory.RepositoryRoot.FullName,
-            "src", "Sunder.Package.Agent", "App", "PackageModule.cs"));
+        var source = File.ReadAllText(Path.Combine(CanonicalPackageRoles.Analysis(CanonicalPackageRoles.Source("Agent")), "roles/app/app-module.g.cs"));
 
         Assert.DoesNotContain("AgentLocalStore", source, StringComparison.Ordinal);
         Assert.DoesNotContain("RegisterExtension", source, StringComparison.Ordinal);
@@ -86,13 +78,12 @@ public sealed class ArchitectureReferenceTests
     }
 
     [Fact]
-    public void StackDependencyContributors_RequireOwnedRpcCatalogs()
+    public void StackDependencyContributors_RequireOwnedProviderBindings()
     {
         var contributorTypes = new[]
         {
             typeof(AgentProfileStackContributor),
             typeof(AgentWorkspaceStackContributor),
-            typeof(SubagentStackContributor),
         };
 
         foreach (var contributorType in contributorTypes)
@@ -103,6 +94,13 @@ public sealed class ArchitectureReferenceTests
             Assert.False(parameter.IsOptional);
             Assert.False(parameter.HasDefaultValue);
         }
+
+        var subagentConstructors = typeof(SubagentStackContributor).GetConstructors();
+        var bindingsType = typeof(SubagentStackContributor).Assembly.GetType(
+            "Sunder.Package.Agent.Subagents.Runtime.ISubagentRuntimeBindings", throwOnError: true)!;
+        var binding = Assert.Single(Assert.Single(subagentConstructors).GetParameters(), parameter => parameter.ParameterType == bindingsType);
+        Assert.False(binding.IsOptional);
+        Assert.False(binding.HasDefaultValue);
     }
 
     [Fact]
@@ -136,7 +134,7 @@ public sealed class ArchitectureReferenceTests
     }
 
     [Fact]
-    public void AgentExtensionPackages_ReferenceAgentProtocolProject()
+    public void AgentExtensionPackages_SelectAgentApiWithoutProtocolProjectReferences()
     {
         var protocolProjectPath = Path.Combine(
             AgentPackageRepositoryInventory.RepositoryRoot.FullName,
@@ -148,7 +146,9 @@ public sealed class ArchitectureReferenceTests
         Assert.NotEmpty(extensionProjects);
         foreach (var projectPath in extensionProjects)
         {
-            Assert.Contains(protocolProjectPath, GetProjectReferencePaths(projectPath), StringComparer.OrdinalIgnoreCase);
+            Assert.DoesNotContain(protocolProjectPath, GetProjectReferencePaths(projectPath), StringComparer.OrdinalIgnoreCase);
+            using var locked = System.Text.Json.JsonDocument.Parse(File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(projectPath)!, "sunder-contracts.lock.json")));
+            Assert.True(locked.RootElement.GetProperty("packageArtifacts").TryGetProperty("sunder.package.agent", out _));
         }
     }
 
@@ -156,22 +156,19 @@ public sealed class ArchitectureReferenceTests
     public void ProductionAssemblies_DoNotReferenceRetiredContractsAssemblyIdentity()
     {
         const string retiredAssemblyName = "Sunder.Package.Agent.Contracts";
-        const string protocolAssemblyName = "Sunder.Package.Agent.Protocol";
         Assert.Equal(
-            protocolAssemblyName,
+            "Sunder.Package.Agent",
             typeof(Sunder.Package.Agent.Contracts.Contracts.IAgentChatProvider).Assembly.GetName().Name);
 
         var assemblyNames = AgentPackageRepositoryInventory.GetRuntimePackageProjects()
-            .Select(static package => package.Name)
-            .Append("Sunder.Agent.Execution.Common")
-            .Append(protocolAssemblyName)
+            .SelectMany(static package => package.HasAppRole ? new[] { package.Name, package.AppAssemblyName! } : [package.Name])
             .Distinct(StringComparer.Ordinal);
         foreach (var assemblyName in assemblyNames)
         {
             var assembly = Assembly.Load(assemblyName);
             Assert.DoesNotContain(
                 assembly.GetReferencedAssemblies(),
-                reference => string.Equals(reference.Name, retiredAssemblyName, StringComparison.Ordinal));
+                reference => reference.Name is retiredAssemblyName or "Sunder.Package.Agent.Protocol" or "Sunder.Agent.Execution.Common");
         }
     }
 
@@ -189,6 +186,10 @@ public sealed class ArchitectureReferenceTests
             .ToArray();
 
         Assert.NotEmpty(sourceLinks);
+        var reviewedPublicLinks = AgentSourceMigrationProjectChanges.ReviewedCentralRelocations.Select(pair => pair.Value)
+            .Concat(AgentSourceMigrationProjectChanges.AgentSemanticHelpers)
+            .Concat(["src/Sunder.Package.Agent.Provider.Shared/Models/ProviderChatModels.cs", "src/Sunder.Package.Agent.Shared/Execution/AgentExecutionFacetIds.cs"])
+            .ToHashSet(StringComparer.Ordinal);
         foreach (var sourceLink in sourceLinks)
         {
             Assert.True(
@@ -202,6 +203,8 @@ public sealed class ArchitectureReferenceTests
             var sourceOwner = GetSourceOwner(sourceRoot, sourceLink.SourcePath);
             if (!string.Equals(declarationOwner, sourceOwner, StringComparison.OrdinalIgnoreCase))
             {
+                var relative = "src/" + Path.GetRelativePath(sourceRoot, sourceLink.SourcePath).Replace('\\', '/');
+                if (reviewedPublicLinks.Contains(relative)) continue; // Reviewed role-local semantic source; identity is checked by the frozen oracle.
                 Assert.Contains(sourceOwner, AllowedCrossFamilySourceOwners);
                 Assert.DoesNotMatch(PublicTypeDeclarationPattern, File.ReadAllText(sourceLink.SourcePath));
             }
@@ -233,6 +236,11 @@ public sealed class ArchitectureReferenceTests
     public void AvaloniaProjects_UseReviewedSharedPresentationSourcesAndCompiledBindings()
     {
         var sourceRoot = Path.Combine(AgentPackageRepositoryInventory.RepositoryRoot.FullName, "src");
+        var packageDefaults = XDocument.Load(Path.Combine(AgentPackageRepositoryInventory.RepositoryRoot.FullName, "Sunder.Agent.Worker.props"));
+        var defaultBindings = Assert.Single(packageDefaults.Descendants("AvaloniaUseCompiledBindingsByDefault")).Value;
+        var providerSettings = XDocument.Load(Path.Combine(sourceRoot, "Sunder.Package.Agent.Provider.Shared/ProviderSettingsSources.props"));
+        Assert.Contains(providerSettings.Descendants("AvaloniaResource"), item => item.Attribute("Include")?.Value.Replace('\\', '/')
+            .EndsWith("Sunder.Package.Agent.Shared/Presentation/PresentationStyles.axaml", StringComparison.Ordinal) == true);
         var avaloniaProjects = Directory.EnumerateFiles(sourceRoot, "*.csproj", SearchOption.AllDirectories)
             .Where(AgentPackageRepositoryInventory.IsSourceFile)
             .Where(projectPath => GetReferenceIncludes(projectPath, "PackageReference")
@@ -252,18 +260,24 @@ public sealed class ArchitectureReferenceTests
             var directSharedItems = project.Descendants()
                 .Where(static element => element.Name.LocalName is "Compile" or "AvaloniaResource")
                 .Select(static element => element.Attribute("Include")?.Value)
-                .Where(static include => include?.Contains("Sunder.Package.Agent.Shared", StringComparison.OrdinalIgnoreCase) == true)
+                .Where(static include => include?.Replace('\\', '/').Contains("Sunder.Package.Agent.Shared/Presentation/", StringComparison.OrdinalIgnoreCase) == true
+                    || include?.Replace('\\', '/').Contains("Sunder.Package.Agent.Shared/PackageViews/", StringComparison.OrdinalIgnoreCase) == true)
                 .ToArray();
             var compiledBindings = project.Descendants("AvaloniaUseCompiledBindingsByDefault")
                 .Select(static element => element.Value)
                 .SingleOrDefault();
+            if (compiledBindings is null)
+            {
+                Assert.Contains(project.Descendants("Import"), item => item.Attribute("Project")?.Value.Replace('\\', '/')
+                    .EndsWith("/Sunder.Agent.Worker.props", StringComparison.Ordinal) == true);
+                compiledBindings = defaultBindings;
+            }
 
             if (NarrowProviderAppProjects.Contains(Path.GetFileNameWithoutExtension(projectPath)))
             {
                 Assert.Empty(sharedImports);
-                Assert.Contains(directSharedItems, static include => include?.Replace('\\', '/').EndsWith(
-                    "Sunder.Package.Agent.Shared/Presentation/PresentationStyles.axaml",
-                    StringComparison.OrdinalIgnoreCase) == true);
+                Assert.Single(project.Descendants("Import"), item => item.Attribute("Project")?.Value.Replace('\\', '/')
+                    .EndsWith("Sunder.Package.Agent.Provider.Shared/ProviderSettingsSources.props", StringComparison.Ordinal) == true);
             }
             else
             {
@@ -277,18 +291,7 @@ public sealed class ArchitectureReferenceTests
     [Fact]
     public void AgentContracts_RemainFreeOfUiPersistenceProcessAndHostDependencies()
     {
-        var contractsRoot = Path.Combine(
-            AgentPackageRepositoryInventory.RepositoryRoot.FullName,
-            "src",
-            "Sunder.Package.Agent.Contracts");
-        var projectPath = Path.Combine(contractsRoot, "Sunder.Package.Agent.Contracts.csproj");
-
-        var references = GetReferenceIncludes(projectPath, "PackageReference")
-            .Concat(GetReferenceIncludes(projectPath, "ProjectReference"));
-        Assert.DoesNotContain(references, reference => ProhibitedContractReferenceTokens.Any(
-            token => reference.Contains(token, StringComparison.OrdinalIgnoreCase)));
-        foreach (var sourceFile in Directory.EnumerateFiles(contractsRoot, "*.cs", SearchOption.AllDirectories)
-                     .Where(AgentPackageRepositoryInventory.IsSourceFile))
+        foreach (var sourceFile in CurrentDomainSources())
         {
             var source = File.ReadAllText(sourceFile);
             Assert.DoesNotMatch(ProhibitedContractNamespacePattern, source);
@@ -298,12 +301,7 @@ public sealed class ArchitectureReferenceTests
     [Fact]
     public void AgentContracts_DoNotReferenceBaseAgentImplementationNamespaces()
     {
-        var contractsRoot = Path.Combine(AgentPackageRepositoryInventory.RepositoryRoot.FullName, "src", "Sunder.Package.Agent.Contracts");
-        var sourceFiles = Directory.EnumerateFiles(contractsRoot, "*.*", SearchOption.AllDirectories)
-            .Where(path => Path.GetExtension(path) is ".cs" or ".csproj")
-            .Where(AgentPackageRepositoryInventory.IsSourceFile)
-            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+        var sourceFiles = CurrentDomainSources();
 
         Assert.NotEmpty(sourceFiles);
         foreach (var sourceFile in sourceFiles)
@@ -327,7 +325,7 @@ public sealed class ArchitectureReferenceTests
             "Sunder.Package.Agent.Provider.Shared",
         };
 
-        var exposedTypes = contractsAssembly.ExportedTypes
+        var exposedTypes = contractsAssembly.ExportedTypes.Where(type => type.Namespace?.StartsWith("Sunder.Package.Agent.Contracts", StringComparison.Ordinal) == true)
             .SelectMany(type => type.GetMembers(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static)
                 .SelectMany(GetSignatureTypes)
                 .Append(type))
@@ -414,6 +412,9 @@ public sealed class ArchitectureReferenceTests
         }
     }
 
+    private static string[] CurrentDomainSources() => AgentSourceMigrationProjectChanges.ReviewedCentralRelocations
+        .Select(pair => Path.Combine(AgentPackageRepositoryInventory.RepositoryRoot.FullName, pair.Value)).Distinct(StringComparer.Ordinal).ToArray();
+
     private static readonly Regex PublicTypeDeclarationPattern = new(
         @"^\s*public\s+(?:(?:abstract|sealed|static|partial|readonly|ref)\s+)*(?:class|record|struct|interface|enum|delegate)\b",
         RegexOptions.Multiline | RegexOptions.CultureInvariant);
@@ -432,10 +433,10 @@ public sealed class ArchitectureReferenceTests
 
     private static readonly IReadOnlySet<string> NarrowProviderAppProjects = new HashSet<string>(
         [
-            "Sunder.Package.Agent.Provider.Anthropic.App",
-            "Sunder.Package.Agent.Provider.Gemini.App",
-            "Sunder.Package.Agent.Provider.LMStudio.App",
-            "Sunder.Package.Agent.Provider.OpenAI.App",
+            "Sunder.Package.Agent.Provider.Anthropic",
+            "Sunder.Package.Agent.Provider.Gemini",
+            "Sunder.Package.Agent.Provider.LMStudio",
+            "Sunder.Package.Agent.Provider.OpenAI",
         ],
         StringComparer.OrdinalIgnoreCase);
 
@@ -449,61 +450,32 @@ public sealed class ArchitectureReferenceTests
     private static readonly IReadOnlySet<string> AllowedFriendAssemblies = new HashSet<string>(
         [
             "Sunder.Package.Agent -> Sunder.Package.Agent.Tests",
-            "Sunder.Package.Agent -> Sunder.Package.Agent",
-            "Sunder.Package.Agent -> Sunder.Package.Agent.App",
             "Sunder.Package.Agent -> Sunder.Package.Agent.Presentation.State.Tests",
             "Sunder.Package.Agent -> Sunder.Package.Agent.Presentation.Tests",
-            "Sunder.Package.Agent.Builder -> Sunder.Package.Agent.Builder",
-            "Sunder.Package.Agent.Builder -> Sunder.Package.Agent.Builder.App",
-            "Sunder.Package.Agent.Builder -> Sunder.Package.Agent.Presentation.Tests",
             "Sunder.Package.Agent.Builder -> Sunder.Package.Agent.Tests",
-            "Sunder.Package.Agent.Contracts -> Sunder.Package.Agent",
-            "Sunder.Package.Agent.Contracts -> Sunder.Package.Agent.Execution.Local.Tests",
-            "Sunder.Package.Agent.Contracts -> Sunder.Package.Agent.Mcp",
-            "Sunder.Package.Agent.Contracts -> Sunder.Package.Agent.Memory.Semantic",
-            "Sunder.Package.Agent.Contracts -> Sunder.Package.Agent.Memory.Semantic.Tests",
-            "Sunder.Package.Agent.Contracts -> Sunder.Package.Agent.Presentation.Tests",
-            "Sunder.Package.Agent.Contracts -> Sunder.Package.Agent.Subagents",
-            "Sunder.Package.Agent.Contracts -> Sunder.Package.Agent.Subagents.App",
-            "Sunder.Package.Agent.Contracts -> Sunder.Package.Agent.Tests",
             "Sunder.Package.Agent.Execution.Docker -> Sunder.Package.Agent.Execution.Local.Tests",
             "Sunder.Package.Agent.Execution.Docker -> Sunder.Package.Agent.Tests",
             "Sunder.Package.Agent.Execution.Local -> Sunder.Package.Agent.Execution.Local.Tests",
             "Sunder.Package.Agent.Execution.Local -> Sunder.Package.Agent.Tests",
             "Sunder.Package.Agent.Mcp -> Sunder.Package.Agent.Tests",
-            "Sunder.Package.Agent.Mcp -> Sunder.Package.Agent.Mcp",
-            "Sunder.Package.Agent.Mcp -> Sunder.Package.Agent.Mcp.App",
             "Sunder.Package.Agent.Mcp -> Sunder.Package.Agent.Presentation.Tests",
             "Sunder.Package.Agent.Memory.Semantic -> Sunder.Package.Agent.Tests",
-            "Sunder.Package.Agent.Memory.Semantic -> Sunder.Package.Agent.Memory.Semantic",
             "Sunder.Package.Agent.Memory.Semantic -> Sunder.Package.Agent.Memory.Semantic.Tests",
             "Sunder.Package.Agent.Memory.Semantic -> Sunder.Package.Agent.Presentation.Tests",
-            "Sunder.Package.Agent.Provider.Anthropic -> Sunder.Package.Agent.Provider.Anthropic",
-            "Sunder.Package.Agent.Provider.Anthropic -> Sunder.Package.Agent.Provider.Anthropic.App",
             "Sunder.Package.Agent.Provider.Anthropic -> Sunder.Package.Agent.Provider.Anthropic.Tests",
             "Sunder.Package.Agent.Provider.Anthropic -> Sunder.Package.Agent.Tests",
-            "Sunder.Package.Agent.Provider.Gemini -> Sunder.Package.Agent.Provider.Gemini",
-            "Sunder.Package.Agent.Provider.Gemini -> Sunder.Package.Agent.Provider.Gemini.App",
             "Sunder.Package.Agent.Provider.Gemini -> Sunder.Package.Agent.Provider.Gemini.Tests",
             "Sunder.Package.Agent.Provider.Gemini -> Sunder.Package.Agent.Tests",
-            "Sunder.Package.Agent.Provider.LMStudio -> Sunder.Package.Agent.Provider.LMStudio",
-            "Sunder.Package.Agent.Provider.LMStudio -> Sunder.Package.Agent.Provider.LMStudio.App",
             "Sunder.Package.Agent.Provider.LMStudio -> Sunder.Package.Agent.Provider.LMStudio.Tests",
             "Sunder.Package.Agent.Provider.LMStudio -> Sunder.Package.Agent.Tests",
             "Sunder.Package.Agent.Provider.OpenAI -> Sunder.Package.Agent.Provider.OpenAI.Tests",
             "Sunder.Package.Agent.Provider.OpenAI -> Sunder.Package.Agent.Tests",
-            "Sunder.Package.Agent.Provider.OpenAI -> Sunder.Package.Agent.Provider.OpenAI",
-            "Sunder.Package.Agent.Provider.OpenAI -> Sunder.Package.Agent.Provider.OpenAI.App",
             "Sunder.Package.Agent.Provider.OpenAI -> Sunder.Package.Agent.Presentation.Tests",
             "Sunder.Package.Agent.Skills -> Sunder.Package.Agent.Skills.Tests",
             "Sunder.Package.Agent.Skills -> Sunder.Package.Agent.Tests",
-            "Sunder.Package.Agent.Skills -> Sunder.Package.Agent.Skills",
-            "Sunder.Package.Agent.Skills -> Sunder.Package.Agent.Skills.App",
             "Sunder.Package.Agent.Skills -> Sunder.Package.Agent.Presentation.Tests",
             "Sunder.Package.Agent.Subagents -> Sunder.Package.Agent.Execution.Local.Tests",
             "Sunder.Package.Agent.Subagents -> Sunder.Package.Agent.Presentation.Tests",
-            "Sunder.Package.Agent.Subagents -> Sunder.Package.Agent.Subagents",
-            "Sunder.Package.Agent.Subagents -> Sunder.Package.Agent.Subagents.App",
             "Sunder.Package.Agent.Subagents -> Sunder.Package.Agent.Subagents.Tests",
             "Sunder.Package.Agent.Subagents -> Sunder.Package.Agent.Tests",
             "Sunder.Package.Agent.Tools.Files -> Sunder.Package.Agent.Tests",

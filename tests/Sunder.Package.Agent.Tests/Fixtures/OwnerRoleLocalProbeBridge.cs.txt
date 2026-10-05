@@ -1,0 +1,78 @@
+using System.Runtime.CompilerServices;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.HistorySearch;
+using Sunder.Package.Agent.Runtime;
+using Sunder.Sdk.Rpc;
+
+namespace Sunder.Package.Agent.Tests.Fixtures;
+
+// Compiled separately against the fresh Worker. Only BCL values and SDK invocation
+// context cross to the retained behavior probe; no legacy model assembly is referenced.
+internal sealed class OwnerRoleLocalProbeBridge(
+    Func<string, string, SunderRpcInvocationContext?, CancellationToken, ValueTask<(string? Value, string? Error)>> invoke,
+    Func<string, string, CancellationToken, IAsyncEnumerable<(string? Value, string? Error)>> subscribe) : IAgentOwnerRuntimeProvider
+{
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
+    { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull, Converters = { new SunderRpcJsonConverterFactory() } };
+
+    private async ValueTask<T> Call<T>(object request, CancellationToken token, SunderRpcInvocationContext? context = null, [CallerMemberName] string method = "")
+    {
+        var result = await invoke(method, JsonSerializer.Serialize(request, request.GetType(), Json), context, token);
+        if (result.Error is not null) throw new AgentOwnerOperationException(result.Error);
+        return JsonSerializer.Deserialize<T>(result.Value!, Json)!;
+    }
+
+    private async IAsyncEnumerable<T> Stream<T>(object request, [EnumeratorCancellation] CancellationToken token, [CallerMemberName] string method = "")
+    {
+        await foreach (var result in subscribe(method, JsonSerializer.Serialize(request, request.GetType(), Json), token).WithCancellation(token))
+        {
+            if (result.Error is not null) throw new AgentOwnerOperationException(result.Error);
+            yield return JsonSerializer.Deserialize<T>(result.Value!, Json)!;
+        }
+    }
+
+    public ValueTask<AgentTransportProfile> NegotiateTransportProfileAsync(AgentTransportProfileRequest request, CancellationToken token)
+        => Call<AgentTransportProfile>(request, token);
+    public ValueTask<AgentChatSnapshotProjection> GetChatSnapshotAsync(AgentChatSnapshotRequest request, CancellationToken token)
+        => Call<AgentChatSnapshotProjection>(request, token);
+    public ValueTask<AgentDashboardProjection> GetDashboardAsync(AgentDashboardRequest request, CancellationToken token)
+        => Call<AgentDashboardProjection>(request, token);
+    public ValueTask<AgentTranscriptPage> GetTranscriptPageAsync(AgentTranscriptPageRequest request, CancellationToken token)
+        => Call<AgentTranscriptPage>(request, token);
+    public ValueTask<AgentCatalogProjection> GetCatalogAsync(AgentCatalogRequest request, CancellationToken token)
+        => Call<AgentCatalogProjection>(request, token);
+    public ValueTask<AgentProfileCommandResult> ExecuteProfileCommandAsync(AgentProfileCommand request, CancellationToken token)
+        => Call<AgentProfileCommandResult>(request, token);
+    public ValueTask<AgentWorkspaceCommandResult> ExecuteWorkspaceCommandAsync(AgentWorkspaceCommand request, CancellationToken token)
+        => Call<AgentWorkspaceCommandResult>(request, token);
+    public ValueTask<AgentSessionCommandResult> ExecuteSessionCommandAsync(AgentSessionCommand request, CancellationToken token)
+        => Call<AgentSessionCommandResult>(request, token);
+    public ValueTask<AgentRunCommandResult> ExecuteRunCommandAsync(AgentRunCommand request, CancellationToken token)
+        => Call<AgentRunCommandResult>(request, token);
+    public ValueTask<AgentRunCommandStatusResult> GetRunStatusAsync(AgentRunCommandStatusRequest request, CancellationToken token)
+        => Call<AgentRunCommandStatusResult>(request, token);
+    public ValueTask<AgentPermissionProjection> ExecutePermissionCommandAsync(AgentPermissionCommand request, CancellationToken token)
+        => Call<AgentPermissionProjection>(request, token);
+    public ValueTask<AgentAttachmentContentUploadResult> UploadAttachmentAsync(SunderRpcInvocationContext context, AgentAttachmentContentUploadRequest request, CancellationToken token)
+        => Call<AgentAttachmentContentUploadResult>(request, token, context);
+    public ValueTask<AgentAttachmentContentDownloadResult> DownloadAttachmentAsync(SunderRpcInvocationContext context, AgentAttachmentContentDownloadRequest request, CancellationToken token)
+        => Call<AgentAttachmentContentDownloadResult>(request, token, context);
+    public ValueTask<AgentAttachmentContentDiscardResult> DiscardAttachmentAsync(AgentAttachmentContentDiscardRequest request, CancellationToken token)
+        => Call<AgentAttachmentContentDiscardResult>(request, token);
+    public ValueTask<HistorySearchResponse> SearchHistoryAsync(HistorySearchRequest request, CancellationToken token)
+        => Call<HistorySearchResponse>(request, token);
+    public ValueTask<HistorySearchState> GetHistoryStateAsync(HistorySearchStateRequest request, CancellationToken token)
+        => Call<HistorySearchState>(request, token);
+    public ValueTask<HistorySearchCommandResult> ExecuteHistoryCommandAsync(HistorySearchCommand request, CancellationToken token)
+        => Call<HistorySearchCommandResult>(request, token);
+    public ValueTask<AgentTranscriptAroundTurnPage> GetTranscriptAroundAsync(AgentTranscriptAroundTurnRequest request, CancellationToken token)
+        => Call<AgentTranscriptAroundTurnPage>(request, token);
+    public ValueTask<AgentTranscriptToolDetailResult> GetTranscriptToolDetailAsync(AgentTranscriptToolDetailRequest request, CancellationToken token)
+        => Call<AgentTranscriptToolDetailResult>(request, token);
+    public IAsyncEnumerable<AgentRuntimeChange> WatchChangesAsync(AgentChangeSubscription request, CancellationToken token)
+        => Stream<AgentRuntimeChange>(request, token);
+    public IAsyncEnumerable<HistorySearchStatus> WatchHistoryStatusAsync(HistorySearchStatusSubscription request, CancellationToken token)
+        => Stream<HistorySearchStatus>(request, token);
+}

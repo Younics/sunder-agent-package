@@ -191,7 +191,7 @@ public sealed class AgentMemoryCoordinator(
         GetPromptContextContributors()
         => AgentRpcInvocation.Snapshot(
                 rpcCatalog,
-                AgentRpcServices.PromptContextContributors,
+                Sunder.Package.Agent.Runtime.Rpc.AgentPromptContextBindings.Service,
                 static contributor => new PromptContextContributorMetadata(
                     contributor.ContributorId,
                     contributor.DisplayName,

@@ -21,22 +21,10 @@ public sealed class AgentRpcWireCompatibilityTests
     private static readonly SunderRpcOffsetDateTime ExactTimestamp = new(ExactTimestampText);
 
     [Fact]
-    public async Task Handler_PreservesExactOffsetNanosecondsAndBinary64Values()
+    public void GeneratedHandlerCodec_PreservesExactOffsetNanosecondsAndBinary64Values()
     {
-        WireProbe? observed = null;
-        var handler = AgentRpcServiceHandler.Create()
-            .AddUnary<WireProbe, WireProbe>("wire", "echo", (_, request, _) =>
-            {
-                observed = request;
-                return ValueTask.FromResult(request);
-            })
-            .Build();
-
-        var response = await handler.InvokeUnaryAsync(
-            null!,
-            "wire",
-            "echo",
-            Parse(CanonicalNanosecondJson));
+        var observed = Parse(CanonicalNanosecondJson).Deserialize<WireProbe>(GeneratedJson)!;
+        var response = JsonSerializer.SerializeToElement(observed, GeneratedJson);
 
         AssertProbe(observed!);
         Assert.Equal(ExactTimestampText, response.GetProperty("timestamp").GetString());
@@ -50,7 +38,7 @@ public sealed class AgentRpcWireCompatibilityTests
         var endpoint = new SunderRpcEndpointReference("rpc1_wire_compatibility");
         var request = new WireProbe(ExactTimestamp, Binary64Value);
 
-        var response = await AgentRpcServiceHandler.InvokeAsync<WireProbe, WireProbe>(
+        var response = await SunderRpcClientExtensions.InvokeAsync<WireProbe, WireProbe>(
             client,
             endpoint,
             "wire",
@@ -60,7 +48,7 @@ public sealed class AgentRpcWireCompatibilityTests
         AssertRequest(client.LastRequest);
 
         var events = new List<WireProbe>();
-        await foreach (var item in AgentRpcServiceHandler.SubscribeAsync<WireProbe, WireProbe>(
+        await foreach (var item in SunderRpcClientExtensions.SubscribeAsync<WireProbe, WireProbe>(
                            client,
                            endpoint,
                            "wire",
@@ -77,11 +65,10 @@ public sealed class AgentRpcWireCompatibilityTests
     [Fact]
     public async Task ToolExecutionClient_RequestsFreshExtendedDeadline()
     {
-        var response = Parse("{\"toolId\":\"test_tool\",\"summary\":\"Completed.\"}");
+        var response = Parse("{\"toolId\":\"test_tool\",\"summary\":\"Completed.\",\"isError\":false,\"requiresPromptContextRefresh\":false,\"wasTruncated\":false}");
         var client = new RawRpcClient(response);
-        var source = new AgentToolSourceRpcClient(
-            client,
-            new SunderRpcEndpointReference("rpc1_tool_source"));
+        client.Provider = Provider(AgentRpcContractIds.ToolSource, "rpc1_tool_source");
+        using var source = new Runtime.Rpc.GeneratedToolSourceClient(client, client.Provider);
         var before = DateTimeOffset.UtcNow;
 
         _ = await source.ExecuteAsync(
@@ -99,11 +86,10 @@ public sealed class AgentRpcWireCompatibilityTests
     [Fact]
     public async Task LegacyToolSourceClient_RemainsUnaryWhenDispatchObservationIsRequested()
     {
-        var response = Parse("{\"toolId\":\"test_tool\",\"summary\":\"Completed.\"}");
+        var response = Parse("{\"toolId\":\"test_tool\",\"summary\":\"Completed.\",\"isError\":false,\"requiresPromptContextRefresh\":false,\"wasTruncated\":false}");
         var client = new RawRpcClient(response);
-        var source = new AgentToolSourceRpcClient(
-            client,
-            new SunderRpcEndpointReference("rpc1_legacy_tool_source"));
+        client.Provider = Provider(AgentRpcContractIds.ToolSource, "rpc1_unary_tool_source");
+        using var source = new Runtime.Rpc.GeneratedToolSourceClient(client, client.Provider);
         var dispatchCount = 0;
 
         _ = await source.ExecuteAsync(
@@ -123,12 +109,10 @@ public sealed class AgentRpcWireCompatibilityTests
         const int formerMaximumJsonTextLength = 900_000;
         var argumentsJson = new string('x', formerMaximumJsonTextLength + 1);
         var toolResult = new AgentToolResult("test_tool", "Completed.", Content: "done");
-        var response = Parse(AgentRpcServiceHandler.Serialize(
-            ObservedToolInvocationEvent.Completed(toolResult)));
+        var response = JsonSerializer.SerializeToElement(new { kind = "result", result = toolResult }, RegressionTestRpcValues.Json);
         var client = new RawRpcClient(response) { BlockAfterStreamResponse = true };
-        var execution = new AgentObservedToolExecutionRpcClient(
-            client,
-            new SunderRpcEndpointReference("rpc1_observed_tool_execution"));
+        client.Provider = Provider(AgentRpcContractIds.ObservedToolExecution, "rpc1_observed_tool_execution");
+        using var execution = new Runtime.Rpc.GeneratedObservedToolExecutionClient(client, client.Provider);
         var dispatchCount = 0;
 
         var result = await execution.ExecuteAsync(
@@ -162,39 +146,38 @@ public sealed class AgentRpcWireCompatibilityTests
     [Fact]
     public async Task DateTimeOffsetProjection_RejectsUnrepresentableNanoseconds()
     {
-        var handler = AgentRpcServiceHandler.Create()
-            .AddUnary<DateTimeOffsetProbe, DateTimeOffsetProbe>("wire", "echo", (_, request, _) =>
-                ValueTask.FromResult(request))
-            .Build();
+        var createdAt = new DateTimeOffset(2026, 7, 28, 12, 34, 56, TimeSpan.FromMinutes(330)).AddTicks(1_234_567);
+        var chat = AgentChatWireMapper.FromUpdate(new ChatResponseUpdate { CreatedAt = createdAt });
+        Assert.Equal("2026-07-28T07:04:56.1234567Z", chat.CreatedAt!.Value.Value);
+        Assert.Equal(createdAt, AgentChatWireMapper.ToUpdate(chat).CreatedAt);
+        var unrepresentable = Assert.Throws<SunderRpcException>(() => AgentChatWireMapper.ToUpdate(new(CreatedAt: ExactTimestamp)));
+        Assert.Equal(SunderRpcErrorKind.Protocol, unrepresentable.Error.Kind);
+        Assert.Equal("agent.rpc.timestamp-not-representable", unrepresentable.Error.Code);
 
-        await Assert.ThrowsAsync<JsonException>(() => handler.InvokeUnaryAsync(
-            null!,
-            "wire",
-            "echo",
-            Parse("{\"timestamp\":\"2026-07-28T12:34:56.123456789Z\"}")).AsTask());
+        var client = new RawRpcClient(Parse("{\"timestamp\":\"2026-07-28T12:34:56.123456789Z\"}"));
+        await Assert.ThrowsAsync<JsonException>(() => SunderRpcClientExtensions.InvokeAsync<DateTimeOffsetProbe, DateTimeOffsetProbe>(
+            client, new("rpc1_timestamp"), "wire", "echo", new(createdAt)).AsTask());
     }
 
     [Fact]
     public async Task NullableUnary_UsesJsonNullWithoutAnEnvelope()
     {
-        var handler = AgentRpcServiceHandler.Create()
-            .AddNullableUnary<AgentRpcEmpty, string>("wire", "none", (_, _, _) =>
-                ValueTask.FromResult<string?>(null))
-            .Build();
+        using var roles = new RegressionTestProviderRoles();
+        var handler = roles.Create("Provider.Gemini", "Rpc.ChatProvider", new ChatProviderProbe()).Handler;
         var response = await handler.InvokeUnaryAsync(
             null!,
-            "wire",
-            "none",
-            JsonSerializer.SerializeToElement(new AgentRpcEmpty()));
+            "chat-provider",
+            "resolve-utility-model",
+            JsonSerializer.SerializeToElement(new { }));
         Assert.Equal(JsonValueKind.Null, response.ValueKind);
 
         var client = new RawRpcClient(Parse("null"));
-        var result = await AgentRpcServiceHandler.InvokeNullableAsync<AgentRpcEmpty, string>(
+        var result = await SunderRpcClientExtensions.InvokeAsync<object, string?>(
             client,
             new SunderRpcEndpointReference("rpc1_wire_compatibility"),
             "wire",
             "none",
-            new AgentRpcEmpty());
+            new { }, requestAllowsNull: false, responseAllowsNull: true);
         Assert.Null(result);
     }
 
@@ -222,7 +205,8 @@ public sealed class AgentRpcWireCompatibilityTests
         AssertChatRequestIsSchemaValid(request);
 
         var provider = new ChatProviderProbe();
-        await DrainAsync(AgentChatProviderRpc.CreateHandler(provider), request);
+        using var roles = new RegressionTestProviderRoles();
+        await DrainAsync(roles.Create("Provider.Gemini", "Rpc.ChatProvider", provider).Handler, request);
 
         Assert.Equal(1, provider.Client.CallCount);
         var observed = Assert.IsType<ChatOptions>(provider.Client.ObservedOptions);
@@ -246,7 +230,8 @@ public sealed class AgentRpcWireCompatibilityTests
         AssertChatRequestIsSchemaValid(request);
 
         var provider = new ChatProviderProbe();
-        await DrainAsync(AgentChatProviderRpc.CreateHandler(provider), request);
+        using var roles = new RegressionTestProviderRoles();
+        await DrainAsync(roles.Create("Provider.Gemini", "Rpc.ChatProvider", provider).Handler, request);
 
         Assert.Equal(1, provider.Client.CallCount);
         var options = Assert.IsType<ChatOptions>(provider.Client.ObservedOptions);
@@ -283,13 +268,13 @@ public sealed class AgentRpcWireCompatibilityTests
                 ["count"] = JsonSerializer.SerializeToElement(3),
             },
             [0, 1, 255]);
-        var optionsJson = Parse(AgentRpcServiceHandler.Serialize(options));
+        var optionsJson = Parse(RegressionTestRpcValues.Serialize(options));
         Assert.Equal(JsonValueKind.Number, optionsJson.GetProperty("additionalProperties").GetProperty("count").ValueKind);
         Assert.Equal("AAH/", optionsJson.GetProperty("continuationHandle").GetString());
         AssertSchemaValid("sunder.agent.chat.provider", "#/$defs/AgentChatOptions", optionsJson);
 
-        var absent = Parse(AgentRpcServiceHandler.Serialize(new AgentChatContent("text")));
-        var explicitNull = Parse(AgentRpcServiceHandler.Serialize(new AgentChatContent(
+        var absent = Parse(RegressionTestRpcValues.Serialize(new AgentChatContent("text")));
+        var explicitNull = Parse(RegressionTestRpcValues.Serialize(new AgentChatContent(
             "tool-result",
             Json: new SunderRpcOptional<JsonElement>(JsonSerializer.SerializeToElement<object?>(null)))));
         Assert.False(absent.TryGetProperty("json", out _));
@@ -299,18 +284,13 @@ public sealed class AgentRpcWireCompatibilityTests
     [Fact]
     public async Task WireEnums_UseKebabCaseStringsAndRejectIntegers()
     {
-        var serialized = Parse(AgentRpcServiceHandler.Serialize(new EnumProbe(
-            AgentProviderReadinessStatus.NeedsConfiguration)));
+        var serialized = JsonSerializer.SerializeToElement(new EnumProbe(
+            Sunder.Generated.Rpc.ChatProvider.AgentProviderReadinessStatus.NeedsConfiguration), GeneratedJson);
         Assert.Equal("needs-configuration", serialized.GetProperty("status").GetString());
 
-        var handler = AgentRpcServiceHandler.Create()
-            .AddUnary<EnumProbe, EnumProbe>("wire", "echo", (_, request, _) => ValueTask.FromResult(request))
-            .Build();
-        await Assert.ThrowsAsync<JsonException>(() => handler.InvokeUnaryAsync(
-            null!,
-            "wire",
-            "echo",
-            Parse("{\"status\":1}")).AsTask());
+        var client = new RawRpcClient(Parse("{\"status\":1}"));
+        await Assert.ThrowsAsync<JsonException>(() => SunderRpcClientExtensions.InvokeAsync<object, EnumProbe>(
+            client, new("rpc1_enum"), "wire", "echo", new { }).AsTask());
     }
 
     [Fact]
@@ -322,7 +302,7 @@ public sealed class AgentRpcWireCompatibilityTests
             "Safe details.",
             AgentChatProviderFailureKind.ContextWindowExceeded);
 
-        var json = Parse(AgentRpcServiceHandler.Serialize(error));
+        var json = JsonSerializer.SerializeToElement(error, RegressionTestRpcValues.Json);
         Assert.Equal("error", json.GetProperty("kind").GetString());
         Assert.Equal("context-window-exceeded", json.GetProperty("errorFailureKind").GetString());
         Assert.False(json.TryGetProperty("contentItems", out _));
@@ -332,9 +312,10 @@ public sealed class AgentRpcWireCompatibilityTests
     [Fact]
     public void CatalogEvents_EncodeOnlyTheirTaggedVariant()
     {
-        AgentRuntimeCatalogEvent catalogEvent = new AgentSessionCatalogEvent(1, Guid.NewGuid());
+        Sunder.Generated.Rpc.RuntimeCatalog.AgentRuntimeCatalogEvent catalogEvent =
+            new Sunder.Generated.Rpc.RuntimeCatalog.AgentSessionCatalogEvent { Sequence = 1, SessionId = Guid.NewGuid() };
 
-        var json = Parse(AgentRpcServiceHandler.Serialize(catalogEvent));
+        var json = JsonSerializer.SerializeToElement(catalogEvent, GeneratedJson);
         Assert.Equal("session", json.GetProperty("kind").GetString());
         Assert.False(json.TryGetProperty("profileId", out _));
         Assert.False(json.TryGetProperty("turn", out _));
@@ -346,13 +327,9 @@ public sealed class AgentRpcWireCompatibilityTests
     {
         using var scope = RegressionTestPackageScope.Create();
         using var extensionCatalog = new RegressionTestExtensionCatalog();
-        extensionCatalog.AddProvider(AgentRpcServices.ChatProviders, new ChatProviderProbe());
-        var serviceCollection = new ServiceCollection();
-        serviceCollection.AddSingleton<AgentRpcCatalog>(extensionCatalog);
-        new PackageModule().ConfigureRuntimeServices(serviceCollection, scope.Context);
-        await using var services = serviceCollection.BuildServiceProvider();
-        var handler = AgentOwnerRuntimeRpc.CreateHandler(
-            services.GetRequiredService<AgentOwnerRuntimeProvider>());
+        extensionCatalog.AddProvider(RegressionTestBindings.ChatProviders, new ChatProviderProbe());
+        await using var services = RegressionTestRuntime.Create(scope.Context, extensionCatalog);
+        var handler = services.GetRequiredService<Rpc.Owner.OwnerRuntimeService>().CreateSunderRpcProviderRegistration().Handler;
 
         var workspaceResult = await handler.InvokeUnaryAsync(
             null!,
@@ -449,20 +426,20 @@ public sealed class AgentRpcWireCompatibilityTests
 
     private static void AssertSchemaValid(string contractId, string schemaReference, JsonElement value)
     {
-        var descriptor = AgentRpcContractDescriptors.Get(contractId);
+        var descriptor = RegressionTestRpcDescriptors.Get(contractId);
         Assert.True(descriptor.IsValid(schemaReference, value, out var error), error);
     }
 
     private static void AssertOwnerSchemaValid(string schemaReference, JsonElement value)
         => Assert.True(
-            AgentOwnerRuntimeRpc.Descriptor.IsValid(schemaReference, value, out var error),
+            RegressionTestRpcDescriptors.Get("sunder.agent.owner.runtime").IsValid(schemaReference, value, out var error),
             error);
 
     private static async Task DrainAsync(ISunderRpcServiceHandler handler, JsonElement request)
     {
         await foreach (var _ in handler.InvokeServerStreamAsync(
                            null!,
-                           AgentChatProviderRpc.ServiceId,
+                           "chat-provider",
                            "stream-chat",
                            request))
         {
@@ -477,7 +454,17 @@ public sealed class AgentRpcWireCompatibilityTests
 
     private sealed record WireProbe(SunderRpcOffsetDateTime Timestamp, double Value);
     private sealed record DateTimeOffsetProbe(DateTimeOffset Timestamp);
-    private sealed record EnumProbe(AgentProviderReadinessStatus Status);
+    private sealed record EnumProbe(Sunder.Generated.Rpc.ChatProvider.AgentProviderReadinessStatus Status);
+
+    private static JsonSerializerOptions GeneratedJson => (JsonSerializerOptions)typeof(Sunder.Generated.Rpc.ChatProvider.SunderAgentChatProviderRpcHandler)
+        .GetField("JsonOptions", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!.GetValue(null)!;
+
+    private static SunderRpcProviderSnapshot Provider(string contractId, string endpoint)
+    {
+        var descriptor = RegressionTestRpcDescriptors.Get(contractId);
+        return new("test.package", "2.0.0", "test.provider", contractId, descriptor.Version, descriptor.Sha256, descriptor.AbiSha256!,
+            Guid.NewGuid(), 1, 1, new(endpoint), 1, SunderRpcProviderState.Active);
+    }
 
     private sealed class ChatProviderProbe : IAgentChatProvider
     {
@@ -550,6 +537,7 @@ public sealed class AgentRpcWireCompatibilityTests
 
     private sealed class RawRpcClient(JsonElement response) : ISunderRpcClient
     {
+        internal SunderRpcProviderSnapshot? Provider { get; set; }
         public JsonElement LastRequest { get; private set; }
         public string? LastServiceId { get; private set; }
         public string? LastMethodId { get; private set; }
@@ -560,7 +548,7 @@ public sealed class AgentRpcWireCompatibilityTests
         public ValueTask<SunderRpcProviderSnapshot?> GetProviderAsync(
             SunderRpcEndpointReference endpoint,
             CancellationToken cancellationToken = default)
-            => throw new NotSupportedException();
+            => ValueTask.FromResult(Provider);
 
         public ValueTask<bool> TryReportInvariantViolationAsync(
             SunderRpcEndpointReference endpoint,
@@ -621,6 +609,44 @@ public sealed class AgentRpcWireCompatibilityTests
             {
                 StreamDisposed = true;
             }
+        }
+
+        public ValueTask<ISunderRpcCallScope> CreateCallScopeAsync(SunderRpcCallOptions? options = null, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult<ISunderRpcCallScope>(new Scope(this, options));
+        }
+
+        private sealed class Scope(RawRpcClient owner, SunderRpcCallOptions? options) : ISunderRpcCallScope
+        {
+            private bool _disposed;
+            public DateTimeOffset DeadlineUtc { get; } = options?.DeadlineUtc ?? DateTimeOffset.UtcNow.AddMinutes(1);
+            public ValueTask DisposeAsync() { _disposed = true; return ValueTask.CompletedTask; }
+            public ValueTask<SunderRpcProviderSnapshot?> GetProviderAsync(SunderRpcEndpointReference endpoint, CancellationToken cancellationToken = default)
+                => owner.GetProviderAsync(endpoint, cancellationToken);
+            public ValueTask<bool> TryReportInvariantViolationAsync(SunderRpcEndpointReference endpoint, Exception exception, CancellationToken cancellationToken = default)
+                => owner.TryReportInvariantViolationAsync(endpoint, exception, cancellationToken);
+            public ValueTask<SunderRpcCatalogSnapshot> DiscoverAsync(string contractId, CancellationToken cancellationToken = default)
+                => owner.DiscoverAsync(contractId, cancellationToken);
+            public IAsyncEnumerable<SunderRpcCatalogEvent> WatchAsync(long afterRevision, long afterSequence, CancellationToken cancellationToken = default)
+                => owner.WatchAsync(afterRevision, afterSequence, cancellationToken);
+            public ValueTask<JsonElement> InvokeAsync(SunderRpcEndpointReference endpoint, string serviceId, string methodId, JsonElement request,
+                SunderRpcCallOptions? callOptions = null, CancellationToken cancellationToken = default)
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                return owner.InvokeAsync(endpoint, serviceId, methodId, request, callOptions ?? options, cancellationToken);
+            }
+            public IAsyncEnumerable<JsonElement> SubscribeAsync(SunderRpcEndpointReference endpoint, string serviceId, string methodId, JsonElement request,
+                SunderRpcCallOptions? callOptions = null, CancellationToken cancellationToken = default)
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                return owner.SubscribeAsync(endpoint, serviceId, methodId, request, callOptions ?? options, cancellationToken);
+            }
+            public ValueTask<SunderRpcContentReference> RegisterContentAsync(SunderRpcEndpointReference endpoint, Stream source,
+                SunderRpcContentRegistrationOptions registrationOptions, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+            public ValueTask<SunderRpcContentReference> RegisterContentFileAsync(SunderRpcEndpointReference endpoint, string path,
+                SunderRpcContentRegistrationOptions registrationOptions, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+            public ValueTask<Stream> OpenContentAsync(SunderRpcContentReference reference, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         }
     }
 }

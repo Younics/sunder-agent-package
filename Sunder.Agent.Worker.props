@@ -1,0 +1,18 @@
+<Project>
+  <!-- The authored project is the analysis input; Core projects isolated roles. -->
+  <PropertyGroup>
+    <SunderPackageProject>true</SunderPackageProject>
+    <SunderSdkWorkerReference>true</SunderSdkWorkerReference>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <OutputType>Library</OutputType>
+    <RuntimeIdentifiers>win-x64;win-arm64;linux-x64;linux-arm64;osx-x64;osx-arm64</RuntimeIdentifiers>
+    <SelfContained>false</SelfContained>
+    <UseAppHost>false</UseAppHost>
+    <PublishSingleFile>false</PublishSingleFile>
+    <PublishTrimmed>false</PublishTrimmed>
+    <EnableRuntimePackDownload>false</EnableRuntimePackDownload>
+    <EnableAppHostPackDownload>false</EnableAppHostPackDownload>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <DefaultItemExcludes>$(DefaultItemExcludes);**/bin/**;**/obj/**</DefaultItemExcludes>
+  </PropertyGroup>
+</Project>

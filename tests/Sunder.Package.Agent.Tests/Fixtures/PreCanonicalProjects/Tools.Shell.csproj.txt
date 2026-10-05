@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <SunderPackageFamilyId>sunder.package.agent.tools.shell</SunderPackageFamilyId>
+    <SunderPackageRole>worker</SunderPackageRole>
+  </PropertyGroup>
+
+  <Import Project="$(MSBuildThisFileDirectory)..\..\Sunder.Agent.Worker.props" />
+
+  <ItemGroup>
+    <ProjectReference Include="..\Sunder.Agent.Execution.Common\Sunder.Agent.Execution.Common.csproj" />
+    <SunderSdkCapability Include="logging.v1" />
+    <Compile Remove="Rpc\**\*.cs" />
+    <ProjectReference Include="..\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
+    <Compile Include="..\Sunder.Package.Agent.Shared\Presentation\AgentToolPresentationMarkdown.cs"
+             Link="Presentation\AgentToolPresentationMarkdown.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <SunderPackageTarget Include="runtime/$(RuntimeIdentifier)"
+                         Role="runtime"
+                         Rid="$(RuntimeIdentifier)"
+                         Kind="worker" />
+  </ItemGroup>
+
+</Project>

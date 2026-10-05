@@ -1,9 +1,11 @@
-using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Subagents.Models;
-using Sunder.Package.Agent.Subagents.Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
+
+extern alias SubagentsWorker;
+using SubagentsWorker::Sunder.Package.Agent.Contracts.Models;
+using SubagentsWorker::Sunder.Package.Agent.Subagents.Models;
+using SubagentsWorker::Sunder.Package.Agent.Subagents.Services;
 
 public sealed class SubagentTaskResultPresentationTests
 {

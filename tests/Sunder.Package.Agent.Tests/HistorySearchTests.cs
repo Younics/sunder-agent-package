@@ -9,11 +9,13 @@ using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
-using Sunder.Package.Agent.Subagents.Runtime;
 using Sunder.Sdk.Abstractions;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
+
+extern alias SubagentsWorker;
+using SubagentsWorker::Sunder.Package.Agent.Subagents.Runtime;
 
 public sealed class HistorySearchTests
 {
@@ -319,18 +321,12 @@ public sealed class HistorySearchTests
     public async Task RuntimeIndexer_SearchesAcrossRootAndChildSessionsAndValidatesStaleHits()
     {
         using var scope = RegressionTestPackageScope.Create();
-        var services = new ServiceCollection();
-        services.AddSingleton(scope.Context);
-        services.AddSingleton<IPackageContext>(scope.Context);
-        var extensionCatalog = new RegressionTestExtensionCatalog();
+        using var extensionCatalog = new RegressionTestExtensionCatalog();
         var embeddingProvider = new HistoryEmbeddingProvider();
         extensionCatalog.AddProvider(
-            AgentRpcServices.EmbeddingProviders,
+            RegressionTestBindings.EmbeddingProviders,
             embeddingProvider);
-        services.AddSingleton<Sunder.Package.Agent.Protocol.AgentRpcCatalog>(extensionCatalog);
-        services.AddSingleton<IBackgroundProcessQueue, CompositionBackgroundProcessQueue>();
-        new PackageModule().ConfigureRuntimeServices(services, scope.Context);
-        await using var provider = services.BuildServiceProvider();
+        await using var provider = RegressionTestRuntime.Create(scope.Context, extensionCatalog);
         var sessions = provider.GetRequiredService<AgentSessionService>();
         var workspaces = provider.GetRequiredService<AgentWorkspaceService>();
         var workspace = workspaces.CreateWorkspace("History workspace");
@@ -408,12 +404,10 @@ public sealed class HistorySearchTests
         Assert.Equal(2, around.Turns.Count);
         Assert.True(around.HasNewer);
 
-        extensionCatalog.AddProvider(
-            AgentRpcServices.RuntimeCatalogs,
-            provider.GetRequiredService<AgentRuntimeCatalog>());
-        var childAround = await new SubsessionLocalRuntimeAdapter(
-                extensionCatalog.GetRequiredReference(AgentRpcServices.RuntimeCatalogs))
-            .LoadAroundTurnAsync(
+        extensionCatalog.AddRuntimeCatalog(provider.GetRequiredService<AgentRuntimeCatalog>());
+        using var subsessions = new SubsessionLocalRuntimeAdapter(
+            Assert.Single(extensionCatalog.Subagents().GetRuntimeCatalogs()));
+        var childAround = await subsessions.LoadAroundTurnAsync(
                 child.SessionId,
                 childTurn.TurnId,
                 childTurn.CreatedAtUtc,

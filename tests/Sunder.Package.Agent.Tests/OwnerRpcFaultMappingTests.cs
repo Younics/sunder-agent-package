@@ -1,17 +1,26 @@
 extern alias SkillsWorker;
 extern alias SubagentsWorker;
+extern alias BuilderWorker;
+extern alias McpWorker;
+extern alias MemoryWorker;
+extern alias AgentApp;
 
 using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Contracts.Contracts;
-using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Builder;
-using Sunder.Package.Agent.Mcp.Runtime;
-using Sunder.Package.Agent.Mcp.Services;
-using Sunder.Package.Agent.Memory.Semantic.Runtime;
+using AgentApp::Sunder.Package.Agent.Contracts.Models;
+using BuilderWorker::Sunder.Package.Agent.Builder;
+using McpWorker::Sunder.Package.Agent.Mcp.Runtime;
+using McpWorker::Sunder.Package.Agent.Mcp.Services;
+using MemoryWorker::Sunder.Package.Agent.Memory.Semantic.Runtime;
+using IAgentOwnerClient = AgentApp::Sunder.Package.Agent.Runtime.IAgentOwnerClient;
 using Sunder.Package.Agent.Protocol;
-using Sunder.Package.Agent.Runtime;
+using AgentApp::Sunder.Package.Agent.Runtime;
+using AgentOwnerRuntimeProvider = Sunder.Package.Agent.Runtime.AgentOwnerRuntimeProvider;
 using Sunder.Package.Agent.Services;
 using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Worker;
+using System.Reflection;
+using System.Text.Json;
 using Xunit;
 using SkillOwnerJson = SkillsWorker::Sunder.Package.Agent.Skills.Runtime.OwnerJson;
 using SkillOwnerOperationException = SkillsWorker::Sunder.Package.Agent.Skills.Runtime.SkillOwnerOperationException;
@@ -24,23 +33,75 @@ public sealed class OwnerRpcFaultMappingTests
     private const string UnexpectedMessage = "unexpected-provider-secret-canary";
 
     [Fact]
-    public void OwnerAdapters_MapOnlyExplicitDomainExceptions()
+    public async Task OwnerAdapters_MapOnlyExplicitDomainExceptions()
     {
         var unexpected = new InvalidOperationException(UnexpectedMessage);
 
-        Assert.False(McpManagementRpcProvider.ShouldMap(unexpected));
-        Assert.False(BuilderRpcProvider.ShouldMap(unexpected));
         Assert.False(SkillOwnerJson.ShouldMap(unexpected));
         Assert.False(SubagentOwnerJson.ShouldMap(unexpected));
-        Assert.False(AgentOwnerRuntimeRpc.ShouldMap(unexpected));
-        Assert.False(MemoryInspectorRpc.ShouldMap(unexpected));
-
-        Assert.True(McpManagementRpcProvider.ShouldMap(new McpManagementOperationException("expected")));
-        Assert.True(BuilderRpcProvider.ShouldMap(new BuilderRpcDomainException("agent.builder.invalid-request", "expected")));
         Assert.True(SkillOwnerJson.ShouldMap(new SkillOwnerOperationException("expected")));
         Assert.True(SubagentOwnerJson.ShouldMap(new SubagentOwnerOperationException("expected")));
-        Assert.True(AgentOwnerRuntimeRpc.ShouldMap(new AgentOwnerOperationException("expected")));
-        Assert.True(MemoryInspectorRpc.ShouldMap(new MemoryInspectorOperationException("expected")));
+
+        await Verify(
+            error => new McpWorker::Sunder.Package.Agent.Mcp.Rpc.ManagementService(ThrowingOperations.Create<IMcpOwnerManagementClient>(error)).CreateSunderRpcProviderRegistration(),
+            new McpManagementOperationException("expected"), "mcp.management.failed", "sunder.package.agent.mcp", "query", "{}", mcpContent: true);
+        await Verify(
+            error => new BuilderWorker::Sunder.Package.Agent.Builder.BuilderRuntimeService(ThrowingOperations.Create<IBuilderRuntimeOperations>(error)).CreateSunderRpcProviderRegistration(),
+            new BuilderRpcDomainException("agent.builder.invalid-request", "expected"), "agent.builder.invalid-request", "sunder.package.agent.builder", "execute",
+            "{\"kind\":\"list-workspaces\",\"timeoutSeconds\":1}");
+        await Verify(
+            error => new Rpc.Owner.OwnerRuntimeService(ThrowingOperations.Create<Runtime.IAgentOwnerRuntimeProvider>(error)).CreateSunderRpcProviderRegistration(),
+            new Runtime.AgentOwnerOperationException("expected"), "agent.owner.operation-failed", "sunder.package.agent", "dashboard", "{}");
+        await Verify(
+            error => new MemoryWorker::Sunder.Package.Agent.Memory.Semantic.Rpc.ManagementService(ThrowingOperations.Create<IMemoryInspectorRpcService>(error)).CreateSunderRpcProviderRegistration(),
+            new MemoryInspectorOperationException("expected"), "memory.semantic.operation-failed", "sunder.package.agent.memory.semantic", "query", "{\"kind\":\"sessions\",\"includeInactive\":false}");
+
+        async Task Verify(Func<Exception, SunderWorkerProviderRegistration> create, Exception expected, string code,
+            string packageId, string method, string json, bool mcpContent = false)
+        {
+            Assert.Same(unexpected, await Assert.ThrowsAsync<InvalidOperationException>(() => Invoke(create(unexpected))));
+            var mapped = await Assert.ThrowsAsync<SunderRpcException>(() => Invoke(create(expected)));
+            Assert.Equal(SunderRpcErrorKind.Domain, mapped.Error.Kind);
+            Assert.Equal(code, mapped.Error.Code);
+            Assert.Equal("expected", mapped.Error.Message);
+            Assert.DoesNotContain(UnexpectedMessage, mapped.Error.Message, StringComparison.Ordinal);
+
+            async Task Invoke(SunderWorkerProviderRegistration registration)
+            {
+                using var state = new RegressionTestRpcState();
+                state.AddGenerated(packageId, registration.Handler, registration, NoOpLifetime.Instance, registration.ProviderId);
+                var rpc = new RegressionTestRpcClient(state, packageId);
+                var endpoint = Assert.Single((await rpc.DiscoverAsync(registration.ContractId)).Providers).Endpoint;
+                await using var scope = await rpc.CreateCallScopeAsync();
+                using var document = JsonDocument.Parse(json);
+                var request = document.RootElement.Clone();
+                if (mcpContent)
+                {
+                    var content = await McpManagementContent.RegisterAsync(new McpQuery(McpQueryKind.Catalog), "query.json", scope.DeadlineUtc,
+                        (stream, options, token) => scope.RegisterContentAsync(endpoint, stream, options, token), CancellationToken.None);
+                    request = JsonSerializer.SerializeToElement(new { content }, RegressionTestRpcValues.Json);
+                }
+                await scope.InvokeAsync(endpoint, Assert.Single(RegressionTestRpcDescriptors.Get(registration.ContractId).Services).ServiceId, method, request);
+            }
+        }
+    }
+
+    private class ThrowingOperations : DispatchProxy
+    {
+        private Exception _error = null!;
+        internal static T Create<T>(Exception error) where T : class
+        {
+            var value = Create<T, ThrowingOperations>();
+            ((ThrowingOperations)(object)value)._error = error;
+            return value;
+        }
+        protected override object? Invoke(MethodInfo? method, object?[]? arguments) => throw _error;
+    }
+
+    private sealed class NoOpLifetime : IDisposable
+    {
+        internal static NoOpLifetime Instance { get; } = new();
+        public void Dispose() { }
     }
 
     [Fact]
@@ -181,7 +242,7 @@ public sealed class OwnerRpcFaultMappingTests
     {
         await using var boundary = new AgentOwnerBoundary();
         boundary.Catalog.AddProvider(
-            AgentRpcServices.SelectableCapabilityProviders,
+            RegressionTestBindings.SelectableCapabilityProviders,
             new ThrowingSelectableCapabilityProvider());
 
         var exception = await Assert.ThrowsAsync<SunderRpcException>(async () =>
@@ -203,7 +264,7 @@ public sealed class OwnerRpcFaultMappingTests
                     "application/octet-stream",
                     AgentAttachmentKind.Binary,
                     1,
-                    string.Empty,
+                    new string('0', 64), // Valid metadata reaches the missing-content provider path.
                     "missing-content",
                     IsText: false,
                     WasTruncated: false),
@@ -234,15 +295,12 @@ public sealed class OwnerRpcFaultMappingTests
 
         public AgentOwnerBoundary()
         {
-            var services = new ServiceCollection();
-            services.AddSingleton<AgentRpcCatalog>(_catalog);
-            new PackageModule().ConfigureRuntimeServices(services, _scope.Context);
-            Services = services.BuildServiceProvider();
+            Services = RegressionTestRuntime.Create(_scope.Context, _catalog);
             Client = _catalog.AddOwnerRuntimeProvider(
                 Services.GetRequiredService<AgentOwnerRuntimeProvider>());
         }
 
-        public ServiceProvider Services { get; }
+        public RegressionTestRuntime Services { get; }
 
         public RegressionTestExtensionCatalog Catalog => _catalog;
 
@@ -263,9 +321,9 @@ public sealed class OwnerRpcFaultMappingTests
 
         public string DisplayName => throw new InvalidOperationException(UnexpectedMessage);
 
-        public ValueTask<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>> ListCapabilitiesAsync(
-            AgentProfileSelectableCapabilityRequest request,
+        public ValueTask<IReadOnlyList<Sunder.Package.Agent.Contracts.Models.AgentProfileSelectableCapabilityDescriptor>> ListCapabilitiesAsync(
+            Sunder.Package.Agent.Contracts.Models.AgentProfileSelectableCapabilityRequest request,
             CancellationToken cancellationToken = default)
-            => ValueTask.FromResult<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>>([]);
+            => ValueTask.FromResult<IReadOnlyList<Sunder.Package.Agent.Contracts.Models.AgentProfileSelectableCapabilityDescriptor>>([]);
     }
 }

@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "authorityKind": "package",
+  "authorityId": "sunder.package.agent.provider.lmstudio",
+  "packageId": "sunder.package.agent.provider.lmstudio",
+  "contracts": {
+    "credential-settings": {
+      "contractId": "sunder.package.agent.provider.lmstudio.credentials",
+      "current": {
+        "state": "release-frozen",
+        "exposure": "package",
+        "contractVersion": "1.0.0",
+        "descriptorBytes": 1571,
+        "canonicalDescriptor": "{\"$defs\":{\"CredentialCommand\":{\"additionalProperties\":false,\"properties\":{\"credential\":{\"$ref\":\"#/$defs/CredentialValue\"},\"kind\":{\"$ref\":\"#/$defs/CredentialOperation\"}},\"required\":[\"kind\"],\"type\":\"object\"},\"CredentialOperation\":{\"enum\":[\"set\",\"clear\"],\"type\":\"string\"},\"CredentialQuery\":{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"},\"CredentialSnapshot\":{\"additionalProperties\":false,\"properties\":{\"hasStoredCredential\":{\"type\":\"boolean\"}},\"required\":[\"hasStoredCredential\"],\"type\":\"object\"},\"CredentialValue\":{\"minLength\":1,\"type\":\"string\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"contractId\":\"sunder.package.agent.provider.lmstudio.credentials\",\"descriptorVersion\":1,\"errors\":{\"provider.credential.command-invalid\":{\"description\":\"The credential command kind is not supported.\"},\"provider.credential.required\":{\"description\":\"A set command requires a non-empty credential.\"},\"provider.credential.unexpected\":{\"description\":\"A clear command must not contain a credential.\"}},\"schemaProfile\":\"sunder.rpc.values.v1\",\"services\":{\"credential-settings\":{\"methods\":{\"command\":{\"errors\":[\"provider.credential.command-invalid\",\"provider.credential.required\",\"provider.credential.unexpected\"],\"idempotency\":\"none\",\"kind\":\"unary\",\"requestSchema\":{\"$ref\":\"#/$defs/CredentialCommand\"},\"responseSchema\":{\"$ref\":\"#/$defs/CredentialSnapshot\"}},\"query\":{\"errors\":[],\"idempotency\":\"idempotent\",\"kind\":\"unary\",\"requestSchema\":{\"$ref\":\"#/$defs/CredentialQuery\"},\"responseSchema\":{\"$ref\":\"#/$defs/CredentialSnapshot\"}}}}},\"version\":\"1.0.0\"}",
+        "descriptorSha256": "734524d84a46484d0e5bf291e32051a5463d7e8c764756e1b91b2c45bea041ff",
+        "abiProjectionBytes": 1311,
+        "canonicalAbiProjection": "{\"$defs\":{\"CredentialCommand\":{\"additionalProperties\":false,\"properties\":{\"credential\":{\"$ref\":\"#/$defs/CredentialValue\"},\"kind\":{\"$ref\":\"#/$defs/CredentialOperation\"}},\"required\":[\"kind\"],\"type\":\"object\"},\"CredentialOperation\":{\"enum\":[\"clear\",\"set\"],\"type\":\"string\"},\"CredentialQuery\":{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"},\"CredentialSnapshot\":{\"additionalProperties\":false,\"properties\":{\"hasStoredCredential\":{\"type\":\"boolean\"}},\"required\":[\"hasStoredCredential\"],\"type\":\"object\"},\"CredentialValue\":{\"minLength\":1,\"type\":\"string\"}},\"contractId\":\"sunder.package.agent.provider.lmstudio.credentials\",\"descriptorVersion\":1,\"errors\":{\"provider.credential.command-invalid\":{},\"provider.credential.required\":{},\"provider.credential.unexpected\":{}},\"schemaProfile\":\"sunder.rpc.values.v1\",\"services\":{\"credential-settings\":{\"methods\":{\"command\":{\"errors\":[\"provider.credential.command-invalid\",\"provider.credential.required\",\"provider.credential.unexpected\"],\"idempotency\":\"none\",\"kind\":\"unary\",\"requestSchema\":{\"$ref\":\"#/$defs/CredentialCommand\"},\"responseSchema\":{\"$ref\":\"#/$defs/CredentialSnapshot\"}},\"query\":{\"errors\":[],\"idempotency\":\"idempotent\",\"kind\":\"unary\",\"requestSchema\":{\"$ref\":\"#/$defs/CredentialQuery\"},\"responseSchema\":{\"$ref\":\"#/$defs/CredentialSnapshot\"}}}}}}",
+        "abiSha256": "b9cc3f99e659bc8db8b29a2638575756561e2de168a3dd584eeeb25ee3a24136",
+        "packageRelease": {
+          "packageId": "sunder.package.agent.provider.lmstudio",
+          "packageVersion": "2.0.0"
+        }
+      },
+      "history": []
+    }
+  }
+}

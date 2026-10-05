@@ -10,6 +10,8 @@ using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.PackageViews;
 
+[Sunder.Sdk.Packaging.SunderPackageView("sunder.package.agent.history", "History",
+    IconPath = "Assets/session-icon.png", DefaultPlacement = PackageViewPlacement.RightTop)]
 public partial class AgentHistorySearchView : UserControl, IDisposable,
     IPackageViewWarmupTarget, IPackageViewNavigationTarget
 {
@@ -30,12 +32,20 @@ public partial class AgentHistorySearchView : UserControl, IDisposable,
     }
 
     public AgentHistorySearchView(IServiceProvider services)
+        : this(services.GetRequiredService<IAgentHistorySearchGateway>(),
+            services.GetRequiredService<AgentChatSelectionStateService>(),
+            services.GetRequiredService<IPackageShellViewService>()) { }
+
+    internal AgentHistorySearchView(
+        IAgentHistorySearchGateway gateway,
+        AgentChatSelectionStateService selectionState,
+        IPackageShellViewService shellViewService)
         : this()
     {
         _viewModel = new AgentHistorySearchViewModel(
-            services.GetRequiredService<IAgentHistorySearchGateway>(),
-            services.GetRequiredService<AgentChatSelectionStateService>(),
-            services.GetRequiredService<IPackageShellViewService>());
+            gateway,
+            selectionState,
+            shellViewService);
         DataContext = _viewModel;
     }
 

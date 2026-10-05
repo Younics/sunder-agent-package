@@ -1,7 +1,7 @@
 extern alias LMStudioApp;
 
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Provider.LMStudio.Protocol.Generated;
+using Sunder.Package.Agent.Provider.LMStudio.Rpc;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Package.Agent.Provider.TestSupport;
 using Sunder.Sdk.Abstractions;
@@ -328,12 +328,11 @@ public sealed class LMStudioConnectionTests
     private sealed class CredentialOwnerClientFake(ProviderCredentialAccessor credentials)
         : IProviderCredentialOwnerClient
     {
-        private readonly ProviderCredentialRpcProvider _provider = new(credentials);
+        private readonly CredentialSettingsService _provider = new(credentials);
 
         public async ValueTask<ProviderCredentialSnapshot> GetStatusAsync(
             CancellationToken cancellationToken = default)
             => ToSnapshot(await _provider.QueryAsync(
-                null!,
                 new CredentialQuery(),
                 cancellationToken));
 
@@ -341,14 +340,12 @@ public sealed class LMStudioConnectionTests
             string credential,
             CancellationToken cancellationToken = default)
             => ToSnapshot(await _provider.CommandAsync(
-                null!,
-                new CredentialCommand { Kind = CredentialOperation.Set, Credential = credential },
+                new CredentialCommand { Kind = CredentialOperation.Set, Credential = new(new() { Value = credential }) },
                 cancellationToken));
 
         public async ValueTask<ProviderCredentialSnapshot> ClearAsync(
             CancellationToken cancellationToken = default)
             => ToSnapshot(await _provider.CommandAsync(
-                null!,
                 new CredentialCommand { Kind = CredentialOperation.Clear },
                 cancellationToken));
 

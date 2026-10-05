@@ -1,8 +1,12 @@
+extern alias McpApp;
+extern alias McpWorker;
+
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
-using Sunder.Package.Agent.Mcp;
-using Sunder.Package.Agent.Mcp.Runtime;
-using Sunder.Package.Agent.Mcp.Services;
+using McpApp::Sunder.Package.Agent.Mcp;
+using McpApp::Sunder.Package.Agent.Mcp.Runtime;
+using McpApp::Sunder.Package.Agent.Mcp.Services;
+using McpOAuthCallbackHandler = McpWorker::Sunder.Package.Agent.Mcp.Services.McpOAuthCallbackHandler;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Callbacks;
 using Xunit;
@@ -17,15 +21,19 @@ public sealed class McpCallbackFlowTests
         using var scope = RegressionTestPackageScope.Create();
         var callbacks = new FakeCallbackClient();
         var context = new CallbackPackageContext(scope.Context, callbacks);
+        using var catalog = new RegressionTestExtensionCatalog();
+        var service = new McpWorker::Sunder.Package.Agent.Mcp.Rpc.ManagementService(
+            AgentRoleBoundary.As<McpWorker::Sunder.Package.Agent.Mcp.Runtime.IMcpOwnerManagementClient>(new IdleManagementClient()));
+        catalog.AddGeneratedProvider("sunder.package.agent.mcp", service, service.CreateSunderRpcProviderRegistration());
         var services = new ServiceCollection();
+        services.AddSingleton<IPackageContext>(context);
+        services.AddSingleton(catalog.RpcForCaller("sunder.package.agent.mcp"));
 
-        new Sunder.Package.Agent.Mcp.AppPackageModule().ConfigureAppServices(services, context);
-        services.AddSingleton<IMcpOwnerManagementClient>(new IdleManagementClient());
+        new McpApp::Sunder.Generated.Package.AppModule().ConfigureAppServices(services, context);
 
         Assert.DoesNotContain(services, descriptor => descriptor.ServiceType == typeof(IPackageCallbackClient));
         await using var provider = services.BuildServiceProvider();
-        var gateway = Assert.IsType<McpAppRuntimeGateway>(
-            provider.GetRequiredService<IMcpManagementGateway>());
+        var gateway = provider.GetRequiredService<McpAppRuntimeGateway>();
         await gateway.AuthorizeAsync(CreateServer(), CancellationToken.None);
         Assert.Equal(McpOAuthCallbackHandler.HandlerId, callbacks.HandlerId);
     }

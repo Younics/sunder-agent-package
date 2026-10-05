@@ -9,6 +9,7 @@ internal interface IAgentTranscriptAnchorGateway
         CancellationToken cancellationToken = default);
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentTranscriptAroundTurnRequest(
     Guid SessionId,
     Guid TurnId,
@@ -16,6 +17,7 @@ internal sealed record AgentTranscriptAroundTurnRequest(
     int AfterLimit = 20,
     Guid? ItemId = null);
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentTranscriptAroundTurnPage(
     long Revision,
     IReadOnlyList<AgentTurnRecord> Turns,

@@ -10,6 +10,7 @@ namespace Sunder.Package.Agent.Provider.Gemini;
 public sealed class GeminiEmbeddingProvider : IAgentEmbeddingProvider, IAgentEmbeddingSpaceIdentityProvider
 {
     private readonly ProviderCredentialAccessor _credentials;
+    private readonly Func<string, Client> _clientFactory;
 
     private static readonly IReadOnlyList<AgentEmbeddingModelDescriptor> Models =
     [
@@ -24,9 +25,15 @@ public sealed class GeminiEmbeddingProvider : IAgentEmbeddingProvider, IAgentEmb
     {
     }
 
-    internal GeminiEmbeddingProvider(IPackageContext packageContext, ProviderCredentialAccessor credentials)
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
+    internal GeminiEmbeddingProvider(IPackageContext packageContext, ProviderSettings settings)
+        : this(packageContext, settings.Credentials) { }
+
+    internal GeminiEmbeddingProvider(IPackageContext packageContext, ProviderCredentialAccessor credentials,
+        Func<string, Client>? clientFactory = null)
     {
         _credentials = credentials;
+        _clientFactory = clientFactory ?? (apiKey => new Client(apiKey: apiKey));
         Descriptor = new AgentEmbeddingProviderDescriptor(
             "gemini",
             "Google Gemini",
@@ -103,7 +110,7 @@ public sealed class GeminiEmbeddingProvider : IAgentEmbeddingProvider, IAgentEmb
             return results;
         }
 
-        using var client = new Client(apiKey: apiKey);
+        using var client = _clientFactory(apiKey);
         for (var index = 0; index < validTexts.Count; index++)
         {
             var input = validTexts[index];

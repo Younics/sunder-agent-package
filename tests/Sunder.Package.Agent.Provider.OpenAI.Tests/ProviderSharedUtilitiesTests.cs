@@ -237,6 +237,20 @@ public sealed class ProviderSharedUtilitiesTests
     }
 
     [Fact]
+    public void UsageContent_WireCountsPreserveMissingTotalWhileVendorSnapshotsCanInferIt()
+    {
+        var snapshot = new ProviderUsageSnapshot(2, 3, CachedInputTokenCount: 1);
+        var wire = ProviderResponseUpdates.CreateUsageContent(snapshot, inferTotalTokenCount: false).Details;
+        Assert.Equal(2, wire.InputTokenCount);
+        Assert.Equal(3, wire.OutputTokenCount);
+        Assert.Equal(1, wire.CachedInputTokenCount);
+        Assert.Null(wire.TotalTokenCount);
+        Assert.Null(wire.ReasoningTokenCount);
+        Assert.Equal(5, ProviderResponseUpdates.CreateUsageContent(snapshot).Details.TotalTokenCount);
+        Assert.Equal(9, ProviderResponseUpdates.CreateUsageContent(snapshot with { TotalTokenCount = 9 }, inferTotalTokenCount: false).Details.TotalTokenCount);
+    }
+
+    [Fact]
     public void UsageAccumulator_MergesPartialSnapshotsWithoutDoubleCounting()
     {
         var usage = new ProviderUsageAccumulator();

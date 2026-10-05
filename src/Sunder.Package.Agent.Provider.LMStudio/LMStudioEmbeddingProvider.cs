@@ -22,6 +22,7 @@ public sealed class LMStudioEmbeddingProvider :
         Descriptor = CreateDescriptor(packageContext.PackageId);
     }
 
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
     internal LMStudioEmbeddingProvider(
         IPackageContext packageContext,
         LMStudioConnection connection,

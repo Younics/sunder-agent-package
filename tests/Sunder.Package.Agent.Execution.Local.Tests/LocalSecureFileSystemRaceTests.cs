@@ -1,7 +1,9 @@
+extern alias LocalWorker;
+
 using Microsoft.Win32.SafeHandles;
 using System.Runtime.InteropServices;
-using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Execution.Local;
+using LocalWorker::Sunder.Package.Agent.Contracts.Models;
+using LocalWorker::Sunder.Package.Agent.Execution.Local;
 using Xunit;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;

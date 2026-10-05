@@ -1,5 +1,11 @@
 # Package Family Architecture
 
+> **Pre-cutover architecture:** this page describes the currently testable
+> descriptor-first tree. The final V1 shape has exactly 15 runtime packages,
+> implementation-derived contract locks, package-local generated bindings, and no
+> Protocol project/package. See
+> [`../compatibility/README.md`](../compatibility/README.md).
+
 Sunder Agent is a package family, not one monolithic plugin. The base package owns durable Agent state and orchestration; independently installed packages provide tools, execution, memory, MCP, skills, and subagents through 18 supported third-party RPC extension points. The Protocol artifact bundles 19 public descriptors because the observed-execution bridge is reserved for first-party package composition.
 
 ## Layering
@@ -51,7 +57,7 @@ It declares a runtime dependency on `sunder.package.agent`. It must not referenc
 
 `packages.json` is the first-party release/capability inventory. Samples are intentionally excluded.
 
-Every runtime family ships as a self-contained six-RID Worker V3 package. Each universal archive combines one exact executable target for every supported RID. Runtime starts the selected target as a supervised child process; it does not load an `ISunderRuntimePackageModule`.
+Every runtime family ships as a framework-dependent six-RID Worker V1 package. Each universal archive combines one exact managed-module target for every supported RID. Runtime resolves the shared execution runtime and starts the selected target as a supervised child process; it does not load an `ISunderRuntimePackageModule`.
 
 ## Runtime And App Roles
 
@@ -59,7 +65,7 @@ Every family has one root, unsuffixed canonical Worker/package project with `Sun
 
 | Role | Owns | Must not own |
 | --- | --- | --- |
-| Runtime (Worker V3) | Network clients, secrets, storage authority, providers, tools, execution, memory, callbacks, owner RPC | Avalonia controls or direct App state |
+| Runtime (Worker V1) | Network clients, secrets, storage authority, providers, tools, execution, memory, callbacks, owner RPC | Avalonia controls or direct App state |
 | App (`ISunderAppPackageModule`) | Views, view models, navigation, host browser launch, typed owner-RPC clients | Runtime stores, provider clients, credentials, execution authority |
 
 Role-local DI and RPC visibility mean a Runtime service object is never available directly in App. When both roles expose related behavior, they use different activation-owned providers with different responsibilities. The App should call typed owner RPC rather than duplicating state.
@@ -85,7 +91,7 @@ Extensions read base projections through `IAgentRuntimeCatalog` and use service 
 
 ## Extension Ownership
 
-The Host records the activating package id for every provider advertised by a Worker V3 activation. Each endpoint names one exact activation and becomes stale when that owner deactivates.
+The Host records the activating package id for every provider advertised by a Worker V1 activation. Each endpoint names one exact activation and becomes stale when that owner deactivates.
 
 Use `SunderRpcProviderSnapshot.PackageId` when package identity matters, especially stack export or dependency inference. A domain descriptor's optional `PackageId` is useful display metadata but is not the ownership authority.
 
@@ -125,7 +131,9 @@ Identity and dependencies are authored as assembly attributes. `Sunder.Package.B
 4. Builds the current native Worker leaf and composes canonical `bin/<configuration>/<tfm>/sunder-dev` after a normal primary-project build.
 5. Builds all configured Worker RIDs and emits one universal `.sunderpkg` when `PackSunderPackage` is invoked directly on that same canonical project.
 
-Do not maintain a source manifest or copy SDK assemblies into the package archive. Package activation/reload remains host-owned; Builder builds and publishes artifacts but does not own Runtime activation.
+Common Worker V1 properties are defined once in `Sunder.Agent.Worker.props` and enforced by `Directory.Build.targets`: primary package identity, the six supported RIDs, framework-dependent managed-module output, Worker SDK reference, copy-local dependencies, and generated manifest location. Worker projects import the props immediately after declaring their role so RID-sensitive SDK output paths are calculated correctly; they otherwise retain only their family role, target declarations, App selection, contracts, assets, and package-specific metadata.
+
+Do not maintain a source manifest or copy SDK assemblies into the package archive. Package activation/reload remains host-owned; Builder builds and publishes artifacts but does not own Runtime activation. Builder's own Worker uses the host-selected shared execution runtime, but the workspace-selected execution target owns project SDK/toolchain selection and runs project creation, build, and publish commands. Build SDKs are not execution-runtime artifacts.
 
 ## Public Surface Policy
 

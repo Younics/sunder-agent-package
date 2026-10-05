@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "authorityKind": "package",
+  "authorityId": "sunder.package.agent.subagents",
+  "packageId": "sunder.package.agent.subagents",
+  "contracts": {
+    "management": {
+      "contractId": "sunder.package.agent.subagents.owner",
+      "current": {
+        "state": "release-frozen",
+        "exposure": "package",
+        "contractVersion": "1.0.0",
+        "descriptorBytes": 1392,
+        "canonicalDescriptor": "{\"$defs\":{\"ChangeRevision\":{\"minimum\":0,\"type\":\"integer\"},\"ChangeSubscription\":{\"additionalProperties\":false,\"properties\":{\"afterRevision\":{\"$ref\":\"#/$defs/ChangeRevision\"}},\"required\":[\"afterRevision\"],\"type\":\"object\"},\"ContentReference\":{\"logicalType\":\"content-reference\",\"type\":\"object\"},\"OwnerContent\":{\"additionalProperties\":false,\"properties\":{\"content\":{\"$ref\":\"#/$defs/ContentReference\"}},\"required\":[\"content\"],\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"contractId\":\"sunder.package.agent.subagents.owner\",\"descriptorVersion\":1,\"errors\":{\"subagents.owner.operation-failed\":{\"description\":\"The requested Subagents operation could not be completed.\"}},\"schemaProfile\":\"sunder.rpc.values.v1\",\"services\":{\"subagents-management\":{\"methods\":{\"changes\":{\"errors\":[\"subagents.owner.operation-failed\"],\"eventSchema\":{\"$ref\":\"#/$defs/OwnerContent\"},\"idempotency\":\"idempotent\",\"kind\":\"server-stream\",\"requestSchema\":{\"$ref\":\"#/$defs/ChangeSubscription\"}},\"command\":{\"errors\":[\"subagents.owner.operation-failed\"],\"idempotency\":\"none\",\"kind\":\"unary\",\"requestSchema\":{\"$ref\":\"#/$defs/OwnerContent\"},\"responseSchema\":{\"$ref\":\"#/$defs/OwnerContent\"}},\"query\":{\"errors\":[\"subagents.owner.operation-failed\"],\"idempotency\":\"idempotent\",\"kind\":\"unary\",\"requestSchema\":{\"$ref\":\"#/$defs/OwnerContent\"},\"responseSchema\":{\"$ref\":\"#/$defs/OwnerContent\"}}}}},\"version\":\"1.0.0\"}",
+        "descriptorSha256": "4ffdf78213be2a66454d0d73a95ceabb3693923fbccfdcaaab0140820df54629",
+        "abiProjectionBytes": 1244,
+        "canonicalAbiProjection": "{\"$defs\":{\"ChangeRevision\":{\"minimum\":0,\"type\":\"integer\"},\"ChangeSubscription\":{\"additionalProperties\":false,\"properties\":{\"afterRevision\":{\"$ref\":\"#/$defs/ChangeRevision\"}},\"required\":[\"afterRevision\"],\"type\":\"object\"},\"ContentReference\":{\"logicalType\":\"content-reference\",\"type\":\"object\"},\"OwnerContent\":{\"additionalProperties\":false,\"properties\":{\"content\":{\"$ref\":\"#/$defs/ContentReference\"}},\"required\":[\"content\"],\"type\":\"object\"}},\"contractId\":\"sunder.package.agent.subagents.owner\",\"descriptorVersion\":1,\"errors\":{\"subagents.owner.operation-failed\":{}},\"schemaProfile\":\"sunder.rpc.values.v1\",\"services\":{\"subagents-management\":{\"methods\":{\"changes\":{\"errors\":[\"subagents.owner.operation-failed\"],\"eventSchema\":{\"$ref\":\"#/$defs/OwnerContent\"},\"idempotency\":\"idempotent\",\"kind\":\"server-stream\",\"requestSchema\":{\"$ref\":\"#/$defs/ChangeSubscription\"}},\"command\":{\"errors\":[\"subagents.owner.operation-failed\"],\"idempotency\":\"none\",\"kind\":\"unary\",\"requestSchema\":{\"$ref\":\"#/$defs/OwnerContent\"},\"responseSchema\":{\"$ref\":\"#/$defs/OwnerContent\"}},\"query\":{\"errors\":[\"subagents.owner.operation-failed\"],\"idempotency\":\"idempotent\",\"kind\":\"unary\",\"requestSchema\":{\"$ref\":\"#/$defs/OwnerContent\"},\"responseSchema\":{\"$ref\":\"#/$defs/OwnerContent\"}}}}}}",
+        "abiSha256": "687ac850db9da0eae40f0ad55266ba566ff74a2a02995925129aa9a6e4093558",
+        "packageRelease": {
+          "packageId": "sunder.package.agent.subagents",
+          "packageVersion": "2.0.0"
+        }
+      },
+      "history": []
+    }
+  }
+}

@@ -3,6 +3,7 @@ using System.Text;
 
 namespace Sunder.Package.Agent.Provider.LMStudio;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record LMStudioConnectionOptions(
     Uri BaseUri,
     string NormalizedBaseUrl,
@@ -93,4 +94,5 @@ internal sealed record LMStudioConnectionOptions(
     }
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record LMStudioConnectionCacheKey(string BaseUrl, string CredentialFingerprint);

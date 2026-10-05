@@ -372,6 +372,13 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
             }
 
             ScrollToBottom(resumeFollowing: request.Force || IsFollowingTail);
+            if (request.Force && IsFollowingTail)
+            {
+                // A forced jump can realize/reflow the tail after this first
+                // offset write. Keep its authority through the bounded layout
+                // settling path so native tail anchoring has a visible target.
+                QueueScrollToBottomAfterLayoutSettles();
+            }
         }, DispatcherPriority.Render);
         _scrollToBottomOperation = ObservePagingOperationAsync(operation);
     }

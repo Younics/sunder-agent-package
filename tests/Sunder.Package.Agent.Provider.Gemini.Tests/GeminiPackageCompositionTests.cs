@@ -2,12 +2,11 @@ extern alias GeminiApp;
 
 using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Contracts.Contracts;
-using Sunder.Package.Agent.Provider.Gemini.Protocol.Generated;
+using Sunder.Package.Agent.Provider.Gemini.Rpc;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Package.Agent.Provider.TestSupport;
 using Sunder.Package.Agent.TestSupport.Avalonia;
 using Xunit;
-using GeminiAppPackageModule = GeminiApp::Sunder.Package.Agent.Provider.Gemini.AppPackageModule;
 using GeminiSettingsView = GeminiApp::Sunder.Package.Agent.Provider.Gemini.GeminiSettingsView;
 using GeminiSettingsViewModel = GeminiApp::Sunder.Package.Agent.Provider.Gemini.GeminiSettingsViewModel;
 using GeminiCredentialOwnerRpcClient = GeminiApp::Sunder.Package.Agent.Provider.Gemini.ProviderCredentialOwnerRpcClient;
@@ -25,8 +24,8 @@ public sealed class GeminiPackageCompositionTests
             context.Secrets,
             GeminiProviderConfiguration.ApiKeySecretKey);
 
-        Assert.IsAssignableFrom<ICredentialSettingsProvider>(
-            new ProviderCredentialRpcProvider(credentials));
+        Assert.IsAssignableFrom<Sunder.Sdk.Rpc.ISunderRpcServiceHandler>(
+            new CredentialSettingsService(credentials).CreateSunderRpcProviderRegistration().Handler);
         Assert.IsAssignableFrom<IAgentChatProvider>(
             new GeminiAgentProvider(context, credentials));
         Assert.IsAssignableFrom<IAgentEmbeddingProvider>(
@@ -34,12 +33,12 @@ public sealed class GeminiPackageCompositionTests
         Assert.NotNull(GeminiProviderConfiguration.Schema);
 
         var appServices = new ServiceCollection();
-        var appModule = new GeminiAppPackageModule();
+        var appModule = GeneratedProviderComposition.App(typeof(GeminiSettingsViewModel).Assembly);
         appModule.ConfigureAppServices(appServices, context);
         Assert.Contains(appServices, descriptor => descriptor.ServiceType == typeof(GeminiSettingsViewModel));
         Assert.Contains(appServices, descriptor => descriptor.ServiceType == typeof(GeminiCredentialOwnerRpcClient));
         Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(ProviderCredentialAccessor));
-        Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(ProviderCredentialRpcProvider));
+        Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(CredentialSettingsService));
         Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(GeminiAgentProvider));
         Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(GeminiEmbeddingProvider));
 

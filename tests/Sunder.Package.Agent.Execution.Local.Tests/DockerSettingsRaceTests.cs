@@ -1,4 +1,6 @@
-using Sunder.Package.Agent.Execution.Docker;
+extern alias DockerApp;
+
+using DockerApp::Sunder.Package.Agent.Execution.Docker;
 using Sunder.Package.Agent.TestSupport.Avalonia;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Rpc;

@@ -3,12 +3,16 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
+using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Notifications;
 
 namespace Sunder.Package.Agent.Builder;
 
+// The constructor assigns the activation-owned Builder model to DataContext.
+[Sunder.Sdk.Packaging.SunderPackageView("sunder.package.agent.builder", "Package Builder",
+    IconPath = "Assets/builder-icon.png", DefaultPlacement = PackageViewPlacement.Middle)]
 public partial class BuilderView : UserControl, IDisposable, IPackageViewWarmupTarget, IPackageViewNavigationTarget
 {
     private readonly AdaptiveMasterDetail _adaptiveLayout;
@@ -44,6 +48,7 @@ public partial class BuilderView : UserControl, IDisposable, IPackageViewWarmupT
         DataContext = viewModel;
     }
 
+    [ActivatorUtilitiesConstructor]
     public BuilderView(
         BuilderViewModel viewModel,
         IPackageContext packageContext,

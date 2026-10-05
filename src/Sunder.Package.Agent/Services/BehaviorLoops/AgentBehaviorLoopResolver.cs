@@ -10,6 +10,10 @@ public sealed class AgentBehaviorLoopResolver(
     AgentRpcProviderService<IAgentBehaviorLoop> behaviorLoops,
     DefaultAgentBehaviorLoop defaultBehaviorLoop)
 {
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
+    internal AgentBehaviorLoopResolver(AgentRpcCatalog catalog, Runtime.Rpc.AgentBehaviorServices behaviors, DefaultAgentBehaviorLoop defaultLoop)
+        : this(catalog, behaviors.Service, defaultLoop) { }
+
     public AgentBehaviorLoopSelection Resolve(AgentProfileRecord profile)
     {
         var requestedLoopId = string.IsNullOrWhiteSpace(profile.BehaviorLoopId)

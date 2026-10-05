@@ -11,13 +11,32 @@ namespace Sunder.Package.Agent.Tests;
 public sealed class PackageFamilyArchiveContractTests
 {
     internal const string ArchiveDirectoryVariable = "SUNDER_AGENT_PACKAGE_ARCHIVE_DIR";
+    internal const string OutputAuditRequiredVariable = "SUNDER_AGENT_PACKAGE_OUTPUT_AUDIT_REQUIRED";
 
     private const string ContentIndexPath = "manifest/content-index.json";
+    private const string DotNetModuleAbi = "sunder.dotnet-worker-module.v1";
+    private const string DotNetRuntimeId = "sunder.runtime.dotnet";
+    private const string DotNetRuntimeVersionRange = ">=10.0.0 <11.0.0";
     private const string FamilyDependencyRangeText = ">=2.0.0 <3.0.0";
     private const string ManifestPath = "manifest/sunder-package.json";
     private const long MaxArchiveBytes = 256L * 1024 * 1024;
     private const long MaxPayloadBytes = 640L * 1024 * 1024;
     private const long MaxFamilyBytes = 4L * 1024 * 1024 * 1024;
+    private static readonly IReadOnlySet<string> BuildTimePathSegments = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "analyzers", "build", "buildMultiTargeting", "buildTransitive", "obj", "packs", "ref", "refs", "sdk", "tools",
+    };
+    private static readonly IReadOnlySet<string> BuildTimeExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ".a", ".cs", ".csproj", ".exp", ".fs", ".fsproj", ".ilk", ".lib", ".props", ".rsp", ".targets", ".tasks", ".vb", ".vbproj",
+    };
+    private static readonly IReadOnlySet<string> ForbiddenRuntimeStems = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "apphost", "clrgc", "clrgcexp", "clrjit", "coreclr", "createdump", "dbgshim", "dotnet", "hostfxr", "hostpolicy",
+        "mscordaccore", "mscordbi", "singlefilehost", "system.globalization.native", "system.io.compression.native", "system.native",
+        "system.net.security.native", "system.private.corelib", "system.security.cryptography.native.apple",
+        "system.security.cryptography.native.openssl",
+    };
     private static readonly string[] SupportedRids =
     [
         "linux-arm64",
@@ -78,6 +97,7 @@ public sealed class PackageFamilyArchiveContractTests
         }
 
         Assert.InRange(familyBytes, 1, MaxFamilyBytes);
+        VerifyMeasuredInstalledProjectionGate(archiveDirectory, inventory);
     }
 
     [PackageArtifactsFact]
@@ -105,12 +125,15 @@ public sealed class PackageFamilyArchiveContractTests
 
         using var archive = ZipFile.OpenRead(mutatedPath);
         var exception = Assert.Throws<InvalidDataException>(
-            () => VerifyArchive(
-                archive,
-                package,
-                inventory.ReleaseVersion,
-                inventory.Packages.Select(static item => item.PackageId).ToHashSet(StringComparer.Ordinal),
-                inventory.ContractIdentities));
+            () =>
+            {
+                VerifyArchive(
+                    archive,
+                    package,
+                    inventory.ReleaseVersion,
+                    inventory.Packages.Select(static item => item.PackageId).ToHashSet(StringComparer.Ordinal),
+                    inventory.ContractIdentities);
+            });
         Assert.Contains("SHA-256", exception.Message, StringComparison.Ordinal);
     }
 
@@ -138,12 +161,15 @@ public sealed class PackageFamilyArchiveContractTests
         });
 
         using var archive = ZipFile.OpenRead(mutatedPath);
-        var exception = Assert.Throws<InvalidDataException>(() => VerifyArchive(
-            archive,
-            package,
-            inventory.ReleaseVersion,
-            inventory.Packages.Select(static item => item.PackageId).ToHashSet(StringComparer.Ordinal),
-            inventory.ContractIdentities));
+        var exception = Assert.Throws<InvalidDataException>(() =>
+        {
+            VerifyArchive(
+                archive,
+                package,
+                inventory.ReleaseVersion,
+                inventory.Packages.Select(static item => item.PackageId).ToHashSet(StringComparer.Ordinal),
+                inventory.ContractIdentities);
+        });
         Assert.Contains("noncanonical", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -173,12 +199,15 @@ public sealed class PackageFamilyArchiveContractTests
         });
 
         using var archive = ZipFile.OpenRead(mutatedPath);
-        var exception = Assert.Throws<InvalidDataException>(() => VerifyArchive(
-            archive,
-            package,
-            inventory.ReleaseVersion,
-            inventory.Packages.Select(static item => item.PackageId).ToHashSet(StringComparer.Ordinal),
-            inventory.ContractIdentities));
+        var exception = Assert.Throws<InvalidDataException>(() =>
+        {
+            VerifyArchive(
+                archive,
+                package,
+                inventory.ReleaseVersion,
+                inventory.Packages.Select(static item => item.PackageId).ToHashSet(StringComparer.Ordinal),
+                inventory.ContractIdentities);
+        });
         Assert.Contains("descriptor identity", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -209,12 +238,15 @@ public sealed class PackageFamilyArchiveContractTests
         });
 
         using var archive = ZipFile.OpenRead(mutatedPath);
-        var exception = Assert.ThrowsAny<Exception>(() => VerifyArchive(
-            archive,
-            package,
-            inventory.ReleaseVersion,
-            inventory.Packages.Select(static item => item.PackageId).ToHashSet(StringComparer.Ordinal),
-            inventory.ContractIdentities));
+        var exception = Assert.ThrowsAny<Exception>(() =>
+        {
+            VerifyArchive(
+                archive,
+                package,
+                inventory.ReleaseVersion,
+                inventory.Packages.Select(static item => item.PackageId).ToHashSet(StringComparer.Ordinal),
+                inventory.ContractIdentities);
+        });
         Assert.Contains(FamilyDependencyRangeText, exception.ToString(), StringComparison.Ordinal);
     }
 
@@ -286,6 +318,10 @@ public sealed class PackageFamilyArchiveContractTests
             Assert.Equal(new DateTime(1980, 1, 1), entry.LastWriteTime.DateTime);
             Assert.Equal(0, entry.ExternalAttributes);
         });
+        Assert.DoesNotContain(paths, static path =>
+            !path.StartsWith("payload/app/", StringComparison.Ordinal)
+            && (path.EndsWith(".pdb", StringComparison.OrdinalIgnoreCase)
+                || path.EndsWith(".mdb", StringComparison.OrdinalIgnoreCase)));
         Assert.All(paths, static path => Assert.True(
             string.Equals(path, ContentIndexPath, StringComparison.Ordinal)
             || string.Equals(path, ManifestPath, StringComparison.Ordinal)
@@ -299,14 +335,10 @@ public sealed class PackageFamilyArchiveContractTests
             Assert.DoesNotContain(assemblyPath, paths, StringComparer.OrdinalIgnoreCase);
         }
 
-        foreach (var pdbPath in paths.Where(static path => path.EndsWith(".pdb", StringComparison.OrdinalIgnoreCase)))
-        {
-            var assemblyPath = $"{pdbPath[..^4]}.dll";
-            Assert.Contains(assemblyPath, paths, StringComparer.OrdinalIgnoreCase);
-        }
-
         var payloadBytes = ValidateContentIndex(archive, package.PackageId);
         Assert.InRange(payloadBytes, 1, MaxPayloadBytes);
+        VerifyNoRuntimeOrToolchainPayload(paths, package);
+        VerifyPackageOwnedPayload(archive, paths, package);
         using var manifest = ReadJson(archive, ManifestPath, package.PackageId);
         VerifyManifest(
             archive,
@@ -315,6 +347,49 @@ public sealed class PackageFamilyArchiveContractTests
             releaseVersion,
             packageIds,
             contractIdentities);
+    }
+
+    private static void VerifyMeasuredInstalledProjectionGate(
+        string archiveDirectory,
+        PackageInventory inventory)
+    {
+        const long phase0BaselineBytes = 1_440_013_254;
+        const long maximumInstalledProjectionBytes = 360_003_313;
+        var auditPath = Path.Combine(archiveDirectory, "package-output-audit.json");
+        if (!File.Exists(auditPath))
+        {
+            Assert.NotEqual(
+                "1",
+                Environment.GetEnvironmentVariable(OutputAuditRequiredVariable));
+            return;
+        }
+        using var audit = JsonDocument.Parse(File.ReadAllBytes(auditPath));
+        var root = audit.RootElement;
+        Assert.Equal(1, root.GetProperty("schemaVersion").GetInt32());
+        Assert.Equal("https://sunderapp.io/evidence/agent-package-output-audit/v1", root.GetProperty("kind").GetString());
+        Assert.Equal(inventory.ReleaseVersion, root.GetProperty("version").GetString());
+        var gate = root.GetProperty("installedProjectionGate");
+        Assert.Equal(phase0BaselineBytes, gate.GetProperty("phase0BaselineBytes").GetInt64());
+        Assert.Equal(75, gate.GetProperty("requiredReductionPercent").GetInt32());
+        Assert.Equal(maximumInstalledProjectionBytes, gate.GetProperty("maximumBytes").GetInt64());
+        var familyRids = root.GetProperty("family").GetProperty("rids").EnumerateArray().ToArray();
+        Assert.Equal(
+            SupportedRids,
+            familyRids.Select(static rid => RequiredString(rid, "rid")).Order(StringComparer.Ordinal).ToArray());
+        Assert.All(familyRids, rid =>
+        {
+            Assert.True(rid.GetProperty("meetsInstalledProjectionGate").GetBoolean());
+            Assert.InRange(
+                rid.GetProperty("installedProjection").GetProperty("bytes").GetInt64(),
+                1,
+                maximumInstalledProjectionBytes);
+        });
+        Assert.Equal(
+            inventory.Packages.Select(static package => package.PackageId).Order(StringComparer.Ordinal).ToArray(),
+            root.GetProperty("packages").EnumerateArray()
+                .Select(static package => RequiredString(package, "packageId"))
+                .Order(StringComparer.Ordinal)
+                .ToArray());
     }
 
     private static void VerifyManifest(
@@ -326,7 +401,7 @@ public sealed class PackageFamilyArchiveContractTests
         IReadOnlyDictionary<string, ContractIdentity> contractIdentities)
     {
         Assert.Equal(1, root.GetProperty("archiveFormatVersion").GetInt32());
-        Assert.Equal(3, root.GetProperty("manifestVersion").GetInt32());
+        Assert.Equal(1, root.GetProperty("manifestVersion").GetInt32());
         Assert.Equal(package.PackageId, root.GetProperty("id").GetString());
         Assert.Equal(releaseVersion, root.GetProperty("version").GetString());
 
@@ -355,22 +430,28 @@ public sealed class PackageFamilyArchiveContractTests
         Assert.Equal(
             package.HasApp ? SupportedRids : [],
             appTargets.Select(static target => RequiredString(target, "rid")).Order(StringComparer.Ordinal).ToArray());
-        Assert.All(runtimeTargets, static target =>
+        Assert.All(runtimeTargets, target =>
         {
             Assert.Equal("worker", RequiredString(target, "kind"));
             Assert.Equal("net10.0", RequiredString(target, "targetFramework"));
+            Assert.Equal($"lib/{package.WorkerAssemblyName}.dll", RequiredString(target, "entryPoint"));
+            var executionRuntime = target.GetProperty("executionRuntime");
+            Assert.Equal(DotNetRuntimeId, RequiredString(executionRuntime, "id"));
+            Assert.Equal(DotNetRuntimeVersionRange, RequiredString(executionRuntime, "versionRange"));
+            Assert.Equal(DotNetModuleAbi, RequiredString(executionRuntime, "moduleAbi"));
             Assert.Contains(
-                "worker-protocol.v3",
+                "worker-protocol.v1",
                 target.GetProperty("requiredHostCapabilities").EnumerateArray()
                     .Select(static capability => capability.GetString()),
                 StringComparer.Ordinal);
+            VerifyDotNetWorkerPayload(archive, target, package);
         });
         Assert.All(appTargets, static target =>
         {
             Assert.Equal("avalonia", RequiredString(target, "kind"));
             Assert.Equal("net10.0", RequiredString(target, "targetFramework"));
             Assert.DoesNotContain(
-                "worker-protocol.v3",
+                "worker-protocol.v1",
                 target.GetProperty("requiredHostCapabilities").EnumerateArray()
                     .Select(static capability => capability.GetString()),
                 StringComparer.Ordinal);
@@ -381,6 +462,297 @@ public sealed class PackageFamilyArchiveContractTests
             package.ProviderIds,
             providers.Select(static provider => RequiredString(provider, "providerId")).Order(StringComparer.Ordinal).ToArray());
         VerifyContractHashes(archive, root, providers, package.PackageId, contractIdentities);
+    }
+
+    private static void VerifyDotNetWorkerPayload(
+        ZipArchive archive,
+        JsonElement target,
+        PackageExpectation package)
+    {
+        var rid = RequiredString(target, "rid");
+        var entryPoint = RequiredString(target, "entryPoint");
+        var moduleBase = entryPoint[..^".dll".Length];
+        _ = ResolveProjectedEntry(archive, "runtime", rid, entryPoint, package.PackageId);
+        AssertProjectedEntryMissing(archive, "runtime", rid, moduleBase, package.PackageId);
+        AssertProjectedEntryMissing(archive, "runtime", rid, moduleBase + ".exe", package.PackageId);
+
+        var runtimeConfigPath = moduleBase + ".runtimeconfig.json";
+        var runtimeConfigEntry = ResolveProjectedEntry(archive, "runtime", rid, runtimeConfigPath, package.PackageId);
+        using (var runtimeConfig = ReadJson(archive, runtimeConfigEntry.FullName, package.PackageId))
+        {
+            var runtimeOptions = runtimeConfig.RootElement.GetProperty("runtimeOptions");
+            Assert.Equal("net10.0", RequiredString(runtimeOptions, "tfm"));
+            Assert.False(runtimeOptions.TryGetProperty("includedFrameworks", out _));
+            Assert.False(runtimeOptions.TryGetProperty("frameworks", out _));
+            var framework = runtimeOptions.GetProperty("framework");
+            Assert.Equal("Microsoft.NETCore.App", RequiredString(framework, "name"));
+            Assert.StartsWith("10.", RequiredString(framework, "version"), StringComparison.Ordinal);
+        }
+
+        var depsPath = moduleBase + ".deps.json";
+        var depsEntry = ResolveProjectedEntry(archive, "runtime", rid, depsPath, package.PackageId);
+        using var dependencies = ReadJson(archive, depsEntry.FullName, package.PackageId);
+        var expectedRuntimeTarget = $".NETCoreApp,Version=v10.0/{rid}";
+        Assert.Equal(
+            expectedRuntimeTarget,
+            RequiredString(dependencies.RootElement.GetProperty("runtimeTarget"), "name"));
+        var targetGraph = dependencies.RootElement.GetProperty("targets").GetProperty(expectedRuntimeTarget);
+        var packageOwnedAssets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var library in targetGraph.EnumerateObject())
+        {
+            VerifyDependencyIdentity(library.Name, package.PackageId, rid);
+            if (library.Value.TryGetProperty("dependencies", out var transitiveDependencies))
+            {
+                foreach (var dependency in transitiveDependencies.EnumerateObject())
+                {
+                    VerifyDependencyIdentity(dependency.Name, package.PackageId, rid);
+                }
+            }
+            foreach (var assetGroup in new[] { "runtime", "native", "resources", "runtimeTargets" })
+            {
+                if (!library.Value.TryGetProperty(assetGroup, out var assets)
+                    || assets.ValueKind != JsonValueKind.Object)
+                {
+                    continue;
+                }
+                foreach (var asset in assets.EnumerateObject())
+                {
+                    if (assetGroup == "runtimeTargets"
+                        && asset.Value.TryGetProperty("rid", out var assetRid)
+                        && assetRid.ValueKind == JsonValueKind.String
+                        && !string.Equals(assetRid.GetString(), rid, StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+                    packageOwnedAssets.Add(FileName(asset.Name));
+                }
+            }
+        }
+
+        foreach (var entry in ProjectedEntries(archive, "runtime", rid))
+        {
+            var fileName = FileName(entry.FullName);
+            if (IsPotentialSharedFrameworkAssembly(fileName))
+            {
+                Require(
+                    packageOwnedAssets.Contains(fileName),
+                    $"{package.PackageId}/{rid}: shared-framework assembly '{fileName}' is not package-owned by the RID dependency graph.");
+            }
+        }
+    }
+
+    private static void VerifyNoRuntimeOrToolchainPayload(
+        IReadOnlyList<string> paths,
+        PackageExpectation package)
+    {
+        foreach (var path in paths.Where(static path =>
+                     path.StartsWith("payload/runtime/", StringComparison.Ordinal)
+                     || path.StartsWith("payload/app/", StringComparison.Ordinal)
+                     || path.StartsWith("payload/shared/", StringComparison.Ordinal)))
+        {
+            var segments = path.Split('/');
+            Require(
+                !segments.Any(BuildTimePathSegments.Contains)
+                && !BuildTimeExtensions.Contains(Path.GetExtension(path)),
+                $"{package.PackageId}: package payload contains build-time or toolchain path '{path}'.");
+            if (path.StartsWith("payload/runtime/", StringComparison.Ordinal)
+                || path.StartsWith("payload/shared/", StringComparison.Ordinal))
+            {
+                var stem = RuntimeStem(FileName(path));
+                Require(
+                    !ForbiddenRuntimeStems.Contains(stem)
+                    && !stem.StartsWith("mscordaccore_", StringComparison.OrdinalIgnoreCase)
+                    && !stem.StartsWith("mscordbi_", StringComparison.OrdinalIgnoreCase),
+                    $"{package.PackageId}: Worker payload contains forbidden .NET runtime file '{path}'.");
+            }
+        }
+
+        if (package.PackageId == "sunder.package.agent.builder")
+        {
+            Assert.DoesNotContain(paths, static path =>
+            {
+                var fileName = FileName(path);
+                return fileName.StartsWith("Microsoft.Build", StringComparison.OrdinalIgnoreCase)
+                       || fileName.StartsWith("NuGet.", StringComparison.OrdinalIgnoreCase)
+                       || fileName.Equals("dotnet", StringComparison.OrdinalIgnoreCase)
+                       || fileName.Equals("dotnet.exe", StringComparison.OrdinalIgnoreCase);
+            });
+        }
+    }
+
+    private static void VerifyPackageOwnedPayload(
+        ZipArchive archive,
+        IReadOnlyList<string> paths,
+        PackageExpectation package)
+    {
+        var sqliteOwner = package.PackageId is "sunder.package.agent" or "sunder.package.agent.memory.semantic";
+        var sqlitePaths = paths.Where(static path =>
+            FileName(path).StartsWith("SQLitePCLRaw.", StringComparison.OrdinalIgnoreCase)
+            || FileName(path).Contains("e_sqlite3", StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (sqliteOwner)
+        {
+            Assert.Contains(sqlitePaths, static path => FileName(path).Equals("SQLitePCLRaw.core.dll", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(sqlitePaths, static path => FileName(path).Equals("SQLitePCLRaw.provider.e_sqlite3.dll", StringComparison.OrdinalIgnoreCase));
+            foreach (var rid in SupportedRids)
+            {
+                var nativeName = rid.StartsWith("win-", StringComparison.Ordinal)
+                    ? "e_sqlite3.dll"
+                    : rid.StartsWith("osx-", StringComparison.Ordinal)
+                        ? "libe_sqlite3.dylib"
+                        : "libe_sqlite3.so";
+                _ = ResolveProjectedEntry(archive, "runtime", rid, $"lib/{nativeName}", package.PackageId);
+            }
+        }
+        else
+        {
+            Assert.Empty(sqlitePaths);
+        }
+
+        var onigwrapOwner = package.PackageId is "sunder.package.agent" or "sunder.package.agent.mcp" or "sunder.package.agent.subagents";
+        var onigwrapPaths = paths.Where(static path =>
+            FileName(path).Contains("onigwrap", StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (onigwrapOwner)
+        {
+            _ = ResolveProjectedEntry(archive, "app", SupportedRids[0], "lib/Onigwrap.dll", package.PackageId);
+            foreach (var rid in SupportedRids)
+            {
+                var nativeName = rid.StartsWith("win-", StringComparison.Ordinal)
+                    ? "libonigwrap.dll"
+                    : rid.StartsWith("osx-", StringComparison.Ordinal)
+                        ? "libonigwrap.dylib"
+                        : "libonigwrap.so";
+                _ = ResolveProjectedEntry(
+                    archive,
+                    "app",
+                    rid,
+                    $"lib/runtimes/{rid}/native/{nativeName}",
+                    package.PackageId);
+            }
+        }
+        else
+        {
+            Assert.Empty(onigwrapPaths);
+        }
+
+        var systemManagementPaths = paths.Where(static path =>
+            FileName(path).Equals("System.Management.dll", StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (package.PackageId == "sunder.package.agent.provider.gemini")
+        {
+            Assert.NotEmpty(systemManagementPaths);
+            foreach (var rid in SupportedRids)
+            {
+                _ = ResolveProjectedEntry(archive, "runtime", rid, "lib/System.Management.dll", package.PackageId);
+            }
+        }
+        else
+        {
+            Assert.Empty(systemManagementPaths);
+        }
+    }
+
+    private static ZipArchiveEntry ResolveProjectedEntry(
+        ZipArchive archive,
+        string role,
+        string rid,
+        string logicalPath,
+        string packageId)
+    {
+        var candidates = new[]
+        {
+            archive.GetEntry($"payload/{role}/{rid}/{logicalPath}"),
+            archive.GetEntry($"payload/{role}/shared/{logicalPath}"),
+            archive.GetEntry($"payload/shared/{logicalPath}"),
+        }.Where(static entry => entry is not null).Cast<ZipArchiveEntry>().ToArray();
+        Require(
+            candidates.Length == 1,
+            $"{packageId}: target '{role}/{rid}' must resolve exactly one '{logicalPath}', but found {candidates.Length}.");
+        return candidates[0];
+    }
+
+    private static void AssertProjectedEntryMissing(
+        ZipArchive archive,
+        string role,
+        string rid,
+        string logicalPath,
+        string packageId)
+    {
+        Require(
+            archive.GetEntry($"payload/{role}/{rid}/{logicalPath}") is null
+            && archive.GetEntry($"payload/{role}/shared/{logicalPath}") is null
+            && archive.GetEntry($"payload/shared/{logicalPath}") is null,
+            $"{packageId}: target '{role}/{rid}' contains forbidden projected entry '{logicalPath}'.");
+    }
+
+    private static IEnumerable<ZipArchiveEntry> ProjectedEntries(ZipArchive archive, string role, string rid)
+    {
+        var targetPrefix = $"payload/{role}/{rid}/";
+        var sharedPrefix = $"payload/{role}/shared/";
+        return archive.Entries.Where(entry =>
+            entry.FullName.StartsWith(targetPrefix, StringComparison.Ordinal)
+            || entry.FullName.StartsWith(sharedPrefix, StringComparison.Ordinal)
+            || entry.FullName.StartsWith("payload/shared/", StringComparison.Ordinal));
+    }
+
+    private static void VerifyDependencyIdentity(string identity, string packageId, string rid)
+    {
+        var separator = identity.LastIndexOf('/');
+        var dependencyId = separator > 0 ? identity[..separator] : identity;
+        var runtimePack = dependencyId.StartsWith("runtimepack.", StringComparison.OrdinalIgnoreCase)
+                          || dependencyId.StartsWith("Microsoft.NETCore.App.Runtime.", StringComparison.OrdinalIgnoreCase)
+                          || dependencyId.StartsWith("Microsoft.NETCore.App.Host.", StringComparison.OrdinalIgnoreCase)
+                          || dependencyId.Equals("Microsoft.NETCore.App.Ref", StringComparison.OrdinalIgnoreCase)
+                          || dependencyId.StartsWith("Microsoft.AspNetCore.App.Runtime.", StringComparison.OrdinalIgnoreCase)
+                          || dependencyId.Equals("Microsoft.AspNetCore.App.Ref", StringComparison.OrdinalIgnoreCase)
+                          || dependencyId.StartsWith("Microsoft.WindowsDesktop.App.Runtime.", StringComparison.OrdinalIgnoreCase)
+                          || dependencyId.Equals("Microsoft.WindowsDesktop.App.Ref", StringComparison.OrdinalIgnoreCase)
+                          || dependencyId.StartsWith("Microsoft.NETCore.DotNetHost", StringComparison.OrdinalIgnoreCase)
+                          || dependencyId.StartsWith("Microsoft.NETCore.DotNetAppHost", StringComparison.OrdinalIgnoreCase);
+        var toolchain = dependencyId.Equals("Microsoft.NET.Sdk", StringComparison.OrdinalIgnoreCase)
+                        || dependencyId.StartsWith("Microsoft.NET.Sdk.", StringComparison.OrdinalIgnoreCase)
+                        || dependencyId.Equals("Microsoft.Build", StringComparison.OrdinalIgnoreCase)
+                        || dependencyId.StartsWith("Microsoft.Build.", StringComparison.OrdinalIgnoreCase)
+                        || dependencyId.StartsWith("NuGet.", StringComparison.OrdinalIgnoreCase);
+        Require(!runtimePack, $"{packageId}/{rid}: dependency graph contains runtime-pack identity '{identity}'.");
+        Require(!toolchain, $"{packageId}/{rid}: dependency graph contains SDK/toolchain identity '{identity}'.");
+    }
+
+    private static bool IsPotentialSharedFrameworkAssembly(string fileName)
+        => fileName.Equals("mscorlib.dll", StringComparison.OrdinalIgnoreCase)
+           || fileName.Equals("netstandard.dll", StringComparison.OrdinalIgnoreCase)
+           || fileName.Equals("WindowsBase.dll", StringComparison.OrdinalIgnoreCase)
+           || fileName.Equals("Microsoft.CSharp.dll", StringComparison.OrdinalIgnoreCase)
+           || fileName.Equals("Microsoft.VisualBasic.dll", StringComparison.OrdinalIgnoreCase)
+           || fileName.Equals("Microsoft.VisualBasic.Core.dll", StringComparison.OrdinalIgnoreCase)
+           || fileName.StartsWith("Microsoft.Win32.", StringComparison.OrdinalIgnoreCase)
+           || fileName.Equals("System.dll", StringComparison.OrdinalIgnoreCase)
+           || fileName.StartsWith("System.", StringComparison.OrdinalIgnoreCase)
+           && fileName.EndsWith(".dll", StringComparison.OrdinalIgnoreCase);
+
+    private static string RuntimeStem(string fileName)
+    {
+        var stem = fileName.ToLowerInvariant();
+        var sharedObject = stem.IndexOf(".so", StringComparison.Ordinal);
+        if (sharedObject > 0)
+        {
+            stem = stem[..sharedObject];
+        }
+        else
+        {
+            foreach (var extension in new[] { ".dylib", ".dll", ".exe" })
+            {
+                if (!stem.EndsWith(extension, StringComparison.Ordinal)) continue;
+                stem = stem[..^extension.Length];
+                break;
+            }
+        }
+        return stem.StartsWith("lib", StringComparison.Ordinal) ? stem[3..] : stem;
+    }
+
+    private static string FileName(string path)
+    {
+        var normalized = path.Replace('\\', '/');
+        var separator = normalized.LastIndexOf('/');
+        return separator < 0 ? normalized : normalized[(separator + 1)..];
     }
 
     private static void VerifyContractHashes(
@@ -640,14 +1012,19 @@ public sealed class PackageFamilyArchiveContractTests
         var root = document.RootElement;
         var packages = root.GetProperty("packages").EnumerateArray()
             .Where(static package => RequiredString(package, "artifactType") == "sunderpkg")
-            .Select(static package => new PackageExpectation(
-                RequiredString(package, "packageId"),
-                package.TryGetProperty("appProjectPath", out var appProjectPath)
-                && !string.IsNullOrWhiteSpace(appProjectPath.GetString()),
-                package.GetProperty("providerIds").EnumerateArray()
-                    .Select(static providerId => providerId.GetString()!)
-                    .Order(StringComparer.Ordinal)
-                    .ToArray()))
+            .Select(static package =>
+            {
+                var projectPath = RequiredString(package, "projectPath");
+                return new PackageExpectation(
+                    RequiredString(package, "packageId"),
+                    Path.GetFileNameWithoutExtension(projectPath),
+                    package.TryGetProperty("appProjectPath", out var appProjectPath)
+                    && !string.IsNullOrWhiteSpace(appProjectPath.GetString()),
+                    package.GetProperty("providerIds").EnumerateArray()
+                        .Select(static providerId => providerId.GetString()!)
+                        .Order(StringComparer.Ordinal)
+                        .ToArray());
+            })
             .OrderBy(static package => package.PackageId, StringComparer.Ordinal)
             .ToArray();
         using var candidateDocument = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(
@@ -677,6 +1054,7 @@ public sealed class PackageFamilyArchiveContractTests
 
     private sealed record PackageExpectation(
         string PackageId,
+        string WorkerAssemblyName,
         bool HasApp,
         IReadOnlyList<string> ProviderIds);
 

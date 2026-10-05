@@ -2,6 +2,7 @@ using Avalonia.Controls;
 
 namespace Sunder.Package.Agent.Provider.Anthropic;
 
+[Sunder.Sdk.Packaging.SunderPackageSettingsView(ViewModel = typeof(AnthropicSettingsViewModel))]
 public partial class AnthropicSettingsView : UserControl, IDisposable
 {
     private AnthropicSettingsViewModel? _viewModel;
@@ -11,6 +12,7 @@ public partial class AnthropicSettingsView : UserControl, IDisposable
         InitializeComponent();
     }
 
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
     public AnthropicSettingsView(AnthropicSettingsViewModel viewModel)
         : this()
     {

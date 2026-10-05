@@ -1,6 +1,6 @@
 extern alias AgentCore;
 
-using Sunder.Package.Agent.Contracts.Models;
+using AgentCore::Sunder.Package.Agent.Contracts.Models;
 using Xunit;
 using CorePresentation = AgentCore::Sunder.Package.Agent.Shared.PackageViews;
 

@@ -3,7 +3,6 @@ using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.HistorySearch;
-using Sunder.Package.Agent.Memory.Semantic;
 using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Services;
@@ -11,6 +10,9 @@ using Sunder.Package.Agent.Storage;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
+
+extern alias MemoryWorker;
+using MemoryWorker::Sunder.Package.Agent.Memory.Semantic;
 
 public sealed class SqlitePostCommitMaintenanceTests
 {

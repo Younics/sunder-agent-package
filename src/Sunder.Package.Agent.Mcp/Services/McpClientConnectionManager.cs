@@ -41,6 +41,10 @@ public sealed partial class McpClientConnectionManager : IAsyncDisposable
     {
     }
 
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
+    internal McpClientConnectionManager(Sunder.Sdk.Abstractions.IPackageContext context, McpOAuthService oauth)
+        : this(context.Logging.LoggerFactory, oauth) { }
+
     internal McpClientConnectionManager(
         ILoggerFactory loggerFactory,
         IMcpClientConnectionFactory connectionFactory,

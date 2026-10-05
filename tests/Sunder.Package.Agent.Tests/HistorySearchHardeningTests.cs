@@ -15,12 +15,17 @@ using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
-using Sunder.Package.Agent.Subagents.Runtime;
+using Sunder.Package.Agent.TestSupport;
 using Sunder.Sdk.Abstractions;
 using Xunit;
 using AgentRuntimePayloadLimits = AgentCore::Sunder.Package.Agent.Runtime.AgentRuntimePayloadLimits;
+using IAgentHistorySearchGateway = AgentCore::Sunder.Package.Agent.HistorySearch.IAgentHistorySearchGateway;
+using IAgentTranscriptAnchorGateway = AgentCore::Sunder.Package.Agent.Runtime.IAgentTranscriptAnchorGateway;
 
 namespace Sunder.Package.Agent.Tests;
+
+extern alias SubagentsWorker;
+using SubagentsWorker::Sunder.Package.Agent.Subagents.Runtime;
 
 public sealed class HistorySearchHardeningTests
 {
@@ -606,8 +611,8 @@ public sealed class HistorySearchHardeningTests
         var catalog = new RegressionTestExtensionCatalog();
         var first = new FirstFingerprintProvider("DUPLICATE", "MODEL");
         var second = new SecondFingerprintProvider("duplicate", "model");
-        catalog.AddProvider(AgentRpcServices.EmbeddingProviders, first, "package.one");
-        catalog.AddProvider(AgentRpcServices.EmbeddingProviders, second, "package.two");
+        catalog.AddProvider(RegressionTestBindings.EmbeddingProviders, first, "package.one");
+        catalog.AddProvider(RegressionTestBindings.EmbeddingProviders, second, "package.two");
         var providers = new HistoryEmbeddingProviderCatalog(catalog);
 
         Assert.Throws<InvalidOperationException>(() => providers.Resolve(null, "duplicate"));
@@ -643,7 +648,7 @@ public sealed class HistorySearchHardeningTests
             providerId,
             modelId,
             "Useful provider password=display-canary");
-        catalog.AddProvider(AgentRpcServices.EmbeddingProviders, provider, packageId);
+        catalog.AddProvider(RegressionTestBindings.EmbeddingProviders, provider, packageId);
         var providers = new HistoryEmbeddingProviderCatalog(catalog);
 
         var option = Assert.Single(providers.ListOptions());
@@ -733,7 +738,7 @@ public sealed class HistorySearchHardeningTests
         {
             SpaceIdentity = "https://first.example/v1",
         };
-        catalog.AddProvider(AgentRpcServices.EmbeddingProviders, provider, "package.configured");
+        catalog.AddProvider(RegressionTestBindings.EmbeddingProviders, provider, "package.configured");
         var providers = new HistoryEmbeddingProviderCatalog(catalog);
 
         var first = await providers.ResolveSelectionAsync(
@@ -754,7 +759,7 @@ public sealed class HistorySearchHardeningTests
         using var scope = RegressionTestPackageScope.Create();
         var catalog = new RegressionTestExtensionCatalog();
         var embeddings = new ReadinessEmbeddingProvider();
-        catalog.AddProvider(AgentRpcServices.EmbeddingProviders, embeddings, "package.ready");
+        catalog.AddProvider(RegressionTestBindings.EmbeddingProviders, embeddings, "package.ready");
         var seededProjection = CreateReadyEmbeddingProjection(scope.Context);
         Assert.True(seededProjection.GetConfiguration().SemanticEnabled);
         Assert.True(seededProjection.GetSnapshot().SemanticReady);
@@ -881,7 +886,7 @@ public sealed class HistorySearchHardeningTests
         using var scope = RegressionTestPackageScope.Create();
         var catalog = new RegressionTestExtensionCatalog();
         var embeddings = new ReadinessEmbeddingProvider();
-        catalog.AddProvider(AgentRpcServices.EmbeddingProviders, embeddings, "package.readiness");
+        catalog.AddProvider(RegressionTestBindings.EmbeddingProviders, embeddings, "package.readiness");
         await using var services = CreateRuntime(scope, catalog);
         var indexer = services.GetRequiredService<HistorySearchIndexingService>();
         var projection = services.GetRequiredService<HistorySearchStore>();
@@ -1155,32 +1160,36 @@ public sealed class HistorySearchHardeningTests
         await indexer.StartAsync();
         await WaitUntilAsync(() => projection.GetSnapshot().DocumentCount == 1);
         await indexer.StopAsync();
+        await WaitForHistoryWalCheckpointIdleAsync(projection, "indexed canary");
         Assert.True(DatabaseFilesContain(projection.DatabasePath, canary));
         services.GetRequiredService<AgentLocalStore>().DeleteSessionTree(session.SessionId);
 
         indexer.DeleteSessionData(session.SessionId);
 
         Assert.Equal(0, projection.GetSnapshot().DocumentCount);
+        await WaitForHistoryWalCheckpointIdleAsync(projection, "session cleanup");
         AssertDatabaseFilesDoNotContain(projection.DatabasePath, canary);
     }
 
     [Fact]
-    public void TranscriptRollback_SecurelyErasesAgentDatabaseWalAndShmBytes()
+    public async Task TranscriptRollback_SecurelyErasesAgentDatabaseWalAndShmBytes()
     {
         const string canary = "transcript-rollback-plaintext-canary-a864e91c";
         using var scope = RegressionTestPackageScope.Create();
-        using var services = CreateRuntime(scope, new RegressionTestExtensionCatalog());
+        await using var services = CreateRuntime(scope, new RegressionTestExtensionCatalog());
+        var store = services.GetRequiredService<AgentLocalStore>();
+        await WaitForAgentWalCheckpointIdleAsync(store, "startup");
         var workspace = services.GetRequiredService<AgentWorkspaceService>().CreateWorkspace("Secure rollback");
         var sessions = services.GetRequiredService<AgentSessionService>();
         var session = sessions.CreateSession("Secure rollback", workspaceId: workspace.WorkspaceId);
         var anchor = sessions.AppendTextTurn(session.SessionId, AgentMessageRole.User, "rollback anchor");
         sessions.AppendTextTurn(session.SessionId, AgentMessageRole.Assistant, canary);
-        var store = services.GetRequiredService<AgentLocalStore>();
         Assert.True(DatabaseFilesContain(store.DatabasePath, canary));
 
         var result = store.RollbackTranscript(session.SessionId, anchor.TurnId);
 
         Assert.Equal(2, result.DeletedTurnIds.Count);
+        await WaitForAgentWalCheckpointIdleAsync(store, "transcript rollback");
         AssertDatabaseFilesDoNotContain(store.DatabasePath, canary);
     }
 
@@ -1297,12 +1306,16 @@ public sealed class HistorySearchHardeningTests
     {
         using var scope = RegressionTestPackageScope.Create();
         var timeProvider = new ManualUtcTimeProvider();
-        await using var services = CreateRuntime(scope, new RegressionTestExtensionCatalog(), timeProvider);
+        using var catalog = new RegressionTestExtensionCatalog();
+        await using var services = CreateRuntime(scope, catalog);
         var workspace = services.GetRequiredService<AgentWorkspaceService>().CreateWorkspace("Begin retry");
         var sessions = services.GetRequiredService<AgentSessionService>();
         var session = sessions.CreateSession("Begin retry", workspaceId: workspace.WorkspaceId);
         sessions.AppendTextTurn(session.SessionId, AgentMessageRole.User, "begin-generation-retry-anchor");
-        var indexer = services.GetRequiredService<HistorySearchIndexingService>();
+        await using var indexer = new HistorySearchIndexingService(
+            services.GetRequiredService<HistorySearchStore>(), services.GetRequiredService<AgentLocalStore>(),
+            sessions, services.GetRequiredService<AgentWorkspaceService>(), services.GetRequiredService<HistoryEmbeddingProviderCatalog>(),
+            services.GetRequiredService<HistorySemanticOperationFence>(), services.GetRequiredService<HistorySearchRuntimeState>(), timeProvider);
         var projection = services.GetRequiredService<HistorySearchStore>();
         var state = services.GetRequiredService<HistorySearchRuntimeState>();
         using (var connection = Open(projection.DatabasePath))
@@ -1347,6 +1360,7 @@ public sealed class HistorySearchHardeningTests
     {
         using var scope = RegressionTestPackageScope.Create();
         await using var services = CreateRuntime(scope, new RegressionTestExtensionCatalog());
+        AsyncGate? nextProjectionWriteBlocker = null;
         var workspace = services.GetRequiredService<AgentWorkspaceService>().CreateWorkspace("Drain worker");
         var sessions = services.GetRequiredService<AgentSessionService>();
         var session = sessions.CreateSession("Drain worker", workspaceId: workspace.WorkspaceId);
@@ -1369,58 +1383,73 @@ public sealed class HistorySearchHardeningTests
         Assert.NotNull(lifetimeField);
         Assert.NotNull(signalField);
         var operationGate = Assert.IsType<SemaphoreSlim>(operationGateField?.GetValue(indexer));
+        indexer.BeforeTurnProjectionWriteAsync = () =>
+        {
+            var blocker = Interlocked.Exchange(ref nextProjectionWriteBlocker, null);
+            return blocker is null
+                ? ValueTask.CompletedTask
+                : new ValueTask(blocker.EnterAndWaitAsync());
+        };
         await indexer.StartAsync();
-        await WaitUntilAsync(() => projection.GetSnapshot().DocumentCount == 1
-                                   && operationGate.CurrentCount == 1);
+        await WaitForIndexerIdleAsync(projection, operationGate, expectedDocumentCount: 1);
         var oldWorker = Assert.IsAssignableFrom<Task>(workerField.GetValue(indexer));
         var oldLifetime = Assert.IsType<CancellationTokenSource>(lifetimeField.GetValue(indexer));
         var oldSignal = signalField.GetValue(indexer);
         Assert.NotNull(oldSignal);
 
-        using (var blocker = Open(projection.DatabasePath))
-        using (var transaction = blocker.BeginTransaction(deferred: false))
+        var oldWorkerBlocker = new AsyncGate();
+        Assert.Null(Interlocked.Exchange(ref nextProjectionWriteBlocker, oldWorkerBlocker));
+        try
         {
             sessions.AppendTextTurn(session.SessionId, AgentMessageRole.Assistant, "blocked-restart-anchor");
-            await WaitUntilAsync(() => operationGate.CurrentCount == 0);
-            await Task.Delay(100);
-            using var stopCancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
-
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => indexer.StopAsync(stopCancellation.Token));
+            await WaitForTaskAsync(oldWorkerBlocker.Entered, "old worker projection-write checkpoint");
+            Assert.Equal(0, operationGate.CurrentCount);
+            await AssertStopCancellationWhileWorkerBlockedAsync(indexer, oldLifetime, "old worker");
             var restart = indexer.StartAsync();
-            await Task.Delay(100);
             Assert.False(restart.IsCompleted);
             Assert.Same(oldWorker, workerField.GetValue(indexer));
             Assert.Same(oldLifetime, lifetimeField.GetValue(indexer));
             Assert.Same(oldSignal, signalField.GetValue(indexer));
 
-            transaction.Rollback();
-            await restart.WaitAsync(TimeSpan.FromSeconds(10));
+            oldWorkerBlocker.Release();
+            await WaitForTaskAsync(restart, "replacement worker startup after old-worker drain");
+        }
+        finally
+        {
+            oldWorkerBlocker.Release();
         }
 
-        await WaitUntilAsync(() => projection.GetSnapshot().DocumentCount == 2
-                                   && operationGate.CurrentCount == 1);
+        await WaitForIndexerIdleAsync(projection, operationGate, expectedDocumentCount: 2);
         var replacementWorker = Assert.IsAssignableFrom<Task>(workerField.GetValue(indexer));
+        var replacementLifetime = Assert.IsType<CancellationTokenSource>(lifetimeField.GetValue(indexer));
         Assert.NotSame(oldWorker, replacementWorker);
-        Assert.NotSame(oldLifetime, lifetimeField.GetValue(indexer));
+        Assert.NotSame(oldLifetime, replacementLifetime);
         Assert.NotSame(oldSignal, signalField.GetValue(indexer));
         Assert.True(oldWorker.IsCompleted);
 
-        using (var blocker = Open(projection.DatabasePath))
-        using (var transaction = blocker.BeginTransaction(deferred: false))
+        var replacementWorkerBlocker = new AsyncGate();
+        Assert.Null(Interlocked.Exchange(ref nextProjectionWriteBlocker, replacementWorkerBlocker));
+        try
         {
             sessions.AppendTextTurn(session.SessionId, AgentMessageRole.Assistant, "blocked-dispose-anchor");
-            await WaitUntilAsync(() => operationGate.CurrentCount == 0);
-            await Task.Delay(100);
-            using var stopCancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
-
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => indexer.StopAsync(stopCancellation.Token));
+            await WaitForTaskAsync(
+                replacementWorkerBlocker.Entered,
+                "replacement worker projection-write checkpoint");
+            Assert.Equal(0, operationGate.CurrentCount);
+            await AssertStopCancellationWhileWorkerBlockedAsync(
+                indexer,
+                replacementLifetime,
+                "replacement worker");
             var disposal = indexer.DisposeAsync().AsTask();
-            await Task.Delay(100);
             Assert.False(disposal.IsCompleted);
             Assert.Same(replacementWorker, workerField.GetValue(indexer));
 
-            transaction.Rollback();
-            await disposal.WaitAsync(TimeSpan.FromSeconds(10));
+            replacementWorkerBlocker.Release();
+            await WaitForTaskAsync(disposal, "indexer disposal after replacement-worker drain");
+        }
+        finally
+        {
+            replacementWorkerBlocker.Release();
         }
 
         Assert.True(replacementWorker.IsCompleted);
@@ -1514,15 +1543,18 @@ public sealed class HistorySearchHardeningTests
     public void ProjectionStartup_ValidatesTablesColumnsSingletonsAndFts(string corruptionSql)
     {
         using var scope = RegressionTestPackageScope.Create();
-        var original = new HistorySearchStore(scope.Context);
-        using (var connection = Open(original.DatabasePath))
+        string databasePath;
+        // Startup recovery runs after the previous store and its background WAL
+        // maintenance have stopped, rather than racing the simulated corruption.
+        using (var original = new HistorySearchStore(scope.Context)) databasePath = original.DatabasePath;
+        using (var connection = Open(databasePath))
         using (var command = connection.CreateCommand())
         {
             command.CommandText = corruptionSql;
             command.ExecuteNonQuery();
         }
 
-        var recovered = new HistorySearchStore(scope.Context);
+        using var recovered = new HistorySearchStore(scope.Context);
 
         Assert.True(recovered.IsAvailable);
         Assert.True(recovered.WasRecovered);
@@ -1895,7 +1927,7 @@ public sealed class HistorySearchHardeningTests
             new AgentTranscriptAroundTurnRequest(child.SessionId, childTurn.TurnId)).AsTask());
         var runtime = services.GetRequiredService<AgentRuntimeCatalog>();
         Assert.Throws<InvalidOperationException>(() => SubsessionLocalRuntimeAdapter.BuildAroundTurnPage(
-            runtime,
+            AgentRoleBoundary.As<SubagentsWorker::Sunder.Package.Agent.Contracts.Contracts.IAgentRuntimeCatalog>(runtime),
             root.SessionId,
             rootTurn.TurnId,
             rootTurn.CreatedAtUtc,
@@ -1917,34 +1949,10 @@ public sealed class HistorySearchHardeningTests
             ExecuteString(connection, "SELECT Name || '|' || Checksum FROM SchemaMigrations WHERE Version = 1;"));
     }
 
-    private static ServiceProvider CreateRuntime(
+    private static RegressionTestRuntime CreateRuntime(
         RegressionTestPackageScope scope,
-        RegressionTestExtensionCatalog catalog,
-        TimeProvider? timeProvider = null)
-    {
-        var services = new ServiceCollection();
-        services.AddSingleton(scope.Context);
-        services.AddSingleton<IPackageContext>(scope.Context);
-        services.AddSingleton<Sunder.Package.Agent.Protocol.AgentRpcCatalog>(catalog);
-        services.AddSingleton<IBackgroundProcessQueue, CompositionBackgroundProcessQueue>();
-        new PackageModule().ConfigureRuntimeServices(services, scope.Context);
-        if (timeProvider is not null)
-        {
-            var registration = services.Single(descriptor =>
-                descriptor.ServiceType == typeof(HistorySearchIndexingService));
-            services.Remove(registration);
-            services.AddSingleton(provider => new HistorySearchIndexingService(
-                provider.GetRequiredService<HistorySearchStore>(),
-                provider.GetRequiredService<AgentLocalStore>(),
-                provider.GetRequiredService<AgentSessionService>(),
-                provider.GetRequiredService<AgentWorkspaceService>(),
-                provider.GetRequiredService<HistoryEmbeddingProviderCatalog>(),
-                provider.GetRequiredService<HistorySemanticOperationFence>(),
-                provider.GetRequiredService<HistorySearchRuntimeState>(),
-                timeProvider));
-        }
-        return services.BuildServiceProvider();
-    }
+        RegressionTestExtensionCatalog catalog)
+        => RegressionTestRuntime.Create(scope.Context, catalog);
 
     private sealed class ManualUtcTimeProvider : TimeProvider
     {
@@ -2118,6 +2126,111 @@ public sealed class HistorySearchHardeningTests
         return Convert.ToString(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture)
                ?? string.Empty;
     }
+
+    private static Task WaitForAgentWalCheckpointIdleAsync(
+        AgentLocalStore store,
+        string checkpoint)
+        => WaitForWalCheckpointIdleAsync(
+            "Agent store",
+            store.DatabasePath,
+            () => store.WalCheckpointAttemptCount,
+            cancellationToken => store.WaitForWalCheckpointIdleAsync(cancellationToken),
+            checkpoint);
+
+    private static Task WaitForHistoryWalCheckpointIdleAsync(
+        HistorySearchStore store,
+        string checkpoint)
+        => WaitForWalCheckpointIdleAsync(
+            "History projection store",
+            store.DatabasePath,
+            () => store.WalCheckpointAttemptCount,
+            cancellationToken => store.WaitForWalCheckpointIdleAsync(cancellationToken),
+            checkpoint);
+
+    private static async Task WaitForWalCheckpointIdleAsync(
+        string storeName,
+        string databasePath,
+        Func<int> getAttemptCount,
+        Func<CancellationToken, Task> waitForIdle,
+        string checkpoint)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        try
+        {
+            await waitForIdle(timeout.Token);
+        }
+        catch (OperationCanceledException exception) when (timeout.IsCancellationRequested)
+        {
+            throw new TimeoutException(
+                $"Timed out waiting for {storeName} WAL checkpoint '{checkpoint}'. "
+                + $"Attempts={getAttemptCount()}; "
+                + $"files={DescribeDatabaseFiles(databasePath)}.",
+                exception);
+        }
+    }
+
+    private static async Task AssertStopCancellationWhileWorkerBlockedAsync(
+        HistorySearchIndexingService indexer,
+        CancellationTokenSource workerLifetime,
+        string workerDescription)
+    {
+        Assert.False(workerLifetime.IsCancellationRequested);
+        var cancellationRequested = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        using var registration = workerLifetime.Token.Register(
+            static state => ((TaskCompletionSource)state!).TrySetResult(),
+            cancellationRequested);
+        using var stopCancellation = new CancellationTokenSource();
+
+        var stop = indexer.StopAsync(stopCancellation.Token);
+        await WaitForTaskAsync(
+            cancellationRequested.Task,
+            $"{workerDescription} lifetime cancellation");
+        Assert.False(
+            stop.IsCompleted,
+            $"Stop completed before its caller cancelled while the {workerDescription} was blocked.");
+
+        stopCancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => stop);
+    }
+
+    private static async Task WaitForIndexerIdleAsync(
+        HistorySearchStore projection,
+        SemaphoreSlim operationGate,
+        int expectedDocumentCount)
+    {
+        await Eventually.ObserveAsync(
+            () => (Snapshot: projection.GetSnapshot(), OperationGateCount: operationGate.CurrentCount),
+            observation => observation.Snapshot.DocumentCount == expectedDocumentCount
+                           && observation.OperationGateCount == 1,
+            timeout: TimeSpan.FromSeconds(10),
+            describe: observation =>
+                $"generation={observation.Snapshot.ActiveTextGenerationId?.ToString() ?? "none"}, "
+                + $"documents={observation.Snapshot.DocumentCount}, "
+                + $"operation gate count={observation.OperationGateCount}");
+    }
+
+    private static async Task WaitForTaskAsync(Task task, string checkpoint)
+    {
+        try
+        {
+            await task.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        catch (TimeoutException exception)
+        {
+            throw new TimeoutException(
+                $"Timed out waiting for '{checkpoint}'. Task status={task.Status}.",
+                exception);
+        }
+    }
+
+    private static string DescribeDatabaseFiles(string databasePath)
+        => string.Join(
+            ", ",
+            new[] { databasePath, databasePath + "-wal", databasePath + "-shm" }
+                .Select(path => File.Exists(path)
+                    ? $"{Path.GetFileName(path)}={new FileInfo(path).Length} bytes"
+                    : $"{Path.GetFileName(path)}=missing"));
 
     private static bool DatabaseFilesContain(string databasePath, string canary)
     {

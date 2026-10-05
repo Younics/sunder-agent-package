@@ -7,10 +7,17 @@ using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Provider.OpenAI;
 
+[method: Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
 public sealed class OpenAiEmbeddingProvider(
     ApiKeyAuthStrategy apiKeyAuthStrategy,
     IPackageContext packageContext) : IAgentEmbeddingProvider, IAgentEmbeddingSpaceIdentityProvider
 {
+    private readonly Func<string, string, EmbeddingClient> _clientFactory = static (model, key) => new EmbeddingClient(model, key);
+
+    internal OpenAiEmbeddingProvider(ApiKeyAuthStrategy apiKeyAuthStrategy, IPackageContext packageContext,
+        Func<string, string, EmbeddingClient> clientFactory) : this(apiKeyAuthStrategy, packageContext)
+        => _clientFactory = clientFactory;
+
     private static readonly IReadOnlyList<AgentEmbeddingModelDescriptor> Models =
     [
         new("openai/text-embedding-3-small", "Text Embedding 3 Small", Dimensions: 1536, IsRecommended: true),
@@ -80,7 +87,7 @@ public sealed class OpenAiEmbeddingProvider(
             return results;
         }
 
-        var client = new EmbeddingClient(ProviderModelId.RemovePrefix(modelId, "openai"), apiKey);
+        var client = _clientFactory(ProviderModelId.RemovePrefix(modelId, "openai"), apiKey);
         var response = await client.GenerateEmbeddingsAsync(
             validTexts.Select(item => item.Text).ToArray(),
             options: null,

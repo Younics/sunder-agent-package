@@ -32,7 +32,7 @@ public sealed class AgentRpcCatalogAvailabilityTests
             AgentRpcContractIds.BehaviorLoop,
             static (_, _) => new object());
 
-        Assert.Empty(catalog.GetServiceReferences(AgentRpcServices.ChatProviders));
+        Assert.Empty(catalog.GetServiceReferences(RegressionTestBindings.ChatProviders));
         Assert.Empty(catalog.GetServiceReferences(providerService));
         Assert.Equal(AgentRpcCatalogAvailability.Unavailable, catalog.Availability);
         Assert.Equal(SunderRpcErrorKind.Unavailable, catalog.AvailabilityError?.Kind);
@@ -47,7 +47,7 @@ public sealed class AgentRpcCatalogAvailabilityTests
             static (_, _) => new object());
 
         var serviceFailure = Assert.Throws<SunderRpcException>(
-            () => catalog.GetServiceReferences(AgentRpcServices.ChatProviders));
+            () => catalog.GetServiceReferences(RegressionTestBindings.ChatProviders));
         var providerFailure = Assert.Throws<SunderRpcException>(
             () => catalog.GetServiceReferences(providerService));
 
@@ -116,7 +116,8 @@ public sealed class AgentRpcCatalogAvailabilityTests
     {
         var client = new RetryingWatchRpcClient();
         using var catalog = new AgentRpcCatalog(client);
-        using var observer = new AgentProfileSelectableCapabilityChangeObserver(catalog);
+        using var observer = new AgentProfileSelectableCapabilityChangeObserver(
+            catalog, refreshProviderSubscriptions: true, RegressionTestBindings.SelectableCapabilityProviders);
         var projectionChanged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var availabilityRecovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         observer.Changed += () => projectionChanged.TrySetResult();
@@ -206,7 +207,7 @@ public sealed class AgentRpcCatalogAvailabilityTests
     }
 
     [Fact]
-    public void Discovery_RejectsAgentV2ProviderWithoutAbiHash()
+    public void Discovery_RejectsAgentV1ProviderWithoutAbiHash()
     {
         var client = new RecoveringReferenceRpcClient();
         client.RemoveAbiHash();
@@ -549,7 +550,7 @@ public sealed class AgentRpcCatalogAvailabilityTests
                 ? Provider with { AbiSha256 = new string('c', 64) }
                 : Provider with { DescriptorSha256 = new string('b', 64) };
 
-        public void RemoveAbiHash() => Provider = Provider with { AbiSha256 = null };
+        public void RemoveAbiHash() => Provider = Provider with { AbiSha256 = null! };
 
         public ValueTask<SunderRpcProviderSnapshot?> GetProviderAsync(
             SunderRpcEndpointReference endpoint,

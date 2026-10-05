@@ -395,7 +395,11 @@ internal sealed partial class TranscriptRowProjector<TRow> where TRow : class
         _messageRowsByTurnId.Clear();
         _toolRowsByKey.Clear();
         _turnWindow.Reset();
-        _rows.Clear();
+        // Keep reset/cancellation state changes without publishing an empty-to-empty reset.
+        if (_rows.Count > 0)
+        {
+            _rows.Clear();
+        }
     }
 
     public void ReconcileAuthoritativeTurns(IReadOnlyList<AgentTurnRecord> turns)

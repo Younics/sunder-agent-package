@@ -2,6 +2,7 @@ using Sunder.Sdk.Settings;
 
 namespace Sunder.Package.Agent.Provider.Shared;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal static class ProviderConfigurationSections
 {
     public static PackageSettingsSection ApiKey(

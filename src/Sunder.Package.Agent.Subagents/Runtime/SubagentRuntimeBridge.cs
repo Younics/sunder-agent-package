@@ -2,7 +2,6 @@ using Microsoft.Extensions.Logging;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Package.Agent.Shared.PackageViews;
 using Sunder.Package.Agent.Subagents.Models;
@@ -10,6 +9,7 @@ using Sunder.Package.Agent.Subagents.Services;
 
 namespace Sunder.Package.Agent.Subagents.Runtime;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal interface ISubagentManagementGateway
 {
     event Action? SubagentsChanged;
@@ -25,34 +25,8 @@ internal interface ISubagentManagementGateway
     Task<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>> ListPackageCapabilitiesAsync(CancellationToken cancellationToken = default);
 }
 
-#if SUNDER_SUBAGENTS_WORKER
-internal sealed class SubagentLocalManagementGateway(
-    SubagentService service,
-    AgentRpcCatalog rpcCatalog) : ISubagentManagementGateway, IDisposable
-{
-    private readonly SubagentEditorCapabilityCatalog _capabilities = new(rpcCatalog);
-    public event Action? SubagentsChanged { add => service.SubagentsChanged += value; remove => service.SubagentsChanged -= value; }
-    public event Action? CatalogChanged { add => _capabilities.Changed += value; remove => _capabilities.Changed -= value; }
-    public Task<IReadOnlyList<SubagentRecord>> ListSubagentsAsync(CancellationToken cancellationToken = default) => Task.FromResult(service.ListSubagents());
-    public Task<SubagentRecord> CreateSubagentAsync(string displayName, CancellationToken cancellationToken = default) => Task.FromResult(service.CreateSubagent(displayName));
-    public Task<SubagentRecord> SaveSubagentAsync(SubagentSaveRequest request, CancellationToken cancellationToken = default)
-        => Task.FromResult(service.SaveSubagent(request.SubagentId, request.DisplayName, request.Description, request.Instructions,
-            request.ChatProviderId, request.ChatModelId, request.Assignments, request.ChatModelSettingsJson));
-    public Task DeleteSubagentAsync(string subagentId, CancellationToken cancellationToken = default) { service.DeleteSubagent(subagentId); return Task.CompletedTask; }
-    public Task<IReadOnlyList<ProviderCatalogOption>> ListChatProvidersAsync(
-        CancellationToken cancellationToken = default)
-        => ProviderModelCatalogAdapter.ForChatProviders(rpcCatalog)
-            .ListProvidersAsync(cancellationToken);
-    public Task<ProviderModelCatalogResult> LoadChatModelsAsync(string providerId, CancellationToken cancellationToken = default)
-        => ProviderModelCatalogAdapter.ForChatProviders(rpcCatalog).LoadAsync(providerId, cancellationToken);
-    public Task<IReadOnlyList<AgentToolDescriptor>> ListLocalToolsAsync(CancellationToken cancellationToken = default) => _capabilities.ListLocalToolsAsync(cancellationToken);
-    public Task<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>> ListPackageCapabilitiesAsync(CancellationToken cancellationToken = default) => _capabilities.ListPackageCapabilitiesAsync(cancellationToken);
-    public void Dispose() => _capabilities.Dispose();
-}
-#endif
-
 #if SUNDER_SUBAGENTS_APP
-internal sealed class SubagentAppRuntimeGateway :
+internal sealed partial class SubagentAppRuntimeGateway :
     ISubagentManagementGateway,
     ISubsessionSessionReader,
     ISubsessionCheckpointReader,
@@ -66,7 +40,6 @@ internal sealed class SubagentAppRuntimeGateway :
     private readonly ISubagentOwnerClient _client;
     private readonly CancellationTokenSource _lifetime = new();
     private readonly object _runtimeSnapshotLock = new();
-    private IReadOnlyList<ProviderCatalogOption>? _providers;
     private Task<SubagentProjection>? _runtimeSnapshot;
     private Task<SubagentProjection>? _abandonedRuntimeSnapshot;
     private Task? _observationTask;
@@ -137,7 +110,6 @@ internal sealed class SubagentAppRuntimeGateway :
     public async Task<IReadOnlyList<SubagentRecord>> ListSubagentsAsync(CancellationToken cancellationToken = default)
     {
         var projection = await InvokeAsync(new(SubagentQueryKind.Management), cancellationToken).ConfigureAwait(false);
-        UpdateProviders(projection);
         return projection.Subagents ?? [];
     }
     public async Task<SubagentRecord> CreateSubagentAsync(string displayName, CancellationToken cancellationToken = default)
@@ -149,13 +121,14 @@ internal sealed class SubagentAppRuntimeGateway :
     public async Task DeleteSubagentAsync(string subagentId, CancellationToken cancellationToken = default)
         => _ = await CommandAsync(new(SubagentCommandKind.Delete, subagentId), cancellationToken);
 
-    public Task<IReadOnlyList<ProviderCatalogOption>> ListChatProvidersAsync(
+    public async Task<IReadOnlyList<ProviderCatalogOption>> ListChatProvidersAsync(
         CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromResult(_providers
-            ?? throw new InvalidOperationException(
-                "Subagent management must initialize before providers are read."));
+        // Explicit editor refreshes must query the current catalog even when its
+        // asynchronous change notification has not reached the App yet.
+        var projection = await InvokeAsync(new(SubagentQueryKind.Management), cancellationToken).ConfigureAwait(false);
+        return (projection.Providers ?? []).Select(provider =>
+            new ProviderCatalogOption(provider.ProviderId, provider.DisplayName, provider.PackageId)).ToArray();
     }
 
     public async Task<ProviderModelCatalogResult> LoadChatModelsAsync(string providerId, CancellationToken cancellationToken = default)
@@ -397,9 +370,7 @@ internal sealed class SubagentAppRuntimeGateway :
                 Dispatch(SubagentsChanged);
                 break;
             case SubagentChangeKind.Catalog:
-                UpdateProviders(await InvokeAsync(
-                    new(SubagentQueryKind.Management),
-                    cancellationToken).ConfigureAwait(false));
+                _ = await ListChatProvidersAsync(cancellationToken).ConfigureAwait(false);
                 Dispatch(CatalogChanged);
                 break;
             case SubagentChangeKind.Session when change.SessionId is { } sessionId:
@@ -529,18 +500,15 @@ internal sealed class SubagentAppRuntimeGateway :
         }
     }
 
-    private void UpdateProviders(SubagentProjection projection)
-        => _providers = (projection.Providers ?? []).Select(provider =>
-            new ProviderCatalogOption(provider.ProviderId, provider.DisplayName, provider.PackageId)).ToArray();
 }
 #endif
 
 #if SUNDER_SUBAGENTS_WORKER
-internal sealed class SubagentRuntimeHandler(
+internal sealed partial class SubagentRuntimeHandler(
     SubagentService service,
-    AgentRpcCatalog rpcCatalog) : IDisposable
+    ISubagentRuntimeBindings runtimeBindings) : IDisposable
 {
-    private readonly SubagentEditorCapabilityCatalog _capabilities = new(rpcCatalog);
+    private readonly SubagentEditorCapabilityCatalog _capabilities = new(runtimeBindings);
 
     public async ValueTask<SubagentProjection> HandleAsync(SubagentQuery request, CancellationToken cancellationToken = default)
     {
@@ -637,11 +605,10 @@ internal sealed class SubagentRuntimeHandler(
             readiness.Value)]);
     }
 
-    private IReadOnlyList<SubagentCatalogRpcReference<IAgentChatProvider, AgentProviderDescriptor>>
+    private IReadOnlyList<SubagentCatalogRpcReference<ISubagentChatCatalog, AgentProviderDescriptor>>
         SnapshotChatProviders(CancellationToken cancellationToken)
         => SubagentCatalogRpcInvocation.Snapshot(
-            rpcCatalog,
-            AgentRpcServices.ChatProviders,
+            runtimeBindings.GetChatProviders,
             cancellationToken,
             static provider => provider.Descriptor with
             {
@@ -652,7 +619,7 @@ internal sealed class SubagentRuntimeHandler(
         Func<IAgentRuntimeCatalog, SubagentProjection> callback,
         CancellationToken cancellationToken)
     {
-        var reference = rpcCatalog.GetServiceReferences(AgentRpcServices.RuntimeCatalogs)
+        var reference = runtimeBindings.GetRuntimeCatalogs()
             .FirstOrDefault();
         if (reference is null || !reference.TryAcquire(out var lease))
         {

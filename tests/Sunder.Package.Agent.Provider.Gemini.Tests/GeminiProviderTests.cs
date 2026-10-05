@@ -2,7 +2,7 @@ extern alias GeminiApp;
 
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Provider.Gemini;
-using Sunder.Package.Agent.Provider.Gemini.Protocol.Generated;
+using Sunder.Package.Agent.Provider.Gemini.Rpc;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Package.Agent.Provider.TestSupport;
 using Xunit;
@@ -132,12 +132,11 @@ public sealed class GeminiProviderTests
     private sealed class CredentialOwnerClientFake(ProviderCredentialAccessor credentials)
         : IProviderCredentialOwnerClient
     {
-        private readonly ProviderCredentialRpcProvider _provider = new(credentials);
+        private readonly CredentialSettingsService _provider = new(credentials);
 
         public async ValueTask<ProviderCredentialSnapshot> GetStatusAsync(
             CancellationToken cancellationToken = default)
             => ToSnapshot(await _provider.QueryAsync(
-                null!,
                 new CredentialQuery(),
                 cancellationToken));
 
@@ -145,14 +144,12 @@ public sealed class GeminiProviderTests
             string credential,
             CancellationToken cancellationToken = default)
             => ToSnapshot(await _provider.CommandAsync(
-                null!,
-                new CredentialCommand { Kind = CredentialOperation.Set, Credential = credential },
+                new CredentialCommand { Kind = CredentialOperation.Set, Credential = new(new() { Value = credential }) },
                 cancellationToken));
 
         public async ValueTask<ProviderCredentialSnapshot> ClearAsync(
             CancellationToken cancellationToken = default)
             => ToSnapshot(await _provider.CommandAsync(
-                null!,
                 new CredentialCommand { Kind = CredentialOperation.Clear },
                 cancellationToken));
 

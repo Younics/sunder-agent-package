@@ -1,5 +1,5 @@
 using Sunder.Package.Agent.Provider.OpenAI.Auth;
-using Sunder.Package.Agent.Provider.OpenAI.Protocol.Generated;
+using Sunder.Package.Agent.Provider.OpenAI.Rpc;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Package.Agent.Provider.TestSupport;
 using Sunder.Sdk.Abstractions;
@@ -19,12 +19,12 @@ public sealed class OpenAiManagementRpcFaultTests
         using var auth = new CodexConnectedAuthStrategy(new ProviderTestPackageContext(
             "sunder.package.agent.provider.openai",
             secrets: secrets));
-        var provider = new OpenAiManagementRpcProvider(
+        var provider = new ManagementService(new OpenAiRuntimeManagementClient(
             new OpenAiAuthOperationHandler(auth),
-            new ProviderCredentialAccessor(secrets, "openai.api-key"));
+            new ProviderCredentialAccessor(secrets, "openai.api-key")));
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            provider.GetCredentialStatusAsync(null!, new ManagementQuery()).AsTask());
+            provider.GetCredentialStatusAsync(new ManagementQuery()).AsTask());
 
         Assert.Equal(UnexpectedMessage, exception.Message);
         Assert.IsNotType<SunderRpcException>(exception);
@@ -37,12 +37,12 @@ public sealed class OpenAiManagementRpcFaultTests
         using var auth = new CodexConnectedAuthStrategy(new ProviderTestPackageContext(
             "sunder.package.agent.provider.openai",
             secrets: secrets));
-        var provider = new OpenAiManagementRpcProvider(
+        var provider = new ManagementService(new OpenAiRuntimeManagementClient(
             new OpenAiAuthOperationHandler(auth),
-            new ProviderCredentialAccessor(secrets, "openai.api-key"));
+            new ProviderCredentialAccessor(secrets, "openai.api-key")));
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            provider.GetAuthStatusAsync(null!, new ManagementQuery()).AsTask());
+            provider.GetAuthStatusAsync(new ManagementQuery()).AsTask());
 
         Assert.Equal(UnexpectedMessage, exception.Message);
         Assert.IsNotType<SunderRpcException>(exception);
@@ -55,14 +55,13 @@ public sealed class OpenAiManagementRpcFaultTests
         using var auth = new CodexConnectedAuthStrategy(new ProviderTestPackageContext(
             "sunder.package.agent.provider.openai",
             secrets: secrets));
-        var provider = new OpenAiManagementRpcProvider(
+        var provider = new ManagementService(new OpenAiRuntimeManagementClient(
             new OpenAiAuthOperationHandler(auth),
-            new ProviderCredentialAccessor(secrets, "openai.api-key"));
+            new ProviderCredentialAccessor(secrets, "openai.api-key")));
 
         var exception = await Assert.ThrowsAsync<SunderRpcException>(() =>
             provider.SetCredentialAsync(
-                null!,
-                new CredentialRequest { Credential = " " },
+                new CredentialRequest { Credential = new() { Value = " " } },
                 CancellationToken.None).AsTask());
 
         Assert.Equal(SunderRpcErrorKind.Domain, exception.Error.Kind);

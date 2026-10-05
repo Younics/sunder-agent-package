@@ -4,7 +4,7 @@ using Sunder.Sdk.Worker;
 
 namespace Sunder.Package.Agent.Execution.Docker;
 
-internal sealed class DockerPackageStorageMigration(IPackageContext packageContext) : ISunderWorkerLifecycleService
+internal sealed class DockerPackageStorageMigration(IPackageContext packageContext) : ISunderWorkerLifecycleService, ISunderWorkerSettingsSchemaProvider
 {
     private const string WorkspaceKeyPrefix = "workspace-bindings.config.v2.";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
@@ -34,6 +34,8 @@ internal sealed class DockerPackageStorageMigration(IPackageContext packageConte
         => await EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
 
     public Task Completion => Task.CompletedTask;
+
+    public Sunder.Sdk.Settings.PackageSettingsSchema SettingsSchema => DockerExecutionConfiguration.Schema;
 
     public ValueTask PrepareCandidateAsync(CancellationToken cancellationToken = default)
     {

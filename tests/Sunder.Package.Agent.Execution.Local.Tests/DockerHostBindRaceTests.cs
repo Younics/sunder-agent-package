@@ -1,8 +1,12 @@
-using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Execution.Docker;
+extern alias DockerWorker;
+
+using DockerWorker::Sunder.Package.Agent.Contracts.Models;
+using DockerWorker::Sunder.Package.Agent.Execution.Docker;
 using Xunit;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
+
+using DockerWorker::Sunder.Agent.Execution.Common;
 
 public sealed class DockerHostBindRaceTests : IDisposable
 {

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -8,13 +9,18 @@ using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.TestSupport;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Worker;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
 
-internal partial class RegressionTestExtensionCatalog : AgentRpcCatalog
+internal partial class RegressionTestExtensionCatalog : AgentRpcCatalog, IDisposable
 {
     private readonly RegressionTestRpcClient _client;
+    private readonly RegressionTestSourceProviders _providers = new();
+    private int _catalogDisposed;
+    private readonly object _consumerGate = new();
+    private readonly Dictionary<(Type Type, string Caller), IAsyncDisposable> _consumers = [];
 
     public RegressionTestExtensionCatalog(bool workerStyleProviderBoundary = false)
         : this(new RegressionTestRpcClient(
@@ -28,12 +34,17 @@ internal partial class RegressionTestExtensionCatalog : AgentRpcCatalog
     {
         _client = client;
         RunControls = new AgentRunControlRegistry();
-        BehaviorLoops = AgentRpcServices.CreateBehaviorLoops(RunControls, this);
+        // This source is linked into several owning test assemblies. Resolve the
+        // actual Worker binding without expanding production friend assemblies.
+        BehaviorLoops = (AgentRpcProviderService<IAgentBehaviorLoop>)typeof(AgentRpcCatalog).Assembly
+            .GetType("Sunder.Package.Agent.Runtime.Rpc.AgentBehaviorBindings", throwOnError: true)!
+            .GetMethod("Create", BindingFlags.Static | BindingFlags.NonPublic)!
+            .Invoke(null, [RunControls, this])!;
         AddProvider(
             AgentRpcContractIds.RunControl,
             RunControls,
             "sunder.package.agent",
-            providerId: AgentRunControlRpc.ProviderId);
+            providerId: "agent.run.control");
     }
 
     public AgentRunControlRegistry RunControls { get; }
@@ -52,6 +63,23 @@ internal partial class RegressionTestExtensionCatalog : AgentRpcCatalog
 
     public int InvariantViolationReportCount => _client.State.InvariantViolationReportCount;
 
+    internal ISunderRpcClient RpcForCaller(string packageId) => _client.ForCaller(packageId);
+
+    internal T OwnConsumer<T>(string caller, Func<ISunderRpcClient, T> create) where T : class, IAsyncDisposable
+    {
+        lock (_consumerGate)
+        {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _catalogDisposed) != 0, this);
+            var key = (typeof(T), caller);
+            if (!_consumers.TryGetValue(key, out var value))
+            {
+                value = create(_client.ForCaller(caller));
+                _consumers.Add(key, value);
+            }
+            return (T)value;
+        }
+    }
+
     public void SetProviderLookupFailure(string callerPackageId, SunderRpcErrorKind? errorKind)
         => _client.State.SetProviderLookupFailure(callerPackageId, errorKind);
 
@@ -59,92 +87,43 @@ internal partial class RegressionTestExtensionCatalog : AgentRpcCatalog
         where TService : class
         => Assert.Single(GetServiceReferences(service));
 
-    public void AddProvider<TService>(
-        AgentRpcService<TService> service,
-        TService implementation,
-        string packageId = "test.package")
-        where TService : class
-        => AddProvider(service.ContractId, implementation, packageId);
-
-    public void AddProvider<TService>(
-        AgentRpcProviderService<TService> service,
-        TService implementation,
-        string packageId = "test.package")
-        where TService : class
-        => AddProvider(service.ContractId, implementation, packageId);
-
-    public void AddTool(IAgentTool tool, string packageId = "test.package")
-    {
-        var source = new AgentStaticToolSourceAdapter(
-            "installed-packages",
-            "Installed packages",
-            "test",
-            [tool]);
-        AddProvider(AgentRpcContractIds.ToolSource, source, packageId, tool);
-    }
-
-    public void AddBehaviorLoop(IAgentBehaviorLoop implementation, string packageId = "test.package")
-        => AddProvider(AgentRpcContractIds.BehaviorLoop, implementation, packageId);
-
     public Task RetireProviderAsync(object implementation)
         => _client.State.RetireAsync(implementation);
 
-    public Task RetireProviderAsync<TService>(AgentRpcService<TService> _, TService implementation)
+    public Task RetireProviderAsync<TService>(AgentRpcService<TService> _, object implementation)
         where TService : class
         => RetireProviderAsync(implementation);
 
     public void RemoveProvider(object implementation)
         => _ = RetireProviderAsync(implementation);
 
-    public void RemoveProvider<TService>(AgentRpcService<TService> _, TService implementation)
+    public void RemoveProvider<TService>(AgentRpcService<TService> _, object implementation)
         where TService : class
         => RemoveProvider(implementation);
 
     public new void Dispose()
     {
-        base.Dispose();
-        _client.State.Dispose();
+        if (Interlocked.Exchange(ref _catalogDisposed, 1) != 0) return;
+        try { base.Dispose(); }
+        finally
+        {
+            try
+            {
+                IAsyncDisposable[] consumers;
+                lock (_consumerGate) { consumers = _consumers.Values.ToArray(); _consumers.Clear(); }
+                Task.Run(async () =>
+                {
+                    await Task.WhenAll(consumers.Select(consumer => consumer.DisposeAsync().AsTask())).ConfigureAwait(false);
+                }).GetAwaiter().GetResult();
+            }
+            finally
+            {
+                try { _client.State.Dispose(); }
+                finally { _providers.Dispose(); }
+            }
+        }
     }
 
-    private void AddProvider(
-        string contractId,
-        object implementation,
-        string packageId,
-        object? registrationIdentity = null,
-        string? providerId = null)
-    {
-        var providerCatalog = new AgentRpcCatalog(_client.ForCaller(packageId));
-        var handler = contractId switch
-        {
-            AgentRpcContractIds.ChatProvider when implementation is IAgentChatProvider service => AgentChatProviderRpc.CreateHandler(service),
-            AgentRpcContractIds.EmbeddingProvider when implementation is IAgentEmbeddingProvider service => AgentEmbeddingProviderRpc.CreateHandler(service),
-            AgentRpcContractIds.RuntimeCatalog when implementation is IAgentRuntimeCatalog service => AgentRuntimeCatalogRpc.CreateHandler(service),
-            AgentRpcContractIds.WorkspaceExecutionResolver when implementation is IAgentWorkspaceExecutionResolver service => AgentWorkspaceExecutionResolverRpc.CreateHandler(service),
-            AgentRpcContractIds.ChildRunExecutor when implementation is IAgentChildRunExecutor service => AgentChildRunExecutorRpc.CreateHandler(service),
-            AgentRpcContractIds.SessionCleaner when implementation is IAgentSessionDataCleaner service => AgentSessionCleanerRpc.CreateHandler(service),
-            AgentRpcContractIds.SystemPromptContributor when implementation is IAgentSystemPromptContributor service => AgentSystemPromptContributorRpc.CreateHandler(service),
-            AgentRpcContractIds.ToolSource when implementation is IAgentToolSource service => AgentToolSourceRpc.CreateHandler(service, providerCatalog),
-            AgentRpcContractIds.ObservedToolExecution when implementation is IAgentObservedToolExecution service => AgentObservedToolExecutionRpc.CreateHandler(service, providerCatalog),
-            AgentRpcContractIds.PermissionSurface when implementation is IAgentPermissionSurface service => AgentPermissionSurfaceRpc.CreateHandler(service),
-            AgentRpcContractIds.PromptContextContributor when implementation is IAgentPromptContextContributor service => AgentPromptContextContributorRpc.CreateHandler(service, providerCatalog),
-            AgentRpcContractIds.DurableLifecycleObserver when implementation is IAgentDurableLifecycleObserver service => AgentDurableLifecycleObserverRpc.CreateHandler(service),
-            AgentRpcContractIds.ProfileCapabilityConsumer when implementation is IAgentProfileCapabilityConsumer service => AgentProfileCapabilityConsumerRpc.CreateHandler(service),
-            AgentRpcContractIds.SelectableCapabilityProvider when implementation is IAgentProfileSelectableCapabilityProvider service => AgentSelectableCapabilityProviderRpc.CreateHandler(service),
-            AgentRpcContractIds.BehaviorLoop when implementation is IAgentBehaviorLoop service => AgentBehaviorLoopRpc.CreateHandler(service, providerCatalog),
-            AgentRpcContractIds.ExecutionTarget when implementation is IAgentExecutionTarget service => AgentExecutionTargetRpc.CreateHandler(service),
-            AgentRpcContractIds.WorkspacePathMigrator when implementation is IAgentWorkspacePathMigrationContributor service => AgentWorkspacePathMigratorRpc.CreateHandler(service),
-            AgentRpcContractIds.WorkspaceEditor when implementation is IAgentWorkspaceEditorContributor service => AgentWorkspaceEditorRpc.CreateHandler(service),
-            AgentRpcContractIds.RunControl when implementation is AgentRunControlRegistry service => AgentRunControlRpc.CreateHandler(service),
-            _ => throw new ArgumentException($"No test RPC handler is available for contract '{contractId}'.", nameof(implementation)),
-        };
-        _client.State.Add(
-            packageId,
-            contractId,
-            registrationIdentity ?? implementation,
-            handler,
-            providerCatalog,
-            providerId);
-    }
 }
 
 internal sealed class RegressionTestRpcClient(
@@ -592,8 +571,9 @@ internal sealed class RegressionTestInvocationAuthority(
     private void ThrowIfRevoked() => _revocation.Token.ThrowIfCancellationRequested();
 }
 
-internal sealed class RegressionTestRpcState(bool workerStyleProviderBoundary = false) : IDisposable
+internal sealed partial class RegressionTestRpcState(bool workerStyleProviderBoundary = false) : IDisposable
 {
+    private readonly bool _workerStyleProviderBoundary = workerStyleProviderBoundary;
     private readonly object _gate = new();
     private readonly Dictionary<string, Entry> _entries = new(StringComparer.Ordinal);
     private readonly Dictionary<string, SunderRpcErrorKind> _providerLookupFailures = new(StringComparer.Ordinal);
@@ -642,7 +622,7 @@ internal sealed class RegressionTestRpcState(bool workerStyleProviderBoundary = 
         }
     }
 
-    public void Add(
+    public SunderRpcProviderSnapshot Add(
         string packageId,
         string contractId,
         object implementation,
@@ -651,19 +631,34 @@ internal sealed class RegressionTestRpcState(bool workerStyleProviderBoundary = 
         string? providerId = null)
         => Add(
             packageId,
-            AgentRpcContractDescriptors.Get(contractId),
+            RegressionTestRpcDescriptors.Get(contractId),
             implementation,
             handler,
             ownedCatalog,
             providerId);
 
-    public void Add(
+    public SunderRpcProviderSnapshot AddGenerated(
+        string packageId,
+        object implementation,
+        SunderWorkerProviderRegistration registration,
+        IDisposable ownedCatalog,
+        string? providerId = null)
+    {
+        var descriptor = RegressionTestRpcDescriptors.Get(registration.ContractId);
+        Assert.Equal(descriptor.Version, registration.ContractVersion);
+        Assert.Equal(descriptor.Sha256, registration.DescriptorSha256);
+        Assert.Equal(descriptor.AbiSha256, registration.AbiSha256);
+        return Add(packageId, descriptor, implementation, registration.Handler, ownedCatalog, providerId, "2.0.0");
+    }
+
+    public SunderRpcProviderSnapshot Add(
         string packageId,
         SunderRpcContractDescriptor descriptor,
         object implementation,
         ISunderRpcServiceHandler handler,
         IDisposable ownedCatalog,
-        string? providerId = null)
+        string? providerId = null,
+        string packageVersion = "1.0.0")
     {
         lock (_gate)
         {
@@ -671,13 +666,13 @@ internal sealed class RegressionTestRpcState(bool workerStyleProviderBoundary = 
             var endpoint = new SunderRpcEndpointReference($"test.rpc.{Guid.NewGuid():N}");
             var snapshot = new SunderRpcProviderSnapshot(
                 packageId,
-                "1.0.0",
+                packageVersion,
                 providerId ?? $"test.provider.{sequence}",
                 descriptor.ContractId,
                 descriptor.Version,
                 descriptor.Sha256,
                 descriptor.AbiSha256 ?? throw new InvalidOperationException(
-                    $"Agent RPC contract '{descriptor.ContractId}' does not expose a V2 ABI SHA-256."),
+                    $"Agent RPC contract '{descriptor.ContractId}' does not expose an ABI SHA-256."),
                 Guid.NewGuid(),
                 sequence,
                 1,
@@ -687,6 +682,7 @@ internal sealed class RegressionTestRpcState(bool workerStyleProviderBoundary = 
             var entry = new Entry(implementation, handler, snapshot, descriptor, ownedCatalog);
             _entries.Add(endpoint.Value, entry);
             Publish(new SunderRpcCatalogEvent(_revision, ++_sequence, SunderRpcCatalogEventKind.Activated, snapshot));
+            return snapshot;
         }
     }
 
@@ -846,9 +842,11 @@ internal sealed class RegressionTestRpcState(bool workerStyleProviderBoundary = 
         var entry = Acquire(endpoint);
         using var invocation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, entry.Retirement.Token);
         var context = CreateContext(callerPackageId, entry.Snapshot, invocation.Token, scope);
+        var providerInvoked = false;
         try
         {
             ValidatePayload(entry, serviceId, methodId, request, output: false);
+            providerInvoked = true;
             var response = await entry.Handler.InvokeUnaryAsync(
                 context,
                 serviceId,
@@ -867,10 +865,17 @@ internal sealed class RegressionTestRpcState(bool workerStyleProviderBoundary = 
             Volatile.Write(ref _lastInvocationFailure, exception);
             throw exception;
         }
+        catch (OperationCanceledException exception) when (cancellationToken.IsCancellationRequested)
+        {
+            Volatile.Write(ref _lastInvocationFailure, exception);
+            throw;
+        }
         catch (Exception exception)
         {
             Volatile.Write(ref _lastInvocationFailure, exception);
-            var projected = ProjectProviderFailure(entry, serviceId, methodId, exception);
+            // Host-side request validation precedes dispatch. Only failures from
+            // the provider/output boundary receive worker-style sanitization.
+            var projected = providerInvoked ? ProjectProviderFailure(entry, serviceId, methodId, exception) : exception;
             if (ReferenceEquals(projected, exception)) throw;
             throw projected;
         }
@@ -907,10 +912,11 @@ internal sealed class RegressionTestRpcState(bool workerStyleProviderBoundary = 
                        entry,
                        serviceId,
                        methodId,
-                       enumerator).ConfigureAwait(false))
+                       enumerator,
+                       cancellationToken).ConfigureAwait(false))
             {
                 var item = enumerator.Current;
-                ValidatePayload(entry, serviceId, methodId, item, output: true);
+                ValidateProviderOutput(entry, serviceId, methodId, item);
                 yield return item;
             }
         }
@@ -925,7 +931,8 @@ internal sealed class RegressionTestRpcState(bool workerStyleProviderBoundary = 
         Entry entry,
         string serviceId,
         string methodId,
-        IAsyncEnumerator<JsonElement> enumerator)
+        IAsyncEnumerator<JsonElement> enumerator,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -939,6 +946,11 @@ internal sealed class RegressionTestRpcState(bool workerStyleProviderBoundary = 
                 "The test RPC provider activation is stale."));
             Volatile.Write(ref _lastInvocationFailure, exception);
             throw exception;
+        }
+        catch (OperationCanceledException exception) when (cancellationToken.IsCancellationRequested)
+        {
+            Volatile.Write(ref _lastInvocationFailure, exception);
+            throw;
         }
         catch (Exception exception)
         {
@@ -999,31 +1011,6 @@ internal sealed class RegressionTestRpcState(bool workerStyleProviderBoundary = 
         foreach (var watcher in _watchers.ToArray()) watcher.TryWrite(item);
     }
 
-    private Exception ProjectProviderFailure(
-        Entry entry,
-        string serviceId,
-        string methodId,
-        Exception exception)
-    {
-        if (!workerStyleProviderBoundary
-            || exception is SunderRpcException
-            {
-                IsHostAuthenticated: false,
-                Error.Kind: SunderRpcErrorKind.Domain,
-            } rpcException
-            && entry.Descriptor.FindService(serviceId)?.FindMethod(methodId)?.Errors.Contains(
-                rpcException.Error.Code,
-                StringComparer.Ordinal) == true)
-        {
-            return exception;
-        }
-
-        return new SunderRpcException(new SunderRpcError(
-            SunderRpcErrorKind.ProviderFaulted,
-            "rpc.provider.handler-fault",
-            "The process provider handler failed."));
-    }
-
     private static SunderRpcInvocationContext CreateContext(
         string callerPackageId,
         SunderRpcProviderSnapshot provider,
@@ -1037,27 +1024,6 @@ internal sealed class RegressionTestRpcState(bool workerStyleProviderBoundary = 
             1,
             cancellationToken,
             scope?.CreateInvocationAuthority(provider.Endpoint));
-
-    private static void ValidatePayload(
-        Entry entry,
-        string serviceId,
-        string methodId,
-        JsonElement payload,
-        bool output)
-    {
-        var method = entry.Descriptor.FindService(serviceId)?.FindMethod(methodId);
-        var schemaReference = output ? method?.OutputSchemaReference : method?.RequestSchemaReference;
-        string? error = null;
-        if (schemaReference is null
-            || !entry.Descriptor.IsValid(schemaReference, payload, out error))
-        {
-            throw new SunderRpcException(new SunderRpcError(
-                SunderRpcErrorKind.Validation,
-                "test.rpc.schema-validation",
-                $"The RPC {(output ? "output" : "request")} does not match "
-                + $"'{entry.Descriptor.ContractId}/{serviceId}/{methodId}': {error ?? "method not found"}"));
-        }
-    }
 
     private sealed class Entry(
         object implementation,

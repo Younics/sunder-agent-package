@@ -193,7 +193,7 @@ public sealed class AgentWorkspaceStackContributor(
         {
             foreach (var contribution in AgentRpcInvocation.Snapshot(
                          rpcCatalog,
-                         AgentRpcServices.ExecutionTargets,
+                         Sunder.Package.Agent.Runtime.Rpc.AgentExecutionBindings.Service,
                          static target => target.Descriptor))
             {
                 var descriptor = contribution.Metadata;

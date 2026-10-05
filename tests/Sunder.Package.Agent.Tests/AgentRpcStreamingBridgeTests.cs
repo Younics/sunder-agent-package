@@ -87,15 +87,17 @@ public sealed class AgentRpcStreamingBridgeTests
         var chat = new SequenceChatClient(Enumerable.Range(0, 256)
             .Select(static index => Update(new TextContent(index.ToString())))
             .ToArray());
-        using var requestDocument = JsonDocument.Parse(AgentRpcServiceHandler.Serialize(new AgentChatStreamRequest(
+        using var requestDocument = JsonDocument.Parse(RegressionTestRpcValues.Serialize(new AgentChatStreamRequest(
             "provider",
             "model",
             [],
             EmptyOptions())));
-        var enumerator = AgentChatProviderRpc.CreateHandler(new ChatProvider(chat))
-            .InvokeServerStreamAsync(
-                null!,
-                AgentChatProviderRpc.ServiceId,
+        using var catalog = new RegressionTestExtensionCatalog();
+        var provider = catalog.AddProvider(AgentRpcContractIds.ChatProvider, new ChatProvider(chat), "test.chat");
+        await using var scope = await catalog.RpcForCaller("sunder.package.agent").CreateCallScopeAsync();
+        var enumerator = scope.SubscribeAsync(
+                provider.Endpoint,
+                "chat-provider",
                 "stream-chat",
                 requestDocument.RootElement.Clone())
             .GetAsyncEnumerator();
@@ -112,7 +114,7 @@ public sealed class AgentRpcStreamingBridgeTests
     {
         var queueFailure = new SunderRpcException(new SunderRpcError(
             SunderRpcErrorKind.ResourceExhausted,
-            AgentChatProviderRpc.StreamQueueLimitErrorCode,
+            AgentChatFailureProjection.StreamQueueLimitErrorCode,
             "queue diagnostic",
             SunderRpcDispatchState.PossiblyDispatched,
             SunderRpcRetrySafety.Unsafe));
@@ -125,9 +127,9 @@ public sealed class AgentRpcStreamingBridgeTests
         var item = Assert.Single(await ReadProviderEventsAsync(
             new SequenceChatClient([], providerFailure)));
         var errorCode = item.GetProperty("errorCode").GetString();
-        Assert.Equal(AgentChatProviderRpc.StreamQueueLimitErrorCode, errorCode);
+        Assert.Equal(AgentChatFailureProjection.StreamQueueLimitErrorCode, errorCode);
 
-        var reconstructed = AgentChatProviderRpc.CreateProviderException(new AgentChatErrorEvent(
+        var reconstructed = AgentChatFailureProjection.CreateProviderException(new AgentChatErrorEvent(
             errorCode!,
             item.GetProperty("errorMessage").GetString()!,
             item.GetProperty("errorContent").GetString()!,
@@ -156,10 +158,10 @@ public sealed class AgentRpcStreamingBridgeTests
         var item = Assert.Single(await ReadProviderEventsAsync(
             new SequenceChatClient([], providerFailure)));
         Assert.Equal(
-            AgentChatProviderRpc.UnsafeRpcFailureErrorCode,
+            AgentChatFailureProjection.UnsafeRpcFailureErrorCode,
             item.GetProperty("errorCode").GetString());
-        var reconstructed = AgentChatProviderRpc.CreateProviderException(new AgentChatErrorEvent(
-            AgentChatProviderRpc.UnsafeRpcFailureErrorCode,
+        var reconstructed = AgentChatFailureProjection.CreateProviderException(new AgentChatErrorEvent(
+            AgentChatFailureProjection.UnsafeRpcFailureErrorCode,
             "outer provider diagnostic",
             "outer provider content",
             AgentChatProviderFailureKind.Unknown));
@@ -194,19 +196,18 @@ public sealed class AgentRpcStreamingBridgeTests
             new ChatRuntime(chat),
             "sunder.package.agent",
             out var invocationId);
-        var reference = Assert.Single(catalog.GetServiceReferences(AgentRpcServices.RunControls));
-        Assert.True(reference.TryAcquire(out var lease));
-        using (lease)
+        await using var scope = await catalog.RpcForCaller("sunder.package.agent").CreateCallScopeAsync();
+        var provider = Assert.Single((await scope.DiscoverAsync(AgentRpcContractIds.RunControl)).Providers);
         {
-            var enumerator = lease.Service.StreamChatAsync(
-                    null,
+            var enumerator = scope.SubscribeAsync(
+                    provider.Endpoint, "run-control", "stream-chat",
                     Request(invocationId),
-                    CancellationToken.None)
+                    cancellationToken: CancellationToken.None)
                 .GetAsyncEnumerator();
             try
             {
                 Assert.True(await enumerator.MoveNextAsync());
-                Assert.IsType<AgentChatUpdateEvent>(enumerator.Current);
+                Assert.Equal("update", enumerator.Current.GetProperty("kind").GetString());
                 Assert.Equal(1, chat.ProducedCount);
             }
             finally
@@ -238,23 +239,23 @@ public sealed class AgentRpcStreamingBridgeTests
             new ChatRuntime(chat),
             "sunder.package.agent",
             out var invocationId);
-        var reference = Assert.Single(catalog.GetServiceReferences(AgentRpcServices.RunControls));
-        Assert.True(reference.TryAcquire(out var lease));
-        using (lease)
+        await using var scope = await catalog.RpcForCaller("sunder.package.agent").CreateCallScopeAsync();
+        var provider = Assert.Single((await scope.DiscoverAsync(AgentRpcContractIds.RunControl)).Providers);
         {
-            var events = new List<AgentChatStreamEvent>();
-            await foreach (var item in lease.Service.StreamChatAsync(
-                               null,
+            var events = new List<JsonElement>();
+            await foreach (var item in scope.SubscribeAsync(
+                               provider.Endpoint, "run-control", "stream-chat",
                                Request(invocationId),
-                               CancellationToken.None))
+                               cancellationToken: CancellationToken.None))
             {
                 events.Add(item);
             }
 
-            Assert.IsType<AgentChatUpdateEvent>(events[0]);
-            var error = Assert.IsType<AgentChatErrorEvent>(events[1]);
-            Assert.Equal("expected-provider-error", error.ErrorCode);
-            Assert.Equal(AgentChatProviderFailureKind.ContextWindowExceeded, error.ErrorFailureKind);
+            Assert.Equal("update", events[0].GetProperty("kind").GetString());
+            var error = events[1];
+            Assert.Equal("error", error.GetProperty("kind").GetString());
+            Assert.Equal("expected-provider-error", error.GetProperty("errorCode").GetString());
+            Assert.Equal("context-window-exceeded", error.GetProperty("errorFailureKind").GetString());
             Assert.Equal(2, events.Count);
         }
     }
@@ -271,14 +272,13 @@ public sealed class AgentRpcStreamingBridgeTests
             new ChatRuntime(chat),
             "sunder.package.agent",
             out var invocationId);
-        var reference = Assert.Single(catalog.GetServiceReferences(AgentRpcServices.RunControls));
-        Assert.True(reference.TryAcquire(out var lease));
-        using (lease)
+        await using var scope = await catalog.RpcForCaller("sunder.package.agent").CreateCallScopeAsync();
+        var provider = Assert.Single((await scope.DiscoverAsync(AgentRpcContractIds.RunControl)).Providers);
         {
-            var enumerator = lease.Service.StreamChatAsync(
-                    null,
+            var enumerator = scope.SubscribeAsync(
+                    provider.Endpoint, "run-control", "stream-chat",
                     Request(invocationId),
-                    CancellationToken.None)
+                    cancellationToken: CancellationToken.None)
                 .GetAsyncEnumerator();
             try
             {
@@ -307,14 +307,13 @@ public sealed class AgentRpcStreamingBridgeTests
             new ChatRuntime(chat),
             "sunder.package.agent",
             out var invocationId);
-        var reference = Assert.Single(catalog.GetServiceReferences(AgentRpcServices.RunControls));
-        Assert.True(reference.TryAcquire(out var lease));
-        using (lease)
+        await using var scope = await catalog.RpcForCaller("sunder.package.agent").CreateCallScopeAsync();
+        var provider = Assert.Single((await scope.DiscoverAsync(AgentRpcContractIds.RunControl)).Providers);
         {
-            var enumerator = lease.Service.StreamChatAsync(
-                    null,
+            var enumerator = scope.SubscribeAsync(
+                    provider.Endpoint, "run-control", "stream-chat",
                     Request(invocationId),
-                    cancellation.Token)
+                    cancellationToken: cancellation.Token)
                 .GetAsyncEnumerator(cancellation.Token);
             try
             {
@@ -345,14 +344,13 @@ public sealed class AgentRpcStreamingBridgeTests
             new ChatRuntime(chat),
             "sunder.package.agent",
             out var invocationId);
-        var reference = Assert.Single(catalog.GetServiceReferences(AgentRpcServices.RunControls));
-        Assert.True(reference.TryAcquire(out var lease));
-        using (lease)
+        await using var scope = await catalog.RpcForCaller("sunder.package.agent").CreateCallScopeAsync();
+        var provider = Assert.Single((await scope.DiscoverAsync(AgentRpcContractIds.RunControl)).Providers);
         {
-            var enumerator = lease.Service.StreamChatAsync(
-                    null,
+            var enumerator = scope.SubscribeAsync(
+                    provider.Endpoint, "run-control", "stream-chat",
                     Request(invocationId),
-                    cancellation.Token)
+                    cancellationToken: cancellation.Token)
                 .GetAsyncEnumerator(cancellation.Token);
             try
             {
@@ -376,17 +374,18 @@ public sealed class AgentRpcStreamingBridgeTests
 
     private static async Task<IReadOnlyList<JsonElement>> ReadProviderEventsAsync(IChatClient chatClient)
     {
-        using var requestDocument = JsonDocument.Parse(AgentRpcServiceHandler.Serialize(new AgentChatStreamRequest(
-            "provider",
-            "model",
-            [],
-            EmptyOptions())));
+        using var requestDocument = JsonDocument.Parse(RegressionTestRpcValues.Serialize(new
+        {
+            providerId = "provider", modelId = "model", messages = Array.Empty<object>(), options = EmptyOptions(),
+        }));
         var request = requestDocument.RootElement.Clone();
         var events = new List<JsonElement>();
-        await foreach (var item in AgentChatProviderRpc.CreateHandler(new ChatProvider(chatClient))
-                           .InvokeServerStreamAsync(
-                               null!,
-                               AgentChatProviderRpc.ServiceId,
+        using var catalog = new RegressionTestExtensionCatalog();
+        var provider = catalog.AddProvider(AgentRpcContractIds.ChatProvider, new ChatProvider(chatClient), "test.chat");
+        await using var scope = await catalog.RpcForCaller("sunder.package.agent").CreateCallScopeAsync();
+        await foreach (var item in scope.SubscribeAsync(
+                               provider.Endpoint,
+                               "chat-provider",
                                "stream-chat",
                                request))
         {
@@ -395,12 +394,15 @@ public sealed class AgentRpcStreamingBridgeTests
         return events;
     }
 
-    private static RunControlChatRequest Request(Guid invocationId)
-        => new(
-            new RunControlInvocation(invocationId),
-            new RunControlChatContext("provider", "model", null),
-            [],
-            EmptyOptions());
+    private static JsonElement Request(Guid invocationId)
+    {
+        using var document = JsonDocument.Parse(RegressionTestRpcValues.Serialize(new
+        {
+            invocation = new { invocationId }, context = new { providerId = "provider", modelId = "model" },
+            messages = Array.Empty<object>(), options = EmptyOptions(),
+        }));
+        return document.RootElement.Clone();
+    }
 
     private static AgentChatOptions EmptyOptions()
         => new(

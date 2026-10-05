@@ -94,6 +94,7 @@ internal sealed class CapabilityOptionState : INotifyPropertyChanged
     }
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.App)]
 internal sealed class CapabilitySelectionState : INotifyPropertyChanged
 {
     private static readonly CapabilityAssignmentComparer AssignmentComparer = new();
@@ -311,6 +312,7 @@ internal sealed class CapabilitySelectionState : INotifyPropertyChanged
     }
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.App)]
 internal static class CapabilityGrouping
 {
     public static CapabilityGroupDefinition ForTool(AgentToolDescriptor descriptor)

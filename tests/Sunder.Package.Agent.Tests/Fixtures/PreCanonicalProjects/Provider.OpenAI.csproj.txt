@@ -1,0 +1,60 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AssemblyName>Sunder.Package.Agent.Provider.OpenAI</AssemblyName>
+    <RootNamespace>Sunder.Package.Agent.Provider.OpenAI</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <SunderPackageFamilyId>sunder.package.agent.provider.openai</SunderPackageFamilyId>
+    <SunderPackageRole>worker</SunderPackageRole>
+    <SunderPackageAppProject>App\Sunder.Package.Agent.Provider.OpenAI.App.csproj</SunderPackageAppProject>
+    <SunderPackageAssetsDirectory>$(MSBuildProjectDirectory)\Assets</SunderPackageAssetsDirectory>
+  </PropertyGroup>
+
+  <Import Project="$(MSBuildThisFileDirectory)..\..\Sunder.Agent.Worker.props" />
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="OpenAI" />
+    <ProjectReference Include="Shared\Sunder.Package.Agent.Provider.OpenAI.Shared.csproj" />
+    <ProjectReference Include="..\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
+    <Compile Include="Worker\**\*.cs"
+             Exclude="Worker\bin\**;Worker\obj\**" />
+    <Compile Include="OpenAiExceptionMapper.cs" />
+    <Compile Include="OpenAiModelOptionsChatClient.cs" />
+    <Compile Include="OpenAiPackageAuthHandler.cs" />
+    <Compile Include="OpenAiAgentProvider.cs" />
+    <Compile Include="OpenAiCodexChatClient.cs" />
+    <Compile Include="OpenAiEmbeddingProvider.cs" />
+    <Compile Include="CodexHttpClientFactory.cs" />
+    <Compile Include="PackageMetadata.cs" />
+    <Compile Include="PackageDependency.Legacy.cs" />
+    <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="Management\OpenAiManagementRpcProvider.cs" />
+    <Compile Include="Management\OpenAiAuthOperationHandler.cs" />
+    <Compile Include="Management\OpenAiRuntimeManagementClient.cs" />
+    <Compile Include="Auth\*.cs" />
+    <Compile Include="Transport\*.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Provider.Shared\*.cs"
+             Exclude="..\Sunder.Package.Agent.Provider.Shared\ApiKeySettingsState.cs;..\Sunder.Package.Agent.Provider.Shared\ApiKeyUtilitySettingsState.cs;..\Sunder.Package.Agent.Provider.Shared\ProviderConfigurationSections.cs;..\Sunder.Package.Agent.Provider.Shared\ProviderModelCatalog.cs;..\Sunder.Package.Agent.Provider.Shared\ProviderModelId.cs;..\Sunder.Package.Agent.Provider.Shared\ProviderUtilityModelSelection.cs;..\Sunder.Package.Agent.Provider.Shared\UtilityModelSettingsState.cs"
+             Link="Provider.Shared\%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <SunderContractBundle Include="Shared\Contracts\openai-management.rpc.json"
+                          ContractId="sunder.package.agent.provider.openai.management"
+                            Version="1.0.0"
+                          DescriptorPath="contracts/openai-management.rpc.json"
+                          Exposure="package" />
+    <SunderRpcProvider Include="openai.management"
+                       ContractId="sunder.package.agent.provider.openai.management"
+                        ContractVersion="1.0.0"
+                       Role="runtime"
+                       Audience="owner" />
+    <SunderPackageTarget Include="runtime/$(RuntimeIdentifier)"
+                         Role="runtime"
+                         Rid="$(RuntimeIdentifier)"
+                         Kind="worker" />
+  </ItemGroup>
+
+</Project>

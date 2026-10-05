@@ -1,4 +1,6 @@
-using Sunder.Package.Agent.Execution.Local;
+extern alias LocalApp;
+
+using LocalApp::Sunder.Package.Agent.Execution.Local;
 using Sunder.Package.Agent.TestSupport.Avalonia;
 using Sunder.Sdk.Abstractions;
 using Xunit;

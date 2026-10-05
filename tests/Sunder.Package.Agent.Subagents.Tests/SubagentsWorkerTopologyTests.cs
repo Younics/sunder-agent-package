@@ -1,7 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using Sunder.Package.Agent.Subagents.Models;
-using Sunder.Package.Agent.Subagents.Protocol;
 using Sunder.Package.Agent.Subagents.Services;
 using Sunder.Package.Agent.Tests;
 using Sunder.Sdk.Abstractions;
@@ -36,7 +35,7 @@ public sealed class SubagentsWorkerTopologyTests
 
     [Fact]
     [Trait("Lane", "PackageCompatibility")]
-    public void ComposedManifest_ContainsSixRidAppExactRidWorkerAndOwnerProvider()
+    public void ComposedManifest_ContainsExactRidAppWorkerAndOwnerProvider()
     {
         var composedRoot = ComposedOutputRoot();
         var manifestPath = Path.Combine(composedRoot, "manifest", "sunder-package.json");
@@ -44,17 +43,16 @@ public sealed class SubagentsWorkerTopologyTests
         using var document = JsonDocument.Parse(File.ReadAllBytes(manifestPath));
         var root = document.RootElement;
         var targets = root.GetProperty("targets").EnumerateArray().ToArray();
-        var apps = targets.Where(static target => target.GetProperty("role").GetString() == "app").ToArray();
+        var app = Assert.Single(targets, static target => target.GetProperty("role").GetString() == "app");
         var worker = Assert.Single(targets, static target => target.GetProperty("role").GetString() == "runtime");
 
-        Assert.Equal(
-            ["win-x64", "win-arm64", "linux-x64", "linux-arm64", "osx-x64", "osx-arm64"],
-            apps.Select(static app => app.GetProperty("rid").GetString()));
-        Assert.All(apps, static app => Assert.Equal("avalonia", app.GetProperty("kind").GetString()));
+        Assert.Equal(RuntimeInformation.RuntimeIdentifier, app.GetProperty("rid").GetString());
+        Assert.Equal("avalonia", app.GetProperty("kind").GetString());
+        Assert.Equal("lib/Sunder.Package.Agent.Subagents.App.dll", app.GetProperty("entryPoint").GetString());
         Assert.Equal(RuntimeInformation.RuntimeIdentifier, worker.GetProperty("rid").GetString());
         Assert.Equal("worker", worker.GetProperty("kind").GetString());
         Assert.Contains(
-            "worker-protocol.v3",
+            "worker-protocol.v1",
             worker.GetProperty("requiredHostCapabilities").EnumerateArray()
                 .Select(static capability => capability.GetString()));
 
@@ -72,16 +70,16 @@ public sealed class SubagentsWorkerTopologyTests
         var owner = Assert.Single(root.GetProperty("provides").EnumerateArray(), static provider =>
             provider.GetProperty("providerId").GetString() == "subagents.management");
         Assert.Equal("owner", owner.GetProperty("audience").GetString());
-        Assert.Equal(SubagentsOwnerProtocol.Descriptor.ContractId, owner.GetProperty("contractId").GetString());
+        Assert.Equal("sunder.package.agent.subagents.owner", owner.GetProperty("contractId").GetString());
         var appImport = Assert.Single(root.GetProperty("usesContracts").EnumerateArray(), static contract =>
             contract.GetProperty("role").GetString() == "app");
-        Assert.Equal(SubagentsOwnerProtocol.Descriptor.ContractId, appImport.GetProperty("contractId").GetString());
+        Assert.Equal("sunder.package.agent.subagents.owner", appImport.GetProperty("contractId").GetString());
 
         var runtimeRoot = Path.Combine(composedRoot, "payload", "runtime");
         var workerRoot = Path.Combine(runtimeRoot, RuntimeInformation.RuntimeIdentifier, "lib");
         Assert.True(File.Exists(Path.Combine(
             workerRoot,
-            OperatingSystem.IsWindows() ? "Sunder.Package.Agent.Subagents.exe" : "Sunder.Package.Agent.Subagents")));
+            "Sunder.Package.Agent.Subagents.dll")));
         Assert.DoesNotContain(
             Directory.EnumerateFiles(runtimeRoot, "*", SearchOption.AllDirectories).Select(Path.GetFileName),
             static fileName => fileName?.StartsWith("Avalonia", StringComparison.OrdinalIgnoreCase) == true);

@@ -1,8 +1,10 @@
+extern alias AgentApp;
+
 using System.Collections.Concurrent;
-using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.HistorySearch;
-using Sunder.Package.Agent.PackageViews;
-using Sunder.Package.Agent.Services;
+using AgentApp::Sunder.Package.Agent.Contracts.Models;
+using AgentApp::Sunder.Package.Agent.HistorySearch;
+using AgentApp::Sunder.Package.Agent.PackageViews;
+using AgentApp::Sunder.Package.Agent.Services;
 using Sunder.Sdk.Abstractions;
 using Xunit;
 

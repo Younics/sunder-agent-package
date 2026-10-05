@@ -1,9 +1,9 @@
 extern alias SubagentsPackage;
 
-using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Subagents.Models;
-using Sunder.Package.Agent.Subagents.PackageViews;
-using Sunder.Package.Agent.Subagents.Runtime;
+using SubagentsPackage::Sunder.Package.Agent.Contracts.Models;
+using SubagentsPackage::Sunder.Package.Agent.Subagents.Models;
+using SubagentsPackage::Sunder.Package.Agent.Subagents.PackageViews;
+using SubagentsPackage::Sunder.Package.Agent.Subagents.Runtime;
 using Sunder.Sdk.Abstractions;
 using Xunit;
 using SubagentProviderCatalogOption = SubagentsPackage::Sunder.Package.Agent.Shared.Presentation.ProviderCatalogOption;

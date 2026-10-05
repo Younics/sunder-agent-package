@@ -22,6 +22,12 @@ jobs:
   prepare:
     name: Resolve immutable Core and Agent release metadata
     runs-on: ubuntu-latest
+    environment: sunder-agent-release-promotion
+    env:
+      SUNDER_AGENT_ARTIFACT_SOURCE_COMMIT: ${{ vars.SUNDER_AGENT_ARTIFACT_SOURCE_COMMIT }}
+      SUNDER_AGENT_LOCK_SET_SHA256: ${{ vars.SUNDER_AGENT_LOCK_SET_SHA256 }}
+      SUNDER_AGENT_RELEASE_APPROVAL_REFERENCE: ${{ vars.SUNDER_AGENT_RELEASE_APPROVAL_REFERENCE }}
+      SUNDER_AGENT_COLD_INPUT_MANIFEST: ${{ vars.SUNDER_AGENT_COLD_INPUT_MANIFEST }}
     permissions:
       contents: read
     outputs:
@@ -29,6 +35,8 @@ jobs:
       core_tag: ${{ steps.core.outputs.tag }}
       is_prerelease: ${{ steps.release.outputs.is_prerelease }}
       version: ${{ steps.release.outputs.version }}
+      resume: ${{ steps.recovery.outputs.resume }}
+      cold_inputs: ${{ steps.cold_inputs.outputs.locator }}
     steps:
       - name: Checkout Agent repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -40,11 +48,20 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
+      - name: Require Python 3.9 or newer
+        shell: bash
+        run: python3 -B scripts/release/release_inputs.py check-python
+
       - name: Validate family release tag and inventory
         id: release
         shell: bash
         run: |
           set -euo pipefail
+          test "$GITHUB_SHA" = "$SUNDER_AGENT_ARTIFACT_SOURCE_COMMIT"
+          test "$GITHUB_WORKFLOW_SHA" = "$GITHUB_SHA"
+          test "$GITHUB_EVENT_NAME" = push
+          [[ "$SUNDER_AGENT_RELEASE_APPROVAL_REFERENCE" =~ ^https://[^/?#]+/[^[:space:]#]+$ ]]
+          test "$(python3 scripts/release/agent_release.py lock-set "$PWD")" = "$SUNDER_AGENT_LOCK_SET_SHA256"
           tag="$GITHUB_REF_NAME"
           if [[ "$tag" != agent/v* ]]; then
             echo "Agent family releases must use agent/v<semver>." >&2
@@ -54,19 +71,16 @@ jobs:
           bash scripts/release/verify-agent-release-version.sh "$version" "$CORE_SDK_VERSION"
           test "$version" = "$(jq -er '.releaseVersion' packages.json)" \
             || { echo "Release tag must match packages.json releaseVersion." >&2; exit 1; }
-          test "$(jq '[.packages[] | select(.artifactType == "sunderpkg")] | length' packages.json)" -eq 15 \
-            || { echo "packages.json must contain exactly 15 primary runtime package projects." >&2; exit 1; }
-          test "$(jq '[.packages[] | select(.artifactType == "nuget" and .packageId == "Sunder.Package.Agent.Protocol")] | length' packages.json)" -eq 1 \
-            || { echo "packages.json must contain exactly one Agent Protocol package." >&2; exit 1; }
+          jq -e '.packages | length == 15 and all(.[]; .artifactType == "sunderpkg") and ([.[].packageId] | unique | length) == 15' packages.json >/dev/null \
+            || { echo "packages.json must contain exactly 15 unique canonical package archives." >&2; exit 1; }
+          node scripts/compatibility/check-protocol-retirement.mjs
 
           is_prerelease=false
           if [[ "$version" == *-* ]]; then
             is_prerelease=true
-          else
-            unshipped="$(grep -Ev '^[[:space:]]*(#|$)' src/Sunder.Package.Agent.Contracts/PublicAPI.Unshipped.txt || true)"
-            [[ -z "$unshipped" ]] \
-              || { echo "Stable releases require a finalized Protocol API ledger." >&2; printf '%s\n' "$unshipped" >&2; exit 1; }
           fi
+          # Canonical Pack requires source-matched release-frozen owned contracts.
+          # Native lanes consume Core's qualified V1 prebuilt role-input contract.
           {
             echo "is_prerelease=$is_prerelease"
             echo "version=$version"
@@ -83,6 +97,7 @@ jobs:
           echo "tag=sdk/v$CORE_SDK_VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Fence release recovery to exact Agent and Core provenance
+        id: recovery
         shell: bash
         env:
           CORE_COMMIT: ${{ steps.core.outputs.commit }}
@@ -100,7 +115,10 @@ jobs:
             --header 'X-GitHub-Api-Version: 2022-11-28' \
             --output "$state" --write-out '%{http_code}' \
             "https://api.github.com/repos/$GH_REPO/releases/tags/$encoded_tag")"
-          [[ "$status" == 404 ]] && exit 0
+          if [[ "$status" == 404 ]]; then
+            echo 'resume=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           [[ "$status" == 200 ]] || { echo "GitHub release lookup returned HTTP $status." >&2; exit 1; }
           jq -e --arg tag "$GITHUB_REF_NAME" '.draft == true and .tag_name == $tag' "$state" >/dev/null \
             || { echo "Immutable publication recovery requires the exact GitHub draft release." >&2; exit 1; }
@@ -122,11 +140,28 @@ jobs:
               and .materials == [{name: "sunder-core-sdk", tag: $core_tag, sha: $core_commit, packageVersion: $core_version}]
             ' "$provenance" >/dev/null \
             || { echo "Existing release provenance differs from this Agent tag or final Core release." >&2; exit 1; }
+          echo 'resume=true' >> "$GITHUB_OUTPUT"
+
+      - name: Verify reviewed durable candidate and catalog inputs
+        id: cold_inputs
+        if: steps.recovery.outputs.resume != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CORE_COMMIT: ${{ steps.core.outputs.commit }}
+        run: |
+          python3 -B scripts/release/release_inputs.py fetch "$PWD" \
+            "$RUNNER_TEMP/agent-approved-inputs" "$GITHUB_SHA" "$CORE_COMMIT"
 
   source-verify:
     name: Complete source behavior and focused locked-package compatibility
     needs: prepare
+    if: needs.prepare.outputs.resume != 'true'
     runs-on: ubuntu-latest
+    env:
+      SUNDER_AGENT_COLD_INPUT_MANIFEST: ${{ needs.prepare.outputs.cold_inputs }}
+      SUNDER_AGENT_OFFLINE_RUNNER: ${{ vars.SUNDER_AGENT_OFFLINE_RUNNER_LINUX_X64 }}
+      SUNDER_AGENT_OFFLINE_RUNNER_SHA256: ${{ vars.SUNDER_AGENT_OFFLINE_RUNNER_SHA256_LINUX_X64 }}
     permissions:
       contents: read
     defaults:
@@ -158,31 +193,53 @@ jobs:
           EXPECTED_CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
         run: |
           set -euo pipefail
+          python3 -B scripts/release/release_inputs.py check-python
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          bash -n scripts/*.sh scripts/release/*.sh
+          for script in scripts/*.sh scripts/release/*.sh; do
+            bash -n "$script"
+          done
           bash scripts/release/verify-nuget-package.fixture.sh
           bash scripts/release/verify-core-sdk-release.fixture.sh
+          bash scripts/release/verify-execution-runtime-availability.fixture.sh
           bash scripts/release/publish-registry-package.fixture.sh
           bash scripts/release/promote-family-dist-tag.fixture.sh
           bash scripts/release/promote-agent-family.fixture.sh
+          bash scripts/release/upload-agent-acceptance.fixture.sh
+          bash scripts/release/verify-agent-publication.fixture.sh
+          bash scripts/release/generate-agent-publication-handoff.fixture.sh
+          python3 -B scripts/release/agent-release.fixture.py
+          python3 -B scripts/release/publish-agent-family.fixture.py
+          python3 -B scripts/release/release-inputs.fixture.py
           bash scripts/release/native-release.fixture.sh
           bash scripts/release/verify-agent-release-version.fixture.sh
           bash scripts/generate-test-duration-report.fixture.sh
           bash scripts/release/verify-core-sdk-release.sh "$CORE_SDK_VERSION" "$EXPECTED_CORE_COMMIT"
 
-      - name: Restore and build complete source mode against exact Core
+      - name: Download exact reviewed cold inputs for this source job
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
+        run: |
+          python3 -B scripts/release/release_inputs.py fetch "$PWD" \
+            "$RUNNER_TEMP/agent-approved-inputs" "$GITHUB_SHA" "$CORE_COMMIT"
+
+      - name: Cold hydrate and build complete source mode offline against exact Core
         shell: bash
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
+          CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
         run: |
           set -euo pipefail
           test "$(git -C ../sunder-core rev-parse HEAD)" = "${{ needs.prepare.outputs.core_commit }}"
           mkdir -p artifacts/test-results/source/full artifacts/reports
           bash scripts/generate-test-inventory.sh > artifacts/reports/test-inventory.json
-          dotnet restore Sunder.AgentPackage.slnx --force-evaluate -p:SunderUseSourceSdk=true
-          dotnet build Sunder.AgentPackage.slnx -c Release --no-restore -m:1 \
-            -p:SunderUseSourceSdk=true -p:SunderAgentVersion="$VERSION" \
-            -p:ContinuousIntegrationBuild=true
+          manifest_sha="$(jq -r '.sha256' <<< "$SUNDER_AGENT_COLD_INPUT_MANIFEST")"
+          python3 -B scripts/release/release_inputs.py prepare "$PWD" \
+            "$RUNNER_TEMP/agent-approved-inputs" "$RUNNER_TEMP/agent-source-cold" \
+            source "$GITHUB_SHA" "$CORE_COMMIT" "$manifest_sha" --solution
+          python3 -B scripts/release/release_inputs.py exec "$RUNNER_TEMP/agent-source-cold/cold-state.json" -- \
+            dotnet build Sunder.AgentPackage.slnx -c Release --no-restore --disable-build-servers
 
       - name: Run complete source-mode behavioral suite
         id: source_tests
@@ -198,14 +255,16 @@ jobs:
         shell: bash
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
+          CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
         run: |
           set -euo pipefail
           bash scripts/release/verify-release-locks.sh "$CORE_SDK_VERSION"
-          dotnet restore Sunder.AgentPackage.slnx --locked-mode \
-            -p:SunderUseSourceSdk=false -p:RestoreLockedMode=true --source "$NUGET_SOURCE"
-          dotnet build Sunder.AgentPackage.slnx -c Release --no-restore -m:1 \
-            -p:SunderUseSourceSdk=false -p:SunderAgentVersion="$VERSION" \
-            -p:ContinuousIntegrationBuild=true
+          manifest_sha="$(jq -r '.sha256' <<< "$SUNDER_AGENT_COLD_INPUT_MANIFEST")"
+          python3 -B scripts/release/release_inputs.py prepare "$PWD" \
+            "$RUNNER_TEMP/agent-approved-inputs" "$RUNNER_TEMP/agent-package-cold" \
+            package "$GITHUB_SHA" "$CORE_COMMIT" "$manifest_sha" --solution
+          python3 -B scripts/release/release_inputs.py exec "$RUNNER_TEMP/agent-package-cold/cold-state.json" -- \
+            dotnet build Sunder.AgentPackage.slnx -c Release --no-restore --disable-build-servers
           mkdir -p artifacts/test-results/package/full
 
       - name: Run focused package compatibility lane
@@ -288,37 +347,39 @@ jobs:
           ' artifacts/reports/package-test-duration-report.json >/dev/null
 
   native-leaves:
-    name: Native signed leaves and Runtime lifecycle (${{ matrix.rid }})
+    name: Native framework-dependent leaves and Runtime lifecycle (${{ matrix.rid }})
     needs:
       - prepare
       - source-verify
-    environment: sunder-agent-release-signing
     permissions:
       contents: read
-      id-token: write
     strategy:
       fail-fast: false
       matrix:
         include:
           - rid: win-x64
+            offline_key: WIN_X64
             runner_labels: ${{ vars.SUNDER_AGENT_RUNNER_WIN_X64 || '["windows-latest"]' }}
-            signing: windows
           - rid: win-arm64
+            offline_key: WIN_ARM64
             runner_labels: ${{ vars.SUNDER_AGENT_RUNNER_WIN_ARM64 || '["windows-11-arm"]' }}
-            signing: windows
           - rid: linux-x64
+            offline_key: LINUX_X64
             runner_labels: ${{ vars.SUNDER_AGENT_RUNNER_LINUX_X64 || '["ubuntu-24.04"]' }}
-            signing: none
           - rid: linux-arm64
+            offline_key: LINUX_ARM64
             runner_labels: ${{ vars.SUNDER_AGENT_RUNNER_LINUX_ARM64 || '["ubuntu-24.04-arm"]' }}
-            signing: none
           - rid: osx-x64
+            offline_key: OSX_X64
             runner_labels: ${{ vars.SUNDER_AGENT_RUNNER_OSX_X64 || '["macos-15-intel"]' }}
-            signing: apple
           - rid: osx-arm64
+            offline_key: OSX_ARM64
             runner_labels: ${{ vars.SUNDER_AGENT_RUNNER_OSX_ARM64 || '["macos-14"]' }}
-            signing: apple
     runs-on: ${{ fromJSON(matrix.runner_labels) }}
+    env:
+      SUNDER_AGENT_COLD_INPUT_MANIFEST: ${{ needs.prepare.outputs.cold_inputs }}
+      SUNDER_AGENT_OFFLINE_RUNNER: ${{ vars[format('SUNDER_AGENT_OFFLINE_RUNNER_{0}', matrix.offline_key)] }}
+      SUNDER_AGENT_OFFLINE_RUNNER_SHA256: ${{ vars[format('SUNDER_AGENT_OFFLINE_RUNNER_SHA256_{0}', matrix.offline_key)] }}
     steps:
       - name: Checkout exact Agent source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -346,129 +407,40 @@ jobs:
           EXPECTED_CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
         run: |
           set -euo pipefail
+          python3 -B scripts/release/release_inputs.py check-python
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test "$(git -C ../sunder-core rev-parse HEAD)" = "$EXPECTED_CORE_COMMIT"
           bash scripts/release/verify-release-locks.sh "$CORE_SDK_VERSION"
 
-      - name: Azure login for native Windows apphost signing
-        if: matrix.signing == 'windows'
-        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3
-        with:
-          client-id: ${{ vars.AZURE_CLIENT_ID || secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID || secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID || secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Configure Azure Trusted Signing for worker apphosts
-        if: matrix.signing == 'windows'
-        shell: pwsh
-        env:
-          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ vars.AZURE_TRUSTED_SIGNING_ENDPOINT || secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
-          AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ vars.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME || secrets.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
-          AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ vars.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME || secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME }}
-          WINDOWS_PUBLISHER_SUBJECT: ${{ vars.WINDOWS_PUBLISHER_SUBJECT || secrets.WINDOWS_PUBLISHER_SUBJECT }}
-        run: |
-          $ErrorActionPreference = "Stop"
-          foreach ($name in @("AZURE_TRUSTED_SIGNING_ENDPOINT", "AZURE_TRUSTED_SIGNING_ACCOUNT_NAME", "AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME", "WINDOWS_PUBLISHER_SUBJECT")) {
-            if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) { throw "Signing value '$name' is required." }
-          }
-          $package = Join-Path $env:RUNNER_TEMP "artifact-signing-client.1.0.128.nupkg"
-          $root = Join-Path $env:RUNNER_TEMP "artifact-signing-client"
-          Invoke-WebRequest -Uri "https://api.nuget.org/v3-flatcontainer/microsoft.artifactsigning.client/1.0.128/microsoft.artifactsigning.client.1.0.128.nupkg" -OutFile $package
-          if ((Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash -ne "74BD7D27E6CE1051409C38D9B46BC8DF0400ECD643D51FFBF2AC00869061E40B") { throw "Artifact Signing client digest validation failed." }
-          Expand-Archive -LiteralPath $package -DestinationPath $root
-          $dlib = Get-ChildItem -Path $root -Filter Azure.CodeSigning.Dlib.dll -Recurse | Where-Object { $_.FullName -match "[\\/]x64[\\/]" } | Select-Object -First 1
-          if ($null -eq $dlib) { throw "Azure.CodeSigning.Dlib.dll was not found." }
-          $metadataPath = Join-Path $env:RUNNER_TEMP "trusted-signing-metadata.json"
-          [ordered]@{
-            Endpoint = $env:AZURE_TRUSTED_SIGNING_ENDPOINT
-            CodeSigningAccountName = $env:AZURE_TRUSTED_SIGNING_ACCOUNT_NAME
-            CertificateProfileName = $env:AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME
-            CorrelationId = "sunder-agent-${{ github.run_id }}-${{ matrix.rid }}"
-            ExcludeCredentials = @("EnvironmentCredential", "ManagedIdentityCredential", "SharedTokenCacheCredential", "VisualStudioCredential", "VisualStudioCodeCredential", "AzurePowerShellCredential", "AzureDeveloperCliCredential", "InteractiveBrowserCredential")
-          } | ConvertTo-Json -Depth 4 | Out-File -FilePath $metadataPath -Encoding utf8
-          "SUNDER_WINDOWS_SIGN_DLIB=$($dlib.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "SUNDER_WINDOWS_SIGN_METADATA=$metadataPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "SUNDER_WINDOWS_PUBLISHER_SUBJECT=$env:WINDOWS_PUBLISHER_SUBJECT" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-      - name: Configure Developer ID signing for native macOS apphosts
-        if: matrix.signing == 'apple'
+      - name: Download exact reviewed cold inputs for this native runner
+        working-directory: sunder-agent-package
         shell: bash
         env:
-          APPLE_BUILD_CERTIFICATE_BASE64: ${{ secrets.APPLE_BUILD_CERTIFICATE_BASE64 }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_KEYCHAIN_PASSWORD: ${{ secrets.APPLE_SIGNING_KEYCHAIN_PASSWORD }}
-          APPLE_SIGN_APP_IDENTITY: ${{ secrets.APPLE_SIGN_APP_IDENTITY }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
         run: |
-          set -euo pipefail
-          for name in APPLE_BUILD_CERTIFICATE_BASE64 APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_KEYCHAIN_PASSWORD APPLE_SIGN_APP_IDENTITY APPLE_TEAM_ID; do
-            [[ -n "${!name:-}" ]] || { echo "Signing secret '$name' is required." >&2; exit 1; }
-          done
-          certificate="$RUNNER_TEMP/apple-build-certificate.p12"
-          keychain="$RUNNER_TEMP/sunder-agent-signing.keychain-db"
-          prior_keychains="$RUNNER_TEMP/sunder-agent-prior-keychains.txt"
-          prior_keychains_pending="$prior_keychains.pending"
-          {
-            echo "SUNDER_APPLE_SIGNING_CERTIFICATE=$certificate"
-            echo "SUNDER_APPLE_SIGNING_KEYCHAIN=$keychain"
-            echo "SUNDER_APPLE_PRIOR_KEYCHAINS=$prior_keychains"
-            echo "SUNDER_APPLE_SIGN_IDENTITY=$APPLE_SIGN_APP_IDENTITY"
-            echo "SUNDER_APPLE_TEAM_ID=$APPLE_TEAM_ID"
-          } >> "$GITHUB_ENV"
-          restore_user_keychains() {
-            [[ -f "$prior_keychains" ]] || return 0
-            local entry
-            local -a entries=()
-            while IFS= read -r entry; do
-              entry="${entry#"${entry%%[![:space:]]*}"}"
-              entry="${entry#\"}"
-              entry="${entry%\"}"
-              [[ -z "$entry" ]] || entries+=("$entry")
-            done < "$prior_keychains"
-            security list-keychains -d user -s "${entries[@]}"
-          }
-          cleanup_signing() {
-            local status="$1"
-            trap - ERR
-            restore_user_keychains || true
-            security delete-keychain "$keychain" >/dev/null 2>&1 || true
-            rm -f "$certificate" "$keychain" "$prior_keychains" "$prior_keychains_pending" || true
-            exit "$status"
-          }
-          trap 'cleanup_signing $?' ERR
-          security list-keychains -d user > "$prior_keychains_pending"
-          mv "$prior_keychains_pending" "$prior_keychains"
-          if ! printf '%s' "$APPLE_BUILD_CERTIFICATE_BASE64" | base64 --decode > "$certificate" 2>/dev/null; then
-            printf '%s' "$APPLE_BUILD_CERTIFICATE_BASE64" | base64 -D > "$certificate"
-          fi
-          security create-keychain -p "$APPLE_SIGNING_KEYCHAIN_PASSWORD" "$keychain"
-          security set-keychain-settings -lut 21600 "$keychain"
-          security unlock-keychain -p "$APPLE_SIGNING_KEYCHAIN_PASSWORD" "$keychain"
-          current_keychains=()
-          while IFS= read -r entry; do
-            entry="${entry#"${entry%%[![:space:]]*}"}"
-            entry="${entry#\"}"
-            entry="${entry%\"}"
-            [[ -z "$entry" ]] || current_keychains+=("$entry")
-          done < "$prior_keychains"
-          security list-keychains -d user -s "$keychain" "${current_keychains[@]}"
-          security import "$certificate" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$APPLE_SIGNING_KEYCHAIN_PASSWORD" "$keychain" >/dev/null
-          rm -f "$certificate"
-          trap - ERR
+          python3 -B scripts/release/release_inputs.py fetch "$PWD" \
+            "$RUNNER_TEMP/agent-approved-inputs" "$GITHUB_SHA" "$CORE_COMMIT"
 
-      - name: Build exactly 15 native leaves through the pre-index signing target
+      - name: Build exactly 15 native framework-dependent leaves
         working-directory: sunder-agent-package
         shell: pwsh
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
-        run: ./scripts/release/build-native-family.ps1 -Rid "${{ matrix.rid }}" -Version $env:VERSION -OutputDirectory "artifacts/native-build/${{ matrix.rid }}"
+          CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
+        run: |
+          $manifest = $env:SUNDER_AGENT_COLD_INPUT_MANIFEST | ConvertFrom-Json
+          ./scripts/release/build-native-family.ps1 -Rid "${{ matrix.rid }}" -Version $env:VERSION `
+            -OutputDirectory "artifacts/native-build/${{ matrix.rid }}" `
+            -ColdInputsDirectory (Join-Path $env:RUNNER_TEMP 'agent-approved-inputs') `
+            -ColdManifestSha256 $manifest.sha256 -ArtifactSourceCommit $env:GITHUB_SHA -CoreCommit $env:CORE_COMMIT
 
       - name: Exercise all native workers and Core release budgets
         working-directory: sunder-agent-package
         shell: bash
         env:
           EXPECTED_CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
+          SUNDER_AGENT_BUILDER_SDK_VERSION: ${{ env.DOTNET_VERSION }}
         run: |
           bash scripts/release/run-native-runtime-smoke.sh \
             ../sunder-core \
@@ -476,7 +448,7 @@ jobs:
             "artifacts/native-build/${{ matrix.rid }}/metrics" \
             "$EXPECTED_CORE_COMMIT"
 
-      - name: Record exact signed leaf, lifecycle, and metric evidence
+      - name: Record exact managed module, lifecycle, and metric evidence
         working-directory: sunder-agent-package
         shell: bash
         env:
@@ -499,41 +471,16 @@ jobs:
           retention-days: 7
           compression-level: 0
 
-      - name: Remove temporary Apple signing keychain
-        if: always() && matrix.signing == 'apple'
-        shell: bash
-        run: |
-          set -uo pipefail
-          cleanup_status=0
-          if [[ -f "${SUNDER_APPLE_PRIOR_KEYCHAINS:-}" ]]; then
-            prior_keychains=()
-            while IFS= read -r entry; do
-              entry="${entry#"${entry%%[![:space:]]*}"}"
-              entry="${entry#\"}"
-              entry="${entry%\"}"
-              [[ -z "$entry" ]] || prior_keychains+=("$entry")
-            done < "$SUNDER_APPLE_PRIOR_KEYCHAINS"
-            security list-keychains -d user -s "${prior_keychains[@]}" || cleanup_status=1
-          fi
-          if [[ -n "${SUNDER_APPLE_SIGNING_KEYCHAIN:-}" ]]; then
-            security delete-keychain "$SUNDER_APPLE_SIGNING_KEYCHAIN" >/dev/null 2>&1 \
-              || [[ ! -e "$SUNDER_APPLE_SIGNING_KEYCHAIN" ]] \
-              || cleanup_status=1
-          fi
-          rm -f \
-            "${SUNDER_APPLE_SIGNING_CERTIFICATE:-}" \
-            "${SUNDER_APPLE_SIGNING_KEYCHAIN:-}" \
-            "${SUNDER_APPLE_PRIOR_KEYCHAINS:-}" \
-            "${SUNDER_APPLE_PRIOR_KEYCHAINS:-}.pending" \
-            || cleanup_status=1
-          exit "$cleanup_status"
-
   fan-in:
     name: Fan in tested native leaves and verify immutable family
     needs:
       - prepare
       - native-leaves
     runs-on: ubuntu-latest
+    env:
+      SUNDER_AGENT_COLD_INPUT_MANIFEST: ${{ needs.prepare.outputs.cold_inputs }}
+      SUNDER_AGENT_OFFLINE_RUNNER: ${{ vars.SUNDER_AGENT_OFFLINE_RUNNER_LINUX_X64 }}
+      SUNDER_AGENT_OFFLINE_RUNNER_SHA256: ${{ vars.SUNDER_AGENT_OFFLINE_RUNNER_SHA256_LINUX_X64 }}
     permissions:
       contents: read
     steps:
@@ -563,7 +510,18 @@ jobs:
           path: native-input
           merge-multiple: true
 
-      - name: Compose signed leaves without rebuilding project references
+      - name: Download exact reviewed fan-in inputs
+        working-directory: sunder-agent-package
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
+        run: |
+          python3 -B scripts/release/release_inputs.py check-python
+          python3 -B scripts/release/release_inputs.py fetch "$PWD" \
+            "$RUNNER_TEMP/agent-approved-inputs" "$GITHUB_SHA" "$CORE_COMMIT"
+
+      - name: Restore matching Release/version/CI graph, hydrate, and fan in offline
         working-directory: sunder-agent-package
         shell: bash
         env:
@@ -575,11 +533,19 @@ jobs:
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test "$(git -C ../sunder-core rev-parse HEAD)" = "$CORE_COMMIT"
           bash scripts/release/verify-release-locks.sh "$CORE_SDK_VERSION"
-          bash scripts/release/assemble-native-family.sh \
+          # The shared prepare operation uses Configuration=Release, the exact
+          # SunderAgentVersion, ContinuousIntegrationBuild=true and all declared RIDs.
+          # Restore/hydration finish before Core's no-Restore prebuilt fan-in starts.
+          manifest_sha="$(jq -r '.sha256' <<< "$SUNDER_AGENT_COLD_INPUT_MANIFEST")"
+          python3 -B scripts/release/release_inputs.py prepare "$PWD" \
+            "$RUNNER_TEMP/agent-approved-inputs" "$RUNNER_TEMP/agent-fanin-cold" \
+            package "$GITHUB_SHA" "$CORE_COMMIT" "$manifest_sha"
+          python3 -B scripts/release/release_inputs.py exec "$RUNNER_TEMP/agent-fanin-cold/cold-state.json" -- \
+            bash scripts/release/assemble-native-family.sh \
             ../native-input artifacts/family "$VERSION" "$GITHUB_SHA" \
             "$CORE_TAG" "$CORE_COMMIT" "$CORE_SDK_VERSION" "$PWD"
 
-      - name: Verify final inventory, budgets, native SQLite, and signed apphost identity
+      - name: Verify final inventory, budgets, native ownership, and managed module identity
         working-directory: sunder-agent-package
         shell: bash
         env:
@@ -593,27 +559,17 @@ jobs:
           runtime_count="$(jq '[.packages[] | select(.artifactType == "sunderpkg")] | length' packages.json)"
           test "$runtime_count" -eq 15
           test "$(find "$output" -maxdepth 1 -name '*.sunderpkg' -type f | wc -l)" -eq 15
-          test -f "$output/Sunder.Package.Agent.Protocol.$VERSION.nupkg"
-          bash scripts/compatibility/verify-packed-protocol.sh \
-            "$output/Sunder.Package.Agent.Protocol.$VERSION.nupkg" "$VERSION"
-          jq -e \
-            --arg version "$VERSION" --arg agent "$GITHUB_SHA" \
-            --arg core_tag "$CORE_TAG" --arg core_commit "$CORE_COMMIT" --arg core_version "$CORE_SDK_VERSION" '
-              .schemaVersion == 1 and .version == $version and .agentCommit == $agent
-              and .core == {tag: $core_tag, commit: $core_commit, packageVersion: $core_version}
-              and ([.nativeRuns[].rid] | sort) == ["linux-arm64","linux-x64","osx-arm64","osx-x64","win-arm64","win-x64"]
-              and all(.nativeRuns[]; .packages | length == 15)
-              and (.finalArtifacts | length == 16)
-            ' "$evidence" >/dev/null
+          test "$(find "$output" -maxdepth 1 -name '*.nupkg' -type f | wc -l)" -eq 0
+          bash scripts/release/verify-native-family-evidence.sh \
+            "$evidence" "$output" packages.json \
+            "$VERSION" "$GITHUB_SHA" "$CORE_TAG" "$CORE_COMMIT" "$CORE_SDK_VERSION"
+          bash scripts/release/generate-package-output-audit.sh \
+            "$output" "$evidence" "$PWD" "$output/package-output-audit.json"
 
           max_runtime_archive_bytes=$((256 * 1024 * 1024))
           max_runtime_payload_bytes=$((640 * 1024 * 1024))
-          max_protocol_archive_bytes=$((16 * 1024 * 1024))
           max_family_archive_bytes=$((4 * 1024 * 1024 * 1024))
-          protocol="$output/Sunder.Package.Agent.Protocol.$VERSION.nupkg"
-          protocol_bytes="$(wc -c < "$protocol" | tr -d '[:space:]')"
-          (( protocol_bytes > 0 && protocol_bytes <= max_protocol_archive_bytes ))
-          family_bytes="$protocol_bytes"
+          family_bytes=0
           while IFS=$'\t' read -r package_id provider_ids; do
             archive="$output/$package_id.$VERSION.sunderpkg"
             manifest="$RUNNER_TEMP/$package_id-manifest.json"
@@ -629,11 +585,20 @@ jobs:
               def rids: ["linux-arm64","linux-x64","osx-arm64","osx-x64","win-arm64","win-x64"];
               ([.targets[] | select(.role == "runtime") | .rid] | sort) == rids
               and (([.targets[] | select(.role == "app") | .rid] | sort) as $apps | $apps == [] or $apps == rids)
-              and all(.targets[] | select(.role == "runtime"); .kind == "worker" and (.requiredHostCapabilities | index("worker-protocol.v3") != null))
+              and all(.targets[] | select(.role == "runtime");
+                .kind == "worker"
+                and .targetFramework == "net10.0"
+                and (.entryPoint | test("^lib/[A-Za-z0-9._-]+\\.dll$"))
+                and .executionRuntime == {
+                  id: "sunder.runtime.dotnet",
+                  versionRange: ">=10.0.0 <11.0.0",
+                  moduleAbi: "sunder.dotnet-worker-module.v1"
+                }
+                and (.requiredHostCapabilities | index("worker-protocol.v1") != null))
               and all(.dependsOn[]; .versionRange == ">=2.0.0 <3.0.0")
               and ([.provides[].providerId] | sort) == ($provider_ids | sort)
             ' "$manifest" >/dev/null
-            if [[ "$package_id" == "sunder.package.agent.memory.semantic" ]]; then
+            if [[ "$package_id" == "sunder.package.agent" || "$package_id" == "sunder.package.agent.memory.semantic" ]]; then
               jq -e '
                 ([.files[].path | select(test("payload/runtime/(win-(x64|arm64)/lib/e_sqlite3\\.dll|osx-(x64|arm64)/lib/libe_sqlite3\\.dylib|linux-(x64|arm64)/lib/libe_sqlite3\\.so)$"))] | length) == 6
                 and ([.files[].path | select(. == "payload/runtime/shared/lib/SQLitePCLRaw.provider.e_sqlite3.dll")] | length) == 1
@@ -641,6 +606,16 @@ jobs:
             fi
           done < <(jq -r '.packages | map(select(.artifactType == "sunderpkg")) | sort_by(.key)[] | [.packageId, (.providerIds | tojson)] | @tsv' packages.json)
           (( family_bytes <= max_family_archive_bytes ))
+          jq -e '
+            .installedProjectionGate == {
+              phase0BaselineBytes: 1440013254,
+              requiredReductionPercent: 75,
+              maximumBytes: 360003313
+            }
+            and all(.family.rids[];
+              .meetsInstalledProjectionGate == true
+              and .installedProjection.bytes <= 360003313)
+          ' "$output/package-output-audit.json" >/dev/null
 
           while IFS=$'\t' read -r artifact expected_sha expected_size; do
             path="$output/$artifact"
@@ -648,16 +623,32 @@ jobs:
             test "$(sha256sum "$path" | cut -d ' ' -f 1)" = "$expected_sha"
             test "$(wc -c < "$path" | tr -d '[:space:]')" = "$expected_size"
           done < <(jq -r '.finalArtifacts[] | [.path, .sha256, (.size | tostring)] | @tsv' "$evidence")
-          while IFS=$'\t' read -r rid package_id apphost_path expected_sha signature_kind; do
+          while IFS=$'\t' read -r rid package_id artifact_path expected_sha; do
             archive="$output/$package_id.$VERSION.sunderpkg"
-            actual_sha="$(unzip -p "$archive" "$apphost_path" | sha256sum | cut -d ' ' -f 1)"
+            logical_path="${artifact_path#payload/runtime/$rid/}"
+            candidates=(
+              "$artifact_path"
+              "payload/runtime/shared/$logical_path"
+              "payload/shared/$logical_path"
+            )
+            resolved=''
+            for candidate in "${candidates[@]}"; do
+              if unzip -Z1 "$archive" "$candidate" >/dev/null 2>&1; then
+                test -z "$resolved"
+                resolved="$candidate"
+              fi
+            done
+            test -n "$resolved"
+            actual_sha="$(unzip -p "$archive" "$resolved" | sha256sum | cut -d ' ' -f 1)"
             test "$actual_sha" = "$expected_sha"
-            case "$rid" in
-              win-*) test "$signature_kind" = authenticode ;;
-              osx-*) test "$signature_kind" = apple ;;
-              linux-*) test "$signature_kind" = none ;;
-            esac
-          done < <(jq -r '.nativeRuns[] | .rid as $rid | .packages[] | [$rid, .packageId, .leaf.appHostPath, .leaf.appHostSha256, .leaf.signatureKind] | @tsv' "$evidence")
+          done < <(jq -r '
+            .nativeRuns[] | .rid as $rid | .packages[] |
+            [
+              [$rid, .packageId, .leaf.modulePath, .leaf.moduleSha256],
+              [$rid, .packageId, .leaf.runtimeConfigPath, .leaf.runtimeConfigSha256],
+              [$rid, .packageId, .leaf.dependencyManifestPath, .leaf.dependencyManifestSha256]
+            ][] | @tsv
+          ' "$evidence")
 
       - name: Run Agent contract against exact immutable archives
         working-directory: sunder-agent-package
@@ -665,6 +656,7 @@ jobs:
         env:
           SUNDER_REQUIRE_TEST_PREREQUISITES: "1"
           SUNDER_AGENT_PACKAGE_ARCHIVE_DIR: ${{ github.workspace }}/sunder-agent-package/artifacts/family
+          SUNDER_AGENT_PACKAGE_OUTPUT_AUDIT_REQUIRED: "1"
         run: |
           set -euo pipefail
           dotnet restore tests/Sunder.Package.Agent.Tests/Sunder.Package.Agent.Tests.csproj \
@@ -739,8 +731,11 @@ jobs:
     needs:
       - prepare
       - fan-in
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && (needs.prepare.outputs.resume == 'true' || needs.fan-in.result == 'success') }}
     runs-on: ubuntu-latest
+    environment: sunder-agent-release-promotion
     permissions:
+      actions: read
       contents: write
     steps:
       - name: Checkout exact Agent source
@@ -753,13 +748,35 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
+      - name: Verify release Python runtime
+        shell: bash
+        run: python3 -B scripts/release/release_inputs.py check-python
+
       - name: Download only the exact tested fan-in artifact
+        if: needs.prepare.outputs.resume != 'true'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: sunder-agent-family-release
           path: release-assets
 
+      - name: Resume only the retained draft artifacts without rebuilding
+        if: needs.prepare.outputs.resume == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir release-assets
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --dir release-assets \
+            --pattern '*.sunderpkg' --pattern 'native-test-evidence.json' --pattern 'package-output-audit.json'
+          test "$(find release-assets -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d '[:space:]')" = 17
+
+      - name: Refresh Protocol retirement evidence immediately before publication
+        shell: bash
+        run: node scripts/compatibility/check-protocol-retirement.mjs
+
       - name: Publish and verify immutable versions and exact draft assets
+        id: publication
         shell: bash
         env:
           CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
@@ -767,8 +784,61 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           IS_PRERELEASE: ${{ needs.prepare.outputs.is_prerelease }}
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
           REGISTRY_API_URL: ${{ vars.SUNDER_REGISTRY_API_URL }}
           SUNDER_REGISTRY_PUBLISH_TOKEN: ${{ secrets.SUNDER_REGISTRY_PUBLISH_TOKEN }}
+          SUNDER_AGENT_ARTIFACT_SOURCE_COMMIT: ${{ vars.SUNDER_AGENT_ARTIFACT_SOURCE_COMMIT }}
+          SUNDER_AGENT_LOCK_SET_SHA256: ${{ vars.SUNDER_AGENT_LOCK_SET_SHA256 }}
+          SUNDER_AGENT_RELEASE_APPROVAL_REFERENCE: ${{ vars.SUNDER_AGENT_RELEASE_APPROVAL_REFERENCE }}
+          SUNDER_AGENT_RELEASE_OWNER_PRINCIPAL_ID: ${{ vars.SUNDER_AGENT_RELEASE_OWNER_PRINCIPAL_ID }}
           VERSION: ${{ needs.prepare.outputs.version }}
         run: bash scripts/release/publish-agent-family.sh release-assets
+
+      - name: Capture exact verified publication bytes
+        id: handoff
+        shell: bash
+        env:
+          EVIDENCE_RUN_ATTEMPT: ${{ steps.publication.outputs.evidence_run_attempt }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_ID: ${{ steps.publication.outputs.release_id }}
+          VERIFIED_RELEASE_ASSETS_SHA256: ${{ steps.publication.outputs.release_assets_sha256 }}
+        run: |
+          set -euo pipefail
+          artifact_name="sunder-agent-publication-evidence-$RELEASE_ID-$GITHUB_RUN_ATTEMPT"
+          mkdir publication-evidence
+          gh release download "$GITHUB_REF_NAME" --repo "$GH_REPO" --dir publication-evidence \
+            --pattern '*.sunderpkg' \
+            --pattern 'native-test-evidence.json' \
+            --pattern 'package-output-audit.json' \
+            --pattern 'SHA256SUMS' \
+            --pattern 'release-provenance.json' \
+            --pattern 'release-sbom.spdx.json' \
+            --pattern 'toolchain.txt'
+          test "$(find publication-evidence -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d '[:space:]')" = 21
+          bash scripts/release/generate-agent-publication-handoff.sh \
+            publication-evidence \
+            "$RELEASE_ID" \
+            "$GITHUB_REF_NAME" \
+            "$GITHUB_SHA" \
+            "$EVIDENCE_RUN_ATTEMPT" \
+            "$VERIFIED_RELEASE_ASSETS_SHA256"
+          test "$(find publication-evidence -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d '[:space:]')" = 22
+          encoded_name="$(jq -rn --arg value "$artifact_name" '$value | @uri')"
+          artifacts="$(gh api -H 'Accept: application/vnd.github+json' \
+            "repos/$GH_REPO/actions/runs/$GITHUB_RUN_ID/artifacts?name=$encoded_name")"
+          artifact_count="$(jq --arg name "$artifact_name" '[.artifacts[] | select(.name == $name and .expired == false)] | length' <<< "$artifacts")"
+          [[ "$artifact_count" -le 1 ]] || { echo "Publication handoff artifact is ambiguous." >&2; exit 1; }
+          {
+            echo "artifact_name=$artifact_name"
+            echo "upload=$([[ "$artifact_count" == 0 ]] && echo true || echo false)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload immutable Agent publication evidence
+        if: steps.handoff.outputs.upload == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ steps.handoff.outputs.artifact_name }}
+          path: publication-evidence/*
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0

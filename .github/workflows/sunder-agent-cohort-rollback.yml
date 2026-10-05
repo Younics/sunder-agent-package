@@ -1,0 +1,110 @@
+name: Sunder Agent Cohort Rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_id:
+        description: Exact unannounced numeric Agent draft
+        required: true
+        type: string
+      tag:
+        description: Immutable Agent artifact-source tag
+        required: true
+        type: string
+      source_sha:
+        description: Approved artifact-source commit
+        required: true
+        type: string
+      cohort_request_sha256:
+        description: Original committed forward cohort request digest
+        required: true
+        type: string
+      expected_package_policy_revision:
+        description: Reviewed current revision; retain unchanged on ambiguous retry
+        required: true
+        type: string
+      idempotency_key:
+        description: New reviewed reverse key; reuse this exact key on retry
+        required: true
+        type: string
+      confirmation:
+        description: Enter reverse-unannounced-cohort after non-security rollback approval
+        required: true
+        type: string
+
+permissions: {}
+concurrency:
+  group: sunder-agent-family-promotion
+  cancel-in-progress: false
+
+jobs:
+  reverse:
+    runs-on: ubuntu-24.04
+    environment: sunder-agent-release-promotion
+    permissions:
+      actions: read
+      contents: read
+    env:
+      REGISTRY_API_URL: ${{ vars.SUNDER_REGISTRY_API_URL }}
+      RELEASE_ID: ${{ inputs.release_id }}
+      TAG: ${{ inputs.tag }}
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      COHORT_REQUEST_SHA256: ${{ inputs.cohort_request_sha256 }}
+      EXPECTED_REVISION: ${{ inputs.expected_package_policy_revision }}
+      IDEMPOTENCY_KEY: ${{ inputs.idempotency_key }}
+    steps:
+      - name: Require exact protected-main rollback approval
+        shell: bash
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          python3 -c 'import sys; assert sys.version_info >= (3, 9), "Python 3.9+ is required"'
+          test "$GITHUB_REPOSITORY" = Younics/sunder-agent-package
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_WORKFLOW_REF" = "$GITHUB_REPOSITORY/.github/workflows/sunder-agent-cohort-rollback.yml@refs/heads/main"
+          test "$CONFIRMATION" = reverse-unannounced-cohort
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ && "$COHORT_REQUEST_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$RELEASE_ID" =~ ^[1-9][0-9]*$ && "$EXPECTED_REVISION" =~ ^[1-9][0-9]*$ ]]
+          [[ "$IDEMPOTENCY_KEY" =~ ^[A-Za-z0-9._-]{1,128}$ ]]
+
+      - name: Checkout trusted rollback policy
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          path: rollback-policy
+          persist-credentials: false
+
+      - name: Checkout immutable release source as data
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          path: release-source
+          persist-credentials: false
+
+      - name: Download exact retained forward transition
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 -B rollback-policy/scripts/release/agent_cohort_receipt.py download \
+            "$GITHUB_REPOSITORY" "$RELEASE_ID" "$TAG" "$COHORT_REQUEST_SHA256" "$RUNNER_TEMP/forward-cohort.json"
+
+      - name: Apply one new reviewed reverse transition
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SUNDER_REGISTRY_CLI_TOKEN: ${{ secrets.SUNDER_REGISTRY_CLI_TOKEN }}
+        run: |
+          python3 -B rollback-policy/scripts/release/reverse_agent_cohort.py apply \
+            "$GITHUB_REPOSITORY" "$RELEASE_ID" "$TAG" "$GITHUB_WORKSPACE/release-source" "$SOURCE_SHA" \
+            "$RUNNER_TEMP/forward-cohort.json" "$IDEMPOTENCY_KEY" "$EXPECTED_REVISION" "$RUNNER_TEMP/reverse-cohort"
+
+      - name: Retain exact reverse request and any committed result
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sunder-agent-cohort-reverse-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/reverse-cohort/*.json
+          if-no-files-found: ignore
+          retention-days: 90

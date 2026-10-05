@@ -1,10 +1,12 @@
+extern alias WebWorker;
+
 using System.Net;
 using System.Text;
 using System.Text.Json;
-using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Tools.Web;
-using Sunder.Package.Agent.Tools.Web.Backends;
-using Sunder.Package.Agent.Tools.Web.Services;
+using WebWorker::Sunder.Package.Agent.Contracts.Models;
+using WebWorker::Sunder.Package.Agent.Tools.Web;
+using WebWorker::Sunder.Package.Agent.Tools.Web.Backends;
+using WebWorker::Sunder.Package.Agent.Tools.Web.Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;

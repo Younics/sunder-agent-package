@@ -7,11 +7,13 @@ using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
-using Sunder.Package.Agent.Subagents.Runtime;
 using Xunit;
 using CorePresentation = AgentCore::Sunder.Package.Agent.Shared.PackageViews;
 
 namespace Sunder.Package.Agent.Tests;
+
+extern alias SubagentsApp;
+using SubagentsApp::Sunder.Package.Agent.Subagents.Runtime;
 
 public sealed class AgentTranscriptLazyDetailTests
 {
@@ -30,7 +32,7 @@ public sealed class AgentTranscriptLazyDetailTests
             extensions);
         using var profiles = new AgentProfileService(store, toolService, extensions, extensions.BehaviorLoops);
         var runtimeCatalog = new AgentRuntimeCatalog(sessions, profiles, workspaces);
-        extensions.AddProvider(AgentRpcServices.RuntimeCatalogs, runtimeCatalog);
+        extensions.AddRuntimeCatalog(runtimeCatalog);
         IAgentRuntimeCatalog runtime = runtimeCatalog;
         var workspace = workspaces.CreateWorkspace("Catalog payloads");
         var session = sessions.CreateSession("Catalog payloads", workspaceId: workspace.WorkspaceId);
@@ -65,7 +67,7 @@ public sealed class AgentTranscriptLazyDetailTests
             1)));
 
         using var subsessions = new SubsessionLocalRuntimeAdapter(
-            extensions.GetRequiredReference(AgentRpcServices.RuntimeCatalogs));
+            Assert.Single(extensions.Subagents().GetRuntimeCatalogs()));
         var recent = await subsessions.ListRecentTurnsAsync(session.SessionId, 1);
         var before = await subsessions.ListTurnsBeforeAsync(
             session.SessionId,
@@ -78,9 +80,9 @@ public sealed class AgentTranscriptLazyDetailTests
             Guid.Empty,
             1);
 
-        AssertHeaderOnly(Assert.Single(Assert.Single(recent.Turns).Items));
-        AssertHeaderOnly(Assert.Single(Assert.Single(before.Turns).Items));
-        AssertHeaderOnly(Assert.Single(Assert.Single(after.Turns).Items));
+        AssertHeaderOnly(AgentRoleBoundary.As<AgentTurnItemRecord>(Assert.Single(Assert.Single(recent.Turns).Items)));
+        AssertHeaderOnly(AgentRoleBoundary.As<AgentTurnItemRecord>(Assert.Single(Assert.Single(before.Turns).Items)));
+        AssertHeaderOnly(AgentRoleBoundary.As<AgentTurnItemRecord>(Assert.Single(Assert.Single(after.Turns).Items)));
     }
 
     [Fact]
@@ -421,7 +423,8 @@ public sealed class AgentTranscriptLazyDetailTests
 
         var fullTurns = store.ListTurns(session.SessionId);
         var liveHeaders = fullTurns
-            .Select(CorePresentation.TranscriptTurnTransportProjection.ProjectToolHeaders)
+            .Select(turn => CorePresentation.TranscriptTurnTransportProjection.ProjectToolHeaders(
+                AgentRoleBoundary.As<AgentCore::Sunder.Package.Agent.Contracts.Models.AgentTurnRecord>(turn)))
             .ToDictionary(turn => turn.TurnId);
         var reloadedHeaders = store.ListRecentTranscriptHeaders(session.SessionId, 10)
             .ToDictionary(turn => turn.TurnId);

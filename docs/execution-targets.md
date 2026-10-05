@@ -60,7 +60,7 @@ Three path domains can exist:
 
 `AgentExecutionScopeDescriptor.WorkspacePaths` and `DefaultWorkingDirectory` are execution paths. `AgentExecutionPathMapping` explicitly carries execution and host paths plus `IsInsideAllowedRoot`, but is advisory only: it retains no handle and must not be turned into a host-side structured mutation. Never infer equivalence between path domains by string concatenation.
 
-Builder consumes a mapping only as advisory host metadata and delegates project creation/build/publish to the selected target's `dotnet` process. It does not create or replace mapped host paths through BCL file APIs. Those `dotnet` process operations retain general process authority and are explicitly outside the structured no-follow guarantee.
+Builder consumes a mapping only as advisory host metadata and delegates project creation/build/publish to the selected target's `dotnet` process. Builder's package Worker itself remains bound to the host-managed shared .NET execution runtime; the project SDK/toolchain is independently selected through the target's path environment and project toolchain configuration such as `global.json`. Build SDKs must not be placed in the Worker execution-runtime store. Builder does not create or replace mapped host paths through BCL file APIs. Those `dotnet` process operations retain general process authority and are explicitly outside the structured no-follow guarantee.
 
 `AgentExecutionResourceDescriptor` allows another package to request mapping for a host resource, including `ReadOnly` or `ReadWrite` access. Return one `AgentResolvedExecutionResource` per accepted descriptor with the same stable resource/source identity. Do not silently upgrade access.
 

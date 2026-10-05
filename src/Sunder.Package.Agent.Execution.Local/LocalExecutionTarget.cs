@@ -7,7 +7,7 @@ using Sunder.Sdk.Abstractions;
 namespace Sunder.Package.Agent.Execution.Local;
 
 public sealed class LocalExecutionTarget
-    : IAgentProcessExecutionTarget, IAgentStructuredFileSearchExecutionTarget, IAgentRangedFileExecutionTarget, IAgentExecutionScopeProvider, IAgentExecutionResourceResolver, IAgentExecutionPathMapper, IAgentExecutionPathEnvironment, IAgentScopedInstructionDiscoveryTarget, IAgentResourceAuthorityExecutionTarget, IDisposable
+    : IAgentProcessExecutionTarget, IAgentStructuredFileSearchExecutionTarget, IAgentRangedFileExecutionTarget, IAgentExecutionScopeProvider, IAgentExecutionResourceResolver, IAgentExecutionPathMapper, IAgentExecutionPathEnvironment, IAgentScopedInstructionDiscoveryTarget, IAgentResourceAuthorityExecutionTarget, IDisposable, Sunder.Sdk.Worker.ISunderWorkerSettingsSchemaProvider
 {
     private readonly LocalExecutionWorkspaceConfigService _configService;
     private readonly IPackageContext _packageContext;
@@ -16,6 +16,7 @@ public sealed class LocalExecutionTarget
     private readonly LocalProcessExecutor _processExecutor;
     private readonly LocalResourceReference _resourceReferences;
 
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
     public LocalExecutionTarget(IPackageContext packageContext, LocalExecutionWorkspaceConfigService configService, LocalShellCatalogService shellCatalogService)
         : this(packageContext, configService, shellCatalogService, new LocalResourceReference())
     {
@@ -34,6 +35,8 @@ public sealed class LocalExecutionTarget
         _processExecutor = new LocalProcessExecutor(packageContext);
         _resourceReferences = resourceReferences;
     }
+
+    public Sunder.Sdk.Settings.PackageSettingsSchema SettingsSchema => LocalExecutionConfiguration.Schema;
 
     public AgentExecutionTargetDescriptor Descriptor { get; } = new(
         "local",

@@ -1,0 +1,58 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <SunderPackageFamilyId>sunder.package.agent.memory.semantic</SunderPackageFamilyId>
+    <SunderPackageRole>worker</SunderPackageRole>
+    <SunderPackageAppProject>App\Sunder.Package.Agent.Memory.Semantic.App.csproj</SunderPackageAppProject>
+  </PropertyGroup>
+
+  <Import Project="$(MSBuildThisFileDirectory)..\..\Sunder.Agent.Worker.props" />
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="Microsoft.Data.Sqlite" SunderPackageAssetRole="worker" />
+    <ProjectReference Include="..\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
+    <ProjectReference Include="Protocol\Sunder.Package.Agent.Memory.Semantic.Protocol.csproj"
+                      PrivateAssets="all" />
+    <Compile Include="..\Sunder.Package.Agent.Shared\Threading\ReferenceCountedKeyedLock.cs"
+             Link="Threading\ReferenceCountedKeyedLock.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Shared\Storage\SqliteWalCheckpointMaintenance.cs"
+             Link="Storage\SqliteWalCheckpointMaintenance.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="App\**\*" />
+    <Compile Remove="MemoryStoreModels.cs" />
+    <Compile Remove="PackageViews\**\*" />
+    <Compile Remove="Protocol\**\*" />
+    <Compile Remove="Rpc\ManagementService.cs;Rpc\ManagementClient.cs;Rpc\ManagementModels.cs;Rpc\MemoryValueMapper.cs;Rpc\MemoryValueJson.cs;Rpc\ProjectionContent.cs" />
+    <Compile Remove="Rpc\SessionCleanerProvider.cs" />
+    <Compile Remove="Rpc\ProviderComposition.cs" />
+    <Compile Remove="Rpc\AppComposition.cs" />
+    <Compile Remove="Rpc\ProfileCapabilityProvider.cs;Rpc\DurableLifecycleProvider.cs;Rpc\PromptContextProvider.cs;Rpc\SemanticProviderValues.cs;Rpc\MemoryProviderCatalog.cs" />
+    <Compile Remove="Rpc\GeneratedEmbeddingClient.cs;Rpc\GeneratedRuntimeCatalogClient.cs;Rpc\SemanticMemoryRpcCatalog.cs" />
+    <Compile Remove="Rpc\MemoryAppRuntimeGateway.Transport.cs" />
+    <Compile Remove="Models\MemoryInspectorModels.cs;Models\SemanticEmbeddingContext.cs;Models\SemanticMemoryInspectorModels.cs;Models\SemanticMemoryServiceModels.cs;Runtime\MemoryInspectorContracts.cs" />
+    <None Remove="App\**\*" />
+    <None Remove="PackageViews\**\*" />
+    <None Remove="Protocol\**\*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <SunderContractBundle Include="Protocol\Contracts\memory-inspector.rpc.json"
+                          ContractId="sunder.agent.memory.semantic.inspector"
+                            Version="1.0.0"
+                          DescriptorPath="contracts/memory-inspector.rpc.json"
+                          Exposure="package" />
+    <SunderRpcProvider Include="semantic.memory.inspector"
+                       ContractId="sunder.agent.memory.semantic.inspector"
+                        ContractVersion="1.0.0"
+                       Role="runtime"
+                       Audience="owner" />
+    <SunderPackageTarget Include="runtime/$(RuntimeIdentifier)"
+                         Role="runtime"
+                         Rid="$(RuntimeIdentifier)"
+                         Kind="worker" />
+  </ItemGroup>
+
+</Project>

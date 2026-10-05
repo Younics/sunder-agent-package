@@ -10,6 +10,7 @@ public sealed class GeminiAgentProvider : IAgentChatProvider, IAgentUtilityModel
 {
     private readonly IPackageContext _packageContext;
     private readonly ProviderCredentialAccessor _credentials;
+    private readonly Func<string, Google.GenAI.Client> _clientFactory;
 
     public GeminiAgentProvider(IPackageContext packageContext)
         : this(
@@ -18,10 +19,16 @@ public sealed class GeminiAgentProvider : IAgentChatProvider, IAgentUtilityModel
     {
     }
 
-    internal GeminiAgentProvider(IPackageContext packageContext, ProviderCredentialAccessor credentials)
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
+    internal GeminiAgentProvider(IPackageContext packageContext, ProviderSettings settings)
+        : this(packageContext, settings.Credentials) { }
+
+    internal GeminiAgentProvider(IPackageContext packageContext, ProviderCredentialAccessor credentials,
+        Func<string, Google.GenAI.Client>? clientFactory = null)
     {
         _packageContext = packageContext;
         _credentials = credentials;
+        _clientFactory = clientFactory ?? (apiKey => new Google.GenAI.Client(apiKey: apiKey));
         Descriptor = new AgentProviderDescriptor(
             "gemini",
             "Google Gemini",
@@ -79,6 +86,6 @@ public sealed class GeminiAgentProvider : IAgentChatProvider, IAgentUtilityModel
     public ValueTask<IChatClient> CreateChatClientAsync(AgentChatClientContext context, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult<IChatClient>(new GeminiChatClient(context, _credentials));
+        return ValueTask.FromResult<IChatClient>(new GeminiChatClient(context, _credentials, _clientFactory));
     }
 }

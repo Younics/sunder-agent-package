@@ -158,7 +158,7 @@ public sealed partial class AgentSessionService(AgentLocalStore store, AgentRpcC
 
         var cleaners = AgentRpcInvocation.Snapshot(
             rpcCatalog,
-            AgentRpcServices.SessionCleaners,
+            Sunder.Package.Agent.Runtime.Rpc.AgentCleanupBindings.SessionCleaners,
             static cleaner => cleaner.CleanerId);
         return cleaners
             .Where(cleaner => !string.IsNullOrWhiteSpace(cleaner.PackageId)

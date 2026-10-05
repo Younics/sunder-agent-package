@@ -2,34 +2,8 @@ namespace Sunder.Agent.Execution.Common;
 
 internal static class LocalGlobMatcher
 {
-    private const int MaxBraceExpansions = 256;
+    private const int MaxBraceExpansions = FileSearchRequestValidation.MaxBraceExpansions;
     private const int MaxMatchStates = 65_536;
-
-    public static bool IsWithinExpansionBounds(string pattern)
-    {
-        var expansions = 1;
-        var offset = 0;
-        while (offset < pattern.Length)
-        {
-            var open = pattern.IndexOf('{', offset);
-            var close = open < 0 ? -1 : pattern.IndexOf('}', open + 1);
-            if (open < 0 || close < 0)
-            {
-                return true;
-            }
-
-            var optionCount = pattern[(open + 1)..close]
-                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Length;
-            if (optionCount == 0 || expansions > MaxBraceExpansions / optionCount)
-            {
-                return false;
-            }
-            expansions *= optionCount;
-            offset = close + 1;
-        }
-        return true;
-    }
 
     public static bool Matches(
         string pattern,

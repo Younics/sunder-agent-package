@@ -11,24 +11,32 @@ on:
         description: Full Agent source commit accepted for this tag
         required: true
         type: string
+      release_id:
+        description: Exact numeric GitHub release containing durable acceptance
+        required: true
+        type: string
+      publication_run_id:
+        description: Successful immutable Agent publication workflow run ID
+        required: true
+        type: string
+      publication_run_attempt:
+        description: Exact immutable Agent publication workflow run attempt
+        required: true
+        type: string
       acceptance_run_id:
-        description: Successful production-acceptance workflow run containing the archived evidence
+        description: Successful pre-visibility run to list, or post-visibility run to announce
         required: true
         type: string
       acceptance_run_attempt:
         description: Exact attempt number from the accepted production-acceptance workflow run
         required: true
         type: string
-      acceptance_artifact_id:
-        description: Exact numeric GitHub Actions artifact ID produced by the accepted run attempt
-        required: true
-        type: string
-      acceptance_artifact_digest:
-        description: Exact GitHub sha256 digest for the selected acceptance artifact
+      acceptance_workflow_sha:
+        description: Exact protected-main commit that ran production acceptance
         required: true
         type: string
       acceptance_evidence_sha256:
-        description: Lowercase SHA-256 of agent-family-acceptance.json from that run
+        description: Lowercase SHA-256 of durable agent-family-acceptance.json
         required: true
         type: string
 
@@ -40,67 +48,119 @@ concurrency:
 
 jobs:
   promote:
-    name: Promote accepted immutable Agent family
+    name: Apply the accepted visibility stage for the immutable Agent family
     runs-on: ubuntu-24.04
     environment: sunder-agent-release-promotion
     permissions:
       actions: read
       contents: write
     steps:
-      - name: Checkout only the explicitly accepted Agent source
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          ref: ${{ inputs.source_sha }}
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Authorize only the designated production acceptance workflow attempt
+      - name: Require promotion policy from protected main
         shell: bash
         env:
-          ACCEPTANCE_ARTIFACT_DIGEST: ${{ inputs.acceptance_artifact_digest }}
-          ACCEPTANCE_ARTIFACT_ID: ${{ inputs.acceptance_artifact_id }}
-          ACCEPTANCE_RUN_ATTEMPT: ${{ inputs.acceptance_run_attempt }}
-          ACCEPTANCE_RUN_ID: ${{ inputs.acceptance_run_id }}
-          GH_REPO: ${{ github.repository }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACCEPTANCE_WORKFLOW_SHA: ${{ inputs.acceptance_workflow_sha }}
+          PUBLICATION_RUN_ATTEMPT: ${{ inputs.publication_run_attempt }}
+          PUBLICATION_RUN_ID: ${{ inputs.publication_run_id }}
+          RELEASE_ID: ${{ inputs.release_id }}
           SOURCE_SHA: ${{ inputs.source_sha }}
         run: |
           set -euo pipefail
-          bash scripts/release/verify-acceptance-artifact.sh \
-            "$GH_REPO" "$SOURCE_SHA" "$ACCEPTANCE_RUN_ID" "$ACCEPTANCE_RUN_ATTEMPT" \
-            "$ACCEPTANCE_ARTIFACT_ID" "$ACCEPTANCE_ARTIFACT_DIGEST"
+          python3 -c 'import sys; assert sys.version_info >= (3, 9), "Python 3.9+ is required"'
+          test "$GITHUB_REPOSITORY" = Younics/sunder-agent-package
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_WORKFLOW" = 'Sunder Agent Family Promotion'
+          test "$GITHUB_WORKFLOW_REF" = "$GITHUB_REPOSITORY/.github/workflows/sunder-agent-promotion.yml@refs/heads/main"
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ && "$ACCEPTANCE_WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$RELEASE_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$PUBLICATION_RUN_ID" =~ ^[1-9][0-9]*$ && "$PUBLICATION_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
 
-      - name: Download archived production acceptance evidence from the exact run
+      - name: Checkout trusted promotion policy from protected main
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          path: promotion-policy
+          persist-credentials: false
+
+      - name: Checkout only the explicitly accepted immutable Agent source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          path: release-source
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download exact immutable publication evidence
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          artifact-ids: ${{ inputs.acceptance_artifact_id }}
-          merge-multiple: true
-          path: ${{ runner.temp }}/agent-acceptance
+          name: sunder-agent-publication-evidence-${{ inputs.release_id }}-${{ inputs.publication_run_attempt }}
+          path: publication-evidence
           github-token: ${{ secrets.GITHUB_TOKEN }}
           repository: ${{ github.repository }}
-          run-id: ${{ inputs.acceptance_run_id }}
+          run-id: ${{ inputs.publication_run_id }}
 
-      - name: Fail closed on source, run, evidence identity, and release script syntax
+      - name: Verify exact successful publication policy, attempt, provenance, and bytes
+        working-directory: promotion-policy
         shell: bash
         env:
-          ACCEPTANCE_ARTIFACT_DIGEST: ${{ inputs.acceptance_artifact_digest }}
-          ACCEPTANCE_ARTIFACT_ID: ${{ inputs.acceptance_artifact_id }}
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SUNDER_AGENT_PUBLICATION_EXPECTED_DRAFT: "any"
+        run: |
+          bash scripts/release/verify-agent-publication.sh \
+            "${{ inputs.release_id }}" "${{ inputs.tag }}" "${{ inputs.source_sha }}" \
+            "${{ inputs.publication_run_id }}" "${{ inputs.publication_run_attempt }}" \
+            ../release-source ../publication-evidence
+
+      - name: Download durable evidence from the exact numeric release and trusted run
+        working-directory: promotion-policy
+        shell: bash
+        env:
           ACCEPTANCE_EVIDENCE_SHA256: ${{ inputs.acceptance_evidence_sha256 }}
           ACCEPTANCE_RUN_ATTEMPT: ${{ inputs.acceptance_run_attempt }}
           ACCEPTANCE_RUN_ID: ${{ inputs.acceptance_run_id }}
+          ACCEPTANCE_WORKFLOW_SHA: ${{ inputs.acceptance_workflow_sha }}
           GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ inputs.release_id }}
+          PUBLICATION_RUN_ATTEMPT: ${{ inputs.publication_run_attempt }}
+          PUBLICATION_RUN_ID: ${{ inputs.publication_run_id }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir "$RUNNER_TEMP/agent-acceptance"
+          bash scripts/release/download-agent-acceptance.sh \
+            "$RELEASE_ID" "$TAG" "$SOURCE_SHA" "$PUBLICATION_RUN_ID" \
+            "$PUBLICATION_RUN_ATTEMPT" "$ACCEPTANCE_RUN_ID" "$ACCEPTANCE_RUN_ATTEMPT" \
+            "$ACCEPTANCE_WORKFLOW_SHA" "$ACCEPTANCE_EVIDENCE_SHA256" \
+            "$RUNNER_TEMP/agent-acceptance/agent-family-acceptance.json"
+
+      - name: Fail closed on source, policy, run, evidence identity, and trusted script syntax
+        working-directory: promotion-policy
+        shell: bash
+        env:
+          ACCEPTANCE_EVIDENCE_SHA256: ${{ inputs.acceptance_evidence_sha256 }}
+          ACCEPTANCE_RUN_ATTEMPT: ${{ inputs.acceptance_run_attempt }}
+          ACCEPTANCE_RUN_ID: ${{ inputs.acceptance_run_id }}
+          ACCEPTANCE_WORKFLOW_SHA: ${{ inputs.acceptance_workflow_sha }}
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ inputs.release_id }}
+          PUBLICATION_RUN_ATTEMPT: ${{ inputs.publication_run_attempt }}
+          PUBLICATION_RUN_ID: ${{ inputs.publication_run_id }}
           SOURCE_SHA: ${{ inputs.source_sha }}
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
           [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$ACCEPTANCE_WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$ACCEPTANCE_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
           [[ "$ACCEPTANCE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
-          [[ "$ACCEPTANCE_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
-          [[ "$ACCEPTANCE_ARTIFACT_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
           [[ "$ACCEPTANCE_EVIDENCE_SHA256" =~ ^[0-9a-f]{64}$ ]]
-          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          [[ "$RELEASE_ID" =~ ^[1-9][0-9]*$ ]]
+          test "$GITHUB_REF" = refs/heads/main
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git -C ../release-source rev-parse HEAD)" = "$SOURCE_SHA"
           bash -n scripts/*.sh scripts/release/*.sh scripts/compatibility/*.sh
 
           acceptance="$RUNNER_TEMP/agent-acceptance/agent-family-acceptance.json"
@@ -110,32 +170,46 @@ jobs:
           test "$(sha256sum "$acceptance" | cut -d ' ' -f 1)" = "$ACCEPTANCE_EVIDENCE_SHA256"
 
           bash scripts/release/verify-acceptance-artifact.sh \
-            "$GH_REPO" "$SOURCE_SHA" "$ACCEPTANCE_RUN_ID" "$ACCEPTANCE_RUN_ATTEMPT" \
-            "$ACCEPTANCE_ARTIFACT_ID" "$ACCEPTANCE_ARTIFACT_DIGEST"
+            "$GH_REPO" "$ACCEPTANCE_WORKFLOW_SHA" "$ACCEPTANCE_RUN_ID" "$ACCEPTANCE_RUN_ATTEMPT"
           jq -e \
             --arg attempt "$ACCEPTANCE_RUN_ATTEMPT" \
             --arg id "$ACCEPTANCE_RUN_ID" \
+            --arg publication_attempt "$PUBLICATION_RUN_ATTEMPT" \
+            --arg publication_id "$PUBLICATION_RUN_ID" \
             --arg source "$SOURCE_SHA" \
-            --arg tag "$TAG" '
+            --arg tag "$TAG" \
+            --arg workflow_sha "$ACCEPTANCE_WORKFLOW_SHA" \
+            --argjson release_id "$RELEASE_ID" '
               .acceptanceRunId == $id
               and .acceptanceRunAttempt == $attempt
               and .sourceCommit == $source
               and .tag == $tag
+              and .publicationRunId == $publication_id
+              and .publicationRunAttempt == $publication_attempt
+              and .acceptanceWorkflow.workflowRef == "refs/heads/main"
+              and .acceptanceWorkflow.workflowSha == $workflow_sha
+              and .draftRelease.id == $release_id
               and .decision == "accepted"
             ' "$acceptance" >/dev/null
 
-      - name: Verify accepted immutable bytes, apply compensating promotion, and finalize exact draft
+      - name: Atomically list a pre-accepted cohort or announce a post-accepted cohort
+        working-directory: promotion-policy
         shell: bash
         env:
-          ACCEPTANCE_ARTIFACT_DIGEST: ${{ inputs.acceptance_artifact_digest }}
-          ACCEPTANCE_ARTIFACT_ID: ${{ inputs.acceptance_artifact_id }}
           ACCEPTANCE_EVIDENCE_SHA256: ${{ inputs.acceptance_evidence_sha256 }}
           ACCEPTANCE_RUN_ATTEMPT: ${{ inputs.acceptance_run_attempt }}
           ACCEPTANCE_RUN_ID: ${{ inputs.acceptance_run_id }}
+          ACCEPTANCE_WORKFLOW_SHA: ${{ inputs.acceptance_workflow_sha }}
           GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REGISTRY_API_URL: ${{ vars.SUNDER_REGISTRY_API_URL }}
+          PUBLICATION_EVIDENCE_DIRECTORY: ${{ github.workspace }}/publication-evidence
+          PUBLICATION_RUN_ATTEMPT: ${{ inputs.publication_run_attempt }}
+          PUBLICATION_RUN_ID: ${{ inputs.publication_run_id }}
           SOURCE_SHA: ${{ inputs.source_sha }}
+          SUNDER_AGENT_POLICY_SHA: ${{ github.sha }}
+          SUNDER_AGENT_POLICY_WORKFLOW_PATH: .github/workflows/sunder-agent-promotion.yml
+          SUNDER_AGENT_RELEASE_SOURCE_DIRECTORY: ${{ github.workspace }}/release-source
           SUNDER_REGISTRY_CLI_TOKEN: ${{ secrets.SUNDER_REGISTRY_CLI_TOKEN }}
           TAG: ${{ inputs.tag }}
         run: |

@@ -3,6 +3,7 @@ using Avalonia.Threading;
 
 namespace Sunder.Package.Agent.Shared.Presentation;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.App)]
 internal interface IPresentationDispatcher
 {
     bool CheckAccess();
@@ -10,6 +11,7 @@ internal interface IPresentationDispatcher
     Task InvokeAsync(Action action);
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.App)]
 internal static class PresentationDispatcher
 {
     public static IPresentationDispatcher Capture() => AvaloniaPresentationDispatcher.Instance;

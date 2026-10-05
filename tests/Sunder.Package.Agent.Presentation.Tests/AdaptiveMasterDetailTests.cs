@@ -1,7 +1,9 @@
+extern alias AgentApp;
+
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
-using Sunder.Package.Agent.Shared.Presentation;
+using AgentApp::Sunder.Package.Agent.Shared.Presentation;
 using Xunit;
 
 namespace Sunder.Package.Agent.Presentation.Tests;

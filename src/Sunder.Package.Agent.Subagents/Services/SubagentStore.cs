@@ -18,16 +18,16 @@ public sealed class SubagentStore
         WriteIndented = true,
     };
 
-    private readonly object _syncRoot;
-    private readonly string _filePath;
-    private readonly string _lockPath;
+    private readonly object _initializationSync = new();
+    private readonly IPackageRoleLocalWorkspace _workspace;
+    private object _syncRoot = null!;
+    private string _filePath = null!;
+    private string _lockPath = null!;
     private int _initialized;
 
     public SubagentStore(IPackageContext context)
     {
-        _filePath = context.Storage.RoleLocalWorkspace.GetLocalPath("subagents/subagents.json");
-        _lockPath = _filePath + ".lock";
-        _syncRoot = PathLocks.GetOrAdd(_filePath, static _ => new object());
+        _workspace = context.Storage.RoleLocalWorkspace;
     }
 
     public void Activate() => EnsureInitialized();
@@ -208,15 +208,21 @@ public sealed class SubagentStore
             return;
         }
 
-        lock (_syncRoot)
+        lock (_initializationSync)
         {
             if (_initialized != 0)
             {
                 return;
             }
 
-            Directory.CreateDirectory(Path.GetDirectoryName(_filePath)!);
-            Volatile.Write(ref _initialized, 1);
+            _filePath = _workspace.GetLocalPath("subagents/subagents.json");
+            _lockPath = _filePath + ".lock";
+            _syncRoot = PathLocks.GetOrAdd(_filePath, static _ => new object());
+            lock (_syncRoot)
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(_filePath)!);
+                Volatile.Write(ref _initialized, 1);
+            }
         }
     }
 

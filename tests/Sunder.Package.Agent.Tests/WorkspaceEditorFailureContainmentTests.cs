@@ -1,7 +1,9 @@
+extern alias AgentApp;
+
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.PackageViews;
+using AgentApp::Sunder.Package.Agent.PackageViews;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
@@ -28,7 +30,7 @@ public sealed class WorkspaceEditorFailureContainmentTests
         Assert.Equal("Healthy settings", Assert.Single(host.ViewModel.EditorSections, static section => !section.IsError).Title);
         Assert.Contains("runtime.editor.discovery", error.DiagnosticText, StringComparison.Ordinal);
         Assert.DoesNotContain("sensitive runtime detail", error.ErrorMessage, StringComparison.Ordinal);
-        Assert.Equal(2, host.Catalog.GetServiceReferences(AgentRpcServices.WorkspaceEditors).Count);
+        Assert.Equal(2, host.Catalog.AppCatalog.GetServiceReferences(RegressionTestAppBindings.WorkspaceEditors).Count);
 
         error.RetryCommand!.Execute(null);
         await host.ViewModel.CurrentEditorSectionRetry.WaitAsync(TimeSpan.FromSeconds(2));
@@ -112,7 +114,6 @@ public sealed class WorkspaceEditorFailureContainmentTests
         await retiring.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
         var retirement = host.Catalog.RetireProviderAsync(
-            AgentRpcServices.WorkspaceEditors,
             retiring);
         await host.ViewModel.CurrentEditorSectionRefresh.WaitAsync(TimeSpan.FromSeconds(2));
         await retirement.WaitAsync(TimeSpan.FromSeconds(2));
@@ -168,7 +169,7 @@ public sealed class WorkspaceEditorFailureContainmentTests
         Assert.Equal(1, host.Catalog.InvariantViolationReportCount);
         Assert.Equal(
             "healthy.package",
-            Assert.Single(host.Catalog.GetServiceReferences(AgentRpcServices.WorkspaceEditors)).PackageId);
+            Assert.Single(host.Catalog.AppCatalog.GetServiceReferences(RegressionTestAppBindings.WorkspaceEditors)).PackageId);
     }
 
     [Fact]
@@ -213,19 +214,19 @@ public sealed class WorkspaceEditorFailureContainmentTests
     [Fact]
     public async Task Discovery_MaterializesGraphThroughExactRpcReference()
     {
-        var catalog = new RegressionTestExtensionCatalog();
+        using var catalog = new RegressionTestExtensionCatalog();
         var contributor = new ScriptedWorkspaceEditorContributor("local", "leased", "Leased");
-        catalog.AddProvider(AgentRpcServices.WorkspaceEditors, contributor, "leased.package");
-        var reference = catalog.GetRequiredReference(AgentRpcServices.WorkspaceEditors);
+        catalog.AddProvider(RegressionTestAppBindings.WorkspaceEditors, contributor, "leased.package");
+        var reference = catalog.GetRequiredReference(RegressionTestAppBindings.WorkspaceEditors);
         var now = DateTimeOffset.UtcNow;
         var context = new AgentWorkspaceEditorContext(
-            new AgentWorkspaceRecord("workspace", "Workspace", null, now, now),
+            new AgentApp::Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord("workspace", "Workspace", null, now, now),
             "local",
             "binding");
 
         var result = await AgentWorkspaceEditorInvocation.InvokeAsync(
             reference,
-            catalog,
+            catalog.AppCatalog,
             AgentEditorInvocationOperation.Discovery,
             CancellationToken.None,
             (leasedContributor, token) => AgentWorkspaceEditorInvocation.GetSectionsSnapshotAsync(
@@ -385,13 +386,13 @@ public sealed class WorkspaceEditorFailureContainmentTests
             {
                 var catalog = new RegressionTestExtensionCatalog();
                 catalog.AddProvider(
-                    AgentRpcServices.ExecutionTargets,
+                    RegressionTestBindings.ExecutionTargets,
                     new TestExecutionTarget("local"),
                     "local.package");
                 foreach (var (contributor, packageId) in contributors)
                 {
                     catalog.AddProvider(
-                        AgentRpcServices.WorkspaceEditors,
+                        RegressionTestAppBindings.WorkspaceEditors,
                         contributor,
                         packageId);
                 }
@@ -404,9 +405,9 @@ public sealed class WorkspaceEditorFailureContainmentTests
                     : null;
                 var targetService = new AgentExecutionTargetService(catalog);
                 var viewModel = new AgentWorkspacesViewModel(
-                    workspaceService,
-                    targetService,
-                    catalog);
+                    AgentRoleBoundary.As<AgentApp::Sunder.Package.Agent.Runtime.IAgentWorkspaceGateway>(workspaceService),
+                    AgentRoleBoundary.As<AgentApp::Sunder.Package.Agent.Runtime.IAgentExecutionGateway>(targetService),
+                    catalog.AppCatalog);
                 await viewModel.InitializeAsync();
                 if (waitForEditor)
                 {
@@ -424,6 +425,7 @@ public sealed class WorkspaceEditorFailureContainmentTests
         public void Dispose()
         {
             ViewModel.Dispose();
+            Catalog.Dispose();
             _scope.Dispose();
         }
     }

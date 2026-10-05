@@ -3,14 +3,17 @@ using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
-using Sunder.Package.Agent.Skills.PackageViews;
-using Sunder.Package.Agent.Skills.Runtime;
-using Sunder.Package.Agent.Skills.Services;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Stacks;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
+
+extern alias SkillsWorker;
+extern alias SkillsApp;
+using SkillsWorker::Sunder.Package.Agent.Skills.Runtime;
+using SkillsWorker::Sunder.Package.Agent.Skills.Services;
+using SkillsApp::Sunder.Package.Agent.Skills.PackageViews;
 
 public sealed class SkillPackageTests
 {
@@ -222,7 +225,7 @@ public sealed class SkillPackageTests
             var store = new SkillStore(context);
             var importer = new SkillImportService(store, new TestGitHubSkillClient(), context);
             InstallSkill(store, "docs-skill", "Docs Skill");
-            using var viewModel = new SkillSettingsViewModel(new SkillLocalManagementGateway(store, importer))
+            using var viewModel = new SkillSettingsViewModel(AgentRoleBoundary.As<SkillsApp::Sunder.Package.Agent.Skills.Runtime.ISkillManagementGateway>(new SkillLocalManagementGateway(store, importer)))
             {
                 IsCompactLayout = true,
             };
@@ -265,7 +268,7 @@ public sealed class SkillPackageTests
             var store = new SkillStore(context);
             var importer = new SkillImportService(store, new TestGitHubSkillClient(), context);
             InstallSkill(store, "docs-skill", "Docs Skill");
-            using var viewModel = new SkillSettingsViewModel(new SkillLocalManagementGateway(store, importer))
+            using var viewModel = new SkillSettingsViewModel(AgentRoleBoundary.As<SkillsApp::Sunder.Package.Agent.Skills.Runtime.ISkillManagementGateway>(new SkillLocalManagementGateway(store, importer)))
             {
                 IsCompactLayout = true,
             };
@@ -297,7 +300,7 @@ public sealed class SkillPackageTests
             var importer = new SkillImportService(store, new TestGitHubSkillClient(), context);
             var timeProvider = new ManualTimerTimeProvider();
             using var viewModel = new SkillSettingsViewModel(
-                new SkillLocalManagementGateway(store, importer),
+                AgentRoleBoundary.As<SkillsApp::Sunder.Package.Agent.Skills.Runtime.ISkillManagementGateway>(new SkillLocalManagementGateway(store, importer)),
                 timeProvider);
 
             await viewModel.ImportLocalFolderAsync(source);
@@ -340,7 +343,7 @@ public sealed class SkillPackageTests
             var context = new TestPackageContext(Path.Combine(root, "install"));
             var store = new SkillStore(context);
             var importer = new SkillImportService(store, new TestGitHubSkillClient(), context);
-            using var viewModel = new SkillSettingsViewModel(new SkillLocalManagementGateway(store, importer))
+            using var viewModel = new SkillSettingsViewModel(AgentRoleBoundary.As<SkillsApp::Sunder.Package.Agent.Skills.Runtime.ISkillManagementGateway>(new SkillLocalManagementGateway(store, importer)))
             {
                 IsCompactLayout = true,
             };
@@ -393,11 +396,12 @@ public sealed class SkillPackageTests
             DateTimeOffset.UtcNow,
             [],
             [new AgentProfileSelectableCapabilityAssignmentRecord("skill", "docs-skill", SkillsPackageId)]);
-        var feature = new SkillsFeature(store, new TestExtensionCatalog(profile));
+        using var catalog = new TestExtensionCatalog(profile);
+        var feature = new SkillsFeature(store, catalog.Skills());
 
         var result = await feature.ExecuteAsync(
-            new AgentToolExecutionContext(SessionId: null, ProfileId: profile.ProfileId),
-            new AgentToolRequest("skill_resource", "{\"skill\":\"docs-skill\",\"path\":\"references/guide.md\"}"));
+            new SkillsWorker::Sunder.Package.Agent.Contracts.Models.AgentToolExecutionContext(SessionId: null, ProfileId: profile.ProfileId),
+            new SkillsWorker::Sunder.Package.Agent.Contracts.Models.AgentToolRequest("skill_resource", "{\"skill\":\"docs-skill\",\"path\":\"references/guide.md\"}"));
 
         Assert.False(result.IsError);
         Assert.Contains("1: first", result.Content);
@@ -637,7 +641,7 @@ public sealed class SkillPackageTests
     {
         public TestExtensionCatalog(AgentProfileRecord profile)
         {
-            AddProvider(AgentRpcServices.RuntimeCatalogs, new TestRuntimeCatalog(profile));
+            AddRuntimeCatalog(new TestRuntimeCatalog(profile));
         }
     }
 

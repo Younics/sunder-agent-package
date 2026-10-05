@@ -5,51 +5,57 @@ using Sunder.Package.Agent.Contracts.Models;
 using AgentPresentation = AgentCore::Sunder.Package.Agent.Shared.PackageViews;
 using AgentServices = AgentCore::Sunder.Package.Agent.Services;
 using AgentViews = AgentCore::Sunder.Package.Agent.PackageViews;
+using AgentModels = AgentCore::Sunder.Package.Agent.Contracts.Models;
 using SubagentPresentation = SubagentsPackage::Sunder.Package.Agent.Shared.PackageViews;
 using SubagentViews = SubagentsPackage::Sunder.Package.Agent.Subagents.PackageViews;
+using SubagentModels = SubagentsPackage::Sunder.Package.Agent.Contracts.Models;
 
 namespace Sunder.Package.Agent.Tests;
 
 internal static class TranscriptToolTestHarness
 {
     internal static AgentViews.AgentToolInvocationRowViewModel CreateAgentRow(
-        AgentTurnRecord turn,
-        AgentTurnItemRecord item,
+        object turn,
+        object item,
         AgentServices.AgentToolPresentationService? presentationService = null,
         Func<AgentTranscriptToolDetailRequest, CancellationToken, Task<AgentTranscriptToolDetailRecord?>>? loadDetail = null,
         Func<AgentTurnRecord, AgentTurnItemRecord, IReadOnlyList<AgentViews.AgentChildSessionLinkViewModel>>? childSessionLinksResolver = null)
     {
-        var normalizedItem = item with { TurnId = turn.TurnId };
+        var localTurn = AgentRoleBoundary.As<AgentModels.AgentTurnRecord>(turn);
+        var normalizedItem = AgentRoleBoundary.As<AgentModels.AgentTurnItemRecord>(item) with { TurnId = localTurn.TurnId };
         var projectedTurn = AgentPresentation.TranscriptTurnTransportProjection.ProjectToolHeaders(
-            turn with { Items = [normalizedItem] });
+            localTurn with { Items = [normalizedItem] });
         var projectedItem = projectedTurn.Items.Single();
         var projection = AgentPresentation.TranscriptRowProjector<AgentViews.AgentTranscriptRowViewModel>
             .DescribeTool(projectedTurn, projectedItem);
-        var detail = CreateDetail(normalizedItem, projection);
+        var detail = CreateDetail(AgentRoleBoundary.As<AgentTurnItemRecord>(normalizedItem), projection);
         return new AgentViews.AgentToolInvocationRowViewModel(
             projectedTurn,
             projectedItem,
             projection,
             presentationService ?? new AgentServices.AgentToolPresentationService(),
-            loadDetail ?? ((_, cancellationToken) =>
+            loadDetail is null ? ((_, cancellationToken) =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                return Task.FromResult<AgentTranscriptToolDetailRecord?>(detail);
-            }),
-            childSessionLinksResolver);
+                return Task.FromResult<AgentModels.AgentTranscriptToolDetailRecord?>(AgentRoleBoundary.As<AgentModels.AgentTranscriptToolDetailRecord>(detail));
+            }) : async (request, token) => AgentRoleBoundary.As<AgentModels.AgentTranscriptToolDetailRecord?>(
+                (await loadDetail(AgentRoleBoundary.As<AgentTranscriptToolDetailRequest>(request), token).ConfigureAwait(false))!),
+            childSessionLinksResolver is null ? null : (value, row) => childSessionLinksResolver(
+                AgentRoleBoundary.As<AgentTurnRecord>(value), AgentRoleBoundary.As<AgentTurnItemRecord>(row)));
     }
 
     internal static SubagentViews.SubsessionToolInvocationRowViewModel CreateSubsessionRow(
-        AgentTurnRecord turn,
-        AgentTurnItemRecord item)
+        object turn,
+        object item)
     {
-        var normalizedItem = item with { TurnId = turn.TurnId };
+        var localTurn = AgentRoleBoundary.As<SubagentModels.AgentTurnRecord>(turn);
+        var normalizedItem = AgentRoleBoundary.As<SubagentModels.AgentTurnItemRecord>(item) with { TurnId = localTurn.TurnId };
         var projectedTurn = SubagentPresentation.TranscriptTurnTransportProjection.ProjectToolHeaders(
-            turn with { Items = [normalizedItem] });
+            localTurn with { Items = [normalizedItem] });
         var projectedItem = projectedTurn.Items.Single();
         var projection = SubagentPresentation.TranscriptRowProjector<SubagentViews.SubsessionTranscriptRowViewModel>
             .DescribeTool(projectedTurn, projectedItem);
-        var detail = CreateDetail(normalizedItem, projection);
+        var detail = CreateDetail(AgentRoleBoundary.As<AgentTurnItemRecord>(normalizedItem), projection);
         return new SubagentViews.SubsessionToolInvocationRowViewModel(
             projectedTurn,
             projectedItem,
@@ -58,7 +64,7 @@ internal static class TranscriptToolTestHarness
             (_, cancellationToken) =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                return Task.FromResult<AgentTranscriptToolDetailRecord?>(detail);
+                return Task.FromResult<SubagentModels.AgentTranscriptToolDetailRecord?>(AgentRoleBoundary.As<SubagentModels.AgentTranscriptToolDetailRecord>(detail));
             });
     }
 

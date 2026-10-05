@@ -6,10 +6,10 @@ extern alias SubagentsApp;
 using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Tests;
 using Xunit;
-using McpAppModule = McpApp::Sunder.Package.Agent.Mcp.AppPackageModule;
-using MemoryAppModule = MemoryApp::Sunder.Package.Agent.Memory.Semantic.AppPackageModule;
-using SkillsAppModule = SkillsApp::Sunder.Package.Agent.Skills.AppPackageModule;
-using SubagentsAppModule = SubagentsApp::Sunder.Package.Agent.Subagents.AppPackageModule;
+using McpAppModule = McpApp::Sunder.Generated.Package.AppModule;
+using MemoryAppModule = MemoryApp::Sunder.Generated.Package.AppModule;
+using SkillsAppModule = SkillsApp::Sunder.Generated.Package.AppModule;
+using SubagentsAppModule = SubagentsApp::Sunder.Generated.Package.AppModule;
 
 namespace Sunder.Package.Agent.Presentation.Tests;
 
@@ -54,7 +54,7 @@ public sealed class ExtensionPackageRoleBoundaryTests
     {
         {
             (services, context) => new McpAppModule().ConfigureAppServices(services, context),
-            "IMcpManagementGateway",
+            "McpAppRuntimeGateway",
             ["McpServerCatalogService", "McpClientConnectionManager", "McpToolSource", "McpServerStackContributor"]
         },
         {

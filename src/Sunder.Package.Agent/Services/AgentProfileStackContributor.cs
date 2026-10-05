@@ -14,6 +14,10 @@ public sealed class AgentProfileStackContributor(
     AgentRpcCatalog rpcCatalog,
     AgentRpcProviderService<IAgentBehaviorLoop> behaviorLoops) : IPackageStackExporter, IPackageStackImporter, IPackageStackImportAppliedHandler
 {
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
+    internal AgentProfileStackContributor(AgentProfileService profiles, IPackageContext context, AgentRpcCatalog catalog, Runtime.Rpc.AgentBehaviorServices behaviors)
+        : this(profiles, context, catalog, behaviors.Service) { }
+
     private const string PackageId = "sunder.package.agent";
     private const string SchemaId = "sunder.package.agent/profile";
     private const string DetailDescription = "description";
@@ -240,7 +244,7 @@ public sealed class AgentProfileStackContributor(
 
         foreach (var contribution in AgentRpcInvocation.Snapshot(
                      rpcCatalog,
-                     AgentRpcServices.ChatProviders,
+                     Sunder.Package.Agent.Runtime.Rpc.AgentChatBindings.Service,
                      static provider => provider.Descriptor.ProviderId))
         {
             if (providerIds.Contains(contribution.Metadata))
@@ -251,7 +255,7 @@ public sealed class AgentProfileStackContributor(
 
         foreach (var contribution in AgentRpcInvocation.Snapshot(
                      rpcCatalog,
-                     AgentRpcServices.EmbeddingProviders,
+                     Sunder.Package.Agent.Runtime.Rpc.AgentEmbeddingBindings.Service,
                      static provider => provider.Descriptor.ProviderId))
         {
             if (providerIds.Contains(contribution.Metadata))
@@ -277,7 +281,7 @@ public sealed class AgentProfileStackContributor(
 
         foreach (var contribution in AgentRpcInvocation.Snapshot(
                      rpcCatalog,
-                     AgentRpcServices.SelectableCapabilityProviders,
+                     Sunder.Package.Agent.Runtime.Rpc.AgentSelectableBindings.Service,
                      static provider => provider.ProviderId))
         {
             if (sourceIds.Contains(contribution.Metadata))

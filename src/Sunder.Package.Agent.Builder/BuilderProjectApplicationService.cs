@@ -170,6 +170,20 @@ public sealed class BuilderProjectApplicationService(
                 : result.CombinedOutput);
         }
 
+        // Initialization is the explicit authoring action for the known template
+        // sample. Ordinary subsequent Build never accepts changed contracts.
+        context.ReportIndeterminate("Restoring the new package project...");
+        var restore = await execution.RunProcessAsync("dotnet", ["restore", executionProjectFolder], executionProjectFolder,
+            cancellationToken: context.CancellationToken);
+        if (restore.ExitCode != 0)
+            throw new InvalidOperationException(string.IsNullOrWhiteSpace(restore.CombinedOutput) ? "Package restore failed." : restore.CombinedOutput);
+        context.ReportIndeterminate("Accepting the initial sample contract...");
+        var accept = await execution.RunProcessAsync("dotnet",
+            ["msbuild", "-t:AcceptSunderContracts", "-p:SunderContractKey=sample", "-p:SunderContractNextVersion=2.0.0"], executionProjectFolder,
+            cancellationToken: context.CancellationToken);
+        if (accept.ExitCode != 0)
+            throw new InvalidOperationException(string.IsNullOrWhiteSpace(accept.CombinedOutput) ? "Initial contract acceptance failed." : accept.CombinedOutput);
+
         var initialized = project with
         {
             ExecutionProjectFolder = executionProjectFolder,
@@ -206,25 +220,25 @@ public sealed class BuilderProjectApplicationService(
         BuilderProjectRecord project,
         BackgroundProcessContext context)
     {
-        context.ReportIndeterminate("Running dotnet publish...");
+        context.ReportIndeterminate("Freezing accepted contracts and packing the package...");
         var execution = await executionService.ResolveAsync(project.WorkspaceId, context.CancellationToken);
         var projectFolder = pathService.ResolveExecutionProjectFolder(project);
         var result = await execution.RunProcessAsync(
             "dotnet",
-            ["publish", projectFolder],
+            ["msbuild", "-t:CheckSunderContracts;FreezeSunderContracts;PackSunderPackage", "-p:Configuration=Release"],
             projectFolder,
             timeoutSeconds: 900,
             cancellationToken: context.CancellationToken);
         if (result.ExitCode != 0)
         {
             throw new BuilderProjectOperationException(
-                "dotnet publish failed. See Builder runtime log for details.",
-                string.IsNullOrWhiteSpace(result.CombinedOutput) ? "dotnet publish failed." : result.CombinedOutput);
+                "Package creation failed. See Builder runtime log for details.",
+                string.IsNullOrWhiteSpace(result.CombinedOutput) ? "Package creation failed." : result.CombinedOutput);
         }
 
         return new BuilderProjectOperationResult(
             project with { UpdatedAtUtc = DateTimeOffset.UtcNow },
-            string.IsNullOrWhiteSpace(result.CombinedOutput) ? "Publish completed." : result.CombinedOutput);
+            string.IsNullOrWhiteSpace(result.CombinedOutput) ? "Package archive created." : result.CombinedOutput);
     }
 
     public async Task<IReadOnlyList<BuilderPrerequisiteStatus>> EnsurePrerequisitesInstalledAsync(
@@ -305,7 +319,6 @@ public sealed class BuilderProjectApplicationService(
             project.DisplayName,
             "--output",
             outputFolder,
-            "--createInPlace",
         ];
 
     private static BuilderProjectValidationResult Invalid(string error)

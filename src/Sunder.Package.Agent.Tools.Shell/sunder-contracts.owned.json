@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "authorityKind": "package",
+  "authorityId": "sunder.package.agent.tools.shell",
+  "packageId": "sunder.package.agent.tools.shell",
+  "contracts": {}
+}

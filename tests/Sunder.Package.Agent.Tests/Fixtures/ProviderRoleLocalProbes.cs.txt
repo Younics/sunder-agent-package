@@ -1,0 +1,41 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using Microsoft.Extensions.AI;
+using Sunder.Package.Agent.Contracts.Contracts;
+using Sunder.Package.Agent.Contracts.Models;
+
+public sealed class RoleLocalChatProbe(string id, Func<IChatClient> create) : IAgentChatProvider
+{
+    public AgentProviderDescriptor Descriptor { get; } = new(id, "Chat probe", [AgentAuthMode.ApiKey], true, true);
+    public ValueTask<IReadOnlyList<AgentModelDescriptor>> GetAvailableModelsAsync(CancellationToken cancellationToken = default)
+        => ValueTask.FromResult<IReadOnlyList<AgentModelDescriptor>>([]);
+    public ValueTask<AgentProviderReadiness> GetReadinessAsync(CancellationToken cancellationToken = default)
+        => ValueTask.FromResult(new AgentProviderReadiness(id, AgentProviderReadinessStatus.Ready, "Ready"));
+    public ValueTask<AgentProviderRunCapabilities> GetRunCapabilitiesAsync(string? modelId, CancellationToken cancellationToken = default)
+        => ValueTask.FromResult(new AgentProviderRunCapabilities(false, false, false, "Probe"));
+    public ValueTask<IChatClient> CreateChatClientAsync(AgentChatClientContext context, CancellationToken cancellationToken = default)
+    { cancellationToken.ThrowIfCancellationRequested(); return ValueTask.FromResult(create()); }
+}
+
+public sealed class RoleLocalEmbeddingProbe(Func<string, string, CancellationToken, ValueTask<string>> call)
+    : IAgentEmbeddingProvider, IAgentEmbeddingSpaceIdentityProvider
+{
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
+    {
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.KebabCaseLower, allowIntegerValues: false) },
+    };
+    public AgentEmbeddingProviderDescriptor Descriptor => Invoke<AgentEmbeddingProviderDescriptor>("describe", new { }, default).AsTask().GetAwaiter().GetResult();
+    public async ValueTask<IReadOnlyList<AgentEmbeddingModelDescriptor>> GetAvailableModelsAsync(CancellationToken cancellationToken = default)
+        => await Invoke<AgentEmbeddingModelDescriptor[]>("models", new { }, cancellationToken);
+    public ValueTask<AgentEmbeddingProviderReadiness> GetReadinessAsync(CancellationToken cancellationToken = default)
+        => Invoke<AgentEmbeddingProviderReadiness>("readiness", new { }, cancellationToken);
+    public ValueTask<string> GetEmbeddingSpaceIdentityAsync(string modelId, CancellationToken cancellationToken = default)
+        => Invoke<string>("space", new { modelId }, cancellationToken);
+    public ValueTask<AgentEmbeddingGenerationResult?> GenerateEmbeddingAsync(string modelId, string text, CancellationToken cancellationToken = default)
+        => Invoke<AgentEmbeddingGenerationResult?>("generate", new { modelId, text }, cancellationToken);
+    public async ValueTask<IReadOnlyList<AgentEmbeddingGenerationResult?>> GenerateEmbeddingsAsync(string modelId, IReadOnlyList<string> texts, CancellationToken cancellationToken = default)
+        => await Invoke<AgentEmbeddingGenerationResult?[]>("batch", new { modelId, texts }, cancellationToken);
+    private async ValueTask<T> Invoke<T>(string operation, object request, CancellationToken token)
+        => JsonSerializer.Deserialize<T>(await call(operation, JsonSerializer.Serialize(request, Json), token), Json)!;
+}

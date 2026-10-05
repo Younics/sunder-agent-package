@@ -1,7 +1,10 @@
+extern alias SubagentsWorker;
+
 using System.Text.Json;
-using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Subagents.Models;
-using Sunder.Package.Agent.Subagents.Services;
+using SubagentsWorker::Sunder.Package.Agent.Contracts.Models;
+using SubagentsWorker::Sunder.Package.Agent.Subagents.Models;
+using SubagentsWorker::Sunder.Package.Agent.Subagents.Services;
+using SubagentsWorker::Sunder.Package.Agent.Subagents.Rpc;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -12,10 +15,12 @@ public sealed class SubagentPayloadBoundaryTests
     public void StructuredParentPayload_OmitsChildResultBodyAndKeepsSessionReference()
     {
         using var scope = RegressionTestPackageScope.Create();
+        using var catalog = new RegressionTestExtensionCatalog();
+        var bindings = catalog.OwnConsumer("sunder.package.agent.subagents", rpc => new SubagentRuntimeBindings(rpc));
         var renderer = new SubagentBatchResultRenderer(
             new SubagentService(new SubagentStore(scope.Context)),
             new SubagentRequestParser(),
-            new SubagentPermissionStatusAdapter(new RegressionTestExtensionCatalog()));
+            new SubagentPermissionStatusAdapter(bindings));
         var childSessionId = Guid.NewGuid();
         var now = DateTimeOffset.UtcNow;
         var subagent = new SubagentRecord(

@@ -1,6 +1,8 @@
-using Sunder.Package.Agent.Builder;
-using Sunder.Package.Agent.Contracts.Contracts;
-using Sunder.Package.Agent.Contracts.Models;
+extern alias BuilderApp;
+
+using BuilderApp::Sunder.Package.Agent.Builder;
+using BuilderApp::Sunder.Package.Agent.Contracts.Contracts;
+using BuilderApp::Sunder.Package.Agent.Contracts.Models;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -86,7 +88,7 @@ public sealed class BuilderSetupServiceTests
             AgentExecutionTargetContext context,
             string path,
             CancellationToken cancellationToken = default)
-            => ValueTask.FromResult(new AgentResolvedResource("file", path, path, AgentPermissionBoundaryIds.ConfiguredScope, Exists: true));
+            => ValueTask.FromResult(new AgentResolvedResource("file", path, path, "configured-scope", Exists: true));
 
         public ValueTask<AgentShellCommandResult> ExecuteShellAsync(
             AgentExecutionTargetContext context,

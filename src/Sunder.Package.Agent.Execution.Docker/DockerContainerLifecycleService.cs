@@ -9,6 +9,7 @@ public sealed class DockerContainerLifecycleService : IDisposable, IAsyncDisposa
     private readonly TimeSpan _disposeStopTimeout;
     private int _disposed;
 
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
     public DockerContainerLifecycleService()
         : this(TimeSpan.FromMinutes(5))
     {

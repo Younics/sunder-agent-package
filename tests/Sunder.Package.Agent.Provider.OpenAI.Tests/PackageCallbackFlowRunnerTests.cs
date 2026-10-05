@@ -1,4 +1,6 @@
-using Sunder.Package.Agent.Shared.Presentation;
+extern alias OpenAiApp;
+
+using OpenAiApp::Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Callbacks;
 using Xunit;
 

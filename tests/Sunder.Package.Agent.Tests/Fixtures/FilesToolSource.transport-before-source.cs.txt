@@ -1,0 +1,97 @@
+    private static async ValueTask<AgentRpcLease<IAgentExecutionTarget>?> AcquireTargetAsync(
+        AgentRpcReference<IAgentExecutionTarget>? selectedReference,
+        AgentWorkspaceBindingRecord binding,
+        CancellationToken cancellationToken)
+    {
+        if (selectedReference is null)
+        {
+            return null;
+        }
+
+        var lease = await selectedReference.TryAcquireAsync(cancellationToken).ConfigureAwait(false);
+        if (lease is null)
+        {
+            return null;
+        }
+
+        var retirementToken = lease.RetirementToken;
+        using var invocation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            retirementToken);
+        try
+        {
+            var descriptor = lease.Service is AgentExecutionTargetRpcClient rpcTarget
+                ? await rpcTarget.DescribeAsync(invocation.Token).ConfigureAwait(false)
+                : lease.Service.Descriptor;
+            if (retirementToken.IsCancellationRequested || !IsBindingMatch(descriptor, binding))
+            {
+                lease.Dispose();
+                return null;
+            }
+
+            return lease;
+        }
+        catch (Exception exception) when (IsTargetUnavailable(
+            exception,
+            retirementToken,
+            cancellationToken))
+        {
+            lease.Dispose();
+            return null;
+        }
+        catch
+        {
+            lease.Dispose();
+            throw;
+        }
+    }
+
+    private static bool IsBindingMatch(
+        AgentExecutionTargetDescriptor descriptor,
+        AgentWorkspaceBindingRecord binding)
+        => string.Equals(descriptor.TargetId, binding.ContributionId, StringComparison.OrdinalIgnoreCase)
+           || string.Equals(descriptor.TargetKind, binding.ContributionId, StringComparison.OrdinalIgnoreCase);
+
+    private static async ValueTask<TResult> InvokeTargetAsync<TResult>(
+        AgentRpcLease<IAgentExecutionTarget> lease,
+        CancellationToken cancellationToken,
+        Func<IAgentExecutionTarget, CancellationToken, ValueTask<TResult>> callback,
+        Func<TResult> unavailableResult)
+    {
+        using (lease)
+        {
+            var retirementToken = lease.RetirementToken;
+            using var invocation = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken,
+                retirementToken);
+            try
+            {
+                var result = await callback(lease.Service, invocation.Token).ConfigureAwait(false);
+                if (retirementToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                {
+                    return unavailableResult();
+                }
+                return result;
+            }
+            catch (Exception exception) when (IsTargetUnavailable(
+                exception,
+                retirementToken,
+                cancellationToken))
+            {
+                return unavailableResult();
+            }
+        }
+    }
+
+    private static bool IsTargetUnavailable(
+        Exception exception,
+        CancellationToken retirementToken,
+        CancellationToken callerCancellationToken)
+        => !callerCancellationToken.IsCancellationRequested
+           && (exception is SunderRpcException
+               {
+                   Error.Kind: SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable,
+               }
+               || retirementToken.IsCancellationRequested
+               && (exception is OperationCanceledException
+                   || exception is SunderRpcException { Error.Kind: SunderRpcErrorKind.Cancelled }));

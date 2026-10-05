@@ -12,6 +12,7 @@ using Sunder.Sdk.Logging;
 
 namespace Sunder.Package.Agent.Provider.OpenAI;
 
+[method: Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
 public sealed class OpenAiAgentProvider(
     ApiKeyAuthStrategy apiKeyAuthStrategy,
     CodexConnectedAuthStrategy codexConnectedAuthStrategy,
@@ -20,6 +21,13 @@ public sealed class OpenAiAgentProvider(
     IPackageContext packageContext) : IAgentChatProvider, IAgentUtilityModelProvider
 {
     private readonly IPackageContext _packageContext = packageContext;
+    private readonly Func<string, OpenAIClient> _clientFactory = static key => new OpenAIClient(key);
+
+    internal OpenAiAgentProvider(ApiKeyAuthStrategy apiKeyAuthStrategy, CodexConnectedAuthStrategy codexConnectedAuthStrategy,
+        CodexConnectedTransport codexConnectedTransport, CodexResponseContinuationStore codexResponseContinuationStore,
+        IPackageContext packageContext, Func<string, OpenAIClient> clientFactory)
+        : this(apiKeyAuthStrategy, codexConnectedAuthStrategy, codexConnectedTransport, codexResponseContinuationStore, packageContext)
+        => _clientFactory = clientFactory;
 
     public AgentProviderDescriptor Descriptor { get; } = new(
         "openai",
@@ -125,7 +133,7 @@ public sealed class OpenAiAgentProvider(
                 },
                 cancellationToken: cancellationToken);
             var model = OpenAiModelIds.Normalize(context.ModelId);
-            return new OpenAiModelOptionsChatClient(new OpenAIClient(apiKey).GetResponsesClient().AsIChatClient(model));
+            return new OpenAiModelOptionsChatClient(_clientFactory(apiKey).GetResponsesClient().AsIChatClient(model));
         }
 
         var session = await codexConnectedAuthStrategy.TryEnsureAuthenticatedSilentlyAsync(cancellationToken);

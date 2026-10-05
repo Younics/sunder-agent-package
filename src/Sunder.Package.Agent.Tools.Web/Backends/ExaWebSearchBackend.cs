@@ -26,6 +26,7 @@ public sealed class ExaWebSearchBackend : IDisposable
     private readonly TimeSpan _timeout;
     private readonly bool _disposeHttpClient;
 
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
     public ExaWebSearchBackend(WebToolsSettingsService settingsService)
         : this(settingsService, CreateHttpClient(), DefaultTimeout, disposeHttpClient: true)
     {

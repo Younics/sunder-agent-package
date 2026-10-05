@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <SunderPackageFamilyId>sunder.package.agent.builder</SunderPackageFamilyId>
+    <SunderPackageRole>worker</SunderPackageRole>
+    <SunderPackageAppProject>App\Sunder.Package.Agent.Builder.App.csproj</SunderPackageAppProject>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <Import Project="$(MSBuildThisFileDirectory)..\..\Sunder.Agent.Worker.props" />
+
+  <ItemGroup>
+    <ProjectReference Include="..\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
+    <ProjectReference Include="Protocol\Sunder.Package.Agent.Builder.Protocol.csproj" />
+    <Compile Include="BuilderRpcBridge.cs" />
+    <Compile Include="BuilderRpcProvider.cs" />
+    <Compile Include="PackageMetadata.cs" />
+    <Compile Include="PackageDependency.Legacy.cs" />
+    <Compile Include="Runtime\BuilderRuntimeOperations.cs;Runtime\BuilderWorkerComposition.cs;Runtime\BuilderWorkerBindings.Legacy.cs" />
+    <Compile Include="Program.cs" />
+    <Compile Include="Properties\AssemblyInfo.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <SunderPackageTarget Include="runtime/$(RuntimeIdentifier)"
+                         Role="runtime"
+                         Rid="$(RuntimeIdentifier)"
+                         Kind="worker" />
+    <SunderContractBundle Include="Protocol\Contracts\builder-runtime.rpc.json"
+                          ContractId="sunder.package.agent.builder.runtime"
+                            Version="1.0.0"
+                          DescriptorPath="contracts/builder-runtime.rpc.json"
+                          Exposure="package" />
+    <SunderRpcProvider Include="builder.runtime"
+                       ContractId="sunder.package.agent.builder.runtime"
+                        ContractVersion="1.0.0"
+                       Role="runtime"
+                       Audience="owner" />
+  </ItemGroup>
+
+</Project>

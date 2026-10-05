@@ -2,33 +2,17 @@
 
   <PropertyGroup>
     <SunderPackageFamilyId>sunder.package.agent.tools.files</SunderPackageFamilyId>
-    <SunderPackageRole>worker</SunderPackageRole>
-    <SunderPackageProject>true</SunderPackageProject>
-    <SunderPackagePrimaryProject>true</SunderPackagePrimaryProject>
-    <SunderSdkWorkerReference>true</SunderSdkWorkerReference>
-    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
-    <OutputType>Exe</OutputType>
-    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">$(NETCoreSdkRuntimeIdentifier)</RuntimeIdentifier>
-    <RuntimeIdentifiers>win-x64;win-arm64;linux-x64;linux-arm64;osx-x64;osx-arm64</RuntimeIdentifiers>
-    <SelfContained>true</SelfContained>
-    <UseAppHost>true</UseAppHost>
-    <PublishSingleFile>false</PublishSingleFile>
-    <SunderGeneratedPackageManifest>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\obj\$(Configuration)\$(TargetFramework)\$(RuntimeIdentifier)\sunder-package.json'))</SunderGeneratedPackageManifest>
   </PropertyGroup>
+
+  <Import Project="$(MSBuildThisFileDirectory)..\..\Sunder.Agent.Worker.props" />
+  <Import Project="..\Sunder.Package.Agent\Models\AgentExtensionSources.props" />
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
-    <ProjectReference Include="..\Sunder.Agent.Execution.Common\Sunder.Agent.Execution.Common.csproj" />
-    <ProjectReference Include="..\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
+    <SunderSdkCapability Include="logging.v1" />
+    <Compile Include="@(SunderAgentFilesSource->Distinct())" LinkBase="Domain" />
     <Compile Include="..\Sunder.Package.Agent.Shared\Presentation\AgentToolPresentationMarkdown.cs"
              Link="Presentation\AgentToolPresentationMarkdown.cs" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <SunderPackageTarget Include="runtime/$(RuntimeIdentifier)"
-                         Role="runtime"
-                         Rid="$(RuntimeIdentifier)"
-                         Kind="worker" />
   </ItemGroup>
 
 </Project>

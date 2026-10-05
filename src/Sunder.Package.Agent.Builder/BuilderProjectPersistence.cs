@@ -1,3 +1,5 @@
+using Microsoft.Extensions.DependencyInjection;
+
 namespace Sunder.Package.Agent.Builder;
 
 public sealed class BuilderPersistenceFailedEventArgs(Exception exception) : EventArgs
@@ -24,6 +26,7 @@ public sealed class BuilderProjectPersistence : IAsyncDisposable
     private bool _disposed;
     private Task? _disposeTask;
 
+    [ActivatorUtilitiesConstructor]
     public BuilderProjectPersistence(IBuilderProjectStore store)
         : this(store, DefaultDebounceDelay)
     {

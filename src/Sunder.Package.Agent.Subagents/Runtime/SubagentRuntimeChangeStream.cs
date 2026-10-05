@@ -2,27 +2,26 @@ using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Subagents.Services;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Subagents.Runtime;
 
-internal sealed class SubagentRuntimeChangeStream :
+internal sealed partial class SubagentRuntimeChangeStream :
     IDisposable
 {
     private const int ReplayCapacity = 256;
     private const int SubscriberCapacity = 64;
     private readonly SubagentService _service;
     private readonly SubagentEditorCapabilityCatalog _capabilities;
-    private readonly AgentRpcCatalog _rpcCatalog;
+    private readonly ISubagentRuntimeBindings _runtimeBindings;
     private readonly object _gate = new();
     private readonly object _runtimeGate = new();
     private readonly Dictionary<long, Subscriber> _subscribers = [];
     private readonly Queue<SubagentChanged> _replay = new(ReplayCapacity);
     private readonly string _instanceId = Guid.NewGuid().ToString("N");
-    private AgentRpcReference<IAgentRuntimeCatalog>? _runtimeReference;
-    private AgentRpcLease<IAgentRuntimeCatalog>? _runtimeLease;
+    private SubagentProviderReference<IAgentRuntimeCatalog>? _runtimeReference;
+    private SubagentProviderLease<IAgentRuntimeCatalog>? _runtimeLease;
     private IAgentRuntimeCatalog? _runtime;
     private CancellationTokenRegistration _runtimeRetirement;
     private long _runtimeGeneration;
@@ -32,17 +31,24 @@ internal sealed class SubagentRuntimeChangeStream :
 
     public SubagentRuntimeChangeStream(
         SubagentService service,
-        AgentRpcCatalog rpcCatalog)
+        ISubagentRuntimeBindings runtimeBindings)
     {
         _service = service;
-        _rpcCatalog = rpcCatalog;
-        _capabilities = new SubagentEditorCapabilityCatalog(rpcCatalog);
+        _runtimeBindings = runtimeBindings;
+        _capabilities = new SubagentEditorCapabilityCatalog(runtimeBindings);
         service.SubagentsChanged += OnSubagentsChanged;
         _capabilities.Changed += OnCatalogChanged;
+        _runtimeBindings.RuntimeCatalogChanged += OnRuntimeCatalogChanged;
         RefreshRuntime();
     }
 
     internal long Revision => Interlocked.Read(ref _revision);
+
+    internal void RefreshAfterActivation()
+    {
+        _capabilities.RefreshSubscriptions();
+        RefreshRuntime();
+    }
 
     public async IAsyncEnumerable<SubagentChanged> SubscribeAsync(
         SubagentChangeSubscription request,
@@ -142,6 +148,11 @@ internal sealed class SubagentRuntimeChangeStream :
     private void OnRuntimeResetRequired()
         => Publish(new(0, SubagentChangeKind.ResnapshotRequired));
 
+    private void OnRuntimeCatalogChanged()
+    {
+        if (RefreshRuntime()) Publish(new(0, SubagentChangeKind.ResnapshotRequired));
+    }
+
     private void Publish(SubagentChanged change)
     {
         lock (_gate)
@@ -194,7 +205,7 @@ internal sealed class SubagentRuntimeChangeStream :
             }
             catch
             {
-                // Catalog availability is reported by AgentRpcCatalog; retirement callbacks must not throw.
+                // Catalog availability is reported by the bindings; retirement callbacks must not throw.
             }
         }
         Publish(new(0, SubagentChangeKind.ResnapshotRequired));
@@ -203,7 +214,7 @@ internal sealed class SubagentRuntimeChangeStream :
     private bool RefreshRuntime()
     {
         if (Volatile.Read(ref _disposed)) return false;
-        var runtimeReference = _rpcCatalog.GetServiceReferences(AgentRpcServices.RuntimeCatalogs)
+        var runtimeReference = _runtimeBindings.GetRuntimeCatalogs()
             .FirstOrDefault();
         lock (_runtimeGate)
         {
@@ -215,7 +226,7 @@ internal sealed class SubagentRuntimeChangeStream :
             }
         }
 
-        AgentRpcLease<IAgentRuntimeCatalog>? runtimeLease = null;
+        SubagentProviderLease<IAgentRuntimeCatalog>? runtimeLease = null;
         if (runtimeReference?.TryAcquire(out var acquired) == true) runtimeLease = acquired;
 
         long generation;
@@ -305,6 +316,7 @@ internal sealed class SubagentRuntimeChangeStream :
 
         _service.SubagentsChanged -= OnSubagentsChanged;
         _capabilities.Changed -= OnCatalogChanged;
+        _runtimeBindings.RuntimeCatalogChanged -= OnRuntimeCatalogChanged;
         _capabilities.Dispose();
         lock (_runtimeGate) DetachRuntimeCore();
     }

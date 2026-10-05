@@ -1,3 +1,8 @@
+extern alias McpWorker;
+extern alias MemoryWorker;
+extern alias OpenAiWorker;
+extern alias SkillsWorker;
+
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -5,10 +10,10 @@ using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using Microsoft.Data.Sqlite;
 using Sunder.Package.Agent.HistorySearch;
-using Sunder.Package.Agent.Mcp.Services;
-using Sunder.Package.Agent.Memory.Semantic;
-using Sunder.Package.Agent.Provider.OpenAI.Auth;
-using Sunder.Package.Agent.Skills.Services;
+using McpWorker::Sunder.Package.Agent.Mcp.Services;
+using MemoryWorker::Sunder.Package.Agent.Memory.Semantic;
+using OpenAiWorker::Sunder.Package.Agent.Provider.OpenAI.Auth;
+using SkillsWorker::Sunder.Package.Agent.Skills.Services;
 using Sunder.Package.Agent.Storage;
 using Sunder.Sdk.Rpc;
 using Xunit;
@@ -28,29 +33,45 @@ public sealed class AgentCompatibilityCandidateTests
     [Fact]
     public void GeneratedCompatibilityCandidate_MatchesSourceAndLiveSchemas()
     {
+        RejectHistoricalCandidateUpdate(Environment.GetEnvironmentVariable(UpdateEnvironmentVariable));
         var root = AgentPackageRepositoryInventory.RepositoryRoot.FullName;
         var candidatePath = Path.Combine(root, NormalizePath(CandidateRelativePath));
-        var generated = Generate(root);
-        if (string.Equals(Environment.GetEnvironmentVariable(UpdateEnvironmentVariable), "1", StringComparison.Ordinal))
-        {
-            File.WriteAllBytes(candidatePath, generated);
-        }
-
         Assert.True(File.Exists(candidatePath), $"Compatibility candidate was not found: {candidatePath}");
+        Assert.Equal(AgentSourceMigrationProjectChanges.HistoricalCandidateSha256, HashFile(candidatePath));
+        AgentSourceMigrationProjectChanges.AssertRetirementCurrentTopology(root);
+        var generated = Generate(root);
+        // This pre-canonical candidate is historical evidence. Current topology and
+        // generated contract/policy closure are checked independently below; neither
+        // this candidate nor the frozen RPC baseline is an update-switch output.
         Assert.Equal(Encoding.UTF8.GetString(File.ReadAllBytes(candidatePath)), Encoding.UTF8.GetString(generated));
+    }
+
+    [Fact]
+    public void HistoricalCandidate_RejectsTheFormerUpdateSwitch()
+        => Assert.Throws<InvalidOperationException>(() => RejectHistoricalCandidateUpdate("1"));
+
+    [Fact]
+    public void CanonicalCompatibilityClosure_MatchesCurrentDescriptorsPoliciesAndTopology()
+        => AgentSourceMigrationProjectChanges.AssertCurrentCanonicalCompatibility(AgentPackageRepositoryInventory.RepositoryRoot.FullName);
+
+    private static void RejectHistoricalCandidateUpdate(string? value)
+    {
+        if (string.Equals(value, "1", StringComparison.Ordinal))
+            throw new InvalidOperationException("The pre-canonical compatibility candidate and RPC baseline are immutable history; the candidate-update switch cannot rewrite them.");
     }
 
     private static byte[] Generate(string root)
     {
         var descriptors = ReadDescriptors(root);
         var declarations = ReadDeclarations(root);
-        var packageInventoryPath = Path.Combine(root, "packages.json");
-        using var packageInventoryDocument = JsonDocument.Parse(File.ReadAllBytes(packageInventoryPath));
+        var historicalInputs = AgentSourceMigrationProjectChanges.ReadCandidateInputHistory(root);
+        var packageInventoryInput = historicalInputs["packages.json"];
+        using var packageInventoryDocument = JsonDocument.Parse(packageInventoryInput.Text);
         var packageInventory = packageInventoryDocument.RootElement.Clone();
         var extensionPoints = ReadExtensionPoints(root);
-        var roles = ReadProjectRoles(root);
+        var roles = ReadProjectRoles(root, historicalInputs["Sunder.Agent.Worker.props"].Text);
         var packages = ReadRuntimePackages(root);
-        var locks = ReadReleaseLocks(root);
+        var locks = ReadReleaseLocks(root, historicalInputs);
         var publicApi = new[]
         {
             ReadTextSnapshot(root, "src/Sunder.Package.Agent.Contracts/PublicAPI.Shipped.txt"),
@@ -85,7 +106,7 @@ public sealed class AgentCompatibilityCandidateTests
             Descriptors: descriptors,
             Declarations: declarations,
             ExtensionPoints: extensionPoints,
-            PackageInventorySha256: HashFile(packageInventoryPath),
+            PackageInventorySha256: packageInventoryInput.Sha256,
             PackageInventory: packageInventory,
             RuntimePackages: packages,
             ProjectRoles: roles,
@@ -111,12 +132,12 @@ public sealed class AgentCompatibilityCandidateTests
     private static IReadOnlyList<DescriptorSnapshot> ReadDescriptors(string root)
     {
         var publicRoot = NormalizeRelativePath("src/Sunder.Package.Agent.Contracts/Contracts") + "/";
-        return Directory.EnumerateFiles(Path.Combine(root, "src"), "*.rpc.json", SearchOption.AllDirectories)
+        return AgentSourceMigrationProjectChanges.EnumerateMigrationHistoryFiles(root, Path.Combine(root, "src"), "*.rpc.json")
             .Where(AgentPackageRepositoryInventory.IsSourceFile)
             .Select(path =>
             {
                 var relativePath = RelativePath(root, path);
-                var descriptor = SunderRpcContractDescriptor.Parse(File.ReadAllBytes(path));
+                var descriptor = SunderRpcContractDescriptor.Parse(Encoding.UTF8.GetBytes(AgentSourceMigrationProjectChanges.ReadMigrationSourceText(path)));
                 return new DescriptorSnapshot(
                     relativePath,
                     descriptor.ContractId,
@@ -134,14 +155,14 @@ public sealed class AgentCompatibilityCandidateTests
 
     private static DeclarationInventory ReadDeclarations(string root)
     {
-        var sources = Directory.EnumerateFiles(Path.Combine(root, "src"), "*", SearchOption.AllDirectories)
+        var sources = AgentSourceMigrationProjectChanges.EnumerateMigrationHistoryFiles(root, Path.Combine(root, "src"), "*")
             .Concat(Directory.EnumerateFiles(root, "*", SearchOption.TopDirectoryOnly))
             .Where(AgentPackageRepositoryInventory.IsSourceFile)
             .Where(static path => Path.GetExtension(path) is ".csproj" or ".props" or ".targets")
             .Order(StringComparer.Ordinal)
             .ToArray();
         IReadOnlyList<MsBuildDeclaration> Read(string itemName) => sources
-            .SelectMany(source => XDocument.Load(source)
+            .SelectMany(source => AgentSourceMigrationProjectChanges.ReadMsBuildHistoryDocument(root, source)
                 .Descendants(itemName)
                 .Select(item => new MsBuildDeclaration(
                     RelativePath(root, source),
@@ -174,7 +195,7 @@ public sealed class AgentCompatibilityCandidateTests
     private static IReadOnlyList<ExtensionPointSnapshot> ReadExtensionPoints(string root)
     {
         var path = Path.Combine(root, "src", "Sunder.Package.Agent.Contracts", "buildTransitive", "Sunder.Package.Agent.Protocol.props");
-        return XDocument.Load(path)
+        return AgentSourceMigrationProjectChanges.ReadMsBuildHistoryDocument(root, path)
             .Descendants("SunderContractBundle")
             .Select(item => new ExtensionPointSnapshot(
                 item.Attribute("ContractId")?.Value ?? string.Empty,
@@ -185,26 +206,46 @@ public sealed class AgentCompatibilityCandidateTests
             .ToArray();
     }
 
-    private static IReadOnlyList<ProjectRoleSnapshot> ReadProjectRoles(string root)
-        => Directory.EnumerateFiles(Path.Combine(root, "src"), "*.csproj", SearchOption.AllDirectories)
+    private static IReadOnlyList<ProjectRoleSnapshot> ReadProjectRoles(string root, string historicalWorkerProps)
+    {
+        var sharedWorkerProps = XDocument.Parse(historicalWorkerProps);
+        var workerDefaults = sharedWorkerProps.Descendants("PropertyGroup").Single(group =>
+            string.Equals(group.Attribute("Condition")?.Value, "'$(SunderPackageRole)' == 'worker'", StringComparison.Ordinal));
+        var workerPrimary = workerDefaults.Elements("SunderPackagePrimaryProject").Single().Value.Trim();
+        var workerRuntimeIdentifiers = workerDefaults.Elements("RuntimeIdentifiers").Single().Value.Trim();
+        return AgentSourceMigrationProjectChanges.EnumerateMigrationHistoryFiles(root, Path.Combine(root, "src"), "*.csproj")
             .Where(AgentPackageRepositoryInventory.IsSourceFile)
-            .Select(path => (Path: path, Project: XDocument.Load(path)))
+            .Select(path => (Path: path, Project: AgentSourceMigrationProjectChanges.ReadMsBuildHistoryDocument(root, path)))
             .Where(static item => ReadProperty(item.Project, "SunderPackageRole") is not null)
-            .Select(item => new ProjectRoleSnapshot(
-                RelativePath(root, item.Path),
-                ReadProperty(item.Project, "SunderPackageFamilyId"),
-                ReadProperty(item.Project, "SunderPackageRole")!,
-                ReadProperty(item.Project, "SunderPackagePrimaryProject"),
-                NormalizeNullablePath(ReadProperty(item.Project, "SunderPackageAppProject")),
-                SplitValues(ReadProperty(item.Project, "RuntimeIdentifiers"))))
+            .Select(item =>
+            {
+                var role = ReadProperty(item.Project, "SunderPackageRole")!;
+                return new ProjectRoleSnapshot(
+                    RelativePath(root, item.Path),
+                    ReadProperty(item.Project, "SunderPackageFamilyId"),
+                    role,
+                    ReadProperty(item.Project, "SunderPackagePrimaryProject")
+                    ?? (role == "worker" ? workerPrimary : null),
+                    NormalizeNullablePath(ReadProperty(item.Project, "SunderPackageAppProject")),
+                    SplitValues(ReadProperty(item.Project, "RuntimeIdentifiers")
+                                ?? (role == "worker" ? workerRuntimeIdentifiers : null)));
+            })
             .OrderBy(static item => item.Project, StringComparer.Ordinal)
             .ToArray();
+    }
 
     private static IReadOnlyList<RuntimePackageSnapshot> ReadRuntimePackages(string root)
-        => AgentPackageRepositoryInventory.GetRuntimePackageProjects()
-            .Select(project =>
+        => AgentSourceMigrationProjectChanges.CanonicalProjectHistories
+            .Select(history =>
             {
-                var metadataText = File.ReadAllText(project.MetadataPath);
+                var directory = Path.GetDirectoryName(history.Project)!;
+                var metadataPath = Path.Combine(root, directory, "PackageMetadata.cs");
+                var project = AgentSourceMigrationProjectChanges.ReadMsBuildHistoryDocument(root, Path.Combine(root, history.Project));
+                var app = ReadProperty(project, "SunderPackageAppProject");
+                var protocols = AgentSourceMigrationProjectChanges.EnumerateMigrationHistoryFiles(root, Path.Combine(root, directory), "*.csproj")
+                    .Where(path => ReadProperty(AgentSourceMigrationProjectChanges.ReadMsBuildHistoryDocument(root, path), "SunderPackageRole") == "protocol")
+                    .Select(path => RelativePath(root, path)).Order(StringComparer.Ordinal).ToArray();
+                var metadataText = AgentSourceMigrationProjectChanges.ReadPackageMetadataBeforeMigration(metadataPath);
                 var packageBody = Regex.Match(
                     metadataText,
                     @"SunderPackage\((?<body>.*?)\)\]",
@@ -220,12 +261,12 @@ public sealed class AgentCompatibilityCandidateTests
                     .ToArray();
                 return new RuntimePackageSnapshot(
                     ReadNamedString(packageBody, "Id"),
-                    RelativePath(root, project.ProjectPath),
-                    project.AppProjectPath is null ? null : RelativePath(root, project.AppProjectPath),
-                    project.ProtocolProjectPaths.Select(path => RelativePath(root, path)).Order(StringComparer.Ordinal).ToArray(),
-                    project.FamilyId,
-                    project.Role,
-                    HashFile(project.MetadataPath),
+                    history.Project,
+                    app is null ? null : NormalizeRelativePath(Path.Combine(directory, NormalizePath(app))),
+                    protocols,
+                    ReadProperty(project, "SunderPackageFamilyId"),
+                    ReadProperty(project, "SunderPackageRole"),
+                    history.Family != "Agent" ? Hash(Encoding.UTF8.GetBytes(metadataText)) : HashFile(metadataPath),
                     dependencies);
             })
             .OrderBy(static package => package.PackageId, StringComparer.Ordinal)
@@ -242,14 +283,14 @@ public sealed class AgentCompatibilityCandidateTests
             : throw new InvalidDataException($"Package metadata is missing '{name}'.");
     }
 
-    private static ReleaseLockInventory ReadReleaseLocks(string root)
+    private static ReleaseLockInventory ReadReleaseLocks(string root, IReadOnlyDictionary<string, AgentSourceMigrationProjectChanges.CandidateInputCapture> inputs)
     {
-        var solutionPath = Path.Combine(root, "Sunder.AgentPackage.slnx");
-        var projects = XDocument.Load(solutionPath)
-            .Descendants("Project")
-            .Select(project => NormalizeRelativePath(
-                project.Attribute("Path")?.Value
-                ?? throw new InvalidDataException("A solution project has no path.")))
+        // The original lock graph is captured byte-for-byte, not compared to the
+        // intentionally different canonical NuGet locks maintained by release tooling.
+        using var baseline = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(root, "compatibility/agent-rpc-migration-baseline.json")));
+        var projects = baseline.RootElement.GetProperty("buildTopology").GetProperty("projects").EnumerateArray()
+            .Where(project => project.GetProperty("inSolution").GetBoolean())
+            .Select(project => project.GetProperty("path").GetString()!)
             .Order(StringComparer.Ordinal)
             .ToArray();
         var expectedPaths = projects
@@ -261,25 +302,21 @@ public sealed class AgentCompatibilityCandidateTests
             .Where(static project => project.StartsWith("tests/", StringComparison.Ordinal))
             .Where(project =>
             {
-                var document = XDocument.Load(Path.Combine(root, NormalizePath(project)));
+                var document = AgentSourceMigrationProjectChanges.ReadMsBuildHistoryDocument(root, Path.Combine(root, NormalizePath(project)));
                 return string.Equals(ReadProperty(document, "SunderTestSourceMode"), "true", StringComparison.OrdinalIgnoreCase)
                        && string.Equals(ReadProperty(document, "SunderTestPackageMode"), "false", StringComparison.OrdinalIgnoreCase);
             })
             .Select(static project => NormalizeRelativePath(
                 Path.Combine(Path.GetDirectoryName(project)!, "packages.release.lock.json")))
             .ToHashSet(StringComparer.Ordinal);
-        var actualPaths = Directory.EnumerateFiles(Path.Combine(root, "src"), "packages.release.lock.json", SearchOption.AllDirectories)
-            .Concat(Directory.EnumerateFiles(Path.Combine(root, "tests"), "packages.release.lock.json", SearchOption.AllDirectories))
-            .Where(AgentPackageRepositoryInventory.IsSourceFile)
-            .Select(path => RelativePath(root, path))
-            .Order(StringComparer.Ordinal)
-            .ToArray();
-        Assert.Equal(expectedPaths, actualPaths);
+        Assert.Equal(56, projects.Length);
+        Assert.Equal(expectedPaths.Where(path => path.StartsWith("src/", StringComparison.Ordinal)),
+            inputs.Keys.Where(path => path.EndsWith("/packages.release.lock.json", StringComparison.Ordinal)).Order(StringComparer.Ordinal));
 
         return new ReleaseLockInventory(
             expectedPaths
                 .Where(static path => path.StartsWith("src/", StringComparison.Ordinal))
-                .Select(path => new FileHashSnapshot(path, HashFile(Path.Combine(root, NormalizePath(path)))))
+                .Select(path => new FileHashSnapshot(path, inputs[path].Sha256))
                 .ToArray(),
             expectedPaths
                 .Where(static path => path.StartsWith("tests/", StringComparison.Ordinal))
@@ -290,10 +327,14 @@ public sealed class AgentCompatibilityCandidateTests
     private static TextSnapshot ReadTextSnapshot(string root, string relativePath)
     {
         var path = Path.Combine(root, NormalizePath(relativePath));
+        var text = AgentSourceMigrationProjectChanges.ReadMigrationSourceText(path);
+        using var lines = new StringReader(text);
+        var count = 0;
+        while (lines.ReadLine() is not null) count++;
         return new TextSnapshot(
             NormalizeRelativePath(relativePath),
-            HashFile(path),
-            File.ReadLines(path).Count());
+            Hash(Encoding.UTF8.GetBytes(text)),
+            count);
     }
 
     private static IReadOnlyList<SqliteSchemaSnapshot> ReadSchemas()
@@ -386,9 +427,14 @@ public sealed class AgentCompatibilityCandidateTests
 
     private static SourceVocabulary ReadSourceVocabulary(string root)
     {
-        var sources = Directory.EnumerateFiles(Path.Combine(root, "src"), "*.cs", SearchOption.AllDirectories)
+        var sources = AgentSourceMigrationProjectChanges.EnumerateMigrationHistoryFiles(root, Path.Combine(root, "src"), "*.cs")
             .Where(AgentPackageRepositoryInventory.IsSourceFile)
-            .Select(File.ReadAllText)
+            // Reconstruct view intent and constructor moves before reading the
+            // frozen logging vocabulary; view ids are not new telemetry events.
+            .Select(path => AgentSourceMigrationProjectChanges.BeforeAgentSemanticSeparation(path,
+                AgentSourceMigrationProjectChanges.BeforeAgentComposition(path,
+                    AgentSourceMigrationProjectChanges.BeforeBuilderRelocation(path,
+                        AgentSourceMigrationProjectChanges.ReadMigrationSourceText(path)))))
             .ToArray();
         var configurationKeys = sources
             .SelectMany(source => Regex.Matches(

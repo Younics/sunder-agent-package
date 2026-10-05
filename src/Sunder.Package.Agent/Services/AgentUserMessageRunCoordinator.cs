@@ -10,6 +10,7 @@ public sealed class AgentUserMessageRunCoordinator
     private readonly AgentUserTurnAdmissionService _admissionService;
     private readonly AgentRunDispatcher _dispatcher;
 
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
     internal AgentUserMessageRunCoordinator(
         AgentSessionService sessionService,
         AgentRunPreparationService preparationService,

@@ -1,11 +1,11 @@
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Subagents.Models;
+using Sunder.Package.Agent.Subagents.Runtime;
 
 namespace Sunder.Package.Agent.Subagents.Services;
 
-public sealed class SubagentFeature :
+public sealed partial class SubagentFeature :
     IAgentProfileSelectableCapabilityProvider,
     IAgentProfileSelectableCapabilityChangeNotifier,
     IAgentToolSource,
@@ -20,15 +20,15 @@ public sealed class SubagentFeature :
 
     public SubagentFeature(
         SubagentService subagentService,
-        AgentRpcCatalog rpcCatalog)
+        ISubagentRuntimeBindings runtimeBindings)
     {
         _subagentService = subagentService;
-        var permissionStatusAdapter = new SubagentPermissionStatusAdapter(rpcCatalog);
-        _descriptors = new SubagentDescriptorSchema(subagentService, rpcCatalog, permissionStatusAdapter);
+        var permissionStatusAdapter = new SubagentPermissionStatusAdapter(runtimeBindings);
+        _descriptors = new SubagentDescriptorSchema(subagentService, permissionStatusAdapter, runtimeBindings);
         _requestParser = new SubagentRequestParser();
         _resultRenderer = new SubagentBatchResultRenderer(subagentService, _requestParser, permissionStatusAdapter);
         var childRunCoordinator = new SubagentChildRunCoordinator(
-            rpcCatalog,
+            runtimeBindings,
             _descriptors,
             permissionStatusAdapter,
             _resultRenderer);

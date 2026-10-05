@@ -1,16 +1,18 @@
 using System.Text.Json;
 using Microsoft.Extensions.AI;
-using Sunder.Package.Agent.Contracts.Contracts;
-using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
-using Sunder.Package.Agent.Subagents.Models;
-using Sunder.Package.Agent.Subagents.Services;
 using Sunder.Sdk.Stacks;
 using Sunder.Sdk.Logging;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
+
+extern alias SubagentsWorker;
+using SubagentsWorker::Sunder.Package.Agent.Contracts.Contracts;
+using SubagentsWorker::Sunder.Package.Agent.Contracts.Models;
+using SubagentsWorker::Sunder.Package.Agent.Subagents.Models;
+using SubagentsWorker::Sunder.Package.Agent.Subagents.Services;
 
 public sealed class SubagentRuntimeOrchestrationTests
 {
@@ -38,7 +40,8 @@ public sealed class SubagentRuntimeOrchestrationTests
     {
         using var scope = RegressionTestPackageScope.Create();
         var service = new SubagentService(new SubagentStore(scope.Context));
-        var adapter = new SubagentPermissionStatusAdapter(new RegressionTestExtensionCatalog());
+        using var catalog = new RegressionTestExtensionCatalog();
+        var adapter = new SubagentPermissionStatusAdapter(catalog.Subagents());
         var renderer = new SubagentBatchResultRenderer(service, new SubagentRequestParser(), adapter);
         var completed = CreateTaskResult(SubagentTaskResultState.Completed, "completed");
         var failed = CreateTaskResult(SubagentTaskResultState.Failed, "failed");
@@ -88,8 +91,10 @@ public sealed class SubagentRuntimeOrchestrationTests
         var childSessions = new AgentChildRunSessionService(sessionService, profileService);
         var parent = sessionService.CreateSession("Parent", workspaceId: "workspace");
 
-        var first = childSessions.PrepareChildSession(CreateChildRequest(parent.SessionId, CreateProfile("subagent-reviewer")));
-        var second = childSessions.PrepareChildSession(CreateChildRequest(parent.SessionId, CreateProfile("subagent-researcher")));
+        var first = childSessions.PrepareChildSession(AgentRoleBoundary.As<Sunder.Package.Agent.Contracts.Models.AgentChildRunRequest>(
+            CreateChildRequest(parent.SessionId, CreateProfile("subagent-reviewer"))));
+        var second = childSessions.PrepareChildSession(AgentRoleBoundary.As<Sunder.Package.Agent.Contracts.Models.AgentChildRunRequest>(
+            CreateChildRequest(parent.SessionId, CreateProfile("subagent-researcher"))));
 
         Assert.NotEqual(first.ChildSession.SessionId, second.ChildSession.SessionId);
         Assert.Equal(2, sessionService.ListSessions().Count(session =>
@@ -259,7 +264,8 @@ public sealed class SubagentRuntimeOrchestrationTests
         const string corruptContent = "{broken";
         File.WriteAllText(filePath, corruptContent);
         var service = new SubagentService(new SubagentStore(scope.Context));
-        var contributor = new SubagentStackContributor(service, scope.Context, new RegressionTestExtensionCatalog());
+        using var catalog = new RegressionTestExtensionCatalog();
+        var contributor = new SubagentStackContributor(service, scope.Context, catalog.Subagents());
         const string fragmentId = "subagent.reviewer";
         const string subagentId = "reviewer";
         var fragment = new StackFragmentImport(

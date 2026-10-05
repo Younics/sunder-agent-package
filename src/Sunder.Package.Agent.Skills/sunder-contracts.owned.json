@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "authorityKind": "package",
+  "authorityId": "sunder.package.agent.skills",
+  "packageId": "sunder.package.agent.skills",
+  "contracts": {
+    "management": {
+      "contractId": "sunder.package.agent.skills.owner",
+      "current": {
+        "state": "release-frozen",
+        "exposure": "package",
+        "contractVersion": "1.0.0",
+        "descriptorBytes": 1239,
+        "canonicalDescriptor": "{\"$defs\":{\"ContentReference\":{\"logicalType\":\"content-reference\",\"type\":\"object\"},\"OwnerContent\":{\"additionalProperties\":false,\"properties\":{\"content\":{\"$ref\":\"#/$defs/ContentReference\"}},\"required\":[\"content\"],\"type\":\"object\"},\"OwnerEmpty\":{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"contractId\":\"sunder.package.agent.skills.owner\",\"descriptorVersion\":1,\"errors\":{\"skills.owner.operation-failed\":{\"description\":\"The requested Skills operation could not be completed.\"}},\"schemaProfile\":\"sunder.rpc.values.v1\",\"services\":{\"skills-management\":{\"methods\":{\"changes\":{\"errors\":[\"skills.owner.operation-failed\"],\"eventSchema\":{\"$ref\":\"#/$defs/OwnerEmpty\"},\"idempotency\":\"idempotent\",\"kind\":\"server-stream\",\"requestSchema\":{\"$ref\":\"#/$defs/OwnerEmpty\"}},\"command\":{\"errors\":[\"skills.owner.operation-failed\"],\"idempotency\":\"none\",\"kind\":\"unary\",\"requestSchema\":{\"$ref\":\"#/$defs/OwnerContent\"},\"responseSchema\":{\"$ref\":\"#/$defs/OwnerContent\"}},\"query\":{\"errors\":[\"skills.owner.operation-failed\"],\"idempotency\":\"idempotent\",\"kind\":\"unary\",\"requestSchema\":{\"$ref\":\"#/$defs/OwnerEmpty\"},\"responseSchema\":{\"$ref\":\"#/$defs/OwnerContent\"}}}}},\"version\":\"1.0.0\"}",
+        "descriptorSha256": "5048e77c362cfee564f7ac32063f3f1324aa51d6f9b94145c3ac45b8f0a8e5b4",
+        "abiProjectionBytes": 1094,
+        "canonicalAbiProjection": "{\"$defs\":{\"ContentReference\":{\"logicalType\":\"content-reference\",\"type\":\"object\"},\"OwnerContent\":{\"additionalProperties\":false,\"properties\":{\"content\":{\"$ref\":\"#/$defs/ContentReference\"}},\"required\":[\"content\"],\"type\":\"object\"},\"OwnerEmpty\":{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"}},\"contractId\":\"sunder.package.agent.skills.owner\",\"descriptorVersion\":1,\"errors\":{\"skills.owner.operation-failed\":{}},\"schemaProfile\":\"sunder.rpc.values.v1\",\"services\":{\"skills-management\":{\"methods\":{\"changes\":{\"errors\":[\"skills.owner.operation-failed\"],\"eventSchema\":{\"$ref\":\"#/$defs/OwnerEmpty\"},\"idempotency\":\"idempotent\",\"kind\":\"server-stream\",\"requestSchema\":{\"$ref\":\"#/$defs/OwnerEmpty\"}},\"command\":{\"errors\":[\"skills.owner.operation-failed\"],\"idempotency\":\"none\",\"kind\":\"unary\",\"requestSchema\":{\"$ref\":\"#/$defs/OwnerContent\"},\"responseSchema\":{\"$ref\":\"#/$defs/OwnerContent\"}},\"query\":{\"errors\":[\"skills.owner.operation-failed\"],\"idempotency\":\"idempotent\",\"kind\":\"unary\",\"requestSchema\":{\"$ref\":\"#/$defs/OwnerEmpty\"},\"responseSchema\":{\"$ref\":\"#/$defs/OwnerContent\"}}}}}}",
+        "abiSha256": "69e394d36b716d80cb5eddf267de612d7dcb1d2431e3fbb03d581403c3f5ee58",
+        "packageRelease": {
+          "packageId": "sunder.package.agent.skills",
+          "packageVersion": "2.0.0"
+        }
+      },
+      "history": []
+    }
+  }
+}

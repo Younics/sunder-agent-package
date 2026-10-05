@@ -3,77 +3,10 @@ using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.HistorySearch;
 using Sunder.Sdk.Rpc;
-using Wire = Sunder.Package.Agent.OwnerProtocol.Generated;
 
 namespace Sunder.Package.Agent.Runtime;
 
-internal static class AgentRuntimeOperations
-{
-    public static readonly AgentOwnerRpcOperation<AgentTransportProfileRequest, AgentTransportProfile> TransportProfile =
-        AgentOwnerRuntimeRpc.CreateOperation<AgentTransportProfileRequest, AgentTransportProfile, Wire.AgentTransportProfileRequest, Wire.AgentTransportProfile>(
-            static (client, request, token) => client.TransportProfileAsync(request, token));
-    public static readonly AgentOwnerRpcOperation<AgentChatSnapshotRequest, AgentChatSnapshotProjection> ChatSnapshot =
-        AgentOwnerRuntimeRpc.CreateOperation<AgentChatSnapshotRequest, AgentChatSnapshotProjection, Wire.AgentChatSnapshotRequest, Wire.AgentChatSnapshotProjection>(
-            static (client, request, token) => client.ChatSnapshotAsync(request, token));
-    public static readonly AgentOwnerRpcOperation<AgentDashboardRequest, AgentDashboardProjection> Dashboard =
-        AgentOwnerRuntimeRpc.CreateOperation<AgentDashboardRequest, AgentDashboardProjection, Wire.AgentDashboardRequest, Wire.AgentDashboardProjection>(
-            static (client, request, token) => client.DashboardAsync(request, token));
-    public static readonly AgentOwnerRpcOperation<AgentTranscriptPageRequest, AgentTranscriptPage> Transcript =
-        AgentOwnerRuntimeRpc.CreateOperation<AgentTranscriptPageRequest, AgentTranscriptPage, Wire.AgentTranscriptPageRequest, Wire.AgentTranscriptPage>(
-            static (client, request, token) => client.TranscriptPageAsync(request, token));
-    public static readonly AgentOwnerRpcOperation<AgentCatalogRequest, AgentCatalogProjection> Catalog =
-        AgentOwnerRuntimeRpc.CreateOperation<AgentCatalogRequest, AgentCatalogProjection, Wire.AgentCatalogRequest, Wire.AgentCatalogProjection>(
-            static (client, request, token) => client.CatalogAsync(request, token));
-    public static readonly AgentOwnerRpcOperation<AgentProfileCommand, AgentProfileCommandResult> Profiles =
-        AgentOwnerRuntimeRpc.CreateOperation<AgentProfileCommand, AgentProfileCommandResult, Wire.AgentProfileCommand, Wire.AgentProfileCommandResult>(
-            static (client, request, token) => client.ProfileCommandAsync(request, token));
-    public static readonly AgentOwnerRpcOperation<AgentWorkspaceCommand, AgentWorkspaceCommandResult> Workspaces =
-        AgentOwnerRuntimeRpc.CreateOperation<AgentWorkspaceCommand, AgentWorkspaceCommandResult, Wire.AgentWorkspaceCommand, Wire.AgentWorkspaceCommandResult>(
-            static (client, request, token) => client.WorkspaceCommandAsync(request, token));
-    public static readonly AgentOwnerRpcOperation<AgentSessionCommand, AgentSessionCommandResult> SessionCommands =
-        AgentOwnerRuntimeRpc.CreateOperation<AgentSessionCommand, AgentSessionCommandResult, Wire.AgentSessionCommand, Wire.AgentSessionCommandResult>(
-            static (client, request, token) => client.SessionCommandAsync(request, token));
-    public static readonly AgentOwnerRpcOperation<AgentRunCommand, AgentRunCommandResult> Runs =
-        AgentOwnerRuntimeRpc.CreateOperation<AgentRunCommand, AgentRunCommandResult, Wire.AgentRunCommand, Wire.AgentRunCommandResult>(
-            static (client, request, token) => client.RunCommandAsync(request, token));
-    public static readonly AgentOwnerRpcOperation<AgentRunCommandStatusRequest, AgentRunCommandStatusResult> RunStatus =
-        AgentOwnerRuntimeRpc.CreateOperation<AgentRunCommandStatusRequest, AgentRunCommandStatusResult, Wire.AgentRunCommandStatusRequest, Wire.AgentRunCommandStatusResult>(
-            static (client, request, token) => client.RunStatusAsync(request, token));
-    public static readonly AgentOwnerRpcOperation<AgentPermissionCommand, AgentPermissionProjection> Permissions =
-        AgentOwnerRuntimeRpc.CreateOperation<AgentPermissionCommand, AgentPermissionProjection, Wire.AgentPermissionCommand, Wire.AgentPermissionProjection>(
-            static (client, request, token) => client.PermissionCommandAsync(request, token));
-    public static readonly AgentOwnerRpcOperation<AgentAttachmentContentUploadRequest, AgentAttachmentContentUploadResult> AttachmentUploads =
-        AgentOwnerRuntimeRpc.CreateOperation<AgentAttachmentContentUploadRequest, AgentAttachmentContentUploadResult, Wire.AgentAttachmentContentUploadRequest, Wire.AgentAttachmentContentUploadResult>(
-            static (client, request, token) => client.AttachmentUploadAsync(request, token));
-    public static readonly AgentOwnerRpcOperation<AgentAttachmentContentDownloadRequest, AgentAttachmentContentDownloadResult> AttachmentDownloads =
-        AgentOwnerRuntimeRpc.CreateOperation<AgentAttachmentContentDownloadRequest, AgentAttachmentContentDownloadResult, Wire.AgentAttachmentContentDownloadRequest, Wire.AgentAttachmentContentDownloadResult>(
-            static (client, request, token) => client.AttachmentDownloadAsync(request, token));
-    public static readonly AgentOwnerRpcOperation<AgentAttachmentContentDiscardRequest, AgentAttachmentContentDiscardResult> AttachmentDiscards =
-        AgentOwnerRuntimeRpc.CreateOperation<AgentAttachmentContentDiscardRequest, AgentAttachmentContentDiscardResult, Wire.AgentAttachmentContentDiscardRequest, Wire.AgentAttachmentContentDiscardResult>(
-            static (client, request, token) => client.AttachmentDiscardAsync(request, token));
-    public static readonly AgentOwnerRpcStream<AgentChangeSubscription, AgentRuntimeChange> Changes =
-        AgentOwnerRuntimeRpc.CreateStream<AgentChangeSubscription, AgentRuntimeChange, Wire.AgentChangeSubscription, Wire.AgentRuntimeChange>(
-            static (client, request, token) => client.ChangesAsync(request, token));
-    public static readonly AgentOwnerRpcOperation<HistorySearchRequest, HistorySearchResponse> HistorySearch =
-        AgentOwnerRuntimeRpc.CreateOperation<HistorySearchRequest, HistorySearchResponse, Wire.HistorySearchRequest, Wire.HistorySearchResponse>(
-            static (client, request, token) => client.HistorySearchAsync(request, token));
-    public static readonly AgentOwnerRpcOperation<HistorySearchStateRequest, HistorySearchState> HistoryState =
-        AgentOwnerRuntimeRpc.CreateOperation<HistorySearchStateRequest, HistorySearchState, Wire.HistorySearchStateRequest, Wire.HistorySearchState>(
-            static (client, request, token) => client.HistoryStateAsync(request, token));
-    public static readonly AgentOwnerRpcOperation<HistorySearchCommand, HistorySearchCommandResult> HistoryCommands =
-        AgentOwnerRuntimeRpc.CreateOperation<HistorySearchCommand, HistorySearchCommandResult, Wire.HistorySearchCommand, Wire.HistorySearchCommandResult>(
-            static (client, request, token) => client.HistoryCommandAsync(request, token));
-    public static readonly AgentOwnerRpcOperation<AgentTranscriptAroundTurnRequest, AgentTranscriptAroundTurnPage> TranscriptAround =
-        AgentOwnerRuntimeRpc.CreateOperation<AgentTranscriptAroundTurnRequest, AgentTranscriptAroundTurnPage, Wire.AgentTranscriptAroundTurnRequest, Wire.AgentTranscriptAroundTurnPage>(
-            static (client, request, token) => client.TranscriptAroundAsync(request, token));
-    public static readonly AgentOwnerRpcOperation<AgentTranscriptToolDetailRequest, AgentTranscriptToolDetailResult> TranscriptToolDetail =
-        AgentOwnerRuntimeRpc.CreateOperation<AgentTranscriptToolDetailRequest, AgentTranscriptToolDetailResult, Wire.AgentTranscriptToolDetailRequest, Wire.AgentTranscriptToolDetailResult>(
-            static (client, request, token) => client.TranscriptToolDetailAsync(request, token));
-    public static readonly AgentOwnerRpcStream<HistorySearchStatusSubscription, HistorySearchStatus> HistoryStatus =
-        AgentOwnerRuntimeRpc.CreateStream<HistorySearchStatusSubscription, HistorySearchStatus, Wire.HistorySearchStatusSubscription, Wire.HistorySearchStatus>(
-            static (client, request, token) => client.HistoryStatusAsync(request, token));
-}
-
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentTransportProfileRequest(
     int RequestValueBytes,
     int ResponseValueBytes,
@@ -81,6 +14,7 @@ internal sealed record AgentTransportProfileRequest(
     int ContentReferenceBytes,
     bool RuntimeReported);
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentTransportProfile(
     int RequestValueBytes,
     int ResponseValueBytes,
@@ -96,16 +30,19 @@ internal sealed record AgentTransportProfile(
         RuntimeReported: false);
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentChatSnapshotRequest(
     int InitialTranscriptLimit = 60,
     string? PreferredProfileId = null,
     string? PreferredWorkspaceId = null,
     Guid? PreferredSessionId = null,
     bool IncludeInitialTranscript = true);
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentChatPermissionProjection(
     long Revision,
     AgentSessionPermissionState? SessionState,
     IReadOnlyList<AgentPendingPermissionRequestRecord> PendingRequests);
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentChatSnapshotProjection(
     long Revision,
     IReadOnlyList<AgentProfileRecord> Profiles,
@@ -130,7 +67,9 @@ internal interface IAgentChatSnapshotGateway
     void CompleteChatSnapshot(AgentChatSnapshotProjection snapshot, bool applied);
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentDashboardRequest;
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentDashboardProjection(
     long Revision,
     IReadOnlyList<AgentProfileRecord> Profiles,
@@ -145,20 +84,25 @@ internal interface IAgentDashboardLoader
         CancellationToken cancellationToken = default);
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentSessionSnapshot(AgentSessionRecord Session, AgentRunCheckpointRecord? Checkpoint);
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal enum AgentTranscriptPageDirection { Recent, Before, After, Turn }
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentTranscriptPageRequest(
     Guid SessionId,
     AgentTranscriptPageDirection Direction,
     int Limit = 60,
     DateTimeOffset? AnchorCreatedAtUtc = null,
     Guid? AnchorTurnId = null);
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentTranscriptPage(
     long Revision,
     IReadOnlyList<AgentTurnRecord> Turns,
     bool HasMore,
     TranscriptPageCursor? Continuation = null);
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentTranscriptToolDetailResult(
     bool Found,
     AgentTranscriptToolDetailRecord? Detail);
@@ -171,6 +115,7 @@ internal interface IAgentTranscriptPageGateway
 }
 
 /// <summary>Loads exact tool detail for lightweight transcript rows.</summary>
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 public interface IAgentTranscriptToolDetailGateway
 {
     /// <summary>Loads the detail matching the request's exact session and tool identity.</summary>
@@ -207,6 +152,7 @@ internal interface IAgentChatPermissionCommandGateway
         CancellationToken cancellationToken = default);
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal interface IAgentChatRunGateway
 {
     Task<AgentRunCheckpointRecord?> ApprovePendingPermissionAsync(
@@ -216,6 +162,7 @@ internal interface IAgentChatRunGateway
         CancellationToken cancellationToken = default);
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal interface IAgentCorrelatedRunGateway
 {
     Task<AgentRunCheckpointRecord> QueueUserMessageAsync(
@@ -238,6 +185,7 @@ internal interface IAgentCorrelatedRunGateway
         CancellationToken cancellationToken = default);
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal interface IAgentRunCommandStatusGateway
 {
     Task<AgentRunCommandStatus> GetRunCommandStatusAsync(
@@ -246,10 +194,12 @@ internal interface IAgentRunCommandStatusGateway
         CancellationToken cancellationToken = default);
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentCatalogRequest(
     AgentProfileRecord? Profile = null,
     string? ChatProviderId = null,
     string? EmbeddingProviderId = null);
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentCatalogProjection(
     long Revision,
     IReadOnlyList<AgentProviderDescriptor> ChatProviders,
@@ -271,7 +221,9 @@ internal interface IAgentCatalogLoader
         CancellationToken cancellationToken = default);
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal enum AgentProfileCommandKind { Create, Save, Delete }
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentProfileCommand(
     AgentProfileCommandKind Kind,
     string? ProfileId = null,
@@ -287,6 +239,7 @@ internal sealed record AgentProfileCommand(
     string? BehaviorLoopSourceId = null,
     string? BehaviorLoopSettingsJson = null,
     string? ChatModelSettingsJson = null);
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentProfileCommandResult(long Revision, AgentProfileRecord? Profile);
 
 internal interface IAgentProfileCommandGateway
@@ -312,7 +265,9 @@ internal interface IAgentProfileCommandGateway
         CancellationToken cancellationToken = default);
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal enum AgentWorkspaceCommandKind { Create, Save, Delete, Warmup }
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentWorkspaceCommand(
     AgentWorkspaceCommandKind Kind,
     string? WorkspaceId = null,
@@ -321,6 +276,7 @@ internal sealed record AgentWorkspaceCommand(
     IReadOnlyList<AgentWorkspacePathRecord>? Paths = null,
     IReadOnlyList<AgentWorkspaceDocumentRecord>? Documents = null,
     string? ExecutionTargetId = null);
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentWorkspaceCommandResult(
     long Revision,
     AgentWorkspaceRecord? Workspace,
@@ -346,7 +302,9 @@ internal interface IAgentWorkspaceCommandGateway
         CancellationToken cancellationToken = default);
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal enum AgentSessionCommandKind { Create, Update, Delete }
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentSessionCommand(
     AgentSessionCommandKind Kind,
     AgentSessionRecord? Session = null,
@@ -354,9 +312,12 @@ internal sealed record AgentSessionCommand(
     string? ProfileId = null,
     string? BehaviorLoopId = null,
     string? WorkspaceId = null);
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentSessionCommandResult(long Revision, AgentSessionSnapshot? Session);
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal enum AgentRunCommandKind { Start, RollbackAndStart, Stop, ApprovePermission, DenyPermission }
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentRunCommand(
     AgentRunCommandKind Kind,
     Guid SessionId,
@@ -368,16 +329,22 @@ internal sealed record AgentRunCommand(
     string? PermissionRequestId = null,
     bool ApproveForSession = false,
     Guid? UserTurnId = null);
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentRunCommandResult(
     long Revision,
     AgentRunCheckpointRecord? Checkpoint,
     Guid? RunId = null,
     Guid? UserTurnId = null);
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentRunCommandStatusRequest(Guid SessionId, Guid UserTurnId);
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal enum AgentRunCommandStatus { Pending, Committed, Absent }
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentRunCommandStatusResult(long Revision, AgentRunCommandStatus Status);
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal enum AgentPermissionCommandKind { Read, SetUnrestricted, SaveOverride, DeleteOverride }
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentPermissionCommand(
     AgentPermissionCommandKind Kind,
     Guid? SessionId = null,
@@ -385,6 +352,7 @@ internal sealed record AgentPermissionCommand(
     string? ActionId = null,
     string? BoundaryId = null,
     AgentPermissionDecision? Decision = null);
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentPermissionProjection(
     long Revision,
     AgentSessionPermissionState? SessionState,
@@ -411,24 +379,34 @@ internal interface IAgentGlobalPermissionGateway
         CancellationToken cancellationToken = default);
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentAttachmentUploadDescriptor(
     string FileName,
     string? MediaType,
     int SizeBytes,
     string Sha256);
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentAttachmentUploadHandle(string TransferId);
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentAttachmentContentUploadRequest(
     AgentAttachmentUploadDescriptor Upload,
     SunderRpcContentReference Content);
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentAttachmentContentUploadResult(AgentAttachmentUploadHandle Handle);
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentAttachmentContentDownloadRequest(AgentAttachmentMetadata Metadata);
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentAttachmentContentDownloadResult(SunderRpcContentReference Content);
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentAttachmentContentDiscardRequest(AgentAttachmentUploadHandle Handle);
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentAttachmentContentDiscardResult(bool Discarded);
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentChangeSubscription(
     long AfterRevision = 0,
     bool SupportsTurnMutations = false);
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal enum AgentRuntimeChangeKind
 {
     Connected = 0,
@@ -443,6 +421,7 @@ internal enum AgentRuntimeChangeKind
     Permission = 9,
     TurnMutation = 10,
 }
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentRuntimeChange(
     long Revision,
     AgentRuntimeChangeKind Kind,

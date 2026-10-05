@@ -1,10 +1,12 @@
+extern alias McpWorker;
+
 using System.Security.Cryptography;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Sunder.Package.Agent.Mcp.Protocol.Generated;
-using Sunder.Package.Agent.Mcp.Runtime;
+using McpWorker::Sunder.Generated.Rpc.Management;
+using McpWorker::Sunder.Package.Agent.Mcp.Runtime;
 using Sunder.Sdk.Rpc;
 using Xunit;
 
@@ -24,16 +26,16 @@ public sealed class McpManagementContentTests
     {
         using var state = new RegressionTestRpcState();
         var provider = new EchoProvider();
-        state.Add(
+        var registration = new McpWorker::Sunder.Package.Agent.Mcp.Rpc.ManagementService(provider).CreateSunderRpcProviderRegistration();
+        state.AddGenerated(
             "sunder.package.agent.mcp",
-            McpManagementProtocol.Descriptor,
             provider,
-            new SunderPackageAgentMcpManagementRpcHandler(provider),
+            registration,
             NoOpDisposable.Instance,
-            McpManagementProtocol.ProviderId);
+            registration.ProviderId);
         var rpc = new RegressionTestRpcClient(state, "sunder.package.agent.mcp");
         var scope = await rpc.CreateCallScopeAsync();
-        var catalog = await scope.DiscoverAsync(McpManagementProtocol.Descriptor.ContractId);
+        var catalog = await scope.DiscoverAsync(registration.ContractId);
         var endpoint = Assert.Single(catalog.Providers).Endpoint;
         var document = new string('x', (1024 * 1024) + 32 * 1024);
         var command = new McpCommand(
@@ -41,12 +43,11 @@ public sealed class McpManagementContentTests
             Document: document,
             FileName: "large.json");
 
-        var request = await McpManagementPayload.RegisterRequestAsync(
-            scope,
-            endpoint,
-            command,
-            "mcp-command.json",
-            CancellationToken.None);
+        var request = new ManagementContent
+        {
+            Content = await McpManagementContent.RegisterAsync(command, "mcp-command.json", scope.DeadlineUtc,
+                (stream, options, token) => scope.RegisterContentAsync(endpoint, stream, options, token), CancellationToken.None),
+        };
         var requestBytes = JsonSerializer.SerializeToUtf8Bytes(command, ContentJson);
 
         Assert.True(request.Content.Length > 1024 * 1024);
@@ -57,7 +58,7 @@ public sealed class McpManagementContentTests
 
         var envelopeOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web)
         {
-            Converters = { new SunderRpcV2JsonConverterFactory() },
+            Converters = { new SunderRpcJsonConverterFactory() },
         };
         var envelope = JsonSerializer.SerializeToUtf8Bytes(request, envelopeOptions);
         Assert.True(envelope.Length < 2048);
@@ -68,59 +69,44 @@ public sealed class McpManagementContentTests
         Assert.Equal(SunderRpcContentRepeatability.SingleUse, response.Content.Repeatability);
         Assert.InRange(response.Content.ExpiresAtUtc, DateTimeOffset.UtcNow, scope.DeadlineUtc);
 
-        var projection = await McpManagementPayload.ReadResponseAsync<McpProjection>(
+        var projection = await McpManagementContent.ReadResponseAsync<McpProjection>(
             scope,
-            response,
+            response.Content,
             CancellationToken.None);
         Assert.Equal(document, projection.Document);
         Assert.Equal(Digest(JsonSerializer.SerializeToUtf8Bytes(projection, ContentJson)), response.Content.Sha256);
         await Assert.ThrowsAsync<SunderRpcException>(async () =>
-            await McpManagementPayload.ReadResponseAsync<McpProjection>(
+            await McpManagementContent.ReadResponseAsync<McpProjection>(
                 scope,
-                response,
+                response.Content,
                 CancellationToken.None));
 
-        var unused = await McpManagementPayload.RegisterRequestAsync(
-            scope,
-            endpoint,
-            command,
-            "unused-command.json",
-            CancellationToken.None);
+        var unused = await McpManagementContent.RegisterAsync(command, "unused-command.json", scope.DeadlineUtc,
+            (stream, options, token) => scope.RegisterContentAsync(endpoint, stream, options, token), CancellationToken.None);
         await scope.DisposeAsync();
         await Assert.ThrowsAsync<ObjectDisposedException>(async () =>
-            await scope.OpenContentAsync(unused.Content));
+            await scope.OpenContentAsync(unused));
     }
 
     private static string Digest(byte[] value)
         => Convert.ToHexString(SHA256.HashData(value)).ToLowerInvariant();
 
-    private sealed class EchoProvider : IManagementProvider
+    private sealed class EchoProvider : IMcpOwnerManagementClient
     {
-        public ValueTask<ManagementContent> QueryAsync(
-            SunderRpcInvocationContext context,
-            ManagementContent request,
+        public ValueTask<McpProjection> QueryAsync(
+            McpQuery request,
             CancellationToken cancellationToken = default)
-            => CommandAsync(context, request, cancellationToken);
+            => ValueTask.FromResult(new McpProjection());
 
-        public async ValueTask<ManagementContent> CommandAsync(
-            SunderRpcInvocationContext context,
-            ManagementContent request,
+        public ValueTask<McpProjection> CommandAsync(
+            McpCommand request,
             CancellationToken cancellationToken = default)
         {
-            var command = await McpManagementPayload.ReadRequestAsync<McpCommand>(
-                context,
-                request,
-                cancellationToken);
-            return await McpManagementPayload.RegisterResponseAsync(
-                context,
-                new McpProjection(Document: command.Document),
-                "mcp-projection.json",
-                cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult(new McpProjection(Document: request.Document));
         }
 
-        public async IAsyncEnumerable<ManagementChange> ChangesAsync(
-            SunderRpcInvocationContext context,
-            ChangeSubscription request,
+        public async IAsyncEnumerable<McpChanged> WatchChangesAsync(
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             await Task.CompletedTask;

@@ -4,16 +4,41 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repository_root="$(cd "$script_dir/../.." && pwd)"
 lock_verifier="$script_dir/verify-release-locks.sh"
-signing_targets="$script_dir/Sunder.Agent.ReleaseSigning.targets"
 test_targets="$script_dir/Sunder.Agent.NativeReleaseTests.targets"
-signer="$script_dir/sign-worker-apphost.ps1"
+native_builder="$script_dir/build-native-family.ps1"
+native_recorder="$script_dir/record-native-leaf-evidence.sh"
+native_assembler="$script_dir/assemble-native-family.sh"
+native_verifier="$script_dir/verify-native-family-evidence.sh"
+native_helper="$script_dir/native-family.py"
+output_auditor="$script_dir/generate-package-output-audit.sh"
+native_smoke="$repository_root/tests/fixtures/AgentNativeReleaseSmokeTests.cs"
 
-bash "$lock_verifier" 1.1.0 "$repository_root"
-grep -Fq 'SignSunderAgentReleaseWorkerAppHost' "$signing_targets"
-grep -Fq '@(SunderPackageWorkerSigningFile)' "$signing_targets"
-grep -Fq '$(SunderPackageWorkerEntryPointRelativePath)' "$signing_targets"
-grep -Fq 'Get-AuthenticodeSignature' "$signer"
-grep -Fq 'codesign --verify --strict' "$signer"
+lock_report="$(bash "$lock_verifier" 1.1.0 "$repository_root")"
+printf '%s\n' "$lock_report"
+grep -Fq 'Verified 31 release locks and exactly 15 primary package projects' <<< "$lock_report" \
+  || { printf 'Canonical release fixture requires the final 31-project lock inventory.\n' >&2; exit 1; }
+test ! -e "$script_dir/Sunder.Agent.ReleaseSigning.targets"
+test ! -e "$script_dir/sign-worker-apphost.ps1"
+grep -Fq 'expectedEntryPoint' "$native_builder"
+grep -Fq '.runtimeconfig.json' "$native_builder"
+grep -Fq 'native-family.py" record' "$native_recorder"
+grep -Fq 'native-family.py" assemble' "$native_assembler"
+grep -Fq 'native-family.py" verify' "$native_verifier"
+grep -Fq 'SunderPackagePrebuiltRoleInputsFile=' "$native_builder"
+grep -Fq 'schemaVersion version agentCommit core nativeRuns finalArtifacts' "$native_helper"
+grep -Fq 'Expected exactly 15 unique runtime packages' "$native_helper"
+grep -Fq 'maximumBytes: 360003313' "$output_auditor"
+grep -Fq 'meetsInstalledProjectionGate: true' "$output_auditor"
+grep -Fq 'universalIndexedPayload' "$output_auditor"
+grep -Fq 'EnsureDotNetAsync' "$native_smoke"
+grep -Fq 'ObserveSupportedAsync' "$native_smoke"
+grep -Fq 'AssertRuntimeLaunch' "$native_smoke"
+grep -Fq 'VerifyBuilderProjectLifecycleAsync' "$native_smoke"
+grep -Fq 'SUNDER_AGENT_BUILDER_SDK_VERSION' "$native_smoke"
+grep -Fq 'kind = "add-path-entry"' "$native_smoke"
+grep -Fq '"new", "console"' "$native_smoke"
+grep -Fq '"build", projectRoot' "$native_smoke"
+grep -Fq '"publish", projectRoot' "$native_smoke"
 grep -Fq 'SunderAgentNativeReleaseTestSource' "$test_targets"
 grep -Fq '$(MSBuildProjectName)' "$test_targets"
 grep -Fq 'Sunder.Runtime.Host.Tests' "$test_targets"
@@ -41,4 +66,6 @@ fi
 grep -Eq 'Release lock does not resolve|not locked to the final Core' "$failure_log" \
   || { printf 'Release lock verifier did not explain the final-Core mismatch.\n' >&2; exit 1; }
 
-printf 'Native release fixture passed: exact worker inventory, final remote Core locks, and platform signing hooks are enforced.\n'
+python3 -B "$script_dir/native-family.fixture.py"
+
+printf 'Native release source fixture passed: 31 release locks, 15 canonical packages, Core version/lock metadata, framework-dependent module policy, qualified-input transport and mocked no-rebuild fan-in; no remote provenance or native execution was qualified.\n'

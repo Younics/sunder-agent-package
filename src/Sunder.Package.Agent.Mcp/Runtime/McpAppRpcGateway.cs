@@ -1,6 +1,4 @@
-using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging;
-using Sunder.Package.Agent.Mcp.Protocol.Generated;
 using Sunder.Package.Agent.Mcp.Services;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Abstractions;
@@ -9,82 +7,7 @@ using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Mcp.Runtime;
 
-internal sealed class McpOwnerManagementRpcClient(ISunderRpcClient rpc) : IMcpOwnerManagementClient
-{
-    public async ValueTask<McpProjection> QueryAsync(
-        McpQuery query,
-        CancellationToken cancellationToken = default)
-    {
-        await using var scope = await rpc.CreateCallScopeAsync(cancellationToken: cancellationToken);
-        var endpoint = await ResolveProviderAsync(scope, cancellationToken);
-        var request = await McpManagementPayload.RegisterRequestAsync(
-            scope,
-            endpoint,
-            query,
-            "mcp-query.json",
-            cancellationToken);
-        var response = await new ManagementClient(scope, endpoint).QueryAsync(request, cancellationToken);
-        return await McpManagementPayload.ReadResponseAsync<McpProjection>(
-            scope,
-            response,
-            cancellationToken);
-    }
-
-    public async ValueTask<McpProjection> CommandAsync(
-        McpCommand command,
-        CancellationToken cancellationToken = default)
-    {
-        await using var scope = await rpc.CreateCallScopeAsync(cancellationToken: cancellationToken);
-        var endpoint = await ResolveProviderAsync(scope, cancellationToken);
-        var request = await McpManagementPayload.RegisterRequestAsync(
-            scope,
-            endpoint,
-            command,
-            "mcp-command.json",
-            cancellationToken);
-        var response = await new ManagementClient(scope, endpoint).CommandAsync(request, cancellationToken);
-        return await McpManagementPayload.ReadResponseAsync<McpProjection>(
-            scope,
-            response,
-            cancellationToken);
-    }
-
-    public async IAsyncEnumerable<McpChanged> WatchChangesAsync(
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
-        await using var scope = await rpc.CreateCallScopeAsync(cancellationToken: cancellationToken);
-        var client = new ManagementClient(scope, await ResolveProviderAsync(scope, cancellationToken));
-        await foreach (var change in client.ChangesAsync(
-                           new ChangeSubscription(),
-                           cancellationToken).WithCancellation(cancellationToken))
-        {
-            yield return new McpChanged(change.Kind switch
-            {
-                ManagementChangeKind.Servers => McpChangeKind.Servers,
-                ManagementChangeKind.Status => McpChangeKind.Status,
-                _ => throw new InvalidDataException("The MCP Runtime returned an unknown change kind."),
-            });
-        }
-    }
-
-    private static async ValueTask<SunderRpcEndpointReference> ResolveProviderAsync(
-        ISunderRpcClient client,
-        CancellationToken cancellationToken)
-    {
-        var descriptor = McpManagementProtocol.Descriptor;
-        var catalog = await client.DiscoverAsync(descriptor.ContractId, cancellationToken);
-        var provider = catalog.Providers.SingleOrDefault(candidate =>
-            candidate.ProviderId == McpManagementProtocol.ProviderId
-            && candidate.State == SunderRpcProviderState.Active
-            && candidate.ContractVersion == descriptor.Version
-            && candidate.DescriptorSha256 == descriptor.Sha256
-            && candidate.AbiSha256 == descriptor.AbiSha256);
-        return provider?.Endpoint
-            ?? throw new InvalidOperationException("The MCP Runtime management provider is unavailable.");
-    }
-}
-
-internal sealed class McpAppRuntimeGateway :
+internal sealed partial class McpAppRuntimeGateway :
     IMcpManagementGateway,
     IOwnerStreamAvailability,
     IDisposable,
@@ -227,10 +150,10 @@ internal sealed class McpAppRuntimeGateway :
         CancellationToken cancellationToken)
     {
         await _callbackFlow.RunAsync(
-            McpManagementProtocol.OAuthCallbackHandlerId,
+            McpOAuthConstants.HandlerId,
             new Dictionary<string, string>(StringComparer.Ordinal)
             {
-                [McpManagementProtocol.OAuthServerIdParameter] = server.ServerId,
+                [McpOAuthConstants.ServerIdParameter] = server.ServerId,
             },
             "MCP OAuth authorization",
             cancellationToken).ConfigureAwait(false);

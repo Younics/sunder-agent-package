@@ -24,7 +24,7 @@ public sealed class AgentSystemPromptComposer(AgentRpcCatalog rpcCatalog)
 
         var contributors = AgentRpcInvocation.Snapshot(
             rpcCatalog,
-            AgentRpcServices.SystemPromptContributors,
+            Sunder.Package.Agent.Runtime.Rpc.AgentMetadataBindings.SystemPromptContributors,
             static contributor => contributor.DisplayName);
         foreach (var contributor in contributors
                      .OrderBy(contributor => contributor.Metadata, StringComparer.OrdinalIgnoreCase))

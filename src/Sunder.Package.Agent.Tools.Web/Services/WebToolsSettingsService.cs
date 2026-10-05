@@ -1,11 +1,15 @@
 using Sunder.Agent.Execution.Common;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Settings;
+using Sunder.Sdk.Worker;
 
 namespace Sunder.Package.Agent.Tools.Web.Services;
 
-public sealed class WebToolsSettingsService(IPackageContext packageContext)
+public sealed class WebToolsSettingsService(IPackageContext packageContext) : ISunderWorkerSettingsSchemaProvider
 {
     private readonly IPackageContext _packageContext = packageContext;
+
+    public PackageSettingsSchema SettingsSchema => WebToolsConfiguration.Schema;
 
     public async Task<int> GetDefaultMaxResultsAsync(CancellationToken cancellationToken = default)
         => BoundedValue.ParsePositiveInt32Clamped(

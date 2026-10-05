@@ -25,8 +25,8 @@ public sealed record ProcessRunResult(
 
 public static class BoundedProcessRunner
 {
-    public const int MaximumTimeoutSeconds = 86_400;
-    public const int MaximumOutputLength = 10 * 1024 * 1024;
+    public const int MaximumTimeoutSeconds = ProcessExecutionLimits.MaximumTimeoutSeconds;
+    public const int MaximumOutputLength = ProcessExecutionLimits.MaximumOutputLength;
     private const int MaximumProcessTreeSize = 4096;
 
     public static async Task<ProcessRunResult> RunAsync(

@@ -1,24 +1,63 @@
+using System.Collections.ObjectModel;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
-using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Worker;
 
 namespace Sunder.Package.Agent.Runtime;
 
-internal sealed class DeferredAgentRpcServiceHandler(
-    string providerId,
-    SunderRpcContractDescriptor descriptor,
-    Func<IServiceProvider, ISunderRpcServiceHandler> createHandler)
-    : ISunderRpcServiceHandler, ISunderRpcDeclaredErrorMetadata
+internal sealed class DeferredAgentRpcServiceHandler : ISunderRpcServiceHandler, ISunderRpcDeclaredErrorMetadata
 {
+    private readonly string _providerId;
+    private readonly string _contractId;
+    private readonly Func<IServiceProvider, ISunderRpcServiceHandler> _createHandler;
     private readonly object _gate = new();
     private readonly CancellationTokenSource _retirement = new();
-    private readonly IReadOnlyDictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>> _declaredErrors =
-        AgentRpcServiceHandler.CreateDeclaredErrorMap(descriptor);
+    private readonly IReadOnlyDictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>> _declaredErrors;
     private ISunderRpcServiceHandler? _handler;
     private readonly TaskCompletionSource<ISunderRpcServiceHandler> _activated =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _retired;
+
+    internal DeferredAgentRpcServiceHandler(
+        Func<ISunderRpcServiceHandler, SunderWorkerProviderRegistration> declare,
+        Func<IServiceProvider, SunderWorkerProviderRegistration> activate)
+    {
+        ArgumentNullException.ThrowIfNull(declare);
+        ArgumentNullException.ThrowIfNull(activate);
+        Registration = declare(this) ?? throw new InvalidOperationException("The generated provider declaration returned no registration.");
+        _providerId = Registration.ProviderId;
+        _contractId = Registration.ContractId;
+        _declaredErrors = Registration.DeclaredErrors;
+        _createHandler = services =>
+        {
+            var actual = activate(services) ?? throw new InvalidOperationException($"Agent RPC provider '{_providerId}' returned no registration.");
+            if (actual.ProviderId != Registration.ProviderId || actual.ContractId != Registration.ContractId
+                || actual.ContractVersion != Registration.ContractVersion || actual.DescriptorSha256 != Registration.DescriptorSha256
+                || actual.AbiSha256 != Registration.AbiSha256 || !DeclaredErrorsMatch(_declaredErrors, actual.DeclaredErrors))
+                throw new InvalidOperationException($"Agent RPC provider '{_providerId}' activation does not match its generated declaration.");
+            return actual.Handler;
+        };
+    }
+
+    // Retained for the descriptor-first composition until the canonical source switch.
+    internal DeferredAgentRpcServiceHandler(string providerId, SunderRpcContractDescriptor descriptor,
+        Func<IServiceProvider, ISunderRpcServiceHandler> createHandler)
+    {
+        ArgumentNullException.ThrowIfNull(descriptor);
+        ArgumentNullException.ThrowIfNull(createHandler);
+        _providerId = providerId;
+        _contractId = descriptor.ContractId;
+        _createHandler = createHandler;
+        _declaredErrors = new ReadOnlyDictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>>(descriptor.Services.ToDictionary(
+            service => service.ServiceId,
+            service => (IReadOnlyDictionary<string, IReadOnlyList<string>>)new ReadOnlyDictionary<string, IReadOnlyList<string>>(
+                service.Methods.ToDictionary(method => method.MethodId, method => (IReadOnlyList<string>)Array.AsReadOnly(method.Errors.ToArray()), StringComparer.Ordinal)),
+            StringComparer.Ordinal));
+        Registration = new(providerId, descriptor.ContractId, descriptor.Version, descriptor.Sha256, descriptor.AbiSha256!, this);
+    }
+
+    internal SunderWorkerProviderRegistration Registration { get; }
 
     internal bool IsActive => Volatile.Read(ref _retired) == 0
                                && Volatile.Read(ref _handler) is not null;
@@ -32,20 +71,20 @@ internal sealed class DeferredAgentRpcServiceHandler(
         {
             if (_retired != 0)
             {
-                throw new InvalidOperationException($"Agent RPC provider '{providerId}' is retired.");
+                throw new InvalidOperationException($"Agent RPC provider '{_providerId}' is retired.");
             }
             if (_handler is not null)
             {
-                throw new InvalidOperationException($"Agent RPC provider '{providerId}' was activated more than once.");
+                throw new InvalidOperationException($"Agent RPC provider '{_providerId}' was activated more than once.");
             }
 
-            var handler = createHandler(services)
-                ?? throw new InvalidOperationException($"Agent RPC provider '{providerId}' returned no handler.");
+            var handler = _createHandler(services)
+                ?? throw new InvalidOperationException($"Agent RPC provider '{_providerId}' returned no handler.");
             if (handler is not ISunderRpcDeclaredErrorMetadata metadata
                 || !DeclaredErrorsMatch(_declaredErrors, metadata.DeclaredErrors))
             {
                 throw new InvalidOperationException(
-                    $"Agent RPC provider '{providerId}' does not implement the declared domain errors for contract '{descriptor.ContractId}'.");
+                    $"Agent RPC provider '{_providerId}' does not implement the declared domain errors for contract '{_contractId}'.");
             }
             Volatile.Write(ref _handler, handler);
             _activated.TrySetResult(handler);

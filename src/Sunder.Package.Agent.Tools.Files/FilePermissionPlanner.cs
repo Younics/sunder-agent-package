@@ -298,7 +298,7 @@ internal static class FilePermissionPlanner
             {
                 return;
             }
-            if (AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.ResourceAuthority)
+            if (FilesExecutionFacets.SupportsFacet(target, AgentExecutionFacetIds.ResourceAuthority)
                 && target is IAgentResourceAuthorityExecutionTarget authorityTarget)
             {
                 authorityTarget.ReleaseResourceAuthority(_capabilities.ToArray());
@@ -340,7 +340,7 @@ internal static class FilePermissionPlanner
                     return false;
                 }
                 path = string.IsNullOrWhiteSpace(grep.Path) ? "." : grep.Path;
-                return HostSecureFileSearch.TryValidateRequest(
+                return FileSearchRequestValidation.TryValidateRequest(
                     new AgentFileSearchRequest(path, AgentFileSearchKind.Grep, grep.Pattern, grep.Include),
                     out _);
             case "glob":
@@ -349,7 +349,7 @@ internal static class FilePermissionPlanner
                     return false;
                 }
                 path = string.IsNullOrWhiteSpace(glob.Path) ? "." : glob.Path;
-                return HostSecureFileSearch.TryValidateRequest(
+                return FileSearchRequestValidation.TryValidateRequest(
                     new AgentFileSearchRequest(path, AgentFileSearchKind.Glob, glob.Pattern),
                     out _);
             default:

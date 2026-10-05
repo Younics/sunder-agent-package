@@ -2,11 +2,13 @@ extern alias AgentCore;
 
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Models;
-using Sunder.Package.Agent.PackageViews;
+using AgentCore::Sunder.Package.Agent.PackageViews;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
 using Xunit;
 using CorePresentation = AgentCore::Sunder.Package.Agent.Shared.PackageViews;
+using AppModels = AgentCore::Sunder.Package.Agent.Contracts.Models;
+using AgentToolPresentationService = AgentCore::Sunder.Package.Agent.Services.AgentToolPresentationService;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -196,7 +198,7 @@ public sealed class AgentToolExecutionLedgerTests
             prepared.Execution.ExecutionId,
             prepared.Execution.InvocationFingerprint));
         var projectedTurn = CorePresentation.TranscriptTurnTransportProjection.ProjectToolHeaders(
-            started.ToolCallTurn);
+            AgentRoleBoundary.As<AppModels.AgentTurnRecord>(started.ToolCallTurn));
         var projectedItem = Assert.Single(projectedTurn.Items);
         var detail = Assert.IsType<AgentTranscriptToolDetailRecord>(store.GetTranscriptToolDetail(new(
             session.SessionId,
@@ -207,7 +209,7 @@ public sealed class AgentToolExecutionLedgerTests
             projectedTurn.RunRevision)));
 
         Assert.Equal(started.Execution.UpdatedAtUtc, started.ToolCallTurn.UpdatedAtUtc);
-        Assert.Equal(AgentToolExecutionStatus.Started, projectedItem.ToolExecutionStatus);
+        Assert.Equal(AppModels.AgentToolExecutionStatus.Started, projectedItem.ToolExecutionStatus);
         Assert.Equal(detail.Revision, projectedItem.ToolDetailRevision);
         Assert.True(projectedItem.ToolHasDetails);
 
@@ -218,7 +220,8 @@ public sealed class AgentToolExecutionLedgerTests
             (request, cancellationToken) =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                return Task.FromResult(store.GetTranscriptToolDetail(request));
+                return Task.FromResult(AgentRoleBoundary.As<AppModels.AgentTranscriptToolDetailRecord?>(
+                    store.GetTranscriptToolDetail(AgentRoleBoundary.As<AgentTranscriptToolDetailRequest>(request))!));
             },
             new AgentToolPresentationService().Resolve);
         var request = Assert.IsType<CorePresentation.TranscriptToolExpansionRequest>(state.BeginExpansion());
@@ -229,7 +232,7 @@ public sealed class AgentToolExecutionLedgerTests
         Assert.True(state.CommitExpanded(request));
         Assert.Equal(CorePresentation.TranscriptToolExpansionState.Expanded, state.State);
         Assert.Equal("{\"path\":\"live.txt\"}", loaded?.ArgumentsJson);
-        Assert.Equal(AgentToolExecutionStatus.Started, loaded?.Status);
+        Assert.Equal(AppModels.AgentToolExecutionStatus.Started, loaded?.Status);
     }
 
     [Theory]
@@ -878,8 +881,10 @@ public sealed class AgentToolExecutionLedgerTests
         var other = item with { ToolExecutionId = Guid.NewGuid() };
 
         Assert.NotEqual(
-            CorePresentation.TranscriptRowProjector<AgentTranscriptRowViewModel>.DescribeTool(turn, item).AnchorKey,
-            CorePresentation.TranscriptRowProjector<AgentTranscriptRowViewModel>.DescribeTool(turn, other).AnchorKey);
+            CorePresentation.TranscriptRowProjector<AgentTranscriptRowViewModel>.DescribeTool(
+                AgentRoleBoundary.As<AppModels.AgentTurnRecord>(turn), AgentRoleBoundary.As<AppModels.AgentTurnItemRecord>(item)).AnchorKey,
+            CorePresentation.TranscriptRowProjector<AgentTranscriptRowViewModel>.DescribeTool(
+                AgentRoleBoundary.As<AppModels.AgentTurnRecord>(turn), AgentRoleBoundary.As<AppModels.AgentTurnItemRecord>(other)).AnchorKey);
         using var row = TranscriptToolTestHarness.CreateAgentRow(
             turn,
             item,
@@ -924,7 +929,7 @@ public sealed class AgentToolExecutionLedgerTests
             null,
             null);
         var legacyProjection = CorePresentation.TranscriptRowProjector<AgentTranscriptRowViewModel>
-            .DescribeTool(turn, legacyItem);
+            .DescribeTool(AgentRoleBoundary.As<AppModels.AgentTurnRecord>(turn), AgentRoleBoundary.As<AppModels.AgentTurnItemRecord>(legacyItem));
         using var legacyRow = TranscriptToolTestHarness.CreateAgentRow(
             turn,
             legacyItem,
@@ -943,7 +948,7 @@ public sealed class AgentToolExecutionLedgerTests
                 ToolExecutionStatus = status,
             };
             var projection = CorePresentation.TranscriptRowProjector<AgentTranscriptRowViewModel>
-                .DescribeTool(turn, item);
+                .DescribeTool(AgentRoleBoundary.As<AppModels.AgentTurnRecord>(turn), AgentRoleBoundary.As<AppModels.AgentTurnItemRecord>(item));
             Assert.Equal(status.ToString(), projection.StatusText);
             Assert.Equal(
                 status is AgentToolExecutionStatus.Failed or AgentToolExecutionStatus.Ambiguous
@@ -971,7 +976,7 @@ public sealed class AgentToolExecutionLedgerTests
         Assert.Equal(
             CorePresentation.TranscriptProjectedRowKind.ToolResult,
             CorePresentation.TranscriptRowProjector<AgentTranscriptRowViewModel>
-                .DescribeTool(turn, durableSuspension).Kind);
+                .DescribeTool(AgentRoleBoundary.As<AppModels.AgentTurnRecord>(turn), AgentRoleBoundary.As<AppModels.AgentTurnItemRecord>(durableSuspension)).Kind);
     }
 
     private static AgentToolExecutionPreparation Prepare(

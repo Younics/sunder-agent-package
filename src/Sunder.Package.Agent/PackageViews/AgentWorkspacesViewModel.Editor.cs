@@ -257,7 +257,7 @@ public sealed partial class AgentWorkspacesViewModel
             var editorSections = new List<AgentEditorSectionViewModel>();
             var intent = CaptureEditorIntent(context, ticket.IntentRevision);
             var failureCount = 0;
-            foreach (var contributorReference in _rpcCatalog.GetServiceReferences(AgentRpcServices.WorkspaceEditors))
+            foreach (var contributorReference in _rpcCatalog.GetServiceReferences(Sunder.Package.Agent.Runtime.Rpc.AgentWorkspaceEditorBindings.Service))
             {
                 var result = await AgentEditorSectionViewModel.TryGetApplicableSectionsAsync(
                     contributorReference,

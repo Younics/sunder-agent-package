@@ -1,10 +1,17 @@
-using Sunder.Package.Agent.Provider.Shared;
+extern alias OpenAiApp;
+
+using OpenAiApp::Sunder.Package.Agent.Provider.Shared;
+using OpenAiSettingsViewModel = OpenAiApp::Sunder.Package.Agent.Provider.OpenAI.OpenAiSettingsViewModel;
+using OpenAiAuthPresentationService = OpenAiApp::Sunder.Package.Agent.Provider.OpenAI.OpenAiAuthPresentationService;
 using Sunder.Package.Agent.Provider.TestSupport;
-using Sunder.Package.Agent.Shared.Presentation;
+using OpenAiApp::Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Callbacks;
 using Xunit;
 
 namespace Sunder.Package.Agent.Provider.OpenAI.Tests;
+
+using OpenAiAuthOperationResult = OpenAiApp::Sunder.Package.Agent.Provider.OpenAI.OpenAiAuthOperationResult;
+using IOpenAiOwnerManagementClient = OpenAiApp::Sunder.Package.Agent.Provider.OpenAI.IOpenAiOwnerManagementClient;
 
 public sealed class OpenAiSettingsViewModelTests
 {

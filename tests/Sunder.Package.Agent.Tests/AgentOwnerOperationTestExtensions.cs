@@ -1,4 +1,6 @@
-using Sunder.Package.Agent.Runtime;
+extern alias AgentApp;
+
+using AgentApp::Sunder.Package.Agent.Runtime;
 
 namespace Sunder.Package.Agent.Tests;
 

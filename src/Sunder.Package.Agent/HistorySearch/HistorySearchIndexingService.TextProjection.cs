@@ -368,6 +368,11 @@ internal sealed partial class HistorySearchIndexingService
         {
             return _projection.ReplaceTurnDocuments(generationId, validation.SessionId, turnId, []);
         }
+        if (BeforeTurnProjectionWriteAsync is { } beforeProjectionWrite)
+        {
+            await beforeProjectionWrite().ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+        }
         var projectionChanged = _projection.ReplaceTurnDocuments(
             generationId,
             session.SessionId,

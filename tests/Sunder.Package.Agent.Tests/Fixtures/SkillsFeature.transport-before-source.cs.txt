@@ -1,0 +1,134 @@
+    private async ValueTask<IReadOnlyList<AgentResolvedExecutionResource>> ResolveResourcesAsync(
+        AgentProfileRecord profile,
+        Guid? sessionId,
+        AgentWorkspaceRecord? workspace,
+        AgentWorkspaceBindingRecord? executionBinding,
+        AgentRpcReference<IAgentExecutionTarget>? executionTargetReference,
+        CancellationToken cancellationToken)
+    {
+        if (workspace is null || executionBinding is null)
+        {
+            return [];
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        var descriptors = ListResources(profile);
+        if (descriptors.Count == 0)
+        {
+            return [];
+        }
+
+        if (!TryAcquireExecutionTarget(executionTargetReference, executionBinding, out var targetLease))
+        {
+            return [];
+        }
+
+        return await InvokeTargetAsync(
+            targetLease,
+            cancellationToken,
+            (target, invocationToken) => target.Descriptor.SupportsFacet(AgentExecutionFacetIds.ResourceResolution)
+                && target is IAgentExecutionResourceResolver resolver
+                ? resolver.ResolveResourcesAsync(
+                    new AgentExecutionTargetContext(sessionId, profile.ProfileId, workspace, executionBinding),
+                    descriptors,
+                    invocationToken)
+                : ValueTask.FromResult<IReadOnlyList<AgentResolvedExecutionResource>>([]),
+            static () => []);
+    }
+
+    private static bool TryAcquireExecutionTarget(
+        AgentRpcReference<IAgentExecutionTarget>? selectedReference,
+        AgentWorkspaceBindingRecord binding,
+        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)]
+        out AgentRpcLease<IAgentExecutionTarget>? lease)
+    {
+        if (selectedReference is null || !selectedReference.TryAcquire(out lease))
+        {
+            lease = null;
+            return false;
+        }
+        if (lease.RetirementToken.IsCancellationRequested
+            || !IsBindingMatch(lease.Service.Descriptor, binding))
+        {
+            lease.Dispose();
+            lease = null;
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool IsBindingMatch(
+        AgentExecutionTargetDescriptor descriptor,
+        AgentWorkspaceBindingRecord binding)
+        => string.Equals(descriptor.TargetId, binding.ContributionId, StringComparison.OrdinalIgnoreCase)
+           || string.Equals(descriptor.TargetKind, binding.ContributionId, StringComparison.OrdinalIgnoreCase);
+
+    private static async ValueTask<TResult> InvokeTargetAsync<TResult>(
+        AgentRpcLease<IAgentExecutionTarget> lease,
+        CancellationToken cancellationToken,
+        Func<IAgentExecutionTarget, CancellationToken, ValueTask<TResult>> callback,
+        Func<TResult> unavailableResult)
+    {
+        using (lease)
+        {
+            var retirementToken = lease.RetirementToken;
+            using var invocation = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken,
+                retirementToken);
+            try
+            {
+                var result = await callback(lease.Service, invocation.Token).ConfigureAwait(false);
+                if (retirementToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                {
+                    return unavailableResult();
+                }
+                return result;
+            }
+            catch (Exception exception) when (IsTargetUnavailable(
+                exception,
+                retirementToken,
+                cancellationToken))
+            {
+                return unavailableResult();
+            }
+        }
+    }
+
+    private static bool IsTargetUnavailable(
+        Exception exception,
+        CancellationToken retirementToken,
+        CancellationToken callerCancellationToken)
+        => !callerCancellationToken.IsCancellationRequested
+           && (exception is SunderRpcException
+               {
+                   Error.Kind: SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable,
+               }
+               || retirementToken.IsCancellationRequested
+               && (exception is OperationCanceledException
+                   || exception is SunderRpcException { Error.Kind: SunderRpcErrorKind.Cancelled }));
+
+    private AgentProfileRecord? ResolveProfile(string? profileId)
+    {
+        if (string.IsNullOrWhiteSpace(profileId))
+        {
+            return null;
+        }
+        foreach (var reference in rpcCatalog.GetServiceReferences(AgentRpcServices.RuntimeCatalogs))
+        {
+            if (!reference.TryAcquire(out var lease))
+            {
+                continue;
+            }
+            using (lease)
+            {
+                var profile = lease.Service.GetProfile(profileId);
+                if (!lease.RetirementToken.IsCancellationRequested)
+                {
+                    return profile;
+                }
+            }
+        }
+
+        return null;
+    }

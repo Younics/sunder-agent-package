@@ -52,7 +52,7 @@ public sealed class GeneratedPackageManifestTests
             using var document = JsonDocument.Parse(File.ReadAllText(manifestPath));
             var root = document.RootElement;
             Assert.Equal(1, root.GetProperty("archiveFormatVersion").GetInt32());
-            Assert.Equal(3, root.GetProperty("manifestVersion").GetInt32());
+            Assert.Equal(1, root.GetProperty("manifestVersion").GetInt32());
             var packageId = root.GetProperty("id").GetString()!;
             Assert.Equal(package.FamilyId, packageId);
             Assert.Equal(releaseVersion, root.GetProperty("version").GetString());
@@ -70,10 +70,10 @@ public sealed class GeneratedPackageManifestTests
                     "contracts/tool-execution-observed.rpc.json",
                     observedBundle.GetProperty("descriptorPath").GetString());
                 Assert.Equal(
-                    "46ffee9ab3295a1ab3e7180418836df84c35e15638f45fb3277b2df522a28ca1",
+                    "1e80a60bbba1d0bbfdcd20992b3ad6e6b6d9166fc987056d6945316a611bbee2",
                     observedBundle.GetProperty("descriptorSha256").GetString());
                 Assert.Equal(
-                    "f2dcd6c794d6eb7bf81e745d3c43830ad6fd8ffbd314a16aac3e198e1707f2c6",
+                    "1a34bc8a004d854ae180dd9ac5a9fb4c346de4bd3360c0ec53821d74e361657d",
                     observedBundle.GetProperty("abiSha256").GetString());
                 Assert.Equal("public", observedBundle.GetProperty("exposure").GetString());
             }
@@ -122,6 +122,11 @@ public sealed class GeneratedPackageManifestTests
             var workerTarget = Assert.Single(targets);
             Assert.Equal("worker", workerTarget.GetProperty("kind").GetString());
             Assert.Equal(RuntimeInformation.RuntimeIdentifier, workerTarget.GetProperty("rid").GetString());
+            Assert.Equal($"lib/{package.Name}.dll", workerTarget.GetProperty("entryPoint").GetString());
+            var executionRuntime = workerTarget.GetProperty("executionRuntime");
+            Assert.Equal("sunder.runtime.dotnet", executionRuntime.GetProperty("id").GetString());
+            Assert.Equal(">=10.0.0 <11.0.0", executionRuntime.GetProperty("versionRange").GetString());
+            Assert.Equal("sunder.dotnet-worker-module.v1", executionRuntime.GetProperty("moduleAbi").GetString());
             foreach (var target in targets)
             {
                 Assert.StartsWith("1.1.", target.GetProperty("sdkVersion").GetString(), StringComparison.Ordinal);
@@ -130,11 +135,11 @@ public sealed class GeneratedPackageManifestTests
                     .Select(static capability => capability.GetString()!)
                     .ToArray();
                 Assert.All(capabilities, capability => Assert.Contains(capability, expected));
-                Assert.Contains(SunderSdkCapabilities.RpcV2, capabilities, StringComparer.Ordinal);
+                Assert.Contains(SunderSdkCapabilities.RpcV1, capabilities, StringComparer.Ordinal);
                 Assert.Contains("core.v1", capabilities, StringComparer.Ordinal);
                 Assert.Contains("packaging.v1", capabilities, StringComparer.Ordinal);
                 Assert.Contains("sdk-baseline-1-1.v1", capabilities, StringComparer.Ordinal);
-                Assert.Contains("worker-protocol.v3", capabilities, StringComparer.Ordinal);
+                Assert.Contains("worker-protocol.v1", capabilities, StringComparer.Ordinal);
                 Assert.DoesNotContain("runtime-operations.v1", capabilities, StringComparer.Ordinal);
                 Assert.DoesNotContain("runtime-invocation-errors.v1", capabilities, StringComparer.Ordinal);
                 Assert.DoesNotContain(SunderSdkCapabilities.ThemingV1, capabilities, StringComparer.Ordinal);
@@ -201,10 +206,29 @@ public sealed class GeneratedPackageManifestTests
                 Assert.Empty(forbiddenWorkerFiles);
 
                 var entryPoint = Assert.Single(targets).GetProperty("entryPoint").GetString()!;
-                var executablePath = Path.Combine(
+                var modulePath = Path.Combine(
                     workerRoot,
                     entryPoint.Replace('/', Path.DirectorySeparatorChar));
-                Assert.True(File.Exists(executablePath), $"Worker apphost was not found for {package.Name}: {executablePath}");
+                Assert.True(File.Exists(modulePath), $"Worker managed module was not found for {package.Name}: {modulePath}");
+                Assert.Equal(".dll", Path.GetExtension(modulePath));
+                var moduleBase = modulePath[..^".dll".Length];
+                Assert.False(File.Exists(moduleBase), $"Obsolete Worker apphost was emitted for {package.Name}: {moduleBase}");
+                Assert.False(File.Exists(moduleBase + ".exe"), $"Obsolete Worker apphost was emitted for {package.Name}: {moduleBase}.exe");
+                var runtimeConfigPath = moduleBase + ".runtimeconfig.json";
+                var dependencyManifestPath = moduleBase + ".deps.json";
+                Assert.True(File.Exists(runtimeConfigPath), $"Worker runtimeconfig was not found for {package.Name}: {runtimeConfigPath}");
+                Assert.True(File.Exists(dependencyManifestPath), $"Worker dependency manifest was not found for {package.Name}: {dependencyManifestPath}");
+                using var runtimeConfig = JsonDocument.Parse(File.ReadAllText(runtimeConfigPath));
+                var runtimeOptions = runtimeConfig.RootElement.GetProperty("runtimeOptions");
+                Assert.Equal("net10.0", runtimeOptions.GetProperty("tfm").GetString());
+                Assert.False(runtimeOptions.TryGetProperty("includedFrameworks", out _));
+                var framework = runtimeOptions.GetProperty("framework");
+                Assert.Equal("Microsoft.NETCore.App", framework.GetProperty("name").GetString());
+                Assert.StartsWith("10.", framework.GetProperty("version").GetString(), StringComparison.Ordinal);
+                using var dependencyManifest = JsonDocument.Parse(File.ReadAllText(dependencyManifestPath));
+                Assert.Equal(
+                    $".NETCoreApp,Version=v10.0/{RuntimeInformation.RuntimeIdentifier}",
+                    dependencyManifest.RootElement.GetProperty("runtimeTarget").GetProperty("name").GetString());
             }
 
             if (expected.Contains(SunderSdkCapabilities.StacksRpcV1, StringComparer.Ordinal))

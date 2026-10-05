@@ -1,5 +1,15 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <SunderSdkReference>true</SunderSdkReference>
+  </PropertyGroup>
+
+  <!-- This retained security/OS library owns its local domain values. Runtime
+       packages compile the same reviewed source into their isolated Worker role. -->
   <ItemGroup>
-    <ProjectReference Include="..\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
+    <Compile Include="..\Sunder.Package.Agent\Models\AgentWorkspaceRecord.cs" Link="Models\AgentWorkspaceRecord.cs" />
+    <Compile Include="..\Sunder.Package.Agent\Models\Execution\AgentWorkspaceBindingRecord.cs;..\Sunder.Package.Agent\Models\Execution\AgentExecutionTargetContext.cs;..\Sunder.Package.Agent\Models\Execution\AgentExecutionTargetDescriptor.cs;..\Sunder.Package.Agent\Models\Execution\AgentFileSearchModels.cs;..\Sunder.Package.Agent\Models\Execution\AgentScopedInstructionDiscoveryModels.cs"
+             LinkBase="Models\Execution" />
+    <Compile Include="..\Sunder.Package.Agent\Models\Tools\AgentResourceClaim.cs;..\Sunder.Package.Agent\Models\Tools\AgentResolvedResource.cs;..\Sunder.Package.Agent\Models\Tools\AgentFileReadRequest.cs;..\Sunder.Package.Agent\Models\Tools\AgentFileReadResult.cs;..\Sunder.Package.Agent\Models\Tools\AgentFileWriteRequest.cs;..\Sunder.Package.Agent\Models\Tools\AgentFileDeleteRequest.cs;..\Sunder.Package.Agent\Models\Tools\AgentFileMutationResult.cs;..\Sunder.Package.Agent\Models\Tools\AgentToolResultErrorCodes.cs"
+             LinkBase="Models\Tools" />
   </ItemGroup>
 </Project>

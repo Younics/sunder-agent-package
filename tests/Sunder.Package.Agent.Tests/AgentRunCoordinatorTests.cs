@@ -1,4 +1,15 @@
 extern alias AgentCore;
+extern alias LocalWorker;
+extern alias McpWorker;
+extern alias MemoryWorker;
+extern alias AnthropicWorker;
+extern alias GeminiWorker;
+extern alias SkillsWorker;
+extern alias SkillsApp;
+extern alias SubagentsWorker;
+extern alias SubagentsApp;
+extern alias FilesWorker;
+extern alias ShellWorker;
 
 using System.Collections.Specialized;
 using System.Diagnostics;
@@ -16,35 +27,43 @@ using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Contracts.Services;
-using Sunder.Package.Agent.Execution.Local;
+using LocalWorker::Sunder.Package.Agent.Execution.Local;
 using Sunder.Package.Agent.HistorySearch;
-using Sunder.Package.Agent.Mcp;
-using Sunder.Package.Agent.Mcp.Runtime;
-using Sunder.Package.Agent.Mcp.Services;
-using Sunder.Package.Agent.Memory.Semantic;
-using Sunder.Package.Agent.Memory.Semantic.Services;
+using McpWorker::Sunder.Package.Agent.Mcp;
+using McpWorker::Sunder.Package.Agent.Mcp.Runtime;
+using McpWorker::Sunder.Package.Agent.Mcp.Services;
+using MemoryWorker::Sunder.Package.Agent.Memory.Semantic;
+using MemoryWorker::Sunder.Package.Agent.Memory.Semantic.Services;
 using Sunder.Package.Agent.Models;
-using Sunder.Package.Agent.PackageViews;
-using Sunder.Package.Agent.Provider.Anthropic;
-using Sunder.Package.Agent.Provider.Gemini;
+using AgentCore::Sunder.Package.Agent.PackageViews;
+using AnthropicWorker::Sunder.Package.Agent.Provider.Anthropic;
+using GeminiWorker::Sunder.Package.Agent.Provider.Gemini;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Services.BehaviorLoops;
-using Sunder.Package.Agent.Skills.PackageViews;
-using Sunder.Package.Agent.Skills.Services;
+using SkillsApp::Sunder.Package.Agent.Skills.PackageViews;
+using SkillsWorker::Sunder.Package.Agent.Skills.Services;
 using Sunder.Package.Agent.Storage;
-using Sunder.Package.Agent.Subagents.Models;
-using Sunder.Package.Agent.Subagents.PackageViews;
-using Sunder.Package.Agent.Subagents.Services;
-using Sunder.Package.Agent.Tools.Files;
-using Sunder.Package.Agent.Tools.Shell;
+using SubagentsWorker::Sunder.Package.Agent.Subagents.Models;
+using SubagentsApp::Sunder.Package.Agent.Subagents.PackageViews;
+using SubagentsWorker::Sunder.Package.Agent.Subagents.Services;
+using FilesWorker::Sunder.Package.Agent.Tools.Files;
+using ShellWorker::Sunder.Package.Agent.Tools.Shell;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Rpc;
 using Xunit;
 using AgentPresentationDispatcher = AgentCore::Sunder.Package.Agent.Shared.Presentation.IPresentationDispatcher;
+using AgentChatSelectionStateService = AgentCore::Sunder.Package.Agent.Services.AgentChatSelectionStateService;
+using AgentToolPresentationService = AgentCore::Sunder.Package.Agent.Services.AgentToolPresentationService;
+using AppRuntime = AgentCore::Sunder.Package.Agent.Runtime;
+using AppModels = AgentCore::Sunder.Package.Agent.Contracts.Models;
 
 namespace Sunder.Package.Agent.Tests;
+
+extern alias McpApp;
+using AgentMcpSettingsViewModel = McpApp::Sunder.Package.Agent.Mcp.AgentMcpSettingsViewModel;
+using McpStatusKind = McpApp::Sunder.Package.Agent.Mcp.McpStatusKind;
 
 [CollectionDefinition(Name, DisableParallelization = true)]
 public sealed class AgentRunCoordinatorIsolationCollection
@@ -442,7 +461,7 @@ public sealed class AgentRunCoordinatorTests
     {
         var catalog = new TestExtensionCatalog();
         catalog.AddProvider(
-            AgentRpcServices.SystemPromptContributors,
+            RegressionTestBindings.SystemPromptContributors,
             new TestSystemPromptContributor()
         );
         var composer = new AgentSystemPromptComposer(catalog);
@@ -608,9 +627,9 @@ public sealed class AgentRunCoordinatorTests
     public async Task FilesToolSource_ContributeContextAsync_IncludesExecutionScopeRoots()
     {
         using var scope = RegressionTestPackageScope.Create();
-        var catalog = new TestExtensionCatalog();
+        using var catalog = new TestExtensionCatalog();
         catalog.AddProvider(
-            AgentRpcServices.ExecutionTargets,
+            RegressionTestBindings.ExecutionTargets,
             new TestScopedExecutionTarget()
         );
         var files = new FilesToolSource(scope.Context);
@@ -643,9 +662,10 @@ public sealed class AgentRunCoordinatorTests
 
         var request = BuildPromptContextRequest(systemPromptRequest) with
         {
-            ExecutionTargetReference = catalog.GetRequiredReference(AgentRpcServices.ExecutionTargets),
+            ExecutionTargetReference = catalog.GetRequiredReference(RegressionTestBindings.ExecutionTargets),
         };
-        var contribution = await files.ContributeContextAsync(request);
+        using var filesProbe = new GeneratedToolSourceProbe(catalog, files, "sunder.package.agent.tools.files", withPromptContext: true);
+        var contribution = await filesProbe.ContributeContextAsync(request);
         var block = Assert.Single(Assert.IsType<AgentPromptContextContribution>(contribution).Blocks);
 
         Assert.Equal("Workspace File Scope", block.Title);
@@ -676,11 +696,10 @@ public sealed class AgentRunCoordinatorTests
             new LocalShellCatalogService(packageContext));
         var files = new FilesToolSource(packageContext);
         var shell = new ShellToolSource();
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ExecutionTargets, target, "sunder.package.agent.execution.local");
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ToolSources, files, "sunder.package.agent.tools.files");
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.PromptContextContributors, files, "sunder.package.agent.tools.files");
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ToolSources, shell, "sunder.package.agent.tools.shell");
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.PromptContextContributors, shell, "sunder.package.agent.tools.shell");
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.ExecutionTargets, target, "sunder.package.agent.execution.local");
+        using var filesProbe = new GeneratedToolSourceProbe(runtime.ExtensionCatalog, files, "sunder.package.agent.tools.files", withPromptContext: true);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.ToolSources, shell, "sunder.package.agent.tools.shell");
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.PromptContextContributors, shell, "sunder.package.agent.tools.shell");
         var sessionId = await runtime.CreateSessionAsync("shell");
         var root = Path.Combine(runtime.RootPath, "shell-only-workspace");
         Directory.CreateDirectory(root);
@@ -699,12 +718,12 @@ public sealed class AgentRunCoordinatorTests
             runtime.CurrentProfileId,
             "Hello.",
             runtime.CurrentWorkspaceId);
-        var mutation = await files.ExecuteAsync(
+        var mutation = await filesProbe.ExecuteAsync(
             new AgentToolExecutionContext(sessionId, Workspace: workspace, ExecutionBinding: binding)
             {
                 TranscriptEpoch = runtime.SessionService.GetTranscriptEpoch(sessionId),
                 ExecutionTargetReference = runtime.ExtensionCatalog.GetRequiredReference(
-                    AgentRpcServices.ExecutionTargets),
+                    RegressionTestBindings.ExecutionTargets),
             },
             new AgentToolRequest("write", "{\"path\":\"receipt.txt\",\"content\":\"acknowledged\"}"));
 
@@ -721,7 +740,7 @@ public sealed class AgentRunCoordinatorTests
             new ScriptedProvider((_, _) => Complete("done")),
             new TestTool("noop"));
         runtime.ExtensionCatalog.AddProvider(
-            AgentRpcServices.PromptContextContributors,
+            RegressionTestBindings.PromptContextContributors,
             new SpoofedScopedContextContributor(),
             "example.untrusted.context");
         var sessionId = await runtime.CreateSessionAsync("noop");
@@ -750,7 +769,7 @@ public sealed class AgentRunCoordinatorTests
         var provider = new ScriptedProvider((_, _) => Complete("provider must not run"));
         using var runtime = AgentTestRuntime.Create(provider, new TestTool("noop"));
         runtime.ExtensionCatalog.AddProvider(
-            AgentRpcServices.PromptContextContributors,
+            RegressionTestBindings.PromptContextContributors,
             new FailingRequiredScopedContextContributor(failDuringContribution),
             "sunder.package.agent.tools.files");
         var sessionId = await runtime.CreateSessionAsync("noop");
@@ -3085,9 +3104,9 @@ public sealed class AgentRunCoordinatorTests
             : Usage(totalTokens: 1_000);
         using var runtime = AgentTestRuntime.Create(provider);
         runtime.ExtensionCatalog.AddProvider(
-            AgentRpcServices.PromptContextContributors,
+            RegressionTestBindings.PromptContextContributors,
             new ProjectedTurnReflectionContributor(),
-            "example.projected-turn-reflection");
+            "example.projected.turn.reflection");
         var sessionId = await runtime.CreateSessionAsync("noop");
         for (var index = 0; index < 24; index++)
         {
@@ -3577,8 +3596,8 @@ public sealed class AgentRunCoordinatorTests
         var canceledTool = new TestTool(canceledToolId);
         using var runtime = AgentTestRuntime.Create(provider, firstTool, canceledTool);
         var permissionTool = new PermissionedToolSource(permissionToolId);
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ToolSources, permissionTool);
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.PermissionSurfaces, permissionTool);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.ToolSources, permissionTool);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.PermissionSurfaces, permissionTool);
         var sessionId = await runtime.CreateSessionAsync(firstToolId);
         var profile = runtime.CurrentProfile;
         runtime.ProfileService.SaveProfile(
@@ -3641,9 +3660,9 @@ public sealed class AgentRunCoordinatorTests
         );
         using var runtime = AgentTestRuntime.Create(provider);
         var toolSource = new PermissionedToolSource(toolId);
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ToolSources, toolSource);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.ToolSources, toolSource);
         runtime.ExtensionCatalog.AddProvider(
-            AgentRpcServices.PermissionSurfaces,
+            RegressionTestBindings.PermissionSurfaces,
             toolSource
         );
         var sessionId = await runtime.CreateSessionAsync(toolId);
@@ -3714,8 +3733,8 @@ public sealed class AgentRunCoordinatorTests
         });
         using var runtime = AgentTestRuntime.Create(provider);
         var toolSource = new PermissionedToolSource(toolId);
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ToolSources, toolSource);
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.PermissionSurfaces, toolSource);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.ToolSources, toolSource);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.PermissionSurfaces, toolSource);
         var sessionId = await runtime.CreateSessionAsync(toolId);
         Task<AgentRunCheckpointRecord?>? approvalTask = null;
         var approvalStarted = 0;
@@ -3763,8 +3782,8 @@ public sealed class AgentRunCoordinatorTests
         });
         using var runtime = AgentTestRuntime.Create(provider);
         var toolSource = new PermissionedToolSource(toolId);
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ToolSources, toolSource);
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.PermissionSurfaces, toolSource);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.ToolSources, toolSource);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.PermissionSurfaces, toolSource);
         var sessionId = await runtime.CreateSessionAsync(toolId);
         var waiting = await runtime.RunCoordinator.QueueUserMessageAsync(
             sessionId,
@@ -3804,10 +3823,10 @@ public sealed class AgentRunCoordinatorTests
         using var runtime = AgentTestRuntime.Create(provider);
         var source = new PreflightPermissionedToolSource(toolId, deferInPreflight: false);
         var target = new ReleasingResourceAuthorityExecutionTarget();
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ToolSources, source);
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.PermissionSurfaces, source);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.ToolSources, source);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.PermissionSurfaces, source);
         runtime.ExtensionCatalog.AddProvider(
-            AgentRpcServices.ExecutionTargets,
+            RegressionTestBindings.ExecutionTargets,
             target,
             "test.execution.target.package");
         var sessionId = await runtime.CreateSessionAsync(toolId);
@@ -3870,9 +3889,9 @@ public sealed class AgentRunCoordinatorTests
             toolId,
             deferInPreflight: true,
             deferredErrorCode: errorCode);
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ToolSources, source);
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.PermissionSurfaces, source);
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.PromptContextContributors, source);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.ToolSources, source);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.PermissionSurfaces, source);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.PromptContextContributors, source);
         var sessionId = await runtime.CreateSessionAsync(toolId);
         runtime.PermissionService.SetSessionUnrestrictedMode(sessionId, isEnabled: true);
 
@@ -3912,8 +3931,8 @@ public sealed class AgentRunCoordinatorTests
         });
         using var runtime = AgentTestRuntime.Create(provider);
         var source = new DispatchAwareToolSource(toolId, DispatchAwareToolBehavior.FailBeforeDispatch);
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ToolSources, source);
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ObservedToolExecutions, source);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.ToolSources, source);
+        runtime.ExtensionCatalog.AddProvider(AgentRpcContractIds.ObservedToolExecution, source);
         var sessionId = await runtime.CreateSessionAsync(toolId);
 
         var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
@@ -3939,8 +3958,8 @@ public sealed class AgentRunCoordinatorTests
         });
         using var runtime = AgentTestRuntime.Create(provider);
         var source = new DispatchAwareToolSource(toolId, DispatchAwareToolBehavior.CancelBeforeDispatch);
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ToolSources, source);
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ObservedToolExecutions, source);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.ToolSources, source);
+        runtime.ExtensionCatalog.AddProvider(AgentRpcContractIds.ObservedToolExecution, source);
         var sessionId = await runtime.CreateSessionAsync(toolId);
         using var cancellation = new CancellationTokenSource();
 
@@ -3980,8 +3999,8 @@ public sealed class AgentRunCoordinatorTests
             loseWorkerTransport
                 ? DispatchAwareToolBehavior.TransportLostAfterDispatch
                 : DispatchAwareToolBehavior.AmbiguousAfterDispatch);
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ToolSources, source);
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ObservedToolExecutions, source);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.ToolSources, source);
+        runtime.ExtensionCatalog.AddProvider(AgentRpcContractIds.ObservedToolExecution, source);
         var sessionId = await runtime.CreateSessionAsync(toolId);
 
         var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
@@ -4010,8 +4029,8 @@ public sealed class AgentRunCoordinatorTests
         var source = new DispatchAwareToolSource(
             toolId,
             DispatchAwareToolBehavior.UnexpectedFailureAfterDispatch);
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ToolSources, source);
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ObservedToolExecutions, source);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.ToolSources, source);
+        runtime.ExtensionCatalog.AddProvider(AgentRpcContractIds.ObservedToolExecution, source);
         var sessionId = await runtime.CreateSessionAsync(toolId);
 
         var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
@@ -4046,8 +4065,8 @@ public sealed class AgentRunCoordinatorTests
         var source = new DispatchAwareToolSource(
             toolId,
             DispatchAwareToolBehavior.DefinitiveFailureAfterDispatch);
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ToolSources, source);
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ObservedToolExecutions, source);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.ToolSources, source);
+        runtime.ExtensionCatalog.AddProvider(AgentRpcContractIds.ObservedToolExecution, source);
         var sessionId = await runtime.CreateSessionAsync(toolId);
 
         var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
@@ -4076,8 +4095,8 @@ public sealed class AgentRunCoordinatorTests
             });
         using var runtime = AgentTestRuntime.Create(provider);
         var source = new PreflightPermissionedToolSource(toolId, deferInPreflight: false);
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ToolSources, source);
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.PermissionSurfaces, source);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.ToolSources, source);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.PermissionSurfaces, source);
         var sessionId = await runtime.CreateSessionAsync(toolId);
         runtime.PermissionService.SetSessionUnrestrictedMode(sessionId, isEnabled: true);
 
@@ -4115,8 +4134,8 @@ public sealed class AgentRunCoordinatorTests
             deferInPreflight: false,
             boundaryId: AgentPermissionBoundaryIds.ConfiguredScope,
             resourceReferences: [resourceReference]);
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ToolSources, source);
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.PermissionSurfaces, source);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.ToolSources, source);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.PermissionSurfaces, source);
         var sessionId = await runtime.CreateSessionAsync(toolId);
         runtime.PermissionService.SetSessionUnrestrictedMode(sessionId, isEnabled: true);
 
@@ -4155,8 +4174,8 @@ public sealed class AgentRunCoordinatorTests
             toolId,
             deferInPreflight: true,
             deferredErrorCode: errorCode);
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ToolSources, source);
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.PermissionSurfaces, source);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.ToolSources, source);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.PermissionSurfaces, source);
         var sessionId = await runtime.CreateSessionAsync(toolId);
 
         var waiting = await runtime.RunCoordinator.QueueUserMessageAsync(
@@ -4195,8 +4214,8 @@ public sealed class AgentRunCoordinatorTests
                 : throw new Xunit.Sdk.XunitException($"Unexpected provider request {requestIndex}."));
         using var runtime = AgentTestRuntime.Create(provider);
         var toolSource = new PermissionedToolSource(toolId, waitsForChild: true);
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ToolSources, toolSource);
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.PermissionSurfaces, toolSource);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.ToolSources, toolSource);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.PermissionSurfaces, toolSource);
         var sessionId = await runtime.CreateSessionAsync(toolId);
 
         var waiting = await runtime.RunCoordinator.QueueUserMessageAsync(
@@ -4245,8 +4264,8 @@ public sealed class AgentRunCoordinatorTests
             provider,
             new AgentRunBudgetLimits(TimeSpan.FromMinutes(5), 1, 10));
         var toolSource = new PermissionedToolSource(toolId);
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ToolSources, toolSource);
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.PermissionSurfaces, toolSource);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.ToolSources, toolSource);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.PermissionSurfaces, toolSource);
         var sessionId = await runtime.CreateSessionAsync(toolId);
         var waiting = await runtime.RunCoordinator.QueueUserMessageAsync(
             sessionId,
@@ -4286,8 +4305,8 @@ public sealed class AgentRunCoordinatorTests
 
         using var runtime = AgentTestRuntime.Create(provider);
         var toolSource = new PermissionedToolSource(toolId);
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ToolSources, toolSource);
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.PermissionSurfaces, toolSource);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.ToolSources, toolSource);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.PermissionSurfaces, toolSource);
         var sessionId = await runtime.CreateSessionAsync(toolId);
         for (var index = 0; index < 40; index++)
         {
@@ -4714,7 +4733,7 @@ public sealed class AgentRunCoordinatorTests
         );
         var toolSource = new PermissionedToolSource(toolId);
         runtime.ExtensionCatalog.AddProvider(
-            AgentRpcServices.PermissionSurfaces,
+            RegressionTestBindings.PermissionSurfaces,
             toolSource
         );
         var parentSessionId = await runtime.CreateSessionAsync(toolId);
@@ -4926,11 +4945,11 @@ public sealed class AgentRunCoordinatorTests
         );
         var toolSource = new PermissionedToolSource(toolId);
         runtime.ExtensionCatalog.AddProvider(
-            AgentRpcServices.ToolSources,
+            RegressionTestBindings.ToolSources,
             toolSource
         );
         runtime.ExtensionCatalog.AddProvider(
-            AgentRpcServices.PermissionSurfaces,
+            RegressionTestBindings.PermissionSurfaces,
             toolSource
         );
         var parentSessionId = await runtime.CreateSessionAsync(toolId);
@@ -4993,7 +5012,7 @@ public sealed class AgentRunCoordinatorTests
             Assert.False(subagent.HasRequiredDescription);
             var ex = Assert.Throws<SubagentOwnerOperationException>(
                 () =>
-                    service.SaveSubagent(
+                    SaveSubagent(service,
                         subagent.SubagentId,
                         subagent.DisplayName,
                         " ",
@@ -5039,7 +5058,7 @@ public sealed class AgentRunCoordinatorTests
             var service = new SubagentService(new SubagentStore(new TestPackageContext(rootPath)));
             var subagent = service.CreateSubagent("Researcher");
 
-            var saved = service.SaveSubagent(
+            var saved = SaveSubagent(service,
                 subagent.SubagentId,
                 subagent.DisplayName,
                 "Investigates delegated research tasks.",
@@ -5084,7 +5103,7 @@ public sealed class AgentRunCoordinatorTests
             var service = new SubagentService(new SubagentStore(new TestPackageContext(rootPath)));
             var incomplete = service.CreateSubagent("Incomplete");
             var usable = service.CreateSubagent("Researcher");
-            service.SaveSubagent(
+            SaveSubagent(service,
                 usable.SubagentId,
                 usable.DisplayName,
                 "Investigates delegated research tasks.",
@@ -5093,11 +5112,11 @@ public sealed class AgentRunCoordinatorTests
                 null,
                 []
             );
-            var extensionCatalog = new TestExtensionCatalog();
+            using var extensionCatalog = new TestExtensionCatalog();
             AddSubagentBehaviorLoop(extensionCatalog);
-            var feature = new SubagentFeature(service, extensionCatalog);
+            var feature = new SubagentFeature(service, extensionCatalog.Subagents());
 
-            var capabilities = await feature.ListCapabilitiesAsync(
+            var capabilities = await AgentRoleBoundary.As<IAgentProfileSelectableCapabilityProvider>(feature).ListCapabilitiesAsync(
                 new AgentProfileSelectableCapabilityRequest(
                     CreateBehaviorLoopProfile(SubagentConstants.OrchestratedBehaviorLoopId)
                 )
@@ -5148,7 +5167,7 @@ public sealed class AgentRunCoordinatorTests
         {
             var service = new SubagentService(new SubagentStore(new TestPackageContext(rootPath)));
             var subagent = service.CreateSubagent("Researcher");
-            service.SaveSubagent(
+            SaveSubagent(service,
                 subagent.SubagentId,
                 subagent.DisplayName,
                 "Investigates delegated research tasks.",
@@ -5162,14 +5181,14 @@ public sealed class AgentRunCoordinatorTests
             );
             extensionCatalog.AddBehaviorLoop(new TestBehaviorLoop("feature-loop", "Feature Loop", [SubagentConstants.FeatureKind])
             );
-            var feature = new SubagentFeature(service, extensionCatalog);
+            var feature = new SubagentFeature(service, extensionCatalog.Subagents());
 
-            var defaultCapabilities = await feature.ListCapabilitiesAsync(
+            var defaultCapabilities = await AgentRoleBoundary.As<IAgentProfileSelectableCapabilityProvider>(feature).ListCapabilitiesAsync(
                 new AgentProfileSelectableCapabilityRequest(
                     CreateBehaviorLoopProfile(AgentBehaviorLoopIds.Default)
                 )
             );
-            var featureCapabilities = await feature.ListCapabilitiesAsync(
+            var featureCapabilities = await AgentRoleBoundary.As<IAgentProfileSelectableCapabilityProvider>(feature).ListCapabilitiesAsync(
                 new AgentProfileSelectableCapabilityRequest(CreateBehaviorLoopProfile("feature-loop"))
             );
 
@@ -5206,7 +5225,7 @@ public sealed class AgentRunCoordinatorTests
         {
             var service = new SubagentService(new SubagentStore(new TestPackageContext(rootPath)));
             var subagent = service.CreateSubagent("Researcher");
-            service.SaveSubagent(
+            SaveSubagent(service,
                 subagent.SubagentId,
                 subagent.DisplayName,
                 "Investigates delegated research tasks and reports concise findings.",
@@ -5236,11 +5255,11 @@ public sealed class AgentRunCoordinatorTests
                 ],
                 SubagentConstants.OrchestratedBehaviorLoopId
             );
-            var extensionCatalog = new TestExtensionCatalog();
+            using var extensionCatalog = new TestExtensionCatalog();
             AddSubagentBehaviorLoop(extensionCatalog);
-            var feature = new SubagentFeature(service, extensionCatalog);
+            var feature = new SubagentFeature(service, extensionCatalog.Subagents());
 
-            var tools = await feature.ListToolsAsync(
+            var tools = await AgentRoleBoundary.As<IAgentToolSource>(feature).ListToolsAsync(
                 new AgentToolSourceContext(
                     SessionId: null,
                     profile,
@@ -5335,19 +5354,17 @@ public sealed class AgentRunCoordinatorTests
                 BehaviorLoopId: profile.BehaviorLoopId
             );
             var workspace = new AgentWorkspaceRecord("workspace", "Workspace", null, now, now);
-            var extensionCatalog = new TestExtensionCatalog();
+            using var extensionCatalog = new TestExtensionCatalog();
             AddSubagentBehaviorLoop(extensionCatalog);
-            extensionCatalog.AddProvider(
-                AgentRpcServices.RuntimeCatalogs,
+            extensionCatalog.AddRuntimeCatalog(
                 new TestRuntimeCatalog([profile], [session], [workspace])
             );
-            extensionCatalog.AddProvider(
-                AgentRpcServices.ChildRunExecutors,
+            extensionCatalog.AddChildRunExecutor(
                 new CapturingChildRunExecutor()
             );
-            var feature = new SubagentFeature(service, extensionCatalog);
+            var feature = new SubagentFeature(service, extensionCatalog.Subagents());
 
-            var result = await feature.ExecuteAsync(
+            var result = await AgentRoleBoundary.As<IAgentToolSource>(feature).ExecuteAsync(
                 new AgentToolExecutionContext(
                     session.SessionId,
                     profile.ProfileId,
@@ -5436,7 +5453,7 @@ public sealed class AgentRunCoordinatorTests
         var store = new SubagentStore(new TestPackageContext(rootPath));
         var service = new SubagentService(store);
         var subagent = service.CreateSubagent("Researcher");
-        service.SaveSubagent(
+        SaveSubagent(service,
             subagent.SubagentId,
             subagent.DisplayName,
             "Research specialist",
@@ -5492,13 +5509,13 @@ public sealed class AgentRunCoordinatorTests
         var workspace = new AgentWorkspaceRecord("workspace", "Workspace", null, now, now);
         var childExecutor = new CapturingChildRunExecutor();
         var runtimeCatalog = new TestRuntimeCatalog([profile], [session], [workspace]);
-        var extensionCatalog = new TestExtensionCatalog();
+        using var extensionCatalog = new TestExtensionCatalog();
         AddSubagentBehaviorLoop(extensionCatalog);
-        extensionCatalog.AddProvider(AgentRpcServices.RuntimeCatalogs, runtimeCatalog);
-        extensionCatalog.AddProvider(AgentRpcServices.ChildRunExecutors, childExecutor);
-        var feature = new SubagentFeature(service, extensionCatalog);
+        extensionCatalog.AddRuntimeCatalog(runtimeCatalog);
+        extensionCatalog.AddChildRunExecutor(childExecutor);
+        var feature = new SubagentFeature(service, extensionCatalog.Subagents());
 
-        var result = await feature.ExecuteAsync(
+        var result = await AgentRoleBoundary.As<IAgentToolSource>(feature).ExecuteAsync(
             new AgentToolExecutionContext(
                 session.SessionId,
                 profile.ProfileId,
@@ -5559,7 +5576,7 @@ public sealed class AgentRunCoordinatorTests
         );
         var service = new SubagentService(new SubagentStore(new TestPackageContext(rootPath)));
         var subagent = service.CreateSubagent("Researcher");
-        service.SaveSubagent(
+        SaveSubagent(service,
             subagent.SubagentId,
             subagent.DisplayName,
             "Research specialist",
@@ -5610,16 +5627,15 @@ public sealed class AgentRunCoordinatorTests
         );
         var workspace = new AgentWorkspaceRecord("workspace", "Workspace", null, now, now);
         var childExecutor = new CapturingChildRunExecutor();
-        var extensionCatalog = new TestExtensionCatalog();
+        using var extensionCatalog = new TestExtensionCatalog();
         AddSubagentBehaviorLoop(extensionCatalog);
-        extensionCatalog.AddProvider(
-            AgentRpcServices.RuntimeCatalogs,
+        extensionCatalog.AddRuntimeCatalog(
             new TestRuntimeCatalog([profile], [session], [workspace])
         );
-        extensionCatalog.AddProvider(AgentRpcServices.ChildRunExecutors, childExecutor);
-        var feature = new SubagentFeature(service, extensionCatalog);
+        extensionCatalog.AddChildRunExecutor(childExecutor);
+        var feature = new SubagentFeature(service, extensionCatalog.Subagents());
 
-        var result = await feature.ExecuteAsync(
+        var result = await AgentRoleBoundary.As<IAgentToolSource>(feature).ExecuteAsync(
             new AgentToolExecutionContext(
                 session.SessionId,
                 profile.ProfileId,
@@ -5655,7 +5671,7 @@ public sealed class AgentRunCoordinatorTests
         var service = new SubagentService(new SubagentStore(new TestPackageContext(rootPath)));
         var subagent = service.CreateSubagent("Researcher");
         const string overrideSettingsJson = "{\"reasoningVariantId\":\"low\"}";
-        service.SaveSubagent(
+        SaveSubagent(service,
             subagent.SubagentId,
             subagent.DisplayName,
             "Research specialist",
@@ -5706,16 +5722,15 @@ public sealed class AgentRunCoordinatorTests
         );
         var workspace = new AgentWorkspaceRecord("workspace", "Workspace", null, now, now);
         var childExecutor = new CapturingChildRunExecutor();
-        var extensionCatalog = new TestExtensionCatalog();
+        using var extensionCatalog = new TestExtensionCatalog();
         AddSubagentBehaviorLoop(extensionCatalog);
-        extensionCatalog.AddProvider(
-            AgentRpcServices.RuntimeCatalogs,
+        extensionCatalog.AddRuntimeCatalog(
             new TestRuntimeCatalog([profile], [session], [workspace])
         );
-        extensionCatalog.AddProvider(AgentRpcServices.ChildRunExecutors, childExecutor);
-        var feature = new SubagentFeature(service, extensionCatalog);
+        extensionCatalog.AddChildRunExecutor(childExecutor);
+        var feature = new SubagentFeature(service, extensionCatalog.Subagents());
 
-        var result = await feature.ExecuteAsync(
+        var result = await AgentRoleBoundary.As<IAgentToolSource>(feature).ExecuteAsync(
             new AgentToolExecutionContext(
                 session.SessionId,
                 profile.ProfileId,
@@ -5755,7 +5770,7 @@ public sealed class AgentRunCoordinatorTests
         {
             var service = new SubagentService(new SubagentStore(new TestPackageContext(rootPath)));
             var first = service.CreateSubagent("Researcher");
-            service.SaveSubagent(
+            SaveSubagent(service,
                 first.SubagentId,
                 first.DisplayName,
                 "Investigates delegated research tasks.",
@@ -5765,7 +5780,7 @@ public sealed class AgentRunCoordinatorTests
                 []
             );
             var second = service.CreateSubagent("Reviewer");
-            service.SaveSubagent(
+            SaveSubagent(service,
                 second.SubagentId,
                 second.DisplayName,
                 "Reviews delegated findings for risks.",
@@ -5811,14 +5826,13 @@ public sealed class AgentRunCoordinatorTests
             );
             var workspace = new AgentWorkspaceRecord("workspace", "Workspace", null, now, now);
             var childExecutor = new CapturingChildRunExecutor();
-            var extensionCatalog = new TestExtensionCatalog();
+            using var extensionCatalog = new TestExtensionCatalog();
             AddSubagentBehaviorLoop(extensionCatalog);
-            extensionCatalog.AddProvider(
-                AgentRpcServices.RuntimeCatalogs,
+            extensionCatalog.AddRuntimeCatalog(
                 new TestRuntimeCatalog([profile], [session], [workspace])
             );
-            extensionCatalog.AddProvider(AgentRpcServices.ChildRunExecutors, childExecutor);
-            var feature = new SubagentFeature(service, extensionCatalog);
+            extensionCatalog.AddChildRunExecutor(childExecutor);
+            var feature = new SubagentFeature(service, extensionCatalog.Subagents());
             var argumentsJson = JsonSerializer.Serialize(
                 new
                 {
@@ -5840,7 +5854,7 @@ public sealed class AgentRunCoordinatorTests
                 }
             );
 
-            var result = await feature.ExecuteAsync(
+            var result = await AgentRoleBoundary.As<IAgentToolSource>(feature).ExecuteAsync(
                 new AgentToolExecutionContext(
                     session.SessionId,
                     profile.ProfileId,
@@ -5892,7 +5906,7 @@ public sealed class AgentRunCoordinatorTests
         {
             var service = new SubagentService(new SubagentStore(new TestPackageContext(rootPath)));
             var subagent = service.CreateSubagent("Builder");
-            service.SaveSubagent(
+            SaveSubagent(service,
                 subagent.SubagentId,
                 subagent.DisplayName,
                 "Implements delegated changes.",
@@ -5938,16 +5952,15 @@ public sealed class AgentRunCoordinatorTests
             );
             var workspace = new AgentWorkspaceRecord("workspace", "Workspace", null, now, now);
             var childExecutor = new CapturingChildRunExecutor();
-            var extensionCatalog = new TestExtensionCatalog();
+            using var extensionCatalog = new TestExtensionCatalog();
             AddSubagentBehaviorLoop(extensionCatalog);
-            extensionCatalog.AddProvider(
-                AgentRpcServices.RuntimeCatalogs,
+            extensionCatalog.AddRuntimeCatalog(
                 new TestRuntimeCatalog([profile], [session], [workspace])
             );
-            extensionCatalog.AddProvider(AgentRpcServices.ChildRunExecutors, childExecutor);
+            extensionCatalog.AddChildRunExecutor(childExecutor);
             extensionCatalog.AddTool(new TestMutableTool(toolId)
             );
-            var feature = new SubagentFeature(service, extensionCatalog);
+            var feature = new SubagentFeature(service, extensionCatalog.Subagents());
             var argumentsJson = JsonSerializer.Serialize(
                 new
                 {
@@ -5963,7 +5976,7 @@ public sealed class AgentRunCoordinatorTests
                 }
             );
 
-            var result = await feature.ExecuteAsync(
+            var result = await AgentRoleBoundary.As<IAgentToolSource>(feature).ExecuteAsync(
                 new AgentToolExecutionContext(
                     session.SessionId,
                     profile.ProfileId,
@@ -6010,7 +6023,8 @@ public sealed class AgentRunCoordinatorTests
             var store = new SubagentStore(new TestPackageContext(rootPath));
             var service = new SubagentService(store);
             var subagent = service.CreateSubagent("Researcher");
-            var feature = new SubagentFeature(service, new TestExtensionCatalog());
+            using var extensions = new TestExtensionCatalog();
+            var feature = new SubagentFeature(service, extensions.Subagents());
             var argumentsJson = JsonSerializer.Serialize(
                 new
                 {
@@ -6020,7 +6034,7 @@ public sealed class AgentRunCoordinatorTests
                 }
             );
 
-            var presentation = feature.ResolveToolPresentation(
+            var presentation = AgentRoleBoundary.As<IAgentToolPresentationResolver>(feature).ResolveToolPresentation(
                 new AgentToolPresentationRequest(
                     SubagentConstants.TaskToolId,
                     argumentsJson,
@@ -6304,9 +6318,9 @@ public sealed class AgentRunCoordinatorTests
 
         using var runtime = AgentTestRuntime.Create(provider);
         var toolSource = new PermissionedToolSource(toolId);
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ToolSources, toolSource);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.ToolSources, toolSource);
         runtime.ExtensionCatalog.AddProvider(
-            AgentRpcServices.PermissionSurfaces,
+            RegressionTestBindings.PermissionSurfaces,
             toolSource
         );
         var sessionId = await runtime.CreateSessionAsync(toolId);
@@ -6496,7 +6510,7 @@ public sealed class AgentRunCoordinatorTests
         using var runtime = AgentTestRuntime.Create(
             new ScriptedProvider((_, _) => Complete("done"))
         );
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -6542,7 +6556,7 @@ public sealed class AgentRunCoordinatorTests
         var initiallySelectedSession = runtime.SessionService.CreateSession(
             "Initially selected session",
             workspaceId: runtime.CurrentWorkspaceId);
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -6553,13 +6567,13 @@ public sealed class AgentRunCoordinatorTests
         var anchorGateway = new BlockingTranscriptAnchorGateway(firstTurn);
         viewModel.SetTranscriptAnchorGateway(anchorGateway);
         var navigation = viewModel.NavigateToHistoryAnchorAsync(
-            new HistorySearchNavigationTarget(
+            new AgentCore::Sunder.Package.Agent.HistorySearch.HistorySearchNavigationTarget(
                 runtime.CurrentWorkspaceId,
                 firstSessionId,
                 firstTurn.TurnId,
                 Assert.Single(firstTurn.Items).ItemId,
                 null,
-                HistoryAnchorKind.Text,
+                AgentCore::Sunder.Package.Agent.HistorySearch.HistoryAnchorKind.Text,
                 firstTurn.CreatedAtUtc),
             CancellationToken.None);
         await anchorGateway.LoadStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
@@ -6617,7 +6631,7 @@ public sealed class AgentRunCoordinatorTests
             "original message",
             [storedAttachment]
         );
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -6672,7 +6686,7 @@ public sealed class AgentRunCoordinatorTests
             AgentMessageRole.Assistant,
             "old response"
         );
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -6717,7 +6731,7 @@ public sealed class AgentRunCoordinatorTests
             new ScriptedProvider((_, _) => Complete("unused"))
         );
         var sessionId = await runtime.CreateSessionAsync("noop");
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -6756,7 +6770,7 @@ public sealed class AgentRunCoordinatorTests
             new TestTool(toolId)
         );
         var sessionId = await runtime.CreateSessionAsync(toolId);
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -6783,7 +6797,7 @@ public sealed class AgentRunCoordinatorTests
             new TestTool(toolId)
         );
         var sessionId = await runtime.CreateSessionAsync(toolId);
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -6841,7 +6855,7 @@ public sealed class AgentRunCoordinatorTests
             await selectionState.SaveSelectedWorkspaceIdAsync(secondWorkspace.WorkspaceId);
             await selectionState.SaveSelectedSessionIdAsync(firstSessionId);
 
-            using var viewModel = new AgentChatViewModel(
+            using var viewModel = RegressionTestAppViews.Chat(
                 runtime.ProfileService,
                 runtime.WorkspaceService,
                 runtime.SessionService,
@@ -6893,7 +6907,7 @@ public sealed class AgentRunCoordinatorTests
             await selectionState.SaveSelectedWorkspaceIdAsync(secondWorkspace.WorkspaceId);
             await selectionState.SaveSelectedSessionIdAsync(secondWorkspace.WorkspaceId, firstSessionId);
 
-            using var viewModel = new AgentChatViewModel(
+            using var viewModel = RegressionTestAppViews.Chat(
                 runtime.ProfileService,
                 runtime.WorkspaceService,
                 runtime.SessionService,
@@ -6931,7 +6945,7 @@ public sealed class AgentRunCoordinatorTests
             "Fallback Session",
             workspaceId: runtime.CurrentWorkspaceId
         );
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -6960,7 +6974,7 @@ public sealed class AgentRunCoordinatorTests
             new TestTool(toolId)
         );
         var sessionId = await runtime.CreateSessionAsync(toolId);
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -6993,7 +7007,7 @@ public sealed class AgentRunCoordinatorTests
             "Fallback Session",
             workspaceId: runtime.CurrentWorkspaceId
         );
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -7059,7 +7073,7 @@ public sealed class AgentRunCoordinatorTests
         var profile = await runtime.ProfileService.CreateProfileAsync("Package Developer");
         var workspace = runtime.WorkspaceService.CreateWorkspace("Test Workspace");
         runtime.SessionService.CreateSession("Package Developer Session 2", workspaceId: workspace.WorkspaceId);
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -7089,7 +7103,7 @@ public sealed class AgentRunCoordinatorTests
         var selectionState = new AgentChatSelectionStateService(new TestPackageContext(runtime.RootPath));
         Guid sessionId;
 
-        using (var viewModel = new AgentChatViewModel(
+        using (var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -7200,7 +7214,7 @@ public sealed class AgentRunCoordinatorTests
             new ScriptedProvider((_, _) => Complete("done"))
         );
         var profile = await runtime.ProfileService.CreateProfileAsync("Alpha Profile");
-        using var viewModel = new AgentProfilesViewModel(runtime.ProfileService);
+        using var viewModel = RegressionTestAppViews.Profiles(runtime.ProfileService);
         await viewModel.InitializeAsync();
         await WaitUntilAsync(() => viewModel.SelectedProfile?.ProfileId == profile.ProfileId);
 
@@ -7238,7 +7252,7 @@ public sealed class AgentRunCoordinatorTests
             new ScriptedProvider((_, _) => Complete("done"))
         );
         var profile = await runtime.ProfileService.CreateProfileAsync("Alpha Profile");
-        using var viewModel = new AgentProfilesViewModel(runtime.ProfileService);
+        using var viewModel = RegressionTestAppViews.Profiles(runtime.ProfileService);
         await viewModel.InitializeAsync();
         await WaitUntilAsync(() => viewModel.SelectedProfile?.ProfileId == profile.ProfileId);
         viewModel.IsCompactLayout = true;
@@ -7281,7 +7295,7 @@ public sealed class AgentRunCoordinatorTests
             new ScriptedProvider((_, _) => Complete("done"))
         );
         var profile = await runtime.ProfileService.CreateProfileAsync("Alpha Profile");
-        using var viewModel = new AgentProfilesViewModel(runtime.ProfileService);
+        using var viewModel = RegressionTestAppViews.Profiles(runtime.ProfileService);
         await viewModel.InitializeAsync();
         await WaitUntilAsync(() =>
             viewModel.SelectedProfile?.ProfileId == profile.ProfileId && !viewModel.IsBusy);
@@ -7320,7 +7334,7 @@ public sealed class AgentRunCoordinatorTests
     {
         using var runtime = AgentTestRuntime.CreateWithoutChatProvider();
         var profile = await runtime.ProfileService.CreateProfileAsync("Alpha Profile");
-        using var viewModel = new AgentProfilesViewModel(runtime.ProfileService);
+        using var viewModel = RegressionTestAppViews.Profiles(runtime.ProfileService);
         await viewModel.InitializeAsync();
         await WaitUntilAsync(
             () => viewModel.SelectedProfile?.ProfileId == profile.ProfileId && !viewModel.IsBusy
@@ -7332,7 +7346,7 @@ public sealed class AgentRunCoordinatorTests
         Assert.False(viewModel.ShowReasoningOptions);
 
         runtime.ExtensionCatalog.AddProvider(
-            AgentRpcServices.ChatProviders,
+            RegressionTestBindings.ChatProviders,
             new ScriptedProvider((_, _) => Complete("done"))
         );
         await viewModel.ReloadProfileProvidersCommand.ExecuteAsync(null);
@@ -7355,7 +7369,7 @@ public sealed class AgentRunCoordinatorTests
             )
         );
         var profile = await runtime.ProfileService.CreateProfileAsync("Alpha Profile");
-        using var viewModel = new AgentProfilesViewModel(
+        using var viewModel = RegressionTestAppViews.Profiles(
             runtime.ProfileService,
             settingsNavigation
         );
@@ -7384,12 +7398,12 @@ public sealed class AgentRunCoordinatorTests
             new ScriptedProvider((_, _) => Complete("done"))
         );
         runtime.ExtensionCatalog.AddProvider(
-            AgentRpcServices.ProfileCapabilityConsumers,
+            RegressionTestBindings.ProfileCapabilityConsumers,
             new TestEmbeddingCapabilityConsumer()
         );
         runtime.AddEmbeddingProvider(new TestEmbeddingProvider("test-embeddings"));
         var profile = await runtime.ProfileService.CreateProfileAsync("Alpha Profile");
-        using var viewModel = new AgentProfilesViewModel(runtime.ProfileService);
+        using var viewModel = RegressionTestAppViews.Profiles(runtime.ProfileService);
         await viewModel.InitializeAsync();
         await WaitUntilAsync(
             () => viewModel.SelectedProfile?.ProfileId == profile.ProfileId && !viewModel.IsBusy
@@ -7409,7 +7423,7 @@ public sealed class AgentRunCoordinatorTests
             new ScriptedProvider((_, _) => Complete("done"))
         );
         runtime.ExtensionCatalog.AddProvider(
-            AgentRpcServices.ProfileCapabilityConsumers,
+            RegressionTestBindings.ProfileCapabilityConsumers,
             new TestEmbeddingCapabilityConsumer()
         );
         runtime.AddEmbeddingProvider(
@@ -7421,7 +7435,7 @@ public sealed class AgentRunCoordinatorTests
             )
         );
         var profile = await runtime.ProfileService.CreateProfileAsync("Alpha Profile");
-        using var viewModel = new AgentProfilesViewModel(
+        using var viewModel = RegressionTestAppViews.Profiles(
             runtime.ProfileService,
             settingsNavigation
         );
@@ -7630,12 +7644,12 @@ public sealed class AgentRunCoordinatorTests
             Assert.False(viewModel.ShowReasoningOptions);
 
             runtime.ExtensionCatalog.AddProvider(
-                AgentRpcServices.ChatProviders,
+                RegressionTestBindings.ChatProviders,
                 new ScriptedProvider((_, _) => Complete("done"))
             );
             await viewModel.ReloadSubagentChatProvidersCommand.ExecuteAsync(null);
 
-            Assert.True(viewModel.HasChatProviderChoices);
+            Assert.True(viewModel.HasChatProviderChoices, viewModel.StatusText);
             Assert.True(viewModel.ShowChatProviderPicker);
         }
         finally
@@ -7712,8 +7726,8 @@ public sealed class AgentRunCoordinatorTests
             profileId: runtime.CurrentProfileId,
             agentKind: "subagent"
         );
-        using var runtimeAdapter = new SubsessionLocalRuntimeAdapter(
-            runtime.ExtensionCatalog.GetRequiredReference(AgentRpcServices.RuntimeCatalogs));
+        using var runtimeAdapter = WorkerBackedSubagentManagementGateway.ForRuntime(
+            new TestPackageContext(runtime.RootPath), runtime.ExtensionCatalog);
         using var viewModel = new SubsessionsViewModel(
             runtimeAdapter,
             runtimeAdapter,
@@ -7723,11 +7737,13 @@ public sealed class AgentRunCoordinatorTests
             IsCompactLayout = true,
         };
         await viewModel.InitializeAsync();
+        await WaitUntilAsync(() => viewModel.Subsessions.Any(item => item.SessionId == childSession.SessionId));
 
         Assert.Null(viewModel.SelectedSubsession);
         Assert.False(viewModel.IsDetailActive);
         Assert.True(viewModel.ShowCompactList);
 
+        Assert.False(viewModel.HasLoadError, viewModel.StatusText);
         viewModel.ActivateSubsession(
             viewModel.Subsessions.Single(item => item.SessionId == childSession.SessionId)
         );
@@ -7792,8 +7808,8 @@ public sealed class AgentRunCoordinatorTests
 
         Assert.Null(runtime.SessionService.GetSession(parentSessionId));
         Assert.Null(runtime.SessionService.GetSession(childSession.SessionId));
-        using var runtimeAdapter = new SubsessionLocalRuntimeAdapter(
-            runtime.ExtensionCatalog.GetRequiredReference(AgentRpcServices.RuntimeCatalogs));
+        using var runtimeAdapter = WorkerBackedSubagentManagementGateway.ForRuntime(
+            new TestPackageContext(runtime.RootPath), runtime.ExtensionCatalog);
         using (var subsessionsViewModel = new SubsessionsViewModel(
                    runtimeAdapter,
                    runtimeAdapter,
@@ -7850,8 +7866,8 @@ public sealed class AgentRunCoordinatorTests
         Assert.Null(runtime.WorkspaceService.GetWorkspace(runtime.CurrentWorkspaceId));
         Assert.Null(runtime.SessionService.GetSession(parentSessionId));
         Assert.Null(runtime.SessionService.GetSession(childSession.SessionId));
-        using var runtimeAdapter = new SubsessionLocalRuntimeAdapter(
-            runtime.ExtensionCatalog.GetRequiredReference(AgentRpcServices.RuntimeCatalogs));
+        using var runtimeAdapter = WorkerBackedSubagentManagementGateway.ForRuntime(
+            new TestPackageContext(runtime.RootPath), runtime.ExtensionCatalog);
         using (var subsessionsViewModel = new SubsessionsViewModel(
                    runtimeAdapter,
                    runtimeAdapter,
@@ -7895,8 +7911,8 @@ public sealed class AgentRunCoordinatorTests
         );
         var store = new MemoryLocalStore(context);
         var feature = CreateSemanticFeature(store, runtime.ExtensionCatalog);
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.DurableLifecycleObservers, feature);
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.SessionCleaners, feature);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.DurableLifecycleObservers, feature);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.SessionCleaners, feature);
 
         var parentMemory = StoreMemoryWithEmbedding(
             store,
@@ -7970,7 +7986,7 @@ public sealed class AgentRunCoordinatorTests
                 new SubagentStore(new TestPackageContext(rootPath))
             );
             var subagent = subagentService.CreateSubagent("Researcher");
-            subagentService.SaveSubagent(
+            SaveSubagent(subagentService,
                 subagent.SubagentId,
                 subagent.DisplayName,
                 "Investigates delegated research tasks.",
@@ -7980,10 +7996,10 @@ public sealed class AgentRunCoordinatorTests
                 []
             );
             runtime.ExtensionCatalog.AddProvider(
-                AgentRpcServices.SelectableCapabilityProviders,
-                new SubagentFeature(subagentService, runtime.ExtensionCatalog)
+                RegressionTestBindings.SelectableCapabilityProviders,
+                new SubagentFeature(subagentService, runtime.ExtensionCatalog.Subagents())
             );
-            using var viewModel = new AgentProfilesViewModel(runtime.ProfileService);
+            using var viewModel = RegressionTestAppViews.Profiles(runtime.ProfileService);
             await viewModel.InitializeAsync();
 
             await WaitUntilAsync(() => viewModel.SelectedProfile is not null && !viewModel.IsBusy);
@@ -8076,7 +8092,7 @@ public sealed class AgentRunCoordinatorTests
             );
             var incomplete = subagentService.CreateSubagent("Draft Specialist");
             var usable = subagentService.CreateSubagent("Researcher");
-            subagentService.SaveSubagent(
+            SaveSubagent(subagentService,
                 usable.SubagentId,
                 usable.DisplayName,
                 "Investigates delegated research tasks.",
@@ -8086,10 +8102,10 @@ public sealed class AgentRunCoordinatorTests
                 []
             );
             runtime.ExtensionCatalog.AddProvider(
-                AgentRpcServices.SelectableCapabilityProviders,
-                new SubagentFeature(subagentService, runtime.ExtensionCatalog)
+                RegressionTestBindings.SelectableCapabilityProviders,
+                new SubagentFeature(subagentService, runtime.ExtensionCatalog.Subagents())
             );
-            using var viewModel = new AgentProfilesViewModel(runtime.ProfileService);
+            using var viewModel = RegressionTestAppViews.Profiles(runtime.ProfileService);
             await viewModel.InitializeAsync();
 
             await WaitUntilAsync(
@@ -8116,7 +8132,7 @@ public sealed class AgentRunCoordinatorTests
             );
             usableOption.IsEnabled = true;
 
-            subagentService.SaveSubagent(
+            SaveSubagent(subagentService,
                 incomplete.SubagentId,
                 incomplete.DisplayName,
                 "Handles focused delegated tasks.",
@@ -8143,7 +8159,7 @@ public sealed class AgentRunCoordinatorTests
             Assert.True(incompleteOption.CanSelect);
             Assert.True(usableOption.IsEnabled);
 
-            subagentService.SaveSubagent(
+            SaveSubagent(subagentService,
                 usable.SubagentId,
                 "Lead Researcher",
                 "Investigates delegated research tasks.",
@@ -8215,10 +8231,10 @@ public sealed class AgentRunCoordinatorTests
                 NullLoggerFactory.Instance
             );
             runtime.ExtensionCatalog.AddProvider(
-                AgentRpcServices.SelectableCapabilityProviders,
+                RegressionTestBindings.SelectableCapabilityProviders,
                 new McpToolSource(serverCatalogService, connectionManager)
             );
-            using var viewModel = new AgentProfilesViewModel(runtime.ProfileService);
+            using var viewModel = RegressionTestAppViews.Profiles(runtime.ProfileService);
             await viewModel.InitializeAsync();
 
             await WaitUntilAsync(() => viewModel.SelectedProfile is not null);
@@ -8308,7 +8324,7 @@ public sealed class AgentRunCoordinatorTests
             new ScriptedProvider((_, _) => Complete("done"))
         );
         await runtime.CreateSessionAsync("dynamic_tool");
-        using var viewModel = new AgentProfilesViewModel(runtime.ProfileService);
+        using var viewModel = RegressionTestAppViews.Profiles(runtime.ProfileService);
         await viewModel.InitializeAsync();
 
         await WaitUntilAsync(() => viewModel.SelectedProfile is not null);
@@ -8353,7 +8369,7 @@ public sealed class AgentRunCoordinatorTests
                 new SubagentStore(new TestPackageContext(rootPath))
             );
             var subagent = subagentService.CreateSubagent("Late Specialist");
-            subagentService.SaveSubagent(
+            SaveSubagent(subagentService,
                 subagent.SubagentId,
                 subagent.DisplayName,
                 "Handles work after the profile view is already open.",
@@ -8362,15 +8378,15 @@ public sealed class AgentRunCoordinatorTests
                 null,
                 []
             );
-            using var viewModel = new AgentProfilesViewModel(runtime.ProfileService);
+            using var viewModel = RegressionTestAppViews.Profiles(runtime.ProfileService);
             await viewModel.InitializeAsync();
 
             await WaitUntilAsync(() => viewModel.SelectedProfile is not null);
             Assert.Empty(viewModel.PackageCapabilities);
 
             runtime.ExtensionCatalog.AddProvider(
-                AgentRpcServices.SelectableCapabilityProviders,
-                new SubagentFeature(subagentService, runtime.ExtensionCatalog)
+                RegressionTestBindings.SelectableCapabilityProviders,
+                new SubagentFeature(subagentService, runtime.ExtensionCatalog.Subagents())
             );
 
             await WaitUntilAsync(
@@ -8402,7 +8418,7 @@ public sealed class AgentRunCoordinatorTests
     {
         using var catalog = new TestExtensionCatalog();
         var provider = new MutableSelectableCapabilityProvider();
-        using var observer = new AgentProfileSelectableCapabilityChangeObserver(catalog);
+        using var observer = new AgentProfileSelectableCapabilityChangeObserver(catalog, true, RegressionTestBindings.SelectableCapabilityProviders);
         var changeCount = 0;
         observer.Changed += () => Interlocked.Increment(ref changeCount);
         var providerCatalogChanged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -8417,11 +8433,11 @@ public sealed class AgentRunCoordinatorTests
 
         try
         {
-            catalog.AddProvider(AgentRpcServices.SelectableCapabilityProviders, provider);
+            catalog.AddProvider(RegressionTestBindings.SelectableCapabilityProviders, provider);
             await providerCatalogChanged.Task.WaitAsync(TimeSpan.FromSeconds(2));
             await provider.SubscriptionStarted.WaitAsync(TimeSpan.FromSeconds(2));
 
-            var reference = Assert.Single(catalog.GetServiceReferences(AgentRpcServices.SelectableCapabilityProviders));
+            var reference = Assert.Single(catalog.GetServiceReferences(RegressionTestBindings.SelectableCapabilityProviders));
             Assert.True(reference.TryAcquire(out var providerLease));
             using var lease = providerLease!;
             var notifier = Assert.IsAssignableFrom<IAgentProfileSelectableCapabilityChangeNotifier>(lease.Service);
@@ -8469,7 +8485,7 @@ public sealed class AgentRunCoordinatorTests
                 new SubagentStore(new TestPackageContext(Path.Combine(rootPath, "subagents")))
             );
             var subagent = subagentService.CreateSubagent("Worker");
-            subagentService.SaveSubagent(
+            SaveSubagent(subagentService,
                 subagent.SubagentId,
                 subagent.DisplayName,
                 "Handles delegated work.",
@@ -8485,7 +8501,7 @@ public sealed class AgentRunCoordinatorTests
                 NullLoggerFactory.Instance
             );
             runtime.ExtensionCatalog.AddProvider(
-                AgentRpcServices.SelectableCapabilityProviders,
+                RegressionTestBindings.SelectableCapabilityProviders,
                 new McpToolSource(serverCatalogService, connectionManager)
             );
             using var gateway = new WorkerBackedSubagentManagementGateway(
@@ -9026,7 +9042,7 @@ public sealed class AgentRunCoordinatorTests
             Assert.All(models, model => Assert.NotNull(model.ReleaseDate));
 
             var opus = models.Single(model => model.ModelId == "anthropic/claude-opus-4-7");
-            Assert.Contains(opus.Variants ?? [], variant => variant.ReasoningEffort == AgentReasoningEffort.ExtraHigh);
+            Assert.Contains(opus.Variants ?? [], variant => variant.ReasoningEffort == AnthropicWorker::Sunder.Package.Agent.Contracts.Models.AgentReasoningEffort.ExtraHigh);
             Assert.Contains(opus.SpeedOptions ?? [], option => option.SpeedOptionId == "fast");
 
             var opus48 = models.Single(model => model.ModelId == "anthropic/claude-opus-4-8");
@@ -9034,8 +9050,8 @@ public sealed class AgentRunCoordinatorTests
             Assert.DoesNotContain(models, model => model.ModelId.StartsWith("anthropic/claude-opus-4-1", StringComparison.Ordinal));
 
             var sonnet = models.Single(model => model.ModelId == "anthropic/claude-sonnet-4-6");
-            Assert.Contains(sonnet.Variants ?? [], variant => variant.ReasoningEffort == AgentReasoningEffort.High);
-            Assert.DoesNotContain(sonnet.Variants ?? [], variant => variant.ReasoningEffort == AgentReasoningEffort.ExtraHigh);
+            Assert.Contains(sonnet.Variants ?? [], variant => variant.ReasoningEffort == AnthropicWorker::Sunder.Package.Agent.Contracts.Models.AgentReasoningEffort.High);
+            Assert.DoesNotContain(sonnet.Variants ?? [], variant => variant.ReasoningEffort == AnthropicWorker::Sunder.Package.Agent.Contracts.Models.AgentReasoningEffort.ExtraHigh);
 
             var haiku = models.Single(model => model.ModelId == "anthropic/claude-haiku-4-5");
             Assert.True(haiku.Variants is null || haiku.Variants.Count == 0);
@@ -9058,10 +9074,10 @@ public sealed class AgentRunCoordinatorTests
             Assert.All(models, model => Assert.NotNull(model.ReleaseDate));
 
             var pro = models.Single(model => model.ModelId == "gemini/gemini-2.5-pro");
-            Assert.Contains(pro.Variants ?? [], variant => variant.ReasoningEffort == AgentReasoningEffort.High);
+            Assert.Contains(pro.Variants ?? [], variant => variant.ReasoningEffort == GeminiWorker::Sunder.Package.Agent.Contracts.Models.AgentReasoningEffort.High);
 
             var flash = models.Single(model => model.ModelId == "gemini/gemini-2.5-flash");
-            Assert.Contains(flash.Variants ?? [], variant => variant.ReasoningEffort == AgentReasoningEffort.Medium);
+            Assert.Contains(flash.Variants ?? [], variant => variant.ReasoningEffort == GeminiWorker::Sunder.Package.Agent.Contracts.Models.AgentReasoningEffort.Medium);
 
             Assert.Contains(models, model => model.ModelId == "gemini/gemini-3.5-flash");
             Assert.DoesNotContain(models, model => model.ModelId == "gemini/gemini-2.0-flash");
@@ -9091,7 +9107,7 @@ public sealed class AgentRunCoordinatorTests
             agentKind: "subagent"
         );
 
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -9133,7 +9149,7 @@ public sealed class AgentRunCoordinatorTests
         );
         var shellViewService = new CapturingShellViewService();
 
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -9198,7 +9214,7 @@ public sealed class AgentRunCoordinatorTests
             await selectionState.SaveSelectedSessionIdAsync(childSession.SessionId);
             await selectionState.SaveSelectedProfileIdAsync(runtime.CurrentProfileId);
 
-            using var viewModel = new AgentChatViewModel(
+            using var viewModel = RegressionTestAppViews.Chat(
                 runtime.ProfileService,
                 runtime.WorkspaceService,
                 runtime.SessionService,
@@ -9429,7 +9445,7 @@ public sealed class AgentRunCoordinatorTests
             agentKind: "subagent"
         );
 
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -9481,7 +9497,7 @@ public sealed class AgentRunCoordinatorTests
             AgentRunStatus.Running,
             "Child running."
         );
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -9568,7 +9584,7 @@ public sealed class AgentRunCoordinatorTests
             agentKind: "subagent"
         );
 
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -9607,8 +9623,8 @@ public sealed class AgentRunCoordinatorTests
             AgentMessageRole.Assistant,
             "Child transcript content."
         );
-        using var runtimeAdapter = new SubsessionLocalRuntimeAdapter(
-            runtime.ExtensionCatalog.GetRequiredReference(AgentRpcServices.RuntimeCatalogs));
+        using var runtimeAdapter = WorkerBackedSubagentManagementGateway.ForRuntime(
+            new TestPackageContext(runtime.RootPath), runtime.ExtensionCatalog);
         using var viewModel = new SubsessionsViewModel(
             runtimeAdapter,
             runtimeAdapter,
@@ -9684,8 +9700,8 @@ public sealed class AgentRunCoordinatorTests
             AgentMessageRole.Assistant,
             "Second transcript content."
         );
-        using var runtimeAdapter = new SubsessionLocalRuntimeAdapter(
-            runtime.ExtensionCatalog.GetRequiredReference(AgentRpcServices.RuntimeCatalogs));
+        using var runtimeAdapter = WorkerBackedSubagentManagementGateway.ForRuntime(
+            new TestPackageContext(runtime.RootPath), runtime.ExtensionCatalog);
         using var viewModel = new SubsessionsViewModel(
             runtimeAdapter,
             runtimeAdapter,
@@ -9755,8 +9771,8 @@ public sealed class AgentRunCoordinatorTests
             AgentMessageRole.User,
             "Child task request."
         );
-        using var runtimeAdapter = new SubsessionLocalRuntimeAdapter(
-            runtime.ExtensionCatalog.GetRequiredReference(AgentRpcServices.RuntimeCatalogs));
+        using var runtimeAdapter = WorkerBackedSubagentManagementGateway.ForRuntime(
+            new TestPackageContext(runtime.RootPath), runtime.ExtensionCatalog);
         using var viewModel = new SubsessionsViewModel(
             runtimeAdapter,
             runtimeAdapter,
@@ -9866,7 +9882,8 @@ public sealed class AgentRunCoordinatorTests
         var exception = await Record.ExceptionAsync(async () =>
         {
             item = await Task.Run(
-                () => new SubsessionListItemViewModel(session, "Subagent", checkpoint)
+                () => new SubsessionListItemViewModel(AgentRoleBoundary.As<SubagentsApp::Sunder.Package.Agent.Contracts.Models.AgentSessionRecord>(session),
+                    "Subagent", AgentRoleBoundary.As<SubagentsApp::Sunder.Package.Agent.Contracts.Models.AgentRunCheckpointRecord>(checkpoint))
             );
         });
 
@@ -9898,8 +9915,8 @@ public sealed class AgentRunCoordinatorTests
             AgentMessageRole.Assistant,
             "First transcript content."
         );
-        using var runtimeAdapter = new SubsessionLocalRuntimeAdapter(
-            runtime.ExtensionCatalog.GetRequiredReference(AgentRpcServices.RuntimeCatalogs));
+        using var runtimeAdapter = WorkerBackedSubagentManagementGateway.ForRuntime(
+            new TestPackageContext(runtime.RootPath), runtime.ExtensionCatalog);
         using var viewModel = new SubsessionsViewModel(
             runtimeAdapter,
             runtimeAdapter,
@@ -9957,8 +9974,8 @@ public sealed class AgentRunCoordinatorTests
             AgentMessageRole.Assistant,
             "Initial child transcript."
         );
-        using var runtimeAdapter = new SubsessionLocalRuntimeAdapter(
-            runtime.ExtensionCatalog.GetRequiredReference(AgentRpcServices.RuntimeCatalogs));
+        using var runtimeAdapter = WorkerBackedSubagentManagementGateway.ForRuntime(
+            new TestPackageContext(runtime.RootPath), runtime.ExtensionCatalog);
         using var viewModel = new SubsessionsViewModel(
             runtimeAdapter,
             runtimeAdapter,
@@ -10052,8 +10069,8 @@ public sealed class AgentRunCoordinatorTests
             profileId: runtime.CurrentProfileId,
             agentKind: "subagent"
         );
-        using var runtimeAdapter = new SubsessionLocalRuntimeAdapter(
-            runtime.ExtensionCatalog.GetRequiredReference(AgentRpcServices.RuntimeCatalogs));
+        using var runtimeAdapter = WorkerBackedSubagentManagementGateway.ForRuntime(
+            new TestPackageContext(runtime.RootPath), runtime.ExtensionCatalog);
         using var viewModel = new SubsessionsViewModel(
             runtimeAdapter,
             runtimeAdapter,
@@ -10175,7 +10192,7 @@ public sealed class AgentRunCoordinatorTests
             await selectionState.SaveSelectedSessionIdAsync(secondSession.SessionId);
             await selectionState.SaveSelectedProfileIdAsync(secondProfile.ProfileId);
 
-            using var viewModel = new AgentChatViewModel(
+            using var viewModel = RegressionTestAppViews.Chat(
                 runtime.ProfileService,
                 runtime.WorkspaceService,
                 runtime.SessionService,
@@ -10220,7 +10237,7 @@ public sealed class AgentRunCoordinatorTests
             "Test Session B",
             workspaceId: runtime.CurrentWorkspaceId
         ).SessionId;
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -10264,7 +10281,7 @@ public sealed class AgentRunCoordinatorTests
             "Test Session B",
             workspaceId: runtime.CurrentWorkspaceId
         ).SessionId;
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -10356,7 +10373,7 @@ public sealed class AgentRunCoordinatorTests
             "Test Session B",
             workspaceId: runtime.CurrentWorkspaceId
         ).SessionId;
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -10427,7 +10444,7 @@ public sealed class AgentRunCoordinatorTests
             "Test Session B",
             workspaceId: runtime.CurrentWorkspaceId
         ).SessionId;
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -10481,7 +10498,7 @@ public sealed class AgentRunCoordinatorTests
             new ScriptedProvider((_, _) => Complete("done")),
             new TestTool(toolId));
         var sessionId = await runtime.CreateSessionAsync(toolId);
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -10517,7 +10534,7 @@ public sealed class AgentRunCoordinatorTests
             );
         }
 
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -10572,7 +10589,7 @@ public sealed class AgentRunCoordinatorTests
             );
         }
 
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -10639,7 +10656,7 @@ public sealed class AgentRunCoordinatorTests
             );
         }
 
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -10680,7 +10697,7 @@ public sealed class AgentRunCoordinatorTests
             );
         }
 
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -10734,7 +10751,7 @@ public sealed class AgentRunCoordinatorTests
             );
         }
 
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -10768,7 +10785,7 @@ public sealed class AgentRunCoordinatorTests
             new TestTool(toolId)
         );
         var sessionId = await runtime.CreateSessionAsync(toolId);
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -10825,7 +10842,7 @@ public sealed class AgentRunCoordinatorTests
             new TestTool(toolId)
         );
         var sessionId = await runtime.CreateSessionAsync(toolId);
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -10877,7 +10894,7 @@ public sealed class AgentRunCoordinatorTests
             );
         }
 
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -10908,7 +10925,7 @@ public sealed class AgentRunCoordinatorTests
         );
         var sessionId = await runtime.CreateSessionAsync(toolId);
         runtime.SessionService.AppendTextTurn(sessionId, AgentMessageRole.User, "initial message");
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -10965,7 +10982,7 @@ public sealed class AgentRunCoordinatorTests
             new TestTool(toolId));
         var sessionId = await runtime.CreateSessionAsync(toolId);
         runtime.SessionService.AppendTextTurn(sessionId, AgentMessageRole.User, "initial message");
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -10997,7 +11014,7 @@ public sealed class AgentRunCoordinatorTests
             new ScriptedProvider((_, _) => Complete("unused")));
         var sessionId = await runtime.CreateSessionAsync("noop");
         runtime.SessionService.AppendTextTurn(sessionId, AgentMessageRole.User, "initial message");
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -11022,7 +11039,7 @@ public sealed class AgentRunCoordinatorTests
         using var runtime = AgentTestRuntime.Create(
             new ScriptedProvider((_, _) => Complete("unused")));
         var sessionId = await runtime.CreateSessionAsync("noop");
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -11050,7 +11067,7 @@ public sealed class AgentRunCoordinatorTests
             new ScriptedProvider((_, _) => Complete("unused")));
         var sessionId = await runtime.CreateSessionAsync("noop");
         var gateway = new PendingAdmissionRunGateway(runtime.Store);
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -11085,7 +11102,7 @@ public sealed class AgentRunCoordinatorTests
             new ScriptedProvider((_, _) => Complete("done")),
             new TestTool(toolId));
         var sessionId = await runtime.CreateSessionAsync(toolId);
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -11130,7 +11147,7 @@ public sealed class AgentRunCoordinatorTests
                 $"newer response {index:00}");
         }
 
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -11180,7 +11197,7 @@ public sealed class AgentRunCoordinatorTests
             );
         }
 
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -11233,7 +11250,7 @@ public sealed class AgentRunCoordinatorTests
             new TestTool(toolId)
         );
         var sessionId = await runtime.CreateSessionAsync(toolId);
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -11289,7 +11306,7 @@ public sealed class AgentRunCoordinatorTests
             ],
             now,
             now);
-        var row = new AgentTextTranscriptRowViewModel(turn, "first");
+        var row = new AgentTextTranscriptRowViewModel(AgentRoleBoundary.As<AppModels.AgentTurnRecord>(turn), "first");
         var markdownBuilder = row.MarkdownBuilder;
 
         row.UpdateContent("replacement");
@@ -11316,7 +11333,7 @@ public sealed class AgentRunCoordinatorTests
             createdAt);
 
         var row = new AgentTextTranscriptRowViewModel(
-            turn,
+            AgentRoleBoundary.As<AppModels.AgentTurnRecord>(turn),
             "hello",
             senderDisplayName: "Package Developer");
 
@@ -11347,7 +11364,7 @@ public sealed class AgentRunCoordinatorTests
             createdAt);
 
         var row = new AgentTextTranscriptRowViewModel(
-            turn,
+            AgentRoleBoundary.As<AppModels.AgentTurnRecord>(turn),
             "hello",
             senderDisplayName: "Ignored Agent Name");
 
@@ -11368,7 +11385,7 @@ public sealed class AgentRunCoordinatorTests
             new ScriptedProvider((_, _) => Complete("done"))
         );
         var sessionId = await runtime.CreateSessionAsync("noop");
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -11403,7 +11420,7 @@ public sealed class AgentRunCoordinatorTests
             AgentMessageRole.Assistant,
             "existing response"
         );
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -11470,7 +11487,7 @@ public sealed class AgentRunCoordinatorTests
             toolId,
             "{\"url\":\"https://example.com\"}"
         );
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -11519,7 +11536,7 @@ public sealed class AgentRunCoordinatorTests
             AgentRunStatus.Running,
             "Thinking."
         );
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -11551,7 +11568,7 @@ public sealed class AgentRunCoordinatorTests
             new TestTool(toolId)
         );
         var sessionId = await runtime.CreateSessionAsync(toolId);
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -11588,7 +11605,7 @@ public sealed class AgentRunCoordinatorTests
     {
         using var runtime = AgentTestRuntime.Create(new ScriptedProvider((_, _) => Complete("done")));
         var firstSessionId = await runtime.CreateSessionAsync("noop");
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -11643,7 +11660,7 @@ public sealed class AgentRunCoordinatorTests
         );
         var sessionId = await runtime.CreateSessionAsync(toolId);
         var runRevision = runtime.SessionService.GetNextRunRevision(sessionId);
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -11681,7 +11698,7 @@ public sealed class AgentRunCoordinatorTests
             new TestTool(toolId)
         );
         var sessionId = await runtime.CreateSessionAsync(toolId);
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -11724,7 +11741,7 @@ public sealed class AgentRunCoordinatorTests
             new TestTool(toolId)
         );
         var sessionId = await runtime.CreateSessionAsync(toolId);
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -11773,7 +11790,7 @@ public sealed class AgentRunCoordinatorTests
             AgentRunStatus.Running,
             "Thinking."
         );
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -11896,7 +11913,7 @@ public sealed class AgentRunCoordinatorTests
             AgentRunStatus.Running,
             "Thinking."
         );
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -11937,7 +11954,7 @@ public sealed class AgentRunCoordinatorTests
             new TestTool(toolId)
         );
         var sessionId = await runtime.CreateSessionAsync(toolId);
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -12009,7 +12026,7 @@ public sealed class AgentRunCoordinatorTests
         var backgroundSessionId = runtime.SessionService.CreateSession(
             "Background session",
             workspaceId: runtime.CurrentWorkspaceId).SessionId;
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -12368,7 +12385,7 @@ public sealed class AgentRunCoordinatorTests
                 IsPinned: true,
                 Importance: 0.9f,
                 Confidence: 0.95f,
-                Provenance: AgentMemoryProvenance.User
+                Provenance: MemoryWorker::Sunder.Package.Agent.Contracts.Models.AgentMemoryProvenance.User
             )
         );
 
@@ -13033,7 +13050,7 @@ public sealed class AgentRunCoordinatorTests
         var settings = new MemorySemanticSettingsService(context);
         var extensionCatalog = new TestExtensionCatalog();
         var metrics = new SemanticMemoryMetricsService();
-        var resolver = new SemanticModelRuntimeResolver(extensionCatalog, settings);
+        var resolver = new SemanticModelRuntimeResolver(extensionCatalog.Memory(), settings);
         var retrievalBackend = new SemanticMemoryRetrievalBackend(
             store,
             resolver,
@@ -13118,7 +13135,7 @@ public sealed class AgentRunCoordinatorTests
         var store = new MemoryLocalStore(context);
         var settings = new MemorySemanticSettingsService(context);
         var metrics = new SemanticMemoryMetricsService();
-        var resolver = new SemanticModelRuntimeResolver(runtime.ExtensionCatalog, settings);
+        var resolver = new SemanticModelRuntimeResolver(runtime.ExtensionCatalog.Memory(), settings);
         var retrievalBackend = new SemanticMemoryRetrievalBackend(
             store,
             resolver,
@@ -13211,7 +13228,7 @@ public sealed class AgentRunCoordinatorTests
 
         var settings = new MemorySemanticSettingsService(context);
         var metrics = new SemanticMemoryMetricsService();
-        var resolver = new SemanticModelRuntimeResolver(runtime.ExtensionCatalog, settings);
+        var resolver = new SemanticModelRuntimeResolver(runtime.ExtensionCatalog.Memory(), settings);
         var retrievalBackend = new SemanticMemoryRetrievalBackend(
             store,
             resolver,
@@ -13257,7 +13274,7 @@ public sealed class AgentRunCoordinatorTests
         var store = new MemoryLocalStore(context);
         var settings = new MemorySemanticSettingsService(context);
         var metrics = new SemanticMemoryMetricsService();
-        var resolver = new SemanticModelRuntimeResolver(runtime.ExtensionCatalog, settings);
+        var resolver = new SemanticModelRuntimeResolver(runtime.ExtensionCatalog.Memory(), settings);
         var retrievalBackend = new SemanticMemoryRetrievalBackend(
             store,
             resolver,
@@ -13318,7 +13335,7 @@ public sealed class AgentRunCoordinatorTests
         );
         var store = new MemoryLocalStore(context);
         var settings = new MemorySemanticSettingsService(context);
-        var resolver = new SemanticModelRuntimeResolver(runtime.ExtensionCatalog, settings);
+        var resolver = new SemanticModelRuntimeResolver(runtime.ExtensionCatalog.Memory(), settings);
         var retrievalBackend = new SemanticMemoryRetrievalBackend(
             store,
             resolver,
@@ -13348,7 +13365,7 @@ public sealed class AgentRunCoordinatorTests
         );
 
         await backgroundService.StartAsync();
-        await backgroundService.CommitGenerationAsync(new PackageRuntimeGeneration(Guid.NewGuid(), 1));
+        await backgroundService.CommitGenerationAsync(new MemoryWorker::Sunder.Package.Agent.Contracts.PackageRuntimeGeneration(Guid.NewGuid(), 1));
         await backgroundService.ActivateCommittedGenerationAsync();
         Assert.True(backgroundService.QueueMemoryIndex(memory.MemoryId, profile.ProfileId));
 
@@ -13372,7 +13389,7 @@ public sealed class AgentRunCoordinatorTests
         const string embeddingProviderId = "failing-embeddings";
         var extensionCatalog = new TestExtensionCatalog();
         extensionCatalog.AddProvider(
-            AgentRpcServices.EmbeddingProviders,
+            RegressionTestBindings.EmbeddingProviders,
             new ThrowingEmbeddingProvider(embeddingProviderId)
         );
 
@@ -13411,7 +13428,7 @@ public sealed class AgentRunCoordinatorTests
                 ),
             ]
         );
-        extensionCatalog.AddProvider(AgentRpcServices.RuntimeCatalogs, runtimeCatalog);
+        extensionCatalog.AddRuntimeCatalog(runtimeCatalog);
 
         var context = new TestPackageContext(
             Path.Combine(Path.GetTempPath(), "sunder-memory-tests", Guid.NewGuid().ToString("N")),
@@ -13419,7 +13436,7 @@ public sealed class AgentRunCoordinatorTests
         );
         var store = new MemoryLocalStore(context);
         var settings = new MemorySemanticSettingsService(context);
-        var resolver = new SemanticModelRuntimeResolver(extensionCatalog, settings);
+        var resolver = new SemanticModelRuntimeResolver(extensionCatalog.Memory(), settings);
         var retrievalBackend = new SemanticMemoryRetrievalBackend(
             store,
             resolver,
@@ -13448,7 +13465,7 @@ public sealed class AgentRunCoordinatorTests
         );
 
         await backgroundService.StartAsync();
-        await backgroundService.CommitGenerationAsync(new PackageRuntimeGeneration(Guid.NewGuid(), 1));
+        await backgroundService.CommitGenerationAsync(new MemoryWorker::Sunder.Package.Agent.Contracts.PackageRuntimeGeneration(Guid.NewGuid(), 1));
         await backgroundService.ActivateCommittedGenerationAsync();
         Assert.True(backgroundService.QueueMemoryIndex(memory.MemoryId, "profile-1"));
 
@@ -13621,7 +13638,7 @@ public sealed class AgentRunCoordinatorTests
         );
         var settings = new MemorySemanticSettingsService(settingsContext);
         var metrics = new SemanticMemoryMetricsService();
-        var resolver = new SemanticModelRuntimeResolver(catalog, settings);
+        var resolver = new SemanticModelRuntimeResolver(catalog.Memory(), settings);
         var retrievalBackend = new SemanticMemoryRetrievalBackend(
             store,
             resolver,
@@ -14141,13 +14158,13 @@ public sealed class AgentRunCoordinatorTests
         McpServerCatalogService catalog,
         McpClientConnectionManager connections)
         => new(
-            new McpLocalManagementGateway(
+            AgentRoleBoundary.As<McpApp::Sunder.Package.Agent.Mcp.Runtime.IMcpManagementGateway>(new McpLocalManagementGateway(
                 new McpSettingsEditorService(catalog),
                 new McpConfigurationCoordinator(
                     new McpEcosystemConfigurationImporter(catalog),
                     syncService: null),
                 new McpServerConnectionService(catalog, connections, oauthService: null),
-                new McpOAuthCoordinator(oauthService: null, connections)));
+                new McpOAuthCoordinator(oauthService: null, connections))));
 
     private static ConfiguredMcpServerRecord CreateMcpServer(
         string serverId,
@@ -14353,7 +14370,7 @@ public sealed class AgentRunCoordinatorTests
             );
         }
 
-        using var main = new AgentChatViewModel(
+        using var main = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -14361,8 +14378,8 @@ public sealed class AgentRunCoordinatorTests
             runtime.RunCoordinator
         );
         await main.InitializeAsync();
-        using var runtimeAdapter = new SubsessionLocalRuntimeAdapter(
-            runtime.ExtensionCatalog.GetRequiredReference(AgentRpcServices.RuntimeCatalogs));
+        using var runtimeAdapter = WorkerBackedSubagentManagementGateway.ForRuntime(
+            new TestPackageContext(runtime.RootPath), runtime.ExtensionCatalog);
         using var subsessions = new SubsessionsViewModel(
             runtimeAdapter,
             runtimeAdapter,
@@ -14382,7 +14399,7 @@ public sealed class AgentRunCoordinatorTests
             .Single(row => row.Content == "Shared response.");
         var childText = subsessions.Messages.OfType<SubsessionTextTranscriptRowViewModel>()
             .Single(row => row.Content == "Shared response.");
-        Assert.Equal(mainText.Role, childText.Role);
+        Assert.Equal(mainText.Role.ToString(), childText.Role.ToString());
         Assert.Equal(mainText.RoleGlyph, childText.RoleGlyph);
         Assert.Equal(mainText.Content, childText.Content);
 
@@ -14411,8 +14428,8 @@ public sealed class AgentRunCoordinatorTests
         );
         using var runtime = AgentTestRuntime.Create(provider);
         var toolSource = new PermissionedToolSource(toolId);
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.ToolSources, toolSource);
-        runtime.ExtensionCatalog.AddProvider(AgentRpcServices.PermissionSurfaces, toolSource);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.ToolSources, toolSource);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.PermissionSurfaces, toolSource);
         var sessionId = await runtime.CreateSessionAsync(toolId);
         var waiting = await runtime.RunCoordinator.QueueUserMessageAsync(
             sessionId,
@@ -14422,7 +14439,7 @@ public sealed class AgentRunCoordinatorTests
         );
         Assert.Equal(AgentRunStatus.WaitingForApproval, waiting.Status);
 
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
@@ -14442,25 +14459,33 @@ public sealed class AgentRunCoordinatorTests
         );
     }
 
+    private static SubagentRecord SaveSubagent(SubagentService service, string subagentId, string displayName,
+        string? description, string? instructions, string? chatProviderId, string? chatModelId,
+        IReadOnlyList<AgentProfileSelectableCapabilityAssignmentRecord>? selectableCapabilityAssignments,
+        string? chatModelSettingsJson = null)
+        => service.SaveSubagent(subagentId, displayName, description, instructions, chatProviderId, chatModelId,
+            selectableCapabilityAssignments is null ? null : AgentRoleBoundary.As<IReadOnlyList<SubagentsWorker::Sunder.Package.Agent.Contracts.Models.AgentProfileSelectableCapabilityAssignmentRecord>>(selectableCapabilityAssignments),
+            chatModelSettingsJson);
+
     private sealed class BlockingTranscriptAnchorGateway(AgentTurnRecord turn) :
-        IAgentTranscriptAnchorGateway
+        AppRuntime.IAgentTranscriptAnchorGateway
     {
         internal TaskCompletionSource LoadStarted { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal TaskCompletionSource ReleaseLoad { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public async Task<AgentTranscriptAroundTurnPage> LoadTranscriptAroundTurnAsync(
-            AgentTranscriptAroundTurnRequest request,
+        public async Task<AppRuntime.AgentTranscriptAroundTurnPage> LoadTranscriptAroundTurnAsync(
+            AppRuntime.AgentTranscriptAroundTurnRequest request,
             CancellationToken cancellationToken = default)
         {
             Assert.Equal(turn.SessionId, request.SessionId);
             Assert.Equal(turn.TurnId, request.TurnId);
             LoadStarted.TrySetResult();
             await ReleaseLoad.Task;
-            return new AgentTranscriptAroundTurnPage(
+            return new AppRuntime.AgentTranscriptAroundTurnPage(
                 1,
-                [turn],
+                [AgentRoleBoundary.As<AppModels.AgentTurnRecord>(turn)],
                 HasOlder: false,
                 HasNewer: false,
                 turn.TurnId);
@@ -14672,20 +14697,20 @@ public sealed class AgentRunCoordinatorTests
     }
 
     private sealed class FailOnceTranscriptPageGateway(AgentSessionService sessions)
-        : IAgentTranscriptPageGateway
+        : AppRuntime.IAgentTranscriptPageGateway
     {
         private int _invocationCount;
         private int _failNextTurnLookup = 1;
 
         public int InvocationCount => Volatile.Read(ref _invocationCount);
 
-        public Task<AgentTranscriptPage> LoadTranscriptPageAsync(
-            AgentTranscriptPageRequest request,
+        public Task<AppRuntime.AgentTranscriptPage> LoadTranscriptPageAsync(
+            AppRuntime.AgentTranscriptPageRequest request,
             CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
             Interlocked.Increment(ref _invocationCount);
-            if (request.Direction == AgentTranscriptPageDirection.Turn
+            if (request.Direction == AppRuntime.AgentTranscriptPageDirection.Turn
                 && Interlocked.Exchange(ref _failNextTurnLookup, 0) != 0)
             {
                 throw new InvalidOperationException("Injected reconciliation failure.");
@@ -14693,13 +14718,13 @@ public sealed class AgentRunCoordinatorTests
 
             IReadOnlyList<AgentTurnRecord> turns = request.Direction switch
             {
-                AgentTranscriptPageDirection.Turn when request.AnchorTurnId is { } turnId
+                AppRuntime.AgentTranscriptPageDirection.Turn when request.AnchorTurnId is { } turnId
                     => sessions.GetTurn(turnId) is { } turn ? [turn] : [],
-                AgentTranscriptPageDirection.Recent
+                AppRuntime.AgentTranscriptPageDirection.Recent
                     => sessions.ListRecentTurns(request.SessionId, request.Limit),
                 _ => [],
             };
-            return Task.FromResult(new AgentTranscriptPage(0, turns, false));
+            return Task.FromResult(new AppRuntime.AgentTranscriptPage(0, turns.Select(AgentRoleBoundary.As<AppModels.AgentTurnRecord>).ToArray(), false));
         }
     }
 
@@ -14780,18 +14805,18 @@ public sealed class AgentRunCoordinatorTests
         public AgentProfileRecord CurrentProfile => ProfileService.GetProfile(CurrentProfileId)!;
 
         public static AgentTestRuntime Create(
-            IAgentChatProvider provider,
+            object provider,
             params IAgentTool[] tools
         ) => CreateCore(provider, budgetLimits: null, tools: tools);
 
         public static AgentTestRuntime CreateWithBudget(
-            IAgentChatProvider provider,
+            object provider,
             AgentRunBudgetLimits budgetLimits,
             params IAgentTool[] tools
         ) => CreateCore(provider, budgetLimits, tools: tools);
 
         public static AgentTestRuntime CreateWithContinuityRefinement(
-            IAgentChatProvider provider,
+            object provider,
             params IAgentTool[] tools
         ) => CreateCore(provider, budgetLimits: null, useContinuityRefinement: true, tools: tools);
 
@@ -14799,7 +14824,7 @@ public sealed class AgentRunCoordinatorTests
             CreateCore(provider: null, budgetLimits: null, tools: tools);
 
         private static AgentTestRuntime CreateCore(
-            IAgentChatProvider? provider,
+            object? provider,
             AgentRunBudgetLimits? budgetLimits,
             bool useContinuityRefinement = false,
             params IAgentTool[] tools
@@ -14819,9 +14844,9 @@ public sealed class AgentRunCoordinatorTests
             if (provider is not null)
             {
                 extensionCatalog.AddProvider(
-                    AgentRpcServices.ChatProviders,
+                    RegressionTestBindings.ChatProviders,
                     provider,
-                    provider.Descriptor.PackageId ?? "test.package");
+                    AgentRoleBoundary.As<IAgentChatProvider>(provider).Descriptor.PackageId ?? "test.package");
             }
 
             foreach (var tool in tools)
@@ -14848,8 +14873,9 @@ public sealed class AgentRunCoordinatorTests
                 extensionCatalog.BehaviorLoops);
             var providerResolver = new AgentRunProviderResolver(profileService, extensionCatalog);
             extensionCatalog.AddProvider(
-                AgentRpcServices.RuntimeCatalogs,
-                new AgentRuntimeCatalog(sessionService, profileService, workspaceService)
+                AgentRpcContractIds.RuntimeCatalog,
+                new AgentRuntimeCatalog(sessionService, profileService, workspaceService),
+                "sunder.package.agent"
             );
             var memoryCoordinator = new AgentMemoryCoordinator(
                 sessionService,
@@ -14863,7 +14889,7 @@ public sealed class AgentRunCoordinatorTests
             var promptComposer = new AgentSystemPromptComposer(extensionCatalog);
             var attachmentService = new AgentAttachmentService(packageContext);
             extensionCatalog.AddProvider(
-                AgentRpcServices.SessionCleaners,
+                RegressionTestBindings.SessionCleaners,
                 attachmentService
             );
             var terminalHandler = new AgentLoopTerminalHandler();
@@ -15010,14 +15036,14 @@ public sealed class AgentRunCoordinatorTests
         public void AddMemoryFeature(CapturingMemoryFeature feature)
         {
             _extensionCatalog.AddProvider(
-                AgentRpcServices.PromptContextContributors,
+                RegressionTestBindings.PromptContextContributors,
                 feature
             );
-            _extensionCatalog.AddProvider(AgentRpcServices.DurableLifecycleObservers, feature);
+            _extensionCatalog.AddProvider(RegressionTestBindings.DurableLifecycleObservers, feature);
         }
 
-        public void AddEmbeddingProvider(IAgentEmbeddingProvider provider) =>
-            _extensionCatalog.AddProvider(AgentRpcServices.EmbeddingProviders, provider);
+        public void AddEmbeddingProvider(object provider) =>
+            _extensionCatalog.AddProvider(RegressionTestBindings.EmbeddingProviders, provider);
 
         public async Task<Guid> CreateSessionAsync(params string[] toolIds)
         {
@@ -15048,8 +15074,17 @@ public sealed class AgentRunCoordinatorTests
         {
             try
             {
-                Dispatcher.DisposeAsync().AsTask().GetAwaiter().GetResult();
-                BackgroundWork.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                try
+                {
+                    Dispatcher.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                    BackgroundWork.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                }
+                finally
+                {
+                    _extensionCatalog.Dispose();
+                    ProfileService.Dispose();
+                    Store.Dispose();
+                }
                 if (Directory.Exists(_rootPath))
                 {
                     Directory.Delete(_rootPath, recursive: true);

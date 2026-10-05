@@ -1,9 +1,11 @@
 using System.Reflection;
-using Sunder.Package.Agent.Memory.Semantic;
 using Sunder.Package.Agent.Storage;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
+
+extern alias MemoryWorker;
+using MemoryWorker::Sunder.Package.Agent.Memory.Semantic;
 
 public sealed class SqliteConnectionStringTests
 {

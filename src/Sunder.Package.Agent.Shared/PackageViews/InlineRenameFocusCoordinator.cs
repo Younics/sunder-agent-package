@@ -7,6 +7,7 @@ using Sunder.Package.Agent.Shared.Presentation;
 
 namespace Sunder.Package.Agent.Shared.PackageViews;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.App)]
 internal sealed class InlineRenameFocusCoordinator<TItem> : IDisposable where TItem : class
 {
     private const int FocusRetryLimit = 12;

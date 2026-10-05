@@ -1,0 +1,1686 @@
+{
+  "schemaVersion": 1,
+  "pathBase": "sunder-agent-package repository root",
+  "hashPolicy": "SHA-256 of UTF-8 text after CRLF/CR normalization to LF",
+  "purpose": "Exact authenticated retirement candidates; physical deletion follows successful current test and canonical output checks.",
+  "counts": {
+    "projects": 26,
+    "productionWrappers": 154,
+    "helperSupportFiles": 67,
+    "fixtureSources": 1,
+    "obsoleteTools": 1,
+    "totalFiles": 249
+  },
+  "frozenRpcProjectCount": 57,
+  "retainedProjects": [
+    "src/Sunder.Agent.Execution.Common/Sunder.Agent.Execution.Common.csproj"
+  ],
+  "projects": [
+    "fixtures/PackedProtocolConsumer/PackedProtocolConsumer.csproj",
+    "src/Sunder.Package.Agent.Builder/App/Sunder.Package.Agent.Builder.App.csproj",
+    "src/Sunder.Package.Agent.Builder/Protocol/Sunder.Package.Agent.Builder.Protocol.csproj",
+    "src/Sunder.Package.Agent.Contracts/Sunder.Package.Agent.Contracts.csproj",
+    "src/Sunder.Package.Agent.Execution.Docker/App/DockerApp.csproj",
+    "src/Sunder.Package.Agent.Execution.Docker/Protocol/DockerProtocol.csproj",
+    "src/Sunder.Package.Agent.Execution.Local/App/LocalApp.csproj",
+    "src/Sunder.Package.Agent.Execution.Local/Protocol/LocalProtocol.csproj",
+    "src/Sunder.Package.Agent.Mcp/App/Sunder.Package.Agent.Mcp.App.csproj",
+    "src/Sunder.Package.Agent.Mcp/Shared/Sunder.Package.Agent.Mcp.Shared.csproj",
+    "src/Sunder.Package.Agent.Memory.Semantic/App/Sunder.Package.Agent.Memory.Semantic.App.csproj",
+    "src/Sunder.Package.Agent.Memory.Semantic/Protocol/Sunder.Package.Agent.Memory.Semantic.Protocol.csproj",
+    "src/Sunder.Package.Agent.Provider.Anthropic/App/Sunder.Package.Agent.Provider.Anthropic.App.csproj",
+    "src/Sunder.Package.Agent.Provider.Anthropic/Protocol/Sunder.Package.Agent.Provider.Anthropic.Protocol.csproj",
+    "src/Sunder.Package.Agent.Provider.Gemini/App/Sunder.Package.Agent.Provider.Gemini.App.csproj",
+    "src/Sunder.Package.Agent.Provider.Gemini/Protocol/Sunder.Package.Agent.Provider.Gemini.Protocol.csproj",
+    "src/Sunder.Package.Agent.Provider.LMStudio/App/Sunder.Package.Agent.Provider.LMStudio.App.csproj",
+    "src/Sunder.Package.Agent.Provider.LMStudio/Protocol/Sunder.Package.Agent.Provider.LMStudio.Protocol.csproj",
+    "src/Sunder.Package.Agent.Provider.OpenAI/App/Sunder.Package.Agent.Provider.OpenAI.App.csproj",
+    "src/Sunder.Package.Agent.Provider.OpenAI/Shared/Sunder.Package.Agent.Provider.OpenAI.Shared.csproj",
+    "src/Sunder.Package.Agent.Skills/App/SkillsApp.csproj",
+    "src/Sunder.Package.Agent.Skills/Protocol/SkillsProtocol.csproj",
+    "src/Sunder.Package.Agent.Subagents/App/SubagentsApp.csproj",
+    "src/Sunder.Package.Agent.Subagents/Protocol/SubagentsProtocol.csproj",
+    "src/Sunder.Package.Agent/App/Sunder.Package.Agent.App.csproj",
+    "src/Sunder.Package.Agent/OwnerProtocol/Sunder.Package.Agent.OwnerProtocol.csproj"
+  ],
+  "entries": [
+    {
+      "path": "fixtures/PackedProtocolConsumer/PackedProtocolConsumer.csproj",
+      "kind": "retired-fixture-project",
+      "sha256": "48e43b6e6f7180c73bb640a70d06d9b3f725b4679043e538d9831764d2341b86",
+      "captureFile": "packed-protocol-consumer-history.json",
+      "inFrozenProjectInventory": false,
+      "inOriginalSolution": false
+    },
+    {
+      "path": "fixtures/PackedProtocolConsumer/Program.cs",
+      "kind": "retired-fixture-source",
+      "sha256": "1475836cb17373aaaacbde6cf42a58c04c1e20a332f7b84fc760d263a4d305e7",
+      "captureFile": "packed-protocol-consumer-history.json"
+    },
+    {
+      "path": "scripts/compatibility/verify-packed-protocol.sh",
+      "kind": "retired-fixture-tool",
+      "sha256": "cd537ca7c27711de80a86c217762709a6d10dc7445f368380b87d516da350210",
+      "captureFile": "packed-protocol-consumer-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Builder/App/BuilderAppRpcGateway.cs",
+      "kind": "retired-source",
+      "sha256": "2e20df9752506dcc06c6164f039d0435ab51a72a3afd12a272c7e3dd32da0f2c",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Builder/App/BuilderWorkspaceExecutionService.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "af52ff2843a0279fe7007e6d936a028ac3c7c76504a9e1a6a7f25e93919dc22b",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Builder/App/PackageModule.cs",
+      "kind": "retired-source",
+      "sha256": "c01d50f164116be2926766bc64649ccb69915f07082caa64bf1871f1bbd0f449",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Builder/App/Sunder.Package.Agent.Builder.App.csproj",
+      "kind": "retired-project",
+      "sha256": "9bb428c6e2134ca2af831859a6d1ed041d18ddc95a79ee0f30fcb80a9b367abd",
+      "captureFile": "retirement-history.json",
+      "inFrozenProjectInventory": true,
+      "inOriginalSolution": true,
+      "originalProjectSha256": "dd060e7bf908c4534966d0cf2781afe8e3afe987bf935ca257b9a08576dba4c8"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Builder/BuilderRpcBridge.cs",
+      "kind": "retired-source",
+      "sha256": "99c62782bee09a38a1482b731de4b9e866c3d981211522005a799d9c369d4bac",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Builder/BuilderRpcProvider.cs",
+      "kind": "retired-source",
+      "sha256": "7f9c89203f147ebd6194aa64f66e27e99f2a65d4630377b981672560d5973085",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Builder/PackageDependency.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "d44f3395af684c0cfe0f90bd1f6537dd6f78a6370a44d8e6b5b6c093b14ab3f6",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Builder/Program.cs",
+      "kind": "retired-source",
+      "sha256": "a3e3b8077cdf769f7f6ac4103ad7e00071e83f7e69a8b28ab26d90f156ef1152",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Builder/Protocol/AssemblyInfo.cs",
+      "kind": "retired-support",
+      "sha256": "f578f2d67b134026d101b1b6eef943ffc90d1cd56bc3e4202096e55045185f51",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "f578f2d67b134026d101b1b6eef943ffc90d1cd56bc3e4202096e55045185f51"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Builder/Protocol/BuilderRpcProtocol.cs",
+      "kind": "retired-support",
+      "sha256": "7cea9a96149afd604941ab53814e5f8b64afa88d1d94bf6748bd0602d9c835b6",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "7cea9a96149afd604941ab53814e5f8b64afa88d1d94bf6748bd0602d9c835b6"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Builder/Protocol/BuilderRpcWireMapper.cs",
+      "kind": "retired-support",
+      "sha256": "a57001684cbbfd52782bd0d8f7167f9124c84fa6bd334f2513f1f53d40362d53",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "a57001684cbbfd52782bd0d8f7167f9124c84fa6bd334f2513f1f53d40362d53"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Builder/Protocol/Contracts/builder-runtime.rpc.json",
+      "kind": "retired-support",
+      "sha256": "09dce5d4733fd242747dc940ba92352b3511ae228f2e80dc7bec73637041eec1",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "09dce5d4733fd242747dc940ba92352b3511ae228f2e80dc7bec73637041eec1"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Builder/Protocol/Sunder.Package.Agent.Builder.Protocol.csproj",
+      "kind": "retired-project",
+      "sha256": "2dd9a0b3add4ea024f5e958b0722bf80191c2d8fa19efeea6195a17e8cbbbbcd",
+      "captureFile": "retirement-history.json",
+      "inFrozenProjectInventory": true,
+      "inOriginalSolution": true,
+      "originalProjectSha256": "5638fa1ad9751ebf51fd2d3bb71c5d4dac142fabd88453ed59667d1ba6156992"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Builder/Protocol/packages.release.lock.json",
+      "kind": "retired-support",
+      "sha256": "dbb908c380db8f38b5aaeb1f9dee5e509c4f20e50cc872f72cea1232c9e4c5d7",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "dbb908c380db8f38b5aaeb1f9dee5e509c4f20e50cc872f72cea1232c9e4c5d7"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Builder/Rpc/BuilderRuntimeService.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "994340fea347248a46d9ae03173fc3a0cfdd4221f5e36b119852221295cbdf7d",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Builder/Runtime/BuilderWorkerBindings.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "4dd8e811e420a8588cc69bacbc4450e60e6e6530abf8f067faf86d7a96e2cdbe",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Builder/Runtime/BuilderWorkerComposition.cs",
+      "kind": "retired-source",
+      "sha256": "533dbb17e0e12a2ffd70569ba850735ce8595227584b26d2c18d39d2e5ec5349",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Contracts/Contracts/behavior-loop.rpc.json",
+      "kind": "retired-support",
+      "sha256": "3fbd92bfb01f828e7f625bafa6e526f09ea22ea752d3d058c5c08eda05920abf",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "3fbd92bfb01f828e7f625bafa6e526f09ea22ea752d3d058c5c08eda05920abf"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Contracts/Contracts/chat-provider.rpc.json",
+      "kind": "retired-support",
+      "sha256": "c4ceef7e4f7f55bf3e5205ade231facd7f59a6b2b477c091a7d05064f1744c20",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "c4ceef7e4f7f55bf3e5205ade231facd7f59a6b2b477c091a7d05064f1744c20"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Contracts/Contracts/child-run-executor.rpc.json",
+      "kind": "retired-support",
+      "sha256": "068fa2477ce085591a40601ebdad11aece5a8c25daeb902ae33b003b106fd6d9",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "068fa2477ce085591a40601ebdad11aece5a8c25daeb902ae33b003b106fd6d9"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Contracts/Contracts/durable-lifecycle-observer.rpc.json",
+      "kind": "retired-support",
+      "sha256": "d28f2065cc6199b6215d3133f90e83e1dec25e860328a8c18c263d3595f37e28",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "d28f2065cc6199b6215d3133f90e83e1dec25e860328a8c18c263d3595f37e28"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Contracts/Contracts/embedding-provider.rpc.json",
+      "kind": "retired-support",
+      "sha256": "c6220abc8ff1e7378ddd38f9dfd0e84398eae4a7d593bc3f5b8ebde0feabe807",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "c6220abc8ff1e7378ddd38f9dfd0e84398eae4a7d593bc3f5b8ebde0feabe807"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Contracts/Contracts/execution-target.rpc.json",
+      "kind": "retired-support",
+      "sha256": "1443b9f17c2c46fad306e7e9c2a080a5670fed5a601eddf50a3659c0306f7e72",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "1443b9f17c2c46fad306e7e9c2a080a5670fed5a601eddf50a3659c0306f7e72"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Contracts/Contracts/permission-surface.rpc.json",
+      "kind": "retired-support",
+      "sha256": "3df9042d962c9850b8501f314bff72d096f13356519163ed63619f5c412a2484",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "3df9042d962c9850b8501f314bff72d096f13356519163ed63619f5c412a2484"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Contracts/Contracts/profile-capability-consumer.rpc.json",
+      "kind": "retired-support",
+      "sha256": "3442b7484721ad6754ef79c1687faec69f5f7292425bee0f2cded75fff95328e",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "3442b7484721ad6754ef79c1687faec69f5f7292425bee0f2cded75fff95328e"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Contracts/Contracts/prompt-context-contributor.rpc.json",
+      "kind": "retired-support",
+      "sha256": "652a53c8b0312f845358c56a7b0f70dbddee6748abe1e57e6135023f745f0c70",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "652a53c8b0312f845358c56a7b0f70dbddee6748abe1e57e6135023f745f0c70"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Contracts/Contracts/run-control.rpc.json",
+      "kind": "retired-support",
+      "sha256": "ad3fddce72211b70a23082b9fbdd0979222c042ad9dd39946df5b04c8374da7e",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "ad3fddce72211b70a23082b9fbdd0979222c042ad9dd39946df5b04c8374da7e"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Contracts/Contracts/runtime-catalog.rpc.json",
+      "kind": "retired-support",
+      "sha256": "1d230953f29402a669e3748d5a648c517a395aec0b9b1cfa06df36b715b3271b",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "1d230953f29402a669e3748d5a648c517a395aec0b9b1cfa06df36b715b3271b"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Contracts/Contracts/selectable-capability-provider.rpc.json",
+      "kind": "retired-support",
+      "sha256": "61db9d9d64bfcb4263ec40a2f9823ed81c991a855a3d197995aa0d46d9e647f5",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "61db9d9d64bfcb4263ec40a2f9823ed81c991a855a3d197995aa0d46d9e647f5"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Contracts/Contracts/session-cleaner.rpc.json",
+      "kind": "retired-support",
+      "sha256": "3e412c7994427e04be5228ebc143d2cb153df5786dd105125a7443adb1ac7812",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "3e412c7994427e04be5228ebc143d2cb153df5786dd105125a7443adb1ac7812"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Contracts/Contracts/system-prompt-contributor.rpc.json",
+      "kind": "retired-support",
+      "sha256": "73f83a93235410e3e5b8bd474948ffca9667ff7906fdbb852ac02d2993e102c0",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "73f83a93235410e3e5b8bd474948ffca9667ff7906fdbb852ac02d2993e102c0"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Contracts/Contracts/tool-execution-observed.rpc.json",
+      "kind": "retired-support",
+      "sha256": "e3345534a9b9753fd0e53d1a21117979c3741abfbf2987159ab65116ec8ae03c",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "e3345534a9b9753fd0e53d1a21117979c3741abfbf2987159ab65116ec8ae03c"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Contracts/Contracts/tool-source.rpc.json",
+      "kind": "retired-support",
+      "sha256": "47e57f4e8991b41b925d82cc4a89f27f1fce4d9a13997b9d151c33e2b13ff2b8",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "47e57f4e8991b41b925d82cc4a89f27f1fce4d9a13997b9d151c33e2b13ff2b8"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Contracts/Contracts/workspace-editor.rpc.json",
+      "kind": "retired-support",
+      "sha256": "be0ec1a803a91d6bc5c84dcc296938cbc42715274f0c10441cb5f5a757bce7b2",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "be0ec1a803a91d6bc5c84dcc296938cbc42715274f0c10441cb5f5a757bce7b2"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Contracts/Contracts/workspace-execution-resolver.rpc.json",
+      "kind": "retired-support",
+      "sha256": "aea2c7a204ef9180789cf54dad6d1a63a581252ac8f1978f37678e424214027e",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "aea2c7a204ef9180789cf54dad6d1a63a581252ac8f1978f37678e424214027e"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Contracts/Contracts/workspace-path-migrator.rpc.json",
+      "kind": "retired-support",
+      "sha256": "58917cd87bbbb088b98870ebfe4f4b7912a97a594746011a3561c5e801ac4255",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "58917cd87bbbb088b98870ebfe4f4b7912a97a594746011a3561c5e801ac4255"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Contracts/Extensions/AgentProfileSelectableCapabilityChangeObserver.Compatibility.cs",
+      "kind": "retired-source",
+      "sha256": "4824ecd62cf802cbaaca37466754de03a5ad73bb89d48990c37237b56c5777d6",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Contracts/PublicAPI.Shipped.txt",
+      "kind": "retired-support",
+      "sha256": "ca873e57e440a9485ef7e8106d04776c1d6c3970933bf44952f6cc102fef362b",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "ca873e57e440a9485ef7e8106d04776c1d6c3970933bf44952f6cc102fef362b"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Contracts/PublicAPI.Unshipped.txt",
+      "kind": "retired-support",
+      "sha256": "3c3b422dddb1efeb0fc5b228608fd8682452b2a9507d4031894bce3c4dedadbd",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "3c3b422dddb1efeb0fc5b228608fd8682452b2a9507d4031894bce3c4dedadbd"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Contracts/README.md",
+      "kind": "retired-support",
+      "sha256": "cfbb89f3c1496b9241a014b203a52a1215dbf7486df0c26f746f79da3be15b27",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "cfbb89f3c1496b9241a014b203a52a1215dbf7486df0c26f746f79da3be15b27"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Contracts/Rpc/AgentBehaviorLoopRpcBinding.cs",
+      "kind": "retired-source",
+      "sha256": "d5b357c78f896245b9e0372910b2d286de956f3c5ca89a0fbb4dba6feab64e04",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Contracts/Rpc/AgentChatProviderRpcBinding.cs",
+      "kind": "retired-source",
+      "sha256": "88faa72fe04fd5d4a27a8e9f96c5483b1c5b127f3569b9595e6b3bb10f30da1d",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Contracts/Rpc/AgentExecutionTargetRpcBinding.cs",
+      "kind": "retired-source",
+      "sha256": "227385e4ac5ef6e105493de855548f8b05644c22e8286f8267df0ca02f67644a",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Contracts/Rpc/AgentObservedToolExecutionRpcBinding.cs",
+      "kind": "retired-source",
+      "sha256": "ab1ac31d7375c9243a003a30f846605d4971514eac5ff53b61daa60236c0db59",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Contracts/Rpc/AgentRpcContractDescriptors.cs",
+      "kind": "retired-source",
+      "sha256": "e0bb5d0f48f681e7e3a502b73671da8f91a51d0777f0f605b47dd84d00a18631",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Contracts/Rpc/AgentRpcSimpleBindings.cs",
+      "kind": "retired-source",
+      "sha256": "3b2d228e806b510c0c81573d4b4e6a261c7d0a6bdefa73e7340f783ab585a199",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Contracts/Rpc/AgentRpcWire.cs",
+      "kind": "retired-source",
+      "sha256": "d67642bf702a8fe9330e4c4ecf8eaea6855de27ce9e1f0a191952dd029772f19",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Contracts/Rpc/AgentRuntimeCatalogRpcBinding.cs",
+      "kind": "retired-source",
+      "sha256": "e73302aaf8745b702d71eb084f820be8df1e3de42e7daae923421160159340b2",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Contracts/Rpc/AgentToolSourceRpcBinding.cs",
+      "kind": "retired-source",
+      "sha256": "db4f468bdf838aae423d8fc9e9cc577d4a4d40682ea47f9573b539cc77ff5f24",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Contracts/Rpc/AgentWorkspaceResolverRpcBinding.cs",
+      "kind": "retired-source",
+      "sha256": "da90fbd3616597a2e487a86bdf930ce54d6c189864dabda3f0ec08f20299a24d",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Contracts/Runtime/InternalsVisibleTo.cs",
+      "kind": "retired-source",
+      "sha256": "09f3b719b737ede82db2a7fa26ddfd6fc8eec0eee837872979f4849de5f4f7cf",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Contracts/Sunder.Package.Agent.Contracts.csproj",
+      "kind": "retired-project",
+      "sha256": "046e3ce673bccb11a7f3cf5b83d97da8a6d3f5435a056c7222690a9e53c78619",
+      "captureFile": "retirement-history.json",
+      "inFrozenProjectInventory": true,
+      "inOriginalSolution": true,
+      "originalProjectSha256": "e4bd6a22a6e0552b9252583074fbc049cc44e3d7bf9a3594c4274be3ec8b0ac6"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Contracts/buildTransitive/Sunder.Package.Agent.Protocol.props",
+      "kind": "retired-support",
+      "sha256": "5e36a23709b30ab306c956369427daaba0c615daca04109d1b2a7262f0bc4f36",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "5e36a23709b30ab306c956369427daaba0c615daca04109d1b2a7262f0bc4f36"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Contracts/packages.release.lock.json",
+      "kind": "retired-support",
+      "sha256": "ae4c4c0b519fa5e50db4b4962c300f5dd4d63df6f145a9c48a1b244ac6779235",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "ae4c4c0b519fa5e50db4b4962c300f5dd4d63df6f145a9c48a1b244ac6779235"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Execution.Docker/App/AppPackageModule.cs",
+      "kind": "retired-source",
+      "sha256": "f0e27197b2e2e47e65d0fbe56813b9e11959c5a1f5133eda1a3f0b0da1d8541c",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Execution.Docker/App/DockerApp.csproj",
+      "kind": "retired-project",
+      "sha256": "4463bf7d75d832afbb8d8b2cd6430947884054091a46cbe8cac43d9a5796b3b8",
+      "captureFile": "retirement-history.json",
+      "inFrozenProjectInventory": true,
+      "inOriginalSolution": true,
+      "originalProjectSha256": "da3bdfce9598bd426f462501dc235d80929840d641e3ec7890d9b866cafdbfc6"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Execution.Docker/App/DockerAppBindings.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "77f1d5e6585af4d78fc307dc1de00b70c966d480b5d434549a633ab8336185ff",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Execution.Docker/PackageDependency.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "d44f3395af684c0cfe0f90bd1f6537dd6f78a6370a44d8e6b5b6c093b14ab3f6",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Execution.Docker/Program.cs",
+      "kind": "retired-source",
+      "sha256": "f5b509bb5a8a5ad3441068225ecda53171703b483ec9bb6ec2764c2a2e7a32a2",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Execution.Docker/Protocol/Contracts/docker-execution-presentation.rpc.json",
+      "kind": "retired-support",
+      "sha256": "873ae177f5c942c159a1904b2e7701068b639972062f51d7af464d669b63a1d6",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "873ae177f5c942c159a1904b2e7701068b639972062f51d7af464d669b63a1d6"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Execution.Docker/Protocol/DockerExecutionPresentationRpc.cs",
+      "kind": "retired-support",
+      "sha256": "12a635ee5ef9eae130dd3a2d81e598b4afeeb4954214a44eea7b1a24307ff317",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "11fb80d24ed45a159751ceb642be14493a5dde1887781f0c2c7c0ad178380ed6"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Execution.Docker/Protocol/DockerProtocol.csproj",
+      "kind": "retired-project",
+      "sha256": "1204d2863dc1ee707f34f48ae3b3f46aa4086db1a8d3bca2a93d204ee59f6197",
+      "captureFile": "retirement-history.json",
+      "inFrozenProjectInventory": true,
+      "inOriginalSolution": true,
+      "originalProjectSha256": "e04a6c65c824baa5c5b1cd0cecf93041963f0dcf936ede798f5d1075ee3a6831"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Execution.Docker/Protocol/packages.release.lock.json",
+      "kind": "retired-support",
+      "sha256": "dbb908c380db8f38b5aaeb1f9dee5e509c4f20e50cc872f72cea1232c9e4c5d7",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "dbb908c380db8f38b5aaeb1f9dee5e509c4f20e50cc872f72cea1232c9e4c5d7"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Execution.Docker/Rpc/DockerWorkerBindings.cs",
+      "kind": "retired-source",
+      "sha256": "032649d2dae9dbb456de7c2bc7f02250b7b7d62d5bbff0c162a12152699fce54",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Execution.Docker/Runtime/DockerWorkerBindings.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "7bfe1fb8f468a1b62bf44ed1cfda5e704925f1596ca56ab3a2254b5dcee14cc7",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Execution.Docker/Runtime/DockerWorkerConfiguration.cs",
+      "kind": "retired-source",
+      "sha256": "2247883cfec27f1b67763dbe1268d24cc0ffd28b2afeb87bb3d641bfa9593452",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Execution.Local/App/AppPackageModule.cs",
+      "kind": "retired-source",
+      "sha256": "3c48c14b0de355d0cef67f1bcf65929455e9d9b68819f7e865f250eeb4045bc8",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Execution.Local/App/LocalApp.csproj",
+      "kind": "retired-project",
+      "sha256": "93e15acb5bcfd0c1ba2902ecdc279440ecd42fc9e184af78a8c1ced244dad3c5",
+      "captureFile": "retirement-history.json",
+      "inFrozenProjectInventory": true,
+      "inOriginalSolution": true,
+      "originalProjectSha256": "7a24406021a567a317723531ab17e859c40075e3c93c67e37b4f71925eec08bd"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Execution.Local/App/LocalAppBindings.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "cb2d5a7538560956327274abd526b644b062c785a63407e0a83f3fd87af8e3dd",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Execution.Local/PackageDependency.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "d44f3395af684c0cfe0f90bd1f6537dd6f78a6370a44d8e6b5b6c093b14ab3f6",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Execution.Local/Program.cs",
+      "kind": "retired-source",
+      "sha256": "c9404c0d5e16df10a761d6ae3366da2da938ca05262e095b630b9334359089a6",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Execution.Local/Protocol/Contracts/local-execution-presentation.rpc.json",
+      "kind": "retired-support",
+      "sha256": "77b6171132e2bc13cbec251fc3d49ef1c3d848f5a4abda9db6feddc875a6839e",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "77b6171132e2bc13cbec251fc3d49ef1c3d848f5a4abda9db6feddc875a6839e"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Execution.Local/Protocol/LocalExecutionPresentationRpc.cs",
+      "kind": "retired-support",
+      "sha256": "a2ff976aa48530d1fcb406bb27af1f360e98dad8d9f141c2550d4c2fac90bee0",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "8f5a93c41bb6e886b039b4c969bd20f94d27bc4e690eb5b3b6c9a9c48885d9cd"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Execution.Local/Protocol/LocalProtocol.csproj",
+      "kind": "retired-project",
+      "sha256": "8bb4d89c383d032c44847863499a050079386f978705322fc046a55425f6fd6a",
+      "captureFile": "retirement-history.json",
+      "inFrozenProjectInventory": true,
+      "inOriginalSolution": true,
+      "originalProjectSha256": "15b86cbd230f716076522bea48a20410f55d731c431a285371d0d365f42b5975"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Execution.Local/Protocol/packages.release.lock.json",
+      "kind": "retired-support",
+      "sha256": "dbb908c380db8f38b5aaeb1f9dee5e509c4f20e50cc872f72cea1232c9e4c5d7",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "dbb908c380db8f38b5aaeb1f9dee5e509c4f20e50cc872f72cea1232c9e4c5d7"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Execution.Local/Runtime/LocalWorkerBindings.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "b75474b064bda3ddd7db36c3cf43f3a03bdeeed678d2a4bc6e6734da5ae0600d",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Execution.Local/Runtime/LocalWorkerConfiguration.cs",
+      "kind": "retired-source",
+      "sha256": "2c8260f912188b62ca19cf24bd2ffd271349613635c8dbeb880468ba743f012c",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Mcp/App/PackageModule.cs",
+      "kind": "retired-source",
+      "sha256": "99edf2c514ac347043599ea23c0e9efa8362639f89e59664347aa5b95b5c91b1",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Mcp/App/Sunder.Package.Agent.Mcp.App.csproj",
+      "kind": "retired-project",
+      "sha256": "6b07a1f218beba92d4a3653b66b805ab83be51e5896a63e9e017f2e4ac8ab815",
+      "captureFile": "retirement-history.json",
+      "inFrozenProjectInventory": true,
+      "inOriginalSolution": true,
+      "originalProjectSha256": "8b7cdb70b72e7eeab92d177fe0730860ea1c7fbd7ed160df892ff65547392c2c"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Mcp/PackageDependency.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "d44f3395af684c0cfe0f90bd1f6537dd6f78a6370a44d8e6b5b6c093b14ab3f6",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Mcp/Rpc/McpWorkerBindings.cs",
+      "kind": "retired-source",
+      "sha256": "71179d523d437cdefdf4811c35ee76045866e0a5293b79c2950fc976094807c4",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Mcp/Runtime/LegacyMcpWorkspaceCatalog.cs",
+      "kind": "retired-source",
+      "sha256": "189d74e15edb45446fa6442fc429a5d543e6a987366e56c0e7692eecfb571bcc",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Mcp/Runtime/McpManagementPayload.cs",
+      "kind": "retired-source",
+      "sha256": "fe86e4617720de9eb160a57030a1c00e6471591f79669cf82bdf23e7e06e1c2e",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Mcp/Runtime/McpManagementRpcProvider.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "b280de40d29201dec1b30608003b38a8d79a0f603d545df460b76e06790e091f",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Mcp/Runtime/McpOwnerManagementRpcClient.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "6fefc3259ed84d3e05c38ed3e419287fa909dbdbc5bd5b67f013eb9b13409dd1",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Mcp/Services/McpSunderConfigurationSyncService.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "9b4a8336fa22b98e04b7b9f77a4ea6d7b4dd6c44f7690bb3b0173e98b121d9f5",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Mcp/Shared/Contracts/mcp-management.rpc.json",
+      "kind": "retired-support",
+      "sha256": "9293c52e2ef4ffe970540018d4c1869715c45f6628d4dda7e1e6e60d427a0c87",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "9293c52e2ef4ffe970540018d4c1869715c45f6628d4dda7e1e6e60d427a0c87"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Mcp/Shared/McpManagementProtocol.cs",
+      "kind": "retired-support",
+      "sha256": "edc519fb71a8568cc0a4612471133f149f75e0d3d1708672dc1cae7f95043be7",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "39c75c3ff17f9adb3534a98910109058ca88af433c9e69afd2ce52f39a99f77d"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Mcp/Shared/Properties/AssemblyInfo.cs",
+      "kind": "retired-source",
+      "sha256": "dbdbe7df3ee8a99f4d7753e90cee4b2782c04af70a8439d2a9a4cfd65f8418d0",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Mcp/Shared/Sunder.Package.Agent.Mcp.Shared.csproj",
+      "kind": "retired-project",
+      "sha256": "92e99f1f2e778fb8ab0d61dcac13421570e3c82b682578127556f90cb2b20c97",
+      "captureFile": "retirement-history.json",
+      "inFrozenProjectInventory": true,
+      "inOriginalSolution": true,
+      "originalProjectSha256": "44094211329731e6860680c2eb47085c2d86dbfc022a85d1213e0f163e91216a"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Mcp/Shared/packages.release.lock.json",
+      "kind": "retired-support",
+      "sha256": "4b7d88cc0634e16662b5f418a12c476f62575d6edbabe5274d2df7f51f41ccd3",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "4b7d88cc0634e16662b5f418a12c476f62575d6edbabe5274d2df7f51f41ccd3"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Mcp/Worker/McpWorkerBindings.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "92bbf4aefe848ea59974212b568b24cdc5d342d458dfe803d1445aa300173452",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Mcp/Worker/McpWorkerConfiguration.cs",
+      "kind": "retired-source",
+      "sha256": "496afa11839a6b5e6c7748985eaf467850026c418a3bd2ffee9b9cdb9bac90d3",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Mcp/Worker/Program.cs",
+      "kind": "retired-source",
+      "sha256": "37c701880ab1caccbd24fd98627e84b950d7af7f60c7a25125c9e8c32af8cee9",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Memory.Semantic/App/MemoryAppRuntimeGateway.Transport.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "0d76e15e294cf556ad75d58c2c4f67c525d1fe6cec31feba7767d455600b3a7e",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Memory.Semantic/App/PackageModule.cs",
+      "kind": "retired-source",
+      "sha256": "f581c5e0690ab70baf59a26de76a4b9c720a154a10880787352c5f4ab784af7d",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Memory.Semantic/App/Sunder.Package.Agent.Memory.Semantic.App.csproj",
+      "kind": "retired-project",
+      "sha256": "a9b63a1b6ef7c1d72a15bc26f3d1a5c4cfec484fb56e94a1e791ad5e2498b552",
+      "captureFile": "retirement-history.json",
+      "inFrozenProjectInventory": true,
+      "inOriginalSolution": true,
+      "originalProjectSha256": "2fb17a2868b17c7fb26f1f710788395c935f04bc866a6c462dd27c3e99561c06"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Memory.Semantic/PackageDependency.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "d44f3395af684c0cfe0f90bd1f6537dd6f78a6370a44d8e6b5b6c093b14ab3f6",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Memory.Semantic/Program.cs",
+      "kind": "retired-source",
+      "sha256": "ed484e12d8f151466cee0aa60169569982c9c4ef55b6f36a2c1e5c4e6c34edf9",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Memory.Semantic/Protocol/AssemblyInfo.cs",
+      "kind": "retired-support",
+      "sha256": "bbb62d7857c904641391f27be23ce5e6c27819060cdcc7d4a8f935d6864d198e",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "bbb62d7857c904641391f27be23ce5e6c27819060cdcc7d4a8f935d6864d198e"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Memory.Semantic/Protocol/Contracts/memory-inspector.rpc.json",
+      "kind": "retired-support",
+      "sha256": "54d409128c425de7160dce57372471f5d74f6e8fa58f021b13e509acc69049f7",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "54d409128c425de7160dce57372471f5d74f6e8fa58f021b13e509acc69049f7"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Memory.Semantic/Protocol/MemoryInspectorRpc.cs",
+      "kind": "retired-support",
+      "sha256": "ea2f2ee9ba419733bcc5a9d2ec582cd3e29f271428c697f64a8722805c9ab202",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "ea2f2ee9ba419733bcc5a9d2ec582cd3e29f271428c697f64a8722805c9ab202"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Memory.Semantic/Protocol/MemorySemanticProtocol.cs",
+      "kind": "retired-support",
+      "sha256": "fe9007b3875bb6a2e4573ac504b9ce3c0a4c893dd9dacd3b5442d170e5cc3a46",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "fe9007b3875bb6a2e4573ac504b9ce3c0a4c893dd9dacd3b5442d170e5cc3a46"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Memory.Semantic/Protocol/Sunder.Package.Agent.Memory.Semantic.Protocol.csproj",
+      "kind": "retired-project",
+      "sha256": "eb2b2295faf0727e0174f6fe7ff0bff0ee3b36f2f02aa28b4341f9c906b83bce",
+      "captureFile": "retirement-history.json",
+      "inFrozenProjectInventory": true,
+      "inOriginalSolution": true,
+      "originalProjectSha256": "d125293cb4a0ec1970f1924ba221f60c94a3b04185005c9c72166b7c1dd1af54"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Memory.Semantic/Protocol/packages.release.lock.json",
+      "kind": "retired-support",
+      "sha256": "dbb908c380db8f38b5aaeb1f9dee5e509c4f20e50cc872f72cea1232c9e4c5d7",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "dbb908c380db8f38b5aaeb1f9dee5e509c4f20e50cc872f72cea1232c9e4c5d7"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Memory.Semantic/Rpc/MemoryProviderCatalog.cs",
+      "kind": "retired-source",
+      "sha256": "16f6da4abc70ebd4fe67b2a81d1ca6964ed7d89c5a4708573f0b49c42656ab1e",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Memory.Semantic/Runtime/LegacySemanticMemoryRpcCatalog.cs",
+      "kind": "retired-source",
+      "sha256": "743f0b8f5b04f9620929e33732d33d5287a546015a4bc02edd8d8805a2d49b87",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Memory.Semantic/Runtime/MemoryWorkerBindings.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "68a2abf44045505bb6f515ffa91b53809e3a367e989cef5b57b99074f778a21a",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Memory.Semantic/Runtime/MemoryWorkerComposition.cs",
+      "kind": "retired-source",
+      "sha256": "9e058b19a9e8ea3d7fbd238ecfe48d7e61186c5ad3225d3d5879fc610c180a87",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Memory.Semantic/Services/SemanticModelRuntimeResolver.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "8df9f988fe39975732d8ea58f6110e292cdac4130f833a55002004790c5cf380",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.Anthropic/App/PackageModule.cs",
+      "kind": "retired-source",
+      "sha256": "2ddd502d3f79744d223db2ca3ad6147e7a41e31d8f9ba1bc063b1bfb4e8b9b52",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.Anthropic/App/ProviderCredentialOwnerRpcClient.cs",
+      "kind": "retired-source",
+      "sha256": "50db22ee5f2c98f82e0ccc4b162262af6624312f13f4838af6a7597675b39b68",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.Anthropic/App/Sunder.Package.Agent.Provider.Anthropic.App.csproj",
+      "kind": "retired-project",
+      "sha256": "9d5682db139eecc026b8cd78789fa1f757c150dcf2df796e533f58e88d2777b9",
+      "captureFile": "retirement-history.json",
+      "inFrozenProjectInventory": true,
+      "inOriginalSolution": true,
+      "originalProjectSha256": "88af44063a74cdc69e52b1ca6ee316c23762769a9cff080b060f9f9cf66460db"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.Anthropic/PackageDependency.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "d44f3395af684c0cfe0f90bd1f6537dd6f78a6370a44d8e6b5b6c093b14ab3f6",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.Anthropic/Program.cs",
+      "kind": "retired-source",
+      "sha256": "cfcf8f318e5efb9ea7102094f8fd4d8f5fc87bfa73fa00703652dfecd48a0c30",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.Anthropic/Protocol/AnthropicCredentialProtocol.cs",
+      "kind": "retired-support",
+      "sha256": "695791052dc7b6f98658828dacd84c5eaa3da70c053cff48f7154dee43116599",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "695791052dc7b6f98658828dacd84c5eaa3da70c053cff48f7154dee43116599"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.Anthropic/Protocol/Contracts/credential-settings.rpc.json",
+      "kind": "retired-support",
+      "sha256": "82e786f54f6ecb4687a66554a2666c5feb64d80e1f229df9e3c312193ba9033c",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "82e786f54f6ecb4687a66554a2666c5feb64d80e1f229df9e3c312193ba9033c"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.Anthropic/Protocol/Properties/AssemblyInfo.cs",
+      "kind": "retired-source",
+      "sha256": "177ce6d8b35e4c54b6e79ced6dd6eaa0d891e258071b25c35b44289c6af23b92",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.Anthropic/Protocol/Sunder.Package.Agent.Provider.Anthropic.Protocol.csproj",
+      "kind": "retired-project",
+      "sha256": "72281b5514bb1bf71471d751fbb2c9602f38f65c827ac419308e2a2aaee7751e",
+      "captureFile": "retirement-history.json",
+      "inFrozenProjectInventory": true,
+      "inOriginalSolution": true,
+      "originalProjectSha256": "72281b5514bb1bf71471d751fbb2c9602f38f65c827ac419308e2a2aaee7751e"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.Anthropic/Protocol/packages.release.lock.json",
+      "kind": "retired-support",
+      "sha256": "4b7d88cc0634e16662b5f418a12c476f62575d6edbabe5274d2df7f51f41ccd3",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "4b7d88cc0634e16662b5f418a12c476f62575d6edbabe5274d2df7f51f41ccd3"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.Anthropic/ProviderCredentialRpcProvider.cs",
+      "kind": "retired-source",
+      "sha256": "5e877bedd03cb6e4117fc35509b0ac2a8a716a6868566422aac912051635260c",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.Anthropic/Rpc/AnthropicWorkerBindings.cs",
+      "kind": "retired-source",
+      "sha256": "714b2a384124261f36e0f9bab8a714a4959ab0db11a6bd6c25e7672fbde8d264",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.Anthropic/Runtime/AnthropicWorkerBindings.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "1f43ede6fc23996abe66d682d40685b683d1fc66aa400119aa912959548da140",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.Anthropic/Runtime/AnthropicWorkerComposition.cs",
+      "kind": "retired-source",
+      "sha256": "bf763f8ad050d2789fdfaf7c6e4d14081ef2880e504a5d2638d85117b0920bc8",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.Gemini/App/PackageModule.cs",
+      "kind": "retired-source",
+      "sha256": "b8764c252e8f760b1235f4c2e9816c79cdf48c090a84bdbc7684171d866155e6",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.Gemini/App/ProviderCredentialOwnerRpcClient.cs",
+      "kind": "retired-source",
+      "sha256": "eddd230e62df2780d01ce828a7511a978b872d964e30fddff3e5388a6769f1f6",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.Gemini/App/Sunder.Package.Agent.Provider.Gemini.App.csproj",
+      "kind": "retired-project",
+      "sha256": "7e6a6d5f00ad0ae41eb4789566e159bb34d12f1b568ba5b71fded8451237ae8a",
+      "captureFile": "retirement-history.json",
+      "inFrozenProjectInventory": true,
+      "inOriginalSolution": true,
+      "originalProjectSha256": "20fe8c63e136baa1eff03b260dc96003bd8af6b1d192472ae8a4d8604e45203a"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.Gemini/PackageDependency.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "d44f3395af684c0cfe0f90bd1f6537dd6f78a6370a44d8e6b5b6c093b14ab3f6",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.Gemini/Program.cs",
+      "kind": "retired-source",
+      "sha256": "25a778e61599961c6b5907aba1bd1738933fd000a1ca8ed6afa30de37d0d390f",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.Gemini/Protocol/Contracts/credential-settings.rpc.json",
+      "kind": "retired-support",
+      "sha256": "ed8c55f2735306f4df4f5d4f7603210c84d87f77e945dd14bdfa38aef04646e4",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "ed8c55f2735306f4df4f5d4f7603210c84d87f77e945dd14bdfa38aef04646e4"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.Gemini/Protocol/GeminiCredentialProtocol.cs",
+      "kind": "retired-support",
+      "sha256": "743d5c614da32d623d25c723a938d4ccfc2a19704179c150f2c60173ea73e00a",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "743d5c614da32d623d25c723a938d4ccfc2a19704179c150f2c60173ea73e00a"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.Gemini/Protocol/Properties/AssemblyInfo.cs",
+      "kind": "retired-source",
+      "sha256": "82f50e6fda087bb0640e1d091d5b7e20a136a0cd3c576838edaddf6877a593f4",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.Gemini/Protocol/Sunder.Package.Agent.Provider.Gemini.Protocol.csproj",
+      "kind": "retired-project",
+      "sha256": "30534d928650efb2712a957c5f28cb179b1dd2ab1d8f00455045642eab2321b4",
+      "captureFile": "retirement-history.json",
+      "inFrozenProjectInventory": true,
+      "inOriginalSolution": true,
+      "originalProjectSha256": "30534d928650efb2712a957c5f28cb179b1dd2ab1d8f00455045642eab2321b4"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.Gemini/Protocol/packages.release.lock.json",
+      "kind": "retired-support",
+      "sha256": "4b7d88cc0634e16662b5f418a12c476f62575d6edbabe5274d2df7f51f41ccd3",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "4b7d88cc0634e16662b5f418a12c476f62575d6edbabe5274d2df7f51f41ccd3"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.Gemini/ProviderCredentialRpcProvider.cs",
+      "kind": "retired-source",
+      "sha256": "f1484243d54f3b1ef2466e73fd06d2dc948bbc59b80b88d7fa6ffbf1bfaee4e5",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.Gemini/Rpc/GeminiWorkerBindings.cs",
+      "kind": "retired-source",
+      "sha256": "b1304a737a899447e0fc2fcee0fdd1d7a32c80053c53258ff241e7a854b21e0b",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.Gemini/Runtime/GeminiWorkerBindings.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "36d756c69dbcbdd3aabbd433acd739f4e6fbbe899ad2c58ba622fcba3a053b19",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.Gemini/Runtime/GeminiWorkerComposition.cs",
+      "kind": "retired-source",
+      "sha256": "b9ae460daf24ba68e0fb992087a93e8505f2c2dda29fc848f14468782c60a3f1",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.LMStudio/App/PackageModule.cs",
+      "kind": "retired-source",
+      "sha256": "e8cf1b31daf4c8abc8fcb73a5860f1b9fc34528b666b9fe5e74dad65e0da7ada",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.LMStudio/App/ProviderCredentialOwnerRpcClient.cs",
+      "kind": "retired-source",
+      "sha256": "cf657fc2390f9c2c874e080dbab7f230f7a562b5aca254f9821f0d92475374be",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.LMStudio/App/Sunder.Package.Agent.Provider.LMStudio.App.csproj",
+      "kind": "retired-project",
+      "sha256": "9146c192ac6716cd3a58a6d7148f91aa084126cdaae050166568c6c8d46b6bfd",
+      "captureFile": "retirement-history.json",
+      "inFrozenProjectInventory": true,
+      "inOriginalSolution": true,
+      "originalProjectSha256": "04d2d09b4cce0cb20198008e7f3273b620339b70d3548a05b8a0a9b1157b248b"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.LMStudio/PackageDependency.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "d44f3395af684c0cfe0f90bd1f6537dd6f78a6370a44d8e6b5b6c093b14ab3f6",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.LMStudio/Program.cs",
+      "kind": "retired-source",
+      "sha256": "981851d5b0b71aa125210c2e235e0d5d145a111e38c36aa6154d95d313f901b7",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.LMStudio/Protocol/Contracts/credential-settings.rpc.json",
+      "kind": "retired-support",
+      "sha256": "d55c6fbcc74a3838f5da86836a85f7290db30dd153c1afb1877bf2d543438c30",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "d55c6fbcc74a3838f5da86836a85f7290db30dd153c1afb1877bf2d543438c30"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.LMStudio/Protocol/LMStudioCredentialProtocol.cs",
+      "kind": "retired-support",
+      "sha256": "0c75cb78d9de198743cd03ea91c0e46a7ba6e70eed8efda1b2207dcd854a9e16",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "0c75cb78d9de198743cd03ea91c0e46a7ba6e70eed8efda1b2207dcd854a9e16"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.LMStudio/Protocol/Properties/AssemblyInfo.cs",
+      "kind": "retired-source",
+      "sha256": "ec8ddedf6ebd8c4722af7f6dc2e0dd508abdb7e2743fcbdfbd66aaf9924c133d",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.LMStudio/Protocol/Sunder.Package.Agent.Provider.LMStudio.Protocol.csproj",
+      "kind": "retired-project",
+      "sha256": "247c0f07e654697a4273541b79522376906c277f78d41531e6cc2125e6e89472",
+      "captureFile": "retirement-history.json",
+      "inFrozenProjectInventory": true,
+      "inOriginalSolution": true,
+      "originalProjectSha256": "247c0f07e654697a4273541b79522376906c277f78d41531e6cc2125e6e89472"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.LMStudio/Protocol/packages.release.lock.json",
+      "kind": "retired-support",
+      "sha256": "4b7d88cc0634e16662b5f418a12c476f62575d6edbabe5274d2df7f51f41ccd3",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "4b7d88cc0634e16662b5f418a12c476f62575d6edbabe5274d2df7f51f41ccd3"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.LMStudio/ProviderCredentialRpcProvider.cs",
+      "kind": "retired-source",
+      "sha256": "764edd584f7a4ff3051ebeee15064690ccf35bdbabfb30bcc96dc54fbc1146c5",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.LMStudio/Rpc/LMStudioWorkerBindings.cs",
+      "kind": "retired-source",
+      "sha256": "ccda71d05f9d70500a6624480048e9e9d742fda8f1c534393d8c88dd6230c03f",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.LMStudio/Runtime/LMStudioWorkerBindings.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "b1a4db3feff3ebe386815ec2274f0832a271e130669fdb6ca2cd5db9c793ad65",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.LMStudio/Runtime/LMStudioWorkerComposition.cs",
+      "kind": "retired-source",
+      "sha256": "6dec2c8aeae683ddcef90429e8ee747f4af204bb1a75ed7690a415be2c46d5fd",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.OpenAI/App/PackageModule.cs",
+      "kind": "retired-source",
+      "sha256": "ed365e9d26c2d5fb3a7faaab763356ef0ab50424c38ceb8fb585f93e9e3623fa",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.OpenAI/App/Sunder.Package.Agent.Provider.OpenAI.App.csproj",
+      "kind": "retired-project",
+      "sha256": "69110a32368a075eda454b640bea5305a960ad41e28a280e0143fa17030c84f1",
+      "captureFile": "retirement-history.json",
+      "inFrozenProjectInventory": true,
+      "inOriginalSolution": true,
+      "originalProjectSha256": "4ff9ecc880eff2f47a2e0a48525aab77f1b576703fd6b059a7076c3a4d75cec0"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.OpenAI/Management/OpenAiManagementRpcProvider.cs",
+      "kind": "retired-source",
+      "sha256": "c4c438c843a85d244488f2ef4748b514a48d46bb4bf6b50a16b5013e436394cd",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.OpenAI/Management/OpenAiOwnerManagementRpcClient.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "4a960482bdf9df48f2b931d1c206b99d1bfc88a8e05e23b22967d935bfc6e865",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.OpenAI/PackageDependency.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "d44f3395af684c0cfe0f90bd1f6537dd6f78a6370a44d8e6b5b6c093b14ab3f6",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.OpenAI/Rpc/OpenAiWorkerBindings.cs",
+      "kind": "retired-source",
+      "sha256": "5a1fa2f9f5f4981efa3b50aed43e3936413698d75ed49274899fb01e606f311c",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.OpenAI/Shared/Contracts/openai-management.rpc.json",
+      "kind": "retired-support",
+      "sha256": "8e2d82042824dc443e682e353923b0c8feb67df982eae9a8380142188fb1ce30",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "8e2d82042824dc443e682e353923b0c8feb67df982eae9a8380142188fb1ce30"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.OpenAI/Shared/OpenAiManagementProtocol.cs",
+      "kind": "retired-support",
+      "sha256": "a516782d9f36a01954ac36156f10362d2ad0e1c5217ed796731f09a9ceb5d827",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "a516782d9f36a01954ac36156f10362d2ad0e1c5217ed796731f09a9ceb5d827"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.OpenAI/Shared/Properties/AssemblyInfo.cs",
+      "kind": "retired-source",
+      "sha256": "f827de9cbe5983200af2841946bdbfc4af08096528bd2dbc95332dd33e70382e",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.OpenAI/Shared/Sunder.Package.Agent.Provider.OpenAI.Shared.csproj",
+      "kind": "retired-project",
+      "sha256": "5fd7326d3823e305193053ff6d72bddc4398a2394f9b26d1fc3c46652f920a5e",
+      "captureFile": "retirement-history.json",
+      "inFrozenProjectInventory": true,
+      "inOriginalSolution": true,
+      "originalProjectSha256": "ed0d203813e68bba602ac63ed4a1520199daf1d21643224053c51fac6b8c2f73"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.OpenAI/Shared/packages.release.lock.json",
+      "kind": "retired-support",
+      "sha256": "dbb908c380db8f38b5aaeb1f9dee5e509c4f20e50cc872f72cea1232c9e4c5d7",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "dbb908c380db8f38b5aaeb1f9dee5e509c4f20e50cc872f72cea1232c9e4c5d7"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.OpenAI/Worker/OpenAiWorkerBindings.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "4e1f649e1146b2dabd090ab038a4318f8fb60cea28a3f7af4d626f24f5117445",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.OpenAI/Worker/OpenAiWorkerConfiguration.cs",
+      "kind": "retired-source",
+      "sha256": "59bc27b91c0fe9904553114c58c549f4864dd231b3c130e7eb15448e3d97a18a",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.OpenAI/Worker/Program.cs",
+      "kind": "retired-source",
+      "sha256": "d68954b8a485ba6cbc865ba73b9674c008f1b7fdfa7665ec28e802a4242af754",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Skills/App/PackageModule.cs",
+      "kind": "retired-source",
+      "sha256": "a0295bc995fb29508c91d939e5f8142c5fa93be1941b3ece4d54f505d530f090",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Skills/App/SkillsApp.csproj",
+      "kind": "retired-project",
+      "sha256": "095a797c28c25b0734e115644d9cfb923e7b46b0a41de9e8a6331fbde2008888",
+      "captureFile": "retirement-history.json",
+      "inFrozenProjectInventory": true,
+      "inOriginalSolution": true,
+      "originalProjectSha256": "41ba6307b0bf4eeb671349e124ac7dc392f131ca2338769261ddc90098ff3572"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Skills/PackageDependency.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "d44f3395af684c0cfe0f90bd1f6537dd6f78a6370a44d8e6b5b6c093b14ab3f6",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Skills/Program.cs",
+      "kind": "retired-source",
+      "sha256": "cb2bb400dc0bf475a9d752c014d5af5b5f4cb8858d647427bc95eacad00fd34d",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Skills/Protocol/AssemblyInfo.cs",
+      "kind": "retired-support",
+      "sha256": "7208b26611962d39971797b3fa58813cfd60e0567a6ae36a081504cab3c5a9b1",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "7208b26611962d39971797b3fa58813cfd60e0567a6ae36a081504cab3c5a9b1"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Skills/Protocol/Contracts/skills-owner.rpc.json",
+      "kind": "retired-support",
+      "sha256": "80ed13997571204d6ab38a282285646bfed81a08ed5477b2f8e9442f117edc47",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "80ed13997571204d6ab38a282285646bfed81a08ed5477b2f8e9442f117edc47"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Skills/Protocol/SkillsOwnerProtocol.cs",
+      "kind": "retired-support",
+      "sha256": "047b929e68a2838e315ef9032c561320b364106972492cdd8d45fffc672e0917",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "047b929e68a2838e315ef9032c561320b364106972492cdd8d45fffc672e0917"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Skills/Protocol/SkillsProtocol.csproj",
+      "kind": "retired-project",
+      "sha256": "10f5664e2bf8e17c95a93d4c349f2e0a1d8b12b53554df0ebdce229bbdce3b40",
+      "captureFile": "retirement-history.json",
+      "inFrozenProjectInventory": true,
+      "inOriginalSolution": true,
+      "originalProjectSha256": "a42a15f892be504ffd650875095ba739a06f15198831b97cdee6d90a541a05bd"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Skills/Protocol/packages.release.lock.json",
+      "kind": "retired-support",
+      "sha256": "4b7d88cc0634e16662b5f418a12c476f62575d6edbabe5274d2df7f51f41ccd3",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "4b7d88cc0634e16662b5f418a12c476f62575d6edbabe5274d2df7f51f41ccd3"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Skills/Runtime/LegacySkillsRuntimeBindings.cs",
+      "kind": "retired-source",
+      "sha256": "87cea978c473994a7810aee86f7a9a31797af34c5e62c1ada1fd87a0dfea1063",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Skills/Runtime/SkillOwnerRpc.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "688ba7597e73b9baea72122ab3c3c40a424e382bca7f65b911aa8d88b49b0296",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Skills/Runtime/SkillsWorkerBindings.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "044f4cf15415cd12eb55e84eeb1b92a0a9685c7d2959fa7088d315cab0766f61",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Skills/Runtime/SkillsWorkerComposition.cs",
+      "kind": "retired-source",
+      "sha256": "c94dbf6e2264803d741e89a06cf0ecfd14e0519dd72d54d985c2088e2e972617",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Skills/Services/SkillsFeature.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "af55960ac20dd22b86dd9cf92aeb26470df86707512aa696d6a86758019e3a4b",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Subagents/App/PackageModule.cs",
+      "kind": "retired-source",
+      "sha256": "ccd0679ffa11423d79f924902a511840fb3b30a2e5d3a7940853cb78f3dc946a",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Subagents/App/SubagentsApp.csproj",
+      "kind": "retired-project",
+      "sha256": "767bc5ead55a045446bd7709b8909a05577d6c042e1b34f041e8fe91665d1e71",
+      "captureFile": "retirement-history.json",
+      "inFrozenProjectInventory": true,
+      "inOriginalSolution": true,
+      "originalProjectSha256": "967d7144d013cfc84e9169125955f044800ab5eec400494a1894b25129b7a068"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Subagents/PackageDependency.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "d44f3395af684c0cfe0f90bd1f6537dd6f78a6370a44d8e6b5b6c093b14ab3f6",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Subagents/Program.cs",
+      "kind": "retired-source",
+      "sha256": "f4b79b731661b517c9509295edef44dbca5eb2dbf15ed49efe24bbd9a0a985c4",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Subagents/Protocol/AssemblyInfo.cs",
+      "kind": "retired-support",
+      "sha256": "89f8181201ad0f160f099d44ada32e0e11137721f3c9b36e8935dbdbf0d404f8",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "89f8181201ad0f160f099d44ada32e0e11137721f3c9b36e8935dbdbf0d404f8"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Subagents/Protocol/Contracts/subagents-owner.rpc.json",
+      "kind": "retired-support",
+      "sha256": "8cf7fde41b9cedf197477ea3691598a8d11416d0ff9a1dd07a6d17220da063db",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "8cf7fde41b9cedf197477ea3691598a8d11416d0ff9a1dd07a6d17220da063db"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Subagents/Protocol/SubagentsOwnerProtocol.cs",
+      "kind": "retired-support",
+      "sha256": "7a92b2adc7cc1c6dd5d578ab1982d3f3e92be8f8ccd21c8ff48e1649a2c804b9",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "7a92b2adc7cc1c6dd5d578ab1982d3f3e92be8f8ccd21c8ff48e1649a2c804b9"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Subagents/Protocol/SubagentsProtocol.csproj",
+      "kind": "retired-project",
+      "sha256": "d4aef2d40944dbbf05c803b0d3f6ce71655ac5af26b972939a504bb2e8e3e75f",
+      "captureFile": "retirement-history.json",
+      "inFrozenProjectInventory": true,
+      "inOriginalSolution": true,
+      "originalProjectSha256": "c58b4268b1f8faab9d17758d449b0e8c650a85067b39ca142a863b32cecef290"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Subagents/Protocol/packages.release.lock.json",
+      "kind": "retired-support",
+      "sha256": "dbb908c380db8f38b5aaeb1f9dee5e509c4f20e50cc872f72cea1232c9e4c5d7",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "dbb908c380db8f38b5aaeb1f9dee5e509c4f20e50cc872f72cea1232c9e4c5d7"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Subagents/Runtime/LegacySubagentRuntimeBindings.cs",
+      "kind": "retired-source",
+      "sha256": "0090eca6e960b5c8de293f267cd3368718d62ebcdba46925ef5c71adc0f3d905",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Subagents/Runtime/ProviderModelCatalogAdapter.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "de9e6b81276e5baf60b779f1db30bcb2583d500492f0a2707e9408be9f957b75",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Subagents/Runtime/SubagentLocalManagementGateway.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "43c88b7131c37bd4c5f04ae9a9ce2556730d20e6b28bd5266f31c2929a73c635",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Subagents/Runtime/SubagentOwnerRpc.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "4ba6edce6c94bf92b33f0e73b3d1f6bf95b75ce5a093c770b0121bb091c56b2b",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Subagents/Runtime/SubagentRuntimeChangeStream.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "e99fe9573b9c0820e62aabfa7e6755a81f0e079072365a0d4e926f03326410cc",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Subagents/Runtime/SubagentRuntimeHandler.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "f0aaf513861361b7757043d3c26ba942541094eeb7c02589c65c33fae70a9442",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Subagents/Runtime/SubagentsWorkerBindings.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "d7f113599128694f8db5f14cf9251e576e0cfe819ebafb4d2740db51b8083810",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Subagents/Runtime/SubagentsWorkerComposition.cs",
+      "kind": "retired-source",
+      "sha256": "b0e027e85ed54916c1a2862ed945b9819b3f63f18b7941d2177667d563bd1b9c",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Subagents/Runtime/SubsessionLocalRuntimeAdapter.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "f8764ddc99ed37ac9ad6fcb722be3a218f6628c391ea14f10d40685681f6541a",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Subagents/Services/SubagentChildRunCoordinator.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "ff357139500585e826104dc077645002a62d45c077b46cde3e1bd8b9d680f432",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Subagents/Services/SubagentDescriptorSchema.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "475bf6b172cec478f4a27d04705716db6f57cb83374e73f8def03f955653f772",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Subagents/Services/SubagentEditorCapabilityCatalog.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "2317902d77322ce633ca48a1b3b20d177416c82347e689a1eae81a15a4ee4619",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Subagents/Services/SubagentFeature.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "f137dbabd40e8ee7c5a1521552a4d4a2c543817fcb512ef8859a98edcad3d6d4",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Subagents/Services/SubagentPermissionStatusAdapter.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "c4edaa151fe72552c657b1ce275e050a9f0eba3b3e59b0e2263ab57178d91a2b",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Subagents/Services/SubagentStackContributor.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "4f13cb219c8c96675f550df1f6484577634198a10ff147592add4bf0d2c8721f",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Tools.Files/FilesToolSource.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "8b0b737bf1b7e2c2bd9134eef1411c12ca2b3fc9126efa2c501cd692983879db",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Tools.Files/PackageDependency.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "d44f3395af684c0cfe0f90bd1f6537dd6f78a6370a44d8e6b5b6c093b14ab3f6",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Tools.Files/Program.cs",
+      "kind": "retired-source",
+      "sha256": "d37f6b831344fd00cb9c08af14fb75750fefce135f3fbb30fc45c4fbfc38e939",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Tools.Files/Runtime/FilesExecutionFacets.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "b3aff44736167d95b2bcf4a42bedde6aaf95ebb18dd25bda4b6df5368386e87a",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Tools.Files/Runtime/FilesWorkerBindings.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "19c2d54765f4fc415d7955851578f473a69c2a25a230bdabdaba812a17ac6b9e",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Tools.Files/Runtime/FilesWorkerComposition.cs",
+      "kind": "retired-source",
+      "sha256": "bc9d2c998de395fa660bee7eb8699f8fbdfe40e6444feb8ba7d5fd12df6aeebc",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Tools.Shell/PackageDependency.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "d44f3395af684c0cfe0f90bd1f6537dd6f78a6370a44d8e6b5b6c093b14ab3f6",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Tools.Shell/Program.cs",
+      "kind": "retired-source",
+      "sha256": "6d10e219ccfd054cb2df5bb4bca701a7d7e95ce7aa8f8d1d66952d25bd38a414",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Tools.Shell/Runtime/ShellWorkerBindings.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "1ebe366f6f807f8074459a512b88dd954493937dc555ed3f2b9aae34e84f6e7c",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Tools.Shell/Runtime/ShellWorkerComposition.cs",
+      "kind": "retired-source",
+      "sha256": "bcaca95d025e9e72efd7a98d46dcd5de3f2132f4a9d505bc9ca22fdab059b67a",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Tools.Shell/ShellToolSource.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "b44c0dc5a1c15bf064840e9c48dc6c51589f15078a792266cce58108fdb70426",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Tools.Web/PackageDependency.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "d44f3395af684c0cfe0f90bd1f6537dd6f78a6370a44d8e6b5b6c093b14ab3f6",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Tools.Web/Program.cs",
+      "kind": "retired-source",
+      "sha256": "981d1a7dd768cb72304b83169980a468755cca56842480747d51cf6a152f1396",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Tools.Web/Rpc/WebWorkerBindings.cs",
+      "kind": "retired-source",
+      "sha256": "b05baecc560a748ee282dea60500f697df568dd443507a2b5c194ab92ed7a087",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Tools.Web/Runtime/WebWorkerBindings.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "0e4abdbcb3241e963c06f894585da97f5c140e31bacb3da90e44a08b1bca7300",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Tools.Web/Runtime/WebWorkerComposition.cs",
+      "kind": "retired-source",
+      "sha256": "1e11c84dd29c19d2c86f66fdb4029cd9c7365446655bc728ee601d8ac2c90993",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent/App/PackageModule.cs",
+      "kind": "retired-source",
+      "sha256": "905f774bf00064a3b4667c44f7c2d43e7d939759ce386aa72b58fb667a193495",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent/App/Runtime/AgentOwnerRpcClient.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "71bdad05f6ab88fb2a89f961cea6bf2c675e5cddd6bdde6cdfa7d20603f561f1",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent/App/Runtime/AgentRuntimeOperations.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "d94a1b2ade49dccef1405fb126f9814fe8371c72eb700fbdd347344c29e77a6e",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent/App/Runtime/AgentWorkspaceEditorBindings.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "4d0ce36caf9aa624ae0eb45c927034da9fcfc18893a6e188085899b1ac0e6790",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent/App/Sunder.Package.Agent.App.csproj",
+      "kind": "retired-project",
+      "sha256": "925889eeabca14da912100db5f13166912a3922153fe366c186948fbde8f6956",
+      "captureFile": "retirement-history.json",
+      "inFrozenProjectInventory": true,
+      "inOriginalSolution": true,
+      "originalProjectSha256": "6ff3e2f7ca789ba9028b6fe120706669fc7613510843e1ed5b6f95936ff7f57c"
+    },
+    {
+      "path": "src/Sunder.Package.Agent/OwnerProtocol/AgentOwnerRuntimeRpc.cs",
+      "kind": "retired-support",
+      "sha256": "bf1c9c60b532e781360e6e8bb238f0bb012beab5905ab3dacb17ec4dd388e574",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "ac3b45b38db7f07b2fae525954613962af5dadebcdda18318a4ae7ff100f5b39"
+    },
+    {
+      "path": "src/Sunder.Package.Agent/OwnerProtocol/AssemblyInfo.cs",
+      "kind": "retired-support",
+      "sha256": "acaebebcf005a4df48822bf751e33b7048681850bc21ddddb790ae752f34ef7b",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "acaebebcf005a4df48822bf751e33b7048681850bc21ddddb790ae752f34ef7b"
+    },
+    {
+      "path": "src/Sunder.Package.Agent/OwnerProtocol/Contracts/agent-owner-runtime.rpc.json",
+      "kind": "retired-support",
+      "sha256": "fc4c20608c72996f216c9298bf606eb9b2779f1d2bbe6d38f6e12f3c972bc1c2",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "fc4c20608c72996f216c9298bf606eb9b2779f1d2bbe6d38f6e12f3c972bc1c2"
+    },
+    {
+      "path": "src/Sunder.Package.Agent/OwnerProtocol/Sunder.Package.Agent.OwnerProtocol.csproj",
+      "kind": "retired-project",
+      "sha256": "32179fd0e82d0451ad04a65b078d9d4b4fccedd94d7e46ba7c81039a64cbc48f",
+      "captureFile": "retirement-history.json",
+      "inFrozenProjectInventory": true,
+      "inOriginalSolution": true,
+      "originalProjectSha256": "cf8be44f4e24f49f190cb5477576c677e0ad1c7693ca2331a24b4db658850ae5"
+    },
+    {
+      "path": "src/Sunder.Package.Agent/OwnerProtocol/packages.release.lock.json",
+      "kind": "retired-support",
+      "sha256": "dbb908c380db8f38b5aaeb1f9dee5e509c4f20e50cc872f72cea1232c9e4c5d7",
+      "captureFile": "helper-support-history.json",
+      "originalSourceSha256": "dbb908c380db8f38b5aaeb1f9dee5e509c4f20e50cc872f72cea1232c9e4c5d7"
+    },
+    {
+      "path": "src/Sunder.Package.Agent/PackageModule.cs",
+      "kind": "retired-source",
+      "sha256": "b8276a13cd3a3b3816aecc53772d8eab6eee02e7e18fa4ecb9010626e8d3a8ee",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent/Program.cs",
+      "kind": "retired-source",
+      "sha256": "cc2ff639354f46e2f8fd92e2ca9bf70c993e789fa9ec803e0f4371d008c5cde0",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent/Runtime/AgentWorkerComposition.cs",
+      "kind": "retired-source",
+      "sha256": "ec6be7dc54c263d6feace49fae4c4faae497e9e757ba68119e943e382b597f41",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent/Runtime/AgentWorkerProviderCatalog.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "e37302b85a488bacc050b3c18351dae41a9ee56c213651d9957a9d80eda4dfb8",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent/Runtime/Rpc/AgentBehaviorBindings.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "18cf367b479176a48a4935687b98d48ddff92c52725501ce45ae35c2713638c7",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent/Runtime/Rpc/AgentChatBindings.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "66fa21aa9a0b3804f5baae8147edef4bfdb1cfd2ff8abae219fc89faf523434b",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent/Runtime/Rpc/AgentCleanupBindings.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "7b32a67e1d07500c5e499f496d4b8334cb8b1c3aa19a371db300298f4050eb6e",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent/Runtime/Rpc/AgentEmbeddingBindings.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "2d823d81e2e2fcd885ccbf3f485bcb288e647402219062bfd053848baaf67e84",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent/Runtime/Rpc/AgentExecutionBindings.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "895f503e61c031528865ed5efafab936579fee60beb095adc9c21fc3f4d66ea2",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent/Runtime/Rpc/AgentMetadataBindings.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "97e8a56996eff7c3538b182902bc4601fa9224a978e81ea4c1dadf6a6ae68bb0",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent/Runtime/Rpc/AgentObservedToolBindings.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "2ca15a5637b5cef77f967e3eae9e03a295467ad4758891bc618f936f0e2c77ec",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent/Runtime/Rpc/AgentPromptContextBindings.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "70039e531a7bc574c2a1503ba2d8184fd125bf758803a0564138f58f5b06df19",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent/Runtime/Rpc/AgentSelectableBindings.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "194e652d72f3eb1b0238107c8132013641afd155cda497f5075ae7ebfb35cf20",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent/Runtime/Rpc/AgentToolBindings.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "00bad9d525387ffce7443ac4a2ea83c356205825aec40e3c1a59ef92b050f85e",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent/Runtime/Rpc/AgentToolProfileBindings.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "499848183d8c67de96730f0a63e0dc300200a0f17664224edc42586b6c5d91eb",
+      "captureFile": "retirement-history.json"
+    },
+    {
+      "path": "src/Sunder.Package.Agent/Runtime/Rpc/AgentWorkspacePathBindings.Legacy.cs",
+      "kind": "retired-source",
+      "sha256": "4f2b12b9cdc4d415b03c291e00174c301f051197558ff9cf5059b6231c73643c",
+      "captureFile": "retirement-history.json"
+    }
+  ]
+}

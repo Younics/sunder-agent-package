@@ -1,8 +1,12 @@
-using Sunder.Package.Agent.PackageViews;
+extern alias AgentApp;
+extern alias SubagentsApp;
+extern alias SubagentsWorker;
+
+using AgentApp::Sunder.Package.Agent.PackageViews;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
-using Sunder.Package.Agent.Subagents.PackageViews;
-using Sunder.Package.Agent.Subagents.Services;
+using SubagentsApp::Sunder.Package.Agent.Subagents.PackageViews;
+using SubagentsWorker::Sunder.Package.Agent.Subagents.Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -17,7 +21,7 @@ public sealed class EditorDirtyStateTests
         using var profileService = CreateProfileService(scope, extensionCatalog);
         var first = await profileService.CreateProfileAsync("Alpha");
         var second = await profileService.CreateProfileAsync("Beta");
-        using var viewModel = new AgentProfilesViewModel(profileService);
+        using var viewModel = RegressionTestAppViews.Profiles(profileService);
         await viewModel.InitializeAsync();
         await WaitUntilAsync(() => viewModel.SelectedProfile is not null && !viewModel.IsBusy);
 

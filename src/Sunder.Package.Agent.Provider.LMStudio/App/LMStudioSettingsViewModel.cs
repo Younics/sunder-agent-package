@@ -37,6 +37,7 @@ public sealed partial class LMStudioSettingsViewModel : ObservableObject,
     {
     }
 
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
     internal LMStudioSettingsViewModel(
         IPackageContext packageContext,
         IProviderCredentialOwnerClient credentials)

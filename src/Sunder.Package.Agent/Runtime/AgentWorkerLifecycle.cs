@@ -11,7 +11,9 @@ namespace Sunder.Package.Agent.Runtime;
 internal sealed class AgentWorkerLifecycle : ISunderWorkerLifecycleService
 {
     private static readonly TimeSpan DefaultCleanupTimeout = TimeSpan.FromSeconds(5);
-    private readonly IServiceProvider _services;
+    private readonly IServiceProvider? _services;
+    private readonly Func<AgentRpcCatalog> _catalog;
+    private readonly Func<AgentRuntimeStartupService> _createStartup;
     private readonly IReadOnlyList<DeferredAgentRpcServiceHandler> _providers;
     private readonly TimeSpan _cleanupTimeout;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -24,12 +26,23 @@ internal sealed class AgentWorkerLifecycle : ISunderWorkerLifecycleService
     private int _generationFaultObserved;
     private int _stopping;
 
+    [ActivatorUtilitiesConstructor]
+    internal AgentWorkerLifecycle(AgentRpcCatalog catalog, Lazy<AgentRuntimeStartupService> startup)
+    {
+        _catalog = () => catalog;
+        _createStartup = () => startup.Value;
+        _providers = [];
+        _cleanupTimeout = DefaultCleanupTimeout;
+    }
+
     internal AgentWorkerLifecycle(
         IServiceProvider services,
         IReadOnlyList<DeferredAgentRpcServiceHandler> providers,
         TimeSpan? cleanupTimeout = null)
     {
         _services = services;
+        _catalog = services.GetRequiredService<AgentRpcCatalog>;
+        _createStartup = services.GetRequiredService<AgentRuntimeStartupService>;
         _providers = providers;
         _cleanupTimeout = cleanupTimeout ?? DefaultCleanupTimeout;
         if (_cleanupTimeout <= TimeSpan.Zero)
@@ -93,14 +106,14 @@ internal sealed class AgentWorkerLifecycle : ISunderWorkerLifecycleService
                 ?? throw new InvalidOperationException(
                     "The Agent Worker must receive an exact Runtime generation before activation.");
 
-            var catalog = _services.GetRequiredService<AgentRpcCatalog>();
-            var startup = _services.GetRequiredService<AgentRuntimeStartupService>();
+            var catalog = _catalog();
+            var startup = _createStartup();
             try
             {
                 await startup.StartAsync(cancellationToken).ConfigureAwait(false);
                 await startup.CommitGenerationAsync(generation, cancellationToken).ConfigureAwait(false);
                 catalog.StartWatching();
-                foreach (var provider in _providers) provider.Activate(_services);
+                foreach (var provider in _providers) provider.Activate(_services!);
             }
             catch
             {
@@ -207,7 +220,7 @@ internal sealed class AgentWorkerLifecycle : ISunderWorkerLifecycleService
         if (Interlocked.Exchange(ref _catalogDisposed, 1) != 0) return null;
         try
         {
-            _services.GetRequiredService<AgentRpcCatalog>().Dispose();
+            _catalog().Dispose();
             return null;
         }
         catch (Exception exception)

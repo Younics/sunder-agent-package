@@ -22,7 +22,10 @@ public sealed partial class MemoryLocalStore : IDisposable, IAsyncDisposable
     private readonly object _initializationSync = new();
     private readonly string _contentRootPath;
     private readonly IMemoryPhysicalMaintenance _physicalMaintenance;
-    private readonly SqliteWalCheckpointMaintenance _walCheckpointMaintenance;
+    private readonly IPackageRoleLocalWorkspace _workspace;
+    private readonly ILogger<MemoryLocalStore> _logger;
+    private string? _databasePath;
+    private SqliteWalCheckpointMaintenance? _walCheckpointMaintenance;
     private MemoryRepository _memories = null!;
     private EvidenceRepository _evidence = null!;
     private EmbeddingRepository _embeddings = null!;
@@ -49,34 +52,33 @@ public sealed partial class MemoryLocalStore : IDisposable, IAsyncDisposable
         ArgumentNullException.ThrowIfNull(physicalMaintenance);
         _contentRootPath = packageContext.ContentRootPath;
         _physicalMaintenance = physicalMaintenance;
-        DatabasePath = packageContext.Storage.RoleLocalWorkspace.GetLocalPath("memory/agent-memory.db");
-        _walCheckpointMaintenance = new SqliteWalCheckpointMaintenance(
-            DatabasePath,
-            "Semantic memory store",
-            packageContext.Logging.LoggerFactory.CreateLogger<MemoryLocalStore>());
+        _workspace = packageContext.Storage.RoleLocalWorkspace;
+        _logger = packageContext.Logging.LoggerFactory.CreateLogger<MemoryLocalStore>();
         if (initialize)
         {
             Initialize();
         }
     }
 
-    public string DatabasePath { get; }
+    public string DatabasePath => Volatile.Read(ref _databasePath)
+        ?? throw new InvalidOperationException("The semantic memory store is not initialized.");
 
-    internal int WalCheckpointAttemptCount => _walCheckpointMaintenance.AttemptCount;
+    internal int WalCheckpointAttemptCount => WalCheckpointMaintenance.AttemptCount;
 
     internal Task<bool> WaitForWalCheckpointAttemptAfterAsync(
         int attemptCount,
         CancellationToken cancellationToken = default)
-        => _walCheckpointMaintenance.WaitForAttemptAfterAsync(attemptCount, cancellationToken);
+        => WalCheckpointMaintenance.WaitForAttemptAfterAsync(attemptCount, cancellationToken);
 
     internal Task WaitForWalCheckpointIdleAsync(CancellationToken cancellationToken = default)
-        => _walCheckpointMaintenance.WaitForIdleAsync(cancellationToken);
+        => WalCheckpointMaintenance.WaitForIdleAsync(cancellationToken);
 
-    internal void RetryWalCheckpoint() => _walCheckpointMaintenance.ScheduleCheckpoint();
+    internal void RetryWalCheckpoint() => WalCheckpointMaintenance.ScheduleCheckpoint();
 
-    public ValueTask DisposeAsync() => _walCheckpointMaintenance.DisposeAsync();
+    public ValueTask DisposeAsync()
+        => Volatile.Read(ref _walCheckpointMaintenance)?.DisposeAsync() ?? ValueTask.CompletedTask;
 
-    public void Dispose() => _walCheckpointMaintenance.Dispose();
+    public void Dispose() => Volatile.Read(ref _walCheckpointMaintenance)?.Dispose();
 
     internal static MemoryLocalStore CreateDeferred(IPackageContext packageContext)
         => new(packageContext, SqliteMemoryPhysicalMaintenance.Instance, initialize: false);
@@ -100,17 +102,28 @@ public sealed partial class MemoryLocalStore : IDisposable, IAsyncDisposable
             }
 
             cancellationToken.ThrowIfCancellationRequested();
+            var databasePath = _workspace.GetLocalPath("memory/agent-memory.db");
             MemoryDatabase.Initialize(_contentRootPath);
-            Directory.CreateDirectory(Path.GetDirectoryName(DatabasePath)!);
-            new MemorySchemaMigrator(DatabasePath).Migrate();
-            var evidence = new EvidenceRepository(DatabasePath);
-            _embeddings = new EmbeddingRepository(DatabasePath, _walCheckpointMaintenance);
-            _memories = new MemoryRepository(DatabasePath, evidence);
+            Directory.CreateDirectory(Path.GetDirectoryName(databasePath)!);
+            new MemorySchemaMigrator(databasePath).Migrate();
+            var walCheckpointMaintenance = new SqliteWalCheckpointMaintenance(
+                databasePath,
+                "Semantic memory store",
+                _logger);
+            var evidence = new EvidenceRepository(databasePath);
+            _embeddings = new EmbeddingRepository(databasePath, walCheckpointMaintenance);
+            _memories = new MemoryRepository(databasePath, evidence);
             _evidence = evidence;
+            _databasePath = databasePath;
+            _walCheckpointMaintenance = walCheckpointMaintenance;
             _initialized = true;
-            _walCheckpointMaintenance.ScheduleCheckpoint();
+            walCheckpointMaintenance.ScheduleCheckpoint();
         }
     }
+
+    private SqliteWalCheckpointMaintenance WalCheckpointMaintenance
+        => Volatile.Read(ref _walCheckpointMaintenance)
+           ?? throw new InvalidOperationException("The semantic memory store is not initialized.");
 
     public IReadOnlyList<StoredMemoryRecord> ListActiveMemories(Guid sessionId) => _memories.ListActive(sessionId);
 

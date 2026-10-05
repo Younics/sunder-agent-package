@@ -1,10 +1,23 @@
+extern alias LocalWorker;
+extern alias LocalApp;
+extern alias DockerWorker;
+extern alias DockerApp;
+
 using Avalonia.Controls;
 using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Execution.Docker;
-using Sunder.Package.Agent.Execution.Local;
+using DockerWorker::Sunder.Package.Agent.Execution.Docker;
+using LocalWorker::Sunder.Package.Agent.Execution.Local;
+using LocalModels = LocalWorker::Sunder.Package.Agent.Contracts.Models;
+using DockerModels = DockerWorker::Sunder.Package.Agent.Contracts.Models;
+using DockerUi = DockerApp::Sunder.Package.Agent.Execution.Docker;
+using LocalUi = LocalApp::Sunder.Package.Agent.Execution.Local;
+using DockerManagementService = DockerWorker::Sunder.Package.Agent.Execution.Docker.Rpc.ManagementService;
+using LocalManagementService = LocalWorker::Sunder.Package.Agent.Execution.Local.Rpc.ManagementService;
+using DockerExecutionSettingsViewModel = DockerApp::Sunder.Package.Agent.Execution.Docker.DockerExecutionSettingsViewModel;
+using DockerExecutionSettingsView = DockerApp::Sunder.Package.Agent.Execution.Docker.DockerExecutionSettingsView;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Tests;
 using Sunder.Sdk.Abstractions;
@@ -31,13 +44,13 @@ public sealed class ExecutionPackageRoleBoundaryTests
 
         if (local)
         {
-            services.AddSingleton<ILocalExecutionPresentationClient, NoopLocalPresentationClient>();
-            new Sunder.Package.Agent.Execution.Local.AppPackageModule().ConfigureAppServices(services, scope.Context);
+            services.AddSingleton<LocalUi.ILocalExecutionPresentationClient, NoopLocalPresentationClient>();
+            new LocalApp::Sunder.Generated.Package.AppModule().ConfigureAppServices(services, scope.Context);
         }
         else
         {
-            services.AddSingleton<IDockerExecutionPresentationClient, NoopDockerPresentationClient>();
-            new Sunder.Package.Agent.Execution.Docker.AppPackageModule().ConfigureAppServices(services, scope.Context);
+            services.AddSingleton<DockerUi.IDockerExecutionPresentationClient, NoopDockerPresentationClient>();
+            new DockerApp::Sunder.Generated.Package.AppModule().ConfigureAppServices(services, scope.Context);
         }
 
         var serviceTypeNames = services.Select(descriptor => descriptor.ServiceType.Name).ToArray();
@@ -55,11 +68,11 @@ public sealed class ExecutionPackageRoleBoundaryTests
         var registry = new RecordingAppRegistry();
         if (local)
         {
-            new Sunder.Package.Agent.Execution.Local.AppPackageModule().RegisterAppContributions(registry, provider);
+            new LocalApp::Sunder.Generated.Package.AppModule().RegisterAppContributions(registry, provider);
         }
         else
         {
-            new Sunder.Package.Agent.Execution.Docker.AppPackageModule().RegisterAppContributions(registry, provider);
+            new DockerApp::Sunder.Generated.Package.AppModule().RegisterAppContributions(registry, provider);
         }
 
         Assert.Single(registry.SettingsViews);
@@ -69,20 +82,28 @@ public sealed class ExecutionPackageRoleBoundaryTests
     [Trait("Lane", "PackageCompatibility")]
     [InlineData(true)]
     [InlineData(false)]
-    public void WorkerLeaves_HaveNoAppModuleAndUseOwnerRpcV2(bool local)
+    public void WorkerLeaves_HaveNoAppModuleAndUseOwnerRpcV1(bool local)
     {
         var workerAssembly = local
             ? typeof(LocalExecutionTarget).Assembly
             : typeof(DockerExecutionTarget).Assembly;
-        var descriptor = local
-            ? LocalExecutionPresentationRpc.Descriptor
-            : DockerExecutionPresentationRpc.Descriptor;
+        using var scope = RegressionTestPackageScope.Create();
+        var runner = new DockerCliRunner(scope.Context);
+        var registration = local
+            ? new LocalManagementService(new LocalExecutionPresentationRpcHandler(scope.Context,
+                new LocalShellCatalogService(scope.Context))).CreateSunderRpcProviderRegistration()
+            : new DockerManagementService(new DockerExecutionPresentationRpcHandler(scope.Context, runner,
+                new DockerImageCatalogService(scope.Context, runner))).CreateSunderRpcProviderRegistration();
+        var descriptor = RegressionTestRpcDescriptors.Get(registration.ContractId);
 
         Assert.DoesNotContain(
             workerAssembly.GetTypes(),
             type => typeof(ISunderAppPackageModule).IsAssignableFrom(type));
-        Assert.Equal(SunderRpcProtocol.DescriptorVersionV2, descriptor.DescriptorVersion);
+        Assert.Equal(SunderRpcProtocol.DescriptorVersion, descriptor.DescriptorVersion);
         Assert.NotNull(descriptor.AbiSha256);
+        Assert.Equal(descriptor.Sha256, registration.DescriptorSha256);
+        Assert.Equal(descriptor.AbiSha256, registration.AbiSha256);
+        Assert.Equal(descriptor.Version, registration.ContractVersion);
         Assert.Single(descriptor.Services);
     }
 
@@ -98,23 +119,23 @@ public sealed class ExecutionPackageRoleBoundaryTests
             .ToArray();
         var provider = new LargeDockerPresentationClient(images);
         using var state = new RegressionTestRpcState();
-        state.Add(
+        var registration = new DockerManagementService(provider).CreateSunderRpcProviderRegistration();
+        state.AddGenerated(
             "sunder.package.agent.execution.docker",
-            DockerExecutionPresentationRpc.Descriptor,
             provider,
-            DockerExecutionPresentationRpc.CreateHandler(provider),
+            registration,
             NoOpDisposable.Instance,
-            DockerExecutionPresentationRpc.ProviderId);
-        var client = new DockerExecutionPresentationRpcClient(new RegressionTestRpcClient(
+            registration.ProviderId);
+        var client = new DockerUi.App.DockerExecutionSourceClient(new RegressionTestRpcClient(
             state,
             "sunder.package.agent.execution.docker"));
 
-        var response = await client.ExecuteAsync(new DockerExecutionOperationRequest(
-            DockerExecutionOperationKind.GetSettings));
+        var response = await client.ExecuteAsync(new DockerUi.DockerExecutionOperationRequest(
+            DockerUi.DockerExecutionOperationKind.GetSettings));
 
         Assert.Equal(images.Length, response.Images?.Count);
-        Assert.Equal(images[2499], response.Images?[2499]);
-        Assert.Equal("sunder.rpc.values.v1", DockerExecutionPresentationRpc.Descriptor.SchemaProfile);
+        Assert.Equal(AgentRoleBoundary.As<DockerUi.DockerImageDefinition>(images[2499]), response.Images?[2499]);
+        Assert.Equal("sunder.rpc.values.v1", RegressionTestRpcDescriptors.Get(registration.ContractId).SchemaProfile);
     }
 
     [Fact]
@@ -167,7 +188,7 @@ public sealed class ExecutionPackageRoleBoundaryTests
         await configService.SaveConfigAsync(
             binding.BindingId,
             new LocalExecutionWorkspaceConfig("sh", [Path.Combine(scope.RootPath, "first-bin")]));
-        var generation = await target.GetConfigurationGenerationAsync(context);
+        var generation = await target.GetConfigurationGenerationAsync(AgentRoleBoundary.As<LocalModels.AgentExecutionTargetContext>(context));
 
         await configService.SaveConfigAsync(
             binding.BindingId,
@@ -175,9 +196,9 @@ public sealed class ExecutionPackageRoleBoundaryTests
 
         var staleContext = context with { ExpectedConfigurationGeneration = generation };
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await target.GetExecutionScopeAsync(staleContext));
+            await target.GetExecutionScopeAsync(AgentRoleBoundary.As<LocalModels.AgentExecutionTargetContext>(staleContext)));
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await target.AddPathEntryAsync(staleContext, Path.Combine(scope.RootPath, "rejected-bin")));
+            await target.AddPathEntryAsync(AgentRoleBoundary.As<LocalModels.AgentExecutionTargetContext>(staleContext), Path.Combine(scope.RootPath, "rejected-bin")));
         Assert.DoesNotContain(
             Path.Combine(scope.RootPath, "rejected-bin"),
             (await configService.GetConfigAsync(binding.BindingId)).PathEntries ?? []);
@@ -212,7 +233,7 @@ public sealed class ExecutionPackageRoleBoundaryTests
         await configService.SaveConfigAsync(
             binding.BindingId,
             new LocalExecutionWorkspaceConfig("custom", []));
-        var generation = await target.GetConfigurationGenerationAsync(context);
+        var generation = await target.GetConfigurationGenerationAsync(AgentRoleBoundary.As<LocalModels.AgentExecutionTargetContext>(context));
 
         await shellCatalog.SaveCustomShellsAsync(
             [new LocalShellDefinition("custom", "Custom", secondShell, AgentShellSyntaxKinds.PosixSh, false)],
@@ -220,9 +241,9 @@ public sealed class ExecutionPackageRoleBoundaryTests
 
         var staleContext = context with { ExpectedConfigurationGeneration = generation };
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await target.GetShellAsync(staleContext));
+            await target.GetShellAsync(AgentRoleBoundary.As<LocalModels.AgentExecutionTargetContext>(staleContext)));
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await target.AddPathEntryAsync(staleContext, "/rejected"));
+            await target.AddPathEntryAsync(AgentRoleBoundary.As<LocalModels.AgentExecutionTargetContext>(staleContext), "/rejected"));
         Assert.DoesNotContain(
             "/rejected",
             (await configService.GetConfigAsync(binding.BindingId)).PathEntries ?? []);
@@ -276,7 +297,7 @@ public sealed class ExecutionPackageRoleBoundaryTests
         await configService.SaveConfigAsync(
             binding.BindingId,
             new DockerExecutionWorkspaceConfig("repository/image:latest", null, "/bin/sh", ["/first"]));
-        var generation = await target.GetConfigurationGenerationAsync(context);
+        var generation = await target.GetConfigurationGenerationAsync(AgentRoleBoundary.As<DockerModels.AgentExecutionTargetContext>(context));
 
         await configService.SaveConfigAsync(
             binding.BindingId,
@@ -284,9 +305,9 @@ public sealed class ExecutionPackageRoleBoundaryTests
 
         var staleContext = context with { ExpectedConfigurationGeneration = generation };
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await target.GetShellAsync(staleContext));
+            await target.GetShellAsync(AgentRoleBoundary.As<DockerModels.AgentExecutionTargetContext>(staleContext)));
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await target.AddPathEntryAsync(staleContext, "/rejected"));
+            await target.AddPathEntryAsync(AgentRoleBoundary.As<DockerModels.AgentExecutionTargetContext>(staleContext), "/rejected"));
         Assert.DoesNotContain(
             "/rejected",
             (await configService.GetConfigAsync(binding.BindingId)).PathEntries ?? []);
@@ -319,7 +340,7 @@ public sealed class ExecutionPackageRoleBoundaryTests
             0,
             default,
             default);
-        var targetContext = new AgentExecutionTargetContext(null, null, workspace, binding);
+        var targetContext = AgentRoleBoundary.As<DockerModels.AgentExecutionTargetContext>(new AgentExecutionTargetContext(null, null, workspace, binding));
         await configService.SaveConfigAsync(
             binding.BindingId,
             new DockerExecutionWorkspaceConfig("repository/image:latest", null));
@@ -410,9 +431,13 @@ public sealed class ExecutionPackageRoleBoundaryTests
         using var scope = RegressionTestPackageScope.Create();
         var services = new ServiceCollection();
         services.AddSingleton(scope.Context);
-        services.AddSingleton<IDockerExecutionPresentationClient>(new FailingDockerRuntimeClient());
+        using var state = new RegressionTestRpcState();
+        var runtimeClient = new FailingDockerRuntimeClient();
+        var registration = new DockerManagementService(runtimeClient).CreateSunderRpcProviderRegistration();
+        state.AddGenerated("sunder.package.agent.execution.docker", runtimeClient, registration, NoOpDisposable.Instance, registration.ProviderId);
+        services.AddSingleton<ISunderRpcClient>(new RegressionTestRpcClient(state, "sunder.package.agent.execution.docker"));
         services.AddSingleton<IBackgroundProcessQueue, NoopBackgroundProcessQueue>();
-        var module = new Sunder.Package.Agent.Execution.Docker.AppPackageModule();
+        var module = new DockerApp::Sunder.Generated.Package.AppModule();
         module.ConfigureAppServices(services, scope.Context);
         using var provider = services.BuildServiceProvider();
         var registry = new RecordingAppRegistry();
@@ -447,7 +472,7 @@ public sealed class ExecutionPackageRoleBoundaryTests
         Assert.Equal(BackgroundProcessIndicator.Settings, request.Indicator);
         Assert.Equal(BackgroundProcessConcurrencyMode.SequentialWithinGroup, request.ConcurrencyMode);
         Assert.Equal("agent0ai/agent-zero:1.0", request.Metadata?[DockerExecutionSettingsViewModel.ImageReferenceMetadataKey]);
-        Assert.Equal(DockerImageStatus.Pulling, viewModel.SelectedImage?.Status);
+        Assert.Equal(DockerUi.DockerImageStatus.Pulling, viewModel.SelectedImage?.Status);
         Assert.False(viewModel.PullSelectedImageCommand.CanExecute(null));
     }
 
@@ -467,17 +492,17 @@ public sealed class ExecutionPackageRoleBoundaryTests
         public bool Cancel(Guid processId) => false;
     }
 
-    private sealed class RecordingDockerRuntimeClient : IDockerExecutionPresentationClient
+    private sealed class RecordingDockerRuntimeClient : DockerUi.IDockerExecutionPresentationClient
     {
-        public ValueTask<DockerExecutionOperationResponse> ExecuteAsync(
-            DockerExecutionOperationRequest request,
+        public ValueTask<DockerUi.DockerExecutionOperationResponse> ExecuteAsync(
+            DockerUi.DockerExecutionOperationRequest request,
             CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var response = new DockerExecutionOperationResponse(
+            var response = new DockerUi.DockerExecutionOperationResponse(
                 "300",
                 string.Empty,
-                [new DockerImageDefinition("agent0ai/agent-zero:1.0", DockerImageStatus.NotPulled, null, null)],
+                [new DockerUi.DockerImageDefinition("agent0ai/agent-zero:1.0", DockerUi.DockerImageStatus.NotPulled, null, null)],
                 CatalogRevision: 1);
             return ValueTask.FromResult(response);
         }
@@ -498,20 +523,20 @@ public sealed class ExecutionPackageRoleBoundaryTests
         }
     }
 
-    private sealed class NoopLocalPresentationClient : ILocalExecutionPresentationClient
+    private sealed class NoopLocalPresentationClient : LocalUi.ILocalExecutionPresentationClient
     {
-        public ValueTask<LocalExecutionOperationResponse> ExecuteAsync(
-            LocalExecutionOperationRequest request,
+        public ValueTask<LocalUi.LocalExecutionOperationResponse> ExecuteAsync(
+            LocalUi.LocalExecutionOperationRequest request,
             CancellationToken cancellationToken = default)
-            => ValueTask.FromException<LocalExecutionOperationResponse>(new NotSupportedException());
+            => ValueTask.FromException<LocalUi.LocalExecutionOperationResponse>(new NotSupportedException());
     }
 
-    private sealed class NoopDockerPresentationClient : IDockerExecutionPresentationClient
+    private sealed class NoopDockerPresentationClient : DockerUi.IDockerExecutionPresentationClient
     {
-        public ValueTask<DockerExecutionOperationResponse> ExecuteAsync(
-            DockerExecutionOperationRequest request,
+        public ValueTask<DockerUi.DockerExecutionOperationResponse> ExecuteAsync(
+            DockerUi.DockerExecutionOperationRequest request,
             CancellationToken cancellationToken = default)
-            => ValueTask.FromException<DockerExecutionOperationResponse>(new NotSupportedException());
+            => ValueTask.FromException<DockerUi.DockerExecutionOperationResponse>(new NotSupportedException());
     }
 
     private sealed class LargeDockerPresentationClient(IReadOnlyList<DockerImageDefinition> images)

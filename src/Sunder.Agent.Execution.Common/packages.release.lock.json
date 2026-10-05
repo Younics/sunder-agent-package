@@ -2,40 +2,28 @@
   "version": 2,
   "dependencies": {
     "net10.0": {
+      "Sunder.Sdk": {
+        "type": "Direct",
+        "requested": "[1.1.0, 1.2.0)",
+        "resolved": "1.1.0",
+        "contentHash": "J23vCBbnsxgImNKeJ4SmCo1SuYT88TmHN/u+wpLA7jRlgHtNeyO81fDsqST4YUHR6yCLteHOryJWbgOhkJsm8g==",
+        "dependencies": {
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.8",
+          "Microsoft.Extensions.Logging.Abstractions": "10.0.8"
+        }
+      },
       "Microsoft.Extensions.DependencyInjection.Abstractions": {
         "type": "Transitive",
         "resolved": "10.0.8",
         "contentHash": "21nbDV60SRPWGIivsyl6lqBeEJNG1sginhhfWgRrr3Ais7aQ12To25OAHQxgoiJkjqy1aQ6RxpZBGYuTi7Ge6A=="
       },
       "Microsoft.Extensions.Logging.Abstractions": {
-        "type": "Transitive",
+        "type": "CentralTransitive",
+        "requested": "[10.0.8, )",
         "resolved": "10.0.8",
         "contentHash": "fdVadZmsC8jRP0KvKy8mO8f6GV/HyBvElfcSxEhd+5FM5boAw/01iSaCto5G3G37ApJira4A3pNaVvBv8cUiLQ==",
         "dependencies": {
           "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.8"
-        }
-      },
-      "Sunder.Package.Agent.Protocol": {
-        "type": "Project",
-        "dependencies": {
-          "Microsoft.Extensions.AI.Abstractions": "[10.5.2, )",
-          "Sunder.Sdk": "[1.1.0, 1.2.0)"
-        }
-      },
-      "Microsoft.Extensions.AI.Abstractions": {
-        "type": "CentralTransitive",
-        "requested": "[10.5.2, )",
-        "resolved": "10.5.2",
-        "contentHash": "Ei+YWV9Ybnps7pR1dgjlG29gelXEwZkhLVAcWmKe6HvXS6LNBYgSdWiY3Hk9OZXYtK34rv/NtLWBQYQGOBQYPQ=="
-      },
-      "Sunder.Sdk": {
-        "type": "CentralTransitive",
-        "requested": "[1.1.0, 1.2.0)",
-        "resolved": "1.1.0",
-        "contentHash": "X6TIxu2cP/8doVvGtjz2NgA7IOZkuyH6k0gfOTOXYFKggN8aDy7qoWqH0DqStOdsGDL/4fYphwlvF91gEqmWyQ==",
-        "dependencies": {
-          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.8",
-          "Microsoft.Extensions.Logging.Abstractions": "10.0.8"
         }
       }
     }

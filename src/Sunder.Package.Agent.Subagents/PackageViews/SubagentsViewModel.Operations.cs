@@ -378,8 +378,10 @@ public sealed partial class SubagentsViewModel
 
     private void EndOperation(OperationGeneration generation)
     {
-        _operation.TryComplete(generation);
-        NotifyOperationStateChanged();
+        if (_operation.TryComplete(generation))
+        {
+            NotifyOperationStateChanged();
+        }
     }
 
     private void NotifyOperationStateChanged()

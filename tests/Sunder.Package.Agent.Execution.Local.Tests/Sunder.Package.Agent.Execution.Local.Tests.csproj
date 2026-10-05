@@ -11,25 +11,32 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Contracts\Sunder.Package.Agent.Contracts.csproj" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Execution.Docker\Sunder.Package.Agent.Execution.Docker.csproj" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Execution.Docker\App\DockerApp.csproj"
-                      Aliases="global,DockerPackage" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Execution.Local\Sunder.Package.Agent.Execution.Local.csproj" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Execution.Local\App\LocalApp.csproj" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Subagents\Sunder.Package.Agent.Subagents.csproj" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Subagents\Protocol\SubagentsProtocol.csproj" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Tools.Files\Sunder.Package.Agent.Tools.Files.csproj" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Tools.Shell\Sunder.Package.Agent.Tools.Shell.csproj" />
-    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Tools.Web\Sunder.Package.Agent.Tools.Web.csproj" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent\Sunder.Package.Agent.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="global,AgentWorker" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Execution.Docker\Sunder.Package.Agent.Execution.Docker.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="DockerWorker" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Execution.Docker\Sunder.Package.Agent.Execution.Docker.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=app" Aliases="DockerPackage,DockerApp" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Execution.Local\Sunder.Package.Agent.Execution.Local.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="LocalWorker" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Execution.Local\Sunder.Package.Agent.Execution.Local.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=app" Aliases="LocalApp" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Subagents\Sunder.Package.Agent.Subagents.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="SubagentsWorker" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Tools.Files\Sunder.Package.Agent.Tools.Files.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="FilesWorker" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Tools.Shell\Sunder.Package.Agent.Tools.Shell.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="ShellWorker" />
+    <ProjectReference Include="..\..\src\Sunder.Package.Agent.Tools.Web\Sunder.Package.Agent.Tools.Web.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="WebWorker" />
     <ProjectReference Include="..\Sunder.Package.Agent.TestSupport\Sunder.Package.Agent.TestSupport.csproj" />
     <ProjectReference Include="..\Sunder.Package.Agent.TestSupport.Avalonia\Sunder.Package.Agent.TestSupport.Avalonia.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="..\Sunder.Package.Agent.Tests\RegressionTestInfrastructure.cs" Link="RegressionTestInfrastructure.cs" />
     <Compile Include="..\Sunder.Package.Agent.Tests\RegressionTestPackageContext.cs" Link="RegressionTestPackageContext.cs" />
     <Compile Include="..\Sunder.Package.Agent.Tests\RegressionTestPackageScope.cs" Link="RegressionTestPackageScope.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Tests\GeneratedToolSourceProbe.cs" Link="GeneratedToolSourceProbe.cs" />
     <Compile Include="..\Sunder.Package.Agent.Tests\TestPackageStorageFakes.cs" Link="TestPackageStorageFakes.cs" />
   </ItemGroup>
 
@@ -42,4 +49,5 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
   </ItemGroup>
+  <Import Project="../RegressionTestHarness.props" />
 </Project>

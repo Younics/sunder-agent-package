@@ -1,15 +1,52 @@
 #!/usr/bin/env bash
 set -euo pipefail
 export LC_ALL=C
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
-  printf 'Usage: publish-registry-package.sh [--verify-only] <registry-api-url> <archive> <package-id> <version>\n' >&2
+  printf 'Usage: publish-registry-package.sh [--verify-only] [--initial-yanked <expected-publication.json>] [--current-availability Yanked|Listed|Either] [--published-at-utc <retained-timestamp>] <registry-api-url> <archive> <package-id> <version>\n' >&2
 }
 
 verify_only=false
-if [[ "${1:-}" == '--verify-only' ]]; then
-  verify_only=true
-  shift
+expected_publication_input=''
+current_availability=Yanked
+current_availability_supplied=false
+expected_published_at=''
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --verify-only)
+      [[ "$verify_only" == false ]] || { usage; exit 2; }
+      verify_only=true
+      shift
+      ;;
+    --initial-yanked)
+      [[ $# -ge 2 && -n "$2" && -z "$expected_publication_input" ]] || { usage; exit 2; }
+      expected_publication_input="$2"
+      shift 2
+      ;;
+    --current-availability)
+      [[ $# -ge 2 && "$current_availability_supplied" == false ]] || { usage; exit 2; }
+      current_availability="$2"
+      current_availability_supplied=true
+      shift 2
+      ;;
+    --published-at-utc)
+      [[ $# -ge 2 && -n "$2" && -z "$expected_published_at" ]] || { usage; exit 2; }
+      expected_published_at="$2"
+      shift 2
+      ;;
+    --*) usage; exit 2 ;;
+    *) break ;;
+  esac
+done
+
+if [[ -n "$expected_published_at" ]]; then
+  [[ "$verify_only" == true && -n "$expected_publication_input" ]] || { usage; exit 2; }
+fi
+
+if [[ "$current_availability_supplied" == true ]]; then
+  [[ "$verify_only" == true && -n "$expected_publication_input" \
+      && "$current_availability" =~ ^(Yanked|Listed|Either)$ ]] || { usage; exit 2; }
 fi
 
 if [[ $# -ne 4 ]]; then
@@ -166,6 +203,47 @@ local_entries_path="$temp_dir/local-archive-entries.txt"
 local_manifest_path="$temp_dir/local-sunder-package.json"
 local_content_index_path="$temp_dir/local-content-index.json"
 expected_projection_keys_path="$temp_dir/expected-projection-keys.json"
+expected_publication_path="$temp_dir/expected-publication.json"
+
+if [[ -n "$expected_publication_input" ]]; then
+  [[ -f "$expected_publication_input" && ! -L "$expected_publication_input" ]] \
+    || { printf 'Expected publication evidence must be a regular non-link JSON file.\n' >&2; exit 1; }
+  command -v python3 >/dev/null 2>&1 \
+    || { printf 'python3 is required to validate initial-Yanked publication evidence.\n' >&2; exit 127; }
+  # Snapshot the existing RegistryPackagePublicationEvidence DTO, not a new receipt.
+  # The release coordinator supplies its approved owner/content/inventory identities.
+  python3 - "$expected_publication_input" "$expected_publication_path" <<'PY'
+import json
+import sys
+
+def unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate publication evidence member")
+        result[key] = value
+    return result
+
+with open(sys.argv[1], "rb") as stream:
+    data = stream.read(16385)
+if len(data) > 16384:
+    raise ValueError("Publication evidence exceeds 16 KiB")
+value = json.loads(data.decode("utf-8"), object_pairs_hook=unique_object)
+with open(sys.argv[2], "w", encoding="utf-8") as stream:
+    json.dump(value, stream, ensure_ascii=True, allow_nan=False)
+PY
+  jq -e --arg package_id "$package_id" --arg version "$version" '
+    type == "object"
+    and keys == ["initialAvailability","ownerPrincipalId","package","publicInventorySha256"]
+    and .initialAvailability == "Yanked"
+    and (.ownerPrincipalId | type == "string" and test("^[0-9a-f]{32}$") and . != "00000000000000000000000000000000")
+    and (.publicInventorySha256 | type == "string" and test("^[0-9a-f]{64}$"))
+    and (.package | type == "object" and keys == ["packageContentIdentity","packageId","version"])
+    and .package.packageId == $package_id and .package.version == $version
+    and (.package.packageContentIdentity | type == "string" and test("^[0-9a-f]{64}$"))
+  ' "$expected_publication_path" >/dev/null \
+    || { printf 'Expected initial-Yanked publication evidence has an invalid identity or schema.\n' >&2; exit 1; }
+fi
 
 if ! unzip -tqq "$archive" >/dev/null 2>&1 \
   || ! unzip -Z1 "$archive" > "$local_entries_path"; then
@@ -460,6 +538,25 @@ verify_version_details() {
   local projection_identity
   local projection_format
 
+  if [[ -n "$expected_publication_input" ]]; then
+    python3 -B "$script_dir/agent_release.py" check-json "$details_path" || return 1
+  fi
+  if [[ -n "$expected_published_at" ]]; then
+    python3 - "$details_path" "$expected_published_at" <<'PY' || return 1
+import json
+import sys
+with open(sys.argv[1], encoding="utf-8") as stream:
+    stamp = json.load(stream)["publishedAtUtc"]
+# Same UTC/fraction normalization as Core's publication importer; retain all seven digits.
+if stamp.endswith("+00:00"):
+    stamp = stamp[:-6] + "Z"
+if "." in stamp and stamp.endswith("Z"):
+    stamp = stamp[:-1].rstrip("0").rstrip(".") + "Z"
+if stamp != sys.argv[2]:
+    sys.exit("Registry publication timestamp differs from the evidence commit")
+PY
+  fi
+
   if ! jq -e --arg package_id "$package_id" --arg version "$version" '
     type == "object"
     and .packageId == $package_id
@@ -492,6 +589,18 @@ verify_version_details() {
   ' "$details_path" >/dev/null; then
     printf "Registry returned invalid version details for package '%s' %s.\n" "$package_id" "$version" >&2
     return 1
+  fi
+
+  if [[ -n "$expected_publication_input" ]]; then
+    jq -e --arg availability "$current_availability" --slurpfile expected "$expected_publication_path" '
+      (.isYanked | type == "boolean")
+      and (if $availability == "Either" then true else .isYanked == ($availability == "Yanked") end)
+      and .publication == $expected[0]
+    ' "$details_path" >/dev/null || {
+      printf "Registry publication owner/content/inventory/initial availability or current Yanked state differs for package '%s' %s.\n" \
+        "$package_id" "$version" >&2
+      return 1
+    }
   fi
 
   if ! jq -e --slurpfile expected "$expected_projection_keys_path" '
@@ -610,23 +719,30 @@ case "$details_status" in
     ;;
 esac
 
-if ! publish_response="$(curl --fail-with-body -sS \
+publication_form=(-F 'setLatest=false')
+if [[ -n "$expected_publication_input" ]]; then
+  publication_form+=(-F 'initialAvailability=Yanked')
+fi
+
+publish_confirmed=false
+if publish_response="$(curl --fail-with-body -sS \
   -H "Authorization: Bearer $SUNDER_REGISTRY_PUBLISH_TOKEN" \
   -H "X-Sunder-Expected-Resource-Id: $package_id" \
   -H 'X-Sunder-Set-Latest: false' \
   -F "package=@$archive" \
-  -F 'setLatest=false' \
-  "$registry_api/api/v1/packages/publish")"; then
-  printf "Registry publication failed for package '%s' %s.\n" "$package_id" "$version" >&2
-  exit 1
-fi
-if ! jq -e --arg package_id "$package_id" --arg version "$version" \
+  "${publication_form[@]}" \
+  "$registry_api/api/v1/packages/publish")" \
+  && jq -e --arg package_id "$package_id" --arg version "$version" \
   '.success == true and .packageId == $package_id and .version == $version' \
   <<< "$publish_response" >/dev/null; then
-  printf "Registry rejected publication for package '%s' %s.\n" "$package_id" "$version" >&2
+  publish_confirmed=true
+elif [[ -z "$expected_publication_input" ]]; then
+  printf "Registry publication failed or was rejected for package '%s' %s.\n" "$package_id" "$version" >&2
   exit 1
 fi
 
+# An unknown initial-Yanked upload outcome is reconciled by one exact readback,
+# never a second upload, tag mutation, unyank or compensating operation.
 fetch_version_details
 [[ "$details_status" == "200" ]] || {
   printf "Registry version details for package '%s' %s returned HTTP %s after publication.\n" \
@@ -634,5 +750,10 @@ fetch_version_details
   exit 1
 }
 verify_version_details
+if [[ "$publish_confirmed" != true ]]; then
+  printf "Recovered exact initial-Yanked publication for package '%s' %s after an ambiguous response.\n" \
+    "$package_id" "$version"
+  exit 0
+fi
 printf "Published and verified Registry package '%s' %s canonical archive and projections.\n" \
   "$package_id" "$version"

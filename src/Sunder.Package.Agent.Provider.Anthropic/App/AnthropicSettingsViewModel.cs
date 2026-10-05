@@ -28,6 +28,7 @@ public sealed partial class AnthropicSettingsViewModel : ObservableObject,
     {
     }
 
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
     internal AnthropicSettingsViewModel(
         IPackageContext packageContext,
         IProviderCredentialOwnerClient credentials)

@@ -1,5 +1,7 @@
+extern alias AgentApp;
+
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.PackageViews;
+using AgentApp::Sunder.Package.Agent.PackageViews;
 using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
@@ -28,16 +30,16 @@ public sealed class AgentChatWorkspaceWarmupTests
             "Session",
             profileId: profile.ProfileId,
             workspaceId: workspace.WorkspaceId);
-        using var viewModel = new AgentChatViewModel(
+        using var viewModel = RegressionTestAppViews.Chat(
             profiles,
             workspaces,
             sessions,
             permissions,
             new NoopRunGateway(),
             warmupService: warmup);
-        viewModel.SelectedProfile = profile;
-        viewModel.SelectedSession = new AgentSessionListItemViewModel(session);
-        viewModel.SelectedWorkspace = workspace;
+        viewModel.SelectedProfile = AgentRoleBoundary.As<AgentApp::Sunder.Package.Agent.Contracts.Models.AgentProfileRecord>(profile);
+        viewModel.SelectedSession = new AgentSessionListItemViewModel(AgentRoleBoundary.As<AgentApp::Sunder.Package.Agent.Contracts.Models.AgentSessionRecord>(session));
+        viewModel.SelectedWorkspace = AgentRoleBoundary.As<AgentApp::Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord>(workspace);
 
         await warmup.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
         Assert.True(viewModel.CanUseChat);

@@ -1,6 +1,8 @@
-using Sunder.Package.Agent.Contracts;
-using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Execution.Local;
+extern alias LocalWorker;
+
+using LocalWorker::Sunder.Package.Agent.Contracts;
+using LocalWorker::Sunder.Package.Agent.Contracts.Models;
+using LocalWorker::Sunder.Package.Agent.Execution.Local;
 using Sunder.Package.Agent.Protocol;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;

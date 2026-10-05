@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "authorityKind": "package",
+  "authorityId": "sunder.package.agent.mcp",
+  "packageId": "sunder.package.agent.mcp",
+  "contracts": {
+    "management": {
+      "contractId": "sunder.package.agent.mcp.management",
+      "current": {
+        "state": "release-frozen",
+        "exposure": "package",
+        "contractVersion": "1.0.0",
+        "descriptorBytes": 1425,
+        "canonicalDescriptor": "{\"$defs\":{\"ChangeSubscription\":{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"},\"ContentReference\":{\"logicalType\":\"content-reference\",\"type\":\"object\"},\"ManagementChange\":{\"additionalProperties\":false,\"properties\":{\"kind\":{\"$ref\":\"#/$defs/ManagementChangeKind\"}},\"required\":[\"kind\"],\"type\":\"object\"},\"ManagementChangeKind\":{\"enum\":[\"servers\",\"status\"],\"type\":\"string\"},\"ManagementContent\":{\"additionalProperties\":false,\"properties\":{\"content\":{\"$ref\":\"#/$defs/ContentReference\"}},\"required\":[\"content\"],\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"contractId\":\"sunder.package.agent.mcp.management\",\"descriptorVersion\":1,\"errors\":{\"mcp.management.failed\":{\"description\":\"The MCP management request failed.\"}},\"schemaProfile\":\"sunder.rpc.values.v1\",\"services\":{\"management\":{\"methods\":{\"changes\":{\"errors\":[],\"eventSchema\":{\"$ref\":\"#/$defs/ManagementChange\"},\"idempotency\":\"idempotent\",\"kind\":\"server-stream\",\"requestSchema\":{\"$ref\":\"#/$defs/ChangeSubscription\"}},\"command\":{\"errors\":[\"mcp.management.failed\"],\"idempotency\":\"none\",\"kind\":\"unary\",\"requestSchema\":{\"$ref\":\"#/$defs/ManagementContent\"},\"responseSchema\":{\"$ref\":\"#/$defs/ManagementContent\"}},\"query\":{\"errors\":[\"mcp.management.failed\"],\"idempotency\":\"idempotent\",\"kind\":\"unary\",\"requestSchema\":{\"$ref\":\"#/$defs/ManagementContent\"},\"responseSchema\":{\"$ref\":\"#/$defs/ManagementContent\"}}}}},\"version\":\"1.0.0\"}",
+        "descriptorSha256": "c1946af1cf7f0ca887f0e63fa3103d13d0ef7820c4ee5643120c9775f98d7e44",
+        "abiProjectionBytes": 1300,
+        "canonicalAbiProjection": "{\"$defs\":{\"ChangeSubscription\":{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"},\"ContentReference\":{\"logicalType\":\"content-reference\",\"type\":\"object\"},\"ManagementChange\":{\"additionalProperties\":false,\"properties\":{\"kind\":{\"$ref\":\"#/$defs/ManagementChangeKind\"}},\"required\":[\"kind\"],\"type\":\"object\"},\"ManagementChangeKind\":{\"enum\":[\"servers\",\"status\"],\"type\":\"string\"},\"ManagementContent\":{\"additionalProperties\":false,\"properties\":{\"content\":{\"$ref\":\"#/$defs/ContentReference\"}},\"required\":[\"content\"],\"type\":\"object\"}},\"contractId\":\"sunder.package.agent.mcp.management\",\"descriptorVersion\":1,\"errors\":{\"mcp.management.failed\":{}},\"schemaProfile\":\"sunder.rpc.values.v1\",\"services\":{\"management\":{\"methods\":{\"changes\":{\"errors\":[],\"eventSchema\":{\"$ref\":\"#/$defs/ManagementChange\"},\"idempotency\":\"idempotent\",\"kind\":\"server-stream\",\"requestSchema\":{\"$ref\":\"#/$defs/ChangeSubscription\"}},\"command\":{\"errors\":[\"mcp.management.failed\"],\"idempotency\":\"none\",\"kind\":\"unary\",\"requestSchema\":{\"$ref\":\"#/$defs/ManagementContent\"},\"responseSchema\":{\"$ref\":\"#/$defs/ManagementContent\"}},\"query\":{\"errors\":[\"mcp.management.failed\"],\"idempotency\":\"idempotent\",\"kind\":\"unary\",\"requestSchema\":{\"$ref\":\"#/$defs/ManagementContent\"},\"responseSchema\":{\"$ref\":\"#/$defs/ManagementContent\"}}}}}}",
+        "abiSha256": "6fbd592c4dc17c2ef367609f4bde16ef8d604245516215c3df8c6c77a3f6f20f",
+        "packageRelease": {
+          "packageId": "sunder.package.agent.mcp",
+          "packageVersion": "2.0.0"
+        }
+      },
+      "history": []
+    }
+  }
+}

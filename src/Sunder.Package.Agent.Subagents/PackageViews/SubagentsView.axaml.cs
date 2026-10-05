@@ -8,6 +8,8 @@ using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Subagents.PackageViews;
 
+[Sunder.Sdk.Packaging.SunderPackageView(Sunder.Package.Agent.Subagents.Services.SubagentConstants.PackageId, "Subagents",
+    ViewModel = typeof(SubagentsViewModel), IconPath = "assets/sub-profile-icon.png", DefaultPlacement = PackageViewPlacement.RightTop)]
 public partial class SubagentsView : UserControl, IDisposable, IPackageViewWarmupTarget, IPackageViewNavigationTarget
 {
     private readonly AdaptiveMasterDetail _adaptiveLayout;
@@ -34,6 +36,7 @@ public partial class SubagentsView : UserControl, IDisposable, IPackageViewWarmu
             });
     }
 
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
     public SubagentsView(SubagentsViewModel viewModel)
         : this()
     {

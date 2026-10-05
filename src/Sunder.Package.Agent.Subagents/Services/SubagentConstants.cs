@@ -1,5 +1,6 @@
 namespace Sunder.Package.Agent.Subagents.Services;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 public static class SubagentConstants
 {
     public const string PackageId = "sunder.package.agent.subagents";

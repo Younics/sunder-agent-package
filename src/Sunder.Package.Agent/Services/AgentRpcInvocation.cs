@@ -3,6 +3,7 @@ using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Services;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal static class AgentRpcInvocation
 {
     internal const string PackageUnavailableMessage =
@@ -401,18 +402,21 @@ internal static class AgentRpcInvocation
                 : CancellationToken.None);
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentRpcOwnedReference<TService, TMetadata>(
     AgentRpcReference<TService> Reference,
     string PackageId,
     TMetadata Metadata)
     where TService : class;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentRpcOwnedProviderReference<TService, TMetadata>(
     AgentRpcProviderReference<TService> Reference,
     string PackageId,
     TMetadata Metadata)
     where TService : class;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed class AgentPackageUnavailableException : OperationCanceledException
 {
     internal AgentPackageUnavailableException(string packageId, Exception? innerException = null)

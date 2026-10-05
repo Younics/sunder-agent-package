@@ -2,23 +2,20 @@ using System.Text;
 using System.Text.Json;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Subagents.Models;
+using Sunder.Package.Agent.Subagents.Runtime;
 
 namespace Sunder.Package.Agent.Subagents.Services;
 
-internal sealed class SubagentDescriptorSchema(
+internal sealed partial class SubagentDescriptorSchema(
     SubagentService subagentService,
-    AgentRpcCatalog rpcCatalog,
-    SubagentPermissionStatusAdapter permissionStatusAdapter)
+    SubagentPermissionStatusAdapter permissionStatusAdapter,
+    ISubagentRuntimeBindings runtimeBindings)
 {
     internal const string SourceDisplayName = "Subagents";
 
     private readonly SubagentService _subagentService = subagentService;
     private readonly SubagentPermissionStatusAdapter _permissionStatusAdapter = permissionStatusAdapter;
-    private readonly AgentRpcProviderService<IAgentBehaviorLoop> _behaviorLoops =
-        AgentRpcServices.CreateBehaviorLoops(new AgentRunControlRegistry(), rpcCatalog);
-
     public ValueTask<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>> ListCapabilitiesAsync(
         AgentProfileSelectableCapabilityRequest request,
         CancellationToken cancellationToken)
@@ -200,7 +197,7 @@ internal sealed class SubagentDescriptorSchema(
 
     private AgentProfileRecord? ResolveProfile(string profileId)
     {
-        foreach (var reference in rpcCatalog.GetServiceReferences(AgentRpcServices.RuntimeCatalogs))
+        foreach (var reference in runtimeBindings.GetRuntimeCatalogs())
         {
             if (!reference.TryAcquire(out var lease))
             {
@@ -222,7 +219,7 @@ internal sealed class SubagentDescriptorSchema(
     private IReadOnlyList<AgentBehaviorLoopDescriptor> SnapshotBehaviorLoops()
     {
         var descriptors = new List<AgentBehaviorLoopDescriptor>();
-        foreach (var reference in rpcCatalog.GetServiceReferences(_behaviorLoops))
+        foreach (var reference in runtimeBindings.GetBehaviorLoops())
         {
             if (!reference.TryAcquire(out var lease))
             {

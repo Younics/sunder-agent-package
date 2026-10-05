@@ -8,7 +8,12 @@ internal sealed class AgentRuntimeTransportBudgetState
     private readonly bool _workerReported;
     private AgentTransportProfile _current;
 
-    internal AgentRuntimeTransportBudgetState(ISunderRpcClient? client = null)
+    internal AgentRuntimeTransportBudgetState() : this(null)
+    {
+    }
+
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
+    internal AgentRuntimeTransportBudgetState([System.Diagnostics.CodeAnalysis.AllowNull] ISunderRpcClient client)
     {
         if (client?.ResourceProfile is { } resourceProfile)
         {

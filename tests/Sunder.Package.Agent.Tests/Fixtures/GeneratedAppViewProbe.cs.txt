@@ -1,0 +1,589 @@
+using System.Reflection;
+using System.Runtime.CompilerServices;
+using System.Diagnostics;
+using System.Text.Json;
+using System.Windows.Input;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Headless;
+using Avalonia.Threading;
+using Microsoft.Extensions.DependencyInjection;
+using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Avalonia;
+using Sunder.Sdk.Logging;
+using Sunder.Sdk.Notifications;
+using Sunder.Sdk.Rpc;
+
+var assembly = Assembly.Load(new AssemblyName(args[0]));
+var mcp = assembly.GetName().Name == "Sunder.Package.Agent.Mcp.App";
+var memory = assembly.GetName().Name == "Sunder.Package.Agent.Memory.Semantic.App";
+var skills = assembly.GetName().Name == "Sunder.Package.Agent.Skills.App";
+var subagents = assembly.GetName().Name == "Sunder.Package.Agent.Subagents.App";
+var builder = assembly.GetName().Name == "Sunder.Package.Agent.Builder.App";
+var agent = assembly.GetName().Name == "Sunder.Package.Agent.App";
+var module = (ISunderAppPackageModule)Activator.CreateInstance(assembly.GetType("Sunder.Generated.Package.AppModule", true)!)!;
+var context = DispatchProxy.Create<IPackageContext, MetadataHost>();
+var skillState = skills ? DispatchProxy.Create<IPackageKeyValueStore, SkillsStateProbe>() : null;
+var builderState = builder ? DispatchProxy.Create<IPackageKeyValueStore, BuilderStateProbe>() : null;
+var agentState = agent ? DispatchProxy.Create<IPackageKeyValueStore, AgentStateProbe>() : null;
+if ((skillState ?? builderState ?? agentState) is { } state) ((MetadataHost)context).Storage = new StateOnlyStorageProbe(state);
+var rpc = mcp || memory || skills || subagents || builder || agent ? DispatchProxy.Create<ISunderRpcClient, BlockedOwnerRpc>() : DispatchProxy.Create<ISunderRpcClient, MetadataHost>();
+var blocked = rpc as BlockedOwnerRpc;
+if (blocked is not null) blocked.ContractId = memory ? "sunder.agent.memory.semantic.inspector"
+    : skills ? "sunder.package.agent.skills.owner" : subagents ? "sunder.package.agent.subagents.owner"
+    : builder ? "sunder.package.agent.builder.runtime" : agent ? "sunder.agent.owner.runtime" : "sunder.package.agent.mcp.management";
+var notifications = DispatchProxy.Create<IPackageNotificationService, MetadataHost>();
+var background = new DormantBackgroundQueue();
+var navigationService = new SettingsNavigationProbe();
+var shellService = DispatchProxy.Create<IPackageShellViewService, MetadataHost>();
+var registrations = new ServiceCollection();
+module.ConfigureAppServices(registrations, context);
+if (registrations.Any(value => value.ServiceType == typeof(IPackageContext) || value.ServiceType == typeof(ISunderRpcClient)
+    || value.ServiceType == typeof(IPackageNotificationService) || value.ServiceType == typeof(IBackgroundProcessQueue)
+    || value.ServiceType == typeof(IPackageSettingsNavigationService) || value.ServiceType == typeof(IPackageShellViewService)))
+    throw new Exception("Generated App composition replaced a reserved Host service.");
+registrations.AddSingleton(context); registrations.AddSingleton(rpc);
+registrations.AddSingleton(notifications); registrations.AddSingleton<IBackgroundProcessQueue>(background);
+registrations.AddSingleton<IPackageSettingsNavigationService>(navigationService);
+registrations.AddSingleton(shellService);
+var services = registrations.BuildServiceProvider(new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true });
+using var appLifetime = new AppServicesLifetime(services, PumpUntil);
+var registry = new AppViewRegistry();
+module.RegisterAppContributions(registry, services);
+if (blocked?.Started != 0 && blocked is not null) throw new Exception("Registration started runtime work.");
+if (skillState is SkillsStateProbe { Queries: not 0 }) throw new Exception("Registration started Skills transfer cleanup.");
+if (builderState is BuilderStateProbe { Reads: not 0 } or BuilderStateProbe { Writes: not 0 }) throw new Exception("Registration accessed Builder state.");
+if (agentState is AgentStateProbe { Calls: not 0 }) throw new Exception("Registration accessed Agent selection state.");
+if (navigationService.Opens != 0) throw new Exception("Registration performed settings navigation.");
+AppBuilder.Configure<Application>().UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = true }).SetupWithoutStarting();
+if (agent)
+{
+    VerifyAgentViews(assembly, services, registry, blocked!, shellService, navigationService);
+    return;
+}
+if (builder)
+{
+    VerifyBuilderView(assembly, services, registry, blocked!, (BuilderStateProbe)builderState!, background);
+    return;
+}
+if (subagents)
+{
+    VerifySubagentsViews(assembly, services, registry, blocked!, navigationService);
+    if (background.Subscriptions != 0) throw new Exception("Subagents retained an unrelated queue subscription.");
+    return;
+}
+Type viewType;
+if (memory)
+{
+    if (registry.Settings.Count != 0) throw new Exception("Memory Inspector must be a navigation contribution.");
+    var (type, registration) = registry.Views.Single();
+    if (registration.Id != "sunder.package.agent.memory.semantic.inspector" || registration.Name != "Memory Inspector"
+        || registration.IconAssetPath != "assets/memory-icon.png" || registration.DefaultPlacement != PackageViewPlacement.LeftBottom || !registration.ShowInHotbarByDefault)
+        throw new Exception("Memory Inspector navigation metadata changed.");
+    viewType = type;
+}
+else
+{
+    if (registry.Views.Count != 0) throw new Exception("Settings-only packages must not register a navigation view.");
+    viewType = registry.Settings.Single();
+}
+if (viewType.Assembly != assembly) throw new Exception("View registration lost role ownership.");
+var first = (Control)services.GetRequiredService(viewType);
+var second = (Control)services.GetRequiredService(viewType);
+Dispatcher.UIThread.RunJobs();
+if (ReferenceEquals(first, second) || first.DataContext is null || ReferenceEquals(first.DataContext, second.DataContext))
+    throw new Exception("Views/models must be distinct transient instances.");
+var model = first.DataContext;
+Task? firstWarmup = null, secondWarmup = null;
+TaskCompletionSource<string?>? folderPicker = null;
+Task? pendingFolderImport = null;
+if (memory)
+{
+    if (blocked!.Started != 0) throw new Exception("Memory construction started observation or loaded data before warmup.");
+    firstWarmup = ((IPackageViewWarmupTarget)first).WarmupAsync().AsTask();
+    PumpUntil(() => blocked.Started == 4 && blocked.Active == 4);
+    using var navigationLifetime = new CancellationTokenSource();
+    var navigation = ((IPackageViewNavigationTarget)first).OnNavigatedToAsync(
+        new("sunder.package.agent.memory.semantic.inspector", new Dictionary<string, string?>()), navigationLifetime.Token).AsTask();
+    navigationLifetime.Cancel();
+    PumpUntil(() => navigation.IsCompleted);
+    if (!navigation.IsCanceled || firstWarmup.IsCompleted || blocked.Started != 4 || blocked.Active != 4)
+        throw new Exception("Superseding Memory navigation restarted or cancelled shared initialization.");
+    secondWarmup = ((IPackageViewNavigationTarget)second).OnNavigatedToAsync(
+        new("sunder.package.agent.memory.semantic.inspector", new Dictionary<string, string?>())).AsTask();
+    PumpUntil(() => blocked.Started == 7 && blocked.Active == 7);
+}
+if (mcp || skills)
+    if (blocked!.Started != 3 || blocked.Active != 3) throw new Exception("Construction lost its shared observation or per-view initialization.");
+if (skills)
+{
+    if (((SkillsStateProbe)skillState!).Queries != 1) throw new Exception("The shared Skills gateway did not replay cleanup exactly once.");
+    using var navigationLifetime = new CancellationTokenSource();
+    var navigation = ((IPackageViewNavigationPreparationTarget)model).PrepareNavigationAsync(
+        new("sunder.package.agent.skills.settings", new Dictionary<string, string?>()), navigationLifetime.Token).AsTask();
+    navigationLifetime.Cancel();
+    PumpUntil(() => navigation.IsCompleted);
+    var initialization = (Task)model.GetType().GetMethod("InitializeAsync")!.Invoke(model, null)!;
+    if (!navigation.IsCanceled || initialization.IsCompleted || blocked!.Started != 3 || blocked.Active != 3)
+        throw new Exception("Skills navigation cancellation restarted or cancelled model initialization.");
+    folderPicker = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    pendingFolderImport = (Task)viewType.GetMethod("ContinueLocalFolderImportAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+        .Invoke(first, [model, folderPicker.Task])!;
+}
+if (mcp)
+{
+    var editor = viewType.GetField("ConfigEditor", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!.GetValue(first)!;
+    var text = editor.GetType().GetProperty("Text")!;
+    model.GetType().GetProperty("EditorText")!.SetValue(model, "{\"draft\":true}");
+    if (!Equals(text.GetValue(editor), "{\"draft\":true}")) throw new Exception("MCP view-model edits did not reach the real editor.");
+    text.SetValue(editor, "{\"edited\":true}");
+    if (!Equals(model.GetType().GetProperty("EditorText")!.GetValue(model), "{\"edited\":true}")) throw new Exception("MCP editor edits did not reach the model.");
+}
+var docker = assembly.GetName().Name == "Sunder.Package.Agent.Execution.Docker.App";
+if (background.Subscriptions != (docker ? 2 : 0)) throw new Exception("The views lost their activation-owned queue subscriptions.");
+VerifyViewModel(first, assembly);
+VerifyViewModel(second, assembly);
+((IDisposable)first).Dispose();
+if (background.Subscriptions != (docker ? 1 : 0)) throw new Exception("The disposed view retained its queue subscription.");
+if (first.DataContext is not null) throw new Exception("The view retained its disposed model.");
+if (memory)
+{
+    PumpUntil(() => firstWarmup!.IsCompleted && blocked!.Active == 4);
+    if (!firstWarmup!.IsCanceled || secondWarmup!.IsCompleted || blocked!.Started != 7)
+        throw new Exception("Memory view disposal failed to isolate its load from the other view and shared observation.");
+}
+if (skills)
+{
+    folderPicker!.SetResult("late-folder-selection");
+    PumpUntil(() => pendingFolderImport!.IsCompleted);
+    pendingFolderImport!.GetAwaiter().GetResult();
+    if (blocked!.Started != 3 || ((SkillsStateProbe)skillState!).Queries != 1)
+        throw new Exception("A disposed Skills view imported a late picker result.");
+}
+if (mcp || skills)
+{
+    var initialization = (Task)model.GetType().GetMethod("InitializeAsync")!.Invoke(model, null)!;
+    PumpUntil(() => initialization.IsCompleted && blocked!.Active == 2);
+    initialization.GetAwaiter().GetResult();
+    if (blocked!.Started != 3) throw new Exception("Disposed initialization restarted.");
+}
+else
+{
+    try { model.GetType().GetMethod("InitializeAsync")!.Invoke(model, [CancellationToken.None]); throw new Exception("The disposed model remained active."); }
+    catch (TargetInvocationException error) when (error.InnerException is ObjectDisposedException) { }
+}
+var secondInitialization = mcp || skills ? (Task)second.DataContext!.GetType().GetMethod("InitializeAsync")!.Invoke(second.DataContext, null)! : null;
+((IDisposable)second).Dispose();
+if (background.Subscriptions != 0) throw new Exception("Queue subscriptions survived view disposal.");
+if (blocked is not null)
+{
+    PumpUntil(() => blocked.Active == 1 && (!memory || secondWarmup!.IsCompleted) && (secondInitialization?.IsCompleted ?? true));
+    secondInitialization?.GetAwaiter().GetResult();
+    if (memory && (!secondWarmup!.IsCanceled || blocked.Started != 7)) throw new Exception("Memory warmup survived disposal or restarted.");
+    var shutdown = services.DisposeAsync().AsTask();
+    PumpUntil(() => shutdown.IsCompleted && blocked.Active == 0);
+    shutdown.GetAwaiter().GetResult();
+}
+
+static void VerifyViewModel(Control view, Assembly assembly, bool requiresCommands = true)
+{
+    var model = view.DataContext ?? throw new Exception("The view has no model.");
+    if (view.GetType().Assembly != assembly || model.GetType().Assembly != assembly
+        || !ReferenceEquals(model, Field(view, "_viewModel")))
+        throw new Exception("Constructor and DataContext must share one role-local view model.");
+    foreach (var operations in new[] { Field(view, "_operations"), Field(model, "_operations"), Field(model, "_presentationOperations") }.OfType<object>()
+        .Where(value => value.GetType().FullName == "Sunder.Package.Agent.Shared.Presentation.PresentationOperationObserver"))
+        foreach (var field in new[] { "_writeEvent", "_publishNotification" })
+            if (Field(operations, field) is null) throw new Exception("Operation reporting was replaced by a designer-only constructor.");
+    var commands = model.GetType().GetProperties().Where(property => typeof(ICommand).IsAssignableFrom(property.PropertyType)).ToArray();
+    if (requiresCommands && commands.Length == 0 || commands.Any(property => property.GetValue(model) is null))
+        throw new Exception("The evaluated Toolkit did not generate the view commands.");
+}
+
+static object? Field(object value, string name)
+    => value.GetType().GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(value);
+
+static void VerifyAgentViews(Assembly assembly, ServiceProvider services, AppViewRegistry registry, BlockedOwnerRpc blocked,
+    IPackageShellViewService shell, IPackageSettingsNavigationService navigation)
+{
+    if (registry.Views.Count != 4 || registry.Settings.Single().Name != "AgentPermissionsView") throw new Exception("Agent contributions changed.");
+    var controls = new List<Control>();
+    foreach (var (id, name, icon, placement) in new[]
+    {
+        ("chat", "Agent Chat", "chat", PackageViewPlacement.Middle),
+        ("workspaces", "Workspaces", "workspace", PackageViewPlacement.RightTop),
+        ("profiles", "Agents", "profile", PackageViewPlacement.RightTop),
+        ("history", "History", "session", PackageViewPlacement.RightTop),
+    })
+    {
+        var (type, registration) = registry.Views.Single(item => item.Registration.Id == "sunder.package.agent." + id);
+        if (registration.Name != name || registration.IconAssetPath != "Assets/" + icon + "-icon.png"
+            || registration.DefaultPlacement != placement || !registration.ShowInHotbarByDefault) throw new Exception("Agent view metadata changed.");
+        AddPair(type, id != "history");
+    }
+    AddPair(registry.Settings.Single(), true);
+    var gateway = services.GetRequiredService(assembly.GetType("Sunder.Package.Agent.Runtime.AgentAppRuntimeGateway", true)!);
+    var selection = services.GetRequiredService(assembly.GetType("Sunder.Package.Agent.Services.AgentChatSelectionStateService", true)!);
+    var catalog = services.GetRequiredService(assembly.GetType("Sunder.Package.Agent.Services.AgentAppRpcCatalog", true)!);
+    foreach (var control in controls)
+    {
+        var model = control.DataContext!;
+        foreach (var port in new[] { "_profileService", "_workspaceService", "_sessionService", "_permissionService", "_runCoordinator", "_attachmentService", "_executionGateway", "_gateway" })
+            if (Field(model, port) is { } value && !ReferenceEquals(value, gateway)) throw new Exception("Agent view lost its shared gateway: " + port);
+        if (Field(model, "_selectionState") is { } state && !ReferenceEquals(state, selection)) throw new Exception("Agent selection state was duplicated.");
+        if (Field(model, "_rpcCatalog") is { } rpcCatalog && !ReferenceEquals(rpcCatalog, catalog)) throw new Exception("Agent catalog was duplicated.");
+        if (Field(model, "_shellViewService") is { } shellView && !ReferenceEquals(shellView, shell)) throw new Exception("Agent shell navigation lost its Host instance.");
+        if (Field(model, "_settingsNavigationService") is { } settings && !ReferenceEquals(settings, navigation)) throw new Exception("Agent settings navigation lost its Host instance.");
+    }
+    if (ReferenceEquals(Field(controls[2], "_context"), Field(controls[3], "_context"))) throw new Exception("Workspace view contexts must be per-view.");
+    if (Field(controls[0], "TranscriptItemsControl")?.GetType().FullName != "Avalonia.Controls.ItemsRepeater"
+        || Field(controls[6], "HistoryResultsRepeater")?.GetType().FullName != "Avalonia.Controls.ItemsRepeater")
+        throw new Exception("Agent transcript/history controls were not compiled.");
+    PumpUntil(() => blocked.ActiveWatches == 1 && blocked.Active >= 3);
+    if (blocked.Watches != 1) throw new Exception("Agent catalog observation was duplicated.");
+
+    var loads = controls.Select(control => Initialize(control.DataContext!)).ToArray();
+    Dispatcher.UIThread.RunJobs();
+    if (loads.Any(load => load.IsCompleted)) throw new Exception("Agent view initialization did not wait for its runtime.");
+    using (var cancellation = new CancellationTokenSource())
+    {
+        var pending = ((IPackageViewNavigationTarget)controls[2]).OnNavigatedToAsync(
+            new("sunder.package.agent.workspaces", new Dictionary<string, string?>()), cancellation.Token).AsTask();
+        cancellation.Cancel(); PumpUntil(() => pending.IsCompleted);
+        if (!pending.IsCanceled || loads[2].IsCompleted) throw new Exception("Workspace navigation cancellation stopped shared warmup.");
+    }
+    foreach (var parity in new[] { 0, 1 })
+        for (var index = parity; index < controls.Count; index += 2)
+        {
+            ((IDisposable)controls[index]).Dispose();
+            PumpUntil(() => loads[index].IsCompleted);
+            try { loads[index].GetAwaiter().GetResult(); } catch (OperationCanceledException) { }
+            if (controls[index].DataContext is not null) throw new Exception("Agent view retained its disposed model.");
+            if (parity == 0 && loads[index + 1].IsCompleted) throw new Exception("Agent view disposal stopped its peer.");
+        }
+    if (blocked.ActiveWatches != 1 || blocked.Active == 0) throw new Exception("View disposal stopped an activation-owned Agent producer.");
+    var shutdown = services.DisposeAsync().AsTask();
+    PumpUntil(() => shutdown.IsCompleted && blocked.Active == 0 && blocked.ActiveWatches == 0);
+    shutdown.GetAwaiter().GetResult();
+    if (gateway.GetType().GetProperty("ConnectionState")!.GetValue(gateway)!.ToString() != "Disposed") throw new Exception("Agent gateway shutdown did not complete.");
+
+    void AddPair(Type type, bool commands)
+    {
+        var first = (Control)services.GetRequiredService(type);
+        var second = (Control)services.GetRequiredService(type);
+        VerifyViewModel(first, assembly, commands); VerifyViewModel(second, assembly, commands);
+        if (ReferenceEquals(first, second) || ReferenceEquals(first.DataContext, second.DataContext)) throw new Exception("Agent view/model lifetime changed.");
+        controls.Add(first); controls.Add(second);
+    }
+    static Task Initialize(object model)
+        => Field(model, "_initialization") is Task pending ? pending
+            : (Task)model.GetType().GetMethod("InitializeAsync", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+                binder: null, types: [typeof(CancellationToken)], modifiers: null)!.Invoke(model, [CancellationToken.None])!;
+}
+
+static void VerifyBuilderView(Assembly assembly, ServiceProvider services, AppViewRegistry registry, BlockedOwnerRpc blocked,
+    BuilderStateProbe state, DormantBackgroundQueue background)
+{
+    try
+    {
+        if (registry.Settings.Count != 0) throw new Exception("Builder must register a navigation view.");
+        var (type, registration) = registry.Views.Single();
+        if (registration.Id != "sunder.package.agent.builder" || registration.Name != "Package Builder"
+            || registration.IconAssetPath != "Assets/builder-icon.png" || registration.DefaultPlacement != PackageViewPlacement.Middle || !registration.ShowInHotbarByDefault)
+            throw new Exception("Builder navigation metadata changed.");
+        var first = (Control)services.GetRequiredService(type);
+        var second = (Control)services.GetRequiredService(type);
+        VerifyViewModel(first, assembly, requiresCommands: false); VerifyViewModel(second, assembly, requiresCommands: false);
+        var model = first.DataContext!;
+        if (ReferenceEquals(first, second) || !ReferenceEquals(model, second.DataContext)
+            || !ReferenceEquals(model, services.GetRequiredService(model.GetType())))
+            throw new Exception("Builder must retain its activation-owned model across transient views.");
+        foreach (var name in new[] { "_applicationService", "_operationQueue", "_persistence" })
+        {
+            var dependency = Field(model, name)!;
+            if (!ReferenceEquals(dependency, services.GetRequiredService(dependency.GetType()))) throw new Exception("Builder created an unowned helper: " + name);
+        }
+        var queue = Field(model, "_operationQueue")!;
+        var queueHost = queue.GetType().GetFields(BindingFlags.Instance | BindingFlags.NonPublic)
+            .Single(field => field.FieldType == typeof(IBackgroundProcessQueue)).GetValue(queue);
+        if (!ReferenceEquals(background, queueHost)) throw new Exception("Builder lost its Host-owned background queue.");
+        if (blocked.Started != 0 || state.Reads != 0 || state.Writes != 0) throw new Exception("Builder construction performed I/O.");
+
+        var loading = ((IPackageViewWarmupTarget)first).WarmupAsync().AsTask();
+        PumpUntil(() => blocked.Started == 1 && blocked.Active == 1 && state.Reads == 1);
+        using var cancellation = new CancellationTokenSource();
+        var navigation = ((IPackageViewNavigationTarget)second).OnNavigatedToAsync(
+            new(registration.Id, new Dictionary<string, string?>()), cancellation.Token).AsTask();
+        cancellation.Cancel();
+        PumpUntil(() => navigation.IsCompleted);
+        if (!navigation.IsCanceled || loading.IsCompleted || blocked.Started != 1 || state.Reads != 1)
+            throw new Exception("Builder navigation cancellation changed activation-owned initialization.");
+        ((IDisposable)first).Dispose();
+        if (first.DataContext is not null || !ReferenceEquals(model, second.DataContext) || loading.IsCompleted || blocked.Active != 1)
+            throw new Exception("Closing a Builder view stopped its shared model.");
+
+        var create = (Task)model.GetType().GetMethod("CreateProjectAsync")!.Invoke(model, null)!;
+        PumpUntil(() => create.IsCompleted && blocked.Started == 2 && blocked.Active == 1 && state.Reads == 2 && state.Writes == 1);
+        create.GetAwaiter().GetResult();
+        var project = ((System.Collections.IEnumerable)model.GetType().GetProperty("Projects")!.GetValue(model)!).Cast<object>().Single();
+        using (var saved = JsonDocument.Parse(state.Saved!))
+        {
+            if (saved.RootElement.GetProperty("version").GetInt32() != 1
+                || saved.RootElement.GetProperty("projects").EnumerateArray().Single().GetProperty("id").GetString()
+                    != (string)project.GetType().GetProperty("Id")!.GetValue(project)!)
+                throw new Exception("Builder autosave lost the shared project draft.");
+        }
+        ((IDisposable)second).Dispose();
+        var reopened = (Control)services.GetRequiredService(type);
+        if (second.DataContext is not null || !ReferenceEquals(model, reopened.DataContext) || loading.IsCompleted || state.WriteCompleted)
+            throw new Exception("Builder lost pending work across view reopening.");
+        var resumed = ((IPackageViewWarmupTarget)reopened).WarmupAsync().AsTask();
+        ((IDisposable)reopened).Dispose();
+        if (reopened.DataContext is not null || resumed.IsCompleted || blocked.Started != 2 || state.Reads != 2)
+            throw new Exception("Builder reopening restarted initialization.");
+
+        var shutdown = services.DisposeAsync().AsTask();
+        PumpUntil(() => blocked.Active == 0 && loading.IsCompleted && resumed.IsCompleted);
+        loading.GetAwaiter().GetResult(); resumed.GetAwaiter().GetResult();
+        if (shutdown.IsCompleted || state.Writes != 1) throw new Exception("Builder shutdown did not drain its pending autosave.");
+        state.CompleteWrite();
+        PumpUntil(() => shutdown.IsCompleted);
+        shutdown.GetAwaiter().GetResult();
+        if (state.Writes != 1 || blocked.Started != 2 || background.Subscriptions != 0)
+            throw new Exception("Builder shutdown repeated work or retained subscriptions.");
+    }
+    finally { state.CompleteWrite(); }
+}
+
+static void VerifySubagentsViews(Assembly assembly, ServiceProvider services, AppViewRegistry registry, BlockedOwnerRpc blocked,
+    SettingsNavigationProbe navigationService)
+{
+    if (registry.Settings.Count != 0 || registry.Views.Count != 2) throw new Exception("Subagents must register its two navigation views.");
+    var views = new List<Control>();
+    foreach (var (id, name, icon, placement) in new[]
+    {
+        ("sunder.package.agent.subagents", "Subagents", "sub-profile-icon.png", PackageViewPlacement.RightTop),
+        ("sunder.package.agent.subagents.sessions", "Subsessions", "sub-session-icon.png", PackageViewPlacement.LeftTop),
+    })
+    {
+        var (type, registration) = registry.Views.Single(entry => entry.Registration.Id == id);
+        if (registration.Name != name || registration.IconAssetPath != "assets/" + icon || registration.DefaultPlacement != placement || !registration.ShowInHotbarByDefault)
+            throw new Exception("Subagents navigation metadata changed.");
+        var first = (Control)services.GetRequiredService(type);
+        var second = (Control)services.GetRequiredService(type);
+        VerifyViewModel(first, assembly); VerifyViewModel(second, assembly);
+        if (ReferenceEquals(first, second) || ReferenceEquals(first.DataContext, second.DataContext)) throw new Exception("Subagents views/models are not transient.");
+        views.Add(first); views.Add(second);
+    }
+    Dispatcher.UIThread.RunJobs();
+    if (blocked.Started != 0 || navigationService.Opens != 0) throw new Exception("Subagents construction performed runtime work.");
+    var gateway = Field(views[0].DataContext!, "_gateway");
+    if (gateway is null || !ReferenceEquals(gateway, Field(views[1].DataContext!, "_gateway"))) throw new Exception("Subagent editors do not share a gateway.");
+    foreach (var view in views.Skip(2))
+    {
+        foreach (var port in new[] { "_sessionReader", "_checkpointReader", "_transcriptReader", "_changeNotifications" })
+            if (!ReferenceEquals(gateway, Field(view.DataContext!, port))) throw new Exception("Subsessions lost its shared gateway port: " + port);
+        if (Field(view, "TranscriptItemsControl")?.GetType().FullName != "Avalonia.Controls.ItemsRepeater"
+            || Field(view, "ToolDetailPreparationPortal") is null) throw new Exception("The real transcript controls were not compiled.");
+    }
+    if (!ReferenceEquals(navigationService, Field(views[0].DataContext!, "_settingsNavigationService"))) throw new Exception("The Host settings navigation service was not injected.");
+    ((Task)views[0].DataContext!.GetType().GetMethod("OpenProviderSettingsAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+        .Invoke(views[0].DataContext, ["example.generated.provider"])!).GetAwaiter().GetResult();
+    if (navigationService.Opens != 1) throw new Exception("Subagents did not use Host-owned provider settings navigation.");
+
+    var loads = new List<Task>();
+    for (var index = 0; index < views.Count; index++)
+    {
+        loads.Add(((IPackageViewWarmupTarget)views[index]).WarmupAsync().AsTask());
+        var expected = Math.Min(index + 2, 4);
+        PumpUntil(() => blocked.Started == expected && blocked.Active == expected);
+    }
+    // Both transcript models borrow one gateway-owned runtime snapshot. Their
+    // cancellation stops their waiters; only App shutdown owns that shared call.
+    foreach (var index in new[] { 0, 2 })
+    {
+        using var cancellation = new CancellationTokenSource();
+        var navigation = ((IPackageViewNavigationTarget)views[index]).OnNavigatedToAsync(
+            new(index == 0 ? "sunder.package.agent.subagents" : "sunder.package.agent.subagents.sessions", new Dictionary<string, string?>()), cancellation.Token).AsTask();
+        cancellation.Cancel();
+        PumpUntil(() => navigation.IsCompleted);
+        if (!navigation.IsCanceled || loads.Any(load => load.IsCompleted) || blocked.Started != 4 || blocked.Active != 4)
+            throw new Exception("Subagents navigation cancellation restarted or cancelled shared warmup work.");
+    }
+    for (var index = 0; index < views.Count; index++)
+    {
+        ((IDisposable)views[index]).Dispose();
+        if (views[index].DataContext is not null) throw new Exception("A disposed Subagents view retained its model.");
+        var expected = index == 0 ? 3 : 2;
+        PumpUntil(() => loads[index].IsCompleted && blocked.Active == expected);
+        try { loads[index].GetAwaiter().GetResult(); } catch (OperationCanceledException) { }
+        if (blocked.Started != 4 || loads.Skip(index + 1).Any(load => load.IsCompleted))
+            throw new Exception("Subagents view disposal changed another view's lifetime.");
+    }
+    var shutdown = services.DisposeAsync().AsTask();
+    PumpUntil(() => shutdown.IsCompleted && blocked.Active == 0);
+    shutdown.GetAwaiter().GetResult();
+}
+
+static void PumpUntil(Func<bool> complete)
+{
+    var timeout = Stopwatch.StartNew();
+    while (!complete() && timeout.Elapsed < TimeSpan.FromSeconds(5)) { Dispatcher.UIThread.RunJobs(); Thread.Sleep(5); }
+    if (!complete()) throw new Exception("View initialization/observation did not reach its expected lifetime boundary.");
+}
+
+public sealed class AppServicesLifetime(ServiceProvider services, Action<Func<bool>> pump) : IDisposable
+{
+    public void Dispose()
+    {
+        var shutdown = services.DisposeAsync().AsTask();
+        pump(() => shutdown.IsCompleted);
+        shutdown.GetAwaiter().GetResult();
+    }
+}
+
+public sealed class AppViewRegistry : IAvaloniaPackageContributionRegistry
+{
+    public List<Type> Settings { get; } = [];
+    public List<(Type View, PackageViewRegistration Registration)> Views { get; } = [];
+    public void RegisterSettingsView<TView>() where TView : Control => Settings.Add(typeof(TView));
+    public void RegisterPackageView<TView>(PackageViewRegistration registration) where TView : Control
+        => Views.Add((typeof(TView), registration));
+}
+
+public class MetadataHost : DispatchProxy
+{
+    public IPackageStorageContext? Storage { get; set; }
+    protected override object? Invoke(MethodInfo? method, object?[]? arguments)
+        => method?.Name switch
+        {
+            "get_Logging" => NullPackageLogging.Instance,
+            "get_Callbacks" => NullPackageCallbackClient.Instance,
+            "get_Storage" when Storage is not null => Storage,
+            _ => throw new Exception("View construction/registration performed Host I/O: " + method?.Name),
+        };
+}
+
+public sealed class SettingsNavigationProbe : IPackageSettingsNavigationService
+{
+    public int Opens { get; private set; }
+    public ValueTask<bool> OpenSettingsAsync(IReadOnlyDictionary<string, string?>? parameters = null, CancellationToken cancellationToken = default)
+        => throw new Exception("Unexpected global settings navigation.");
+    public ValueTask<bool> OpenPackageSettingsAsync(string packageId, IReadOnlyDictionary<string, string?>? parameters = null, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (packageId != "example.generated.provider" || parameters is not null) throw new Exception("Provider settings navigation changed its target.");
+        Opens++;
+        return ValueTask.FromResult(true);
+    }
+}
+
+public sealed class StateOnlyStorageProbe(IPackageKeyValueStore state) : IPackageStorageContext
+{
+    public IPackageKeyValueStore State => state;
+    public IPackageFileStore Files => throw new Exception("View initialization accessed package files.");
+    public IPackageRoleLocalWorkspace RoleLocalWorkspace => throw new Exception("View initialization accessed a local path.");
+}
+
+public class BuilderStateProbe : DispatchProxy
+{
+    private int _reads, _writes;
+    private readonly TaskCompletionSource _write = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public int Reads => Volatile.Read(ref _reads);
+    public int Writes => Volatile.Read(ref _writes);
+    public string? Saved { get; private set; }
+    public bool WriteCompleted => _write.Task.IsCompleted;
+    public void CompleteWrite() => _write.TrySetResult();
+    protected override object? Invoke(MethodInfo? method, object?[]? arguments)
+    {
+        if (!Equals(arguments?[0], "builder.projects.v1")) throw new Exception("Builder changed its persisted state key.");
+        if (method?.Name == "GetValueAsync")
+        {
+            ((CancellationToken)arguments![1]!).ThrowIfCancellationRequested();
+            Interlocked.Increment(ref _reads);
+            return Task.FromResult<string?>(null);
+        }
+        if (method?.Name == "SetValueAsync" && (CancellationToken)arguments![2]! == CancellationToken.None)
+        {
+            Saved = (string)arguments[1]!;
+            Interlocked.Increment(ref _writes);
+            return _write.Task;
+        }
+        throw new Exception("Unexpected Builder state operation: " + method?.Name);
+    }
+}
+
+public class AgentStateProbe : DispatchProxy
+{
+    public int Calls { get; private set; }
+    protected override object? Invoke(MethodInfo? method, object?[]? arguments)
+    {
+        if (arguments?[0] is not string key || !key.StartsWith("agent.chat.", StringComparison.Ordinal)) throw new Exception("Unexpected Agent state key.");
+        ((CancellationToken)arguments[^1]!).ThrowIfCancellationRequested();
+        Calls++;
+        return method?.Name switch
+        {
+            "GetValueAsync" => Task.FromResult<string?>(null),
+            "SetValueAsync" or "DeleteValueAsync" => Task.CompletedTask,
+            _ => throw new Exception("Unexpected Agent selection-state operation: " + method?.Name),
+        };
+    }
+}
+
+public class SkillsStateProbe : DispatchProxy
+{
+    public int Queries { get; private set; }
+    protected override object? Invoke(MethodInfo? method, object?[]? arguments)
+    {
+        if (method?.Name != "ListKeysAsync" || !Equals(arguments![0], "skills.transfer-cleanup.v1.")
+            || (CancellationToken)arguments[1]! != CancellationToken.None)
+            throw new Exception("Unexpected Skills cleanup operation: " + method?.Name);
+        Queries++;
+        return Task.FromResult<IReadOnlyList<string>>([]);
+    }
+}
+
+public sealed class DormantBackgroundQueue : IBackgroundProcessQueue
+{
+    public int Subscriptions { get; private set; }
+    public event EventHandler<BackgroundProcessChangedEventArgs>? ProcessChanged
+    { add { Subscriptions++; } remove { Subscriptions--; } }
+    public BackgroundProcessSnapshot Enqueue(BackgroundProcessRequest request) => throw new Exception("View construction queued work.");
+    public IReadOnlyList<BackgroundProcessSnapshot> ListProcesses(string? groupKey = null) => throw new Exception("View construction queried work.");
+    public bool Cancel(Guid processId) => throw new Exception("View construction cancelled work.");
+}
+
+public class BlockedOwnerRpc : DispatchProxy
+{
+    private int _active, _started;
+    private int _activeWatches, _watches;
+    public string ContractId { get; set; } = "";
+    public int Active => Volatile.Read(ref _active);
+    public int Started => Volatile.Read(ref _started);
+    public int ActiveWatches => Volatile.Read(ref _activeWatches);
+    public int Watches => Volatile.Read(ref _watches);
+    protected override object? Invoke(MethodInfo? method, object?[]? arguments)
+    {
+        if (ContractId == "sunder.agent.owner.runtime")
+        {
+            if (method?.Name == "get_ResourceProfile") return null;
+            if (method?.Name == "WatchAsync") return Watch((CancellationToken)arguments![2]!);
+        }
+        if (method?.Name != "DiscoverAsync" || !Equals(arguments![0], ContractId))
+            throw new Exception("Unexpected owner RPC: " + method?.Name);
+        return new ValueTask<SunderRpcCatalogSnapshot>(Discover((CancellationToken)arguments[1]!));
+    }
+    private async Task<SunderRpcCatalogSnapshot> Discover(CancellationToken token)
+    {
+        Interlocked.Increment(ref _started); Interlocked.Increment(ref _active);
+        try { await Task.Delay(Timeout.Infinite, token).ConfigureAwait(false); throw new Exception("Blocked discovery completed without cancellation."); }
+        finally { Interlocked.Decrement(ref _active); }
+    }
+    private async IAsyncEnumerable<SunderRpcCatalogEvent> Watch([EnumeratorCancellation] CancellationToken token)
+    {
+        Interlocked.Increment(ref _watches); Interlocked.Increment(ref _activeWatches);
+        try { await Task.Delay(Timeout.Infinite, token).ConfigureAwait(false); }
+        finally { Interlocked.Decrement(ref _activeWatches); }
+        yield break;
+    }
+}

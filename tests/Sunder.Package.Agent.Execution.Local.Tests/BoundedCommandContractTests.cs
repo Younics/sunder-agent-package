@@ -1,7 +1,10 @@
+extern alias LocalWorker;
+extern alias DockerWorker;
+
 using System.Diagnostics;
-using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Execution.Docker;
-using Sunder.Package.Agent.Execution.Local;
+using LocalWorker::Sunder.Package.Agent.Contracts.Models;
+using DockerWorker::Sunder.Package.Agent.Execution.Docker;
+using LocalWorker::Sunder.Package.Agent.Execution.Local;
 using Xunit;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;

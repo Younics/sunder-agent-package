@@ -1,9 +1,11 @@
-using Sunder.Package.Agent.Contracts.Contracts;
-using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.PackageViews;
-using Sunder.Package.Agent.Protocol;
-using Sunder.Package.Agent.Runtime;
-using Sunder.Package.Agent.Services;
+extern alias AgentApp;
+
+using AgentApp::Sunder.Package.Agent.Contracts.Contracts;
+using AgentApp::Sunder.Package.Agent.Contracts.Models;
+using AgentApp::Sunder.Package.Agent.PackageViews;
+using AgentApp::Sunder.Package.Agent.Protocol;
+using AgentApp::Sunder.Package.Agent.Runtime;
+using AgentApp::Sunder.Package.Agent.Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -21,7 +23,7 @@ public sealed class WorkspaceExecutionTargetAuthorityRaceTests
         using var viewModel = new AgentWorkspacesViewModel(
             workspaceGateway,
             executionGateway,
-            catalog);
+            catalog.AppCatalog);
         await viewModel.InitializeAsync().WaitAsync(TimeSpan.FromSeconds(2));
         viewModel.SelectedExecutionTarget = viewModel.ExecutionTargets.Single(
             target => target.TargetId == "alpha");
@@ -57,22 +59,22 @@ public sealed class WorkspaceExecutionTargetAuthorityRaceTests
         using var viewModel = new AgentWorkspacesViewModel(
             workspaceGateway,
             executionGateway,
-            catalog);
+            catalog.AppCatalog);
 
         var initialization = viewModel.InitializeAsync();
         await workspaceGateway.InitializationStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
         var catalogChanged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        catalog.Changed += OnCatalogChanged;
+        catalog.AppCatalog.Changed += OnCatalogChanged;
         try
         {
             catalog.AddProvider(
-                AgentRpcServices.WorkspaceEditors,
+                RegressionTestAppBindings.WorkspaceEditors,
                 new NoOpWorkspaceEditorContributor());
             await catalogChanged.Task.WaitAsync(TimeSpan.FromSeconds(2));
         }
         finally
         {
-            catalog.Changed -= OnCatalogChanged;
+            catalog.AppCatalog.Changed -= OnCatalogChanged;
         }
 
         workspaceGateway.ReleaseInitialization.TrySetResult();

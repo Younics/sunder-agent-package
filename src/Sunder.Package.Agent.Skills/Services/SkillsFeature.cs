@@ -2,15 +2,17 @@ using System.Text;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
+using Sunder.Package.Agent.Skills.Runtime;
 using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Skills.Services;
 
-public sealed class SkillsFeature(SkillStore store, AgentRpcCatalog rpcCatalog)
+public sealed partial class SkillsFeature(SkillStore store, ISkillsRuntimeBindings runtime)
     : IAgentProfileSelectableCapabilityProvider,
         IAgentProfileSelectableCapabilityChangeNotifier,
         IAgentToolSource,
-        IAgentPromptContextContributor
+        IAgentPromptContextContributor,
+        ISkillsExecutionFeature
 {
     private const int MaxSkillToolChars = 60000;
     private const int DefaultReadLimit = 2000;
@@ -118,12 +120,19 @@ public sealed class SkillsFeature(SkillStore store, AgentRpcCatalog rpcCatalog)
             : new AgentToolReadiness(toolId, AgentToolReadinessStatus.Failed, "Enable at least one skill on this profile."));
     }
 
+    public ValueTask<AgentToolResult> ExecuteAsync(AgentToolExecutionContext context, AgentToolRequest request, CancellationToken cancellationToken = default)
+        => ExecuteAsync(context, request, context.ExecutionTargetReference?.ToHandle(), cancellationToken);
+
+    public ValueTask<AgentPromptContextContribution?> ContributeContextAsync(AgentPromptContextRequest request, CancellationToken cancellationToken = default)
+        => ContributeContextAsync(request, request.ExecutionTargetReference?.ToHandle(), cancellationToken);
+
     public async ValueTask<AgentToolResult> ExecuteAsync(
         AgentToolExecutionContext context,
         AgentToolRequest request,
+        AgentRpcProviderHandle? selectedTarget,
         CancellationToken cancellationToken = default)
     {
-        var profile = ResolveProfile(context.ProfileId);
+        var profile = await runtime.GetProfileAsync(context.ProfileId, cancellationToken).ConfigureAwait(false);
         if (profile is null)
         {
             return Error(request.ToolId, "Skill tools require an active profile.", "skills-profile-required");
@@ -133,8 +142,8 @@ public sealed class SkillsFeature(SkillStore store, AgentRpcCatalog rpcCatalog)
         {
             return request.ToolId.ToLowerInvariant() switch
             {
-                SkillConstants.SkillToolId => await ExecuteSkillAsync(profile, context, request, cancellationToken),
-                SkillConstants.SkillResourceToolId => await ExecuteSkillResourceAsync(profile, context, request, cancellationToken),
+                SkillConstants.SkillToolId => await ExecuteSkillAsync(profile, context, request, selectedTarget, cancellationToken),
+                SkillConstants.SkillResourceToolId => await ExecuteSkillResourceAsync(profile, context, request, selectedTarget, cancellationToken),
                 _ => Error(request.ToolId, $"Unknown skill tool '{request.ToolId}'.", "skills-tool-unknown"),
             };
         }
@@ -150,10 +159,11 @@ public sealed class SkillsFeature(SkillStore store, AgentRpcCatalog rpcCatalog)
 
     public async ValueTask<AgentPromptContextContribution?> ContributeContextAsync(
         AgentPromptContextRequest request,
+        AgentRpcProviderHandle? selectedTarget,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var profile = request.Profile ?? ResolveProfile(request.Session.ProfileId);
+        var profile = request.Profile ?? await runtime.GetProfileAsync(request.Session.ProfileId, cancellationToken).ConfigureAwait(false);
         if (profile is null)
         {
             return null;
@@ -170,7 +180,7 @@ public sealed class SkillsFeature(SkillStore store, AgentRpcCatalog rpcCatalog)
             request.Session.SessionId,
             request.Workspace,
             request.ExecutionBinding,
-            request.ExecutionTargetReference,
+            selectedTarget,
             cancellationToken);
         var pathsBySkillId = resolvedResources.ToDictionary(resource => resource.ResourceId, StringComparer.OrdinalIgnoreCase);
 
@@ -237,6 +247,7 @@ public sealed class SkillsFeature(SkillStore store, AgentRpcCatalog rpcCatalog)
         AgentProfileRecord profile,
         AgentToolExecutionContext context,
         AgentToolRequest request,
+        AgentRpcProviderHandle? selectedTarget,
         CancellationToken cancellationToken)
     {
         if (!TryParseSkillArgs(request.ArgumentsJson, out var args, out var error))
@@ -256,7 +267,7 @@ public sealed class SkillsFeature(SkillStore store, AgentRpcCatalog rpcCatalog)
             context.SessionId,
             context.Workspace,
             context.ExecutionBinding,
-            context.ExecutionTargetReference,
+            selectedTarget,
             cancellationToken);
         var resource = resources.FirstOrDefault(item => string.Equals(item.ResourceId, skill.SkillId, StringComparison.OrdinalIgnoreCase));
         var content = BuildSkillContent(skill, parsed, resource);
@@ -272,6 +283,7 @@ public sealed class SkillsFeature(SkillStore store, AgentRpcCatalog rpcCatalog)
         AgentProfileRecord profile,
         AgentToolExecutionContext context,
         AgentToolRequest request,
+        AgentRpcProviderHandle? selectedTarget,
         CancellationToken cancellationToken)
     {
         if (!TryParseSkillResourceArgs(request.ArgumentsJson, out var args, out var error))
@@ -311,7 +323,7 @@ public sealed class SkillsFeature(SkillStore store, AgentRpcCatalog rpcCatalog)
                 context.SessionId,
                 context.Workspace,
                 context.ExecutionBinding,
-                context.ExecutionTargetReference,
+                selectedTarget,
                 cancellationToken);
             var resource = resources.FirstOrDefault(item => string.Equals(item.ResourceId, skill.SkillId, StringComparison.OrdinalIgnoreCase));
             var content = new StringBuilder()
@@ -378,7 +390,7 @@ public sealed class SkillsFeature(SkillStore store, AgentRpcCatalog rpcCatalog)
         Guid? sessionId,
         AgentWorkspaceRecord? workspace,
         AgentWorkspaceBindingRecord? executionBinding,
-        AgentRpcReference<IAgentExecutionTarget>? executionTargetReference,
+        AgentRpcProviderHandle? selectedTarget,
         CancellationToken cancellationToken)
     {
         if (workspace is null || executionBinding is null)
@@ -393,119 +405,8 @@ public sealed class SkillsFeature(SkillStore store, AgentRpcCatalog rpcCatalog)
             return [];
         }
 
-        if (!TryAcquireExecutionTarget(executionTargetReference, executionBinding, out var targetLease))
-        {
-            return [];
-        }
-
-        return await InvokeTargetAsync(
-            targetLease,
-            cancellationToken,
-            (target, invocationToken) => target.Descriptor.SupportsFacet(AgentExecutionFacetIds.ResourceResolution)
-                && target is IAgentExecutionResourceResolver resolver
-                ? resolver.ResolveResourcesAsync(
-                    new AgentExecutionTargetContext(sessionId, profile.ProfileId, workspace, executionBinding),
-                    descriptors,
-                    invocationToken)
-                : ValueTask.FromResult<IReadOnlyList<AgentResolvedExecutionResource>>([]),
-            static () => []);
-    }
-
-    private static bool TryAcquireExecutionTarget(
-        AgentRpcReference<IAgentExecutionTarget>? selectedReference,
-        AgentWorkspaceBindingRecord binding,
-        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)]
-        out AgentRpcLease<IAgentExecutionTarget>? lease)
-    {
-        if (selectedReference is null || !selectedReference.TryAcquire(out lease))
-        {
-            lease = null;
-            return false;
-        }
-        if (lease.RetirementToken.IsCancellationRequested
-            || !IsBindingMatch(lease.Service.Descriptor, binding))
-        {
-            lease.Dispose();
-            lease = null;
-            return false;
-        }
-
-        return true;
-    }
-
-    private static bool IsBindingMatch(
-        AgentExecutionTargetDescriptor descriptor,
-        AgentWorkspaceBindingRecord binding)
-        => string.Equals(descriptor.TargetId, binding.ContributionId, StringComparison.OrdinalIgnoreCase)
-           || string.Equals(descriptor.TargetKind, binding.ContributionId, StringComparison.OrdinalIgnoreCase);
-
-    private static async ValueTask<TResult> InvokeTargetAsync<TResult>(
-        AgentRpcLease<IAgentExecutionTarget> lease,
-        CancellationToken cancellationToken,
-        Func<IAgentExecutionTarget, CancellationToken, ValueTask<TResult>> callback,
-        Func<TResult> unavailableResult)
-    {
-        using (lease)
-        {
-            var retirementToken = lease.RetirementToken;
-            using var invocation = CancellationTokenSource.CreateLinkedTokenSource(
-                cancellationToken,
-                retirementToken);
-            try
-            {
-                var result = await callback(lease.Service, invocation.Token).ConfigureAwait(false);
-                if (retirementToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
-                {
-                    return unavailableResult();
-                }
-                return result;
-            }
-            catch (Exception exception) when (IsTargetUnavailable(
-                exception,
-                retirementToken,
-                cancellationToken))
-            {
-                return unavailableResult();
-            }
-        }
-    }
-
-    private static bool IsTargetUnavailable(
-        Exception exception,
-        CancellationToken retirementToken,
-        CancellationToken callerCancellationToken)
-        => !callerCancellationToken.IsCancellationRequested
-           && (exception is SunderRpcException
-               {
-                   Error.Kind: SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable,
-               }
-               || retirementToken.IsCancellationRequested
-               && (exception is OperationCanceledException
-                   || exception is SunderRpcException { Error.Kind: SunderRpcErrorKind.Cancelled }));
-
-    private AgentProfileRecord? ResolveProfile(string? profileId)
-    {
-        if (string.IsNullOrWhiteSpace(profileId))
-        {
-            return null;
-        }
-        foreach (var reference in rpcCatalog.GetServiceReferences(AgentRpcServices.RuntimeCatalogs))
-        {
-            if (!reference.TryAcquire(out var lease))
-            {
-                continue;
-            }
-            using (lease)
-            {
-                var profile = lease.Service.GetProfile(profileId);
-                if (!lease.RetirementToken.IsCancellationRequested)
-                {
-                    return profile;
-                }
-            }
-        }
-
-        return null;
+        return await runtime.ResolveResourcesAsync(new AgentExecutionTargetContext(sessionId, profile.ProfileId, workspace, executionBinding),
+            descriptors, selectedTarget, cancellationToken).ConfigureAwait(false);
     }
 
     private InstalledSkillRecord? ResolveEnabledSkill(AgentProfileRecord profile, string name)

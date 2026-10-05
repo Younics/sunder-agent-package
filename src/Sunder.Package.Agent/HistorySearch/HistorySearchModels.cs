@@ -2,6 +2,7 @@ using Sunder.Package.Agent.Contracts.Models;
 
 namespace Sunder.Package.Agent.HistorySearch;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal static class HistorySearchLimits
 {
     internal const int MaximumQueryCharacters = 1_024;
@@ -48,6 +49,7 @@ internal static class HistorySearchVersions
     internal const int RankingVersion = 3;
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal enum HistorySearchRoleFilter
 {
     Any,
@@ -55,6 +57,7 @@ internal enum HistorySearchRoleFilter
     Assistant,
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal enum HistoryActivityKind
 {
     None,
@@ -66,12 +69,14 @@ internal enum HistoryActivityKind
     Execute,
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal enum HistoryAnchorKind
 {
     Text,
     Activity,
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record HistorySearchRequest(
     string Query,
     string? WorkspaceId = null,
@@ -85,6 +90,7 @@ internal sealed record HistorySearchRequest(
     int Limit = HistorySearchLimits.DefaultResults,
     string? Continuation = null);
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record HistorySearchHit(
     string DocumentId,
     string WorkspaceId,
@@ -106,6 +112,7 @@ internal sealed record HistorySearchHit(
     string? CallId,
     HistoryAnchorKind AnchorKind);
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record HistorySearchResponse(
     IReadOnlyList<HistorySearchHit> Results,
     string? Continuation,
@@ -113,6 +120,7 @@ internal sealed record HistorySearchResponse(
     HistorySearchStatus Status,
     bool Restarted = false);
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal enum HistorySearchAvailability
 {
     Starting,
@@ -122,6 +130,7 @@ internal enum HistorySearchAvailability
     Unavailable,
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record HistorySearchStatus(
     long Revision,
     HistorySearchAvailability Availability,
@@ -145,10 +154,12 @@ internal sealed record HistorySearchStatus(
     string? FailureMessage,
     string RuntimeInstanceId = "");
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record HistorySearchStatusSubscription(
     long AfterRevision = 0,
     string? RuntimeInstanceId = null);
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record HistorySearchStateRequest(
     string? EmbeddingProviderId = null,
     string? EmbeddingProviderPackageId = null,
@@ -157,13 +168,16 @@ internal sealed record HistorySearchStateRequest(
     bool IncludeAdvancedFilters = true,
     string? WorkspaceId = null);
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record HistorySearchFilterOption(string Id, string DisplayName, string? ParentId = null);
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record HistoryEmbeddingProviderOption(
     string PackageId,
     string ProviderId,
     string DisplayName);
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record HistoryEmbeddingModelOption(
     string PackageId,
     string ProviderId,
@@ -172,6 +186,7 @@ internal sealed record HistoryEmbeddingModelOption(
     int? Dimensions,
     bool IsRecommended);
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record HistorySearchState(
     HistorySearchStatus Status,
     IReadOnlyList<HistoryEmbeddingProviderOption> EmbeddingProviders,
@@ -182,6 +197,7 @@ internal sealed record HistorySearchState(
     IReadOnlyList<HistorySearchFilterOption> Profiles,
     string? Continuation);
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal enum HistorySearchCommandKind
 {
     ConfigureSemantic,
@@ -189,6 +205,7 @@ internal enum HistorySearchCommandKind
     ClearDerivedIndex,
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record HistorySearchCommand(
     HistorySearchCommandKind Kind,
     bool? SemanticEnabled = null,
@@ -196,6 +213,7 @@ internal sealed record HistorySearchCommand(
     string? EmbeddingModelId = null,
     string? EmbeddingProviderPackageId = null);
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record HistorySearchCommandResult(HistorySearchStatus Status);
 
 internal interface IAgentHistorySearchGateway

@@ -1,11 +1,13 @@
+extern alias MemoryWorker;
+
 using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging;
 using Microsoft.Data.Sqlite;
-using Sunder.Package.Agent.Contracts;
-using Sunder.Package.Agent.Contracts.Contracts;
-using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Memory.Semantic;
-using Sunder.Package.Agent.Memory.Semantic.Services;
+using MemoryWorker::Sunder.Package.Agent.Contracts;
+using MemoryWorker::Sunder.Package.Agent.Contracts.Contracts;
+using MemoryWorker::Sunder.Package.Agent.Contracts.Models;
+using MemoryWorker::Sunder.Package.Agent.Memory.Semantic;
+using MemoryWorker::Sunder.Package.Agent.Memory.Semantic.Services;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Logging;
@@ -741,9 +743,9 @@ public sealed class SemanticMemoryIndexingReliabilityTests
             _context.MutableSettings.SetValueAsync("semantic.reindex.mode", "eager").GetAwaiter().GetResult();
             _catalog = new RegressionTestExtensionCatalog();
             RuntimeCatalog = new TestRuntimeCatalog(Session, profile);
-            _catalog.AddProvider(AgentRpcServices.RuntimeCatalogs, RuntimeCatalog);
+            _catalog.AddRuntimeCatalog(RuntimeCatalog);
             Provider = new ControlledEmbeddingProvider("test-embedding-provider");
-            _catalog.AddProvider(AgentRpcServices.EmbeddingProviders, Provider);
+            _catalog.AddProvider(RegressionTestBindings.EmbeddingProviders, Provider);
             Store = new MemoryLocalStore(_context);
             (Backend, Worker) = CreateIndexingServices();
         }
@@ -763,7 +765,7 @@ public sealed class SemanticMemoryIndexingReliabilityTests
             => Store.ListEmbeddings(Session.SessionId, providerId, Profile.EmbeddingModelId!);
 
         public void AddProvider(ControlledEmbeddingProvider provider)
-            => _catalog.AddProvider(AgentRpcServices.EmbeddingProviders, provider);
+            => _catalog.AddProvider(RegressionTestBindings.EmbeddingProviders, provider);
 
         public void RemoveProvider(ControlledEmbeddingProvider provider)
             => _catalog.RemoveProvider(provider);
@@ -799,6 +801,7 @@ public sealed class SemanticMemoryIndexingReliabilityTests
         public async Task RestartWorkerAsync()
         {
             await Worker.DisposeAsync();
+            await Store.DisposeAsync();
             Store = new MemoryLocalStore(_context);
             (Backend, Worker) = CreateIndexingServices();
         }
@@ -814,7 +817,7 @@ public sealed class SemanticMemoryIndexingReliabilityTests
         {
             var settings = new MemorySemanticSettingsService(_context);
             var resolver = new SemanticModelRuntimeResolver(
-                _catalog,
+                _catalog.Memory(),
                 settings,
                 configurationCacheDuration: TimeSpan.FromMilliseconds(500));
             var backend = new SemanticMemoryRetrievalBackend(Store, resolver, settings);
@@ -838,6 +841,7 @@ public sealed class SemanticMemoryIndexingReliabilityTests
             finally
             {
                 _catalog.Dispose();
+                await Store.DisposeAsync();
                 if (Directory.Exists(_rootPath))
                 {
                     Directory.Delete(_rootPath, recursive: true);

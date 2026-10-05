@@ -63,7 +63,7 @@ public sealed class AgentExecutionTargetService(AgentRpcCatalog rpcCatalog) : IA
         SnapshotTargets(bool omitUnavailable)
         => AgentRpcInvocation.Snapshot(
             rpcCatalog,
-            AgentRpcServices.ExecutionTargets,
+            Sunder.Package.Agent.Runtime.Rpc.AgentExecutionBindings.Service,
             static target => target.Descriptor with
             {
                 Facets = target.Descriptor.Facets.ToArray(),
@@ -74,7 +74,7 @@ public sealed class AgentExecutionTargetService(AgentRpcCatalog rpcCatalog) : IA
         SnapshotTargetsAsync(bool omitUnavailable, CancellationToken cancellationToken)
         => AgentRpcInvocation.SnapshotAsync(
             rpcCatalog,
-            AgentRpcServices.ExecutionTargets,
+            Sunder.Package.Agent.Runtime.Rpc.AgentExecutionBindings.Service,
             static (target, token) => DescribeTargetAsync(target, token),
             cancellationToken,
             omitUnavailable);
@@ -83,9 +83,7 @@ public sealed class AgentExecutionTargetService(AgentRpcCatalog rpcCatalog) : IA
         IAgentExecutionTarget target,
         CancellationToken cancellationToken)
     {
-        var descriptor = target is AgentExecutionTargetRpcClient rpcTarget
-            ? await rpcTarget.DescribeAsync(cancellationToken).ConfigureAwait(false)
-            : target.Descriptor;
+        var descriptor = await Sunder.Package.Agent.Runtime.Rpc.AgentExecutionBindings.DescribeAsync(target, cancellationToken).ConfigureAwait(false);
         return descriptor with { Facets = descriptor.Facets.ToArray() };
     }
 

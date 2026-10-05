@@ -5,6 +5,7 @@ using Sunder.Package.Agent.Services;
 
 namespace Sunder.Package.Agent.Runtime;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 public interface IAgentProfileGateway
 {
     event Action<string>? ProfileChanged;
@@ -33,6 +34,7 @@ public interface IAgentProfileGateway
     Task<AgentEmbeddingProviderReadiness?> GetEmbeddingProviderReadinessAsync(string? providerId, CancellationToken cancellationToken = default);
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 public interface IAgentWorkspaceGateway
 {
     event Action? WorkspacesChanged;
@@ -52,6 +54,7 @@ public interface IAgentWorkspaceGateway
     Task InitializeAsync(CancellationToken cancellationToken = default);
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 public interface IAgentSessionGateway
 {
     event Action<Guid>? SessionChanged;
@@ -76,11 +79,13 @@ public interface IAgentSessionGateway
     AgentRunCheckpointRecord? GetLatestCheckpoint(Guid sessionId);
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 public interface IAgentTurnMutationGateway
 {
     event Action<AgentTurnMutation>? TurnMutated;
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal interface IAgentTranscriptHeaderGateway
 {
     IReadOnlyList<AgentTurnRecord> ListRecentTranscriptHeaders(Guid sessionId, int limit);
@@ -97,6 +102,7 @@ internal interface IAgentTranscriptHeaderGateway
     AgentTurnRecord? GetTranscriptHeader(Guid turnId);
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 public interface IAgentPermissionGateway
 {
     AgentSessionPermissionState GetSessionState(Guid sessionId);
@@ -108,6 +114,7 @@ public interface IAgentPermissionGateway
     IReadOnlyList<AgentPendingPermissionRequestRecord> ListPendingRequestsForSessionTree(Guid sessionId);
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 public interface IAgentRunGateway
 {
     Task<AgentRunCheckpointRecord> QueueUserMessageAsync(Guid sessionId, string profileId, string userMessage,
@@ -124,6 +131,7 @@ public interface IAgentRunGateway
         CancellationToken cancellationToken = default);
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 public interface IAgentAttachmentGateway
 {
     Task<AgentAttachmentUploadRequest> LoadUploadRequestFromFileAsync(string path, CancellationToken cancellationToken = default);
@@ -131,6 +139,7 @@ public interface IAgentAttachmentGateway
     Task<byte[]> ReadAttachmentBytesAsync(AgentAttachmentMetadata metadata, CancellationToken cancellationToken = default);
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 public interface IAgentExecutionGateway
 {
     IReadOnlyList<AgentExecutionTargetDescriptor> ListTargets();

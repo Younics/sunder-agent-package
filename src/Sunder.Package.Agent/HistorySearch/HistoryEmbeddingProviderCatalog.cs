@@ -4,6 +4,7 @@ using System.Text;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
+using Sunder.Package.Agent.Runtime.Rpc;
 
 namespace Sunder.Package.Agent.HistorySearch;
 
@@ -136,7 +137,7 @@ internal sealed class HistoryEmbeddingProviderCatalog(AgentRpcCatalog rpcCatalog
     private IReadOnlyList<OwnedEmbeddingProvider> SnapshotProviders()
     {
         var providers = new List<OwnedEmbeddingProvider>();
-        foreach (var reference in rpcCatalog.GetServiceReferences(AgentRpcServices.EmbeddingProviders))
+        foreach (var reference in rpcCatalog.GetServiceReferences(AgentEmbeddingBindings.Service))
         {
             if (!reference.TryAcquire(out var lease))
             {

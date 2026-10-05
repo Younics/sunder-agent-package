@@ -1,4 +1,6 @@
 using System.Xml.Linq;
+using System.Reflection;
+using System.Text.Json;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -13,26 +15,24 @@ internal sealed record RuntimePackageProject(
 
     public string PackageDirectoryPath => Path.GetDirectoryName(MetadataPath)!;
 
-    public string ProgramPath
-    {
-        get
-        {
-            var rootProgram = Path.Combine(DirectoryPath, "Program.cs");
-            return File.Exists(rootProgram)
-                ? rootProgram
-                : Path.Combine(DirectoryPath, "Worker", "Program.cs");
-        }
-    }
+    public string ProgramPath => Path.Combine(DirectoryPath, "obj",
+        typeof(RuntimePackageProject).Assembly.GetCustomAttribute<AssemblyConfigurationAttribute>()!.Configuration,
+        "net10.0", "sunder-analysis", System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier,
+        "sunder-rpc", "roles", "worker", "worker-entry.g.cs");
 
     public string? FamilyId => GetProperty("SunderPackageFamilyId");
 
     public string? Role => GetProperty("SunderPackageRole");
 
-    public bool IsWorker => string.Equals(Role, "worker", StringComparison.Ordinal);
+    public string ManifestPath => Path.Combine(DirectoryPath, "bin",
+        typeof(RuntimePackageProject).Assembly.GetCustomAttribute<AssemblyConfigurationAttribute>()!.Configuration,
+        "net10.0", "sunder-dev", "manifest", "sunder-package.json");
 
-    public string? AppAssemblyName => AppProjectPath is null
-        ? null
-        : GetAssemblyName(AppProjectPath);
+    public bool IsWorker => HasTarget("runtime", "worker");
+
+    public bool HasAppRole => HasTarget("app", "avalonia");
+
+    public string? AppAssemblyName => HasAppRole ? Name + ".App" : null;
 
     public IReadOnlyList<string> RoleProjectPaths =>
     [
@@ -44,9 +44,12 @@ internal sealed record RuntimePackageProject(
     private string? GetProperty(string name)
         => GetProjectProperty(ProjectPath, name);
 
-    private static string GetAssemblyName(string projectPath)
-        => GetProjectProperty(projectPath, "AssemblyName")
-           ?? Path.GetFileNameWithoutExtension(projectPath);
+    private bool HasTarget(string role, string kind)
+    {
+        using var manifest = JsonDocument.Parse(File.ReadAllBytes(ManifestPath));
+        return manifest.RootElement.GetProperty("targets").EnumerateArray().Any(target =>
+            target.GetProperty("role").GetString() == role && target.GetProperty("kind").GetString() == kind);
+    }
 
     private static string? GetProjectProperty(string projectPath, string name)
         => XDocument.Load(projectPath)
@@ -92,32 +95,18 @@ internal static class AgentPackageRepositoryInventory
     private static RuntimePackageProject CreateRuntimePackageProject(string metadataPath)
     {
         var packageDirectory = Path.GetDirectoryName(metadataPath)!;
-        var projects = Directory.EnumerateFiles(packageDirectory, "*.csproj", SearchOption.AllDirectories)
-            .Where(IsSourceFile)
-            .Select(static path => new RoleProject(
-                Path.GetFullPath(path),
-                XDocument.Load(path).Descendants("SunderPackageRole")
-                    .Select(static property => property.Value)
-                    .SingleOrDefault()))
-            .ToArray();
-        var worker = projects.Single(static project => string.Equals(project.Role, "worker", StringComparison.Ordinal));
-        var app = projects.SingleOrDefault(static project => string.Equals(project.Role, "app", StringComparison.Ordinal));
-        var protocols = projects
-            .Where(static project => string.Equals(project.Role, "protocol", StringComparison.Ordinal))
-            .Select(static project => project.Path)
-            .Order(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-        var workerProject = XDocument.Load(worker.Path);
-        var name = workerProject.Descendants("AssemblyName")
+        var projectPath = Path.GetFullPath(Directory.EnumerateFiles(packageDirectory, "*.csproj", SearchOption.TopDirectoryOnly).Single());
+        var project = XDocument.Load(projectPath);
+        var name = project.Descendants("AssemblyName")
             .Select(static property => property.Value)
             .SingleOrDefault()
-            ?? Path.GetFileNameWithoutExtension(worker.Path);
+            ?? Path.GetFileNameWithoutExtension(projectPath);
         return new RuntimePackageProject(
             name,
-            worker.Path,
+            projectPath,
             metadataPath,
-            app?.Path,
-            protocols);
+            AppProjectPath: null,
+            ProtocolProjectPaths: []);
     }
 
     private static DirectoryInfo FindRepositoryRoot()
@@ -150,5 +139,4 @@ internal static class AgentPackageRepositoryInventory
     private static string NormalizePath(string path)
         => path.Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
 
-    private sealed record RoleProject(string Path, string? Role);
 }

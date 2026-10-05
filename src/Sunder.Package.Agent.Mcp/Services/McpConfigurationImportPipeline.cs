@@ -3,6 +3,7 @@ using Sunder.Package.Agent.Shared.Importing;
 
 namespace Sunder.Package.Agent.Mcp.Services;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal static class McpConfigurationSourceReader
 {
     internal const int MaxDocumentBytes = 2 * 1024 * 1024;
@@ -47,6 +48,7 @@ internal static class McpConfigurationSourceReader
     }
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal static class McpJsonShapeValidator
 {
     public static void RejectDuplicateProperties(JsonElement root)
@@ -85,6 +87,7 @@ internal static class McpJsonShapeValidator
     }
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record McpServerCatalogWrite(
     ConfiguredMcpServerRecord Server,
     IReadOnlyDictionary<string, string> Headers,

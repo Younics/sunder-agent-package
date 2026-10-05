@@ -305,7 +305,7 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
 
         var migrators = AgentRpcInvocation.Snapshot(
             _rpcCatalog,
-            AgentRpcServices.WorkspacePathMigrators,
+            Sunder.Package.Agent.Runtime.Rpc.AgentWorkspacePathBindings.Service,
             static contributor => contributor.ContributorId);
         if (migrators.Count == 0)
         {

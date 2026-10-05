@@ -36,6 +36,7 @@ public sealed class DockerExecutionWorkspaceConfigService : IAgentWorkspacePathM
     {
     }
 
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
     internal DockerExecutionWorkspaceConfigService(
         IPackageContext packageContext,
         DockerImageCatalogService imageCatalogService,

@@ -2,7 +2,6 @@ using System.Text;
 using System.Text.Json;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Shared.Presentation;
 
 namespace Sunder.Package.Agent.Shared.PackageViews;
@@ -262,24 +261,4 @@ internal sealed class TranscriptToolPresentationService(
 
     private static string FormatCount(int count, string noun)
         => count == 1 ? $"1 {noun}" : $"{count} {noun}s";
-}
-
-internal sealed class RpcToolSourcePresentationResolver(
-    AgentRpcReference<IAgentToolSource> reference) : IAgentToolPresentationResolver
-{
-    public AgentToolPresentation? ResolveToolPresentation(AgentToolPresentationRequest request)
-    {
-        if (!reference.TryAcquire(out var lease))
-        {
-            return null;
-        }
-
-        using (lease)
-        {
-            var presentation = lease.Service is IAgentToolPresentationResolver resolver
-                ? resolver.ResolveToolPresentation(request)
-                : null;
-            return lease.RetirementToken.IsCancellationRequested ? null : presentation;
-        }
-    }
 }

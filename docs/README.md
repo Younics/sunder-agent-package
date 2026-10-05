@@ -1,5 +1,11 @@
 # Agent Extension Author Guide
 
+> **Pre-cutover guide:** examples on this page describe the current
+> descriptor-first migration tree so it remains testable. They are not a final V1
+> release contract. Final V1 authoring derives descriptors and role-local bindings
+> from ordinary source and ships no `Sunder.Package.Agent.Protocol` artifact. See
+> [`../compatibility/README.md`](../compatibility/README.md).
+
 This is the canonical guide for packages that integrate with `sunder.package.agent` 2.x through the schema-first contracts in `Sunder.Package.Agent.Protocol`.
 
 Use the Protocol package and the Sunder SDK only. Extensions must not reference `Sunder.Package.Agent`, `Sunder.App`, or `Sunder.Runtime.Host` implementation assemblies. Runtime capabilities are declared in manifests and published only as schema-validated RPC providers; package-local CLR objects never cross an activation boundary.
@@ -35,7 +41,7 @@ vocabulary. Generated bindings in package-local/owner Protocol assemblies are
 internal implementation details exposed only through maintained wrappers or to
 explicit first-party friend assemblies.
 
-Most Agent capabilities belong in an exact-RID Worker V3 executable. Pass activation-owned handlers to `SunderWorker.RunAsync` as immutable `SunderWorkerProviderRegistration` entries. Add an `ISunderAppPackageModule` only for presentation or an App-side client over owner-only RPC.
+Most Agent capabilities belong in an exact-RID Worker V1 executable. Pass activation-owned handlers to `SunderWorker.RunAsync` as immutable `SunderWorkerProviderRegistration` entries. Add an `ISunderAppPackageModule` only for presentation or an App-side client over owner-only RPC.
 
 `Sunder.Package.Agent.Protocol` is the shipped NuGet and assembly identity. The repository retains source folder `src/Sunder.Package.Agent.Contracts` and the `Sunder.Package.Agent.Contracts.*` namespaces for the package-local implementation interfaces and stable API types already carried by that artifact. The path and namespace do not identify another package or a cross-package CLR ABI. The Protocol identity bundles 19 descriptors: 18 supported third-party extension points and one reserved first-party observed-execution bridge.
 

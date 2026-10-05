@@ -716,20 +716,20 @@ internal sealed class PermissionHardeningRuntime : IAsyncDisposable
         {
             var catalog = new RegressionTestExtensionCatalog();
             var provider = new PermissionHardeningProvider();
-            catalog.AddProvider(AgentRpcServices.ChatProviders, provider);
-            catalog.AddProvider(AgentRpcServices.ToolSources, source);
+            catalog.AddProvider(RegressionTestBindings.ChatProviders, provider);
+            catalog.AddProvider(RegressionTestBindings.ToolSources, source);
             if (source is IAgentPermissionSurface permissionSurface)
             {
-                catalog.AddProvider(AgentRpcServices.PermissionSurfaces, permissionSurface);
+                catalog.AddProvider(RegressionTestBindings.PermissionSurfaces, permissionSurface);
             }
 
             var primaryExecutionTarget = new PermissionHardeningExecutionTarget(
                 PermissionHardeningExecutionTarget.PrimaryTargetId);
             catalog.AddProvider(
-                AgentRpcServices.ExecutionTargets,
+                RegressionTestBindings.ExecutionTargets,
                 primaryExecutionTarget);
             catalog.AddProvider(
-                AgentRpcServices.ExecutionTargets,
+                RegressionTestBindings.ExecutionTargets,
                 new PermissionHardeningExecutionTarget(
                     PermissionHardeningExecutionTarget.SecondaryTargetId));
 
@@ -744,9 +744,7 @@ internal sealed class PermissionHardeningRuntime : IAsyncDisposable
                 executionTargetService,
                 catalog);
             var profileService = new AgentProfileService(store, toolService, catalog, catalog.BehaviorLoops);
-            catalog.AddProvider(
-                AgentRpcServices.RuntimeCatalogs,
-                new AgentRuntimeCatalog(sessionService, profileService, workspaceService));
+            catalog.AddRuntimeCatalog(new AgentRuntimeCatalog(sessionService, profileService, workspaceService));
 
             var profile = await profileService.CreateProfileAsync("Permission hardening profile");
             profileService.SaveProfile(

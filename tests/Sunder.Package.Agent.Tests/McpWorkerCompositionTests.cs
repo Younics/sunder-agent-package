@@ -1,10 +1,12 @@
+extern alias McpWorker;
+extern alias McpApp;
+
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
-using Sunder.Package.Agent.Mcp;
-using Sunder.Package.Agent.Mcp.Runtime;
-using Sunder.Package.Agent.Mcp.Services;
-using Sunder.Package.Agent.Mcp.Worker;
+using McpWorker::Sunder.Package.Agent.Mcp;
+using McpWorker::Sunder.Package.Agent.Mcp.Runtime;
+using McpWorker::Sunder.Package.Agent.Mcp.Services;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Worker;
@@ -19,39 +21,40 @@ public sealed class McpWorkerCompositionTests
     public async Task WorkerAndAppComposition_KeepAuthorityInTheWorker()
     {
         using var scope = RegressionTestPackageScope.Create();
-        var options = McpWorkerConfiguration.CreateCore(scope.Context, new IdleRpcClient());
+        var options = AgentSourceArtifactMigrationTests.CreateGeneratedWorker(typeof(McpToolSource).Assembly, scope.Context, new IdleRpcClient()).Options;
         await using var composition = Assert.IsType<SunderWorkerComposition>(options.Composition);
 
         Assert.Equal(
             [
-                "mcp.tools",
-                "mcp.tools.observed",
+                "mcp.management",
                 "mcp.selectable.capabilities",
                 "mcp.session.cleaner",
                 "mcp.stack",
-                McpManagementProtocol.ProviderId,
+                "mcp.tools",
+                "mcp.tools.observed",
             ],
-            options.Providers.Select(provider => provider.ProviderId));
+            options.Providers.Select(provider => provider.ProviderId).Order(StringComparer.Ordinal));
         Assert.All(options.Providers, provider => Assert.IsAssignableFrom<ISunderRpcServiceHandler>(provider.Handler));
         Assert.IsType<McpOAuthCallbackHandler>(Assert.Single(options.CallbackHandlers));
         Assert.Empty(options.StateMigrations);
         Assert.Empty(options.SecretMigrations);
         Assert.Null(options.OnCandidateStarted);
         Assert.Null(options.OnBeforeStorageMigrations);
-        Assert.NotNull(options.OnActivated);
+        Assert.Null(options.OnActivated);
         Assert.NotNull(composition.Services.GetService<McpServerCatalogService>());
         Assert.NotNull(composition.Services.GetService<McpClientConnectionManager>());
         Assert.NotNull(composition.Services.GetService<McpToolSource>());
         Assert.NotNull(composition.Services.GetService<McpServerStackContributor>());
-        Assert.NotNull(composition.Services.GetService<McpManagementRpcProvider>());
-        Assert.Null(composition.Services.GetService<AgentMcpSettingsViewModel>());
-        await options.OnActivated!(null!, CancellationToken.None);
+        Assert.NotNull(composition.Services.GetService<McpWorker::Sunder.Package.Agent.Mcp.Rpc.ManagementService>());
+        Assert.Null(composition.Services.GetService<McpApp::Sunder.Package.Agent.Mcp.AgentMcpSettingsViewModel>());
+        await composition.Services.GetRequiredService<McpWorker::Sunder.Package.Agent.Mcp.Worker.McpActivation>()
+            .ActivateAsync(null!, CancellationToken.None);
 
         var appServices = new ServiceCollection();
-        new Sunder.Package.Agent.Mcp.AppPackageModule().ConfigureAppServices(appServices, scope.Context);
-        Assert.Contains(appServices, descriptor => descriptor.ServiceType == typeof(IMcpOwnerManagementClient));
-        Assert.Contains(appServices, descriptor => descriptor.ServiceType == typeof(IMcpManagementGateway));
-        Assert.Contains(appServices, descriptor => descriptor.ServiceType == typeof(AgentMcpSettingsViewModel));
+        new McpApp::Sunder.Generated.Package.AppModule().ConfigureAppServices(appServices, scope.Context);
+        Assert.Contains(appServices, descriptor => descriptor.ServiceType == typeof(McpApp::Sunder.Package.Agent.Mcp.Runtime.McpOwnerManagementRpcClient));
+        Assert.Contains(appServices, descriptor => descriptor.ServiceType == typeof(McpApp::Sunder.Package.Agent.Mcp.Runtime.McpAppRuntimeGateway));
+        Assert.Contains(appServices, descriptor => descriptor.ServiceType == typeof(McpApp::Sunder.Package.Agent.Mcp.AgentMcpSettingsViewModel));
         Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(McpServerCatalogService));
         Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(McpClientConnectionManager));
         Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(McpToolSource));
@@ -63,13 +66,14 @@ public sealed class McpWorkerCompositionTests
     {
         using var scope = RegressionTestPackageScope.Create();
         var rpc = new BlockingDiscoverRpcClient();
-        using var rpcCatalog = AgentRpcCatalog.CreateDormant(rpc);
+        await using var rpcCatalog = new McpWorker::Sunder.Package.Agent.Mcp.Rpc.RuntimeWorkspaceCatalog(rpc);
+        await rpcCatalog.StartAsync();
         var importer = new McpEcosystemConfigurationImporter(new McpServerCatalogService(scope.Context));
         var sync = new McpSunderConfigurationSyncService(
             importer,
             rpcCatalog,
             userProfilePath: scope.RootPath);
-        var coordinator = new McpConfigurationCoordinator(importer, sync);
+        await using var coordinator = new McpConfigurationCoordinator(importer, sync);
 
         await Task.Run(coordinator.Start).WaitAsync(TimeSpan.FromSeconds(2));
         await rpc.DiscoverStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
@@ -128,8 +132,19 @@ public sealed class McpWorkerCompositionTests
         }
     }
 
-    private sealed class BlockingDiscoverRpcClient : ISunderRpcClient
+    private sealed class BlockingDiscoverRpcClient : ISunderRpcCallScope
     {
+        public DateTimeOffset DeadlineUtc { get; } = DateTimeOffset.UtcNow.AddMinutes(1);
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        public ValueTask<ISunderRpcCallScope> CreateCallScopeAsync(SunderRpcCallOptions? options = null, CancellationToken cancellationToken = default)
+            => ValueTask.FromResult<ISunderRpcCallScope>(this);
+        public ValueTask<SunderRpcContentReference> RegisterContentAsync(SunderRpcEndpointReference endpoint, Stream source,
+            SunderRpcContentRegistrationOptions options, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public ValueTask<SunderRpcContentReference> RegisterContentFileAsync(SunderRpcEndpointReference endpoint, string filePath,
+            SunderRpcContentRegistrationOptions options, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public ValueTask<Stream> OpenContentAsync(SunderRpcContentReference reference, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
         private readonly TaskCompletionSource<SunderRpcCatalogSnapshot> _discover = new(
             TaskCreationOptions.RunContinuationsAsynchronously);
 

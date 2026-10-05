@@ -1,5 +1,6 @@
 namespace Sunder.Package.Agent.Skills.Runtime;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal static class SkillTransferLimits
 {
     public const int MaxFiles = 2_000;

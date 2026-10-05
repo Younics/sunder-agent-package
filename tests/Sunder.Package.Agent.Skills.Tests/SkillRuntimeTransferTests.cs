@@ -1,3 +1,7 @@
+extern alias SkillsApp;
+
+using AppRuntime = SkillsApp::Sunder.Package.Agent.Skills.Runtime;
+using SkillAppRuntimeGateway = SkillsApp::Sunder.Package.Agent.Skills.Runtime.SkillAppRuntimeGateway;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.IO.Compression;
@@ -37,8 +41,9 @@ public sealed class SkillRuntimeTransferTests
 
             var skill = Assert.Single(imported);
             Assert.Null(skill.SourceUri);
-            Assert.Single(store.ListSkills());
-            Assert.Equal("runtime-readable content", await File.ReadAllTextAsync(Path.Combine(store.GetSkillRootPath(skill), "resource.txt")));
+            var stored = Assert.Single(store.ListSkills());
+            Assert.Equal(JsonSerializer.Serialize(stored), JsonSerializer.Serialize(skill));
+            Assert.Equal("runtime-readable content", await File.ReadAllTextAsync(Path.Combine(store.GetSkillRootPath(stored), "resource.txt")));
             Assert.NotNull(client.LastCommand);
             Assert.Equal(SkillCommandKind.ImportTransfer, client.LastCommand!.Kind);
             Assert.NotEqual(source, client.LastCommand.Value);
@@ -275,27 +280,30 @@ public sealed class SkillRuntimeTransferTests
         return output.ToArray();
     }
 
-    private sealed class HandlerRuntimeClient(SkillRuntimeHandler handler) : ISkillOwnerClient
+    private sealed class HandlerRuntimeClient(SkillRuntimeHandler handler) : AppRuntime.ISkillOwnerClient
     {
         public SkillCommand? LastCommand { get; private set; }
 
-        public ValueTask<SkillProjection> QueryAsync(CancellationToken cancellationToken = default)
-            => handler.HandleAsync(new SkillQuery(), cancellationToken);
+        public async ValueTask<AppRuntime.SkillProjection> QueryAsync(CancellationToken cancellationToken = default)
+            => ToApp(await handler.HandleAsync(new SkillQuery(), cancellationToken));
 
-        public ValueTask<SkillProjection> CommandAsync(
-            SkillCommand command,
+        public async ValueTask<AppRuntime.SkillProjection> CommandAsync(
+            AppRuntime.SkillCommand command,
             CancellationToken cancellationToken = default)
         {
-            LastCommand = command;
-            return handler.HandleAsync(command, cancellationToken);
+            LastCommand = new SkillCommand(Enum.Parse<SkillCommandKind>(command.Kind.ToString()), command.Value);
+            return ToApp(await handler.HandleAsync(LastCommand, cancellationToken));
         }
 
-        public async IAsyncEnumerable<SkillChanged> SubscribeChangesAsync(
+        public async IAsyncEnumerable<AppRuntime.SkillChanged> SubscribeChangesAsync(
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             await Task.CompletedTask;
             yield break;
         }
+
+        private static AppRuntime.SkillProjection ToApp(SkillProjection projection)
+            => JsonSerializer.Deserialize<AppRuntime.SkillProjection>(JsonSerializer.SerializeToUtf8Bytes(projection))!;
     }
 
     internal sealed class TestContext(

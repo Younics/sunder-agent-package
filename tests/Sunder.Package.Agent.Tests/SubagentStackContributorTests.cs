@@ -1,12 +1,14 @@
 using Microsoft.Extensions.Logging;
-using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Subagents.Services;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Logging;
 using Sunder.Sdk.Stacks;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
+
+extern alias SubagentsWorker;
+using SubagentsWorker::Sunder.Package.Agent.Contracts.Models;
+using SubagentsWorker::Sunder.Package.Agent.Subagents.Services;
 
 public sealed class SubagentStackContributorTests
 {
@@ -28,7 +30,8 @@ public sealed class SubagentStackContributorTests
                 "gpt-5.5",
                 [new AgentProfileSelectableCapabilityAssignmentRecord("skill", "review", "skills")],
                 "{\"temperature\":0.1}");
-            var contributor = new SubagentStackContributor(service, context, new RegressionTestExtensionCatalog());
+            using var catalog = new RegressionTestExtensionCatalog();
+            var contributor = new SubagentStackContributor(service, context, catalog.Subagents());
 
             var item = Assert.Single(await contributor.ListExportItemsAsync(
                 new StackExportDiscoveryContext(context.PackageId)));
@@ -59,13 +62,15 @@ public sealed class SubagentStackContributorTests
             var sourceService = new SubagentService(new SubagentStore(sourceContext));
             var subagent = sourceService.CreateSubagent("Researcher");
             serviceSaveResearcher(sourceService, subagent.SubagentId);
-            var sourceContributor = new SubagentStackContributor(sourceService, sourceContext, new RegressionTestExtensionCatalog());
+            using var sourceCatalog = new RegressionTestExtensionCatalog();
+            var sourceContributor = new SubagentStackContributor(sourceService, sourceContext, sourceCatalog.Subagents());
             var fragment = Assert.Single((await sourceContributor.ExportAsync(new StackExportRequest(
                 [new StackExportItemSelection(subagent.SubagentId)]))).Fragments);
 
             var targetContext = new TestPackageContext(Path.Combine(root, "target"));
             var targetService = new SubagentService(new SubagentStore(targetContext));
-            var targetContributor = new SubagentStackContributor(targetService, targetContext, new RegressionTestExtensionCatalog());
+            using var targetCatalog = new RegressionTestExtensionCatalog();
+            var targetContributor = new SubagentStackContributor(targetService, targetContext, targetCatalog.Subagents());
             var importFragment = ToImportFragment(fragment);
             var preview = await targetContributor.PreviewImportAsync(new StackImportPreviewRequest(
                 [importFragment],

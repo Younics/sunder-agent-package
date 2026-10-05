@@ -8,8 +8,6 @@ internal static class HostSecureFileSearch
 {
     private const int MaxResults = 1000;
     private const int MaxOutputCharacters = 51_200;
-    private const int MaxExpressionCharacters = 4096;
-    private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(1);
 
     public static async ValueTask<AgentFileSearchResult> ExecuteAsync(
         HostFileSystemPathContext pathContext,
@@ -30,10 +28,7 @@ internal static class HostSecureFileSearch
         {
             try
             {
-                regex = new Regex(
-                    request.Pattern,
-                    RegexOptions.CultureInvariant | RegexOptions.NonBacktracking,
-                    RegexTimeout);
+                regex = FileSearchRequestValidation.CreateGrepRegex(request.Pattern);
             }
             catch (Exception ex) when (ex is ArgumentException or NotSupportedException)
             {
@@ -101,41 +96,7 @@ internal static class HostSecureFileSearch
     internal static bool TryValidateRequest(
         AgentFileSearchRequest request,
         out string? error)
-    {
-        if (string.IsNullOrWhiteSpace(request.Path)
-            || string.IsNullOrWhiteSpace(request.Pattern)
-            || request.Pattern.Length > MaxExpressionCharacters
-            || request.Include?.Length > MaxExpressionCharacters
-            || !Enum.IsDefined(request.Kind)
-            || (request.Kind == AgentFileSearchKind.Glob
-                && !LocalGlobMatcher.IsWithinExpansionBounds(request.Pattern))
-            || (request.Kind == AgentFileSearchKind.Grep
-                && request.Include is not null
-                && !LocalGlobMatcher.IsWithinExpansionBounds(request.Include)))
-        {
-            error = "A structured file search requires a path, search kind, and bounded non-empty expression.";
-            return false;
-        }
-
-        if (request.Kind == AgentFileSearchKind.Grep)
-        {
-            try
-            {
-                _ = new Regex(
-                    request.Pattern,
-                    RegexOptions.CultureInvariant | RegexOptions.NonBacktracking,
-                    RegexTimeout);
-            }
-            catch (Exception ex) when (ex is ArgumentException or NotSupportedException)
-            {
-                error = ex.Message;
-                return false;
-            }
-        }
-
-        error = null;
-        return true;
-    }
+        => FileSearchRequestValidation.TryValidateRequest(request, out error);
 
     private static async Task SearchDirectoryAsync(
         LocalSecurePathSession session,

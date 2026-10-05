@@ -1,0 +1,18 @@
+<Project>
+  <!-- Linked into owning suites; this is test infrastructure, never package source. -->
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)Sunder.Package.Agent.Tests/RegressionTestInfrastructure.cs;
+                      $(MSBuildThisFileDirectory)Sunder.Package.Agent.Tests/RegressionTestRpcState.FailureBoundary.cs;
+                      $(MSBuildThisFileDirectory)Sunder.Package.Agent.Tests/RegressionTestRpcDescriptors.cs;
+                      $(MSBuildThisFileDirectory)Sunder.Package.Agent.Tests/RegressionTestRpcValues.cs;
+                      $(MSBuildThisFileDirectory)Sunder.Package.Agent.Tests/RegressionTestBindings.cs;
+                      $(MSBuildThisFileDirectory)Sunder.Package.Agent.Tests/RegressionTestSourceProviders.cs;
+                      $(MSBuildThisFileDirectory)Sunder.Package.Agent.Tests/RegressionTestProviderRoles.cs;
+                      $(MSBuildThisFileDirectory)Sunder.Package.Agent.Tests/RegressionTestProviderAdapters.Metadata.cs;
+                      $(MSBuildThisFileDirectory)Sunder.Package.Agent.Tests/RegressionTestProviderAdapters.Execution.cs;
+                      $(MSBuildThisFileDirectory)Sunder.Package.Agent.Tests/RegressionTestProviderAdapters.Tools.cs;
+                      $(MSBuildThisFileDirectory)Sunder.Package.Agent.Tests/AgentRoleBoundary.cs;
+                      $(MSBuildThisFileDirectory)Sunder.Package.Agent.Tests/AgentRoleExceptionBoundary.cs"
+             Link="TestSupport/%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>

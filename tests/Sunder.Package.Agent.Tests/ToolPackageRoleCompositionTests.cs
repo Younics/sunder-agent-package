@@ -1,7 +1,10 @@
+extern alias FilesWorker;
+extern alias WebWorker;
+
 using System.Reflection;
-using Sunder.Package.Agent.Tools.Files;
-using Sunder.Package.Agent.Tools.Web;
-using Sunder.Package.Agent.Tools.Web.Services;
+using FilesWorker::Sunder.Package.Agent.Tools.Files;
+using WebWorker::Sunder.Package.Agent.Tools.Web;
+using WebWorker::Sunder.Package.Agent.Tools.Web.Services;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Logging;
 using Xunit;
@@ -60,17 +63,7 @@ public sealed class ToolPackageRoleCompositionTests
         var package = Assert.Single(
             AgentPackageRepositoryInventory.GetRuntimePackageProjects(),
             package => package.Name == assemblyName);
-        var configuration = new DirectoryInfo(AppContext.BaseDirectory.TrimEnd(
-            Path.DirectorySeparatorChar,
-            Path.AltDirectorySeparatorChar)).Parent?.Name ?? "Debug";
-        var manifestPath = Path.Combine(
-            package.DirectoryPath,
-            "obj",
-            configuration,
-            "net10.0",
-            System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier,
-            "sunder-package.json");
-        using var manifest = System.Text.Json.JsonDocument.Parse(File.ReadAllText(manifestPath));
+        using var manifest = System.Text.Json.JsonDocument.Parse(File.ReadAllText(package.ManifestPath));
         var actual = manifest.RootElement.GetProperty("provides")
             .EnumerateArray()
             .Select(static provider => "rpc-provider:" + provider.GetProperty("providerId").GetString())
@@ -109,6 +102,8 @@ public sealed class ToolPackageRoleCompositionTests
         var context = new TestPackageContext(packageScope.Context, settings, secrets);
         var service = new WebToolsSettingsService(context);
 
+        Assert.Same(WebToolsConfiguration.Schema, ((Sunder.Sdk.Worker.ISunderWorkerSettingsSchemaProvider)service).SettingsSchema);
+        Assert.Empty(settings.ReadKeys); Assert.Empty(secrets.ReadKeys);
         Assert.Equal(7, await service.GetDefaultMaxResultsAsync());
         Assert.Equal("exa-key", await service.GetExaApiKeyAsync());
         Assert.Equal(["search.maxResults.default"], settings.ReadKeys);

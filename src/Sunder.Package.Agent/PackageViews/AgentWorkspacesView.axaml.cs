@@ -14,6 +14,8 @@ using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.PackageViews;
 
+[Sunder.Sdk.Packaging.SunderPackageView("sunder.package.agent.workspaces", "Workspaces",
+    IconPath = "Assets/workspace-icon.png", DefaultPlacement = PackageViewPlacement.RightTop)]
 public partial class AgentWorkspacesView : UserControl, IDisposable, IPackageViewWarmupTarget, IPackageViewNavigationTarget
 {
     private const int WorkspaceInlineEditFocusRetryLimit = 12;

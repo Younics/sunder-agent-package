@@ -1,8 +1,11 @@
+extern alias MemoryWorker;
+
+using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.Logging;
 using Microsoft.Data.Sqlite;
-using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Memory.Semantic;
+using MemoryWorker::Sunder.Package.Agent.Contracts.Models;
+using MemoryWorker::Sunder.Package.Agent.Memory.Semantic;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Logging;
 using Xunit;
@@ -20,7 +23,10 @@ public sealed class MemoryLocalStorePersistenceTests
         Assert.Equal(
             $"1|{MemorySchemaMigrator.BaselineName}|{MemorySchemaMigrator.BaselineChecksum}",
             ExecuteString(connection, "SELECT Version || '|' || Name || '|' || Checksum FROM MemorySchemaMigrations;"));
-        Assert.Equal("72c53e869dbc6dcbd56c6376ce8b1721b3b9152b58c1191e3151968f7d921a", MemorySchemaMigrator.BaselineChecksum);
+        Assert.Equal("ed3e1696f550d4f3b16bf440806d60fbfc8a90d7004c5605621f4963bbbb2de1", MemorySchemaMigrator.BaselineChecksum);
+        Assert.Equal(
+            MemorySchemaMigrator.BaselineChecksum,
+            Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(MemorySchemaMigrator.BaselineSql))).ToLowerInvariant());
         Assert.Equal(1L, ExecuteInt64(connection, "SELECT COUNT(*) FROM MemorySchemaMigrations;"));
         Assert.Equal("wal", ExecuteString(connection, "PRAGMA journal_mode;"));
         using var operationalConnection = MemoryDatabase.OpenConnection(storage.DatabasePath);

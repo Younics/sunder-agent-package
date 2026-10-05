@@ -42,7 +42,7 @@ public sealed class AgentPermissionService(
     public IReadOnlyList<AgentPermissionActionDescriptor> ListActions()
     {
         var actions = new List<AgentPermissionActionDescriptor>();
-        foreach (var reference in rpcCatalog.GetServiceReferences(AgentRpcServices.PermissionSurfaces))
+        foreach (var reference in rpcCatalog.GetServiceReferences(Sunder.Package.Agent.Runtime.Rpc.AgentMetadataBindings.PermissionSurfaces))
         {
             if (!reference.TryAcquire(out var lease))
             {

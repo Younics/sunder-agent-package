@@ -21,6 +21,14 @@ internal sealed class AnthropicChatClient : IChatClient
     internal AnthropicChatClient(
         AgentChatClientContext context,
         ProviderCredentialAccessor credentials,
+        Func<string, IAnthropicClient> clientFactory)
+        : this(context, credentials, (apiKey, fast, current) => CreateTransport(clientFactory(apiKey), fast, current))
+    {
+    }
+
+    internal AnthropicChatClient(
+        AgentChatClientContext context,
+        ProviderCredentialAccessor credentials,
         Func<string, bool, AgentChatClientContext, IAnthropicTransport> transportFactory)
     {
         _context = context;
@@ -86,8 +94,13 @@ internal sealed class AnthropicChatClient : IChatClient
         string apiKey,
         bool useFastMode,
         AgentChatClientContext context)
+        => CreateTransport(new AnthropicClient { ApiKey = apiKey }, useFastMode, context);
+
+    private static IAnthropicTransport CreateTransport(
+        IAnthropicClient client,
+        bool useFastMode,
+        AgentChatClientContext context)
     {
-        IAnthropicClient client = new AnthropicClient { ApiKey = apiKey };
         var responseTranslator = new AnthropicResponseTranslator(context);
         return useFastMode
             ? new AnthropicFastTransport(client, responseTranslator)

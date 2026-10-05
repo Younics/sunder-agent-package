@@ -24,7 +24,7 @@ internal static class FileSearchHandler
         }
 
         var path = string.IsNullOrWhiteSpace(args.Path) ? "." : args.Path;
-        if (AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.StructuredFileSearch)
+        if (FilesExecutionFacets.SupportsFacet(target, AgentExecutionFacetIds.StructuredFileSearch)
             && target is IAgentStructuredFileSearchExecutionTarget structuredTarget)
         {
             return await ExecuteStructuredGrepAsync(structuredTarget, context, request.ToolId, path, args, cancellationToken);
@@ -46,7 +46,7 @@ internal static class FileSearchHandler
         }
 
         var path = string.IsNullOrWhiteSpace(args.Path) ? "." : args.Path;
-        if (AgentExecutionTargetRpc.SupportsFacet(target, AgentExecutionFacetIds.StructuredFileSearch)
+        if (FilesExecutionFacets.SupportsFacet(target, AgentExecutionFacetIds.StructuredFileSearch)
             && target is IAgentStructuredFileSearchExecutionTarget structuredTarget)
         {
             return await ExecuteStructuredGlobAsync(structuredTarget, context, request.ToolId, path, args, cancellationToken);

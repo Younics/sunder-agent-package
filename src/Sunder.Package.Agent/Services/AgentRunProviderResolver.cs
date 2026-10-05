@@ -19,7 +19,7 @@ public sealed class AgentRunProviderResolver(
             return new AgentRunProviderSelection(chatBinding);
         }
 
-        foreach (var reference in _rpcCatalog.GetServiceReferences(AgentRpcServices.ChatProviders))
+        foreach (var reference in _rpcCatalog.GetServiceReferences(Sunder.Package.Agent.Runtime.Rpc.AgentChatBindings.Service))
         {
             if (!reference.TryAcquire(out var lease))
             {

@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.TestSupport;
 using Sunder.Sdk.Rpc;
@@ -10,6 +11,36 @@ namespace Sunder.Package.Agent.Tests;
 
 public sealed class TestSupportContractTests
 {
+    [Fact]
+    public async Task RoleServiceAdapter_PreservesSameNamedGeneratedClientAndLifetime()
+    {
+        using var roles = new CanonicalPackageRoles();
+        var worker = roles.Load("Agent", "worker");
+        using var state = new RegressionTestRpcState();
+        var descriptor = RegressionTestRpcDescriptors.Get(AgentRpcContractIds.ToolSource);
+        var handler = new BlockingRpcHandler();
+        var provider = state.Add("test.package", descriptor, handler, handler, new CancellationTokenSource(), "test.tools", "2.0.0");
+        var client = Activator.CreateInstance(worker.GetType("Sunder.Package.Agent.Runtime.Rpc.GeneratedToolSourceClient", true)!,
+            new RegressionTestRpcClient(state, "sunder.package.agent"), provider)!;
+        await using var owner = (IAsyncDisposable)client;
+
+        var adapted = AgentRoleBoundary.As<IAgentToolSource>(client);
+        Assert.NotSame(typeof(Runtime.Rpc.GeneratedToolSourceClient), client.GetType());
+        Assert.Same(client, AgentRoleBoundary.Unwrap(adapted));
+        Assert.IsAssignableFrom<IAgentPermissionAwareToolSource>(adapted);
+        Assert.IsAssignableFrom<IAgentToolExecutionPreflightSource>(adapted);
+        Assert.IsAssignableFrom<IAgentToolPresentationResolver>(adapted);
+        var invocation = adapted.ExecuteAsync(new Contracts.Models.AgentToolExecutionContext(Guid.NewGuid()),
+            new Contracts.Models.AgentToolRequest("fixture.tool", "{}")).AsTask();
+        await handler.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var lifetime = Assert.IsAssignableFrom<IAsyncDisposable>(adapted);
+        var stopping = lifetime.DisposeAsync().AsTask();
+        Assert.Same(stopping, lifetime.DisposeAsync().AsTask());
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => invocation);
+        await stopping.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, Assert.Throws<SunderRpcException>(() => adapted.SourceId).Error.Kind);
+    }
+
     [Fact]
     public async Task InMemorySettings_DistinguishesStoredEffectiveDefaultAndSchemaBehavior()
     {
@@ -55,7 +86,7 @@ public sealed class TestSupportContractTests
         var handler = new BlockingRpcHandler();
         state.Add(
             "test.provider",
-            AgentRpcContractDescriptors.Get(AgentRpcContractIds.RuntimeCatalog),
+            RegressionTestRpcDescriptors.Get(AgentRpcContractIds.RuntimeCatalog),
             handler,
             handler,
             new CancellationTokenSource());
@@ -89,6 +120,8 @@ public sealed class TestSupportContractTests
 
     private sealed class BlockingRpcHandler : ISunderRpcServiceHandler
     {
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public async ValueTask<JsonElement> InvokeUnaryAsync(
             SunderRpcInvocationContext context,
             string serviceId,
@@ -96,6 +129,7 @@ public sealed class TestSupportContractTests
             JsonElement request,
             CancellationToken cancellationToken)
         {
+            Started.TrySetResult();
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             return request;
         }

@@ -5,7 +5,7 @@ Describe the change and why it is needed.
 ## Packages Affected
 
 - [ ] `sunder.package.agent`
-- [ ] `Sunder.Package.Agent.Protocol`
+- [ ] Agent RPC contracts / migration corpus
 - [ ] Provider package
 - [ ] Tool package
 - [ ] Execution package

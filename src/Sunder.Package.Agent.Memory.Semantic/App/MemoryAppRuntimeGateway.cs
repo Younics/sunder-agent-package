@@ -7,7 +7,7 @@ using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Memory.Semantic;
 
-internal sealed class MemoryAppRuntimeGateway :
+internal sealed partial class MemoryAppRuntimeGateway :
     IMemoryInspectorGateway,
     IOwnerStreamAvailability,
     IDisposable,
@@ -156,32 +156,25 @@ internal sealed class MemoryAppRuntimeGateway :
         => QueryAsync(new(MemoryQueryKind.Details, MemoryId: memoryId), cancellationToken);
 
     private Task<MemoryProjection> QueryAsync(MemoryQuery request, CancellationToken cancellationToken)
-        => InvokeAsync((client, token) => client.QueryAsync(request, token), cancellationToken);
+        => InvokeAsync(token => QueryTransportAsync(request, token), cancellationToken);
 
     private Task<MemoryProjection> CommandAsync(MemoryCommand request, CancellationToken cancellationToken)
-        => InvokeAsync((client, token) => client.CommandAsync(request, token), cancellationToken);
+        => InvokeAsync(token => CommandTransportAsync(request, token), cancellationToken);
 
     private async Task<MemoryProjection> InvokeAsync(
-        Func<MemoryInspectorRpcClient, CancellationToken, ValueTask<MemoryProjection>> invoke,
+        Func<CancellationToken, ValueTask<MemoryProjection>> invoke,
         CancellationToken cancellationToken)
     {
         using var invocation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
-        var provider = await ResolveProviderAsync(invocation.Token).ConfigureAwait(false);
-        await using var scope = await _rpc.CreateCallScopeAsync(cancellationToken: invocation.Token).ConfigureAwait(false);
-        return await invoke(MemoryInspectorRpc.CreateClient(scope, provider.Endpoint), invocation.Token).ConfigureAwait(false);
+        return await invoke(invocation.Token).ConfigureAwait(false);
     }
 
     private async Task ObserveChangesOnceAsync(
         Action markAvailable,
         CancellationToken cancellationToken)
     {
-        var provider = await ResolveProviderAsync(cancellationToken).ConfigureAwait(false);
-        await using var scope = await _rpc.CreateCallScopeAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
-        var client = MemoryInspectorRpc.CreateClient(scope, provider.Endpoint);
         var connected = false;
-        await foreach (var change in client.ChangesAsync(
-                           new MemoryChangeSubscription(),
-                           cancellationToken).ConfigureAwait(false))
+        await foreach (var change in WatchTransportAsync(cancellationToken).ConfigureAwait(false))
         {
             if (!connected)
             {
@@ -211,19 +204,4 @@ internal sealed class MemoryAppRuntimeGateway :
             retryDelay.TotalMilliseconds,
             exception.GetType().Name);
 
-    private async ValueTask<SunderRpcProviderSnapshot> ResolveProviderAsync(CancellationToken cancellationToken)
-    {
-        var descriptor = MemorySemanticProtocol.Inspector;
-        var catalog = await _rpc.DiscoverAsync(descriptor.ContractId, cancellationToken).ConfigureAwait(false);
-        var provider = catalog.Providers.SingleOrDefault(candidate =>
-            candidate.ProviderId == MemorySemanticProtocol.ProviderId
-            && candidate.State == SunderRpcProviderState.Active
-            && candidate.ContractVersion == descriptor.Version
-            && candidate.DescriptorSha256 == descriptor.Sha256
-            && candidate.AbiSha256 == descriptor.AbiSha256);
-        return provider ?? throw new SunderRpcException(new SunderRpcError(
-            SunderRpcErrorKind.Unavailable,
-            "semantic-memory.inspector-unavailable",
-            "The semantic memory inspector Runtime provider is unavailable."));
-    }
 }

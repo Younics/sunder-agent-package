@@ -47,18 +47,18 @@ public sealed class SkillStore
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
     private static readonly ConcurrentDictionary<string, object> SharedLocks = new(
         OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
-    private readonly object _syncRoot;
+    private readonly object _initializationSync = new();
     private readonly IPackageContext _packageContext;
-    private readonly string _indexPath;
-    private readonly string _lockPath;
+    private readonly IPackageRoleLocalWorkspace _workspace;
+    private object _syncRoot = null!;
+    private string _indexPath = null!;
+    private string _lockPath = null!;
     private int _initialized;
 
     public SkillStore(IPackageContext packageContext)
     {
         _packageContext = packageContext;
-        _indexPath = packageContext.Storage.RoleLocalWorkspace.GetLocalPath("skills/skills.json");
-        _lockPath = _indexPath + ".lock";
-        _syncRoot = SharedLocks.GetOrAdd(_indexPath, static _ => new object());
+        _workspace = packageContext.Storage.RoleLocalWorkspace;
     }
 
     public void Activate() => EnsureInitialized();
@@ -381,25 +381,31 @@ public sealed class SkillStore
             return;
         }
 
-        lock (_syncRoot)
+        lock (_initializationSync)
         {
             if (_initialized == 2)
             {
                 return;
             }
 
-            Directory.CreateDirectory(SkillsRootPath);
-            Directory.CreateDirectory(Path.GetDirectoryName(_indexPath)!);
-            _initialized = 2;
-            try
+            _indexPath = _workspace.GetLocalPath("skills/skills.json");
+            _lockPath = _indexPath + ".lock";
+            _syncRoot = SharedLocks.GetOrAdd(_indexPath, static _ => new object());
+            lock (_syncRoot)
             {
-                using var processLock = AcquireProcessLock();
-                SkillBatchReplacementCommitter.RecoverInterruptedBatch(this);
-            }
-            catch
-            {
-                _initialized = 0;
-                throw;
+                Directory.CreateDirectory(SkillsRootPath);
+                Directory.CreateDirectory(Path.GetDirectoryName(_indexPath)!);
+                Volatile.Write(ref _initialized, 2);
+                try
+                {
+                    using var processLock = AcquireProcessLock();
+                    SkillBatchReplacementCommitter.RecoverInterruptedBatch(this);
+                }
+                catch
+                {
+                    Volatile.Write(ref _initialized, 0);
+                    throw;
+                }
             }
         }
     }

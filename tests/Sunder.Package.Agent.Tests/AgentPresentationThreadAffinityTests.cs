@@ -1,11 +1,11 @@
 extern alias AgentCore;
 
 using System.Collections.Concurrent;
-using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Models;
-using Sunder.Package.Agent.PackageViews;
-using Sunder.Package.Agent.Runtime;
-using Sunder.Package.Agent.Services;
+using AgentCore::Sunder.Package.Agent.Contracts.Models;
+using AgentCore::Sunder.Package.Agent.Models;
+using AgentCore::Sunder.Package.Agent.PackageViews;
+using AgentCore::Sunder.Package.Agent.Runtime;
+using AgentCore::Sunder.Package.Agent.Services;
 using Xunit;
 using AgentPresentationDispatcher = AgentCore::Sunder.Package.Agent.Shared.Presentation.IPresentationDispatcher;
 

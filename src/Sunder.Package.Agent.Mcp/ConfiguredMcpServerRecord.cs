@@ -1,5 +1,6 @@
 namespace Sunder.Package.Agent.Mcp;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 public sealed record ConfiguredMcpServerRecord
 {
     public int PersistenceVersion { get; init; }

@@ -1,3 +1,5 @@
+extern alias AgentApp;
+
 using System.Net;
 using System.Net.Http.Json;
 using System.Net.Http.Headers;
@@ -7,9 +9,9 @@ using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
 using Microsoft.Extensions.DependencyInjection;
 using Sunder.App.Services;
-using Sunder.Package.Agent.PackageViews;
+using AgentApp::Sunder.Package.Agent.PackageViews;
 using Sunder.Package.Agent.Protocol;
-using Sunder.Package.Agent.Runtime;
+using AgentApp::Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Tests;
 using Sunder.Runtime.Client;
 using Sunder.Runtime.Contracts;
@@ -34,7 +36,7 @@ public sealed class CrossRepositoryCandidatePreparationTests
         await using var runtime = new RuntimeAppWebRpcClient(management, "candidate-app-session");
         var services = CreateAppServices(packageScope, runtime);
         await using var provider = services.BuildServiceProvider();
-        var availability = provider.GetRequiredService<IAgentRuntimeAvailability>();
+        var availability = Assert.IsAssignableFrom<IAgentRuntimeAvailability>(provider.GetRequiredService<AgentAppRuntimeGateway>());
         AgentChatView? view = null;
         Window? window = null;
         var context = new PackageViewNavigationContext(
@@ -42,7 +44,7 @@ public sealed class CrossRepositoryCandidatePreparationTests
             new Dictionary<string, string?>());
         try
         {
-            view = ActivatorUtilities.CreateInstance<AgentChatView>(provider);
+            view = provider.GetRequiredService<AgentChatView>();
             var viewModel = Assert.IsType<AgentChatViewModel>(view.DataContext);
             window = new Window { Width = 900, Height = 700, Content = view };
             window.Show();
@@ -71,9 +73,8 @@ public sealed class CrossRepositoryCandidatePreparationTests
             var owner = new AgentOwnerRpcClient(runtime);
             var retired = await Assert.ThrowsAsync<SunderRpcException>(async () =>
                 await owner.InvokeAsync(
-                    new AgentOwnerRpcOperation<EchoRequest, EchoResponse>(
-                        static (_, request, _) => ValueTask.FromResult(new EchoResponse(request.Value))),
-                    new EchoRequest("retired"),
+                    AgentRuntimeOperations.ChatSnapshot,
+                    new AgentChatSnapshotRequest(),
                     CancellationToken.None));
             Assert.Equal("agent.runtime.unavailable", retired.Error.Code);
             Assert.Equal(0, handler.RetiredRequestCount);
@@ -111,13 +112,9 @@ public sealed class CrossRepositoryCandidatePreparationTests
         services.AddSingleton<IPackageShellViewService, NoOpPackageShellViewService>();
         services.AddSingleton<IPackageNotificationService>(NullPackageNotificationService.Instance);
         services.AddSingleton<IBackgroundProcessQueue, NoOpBackgroundProcessQueue>();
-        new Sunder.Package.Agent.AppPackageModule().ConfigureAppServices(services, packageScope.Context);
+        new AgentApp::Sunder.Generated.Package.AppModule().ConfigureAppServices(services, packageScope.Context);
         return services;
     }
-
-    private sealed record EchoRequest(string Value);
-
-    private sealed record EchoResponse(string Value);
 
     private sealed class AgentRpcRuntimeHandler : HttpMessageHandler
     {
@@ -155,7 +152,7 @@ public sealed class CrossRepositoryCandidatePreparationTests
                     RuntimeProtocol.MinimumSupportedRevision,
                     RuntimeProtocol.MaximumSupportedRevision,
                     ActivationId,
-                    [RuntimeProtocolFeatures.VersionedApiV1, RuntimeProtocolFeatures.AppWebRpcV2],
+                    [RuntimeProtocolFeatures.VersionedApiV1, RuntimeProtocolFeatures.AppWebRpcV1],
                     new RuntimeProductVersionDiagnostics(
                         "Sunder.Runtime.Host",
                         "Development",
@@ -189,7 +186,7 @@ public sealed class CrossRepositoryCandidatePreparationTests
             var discover = await request.Content!.ReadFromJsonAsync<RuntimeRpcAppDiscoverRequest>(
                 WebJson,
                 cancellationToken);
-            Assert.Equal(AgentOwnerRuntimeRpc.ContractId, discover?.ContractId);
+            Assert.Equal("sunder.agent.owner.runtime", discover?.ContractId);
             Interlocked.Increment(ref _ownerDiscoveryRequestCount);
             RuntimeRpcProviderDescriptor[] providers = Volatile.Read(ref _leasesEnabled) == 0
                 ? Array.Empty<RuntimeRpcProviderDescriptor>()
@@ -309,11 +306,11 @@ public sealed class CrossRepositoryCandidatePreparationTests
 
         private static RuntimeRpcProviderDescriptor CreateOwnerProvider()
         {
-            var descriptor = AgentOwnerRuntimeRpc.Descriptor;
+            var descriptor = RegressionTestRpcDescriptors.Get("sunder.agent.owner.runtime");
             return new RuntimeRpcProviderDescriptor(
                 "sunder.package.agent",
                 "2.0.0",
-                AgentOwnerRuntimeRpc.ProviderId,
+                "agent.owner.runtime",
                 descriptor.ContractId,
                 descriptor.Version,
                 descriptor.Sha256,

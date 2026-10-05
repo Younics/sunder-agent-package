@@ -1,7 +1,9 @@
+extern alias MemoryWorker;
+
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Memory.Semantic.Services;
+using MemoryWorker::Sunder.Package.Agent.Memory.Semantic.Services;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Tests;
 using Xunit;
@@ -14,16 +16,16 @@ public sealed class SemanticModelRuntimeResolverTests
     public async Task ResolveForProfile_TracksProviderRemovalAndReplacement()
     {
         using var catalog = new RegressionTestExtensionCatalog();
-        catalog.AddProvider(AgentRpcServices.RuntimeCatalogs, new TestRuntimeCatalog());
+        catalog.AddRuntimeCatalog(new TestRuntimeCatalog());
         var original = new TestEmbeddingProvider("original");
         var replacement = new TestEmbeddingProvider("replacement");
-        catalog.AddProvider(AgentRpcServices.EmbeddingProviders, original);
-        using var resolver = new SemanticModelRuntimeResolver(catalog, null!);
+        catalog.AddProvider(RegressionTestBindings.EmbeddingProviders, original);
+        using var resolver = new SemanticModelRuntimeResolver(catalog.Memory(), null!);
 
         var first = await resolver.ResolveForProfileAsync("profile-1");
         await catalog.RetireProviderAsync(original);
         var removed = await resolver.ResolveForProfileAsync("profile-1");
-        catalog.AddProvider(AgentRpcServices.EmbeddingProviders, replacement);
+        catalog.AddProvider(RegressionTestBindings.EmbeddingProviders, replacement);
         var reinstalled = await resolver.ResolveForProfileAsync("profile-1");
 
         Assert.Equal("original", first?.ProviderDisplayName);

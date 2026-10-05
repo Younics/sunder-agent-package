@@ -1,18 +1,29 @@
+extern alias LocalWorker;
+extern alias DockerWorker;
+extern alias FilesWorker;
+extern alias ShellWorker;
+extern alias WebWorker;
+
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using Sunder.Agent.Execution.Common;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Execution.Docker;
-using Sunder.Package.Agent.Execution.Local;
+using DockerWorker::Sunder.Package.Agent.Execution.Docker;
+using LocalWorker::Sunder.Package.Agent.Execution.Local;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Tests;
-using Sunder.Package.Agent.Tools.Files;
-using Sunder.Package.Agent.Tools.Shell;
-using Sunder.Package.Agent.Tools.Web;
-using Sunder.Package.Agent.Tools.Web.Services;
+using FilesWorker::Sunder.Package.Agent.Tools.Files;
+using ShellWorker::Sunder.Package.Agent.Tools.Shell;
+using WebWorker::Sunder.Package.Agent.Tools.Web;
+using WebWorker::Sunder.Package.Agent.Tools.Web.Services;
+using DockerModels = DockerWorker::Sunder.Package.Agent.Contracts.Models;
+using ShellModels = ShellWorker::Sunder.Package.Agent.Contracts.Models;
+using WebModels = WebWorker::Sunder.Package.Agent.Contracts.Models;
+using HostSecurePathEngine = DockerWorker::Sunder.Agent.Execution.Common.HostSecurePathEngine;
+using HostResourceClaim = DockerWorker::Sunder.Agent.Execution.Common.HostResourceClaim;
+using LocalSecureApprovalLease = DockerWorker::Sunder.Agent.Execution.Common.LocalSecureApprovalLease;
 using Sunder.Sdk.Abstractions;
 using Xunit;
 
@@ -22,6 +33,7 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
 {
     private readonly RegressionTestPackageScope _packageScope = RegressionTestPackageScope.Create();
     private readonly List<RegressionTestExtensionCatalog> _catalogs = [];
+    private readonly List<GeneratedToolSourceProbe> _sources = [];
 
     [Fact]
     public void Constructor_RequiresPackageContextWithoutCompatibilityShim()
@@ -449,10 +461,10 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
         if (targetKind == "local")
         {
             var configService = new LocalExecutionWorkspaceConfigService(scope.Context);
-            strictTarget = new LocalExecutionTarget(
+            strictTarget = AgentRoleBoundary.As<IAgentExecutionTarget>(new LocalExecutionTarget(
                 scope.Context,
                 configService,
-                new LocalShellCatalogService(scope.Context));
+                new LocalShellCatalogService(scope.Context)));
         }
         else
         {
@@ -461,7 +473,7 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
 
         var target = new FailSecondMutationExecutionTarget(strictTarget);
         var catalog = CreateTargetCatalog(target);
-        var source = new FilesToolSource(scope.Context);
+        var source = CreateSourceProbe(catalog, scope.Context);
         var binding = new AgentWorkspaceBindingRecord(
             "binding",
             workspace.WorkspaceId,
@@ -528,7 +540,7 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
             ToolCallId: operation.ToolCallId)
         {
             ResourceOperation = operation,
-            ExecutionTargetReference = catalog.GetRequiredReference(AgentRpcServices.ExecutionTargets),
+            ExecutionTargetReference = catalog.GetRequiredReference(RegressionTestBindings.ExecutionTargets),
         };
         var permission = Assert.IsType<AgentPermissionRequest>(
             await source.BuildPermissionRequestAsync(planningContext, request));
@@ -806,8 +818,8 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
         var web = new WebFetchTool(new WebFetchService());
 
         var filesDetail = files.ResolveToolPresentation(PresentationRequest("read", malformedJson))!.DetailMarkdown!;
-        var shellDetail = shell.ResolveToolPresentation(PresentationRequest("shell", malformedJson))!.DetailMarkdown!;
-        var webDetail = web.ResolveToolPresentation(PresentationRequest("web_fetch", malformedJson))!.DetailMarkdown!;
+        var shellDetail = shell.ResolveToolPresentation(AgentRoleBoundary.As<ShellModels.AgentToolPresentationRequest>(PresentationRequest("shell", malformedJson)))!.DetailMarkdown!;
+        var webDetail = web.ResolveToolPresentation(AgentRoleBoundary.As<WebModels.AgentToolPresentationRequest>(PresentationRequest("web_fetch", malformedJson)))!.DetailMarkdown!;
 
         Assert.Equal(RawRequestBlock(filesDetail), RawRequestBlock(shellDetail));
         Assert.Equal(RawRequestBlock(filesDetail), RawRequestBlock(webDetail));
@@ -826,10 +838,11 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
             ShellTimedOut = true,
         };
         var (files, _, context) = CreateSource(target);
+        using var shell = new GeneratedToolSourceProbe(_catalogs.Single(), new ShellToolSource(), "sunder.package.agent.tools.shell");
         var result = sourceKind switch
         {
             "files" => await files.ExecuteAsync(context, new AgentToolRequest("read", "{\"path\":\"file.txt\"}")),
-            "shell" => await new ShellToolSource().ExecuteAsync(
+            "shell" => await shell.ExecuteAsync(
                 context,
                 new AgentToolRequest("shell", "{\"command\":\"test\"}")),
             _ => throw new ArgumentOutOfRangeException(nameof(sourceKind)),
@@ -846,14 +859,14 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
     public async Task WebFetch_RejectsOutOfRangeTimeoutBeforeNetworkCall(int timeoutSeconds)
     {
         var result = await new WebFetchTool(new WebFetchService()).ExecuteAsync(
-            new AgentToolExecutionContext(null),
-            new AgentToolRequest("web_fetch", $$"""{"url":"https://example.com","timeoutSeconds":{{timeoutSeconds}}}"""));
+            new WebModels.AgentToolExecutionContext(null),
+            new WebModels.AgentToolRequest("web_fetch", $$"""{"url":"https://example.com","timeoutSeconds":{{timeoutSeconds}}}"""));
 
         Assert.True(result.IsError);
         Assert.Equal("web-fetch-args", result.ErrorCode);
     }
 
-    private (FilesToolSource Source, MemoryExecutionTarget Target, AgentToolExecutionContext Context) CreateSource(MemoryExecutionTarget target)
+    private (GeneratedToolSourceProbe Source, MemoryExecutionTarget Target, AgentToolExecutionContext Context) CreateSource(MemoryExecutionTarget target)
     {
         var catalog = CreateTargetCatalog(target);
         var now = DateTimeOffset.UtcNow;
@@ -869,15 +882,15 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
             now,
             now);
         return (
-            new FilesToolSource(_packageScope.Context),
+            CreateSourceProbe(catalog, _packageScope.Context),
             target,
             new AgentToolExecutionContext(null, Workspace: workspace, ExecutionBinding: binding)
             {
-                ExecutionTargetReference = catalog.GetRequiredReference(AgentRpcServices.ExecutionTargets),
+                ExecutionTargetReference = catalog.GetRequiredReference(RegressionTestBindings.ExecutionTargets),
             });
     }
 
-    private (FilesToolSource Source, AgentToolExecutionContext Context) CreateSourceForTarget(IAgentExecutionTarget target)
+    private (GeneratedToolSourceProbe Source, AgentToolExecutionContext Context) CreateSourceForTarget(IAgentExecutionTarget target)
     {
         var catalog = CreateTargetCatalog(target);
         var now = DateTimeOffset.UtcNow;
@@ -893,14 +906,14 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
             now,
             now);
         return (
-            new FilesToolSource(_packageScope.Context),
+            CreateSourceProbe(catalog, _packageScope.Context),
             new AgentToolExecutionContext(null, Workspace: workspace, ExecutionBinding: binding)
             {
-                ExecutionTargetReference = catalog.GetRequiredReference(AgentRpcServices.ExecutionTargets),
+                ExecutionTargetReference = catalog.GetRequiredReference(RegressionTestBindings.ExecutionTargets),
             });
     }
 
-    private async Task<(FilesToolSource Source, AgentToolExecutionContext Context)> CreateLocalSourceAsync(
+    private async Task<(GeneratedToolSourceProbe Source, AgentToolExecutionContext Context)> CreateLocalSourceAsync(
         RegressionTestPackageScope scope,
         string root,
         IReadOnlyList<string>? pathEntries = null)
@@ -934,28 +947,36 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
             new LocalExecutionWorkspaceConfig(null, pathEntries));
         var catalog = CreateTargetCatalog(target);
         return (
-            new FilesToolSource(scope.Context),
+            CreateSourceProbe(catalog, scope.Context),
             new AgentToolExecutionContext(null, Workspace: workspace, ExecutionBinding: binding)
             {
-                ExecutionTargetReference = catalog.GetRequiredReference(AgentRpcServices.ExecutionTargets),
+                ExecutionTargetReference = catalog.GetRequiredReference(RegressionTestBindings.ExecutionTargets),
             });
     }
 
-    private RegressionTestExtensionCatalog CreateTargetCatalog(IAgentExecutionTarget target)
+    private RegressionTestExtensionCatalog CreateTargetCatalog(object target)
     {
         var catalog = new RegressionTestExtensionCatalog();
-        catalog.AddProvider(AgentRpcServices.ExecutionTargets, target);
+        catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target);
         _catalogs.Add(catalog);
         return catalog;
     }
 
     public void Dispose()
     {
+        foreach (var source in _sources) source.Dispose();
         foreach (var catalog in _catalogs)
         {
             catalog.Dispose();
         }
         _packageScope.Dispose();
+    }
+
+    private GeneratedToolSourceProbe CreateSourceProbe(RegressionTestExtensionCatalog catalog, IPackageContext context)
+    {
+        var source = new GeneratedToolSourceProbe(catalog, new FilesToolSource(context), "sunder.package.agent.tools.files");
+        _sources.Add(source);
+        return source;
     }
 
     private static string PatchArguments(string patchText)
@@ -1428,12 +1449,12 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
             AgentExecutionTargetContext context,
             string path,
             CancellationToken cancellationToken = default)
-            => ValueTask.FromResult(_executor.ResolveFileResource(
+            => ValueTask.FromResult(AgentRoleBoundary.As<AgentResolvedResource>(_executor.ResolveFileResource(
                 _config,
                 path,
                 NamespaceFingerprint,
                 cancellationToken,
-                context: context));
+                context: AgentRoleBoundary.As<DockerModels.AgentExecutionTargetContext>(context))));
 
         public ValueTask<AgentShellCommandResult> ExecuteShellAsync(
             AgentExecutionTargetContext context,
@@ -1447,7 +1468,8 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
             CancellationToken cancellationToken = default)
         {
             var (authority, _) = CaptureAndValidate(context, request.Path, cancellationToken);
-            return _executor.ReadFileAsync(_config, request, authority, cancellationToken);
+            return AgentRoleBoundary.As<ValueTask<AgentFileReadResult>>(_executor.ReadFileAsync(_config,
+                AgentRoleBoundary.As<DockerModels.AgentFileReadRequest>(request), authority, cancellationToken));
         }
 
         public async ValueTask<AgentFileMutationResult> WriteFileAsync(
@@ -1459,14 +1481,14 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
             LocalSecureApprovalLease? postMutationAuthority = null;
             try
             {
-                var result = await _executor.WriteFileAsync(
+                var result = AgentRoleBoundary.As<AgentFileMutationResult>(await _executor.WriteFileAsync(
                     _config,
-                    request,
+                    AgentRoleBoundary.As<DockerModels.AgentFileWriteRequest>(request),
                     authority,
                     cancellationToken,
                     postMutationAuthoritySink: context.CapturePostMutationResource
                         ? captured => postMutationAuthority = captured
-                        : null);
+                        : null));
                 return AttachPostMutationResource(
                     context,
                     request.Path,
@@ -1489,15 +1511,15 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
             LocalSecureApprovalLease? postMutationAuthority = null;
             try
             {
-                var result = await _executor.DeleteFileAsync(
+                var result = AgentRoleBoundary.As<AgentFileMutationResult>(await _executor.DeleteFileAsync(
                     _config,
-                    request,
+                    AgentRoleBoundary.As<DockerModels.AgentFileDeleteRequest>(request),
                     authority,
                     chains,
                     cancellationToken,
                     postMutationAuthoritySink: context.CapturePostMutationResource
                         ? captured => postMutationAuthority = captured
-                        : null);
+                        : null));
                 return AttachPostMutationResource(
                     context,
                     request.Path,
@@ -1555,12 +1577,12 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
                         : null,
                 };
                 HostResourceClaim.Validate(
-                    claim,
+                    AgentRoleBoundary.As<DockerModels.AgentResourceClaim>(claim),
                     DockerFileSystemExecutor.ClaimNamespacePrefix + NamespaceFingerprint,
                     path.ContainerPath,
                     path.Mount.ContainerPath,
                     authority,
-                    exactContext);
+                    AgentRoleBoundary.As<DockerModels.AgentExecutionTargetContext>(exactContext));
                 return (authority, chains);
             }
             catch
@@ -1593,14 +1615,14 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
             postMutationAuthority = null;
             return result with
             {
-                PostMutationResource = _executor.ResolveFileResource(
+                PostMutationResource = AgentRoleBoundary.As<AgentResolvedResource>(_executor.ResolveFileResource(
                     _config,
                     path,
                     NamespaceFingerprint,
                     CancellationToken.None,
                     authority,
                     chains,
-                    context),
+                    AgentRoleBoundary.As<DockerModels.AgentExecutionTargetContext>(context))),
             };
         }
     }

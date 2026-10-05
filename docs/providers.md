@@ -95,7 +95,7 @@ await SunderWorker.RunAsync(context =>
 {
     var chat = new AcmeChatProvider(context);
     var embedding = new AcmeEmbeddingProvider(context);
-    return new SunderWorkerV3Options(
+    return new SunderWorkerOptions(
     [
         Register("acme.chat", AgentRpcContractIds.ChatProvider, AgentChatProviderRpc.CreateHandler(chat)),
         Register("acme.embedding", AgentRpcContractIds.EmbeddingProvider, AgentEmbeddingProviderRpc.CreateHandler(embedding)),

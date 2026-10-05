@@ -1,3 +1,5 @@
+extern alias SubagentsWorker;
+
 using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
@@ -6,12 +8,12 @@ using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
-using Sunder.Package.Agent.Subagents.Models;
-using Sunder.Package.Agent.Subagents.Services;
+using SubagentsWorker::Sunder.Package.Agent.Subagents.Models;
+using SubagentsWorker::Sunder.Package.Agent.Subagents.Services;
 using Sunder.Sdk.Rpc;
 using Xunit;
-using SubagentQuery = Sunder.Package.Agent.Subagents.Runtime.SubagentQuery;
-using SubagentQueryKind = Sunder.Package.Agent.Subagents.Runtime.SubagentQueryKind;
+using SubagentQuery = SubagentsWorker::Sunder.Package.Agent.Subagents.Runtime.SubagentQuery;
+using SubagentQueryKind = SubagentsWorker::Sunder.Package.Agent.Subagents.Runtime.SubagentQueryKind;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -23,54 +25,54 @@ public sealed class CatalogFaultContainmentTests
         using var runtime = new AgentCatalogRuntime(catalog =>
         {
             catalog.AddProvider(
-                AgentRpcServices.ToolSources,
+                RegressionTestBindings.ToolSources,
                 new CatalogToolSource("unavailable-tools", SunderRpcErrorKind.Unavailable),
-                "package.unavailable-tools");
+                "package.unavailable.tools");
             catalog.AddProvider(
-                AgentRpcServices.ToolSources,
+                RegressionTestBindings.ToolSources,
                 new CatalogToolSource("healthy-tools"),
-                "package.healthy-tools");
+                "package.healthy.tools");
             catalog.AddProvider(
-                AgentRpcServices.SelectableCapabilityProviders,
+                RegressionTestBindings.SelectableCapabilityProviders,
                 new CatalogCapabilityProvider("unavailable-capabilities", SunderRpcErrorKind.StaleEndpoint),
-                "package.unavailable-capabilities");
+                "package.unavailable.capabilities");
             catalog.AddProvider(
-                AgentRpcServices.SelectableCapabilityProviders,
+                RegressionTestBindings.SelectableCapabilityProviders,
                 new CatalogCapabilityProvider("healthy-capabilities"),
-                "package.healthy-capabilities");
+                "package.healthy.capabilities");
             catalog.AddProvider(
-                AgentRpcServices.ChatProviders,
+                RegressionTestBindings.ChatProviders,
                 new CatalogChatProvider("descriptor-failure", descriptorFailure: SunderRpcErrorKind.Unavailable),
-                "package.descriptor-failure");
+                "package.descriptor.failure");
             catalog.AddProvider(
-                AgentRpcServices.ChatProviders,
+                RegressionTestBindings.ChatProviders,
                 new CatalogChatProvider("healthy-chat"),
-                "package.healthy-chat");
+                "package.healthy.chat");
             catalog.AddProvider(
-                AgentRpcServices.ChatProviders,
+                RegressionTestBindings.ChatProviders,
                 new CatalogChatProvider(
                     "unavailable-chat",
                     modelsFailure: SunderRpcErrorKind.StaleEndpoint,
                     readinessFailure: SunderRpcErrorKind.Unavailable),
-                "package.unavailable-chat");
+                "package.unavailable.chat");
             catalog.AddBehaviorLoop(
                 new CatalogBehaviorLoop("unavailable-loop", SunderRpcErrorKind.Unavailable),
-                "package.unavailable-loop");
+                "package.unavailable.loop");
             catalog.AddBehaviorLoop(
                 new CatalogBehaviorLoop("healthy-loop"),
-                "package.healthy-loop");
+                "package.healthy.loop");
             catalog.AddProvider(
-                AgentRpcServices.ProfileCapabilityConsumers,
+                RegressionTestBindings.ProfileCapabilityConsumers,
                 new CatalogCapabilityConsumer(SunderRpcErrorKind.StaleEndpoint),
-                "package.unavailable-consumer");
+                "package.unavailable.consumer");
             catalog.AddProvider(
-                AgentRpcServices.ProfileCapabilityConsumers,
+                RegressionTestBindings.ProfileCapabilityConsumers,
                 new CatalogCapabilityConsumer(),
-                "package.healthy-consumer");
+                "package.healthy.consumer");
             catalog.AddProvider(
-                AgentRpcServices.ExecutionTargets,
+                RegressionTestBindings.ExecutionTargets,
                 new CatalogExecutionTarget("healthy-target"),
-                "package.healthy-target");
+                "package.healthy.target");
         });
 
         var projection = await runtime.Handler.HandleAsync(new AgentCatalogRequest(
@@ -94,39 +96,39 @@ public sealed class CatalogFaultContainmentTests
         using var scope = RegressionTestPackageScope.Create();
         using var catalog = new RegressionTestExtensionCatalog();
         catalog.AddProvider(
-            AgentRpcServices.ToolSources,
+            RegressionTestBindings.ToolSources,
             new CatalogToolSource("unavailable-tools", SunderRpcErrorKind.Unavailable),
-            "package.unavailable-tools");
+            "package.unavailable.tools");
         catalog.AddProvider(
-            AgentRpcServices.ToolSources,
+            RegressionTestBindings.ToolSources,
             new CatalogToolSource("healthy-tools"),
-            "package.healthy-tools");
+            "package.healthy.tools");
         catalog.AddProvider(
-            AgentRpcServices.SelectableCapabilityProviders,
+            RegressionTestBindings.SelectableCapabilityProviders,
             new CatalogCapabilityProvider("unavailable-capabilities", SunderRpcErrorKind.StaleEndpoint),
-            "package.unavailable-capabilities");
+            "package.unavailable.capabilities");
         catalog.AddProvider(
-            AgentRpcServices.SelectableCapabilityProviders,
+            RegressionTestBindings.SelectableCapabilityProviders,
             new CatalogCapabilityProvider("healthy-capabilities"),
-            "package.healthy-capabilities");
+            "package.healthy.capabilities");
         catalog.AddProvider(
-            AgentRpcServices.ChatProviders,
+            RegressionTestBindings.ChatProviders,
             new CatalogChatProvider("descriptor-failure", descriptorFailure: SunderRpcErrorKind.Unavailable),
-            "package.descriptor-failure");
+            "package.descriptor.failure");
         catalog.AddProvider(
-            AgentRpcServices.ChatProviders,
+            RegressionTestBindings.ChatProviders,
             new CatalogChatProvider("healthy-chat"),
-            "package.healthy-chat");
+            "package.healthy.chat");
         catalog.AddProvider(
-            AgentRpcServices.ChatProviders,
+            RegressionTestBindings.ChatProviders,
             new CatalogChatProvider(
                 "unavailable-chat",
                 modelsFailure: SunderRpcErrorKind.StaleEndpoint,
                 readinessFailure: SunderRpcErrorKind.Unavailable),
-            "package.unavailable-chat");
+            "package.unavailable.chat");
         var service = new SubagentService(new SubagentStore(scope.Context));
         service.CreateSubagent("Existing Subagent");
-        var handler = new SubagentRuntimeHandler(service, catalog);
+        var handler = new SubagentRuntimeHandler(service, catalog.Subagents());
 
         var management = await handler.HandleAsync(new SubagentQuery(SubagentQueryKind.Management));
         var providerModels = await handler.HandleAsync(new SubagentQuery(
@@ -141,7 +143,7 @@ public sealed class CatalogFaultContainmentTests
         Assert.Equal("healthy-capabilities-capability", Assert.Single(management.Capabilities ?? []).CapabilityId);
         var unavailable = Assert.Single(providerModels.Providers ?? []);
         Assert.Empty(unavailable.Models ?? []);
-        Assert.Equal(AgentProviderReadinessStatus.Failed, unavailable.Readiness?.Status);
+        Assert.Equal(SubagentsWorker::Sunder.Package.Agent.Contracts.Models.AgentProviderReadinessStatus.Failed, unavailable.Readiness?.Status);
     }
 
     [Theory]
@@ -151,9 +153,9 @@ public sealed class CatalogFaultContainmentTests
     public async Task AgentCatalog_DoesNotSuppressStrictRpcFailures(SunderRpcErrorKind errorKind)
     {
         using var runtime = new AgentCatalogRuntime(catalog => catalog.AddProvider(
-            AgentRpcServices.ChatProviders,
+            RegressionTestBindings.ChatProviders,
             new CatalogChatProvider("strict-chat", modelsFailure: errorKind),
-            "package.strict-chat"));
+            "package.strict.chat"));
 
         var exception = await Assert.ThrowsAsync<SunderRpcException>(() =>
             runtime.Profiles.ListChatModelsAsync("strict-chat"));
@@ -170,12 +172,12 @@ public sealed class CatalogFaultContainmentTests
         using var scope = RegressionTestPackageScope.Create();
         using var catalog = new RegressionTestExtensionCatalog();
         catalog.AddProvider(
-            AgentRpcServices.ChatProviders,
+            RegressionTestBindings.ChatProviders,
             new CatalogChatProvider("strict-chat", modelsFailure: errorKind),
-            "package.strict-chat");
+            "package.strict.chat");
         var handler = new SubagentRuntimeHandler(
             new SubagentService(new SubagentStore(scope.Context)),
-            catalog);
+            catalog.Subagents());
 
         var exception = await Assert.ThrowsAsync<SunderRpcException>(async () =>
             await handler.HandleAsync(new SubagentQuery(
@@ -190,10 +192,10 @@ public sealed class CatalogFaultContainmentTests
     {
         using var catalog = new RegressionTestExtensionCatalog();
         var provider = new BlockingCancelledChatProvider("caller-cancelled");
-        catalog.AddProvider(AgentRpcServices.ChatProviders, provider, "package.caller-cancelled");
+        catalog.AddProvider(RegressionTestBindings.ChatProviders, provider, "package.caller.cancelled");
         var reference = Assert.Single(AgentRpcInvocation.Snapshot(
             catalog,
-            AgentRpcServices.ChatProviders,
+            RegressionTestBindings.ChatProviders,
             static instance => instance.Descriptor));
         using var cancellation = new CancellationTokenSource();
         var invocation = AgentRpcInvocation.InvokeAsync(
@@ -219,10 +221,10 @@ public sealed class CatalogFaultContainmentTests
     {
         using var catalog = new RegressionTestExtensionCatalog();
         var provider = new BlockingCancelledChatProvider("retired");
-        catalog.AddProvider(AgentRpcServices.ChatProviders, provider, "package.retired");
+        catalog.AddProvider(RegressionTestBindings.ChatProviders, provider, "package.retired");
         var reference = Assert.Single(AgentRpcInvocation.Snapshot(
             catalog,
-            AgentRpcServices.ChatProviders,
+            RegressionTestBindings.ChatProviders,
             static instance => instance.Descriptor));
         var invocation = AgentRpcInvocation.InvokeAsync(
             reference,
@@ -230,7 +232,7 @@ public sealed class CatalogFaultContainmentTests
             static (instance, token) => instance.GetAvailableModelsAsync(token)).AsTask();
         await provider.Started.Task;
 
-        var retirement = catalog.RetireProviderAsync(AgentRpcServices.ChatProviders, provider);
+        var retirement = catalog.RetireProviderAsync(RegressionTestBindings.ChatProviders, provider);
         await provider.CancellationObserved.Task;
         Assert.False(reference.Reference.TryAcquire(out _));
         provider.ReleaseCancellation.TrySetResult();
@@ -249,10 +251,10 @@ public sealed class CatalogFaultContainmentTests
         using var scope = RegressionTestPackageScope.Create();
         using var catalog = new RegressionTestExtensionCatalog();
         var provider = new BlockingCancelledChatProvider("caller-cancelled");
-        catalog.AddProvider(AgentRpcServices.ChatProviders, provider, "package.caller-cancelled");
+        catalog.AddProvider(RegressionTestBindings.ChatProviders, provider, "package.caller.cancelled");
         var handler = new SubagentRuntimeHandler(
             new SubagentService(new SubagentStore(scope.Context)),
-            catalog);
+            catalog.Subagents());
         using var cancellation = new CancellationTokenSource();
         var invocation = handler.HandleAsync(
             new SubagentQuery(SubagentQueryKind.ProviderModels, ProviderId: provider.ProviderId),
@@ -276,16 +278,16 @@ public sealed class CatalogFaultContainmentTests
         using var scope = RegressionTestPackageScope.Create();
         using var catalog = new RegressionTestExtensionCatalog();
         var provider = new BlockingCancelledChatProvider("retired");
-        catalog.AddProvider(AgentRpcServices.ChatProviders, provider, "package.retired");
-        var reference = Assert.Single(catalog.GetServiceReferences(AgentRpcServices.ChatProviders));
+        catalog.AddProvider(RegressionTestBindings.ChatProviders, provider, "package.retired");
+        var reference = Assert.Single(catalog.GetServiceReferences(RegressionTestBindings.ChatProviders));
         var handler = new SubagentRuntimeHandler(
             new SubagentService(new SubagentStore(scope.Context)),
-            catalog);
+            catalog.Subagents());
         var invocation = handler.HandleAsync(
             new SubagentQuery(SubagentQueryKind.ProviderModels, ProviderId: provider.ProviderId)).AsTask();
         await provider.Started.Task;
 
-        var retirement = catalog.RetireProviderAsync(AgentRpcServices.ChatProviders, provider);
+        var retirement = catalog.RetireProviderAsync(RegressionTestBindings.ChatProviders, provider);
         await provider.CancellationObserved.Task;
         Assert.False(reference.TryAcquire(out _));
         provider.ReleaseCancellation.TrySetResult();
@@ -294,16 +296,16 @@ public sealed class CatalogFaultContainmentTests
         await retirement;
         var unavailable = Assert.Single(projection.Providers ?? []);
         Assert.Empty(unavailable.Models ?? []);
-        Assert.Equal(AgentProviderReadinessStatus.Failed, unavailable.Readiness?.Status);
+        Assert.Equal(SubagentsWorker::Sunder.Package.Agent.Contracts.Models.AgentProviderReadinessStatus.Failed, unavailable.Readiness?.Status);
     }
 
     [Fact]
     public async Task OperationalToolCatalog_DoesNotContainInternalSourceFailure()
     {
         using var runtime = new AgentCatalogRuntime(catalog => catalog.AddProvider(
-            AgentRpcServices.ToolSources,
+            RegressionTestBindings.ToolSources,
             new CatalogToolSource("broken-tools", internalFailure: true),
-            "package.broken-tools"));
+            "package.broken.tools"));
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             runtime.Tools.ListReadyOwnedRuntimeToolsAsync());
@@ -313,14 +315,14 @@ public sealed class CatalogFaultContainmentTests
     public async Task OperationalToolCatalog_DoesNotOmitUnavailableSource()
     {
         using var runtime = new AgentCatalogRuntime(catalog => catalog.AddProvider(
-            AgentRpcServices.ToolSources,
+            RegressionTestBindings.ToolSources,
             new CatalogToolSource("unavailable-tools", SunderRpcErrorKind.Unavailable),
-            "package.unavailable-tools"));
+            "package.unavailable.tools"));
 
         var exception = await Assert.ThrowsAsync<AgentPackageUnavailableException>(() =>
             runtime.Tools.ListReadyOwnedRuntimeToolsAsync());
 
-        Assert.Equal("package.unavailable-tools", exception.PackageId);
+        Assert.Equal("package.unavailable.tools", exception.PackageId);
     }
 
     [Fact]
@@ -334,7 +336,7 @@ public sealed class CatalogFaultContainmentTests
         File.WriteAllText(storePath, "{broken");
         var handler = new SubagentRuntimeHandler(
             new SubagentService(new SubagentStore(scope.Context)),
-            catalog);
+            catalog.Subagents());
 
         await Assert.ThrowsAsync<InvalidDataException>(async () =>
             await handler.HandleAsync(new SubagentQuery(SubagentQueryKind.Management)));

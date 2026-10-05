@@ -7,6 +7,7 @@ internal interface IActivityTicker
     event Action? Tick;
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.App)]
 internal sealed class NullActivityTicker : IActivityTicker
 {
     public static NullActivityTicker Instance { get; } = new();

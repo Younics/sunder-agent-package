@@ -1,0 +1,29 @@
+using Sunder.Package.Agent.Execution.Docker;
+using Sunder.Sdk.Abstractions;
+
+public sealed class ArtifactDockerCli(IPackageContext context,
+    Func<string[], int, CancellationToken, string?, Task<(int ExitCode, string Output, bool TimedOut, bool WasTruncated)>> run) : DockerCliRunner(context)
+{
+    internal override Task<DockerCliResolution> ResolveExecutableAsync(CancellationToken cancellationToken = default)
+        => Task.FromResult(new DockerCliResolution(Path.Combine(AppContext.BaseDirectory, "controlled-docker"), [], null));
+    protected override Task<string> ResolveEndpointAsync(CancellationToken cancellationToken)
+        => Task.FromResult("unix:///var/run/sunder-artifact-docker.sock");
+    protected override async Task<DockerCliRunResult> RunCoreAsync(IReadOnlyList<string> args, int timeoutSeconds,
+        CancellationToken cancellationToken, string? standardInput = null, IProgress<string>? progress = null)
+    {
+        var logical = args.Count >= 2 && args[0] == "--host" ? args.Skip(2).ToArray() : args.ToArray();
+        var result = await run(logical, timeoutSeconds, cancellationToken, standardInput);
+        return new(result.ExitCode, result.Output, result.TimedOut, result.WasTruncated);
+    }
+}
+
+public sealed class ArtifactImageCatalog : IDockerExecutionPresentationClient
+{
+    public int Count { get; set; } = 2500;
+    public ValueTask<DockerExecutionOperationResponse> ExecuteAsync(DockerExecutionOperationRequest request, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(new DockerExecutionOperationResponse(Images: Enumerable.Range(0, Count)
+            .Select(index => new DockerImageDefinition($"example.com/artifact/image:{index}", DockerImageStatus.Ready, null, new string('x', 1024))).ToArray(), CatalogRevision: 90));
+    }
+}

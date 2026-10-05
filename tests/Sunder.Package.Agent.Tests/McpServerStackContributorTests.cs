@@ -1,10 +1,12 @@
+extern alias McpWorker;
+
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Mcp;
-using Sunder.Package.Agent.Mcp.Services;
+using McpWorker::Sunder.Package.Agent.Mcp;
+using McpWorker::Sunder.Package.Agent.Mcp.Services;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Logging;
@@ -421,9 +423,10 @@ public sealed class McpServerStackContributorTests
             var catalog = new McpServerCatalogService(context);
             var importer = new McpEcosystemConfigurationImporter(catalog);
             var workspace = CreateWorkspace(project);
+            using var extensionCatalog = new TestExtensionCatalog(new TestRuntimeCatalog([workspace]));
             var syncService = new McpSunderConfigurationSyncService(
                 importer,
-                new TestExtensionCatalog(new TestRuntimeCatalog([workspace])),
+                extensionCatalog.McpWorkspaces(),
                 userProfilePath: home);
 
             var result = await syncService.SyncAsync();
@@ -451,7 +454,7 @@ public sealed class McpServerStackContributorTests
             using var extensionCatalog = new TestExtensionCatalog(runtimeCatalog);
             var syncService = new McpSunderConfigurationSyncService(
                 importer,
-                extensionCatalog,
+                extensionCatalog.McpWorkspaces(),
                 userProfilePath: root);
             using var cancellation = new CancellationTokenSource();
 
@@ -482,7 +485,7 @@ public sealed class McpServerStackContributorTests
             using var extensionCatalog = new TestExtensionCatalog(runtimeCatalog);
             var syncService = new McpSunderConfigurationSyncService(
                 importer,
-                extensionCatalog,
+                extensionCatalog.McpWorkspaces(),
                 userProfilePath: root);
 
             var sync = syncService.SyncAsync();
@@ -682,7 +685,7 @@ public sealed class McpServerStackContributorTests
         {
             foreach (var runtimeCatalog in runtimeCatalogs)
             {
-                AddProvider(AgentRpcServices.RuntimeCatalogs, runtimeCatalog);
+                AddRuntimeCatalog(runtimeCatalog);
             }
         }
     }

@@ -2,14 +2,16 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
-using Sunder.Package.Agent.Contracts;
-using Sunder.Package.Agent.Contracts.Contracts;
-using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Memory.Semantic;
-using Sunder.Package.Agent.Memory.Semantic.Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
+
+extern alias MemoryWorker;
+using MemoryWorker::Sunder.Package.Agent.Contracts;
+using MemoryWorker::Sunder.Package.Agent.Contracts.Contracts;
+using MemoryWorker::Sunder.Package.Agent.Contracts.Models;
+using MemoryWorker::Sunder.Package.Agent.Memory.Semantic;
+using MemoryWorker::Sunder.Package.Agent.Memory.Semantic.Services;
 
 public sealed class SemanticMemoryDurableLifecycleTests
 {
@@ -129,7 +131,7 @@ public sealed class SemanticMemoryDurableLifecycleTests
             seed.ExecuteNonQuery();
         }
         Assert.True(FileContains(store.DatabasePath, ordinarySecret));
-        Assert.True(FileContains(store.DatabasePath, fullTextSecret));
+        Assert.True(DatabaseFilesContain(store.DatabasePath, fullTextSecret));
 
         using (var seedWal = connection.CreateCommand())
         {
@@ -429,7 +431,8 @@ public sealed class SemanticMemoryDurableLifecycleTests
             0.95f,
             AgentMemoryProvenance.User));
         var settings = new MemorySemanticSettingsService(scope.Context);
-        var resolver = new SemanticModelRuntimeResolver(new RegressionTestExtensionCatalog(), settings);
+        using var catalog = new RegressionTestExtensionCatalog();
+        using var resolver = new SemanticModelRuntimeResolver(catalog.Memory(), settings);
         var backend = new SemanticMemoryRetrievalBackend(store, resolver, settings);
         var recall = new SemanticMemoryRecallService(store, backend, new SemanticMemoryMetricsService());
         var barrierEvent = RollbackEvent("recall-barrier", sessionId, []);
