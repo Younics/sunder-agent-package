@@ -1,10 +1,13 @@
 extern alias MemoryApp;
 
-using MemoryApp::Sunder.Package.Agent.Contracts.Models;
 using MemoryApp::Sunder.Package.Agent.Memory.Semantic;
 using MemoryApp::Sunder.Package.Agent.Memory.Semantic.PackageViews;
 using MemoryApp::Sunder.Package.Agent.Memory.Semantic.Runtime;
 using MemoryApp::Sunder.Package.Agent.Memory.Semantic.Services;
+using AgentSessionContextCheckpointRecord = MemoryApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionContextCheckpointRecord;
+using AgentSessionRecord = MemoryApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionRecord;
+using AgentSessionState = MemoryApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionState;
+using AgentWorkingSummaryRecord = MemoryApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentWorkingSummaryRecord;
 using Sunder.Sdk.Rpc;
 using Xunit;
 
@@ -134,13 +137,18 @@ public sealed class MemoryInspectorAuthorityRaceTests
     private static AgentSessionRecord Session(string title)
     {
         var now = DateTimeOffset.UtcNow;
-        return new AgentSessionRecord(
-            Guid.NewGuid(),
-            title,
-            AgentSessionState.Active,
-            now,
-            now);
+        return new AgentSessionRecord
+        {
+            SessionId = Guid.NewGuid(),
+            Title = title,
+            State = AgentSessionState.Active,
+            CreatedAtUtc = RpcTimestamp(now),
+            UpdatedAtUtc = RpcTimestamp(now),
+        };
     }
+
+    private static SunderRpcOffsetDateTime RpcTimestamp(DateTimeOffset value)
+        => new(value.ToString("O", System.Globalization.CultureInfo.InvariantCulture));
 
     private sealed class DeferredMemoryInspectorGateway(
         IReadOnlyList<AgentSessionRecord> sessions) : IMemoryInspectorGateway

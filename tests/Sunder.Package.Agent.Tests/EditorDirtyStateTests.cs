@@ -78,14 +78,15 @@ public sealed class EditorDirtyStateTests
         RegressionTestExtensionCatalog extensionCatalog)
     {
         var store = new AgentLocalStore(scope.Context);
-        var sessionService = new AgentSessionService(store, extensionCatalog);
-        var workspaceService = new AgentWorkspaceService(store, extensionCatalog, sessionService);
+        var sessionService = new AgentSessionService(store, extensionCatalog.SessionCleaners);
+        var workspaceService = new AgentWorkspaceService(store, extensionCatalog.SessionCleaners, sessionService, extensionCatalog.WorkspacePathMigrators);
         var toolService = new AgentToolService(
             sessionService,
             workspaceService,
-            new AgentExecutionTargetService(extensionCatalog),
-            extensionCatalog);
-        return new AgentProfileService(store, toolService, extensionCatalog, extensionCatalog.BehaviorLoops);
+            new AgentExecutionTargetService(extensionCatalog.ExecutionTargets),
+            extensionCatalog.ToolSources,
+            extensionCatalog.ObservedToolExecutions);
+        return extensionCatalog.CreateProfileService(store, toolService);
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition)

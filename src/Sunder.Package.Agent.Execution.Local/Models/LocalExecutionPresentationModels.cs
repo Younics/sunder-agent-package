@@ -1,34 +1,11 @@
 namespace Sunder.Package.Agent.Execution.Local;
 
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
-public interface ILocalExecutionPresentationClient
-{
-    ValueTask<LocalExecutionOperationResponse> ExecuteAsync(
-        LocalExecutionOperationRequest request,
-        CancellationToken cancellationToken = default);
-}
-
-[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
-public enum LocalExecutionOperationKind
-{
-    GetSettings,
-    SaveSettings,
-    SaveShells,
-}
-
-[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
-public sealed record LocalExecutionOperationRequest(
-    LocalExecutionOperationKind Kind,
-    string? TimeoutSeconds = null,
-    IReadOnlyList<LocalShellDefinition>? Shells = null,
-    long? ExpectedShellCatalogRevision = null);
-
-[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 public sealed record LocalExecutionOperationResponse(
     string? TimeoutSeconds = null,
     IReadOnlyList<LocalShellDefinition>? DetectedShells = null,
     IReadOnlyList<LocalShellDefinition>? CustomShells = null,
-    long? ShellCatalogRevision = null,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long? ShellCatalogRevision = null,
     string? Message = null,
     bool Success = true,
     LocalExecutionOperationError? Error = null);

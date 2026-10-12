@@ -17,12 +17,15 @@ using Xunit;
 namespace Sunder.Package.Agent.Tests;
 
 extern alias McpWorker;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 using McpWorker::Sunder.Package.Agent.Mcp.Runtime;
 
 public sealed partial class AgentSourceArtifactMigrationTests
 {
     private static async Task VerifyMcpRoles(string worker)
     {
+        var wireJson = new JsonSerializerOptions(MemoryProviderJson)
+        { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.Never };
         var load = new AssemblyLoadContext("mcp-role-local", isCollectible: true);
         try
         {
@@ -39,11 +42,11 @@ public sealed partial class AgentSourceArtifactMigrationTests
             var presentation = load.LoadFromStream(appStream);
             AssertMcpSemanticOwnership(runtime, app: false);
             AssertMcpSemanticOwnership(presentation, app: true);
-            Assert.NotSame(runtime.GetType("Sunder.Package.Agent.Contracts.Models.AgentToolDescriptor"), presentation.GetType("Sunder.Package.Agent.Contracts.Models.AgentToolDescriptor"));
+            Assert.NotSame(runtime.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentToolDescriptor", true), presentation.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentToolDescriptor", true));
             foreach (var assembly in new[] { runtime, presentation })
             {
                 Assert.DoesNotContain(assembly.GetReferencedAssemblies(), reference => reference.Name == "Sunder.Package.Agent.Mcp.Shared");
-                foreach (var name in new[] { "Sunder.Package.Agent.Mcp.ConfiguredMcpServerRecord", "Sunder.Package.Agent.Mcp.Runtime.McpProjection", "Sunder.Package.Agent.Mcp.Runtime.McpManagementContent" })
+                foreach (var name in new[] { "Sunder.Package.Agent.Mcp.ConfiguredMcpServerRecord", "Sunder.Generated.Packages.Sunder_Package_Agent_Mcp_Services.IManagementService", "Sunder.Package.Agent.Mcp.Runtime.McpManagementContent" })
                     Assert.Same(assembly, assembly.GetType(name, true)!.Assembly);
             }
             Assert.DoesNotContain(presentation.GetReferencedAssemblies(), reference => reference.Name is "Sunder.Package.Agent.Mcp" or "Sunder.Sdk.Worker"
@@ -56,10 +59,10 @@ public sealed partial class AgentSourceArtifactMigrationTests
             var syncType = runtime.GetType("Sunder.Package.Agent.Mcp.Services.McpSunderConfigurationSyncService", true)!;
             Action<IServiceCollection> isolatePaths = services => services.AddSingleton(syncType, services => Activator.CreateInstance(syncType,
                 services.GetRequiredService(runtime.GetType("Sunder.Package.Agent.Mcp.Services.McpEcosystemConfigurationImporter", true)!),
-                services.GetRequiredService(runtime.GetType("Sunder.Package.Agent.Mcp.Rpc.RuntimeWorkspaceCatalog", true)!), workspace.RootPath, workspace.RootPath)!);
+                services.GetRequiredService(typeof(Sunder.Sdk.Services.IServiceProviders<>).MakeGenericType(
+                    runtime.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Services.IRuntimeCatalogService", true)!)), workspace.RootPath, workspace.RootPath)!);
             var options = CreateControlledGeneratedWorker(comparison, context, rpc, isolatePaths).Options;
             await using var composition = Assert.IsType<SunderWorkerComposition>(options.Composition);
-            Assert.Null(composition.Services.GetService<AgentRpcCatalog>());
             Assert.Null(runtime.GetType("Sunder.Package.Agent.Mcp.Runtime.LegacyMcpWorkspaceCatalog"));
             Assert.Equal(0, state.DiscoveryCount);
             Assert.Equal("mcp.oauth.v1", Assert.Single(options.CallbackHandlers).CallbackHandlerId);
@@ -68,10 +71,10 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.Equal(new[] { "mcp.management", "mcp.selectable.capabilities", "mcp.session.cleaner", "mcp.stack", "mcp.tools", "mcp.tools.observed" }, registrations.Keys.Order(StringComparer.Ordinal));
             foreach (var provider in options.Providers)
             {
-                var descriptor = provider.ProviderId == "mcp.management" ? RegressionTestRpcDescriptors.Get("sunder.package.agent.mcp.management")
+                var descriptor = provider.ProviderId == "mcp.management" ? CurrentPrivateRpcDescriptors.Get("sunder.package.agent.mcp.management")
                     : provider.ProviderId == "mcp.stack" ? SunderRpcContractDescriptor.Parse(File.ReadAllBytes(Path.Combine(BuilderSourceMigrationTests.FindRepository(),
                         "../sunder-core/languages/csharp/dotnet/packages/Sunder.Sdk.Stacks/Contracts/sunder.stack.contributor.rpc.json")))
-                    : RegressionTestRpcDescriptors.Get(provider.ContractId);
+                    : CurrentPublicRpcDescriptors.Get(provider.ContractId);
                 Assert.Equal(descriptor.Sha256, provider.DescriptorSha256); Assert.Equal(descriptor.AbiSha256, provider.AbiSha256);
                 state.Add("sunder.package.agent.mcp", descriptor, provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, "2.0.0");
             }
@@ -104,21 +107,26 @@ public sealed partial class AgentSourceArtifactMigrationTests
             var now = DateTimeOffset.UtcNow;
             var profile = new AgentProfileRecord("profile.mcp", "MCP", null, null, null, null, null, null, now, now,
                 SelectableCapabilityAssignments: [new(AgentProfileSelectableCapabilityKinds.ToolGroup, "artifact-mcp", "mcp")]);
-            var capabilities = await Rpc("mcp.selectable.capabilities", "selectable-capability-provider", "list", new { profile });
+            var capabilities = await Rpc("mcp.selectable.capabilities", "selectable-capability-provider", "list", profile);
             Assert.Equal("artifact-mcp", Assert.Single(capabilities.EnumerateArray()).GetProperty("capabilityId").GetString());
-            var tools = await Rpc("mcp.tools", "tool-source", "list-tools", new { context = new { sessionId = session, profile } });
+            var sourceWire = new { sessionId = session, profile, workspace = (object?)null, executionBinding = (object?)null,
+                executionTarget = (object?)null, executionTargetConfigurationGeneration = (string?)null };
+            var tools = await Rpc("mcp.tools", "tool-source", "list-tools", sourceWire);
             var toolId = Assert.Single(tools.EnumerateArray()).GetProperty("toolId").GetString()!;
-            var ready = await Rpc("mcp.tools", "tool-source", "get-readiness", new { toolId, context = new { context = new { sessionId = session, profile } } });
+            var ready = await Rpc("mcp.tools", "tool-source", "get-readiness", new { toolId, context = sourceWire });
             Assert.Equal("ready", ready.GetProperty("status").GetString());
-            var execution = new { approvedResourceCapabilities = Array.Empty<string>(), context = new { sessionId = session, profileId = profile.ProfileId, transcriptEpoch = 0,
-                allowOutsideConfiguredScope = false, approvedResourceClaims = Array.Empty<object>(), approvedResourceReferences = Array.Empty<string>() } };
+            var execution = new { sessionId = session, profileId = profile.ProfileId, workspace = (object?)null, executionBinding = (object?)null,
+                runId = (Guid?)null, runRevision = (long?)null, userTurnId = (Guid?)null, toolCallId = (string?)null, transcriptEpoch = 0,
+                approvedResourceCapabilities = Array.Empty<string>(), resourceOperation = (object?)null,
+                executionTarget = (object?)null, executionTargetConfigurationGeneration = (string?)null,
+                allowOutsideConfiguredScope = false, approvedResourceClaims = Array.Empty<object>(), approvedResourceReferences = Array.Empty<string>() };
             object Request(string message) => new { context = execution, request = new { toolId, argumentsJson = JsonSerializer.Serialize(new { message }) } };
             var executed = await Rpc("mcp.tools", "tool-source", "execute", Request("normal"));
             Assert.False(executed.GetProperty("isError").GetBoolean());
             Assert.Contains("artifact:normal", executed.GetProperty("content").GetString()!, StringComparison.Ordinal);
             var observedEndpoint = (await Select("mcp.tools.observed")).Endpoint;
             var before = peer.ToolCalls;
-            await using (var observed = rpc.SubscribeAsync(observedEndpoint, "tool-execution-observed", "execute", JsonSerializer.SerializeToElement(Request("observed"), MemoryProviderJson)).GetAsyncEnumerator())
+            await using (var observed = rpc.SubscribeAsync(observedEndpoint, "tool-execution-observed", "execute", JsonSerializer.SerializeToElement(Request("observed"), wireJson)).GetAsyncEnumerator())
             {
                 Assert.True(await observed.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10)));
                 Assert.Equal("dispatched", observed.Current.GetProperty("kind").GetString());
@@ -128,29 +136,42 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 Assert.False(await observed.MoveNextAsync());
             }
             before = peer.ToolCalls;
-            await using (var abandoned = rpc.SubscribeAsync(observedEndpoint, "tool-execution-observed", "execute", JsonSerializer.SerializeToElement(Request("abandoned"), MemoryProviderJson)).GetAsyncEnumerator())
+            await using (var abandoned = rpc.SubscribeAsync(observedEndpoint, "tool-execution-observed", "execute", JsonSerializer.SerializeToElement(Request("abandoned"), wireJson)).GetAsyncEnumerator())
             {
                 Assert.True(await abandoned.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10)));
                 Assert.Equal("dispatched", abandoned.Current.GetProperty("kind").GetString());
             }
             Assert.Equal(before, peer.ToolCalls);
             var agentRpc = new RegressionTestRpcClient(state, "sunder.package.agent");
-            var generatedTools = CreateAgentToolClient(agentOwner, agentRpc, await Select("mcp.tools"));
-            var generatedObserved = CreateAgentObservedToolClient(agentOwner, agentRpc, await Select("mcp.tools.observed"));
-            await using var generatedToolsLifetime = (IAsyncDisposable)generatedTools;
-            await using var generatedObservedLifetime = (IAsyncDisposable)generatedObserved;
+            await using var generatedReceiver = new GeneratedServiceTestScope(agentRpc);
+            var generatedTools = Assert.Single((await generatedReceiver.Providers<AgentServices.IToolSourceService>().ListAsync()).Providers,
+                provider => provider.ProviderId == "mcp.tools").Service;
+            var generatedObserved = Assert.Single((await generatedReceiver.Providers<AgentServices.IToolExecutionObservedService>().ListAsync()).Providers,
+                provider => provider.ProviderId == "mcp.tools.observed").Service;
             var sourceContext = new AgentToolSourceContext(session, profile);
             Assert.Equal(toolId, Assert.Single(await generatedTools.ListToolsAsync(sourceContext)).ToolId);
             Assert.Equal(AgentToolReadinessStatus.Ready, (await generatedTools.GetReadinessAsync(toolId, sourceContext))!.Status);
             var generatedContext = new AgentToolExecutionContext(session, profile.ProfileId);
             Assert.Contains("artifact:generated", (await generatedTools.ExecuteAsync(generatedContext, new(toolId, "{\"message\":\"generated\"}"))).Content!, StringComparison.Ordinal);
             var generatedDispatches = 0; before = peer.ToolCalls;
-            var generatedResult = await generatedObserved.ExecuteAsync(generatedContext with
-            { DispatchStarted = () => { Assert.Equal(before, peer.ToolCalls); generatedDispatches++; } }, new(toolId, "{\"message\":\"generated-observed\"}"));
-            Assert.Equal(1, generatedDispatches); Assert.Contains("artifact:generated-observed", generatedResult.Content!, StringComparison.Ordinal);
+            var generatedEvents = new List<JsonElement>();
+            await foreach (var item in generatedObserved.ExecuteAsync(generatedContext, new(toolId, "{\"message\":\"generated-observed\"}")))
+            {
+                if (item is AgentToolDispatchedEvent) { Assert.Equal(before, peer.ToolCalls); generatedDispatches++; }
+                generatedEvents.Add(JsonSerializer.SerializeToElement(item, item.GetType(), wireJson));
+            }
+            Assert.Equal(1, generatedDispatches);
+            Assert.Contains(generatedEvents, item => item.TryGetProperty("result", out var result)
+                && result.GetProperty("content").GetString()!.Contains("artifact:generated-observed", StringComparison.Ordinal));
             before = peer.ToolCalls;
-            await Assert.ThrowsAsync<InvalidOperationException>(() => generatedObserved.ExecuteAsync(generatedContext with
-            { DispatchStarted = () => throw new InvalidOperationException("Dispatch acknowledgement rejected") }, new(toolId, "{\"message\":\"must-not-dispatch\"}")).AsTask());
+            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            {
+                await foreach (var item in generatedObserved.ExecuteAsync(generatedContext, new(toolId, "{\"message\":\"must-not-dispatch\"}")))
+                {
+                    Assert.IsType<AgentToolDispatchedEvent>(item);
+                    throw new InvalidOperationException("Dispatch acknowledgement rejected");
+                }
+            });
             Assert.Equal(before, peer.ToolCalls);
             using (var agentPackage = RegressionTestPackageScope.Create())
             {
@@ -158,27 +179,30 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 var profileService = host.Services.GetRequiredService(agentOwner.GetType("Sunder.Package.Agent.Services.AgentProfileService", true)!);
                 SurfaceCall(profileService, "ImportProfile", profile with { ProfileId = host.Profile.ProfileId });
                 var runtimeCatalog = host.Services.GetRequiredService(agentOwner.GetType("Sunder.Package.Agent.Services.AgentRuntimeCatalog", true)!);
-                var agentCatalogHandler = AddSurfaceProvider(state, "sunder.package.agent", SurfaceRegistration(Activator.CreateInstance(agentOwner.GetType("Sunder.Package.Agent.Rpc.Public.RuntimeCatalogService", true)!, runtimeCatalog)!));
+                AddSubagentSourceProvider(state, agentOwner, "RuntimeCatalogService", runtimeCatalog, RegressionTestBindings.RuntimeCatalog);
+                var agentCatalogHandler = runtimeCatalog;
                 var toolService = host.Services.GetRequiredService(agentOwner.GetType("Sunder.Package.Agent.Services.AgentToolService", true)!);
                 before = peer.ToolCalls; generatedDispatches = 0;
-                var routed = await ExecuteAgentTool(toolService, toolId, "{\"message\":\"agent-routed\"}", host, host.Profile.ProfileId,
-                    () => { Assert.Equal(before, peer.ToolCalls); generatedDispatches++; });
+                var routed = await AgentRoleBoundary.As<Task<AgentToolResult>>(AgentRoleBoundary.Call(toolService, "ExecuteAsync",
+                    toolId, "{\"message\":\"agent-routed\"}", host.Session.SessionId, host.Profile.ProfileId, host.Workspace, false,
+                    null, null, null, null, null, null, null, CancellationToken.None, null, null, null, null, null, false,
+                    (Action)(() => { Assert.Equal(before, peer.ToolCalls); generatedDispatches++; }))!);
                 Assert.False(routed.IsError, routed.Content); Assert.Equal(1, generatedDispatches);
                 Assert.Contains("artifact:agent-routed", routed.Content!, StringComparison.Ordinal);
-                await Rpc("mcp.session.cleaner", "session-cleaner", "delete-session", new { sessionId = host.Session.SessionId });
+                await Rpc("mcp.session.cleaner", "session-cleaner", "delete-session", host.Session.SessionId);
                 await state.RetireAsync(agentCatalogHandler).WaitAsync(TimeSpan.FromSeconds(5));
             }
             using (var cancelled = new CancellationTokenSource())
             {
                 var target = await Select("mcp.tools");
-                var pending = rpc.InvokeAsync(target.Endpoint, "tool-source", "execute", JsonSerializer.SerializeToElement(Request("wait"), MemoryProviderJson), cancellationToken: cancelled.Token).AsTask();
+                var pending = rpc.InvokeAsync(target.Endpoint, "tool-source", "execute", JsonSerializer.SerializeToElement(Request("wait"), wireJson), cancellationToken: cancelled.Token).AsTask();
                 await peer.BlockedCall.Task.WaitAsync(TimeSpan.FromSeconds(10));
                 cancelled.Cancel();
                 await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending.WaitAsync(TimeSpan.FromSeconds(5)));
             }
             var managerType = runtime.GetType("Sunder.Package.Agent.Mcp.Services.McpClientConnectionManager", true)!;
             var manager = composition.Services.GetRequiredService(managerType);
-            await Rpc("mcp.session.cleaner", "session-cleaner", "delete-session", new { sessionId = session });
+            await Rpc("mcp.session.cleaner", "session-cleaner", "delete-session", session);
             Assert.Equal(0, managerType.GetProperty("CachedConnectionCount", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(manager));
             var items = await Rpc("mcp.stack", "stack-contributor", "list-export-items", new { packageId = "sunder.package.agent.mcp" });
             Assert.Single(items.GetProperty("items").EnumerateArray());
@@ -198,7 +222,9 @@ public sealed partial class AgentSourceArtifactMigrationTests
             await changed.Task.WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Empty(((IEnumerable)(await Call("ListAsync", CancellationToken.None))!).Cast<object>());
             await state.RetireAsync(registrations["mcp.management"].Handler).WaitAsync(TimeSpan.FromSeconds(5));
-            await Assert.ThrowsAsync<InvalidOperationException>(() => Call("ListAsync", CancellationToken.None));
+            var unavailable = await Assert.ThrowsAsync<SunderRpcException>(() => Call("ListAsync", CancellationToken.None));
+            Assert.Equal(SunderRpcErrorKind.NotFound, unavailable.Error.Kind);
+            Assert.Equal("rpc.provider-not-found", unavailable.Error.Code);
             await ((IAsyncDisposable)gateway).DisposeAsync();
             Assert.True(((Task)gateway.GetType().GetProperty("ObservationTask", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(gateway)!).IsCompleted);
             await composition.DisposeAsync();
@@ -211,7 +237,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             }
             async Task<SunderRpcProviderSnapshot> Select(string id) => Assert.Single((await rpc.DiscoverAsync(registrations[id].ContractId)).Providers, provider => provider.ProviderId == id);
             async Task<JsonElement> Rpc(string id, string service, string method, object value)
-                => await rpc.InvokeAsync((await Select(id)).Endpoint, service, method, JsonSerializer.SerializeToElement(value, MemoryProviderJson)).AsTask().WaitAsync(TimeSpan.FromSeconds(15));
+                => await rpc.InvokeAsync((await Select(id)).Endpoint, service, method, JsonSerializer.SerializeToElement(value, wireJson)).AsTask().WaitAsync(TimeSpan.FromSeconds(15));
         }
         finally { load.Unload(); }
     }

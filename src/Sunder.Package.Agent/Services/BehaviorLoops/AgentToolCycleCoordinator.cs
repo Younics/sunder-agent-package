@@ -33,7 +33,8 @@ internal sealed class AgentToolCycleCoordinator(AgentLoopTerminalHandler termina
             return AgentToolCycleResult.Terminal(result);
         }
 
-        budgetTracker?.ChargeToolCalls(providerToolCalls.Count);
+        if (budgetTracker is not null)
+            await budgetTracker.ChargeToolCallsAsync(providerToolCalls.Count, cancellationToken).ConfigureAwait(false);
         var toolCalls = providerToolCalls.Select(CreateToolCallRequest).ToArray();
         var outcomes = await host.InvokeToolsAsync(toolCalls, assistantTurn: null, cancellationToken);
         var keyedOutcomes = outcomes

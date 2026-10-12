@@ -142,7 +142,9 @@ public sealed class HistorySearchFreshReviewTests
                         $"overflowunique{index:D4}");
                 }
                 sessions.UpdateTextTurn(updateTurn.TurnId, "overflownewmarker");
-                sessions.RollbackTranscript(createdSessions[1].SessionId, rollbackAnchor.TurnId);
+                sessions.RollbackTranscriptAsync(createdSessions[1].SessionId, rollbackAnchor.TurnId)
+                    .GetAwaiter()
+                    .GetResult();
             }
             catch (Exception exception)
             {

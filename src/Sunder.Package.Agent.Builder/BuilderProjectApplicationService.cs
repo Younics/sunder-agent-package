@@ -1,4 +1,4 @@
-using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Packaging;
 
@@ -170,19 +170,13 @@ public sealed class BuilderProjectApplicationService(
                 : result.CombinedOutput);
         }
 
-        // Initialization is the explicit authoring action for the known template
-        // sample. Ordinary subsequent Build never accepts changed contracts.
+        // The template's private service follows the package version and needs no
+        // authored baseline. Restore through the same target before ordinary Build.
         context.ReportIndeterminate("Restoring the new package project...");
         var restore = await execution.RunProcessAsync("dotnet", ["restore", executionProjectFolder], executionProjectFolder,
             cancellationToken: context.CancellationToken);
         if (restore.ExitCode != 0)
             throw new InvalidOperationException(string.IsNullOrWhiteSpace(restore.CombinedOutput) ? "Package restore failed." : restore.CombinedOutput);
-        context.ReportIndeterminate("Accepting the initial sample contract...");
-        var accept = await execution.RunProcessAsync("dotnet",
-            ["msbuild", "-t:AcceptSunderContracts", "-p:SunderContractKey=sample", "-p:SunderContractNextVersion=2.0.0"], executionProjectFolder,
-            cancellationToken: context.CancellationToken);
-        if (accept.ExitCode != 0)
-            throw new InvalidOperationException(string.IsNullOrWhiteSpace(accept.CombinedOutput) ? "Initial contract acceptance failed." : accept.CombinedOutput);
 
         var initialized = project with
         {
@@ -220,9 +214,11 @@ public sealed class BuilderProjectApplicationService(
         BuilderProjectRecord project,
         BackgroundProcessContext context)
     {
-        context.ReportIndeterminate("Freezing accepted contracts and packing the package...");
+        context.ReportIndeterminate("Checking package APIs and creating the package archive...");
         var execution = await executionService.ResolveAsync(project.WorkspaceId, context.CancellationToken);
         var projectFolder = pathService.ResolveExecutionProjectFolder(project);
+        // Check/Freeze retain the reviewed public API gates and are no-ops for
+        // private-only packages, whose services follow their package version.
         var result = await execution.RunProcessAsync(
             "dotnet",
             ["msbuild", "-t:CheckSunderContracts;FreezeSunderContracts;PackSunderPackage", "-p:Configuration=Release"],

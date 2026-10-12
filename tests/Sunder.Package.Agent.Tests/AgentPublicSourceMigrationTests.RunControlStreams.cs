@@ -2,10 +2,12 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
-using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
+using Sunder.Package.Agent.Services;
 using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -18,7 +20,6 @@ public sealed partial class AgentPublicSourceMigrationTests
     {
         var runtime = new RunControlProbe();
         using var lease = fixture.Registry.Open(runtime, RunControlCaller, out var invocationId);
-        var invocation = new RunControlInvocation(invocationId);
         var update = new ChatResponseUpdate(ChatRole.Assistant,
         [
             new TextContent("Hello 漢字"), new TextReasoningContent("Reasoning") { ProtectedData = "protected-state" },
@@ -34,72 +35,55 @@ public sealed partial class AgentPublicSourceMigrationTests
         };
         var chats = new List<RunControlChatProbe>();
         runtime.ChatFactory = () => { var value = new RunControlChatProbe([update]); chats.Add(value); return value; };
-        var request = RunChatRequest(invocation) with
+        var request = RunChatRequest() with
         {
             Messages = [new("user", "message.in", "Author", [new("text", Text: "Input 漢字"), new("tool-result", CallId: "call.in", Json: new(RunJson((object?)null)))])],
-            Context = new("provider.one", "model.one", new Dictionary<string, JsonElement> { ["nested"] = RunJson(new { flag = false }) }),
-            Options = new("Instructions", "conversation.in", "model.one", 0.5f, 99, 0.75f, 2, 0f, -0.5f, 0, false, "extra-high",
+            Options = new("Instructions", "conversation.in", "model.one", 0.5f, 99, 0.75f, 2, 0f, -0.5f, 0, false, AgentReasoningEffort.ExtraHigh,
                 [new("lookup", "Tool", RunJson(new { type = "object" }))],
                 new Dictionary<string, JsonElement> { ["null"] = RunJson((object?)null), ["values"] = RunJson(new object[] { 1, false, "漢字" }) }, [3, 2, 1]),
         };
-        var json = RunJson(request);
-        var expected = new List<JsonElement> { RunJson<AgentChatStreamEvent>(AgentChatWireMapper.FromUpdate(update)) };
-        var actual = await ReadGeneratedStream(fixture.Client, default, null, "StreamChatAsync", json);
+        var expected = new List<JsonElement> { await ChatEventSnapshotAsync(AgentChatMapper.FromUpdate(update)) };
+        var actual = await ReadRunControlStream(fixture.Client, invocationId, request,
+            new Dictionary<string, JsonElement> { ["nested"] = RunJson(new { flag = false }) });
         Assert.Equal(expected.Count, actual.Count);
-        for (var index = 0; index < expected.Count; index++) Assert.True(JsonElement.DeepEquals(expected[index], actual[index]));
+        for (var index = 0; index < expected.Count; index++)
+            Assert.True(JsonElement.DeepEquals(expected[index], actual[index]),
+                $"Expected chat values: {JsonSerializer.Serialize(expected[index], new JsonSerializerOptions { WriteIndented = true })}"
+                + $"\nActual chat values: {JsonSerializer.Serialize(actual[index], new JsonSerializerOptions { WriteIndented = true })}");
         Assert.Equal("AQID", actual[0].GetProperty("continuationHandle").GetString());
         Assert.Equal(JsonValueKind.Null, actual[0].GetProperty("contentItems")[3].GetProperty("json").ValueKind);
         Assert.Single(chats);
         Assert.All(chats, chat => { Assert.True(chat.Disposed); Assert.True(chat.EnumerationDisposed); });
-        Assert.True(JsonElement.DeepEquals(RunJson(AgentChatWireMapper.FromChatOptions(AgentChatWireMapper.ToChatOptions(request.Options))),
-            RunJson(AgentChatWireMapper.FromChatOptions(chats[0].Options))));
-        Assert.True(JsonElement.DeepEquals(RunJson(request.Messages), RunJson(chats[0].Messages.Select(AgentChatWireMapper.FromChatMessage).ToArray())));
+        Assert.True(JsonElement.DeepEquals(RunJson(AgentChatMapper.FromChatOptions(AgentChatMapper.ToChatOptions(request.Options))),
+            RunJson(AgentChatMapper.FromChatOptions(chats[0].Options))));
+        Assert.True(JsonElement.DeepEquals(await ChatMessagesSnapshotAsync(request.Messages),
+            await ChatMessagesSnapshotAsync(chats[0].Messages.Select(AgentChatMapper.FromChatMessage).ToArray())));
         var options = Assert.IsType<ChatOptions>(chats[0].Options);
         Assert.False(options.AllowMultipleToolCalls);
         Assert.Equal(ReasoningEffort.ExtraHigh, options.Reasoning!.Effort);
         Assert.Equal(new byte[] { 3, 2, 1 }, options.ContinuationToken!.ToBytes().ToArray());
 
-        var observed = new BehaviorCallRecorder(fixture.Rpc);
-        using var callbackCatalog = new AgentRpcCatalog(observed);
-        var callback = (IAgentBehaviorLoopRuntime)Activator.CreateInstance(
-            assembly.GetType("Sunder.Package.Agent.Runtime.Rpc.GeneratedBehaviorRuntime", true)!, callbackCatalog, invocationId,
-            AgentRpcProviderHandle.From(Assert.Single(fixture.State.Discover(AgentRpcContractIds.RunControl).Providers, provider => provider.Endpoint == fixture.Source)))!;
-        using var callbackChat = await callback.CreateChatClientAsync(new(request.Context.ProviderId, request.Context.ModelId,
-            CorrelationAttributes: request.Context.CorrelationAttributes!.ToDictionary(pair => pair.Key, pair => (object?)pair.Value, StringComparer.Ordinal)));
-        var callbackEvents = new List<JsonElement>();
-        await foreach (var item in callbackChat.GetStreamingResponseAsync(request.Messages.Select(message => AgentChatWireMapper.ToChatMessage(message)),
-            AgentChatWireMapper.ToChatOptions(request.Options)))
-            callbackEvents.Add(RunJson<AgentChatStreamEvent>(AgentChatWireMapper.FromUpdate(item)));
-        Assert.Equal(expected.Count, callbackEvents.Count);
-        for (var index = 0; index < expected.Count; index++)
-        {
-            var expectedUpdate = AgentChatWireMapper.ToUpdate(Assert.IsType<AgentChatUpdateEvent>(expected[index].Deserialize<AgentChatStreamEvent>(ExecutionJson)));
-            Assert.True(JsonElement.DeepEquals(RunJson<AgentChatStreamEvent>(AgentChatWireMapper.FromUpdate(expectedUpdate)), callbackEvents[index]));
-        }
-        Assert.True(JsonElement.DeepEquals(RunJson(AgentChatWireMapper.FromChatOptions(chats[0].Options)), RunJson(AgentChatWireMapper.FromChatOptions(chats[^1].Options))));
-        Assert.True(Assert.Single(observed.Scopes).Disposed);
-
         // Single-use binary content referenced twice is opened once and reaches both messages.
         var bytes = new byte[] { 0, 1, 127, 128, 255 };
-        await foreach (var _ in callbackChat.GetStreamingResponseAsync([new(ChatRole.User,
-            [new DataContent(bytes, "image/png") { Name = "callback.png" }])])) { }
-        Assert.Equal(bytes, Assert.IsType<DataContent>(Assert.Single(chats[^1].Messages).Contents[0]).Data.ToArray());
-        Assert.Equal("callback.png", Assert.IsType<DataContent>(chats[^1].Messages[0].Contents[0]).Name);
-        Assert.Equal(2, observed.Scopes.Count); Assert.All(observed.Scopes, scope => Assert.True(scope.Disposed));
         await using var content = new MemoryStream(bytes, writable: false);
-        var reference = await fixture.Scope.RegisterContentAsync(fixture.Source, content,
-            new("image/png", "image.png", bytes.Length, Repeatability: SunderRpcContentRepeatability.SingleUse, MaximumUses: 1));
-        var binary = RunJson(request with { Messages = [new("user", null, null,
-            [new("content-reference", ContentReference: reference), new("content-reference", ContentReference: reference)])] });
-        await ReadGeneratedStream(fixture.Client, default, null, "StreamChatAsync", binary);
+        await using var binaryContent = SunderContent.FromStream(content, "image/png", "image.png", bytes.Length);
+        var binary = request with { Messages = [new("user", null, null,
+            [new("content-reference", Content: binaryContent), new("content-reference", Content: binaryContent)])] };
+        await ReadRunControlStream(fixture.Client, invocationId, binary, null);
         Assert.All(chats[^1].Messages.Single().Contents, item => Assert.Equal(bytes, Assert.IsType<DataContent>(item).Data.ToArray()));
-        await Assert.ThrowsAsync<SunderRpcException>(() => ReadGeneratedStream(fixture.Client, default, null, "StreamChatAsync", binary));
+        var streamCalls = fixture.State.StreamInvocationAttemptCount;
+        var runtimeCalls = runtime.Calls;
+        var chatCount = chats.Count;
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => ReadRunControlStream(fixture.Client, invocationId, binary, null));
+        Assert.Equal(streamCalls, fixture.State.StreamInvocationAttemptCount);
+        Assert.Equal(runtimeCalls, runtime.Calls);
+        Assert.Equal(chatCount, chats.Count);
         Assert.True(chats[^1].Disposed);
 
-        var simple = RunJson(RunChatRequest(invocation));
+        var simple = RunChatRequest();
         var slow = new RunControlChatProbe(Enumerable.Repeat(update, 256).ToArray());
         runtime.ChatFactory = () => slow;
-        await using (var events = callbackChat.GetStreamingResponseAsync([]).GetAsyncEnumerator())
+        await using (var events = fixture.Client.StreamChatAsync(invocationId, simple, null).GetAsyncEnumerator())
         {
             Assert.True(await events.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5)));
             Assert.Equal(1, slow.Produced);
@@ -116,7 +100,7 @@ public sealed partial class AgentPublicSourceMigrationTests
                 DisposeFailure = stage == "dispose" ? providerFailure : new IOException("private cleanup detail"),
             };
             runtime.ChatFactory = () => stage == "create" ? throw providerFailure : chat;
-            var events = await ReadGeneratedStream(fixture.Client, default, null, "StreamChatAsync", simple);
+            var events = await ReadRunControlStream(fixture.Client, invocationId, simple, null);
             Assert.Equal(stage == "create" ? 1 : 2, events.Count);
             var error = events[^1];
             Assert.Equal("error", error.GetProperty("kind").GetString());
@@ -130,7 +114,7 @@ public sealed partial class AgentPublicSourceMigrationTests
             var underlying = new IOException("private primary failure");
             var chat = new RunControlChatProbe([update]) { Failure = stage == "stream" ? underlying : null, DisposeFailure = stage == "dispose" ? underlying : new IOException("private cleanup detail") };
             runtime.ChatFactory = () => stage == "create" ? throw underlying : chat;
-            var error = await Assert.ThrowsAsync<SunderRpcException>(() => ReadGeneratedStream(fixture.Client, default, null, "StreamChatAsync", simple));
+            var error = await Assert.ThrowsAsync<SunderRpcException>(() => ReadRunControlStream(fixture.Client, invocationId, simple, null));
             Assert.Equal(SunderRpcErrorKind.ProviderFaulted, error.Error.Kind);
             Assert.DoesNotContain("private", error.Message, StringComparison.Ordinal);
             Assert.Same(underlying, fixture.State.LastInvocationFailure);
@@ -146,7 +130,7 @@ public sealed partial class AgentPublicSourceMigrationTests
             };
             runtime.ChatFactory = () => chat;
             using var cancellation = new CancellationTokenSource();
-            await using (var events = RunControlEvents(fixture.Client, simple, cancellation.Token).GetAsyncEnumerator())
+            await using (var events = fixture.Client.StreamChatAsync(invocationId, simple, null, cancellation.Token).GetAsyncEnumerator(cancellation.Token))
             {
                 Assert.True(await events.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5)));
                 var pending = blocked ? events.MoveNextAsync().AsTask() : null;
@@ -158,17 +142,17 @@ public sealed partial class AgentPublicSourceMigrationTests
         }
     }
 
-    private static RunControlChatRequest RunChatRequest(RunControlInvocation invocation)
-        => new(invocation, new("provider.one", "model.one", null), [],
+    private static AgentChatStreamRequest RunChatRequest()
+        => new("provider.one", "model.one", [],
             new(null, null, null, null, null, null, null, null, null, null, null, null, [], null, null));
 
-    private static IAsyncEnumerable<JsonElement> RunControlEvents(object client, JsonElement request, CancellationToken token)
+    private static async Task<List<JsonElement>> ReadRunControlStream(AgentServices.IRunControlService client, Guid invocationId,
+        AgentChatStreamRequest request, IReadOnlyDictionary<string, JsonElement>? correlation, CancellationToken token = default)
     {
-        var method = client.GetType().GetMethod("StreamChatAsync")!;
-        var value = JsonSerializer.Deserialize(request.GetRawText(), method.GetParameters()[0].ParameterType, ExecutionJson);
-        var stream = method.Invoke(client, [value, token])!;
-        return (IAsyncEnumerable<JsonElement>)typeof(AgentPublicSourceMigrationTests).GetMethod(nameof(ProjectGeneratedEvents), BindingFlags.Static | BindingFlags.NonPublic)!
-            .MakeGenericMethod(method.ReturnType.GetGenericArguments()[0]).Invoke(null, [stream, token])!;
+        var events = new List<JsonElement>();
+        await foreach (var item in client.StreamChatAsync(invocationId, request, correlation, token).WithCancellation(token))
+            events.Add(await ChatEventSnapshotAsync(item, token, received: true));
+        return events;
     }
 
     private sealed class RunControlChatProbe(IReadOnlyList<ChatResponseUpdate> updates) : IChatClient

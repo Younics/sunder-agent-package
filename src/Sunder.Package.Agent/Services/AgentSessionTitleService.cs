@@ -1,9 +1,9 @@
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.AI;
-using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Sdk.Logging;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.Services;
 
@@ -53,22 +53,18 @@ public sealed partial class AgentSessionTitleService(
             return;
         }
 
-        var retainedSelection = providerSelection.TryRetain();
-        if (retainedSelection is null)
+        if (!providerSelection.IsAvailable)
         {
             return;
         }
 
-        if (_backgroundWork?.TryQueue(cancellationToken => GenerateAndApplyTitleAsync(
+        _backgroundWork?.TryQueue(cancellationToken => GenerateAndApplyTitleAsync(
                 session.SessionId,
-                retainedSelection,
+                providerSelection,
                 userMessage,
                 runId,
                 runRevision,
-                cancellationToken)) != true)
-        {
-            retainedSelection.Dispose();
-        }
+                cancellationToken));
     }
 
     private async Task GenerateAndApplyTitleAsync(
@@ -79,22 +75,21 @@ public sealed partial class AgentSessionTitleService(
         long runRevision,
         CancellationToken cancellationToken)
     {
-        using (providerSelection)
+        using var titleLifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, providerSelection.RetirementToken);
+        cancellationToken = titleLifetime.Token;
         {
             var stopwatch = Stopwatch.StartNew();
             try
             {
-                var modelId = await providerSelection.InvokeAsync(
-                    cancellationToken,
-                    ResolveUtilityModelIdAsync).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+                var provider = providerSelection.Provider!.Service;
+                var modelId = await ResolveUtilityModelIdAsync(provider, cancellationToken).ConfigureAwait(false);
                 if (string.IsNullOrWhiteSpace(modelId))
                 {
                     return;
                 }
 
-                var readiness = await providerSelection.InvokeAsync(
-                    cancellationToken,
-                    static (provider, token) => provider.GetReadinessAsync(token)).ConfigureAwait(false);
+                var readiness = await provider.GetReadinessAsync(cancellationToken).ConfigureAwait(false);
                 if (readiness.Status != AgentProviderReadinessStatus.Ready)
                 {
                     Log(
@@ -114,11 +109,7 @@ public sealed partial class AgentSessionTitleService(
                     return;
                 }
 
-                var response = await providerSelection.InvokeAsync(
-                    cancellationToken,
-                    async (provider, invocationToken) =>
-                    {
-                        using var chatClient = await provider.CreateChatClientAsync(
+                using var chatClient = new AgentModelChatClient(
                             new AgentChatClientContext(
                                 providerSelection.Descriptor!.ProviderId,
                                 modelId,
@@ -129,8 +120,8 @@ public sealed partial class AgentSessionTitleService(
                                     ["run.revision"] = runRevision,
                                     ["utility.task"] = "session-title",
                                 }),
-                            invocationToken).ConfigureAwait(false);
-                        return await chatClient.GetResponseAsync(
+                            provider.StreamChatAsync);
+                var response = await chatClient.GetResponseAsync(
                             [new ChatMessage(ChatRole.User, $"First user message:\n{TruncatePromptMessage(userMessage)}")],
                             new ChatOptions
                             {
@@ -139,8 +130,8 @@ public sealed partial class AgentSessionTitleService(
                                 ModelId = modelId,
                                 ToolMode = ChatToolMode.None,
                             },
-                            invocationToken).ConfigureAwait(false);
-                    }).ConfigureAwait(false);
+                            cancellationToken).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
                 var title = NormalizeGeneratedTitle(response.Text);
                 if (title is null || AgentSessionTitleDefaults.IsGeneratedDefaultTitle(title))
                 {
@@ -190,19 +181,12 @@ public sealed partial class AgentSessionTitleService(
     }
 
     private async ValueTask<string?> ResolveUtilityModelIdAsync(
-        IAgentChatProvider provider,
+        AgentServices.IChatProviderService provider,
         CancellationToken cancellationToken)
     {
-        if (provider is IAgentUtilityModelProvider utilityModelProvider)
-        {
-            var modelId = await utilityModelProvider.ResolveUtilityModelIdAsync(cancellationToken).ConfigureAwait(false);
-            if (!string.IsNullOrWhiteSpace(modelId))
-            {
-                return modelId.Trim();
-            }
-        }
-
-        var models = await provider.GetAvailableModelsAsync(cancellationToken).ConfigureAwait(false);
+        var modelId = await provider.ResolveUtilityModelAsync(cancellationToken).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(modelId)) return modelId.Trim();
+        var models = await provider.ListModelsAsync(cancellationToken).ConfigureAwait(false);
         return models.FirstOrDefault(model => model.IsRecommended)?.ModelId
             ?? models.FirstOrDefault()?.ModelId;
     }

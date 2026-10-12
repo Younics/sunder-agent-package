@@ -14,6 +14,11 @@ namespace Sunder.Package.Agent.Tests;
 
 public sealed partial class AgentOwnerSourceMigrationTests
 {
+    private static readonly JsonSerializerOptions StackJson = new(JsonSerializerDefaults.Web)
+    {
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+        Converters = { new SunderRpcJsonConverterFactory() },
+    };
     private static async Task VerifyStackBehavior(Assembly assembly)
     {
         using var source = RegressionTestPackageScope.Create();
@@ -38,19 +43,20 @@ public sealed partial class AgentOwnerSourceMigrationTests
 
         foreach (var isProfile in new[] { true, false })
         {
-            var name = isProfile ? "AgentProfileStackProvider" : "AgentWorkspaceStackProvider";
+            Assert.Null(assembly.GetType("Sunder.Package.Agent.Rpc.Owner."
+                + (isProfile ? "AgentProfileStackProvider" : "AgentWorkspaceStackProvider")));
             var providerId = isProfile ? "agent.stack.profiles" : "agent.stack.workspaces";
             var sourceDomain = isProfile ? (IPackageStackContributor)sourceServices.GetRequiredService<AgentProfileStackContributor>()
                 : sourceServices.GetRequiredService<AgentWorkspaceStackContributor>();
             var targetDomain = isProfile ? (IPackageStackContributor)targetServices.GetRequiredService<AgentProfileStackContributor>()
                 : targetServices.GetRequiredService<AgentWorkspaceStackContributor>();
             var probe = new StackProbe(targetDomain);
-            var type = assembly.GetType("Sunder.Package.Agent.Rpc.Owner." + name, true)!;
-            var implementation = Activator.CreateInstance(type, sourceDomain)!;
-            var targetImplementation = Activator.CreateInstance(type, probe)!;
+            var implementation = sourceDomain;
+            var targetImplementation = probe;
             var registration = Registration(implementation);
-            var targetRegistration = Registration(targetImplementation);
             var descriptor = SunderStackContributorRpc.Descriptor; // Frozen oracle, not generation input.
+            var targetRegistration = new SunderWorkerProviderRegistration(providerId, descriptor.ContractId, descriptor.Version,
+                descriptor.Sha256, descriptor.AbiSha256!, SunderStackContributorRpc.CreateHandler(targetImplementation));
             Assert.Equal(providerId, registration.ProviderId);
             Assert.Equal(descriptor.Sha256, registration.DescriptorSha256);
             Assert.Equal(descriptor.AbiSha256, registration.AbiSha256);
@@ -85,7 +91,7 @@ public sealed partial class AgentOwnerSourceMigrationTests
                     "export" => await ((IPackageStackExporter)sourceDomain).ExportAsync(exportRequest),
                     _ => throw new InvalidOperationException("Unknown stack scenario."),
                 };
-                var expected = JsonSerializer.SerializeToElement(expectedValue, expectedValue.GetType(), OwnerJson);
+                var expected = JsonSerializer.SerializeToElement(expectedValue, expectedValue.GetType(), StackJson);
                 Assert.True(JsonElement.DeepEquals(expected, await Call(sourceEndpoint, route, parityRequest)), route);
             }
             var requirement = Assert.Single(exported.GetProperty("packageRequirements").EnumerateArray());
@@ -143,7 +149,7 @@ public sealed partial class AgentOwnerSourceMigrationTests
             if (isProfile) targetServices.GetRequiredService<AgentProfileService>().ProfileChanged += _ => notifications++;
             else targetServices.GetRequiredService<AgentWorkspaceService>().WorkspacesChanged += () => notifications++;
             var applied = new StackImportAppliedContext("forged.owner", "forged.contributor", [imported.FragmentId],
-                result.GetProperty("importedItems").Deserialize<StackImportedItem[]>(OwnerJson)!);
+                result.GetProperty("importedItems").Deserialize<StackImportedItem[]>(StackJson)!);
             Assert.Empty((await Call(targetEndpoint, "import-applied", applied)).EnumerateObject());
             Assert.Equal("sunder.package.agent", probe.Applied!.OwnerPackageId);
             Assert.Equal(targetDomain.ContributorId, probe.Applied.ContributorId);
@@ -162,7 +168,7 @@ public sealed partial class AgentOwnerSourceMigrationTests
             Assert.Empty((await rpc.DiscoverAsync(descriptor.ContractId)).Providers);
 
             Task<JsonElement> Call(SunderRpcEndpointReference endpoint, string method, object value, CancellationToken token = default)
-                => rpc.InvokeAsync(endpoint, "stack-contributor", method, JsonSerializer.SerializeToElement(value, OwnerJson), cancellationToken: token).AsTask();
+                => rpc.InvokeAsync(endpoint, "stack-contributor", method, JsonSerializer.SerializeToElement(value, StackJson), cancellationToken: token).AsTask();
         }
 
         static SunderWorkerProviderRegistration Registration(object value)

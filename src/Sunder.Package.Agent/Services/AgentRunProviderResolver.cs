@@ -1,17 +1,17 @@
-using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Protocol;
+using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.Services;
 
 public sealed class AgentRunProviderResolver(
     AgentProfileService profileService,
-    AgentRpcCatalog rpcCatalog)
+    IServiceProviders<AgentServices.IChatProviderService> providers)
 {
     private readonly AgentProfileService _profileService = profileService;
-    private readonly AgentRpcCatalog _rpcCatalog = rpcCatalog;
-
-    public AgentRunProviderSelection ResolveChatProvider(AgentProfileRecord profile)
+    public async ValueTask<AgentRunProviderSelection> ResolveChatProviderAsync(
+        AgentProfileRecord profile, CancellationToken cancellationToken = default)
     {
         var chatBinding = _profileService.GetChatBinding(profile.ProfileId);
         if (string.IsNullOrWhiteSpace(chatBinding?.ProviderId))
@@ -19,29 +19,25 @@ public sealed class AgentRunProviderResolver(
             return new AgentRunProviderSelection(chatBinding);
         }
 
-        foreach (var reference in _rpcCatalog.GetServiceReferences(Sunder.Package.Agent.Runtime.Rpc.AgentChatBindings.Service))
+        var catalog = await providers.ListAsync(cancellationToken).ConfigureAwait(false);
+        foreach (var provider in catalog.Providers)
         {
-            if (!reference.TryAcquire(out var lease))
+            cancellationToken.ThrowIfCancellationRequested();
+            if (provider.State != ServiceProviderState.Active) continue;
+            try
             {
-                continue;
-            }
-
-            var descriptor = SnapshotDescriptor(lease.Service.Descriptor);
-            if (!string.Equals(
+                var descriptor = await provider.Service.DescribeAsync(cancellationToken).ConfigureAwait(false);
+                if (!string.Equals(
                     descriptor.ProviderId,
                     chatBinding.ProviderId,
-                    StringComparison.OrdinalIgnoreCase)
-                || lease.RetirementToken.IsCancellationRequested)
-            {
-                lease.Dispose();
-                continue;
+                    StringComparison.OrdinalIgnoreCase)) continue;
+                return new AgentRunProviderSelection(chatBinding, provider, SnapshotDescriptor(descriptor));
             }
-
-            return new AgentRunProviderSelection(
-                chatBinding,
-                reference,
-                lease,
-                descriptor);
+            catch (SunderRpcException exception) when (!cancellationToken.IsCancellationRequested
+                && exception.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable)
+            {
+                // A withdrawn candidate cannot satisfy this profile's selection.
+            }
         }
 
         return new AgentRunProviderSelection(chatBinding);
@@ -53,31 +49,18 @@ public sealed class AgentRunProviderResolver(
     {
         var chatBinding = selection.ChatBinding
             ?? throw new InvalidOperationException("The selected chat provider has no model binding.");
-        return await selection.InvokeAsync(
-            cancellationToken,
-            async (provider, invocationToken) =>
-            {
-                var runCapabilities = await provider
-                    .GetRunCapabilitiesAsync(chatBinding.ModelId, invocationToken)
-                    .ConfigureAwait(false);
-                var model = await ResolveModelDescriptorAsync(
-                    provider,
-                    chatBinding.ModelId,
-                    invocationToken).ConfigureAwait(false);
-                runCapabilities = EnrichRunCapabilities(runCapabilities, model);
-                var settings = AgentChatModelSettingsJson.Parse(chatBinding.SettingsJson);
-                var modelModeOption = ResolveModelModeOption(model, settings);
-                var modelVariant = modelModeOption?.DisablesReasoning == true
-                    ? null
-                    : ResolveModelVariant(model, settings);
-                var modelSpeedOption = ResolveModelSpeedOption(model, settings)
-                                       ?? ResolveLegacyFastSpeedOption(model, chatBinding.ModelId);
-                return new AgentRunProviderMetadata(
-                    runCapabilities,
-                    modelVariant,
-                    modelSpeedOption,
-                    modelModeOption);
-            }).ConfigureAwait(false);
+        var provider = selection.Provider?.Service
+            ?? throw new InvalidOperationException("The selected chat provider is unavailable.");
+        var runCapabilities = await provider.GetCapabilitiesAsync(chatBinding.ModelId, cancellationToken).ConfigureAwait(false);
+        var model = await ResolveModelDescriptorAsync(provider, chatBinding.ModelId, cancellationToken).ConfigureAwait(false);
+        await selection.Provider!.EnsureCurrentAsync(cancellationToken).ConfigureAwait(false);
+        runCapabilities = EnrichRunCapabilities(runCapabilities, model);
+        var settings = AgentChatModelSettingsJson.Parse(chatBinding.SettingsJson);
+        var modelModeOption = ResolveModelModeOption(model, settings);
+        var modelVariant = modelModeOption?.DisablesReasoning == true ? null : ResolveModelVariant(model, settings);
+        var modelSpeedOption = ResolveModelSpeedOption(model, settings)
+                               ?? ResolveLegacyFastSpeedOption(model, chatBinding.ModelId);
+        return new AgentRunProviderMetadata(runCapabilities, modelVariant, modelSpeedOption, modelModeOption);
     }
 
     public async ValueTask<AgentProviderRunCapabilities> ResolveRunCapabilitiesAsync(
@@ -89,7 +72,7 @@ public sealed class AgentRunProviderResolver(
         => descriptor with { SupportedAuthModes = descriptor.SupportedAuthModes.ToArray() };
 
     private static async ValueTask<AgentModelDescriptor?> ResolveModelDescriptorAsync(
-        IAgentChatProvider provider,
+        AgentServices.IChatProviderService provider,
         string? modelId,
         CancellationToken cancellationToken)
     {
@@ -100,7 +83,7 @@ public sealed class AgentRunProviderResolver(
 
         try
         {
-            var models = await provider.GetAvailableModelsAsync(cancellationToken).ConfigureAwait(false);
+            var models = await provider.ListModelsAsync(cancellationToken).ConfigureAwait(false);
             var model = models.FirstOrDefault(candidate =>
                 string.Equals(candidate.ModelId, modelId, StringComparison.OrdinalIgnoreCase));
             if (model is not null || !modelId.EndsWith("-fast", StringComparison.OrdinalIgnoreCase))
@@ -172,116 +155,15 @@ public sealed class AgentRunProviderResolver(
             : null;
 }
 
-public sealed class AgentRunProviderSelection : IDisposable
+public sealed record AgentRunProviderSelection(
+    AgentProfileModelBindingRecord? ChatBinding,
+    ServiceProvider<AgentServices.IChatProviderService>? Provider = null,
+    AgentProviderDescriptor? Descriptor = null)
 {
-    private AgentRpcLease<IAgentChatProvider>? _lease;
-
-    internal AgentRunProviderSelection(
-        AgentProfileModelBindingRecord? chatBinding,
-        AgentRpcReference<IAgentChatProvider>? reference = null,
-        AgentRpcLease<IAgentChatProvider>? lease = null,
-        AgentProviderDescriptor? descriptor = null)
-    {
-        ChatBinding = chatBinding;
-        Reference = reference;
-        _lease = lease;
-        Descriptor = descriptor;
-        OwnerPackageId = lease?.PackageId;
-        RetirementToken = lease?.RetirementToken ?? CancellationToken.None;
-    }
-
-    public AgentProfileModelBindingRecord? ChatBinding { get; }
-
-    public AgentProviderDescriptor? Descriptor { get; }
-
-    public string? OwnerPackageId { get; }
-
-    public bool IsAvailable => Volatile.Read(ref _lease) is not null;
-
-    internal AgentRpcReference<IAgentChatProvider>? Reference { get; }
-
-    internal CancellationToken RetirementToken { get; }
-
+    public string? OwnerPackageId => Provider?.PackageId;
+    public bool IsAvailable => Provider is not null && !IsRetiring;
+    internal CancellationToken RetirementToken => Provider?.RetirementToken ?? CancellationToken.None;
     internal bool IsRetiring => RetirementToken.IsCancellationRequested;
-
-    internal IAgentChatProvider Provider
-        => Volatile.Read(ref _lease)?.Service
-           ?? throw new ObjectDisposedException(nameof(AgentRunProviderSelection));
-
-    internal AgentRunProviderSelection? TryRetain()
-    {
-        var reference = Reference;
-        if (reference is null || !reference.TryAcquire(out var lease))
-        {
-            return null;
-        }
-
-        if (lease.RetirementToken.IsCancellationRequested)
-        {
-            lease.Dispose();
-            return null;
-        }
-
-        return new AgentRunProviderSelection(
-            ChatBinding,
-            reference,
-            lease,
-            Descriptor);
-    }
-
-    internal bool CanAcquireExactOwner()
-    {
-        var reference = Reference;
-        if (reference is null || !reference.TryAcquire(out var lease))
-        {
-            return false;
-        }
-
-        using (lease)
-        {
-            return !lease.RetirementToken.IsCancellationRequested;
-        }
-    }
-
-    internal async ValueTask<TResult> InvokeAsync<TResult>(
-        CancellationToken cancellationToken,
-        Func<IAgentChatProvider, CancellationToken, ValueTask<TResult>> callback)
-    {
-        var lease = Volatile.Read(ref _lease)
-            ?? throw new ObjectDisposedException(nameof(AgentRunProviderSelection));
-        using var invocation = CancellationTokenSource.CreateLinkedTokenSource(
-            cancellationToken,
-            RetirementToken);
-        try
-        {
-            var result = await callback(lease.Service, invocation.Token).ConfigureAwait(false);
-            if (IsRetiring && !cancellationToken.IsCancellationRequested)
-            {
-                throw AgentRpcInvocation.Unavailable(OwnerPackageId!);
-            }
-
-            return result;
-        }
-        catch (AgentPackageUnavailableException)
-        {
-            throw;
-        }
-        catch (OperationCanceledException exception) when (
-            IsRetiring
-            && !cancellationToken.IsCancellationRequested)
-        {
-            throw AgentRpcInvocation.Unavailable(OwnerPackageId!, exception);
-        }
-        catch (Exception exception) when (
-            IsRetiring
-            && !cancellationToken.IsCancellationRequested)
-        {
-            throw AgentRpcInvocation.Unavailable(OwnerPackageId!, exception);
-        }
-    }
-
-    public void Dispose()
-        => Interlocked.Exchange(ref _lease, null)?.Dispose();
 }
 
 public sealed record AgentRunProviderMetadata(

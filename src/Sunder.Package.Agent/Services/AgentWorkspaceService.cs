@@ -4,6 +4,8 @@ using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Storage;
 using Sunder.Package.Agent.Runtime;
+using Sunder.Sdk.Services;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.Services;
 
@@ -13,19 +15,22 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
     public const string UnassignedSessionsWorkspaceDisplayName = AgentLocalStore.UnassignedSessionsWorkspaceDisplayName;
 
     private readonly AgentLocalStore _store;
-    private readonly AgentRpcCatalog? _rpcCatalog;
+    private readonly IServiceProviders<AgentServices.ISessionCleanerService>? _cleaners;
     private readonly AgentSessionService? _sessionService;
+    private readonly IServiceProviders<AgentServices.IWorkspacePathMigratorService>? _pathMigrators;
     private readonly ConcurrentDictionary<string, object> _executionContextSyncRoots = new(StringComparer.Ordinal);
     private bool _isMigratingWorkspacePaths;
 
     public AgentWorkspaceService(
         AgentLocalStore store,
-        AgentRpcCatalog? rpcCatalog = null,
-        AgentSessionService? sessionService = null)
+        IServiceProviders<AgentServices.ISessionCleanerService>? cleaners = null,
+        AgentSessionService? sessionService = null,
+        IServiceProviders<AgentServices.IWorkspacePathMigratorService>? pathMigrators = null)
     {
         _store = store;
-        _rpcCatalog = rpcCatalog;
+        _cleaners = cleaners;
         _sessionService = sessionService;
+        _pathMigrators = pathMigrators;
     }
 
     public event Action? WorkspacesChanged;
@@ -131,7 +136,7 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
                     ? new AgentWorkspaceBindingRecord(
                         BuildPrimaryBindingId(workspaceId),
                         workspaceId,
-                        AgentRpcContractIds.ExecutionTarget,
+                        AgentWorkspaceBindingRoles.ExecutionTargetExtensionPoint,
                         executionTargetId,
                         AgentWorkspaceBindingRoles.PrimaryExecutionTarget,
                         true,
@@ -153,17 +158,28 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
         NotifyWorkspacesChanged();
     }
 
-    public void DeleteWorkspace(string workspaceId)
+    public async Task DeleteWorkspaceAsync(string workspaceId, CancellationToken cancellationToken = default)
+    {
+        var cleaners = await (_sessionService?.SnapshotSessionDataCleanersAsync(cancellationToken)
+            ?? AgentSessionService.SnapshotSessionDataCleanersAsync(_cleaners, cancellationToken)).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+        var deletedSessionIds = DeleteWorkspaceRecords(workspaceId, cleaners);
+        if (_sessionService is not null)
+            await _sessionService.CompleteSessionDeletionAsync(deletedSessionIds).ConfigureAwait(false);
+        else if (_cleaners is not null)
+        {
+            try { await AgentSessionCleanupDispatcher.DispatchAvailableNowAsync(_store, _cleaners).ConfigureAwait(false); }
+            catch { /* Cleanup jobs remain durable after the committed workspace deletion. */ }
+        }
+    }
+
+    internal IReadOnlyList<Guid> DeleteWorkspaceRecords(string workspaceId, IReadOnlyList<AgentSessionDataCleanerIdentity> cleaners)
     {
         IReadOnlyList<Guid> deletedSessionIds;
         lock (GetExecutionContextSyncRoot(workspaceId))
-        {
-            var cleaners = _sessionService?.SnapshotSessionDataCleaners()
-                ?? AgentSessionService.SnapshotSessionDataCleaners(_rpcCatalog);
             deletedSessionIds = _store.DeleteWorkspaceWithSessions(workspaceId, cleaners);
-        }
         NotifyWorkspacesChanged();
-        _sessionService?.CompleteSessionDeletion(deletedSessionIds);
+        return deletedSessionIds;
     }
 
     public void ImportWorkspace(
@@ -199,7 +215,7 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
                     ? new AgentWorkspaceBindingRecord(
                         BuildPrimaryBindingId(workspaceId),
                         workspaceId,
-                        AgentRpcContractIds.ExecutionTarget,
+                        AgentWorkspaceBindingRoles.ExecutionTargetExtensionPoint,
                         primaryExecutionTargetId.Trim(),
                         AgentWorkspaceBindingRoles.PrimaryExecutionTarget,
                         IsEnabled: true,
@@ -252,7 +268,7 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
                 ? new AgentWorkspaceBindingRecord(
                     BuildPrimaryBindingId(workspaceId, displayRole),
                     workspaceId,
-                    AgentRpcContractIds.ExecutionTarget,
+                    AgentWorkspaceBindingRoles.ExecutionTargetExtensionPoint,
                     contributionId,
                     displayRole,
                     IsEnabled: true,
@@ -298,16 +314,14 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
-        if (_isMigratingWorkspacePaths || _rpcCatalog is null)
+        if (_isMigratingWorkspacePaths || _pathMigrators is null)
         {
             return;
         }
 
-        var migrators = AgentRpcInvocation.Snapshot(
-            _rpcCatalog,
-            Sunder.Package.Agent.Runtime.Rpc.AgentWorkspacePathBindings.Service,
-            static contributor => contributor.ContributorId);
-        if (migrators.Count == 0)
+        var migrators = (await _pathMigrators.ListAsync(cancellationToken).ConfigureAwait(false)).Providers
+            .Where(provider => provider.State == ServiceProviderState.Active).ToArray();
+        if (migrators.Length == 0)
         {
             return;
         }
@@ -331,21 +345,14 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
                 }
 
                 var context = new AgentWorkspacePathMigrationContext(workspace, binding);
-                var completedMigrators = new List<AgentRpcOwnedReference<
-                    IAgentWorkspacePathMigrationContributor,
-                    string>>();
+                var completedMigrators = new List<ServiceProvider<AgentServices.IWorkspacePathMigratorService>>();
                 var migrationItems = new List<AgentWorkspacePathMigrationItem>();
                 foreach (var migrator in migrators)
                 {
                     try
                     {
-                        var items = (await AgentRpcInvocation.InvokeAsync(
-                                migrator,
-                                cancellationToken,
-                                async (contributor, token) => contributor.CanMigrate(context)
-                                    ? await contributor.GetLegacyWorkspacePathsAsync(context, token).ConfigureAwait(false)
-                                    : [])
-                            .ConfigureAwait(false))
+                        if (!await migrator.Service.CanMigrateAsync(context, cancellationToken).ConfigureAwait(false)) continue;
+                        var items = (await migrator.Service.ListLegacyPathsAsync(context, cancellationToken).ConfigureAwait(false))
                             .Where(item => !string.IsNullOrWhiteSpace(item.HostPath))
                             .ToArray();
                         if (items.Length == 0)
@@ -372,11 +379,7 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
                 {
                     try
                     {
-                        await AgentRpcInvocation.InvokeAsync(
-                            migrator,
-                            cancellationToken,
-                            (contributor, token) => new ValueTask(
-                                contributor.CompleteWorkspacePathMigrationAsync(context, token)));
+                        await migrator.Service.CompleteAsync(context, cancellationToken).ConfigureAwait(false);
                     }
                     catch
                     {

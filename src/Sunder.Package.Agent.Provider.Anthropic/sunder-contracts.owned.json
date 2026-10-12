@@ -3,7 +3,8 @@
   "authorityKind": "package",
   "authorityId": "sunder.package.agent.provider.anthropic",
   "packageId": "sunder.package.agent.provider.anthropic",
-  "contracts": {
+  "contracts": {},
+  "retiredPrivateContracts": {
     "credential-settings": {
       "contractId": "sunder.package.agent.provider.anthropic.credentials",
       "current": {

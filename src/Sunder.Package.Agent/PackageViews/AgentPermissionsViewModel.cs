@@ -281,7 +281,7 @@ public sealed partial class AgentPermissionsViewModel : ObservableObject,
             ? new AgentPermissionProjection(
                 0,
                 null,
-                _permissionService.ListActions(),
+                await _permissionService.ListActionsAsync(cancellationToken).ConfigureAwait(false),
                 _permissionService.ListOverrides(),
                 [])
             : await _globalPermissionGateway.LoadGlobalPermissionsAsync(cancellationToken)

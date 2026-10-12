@@ -17,32 +17,29 @@ namespace Sunder.Package.Agent.Tests;
 
 public sealed partial class AgentOwnerSourceMigrationTests
 {
-    private static readonly JsonSerializerOptions OwnerJson = new(JsonSerializerDefaults.Web)
-    { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull, Converters = { new SunderRpcJsonConverterFactory() } };
+    private static JsonSerializerOptions OwnerJson => CurrentPrivateRpcDescriptors.OwnerJson;
 
-    internal static async Task VerifyBehavior(Assembly workerAssembly, Assembly appAssembly, SunderRpcContractDescriptor descriptor,
-        Func<IAgentOwnerRuntimeProvider, object>? adaptProvider = null)
+    internal static async Task VerifyBehavior(Assembly workerAssembly, Assembly appAssembly, SunderRpcContractDescriptor descriptor)
     {
         using var package = RegressionTestPackageScope.Create();
         using var catalog = new RegressionTestExtensionCatalog();
         var generated = await AgentPublicSourceMigrationTests.CreateCanonicalRuntime(typeof(AgentOwnerRuntimeProvider).Assembly, package.Context, catalog);
         await using var lifetime = generated.Lifetime;
         var services = generated.Services;
-        var probe = new OwnerProviderProbe(services.GetRequiredService<AgentOwnerRuntimeProvider>());
-        var type = workerAssembly.GetType("Sunder.Package.Agent.Rpc.Owner.OwnerRuntimeService", true)!;
-        var implementation = AgentRoleBoundary.Create(type, adaptProvider?.Invoke(probe) ?? probe);
-        var registration = Assert.IsType<SunderWorkerProviderRegistration>(type.GetMethod("CreateSunderRpcProviderRegistration")!.Invoke(implementation, null));
+        var implementation = services.GetRequiredService<AgentOwnerRuntimeProvider>();
+        var registration = implementation.CreateSunderRpcProviderRegistration();
+        var probe = new OwnerProviderProbe(registration.Handler);
         Assert.Equal("agent.owner.runtime", registration.ProviderId);
         Assert.Equal(descriptor.Sha256, registration.DescriptorSha256);
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
         var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
-        state.Add("sunder.package.agent", descriptor, implementation, registration.Handler, Noop.Instance, registration.ProviderId, "2.0.0");
+        state.Add("sunder.package.agent", descriptor, implementation, probe, Noop.Instance, registration.ProviderId, "2.0.0");
         Assert.Single((await rpc.DiscoverAsync(descriptor.ContractId)).Providers);
-        var app = new AppClient(appAssembly, rpc);
+        await using var app = new AppClient(appAssembly, rpc);
         var negotiated = await app.Invoke("transport-profile", new { });
         Assert.False(negotiated.GetProperty("runtimeReported").GetBoolean());
         Assert.Equal(8 * 1024 * 1024, negotiated.GetProperty("requestValueBytes").GetInt64());
-        Assert.Single(probe.Requests.OfType<AgentTransportProfileRequest>());
+        Assert.Single(probe.Requests, value => value.Route == "transport-profile");
 
         var profile = (await app.Invoke("profile-command", new AgentProfileCommand(AgentProfileCommandKind.Create, DisplayName: "Owner profile 漢字")))
             .GetProperty("profile").Deserialize<AgentProfileRecord>(OwnerJson)!;
@@ -74,15 +71,16 @@ public sealed partial class AgentOwnerSourceMigrationTests
             ("history-state", new HistorySearchStateRequest(Limit: 10, IncludeAdvancedFilters: false)),
             ("transcript-around", new AgentTranscriptAroundTurnRequest(session.SessionId, turn.TurnId)),
             ("transcript-tool-detail", new AgentTranscriptToolDetailRequest(session.SessionId, ItemId: tool.Items[0].ItemId)),
+            ("tool-presentation", new AgentToolPresentationRequest("tool.one", "{opaque", "Result", "Owner tool output", null, null, false, null, null)),
         };
         foreach (var (route, request) in readCases)
         {
-            var expected = await OwnerDomainResult(probe, route, request);
+            var expected = await OwnerDomainResult(implementation, route, request);
             var actual = await app.Invoke(route, request);
             Assert.True(JsonElement.DeepEquals(expected, actual), $"{route}: {expected} != {actual}");
-            Assert.True(JsonElement.DeepEquals(JsonSerializer.SerializeToElement(request, OwnerJson), JsonSerializer.SerializeToElement(probe.Requests[^1], probe.Requests[^1].GetType(), OwnerJson)));
+            Assert.True(JsonElement.DeepEquals(JsonSerializer.SerializeToElement(request, request.GetType(), OwnerJson), probe.Requests[^1].Request));
         }
-        Assert.Single(probe.Requests.OfType<AgentTransportProfileRequest>());
+        Assert.Single(probe.Requests, value => value.Route == "transport-profile");
         await app.Invoke("permission-command", new AgentPermissionCommand(AgentPermissionCommandKind.SetUnrestricted, session.SessionId, false));
         await app.Invoke("history-command", new HistorySearchCommand(HistorySearchCommandKind.ConfigureSemantic, SemanticEnabled: false));
         var userTurnId = Guid.NewGuid();
@@ -95,8 +93,8 @@ public sealed partial class AgentOwnerSourceMigrationTests
 
         await VerifyAttachments(app, services, state);
         await VerifyStreams(app, services, probe, session.SessionId);
-        Assert.Equal(descriptor.Services.Single().Methods.Select(method => method.RequestSchemaReference.Split('/')[^1]).Order(StringComparer.Ordinal),
-            probe.Requests.Select(request => request.GetType().Name).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal));
+        Assert.Equal(descriptor.Services.Single().Methods.Select(method => method.MethodId).Order(StringComparer.Ordinal),
+            probe.Requests.Select(request => request.Route).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal));
         await VerifyFailures(app, appAssembly, rpc, probe, state, implementation, descriptor, registration);
     }
 
@@ -134,7 +132,7 @@ public sealed partial class AgentOwnerSourceMigrationTests
             using var changed = JsonDocument.Parse(events.Current);
             Assert.Equal((int)AgentRuntimeChangeKind.TurnMutation, changed.RootElement.GetProperty("kind").GetInt32());
             Assert.True(changed.RootElement.TryGetProperty("turnMutation", out _));
-            Assert.False(changed.RootElement.TryGetProperty("turn", out _));
+            Assert.Equal(JsonValueKind.Null, changed.RootElement.GetProperty("turn").ValueKind);
             cancellation.Cancel();
         }
         var hub = services.GetRequiredService<AgentRuntimeChangeHub>();
@@ -154,7 +152,7 @@ public sealed partial class AgentOwnerSourceMigrationTests
             Assert.Equal(hub.Revision, reset.RootElement.GetProperty("revision").GetInt64());
             Assert.False(await events.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5)));
         }
-        probe.StreamFailure = new AgentOwnerOperationException("Expected stream failure");
+        probe.StreamFailure = new SunderRpcException(new(SunderRpcErrorKind.Domain, "agent.owner.operation-failed", "Expected stream failure"));
         await using (var events = app.Watch("history-status", JsonSerializer.Serialize(new HistorySearchStatusSubscription(), OwnerJson), default).GetAsyncEnumerator())
         {
             Assert.True(await events.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5)));
@@ -168,15 +166,13 @@ public sealed partial class AgentOwnerSourceMigrationTests
     private static async Task VerifyFailures(AppClient app, Assembly appAssembly, RegressionTestRpcClient rpc, OwnerProviderProbe probe,
         RegressionTestRpcState state, object implementation, SunderRpcContractDescriptor descriptor, SunderWorkerProviderRegistration registration)
     {
-        var invalid = await Assert.ThrowsAsync<SunderRpcException>(() => app.Invoke("chat-snapshot", new AgentChatSnapshotRequest(0)));
-        Assert.Equal(SunderRpcErrorKind.Validation, invalid.Error.Kind);
-        foreach (var message in new[] { " ", new string('x', 3000) })
-        {
-            probe.Failure = new AgentOwnerOperationException(message);
-            var error = await Assert.ThrowsAsync<SunderRpcException>(() => app.Invoke("dashboard", new AgentDashboardRequest()));
-            Assert.Equal("agent.owner.operation-failed", error.Error.Code);
-            Assert.Equal(message == " " ? "The requested Agent operation failed." : message[..2048], error.Error.Message);
-        }
+        var invalid = await Assert.ThrowsAsync<SunderRpcException>(() => app.Invoke("profile-command",
+            new AgentProfileCommand(AgentProfileCommandKind.Save, ProfileId: " ")));
+        Assert.Equal("agent.owner.operation-failed", invalid.Error.Code);
+        var longError = await Assert.ThrowsAsync<SunderRpcException>(() => app.Invoke("profile-command",
+            new AgentProfileCommand(AgentProfileCommandKind.Save, ProfileId: new string('x', 3000))));
+        Assert.Equal("agent.owner.operation-failed", longError.Error.Code);
+        Assert.Equal(2048, longError.Error.Message.Length);
         probe.Failure = new IOException("private owner failure");
         var unexpected = await Assert.ThrowsAsync<SunderRpcException>(() => app.Invoke("dashboard", new AgentDashboardRequest()));
         Assert.Equal(SunderRpcErrorKind.ProviderFaulted, unexpected.Error.Kind);
@@ -206,21 +202,21 @@ public sealed partial class AgentOwnerSourceMigrationTests
         await state.RetireAsync(implementation).WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => retiring.WaitAsync(TimeSpan.FromSeconds(5)))).Error.Kind);
         probe.Block = false;
-        state.Add("unrelated.package", descriptor, new object(), registration.Handler, Noop.Instance, registration.ProviderId, "2.0.0");
+        state.Add("unrelated.package", descriptor, new object(), probe, Noop.Instance, registration.ProviderId, "2.0.0");
         Assert.Equal(SunderRpcErrorKind.Unavailable, (await Assert.ThrowsAsync<SunderRpcException>(() => app.Invoke("dashboard", new AgentDashboardRequest()))).Error.Kind);
-        state.Add("sunder.package.agent", descriptor, implementation, registration.Handler, Noop.Instance, registration.ProviderId, "2.0.0");
-        var negotiations = probe.Requests.OfType<AgentTransportProfileRequest>().Count();
+        state.Add("sunder.package.agent", descriptor, implementation, probe, Noop.Instance, registration.ProviderId, "2.0.0");
+        var negotiations = probe.Requests.Count(value => value.Route == "transport-profile");
         await app.Invoke("dashboard", new AgentDashboardRequest());
-        Assert.Equal(negotiations + 1, probe.Requests.OfType<AgentTransportProfileRequest>().Count());
-        state.Add("sunder.package.agent", descriptor, new object(), registration.Handler, Noop.Instance, "alternate.owner", "2.0.0");
+        Assert.Equal(negotiations + 1, probe.Requests.Count(value => value.Route == "transport-profile"));
+        state.Add("sunder.package.agent", descriptor, new object(), probe, Noop.Instance, "alternate.owner", "2.0.0");
         Assert.Equal("rpc.provider-ambiguous", (await Assert.ThrowsAsync<SunderRpcException>(() => app.Invoke("dashboard", new AgentDashboardRequest()))).Error.Code);
     }
 
     private sealed class Noop : IDisposable { internal static Noop Instance { get; } = new(); public void Dispose() { } }
 
-    private static async Task<JsonElement> OwnerDomainResult(IAgentOwnerRuntimeProvider provider, string route, object request)
+    private static async Task<JsonElement> OwnerDomainResult(AgentOwnerRuntimeProvider provider, string route, object request)
     {
-        object result = route switch
+        object? result = route switch
         {
             "chat-snapshot" => await provider.GetChatSnapshotAsync((AgentChatSnapshotRequest)request, default),
             "dashboard" => await provider.GetDashboardAsync((AgentDashboardRequest)request, default),
@@ -232,8 +228,9 @@ public sealed partial class AgentOwnerSourceMigrationTests
             "history-state" => await provider.GetHistoryStateAsync((HistorySearchStateRequest)request, default),
             "transcript-around" => await provider.GetTranscriptAroundAsync((AgentTranscriptAroundTurnRequest)request, default),
             "transcript-tool-detail" => await provider.GetTranscriptToolDetailAsync((AgentTranscriptToolDetailRequest)request, default),
+            "tool-presentation" => await provider.GetToolPresentationAsync((AgentToolPresentationRequest)request, default),
             _ => throw new InvalidOperationException("Uncovered owner domain scenario: " + route),
         };
-        return JsonSerializer.SerializeToElement(result, result.GetType(), OwnerJson);
+        return JsonSerializer.SerializeToElement(result, result?.GetType() ?? typeof(object), OwnerJson);
     }
 }

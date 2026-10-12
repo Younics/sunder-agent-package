@@ -142,7 +142,7 @@ public sealed partial class AgentChatViewModel
         var finalSessionDeletion = CaptureFinalSessionDeletionAuthority(session.SessionId);
         if (_chatSessionCommandGateway is null)
         {
-            _sessionService.DeleteSession(session.SessionId);
+            await _sessionService.DeleteSessionAsync(session.SessionId, cancellationToken).ConfigureAwait(false);
         }
         else
         {

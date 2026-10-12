@@ -5,6 +5,7 @@ namespace Sunder.Package.Agent.Contracts;
 /// <summary>
 /// Exposes an immutable session snapshot to Agent extensions.
 /// </summary>
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 public interface IAgentSessionContext
 {
     /// <summary>Gets the stable session identifier.</summary>

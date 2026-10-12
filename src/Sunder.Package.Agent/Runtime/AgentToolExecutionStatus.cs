@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Sunder.Package.Agent.Contracts.Models;
 
 /// <summary>
@@ -7,17 +9,17 @@ namespace Sunder.Package.Agent.Contracts.Models;
 public enum AgentToolExecutionStatus
 {
     /// <summary>The invocation is durable but has not entered its tool source.</summary>
-    Prepared = 0,
+    [JsonStringEnumMemberName("prepared")] Prepared = 0,
 
     /// <summary>The invocation crossed the durable dispatch boundary.</summary>
-    Started = 1,
+    [JsonStringEnumMemberName("started")] Started = 1,
 
     /// <summary>The invocation completed successfully or durably suspended child work.</summary>
-    Completed = 2,
+    [JsonStringEnumMemberName("completed")] Completed = 2,
 
     /// <summary>The invocation did not dispatch or returned a known failure.</summary>
-    Failed = 3,
+    [JsonStringEnumMemberName("failed")] Failed = 3,
 
     /// <summary>The invocation dispatched, but its external effects could not be determined.</summary>
-    Ambiguous = 4,
+    [JsonStringEnumMemberName("ambiguous")] Ambiguous = 4,
 }

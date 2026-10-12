@@ -1,11 +1,13 @@
 using System.Globalization;
 using System.Text;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Protocol;
+using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.Services;
 
-public sealed class AgentSystemPromptComposer(AgentRpcCatalog rpcCatalog)
+public sealed class AgentSystemPromptComposer(IServiceProviders<AgentServices.ISystemPromptContributorService> providers)
 {
     public async ValueTask<string?> ComposeAsync(
         AgentSystemPromptRequest request,
@@ -22,22 +24,42 @@ public sealed class AgentSystemPromptComposer(AgentRpcCatalog rpcCatalog)
         blocks.AddRange(BuildToolConcurrencyBlocks(request));
         blocks.AddRange(BuildToolRuntimeInstructionBlocks(request.AvailableTools));
 
-        var contributors = AgentRpcInvocation.Snapshot(
-            rpcCatalog,
-            Sunder.Package.Agent.Runtime.Rpc.AgentMetadataBindings.SystemPromptContributors,
-            static contributor => contributor.DisplayName);
+        ServiceProviderCatalog<AgentServices.ISystemPromptContributorService>? catalog;
+        try
+        {
+            catalog = await providers.ListAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (SunderRpcException exception) when (!cancellationToken.IsCancellationRequested
+            && exception.Error.Kind == SunderRpcErrorKind.Unavailable)
+        {
+            catalog = null;
+        }
+        var contributors = new List<(ServiceProvider<AgentServices.ISystemPromptContributorService> Provider, string DisplayName)>();
+        foreach (var provider in catalog?.Providers ?? [])
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (provider.State != ServiceProviderState.Active) continue;
+            try
+            {
+                var descriptor = await provider.Service.DescribeAsync(cancellationToken).ConfigureAwait(false);
+                contributors.Add((provider, descriptor.DisplayName));
+            }
+            catch (SunderRpcException exception) when (!cancellationToken.IsCancellationRequested
+                && exception.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable)
+            {
+                // Optional contributors may retire between discovery and description.
+            }
+        }
         foreach (var contributor in contributors
-                     .OrderBy(contributor => contributor.Metadata, StringComparer.OrdinalIgnoreCase))
+                     .OrderBy(contributor => contributor.DisplayName, StringComparer.OrdinalIgnoreCase))
         {
             try
             {
-                var contribution = await AgentRpcInvocation.InvokeAsync(
-                    contributor,
-                    cancellationToken,
-                    (instance, token) => instance.ContributeAsync(request, token));
+                var contribution = await contributor.Provider.Service.ContributeAsync(request, cancellationToken).ConfigureAwait(false);
                 blocks.AddRange(contribution ?? []);
             }
-            catch (AgentPackageUnavailableException)
+            catch (SunderRpcException exception) when (!cancellationToken.IsCancellationRequested
+                && exception.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable)
             {
                 // Retired optional contributors are omitted from this prompt.
             }

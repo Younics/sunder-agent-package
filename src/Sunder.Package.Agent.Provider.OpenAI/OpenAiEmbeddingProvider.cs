@@ -1,16 +1,18 @@
 using OpenAI.Embeddings;
-using Sunder.Package.Agent.Contracts.Contracts;
-using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
 using Sunder.Package.Agent.Provider.OpenAI.Auth;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Provider.OpenAI;
 
 [method: Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
-public sealed class OpenAiEmbeddingProvider(
+[SunderServiceProvider(typeof(IEmbeddingProviderService), ProviderId = "openai.embedding")]
+public sealed partial class OpenAiEmbeddingProvider(
     ApiKeyAuthStrategy apiKeyAuthStrategy,
-    IPackageContext packageContext) : IAgentEmbeddingProvider, IAgentEmbeddingSpaceIdentityProvider
+    IPackageContext packageContext) : IEmbeddingProviderService
 {
     private readonly Func<string, string, EmbeddingClient> _clientFactory = static (model, key) => new EmbeddingClient(model, key);
 
@@ -20,25 +22,31 @@ public sealed class OpenAiEmbeddingProvider(
 
     private static readonly IReadOnlyList<AgentEmbeddingModelDescriptor> Models =
     [
-        new("openai/text-embedding-3-small", "Text Embedding 3 Small", Dimensions: 1536, IsRecommended: true),
-        new("openai/text-embedding-3-large", "Text Embedding 3 Large", Dimensions: 3072)
+        new() { ModelId = "openai/text-embedding-3-small", DisplayName = "Text Embedding 3 Small", Dimensions = 1536, IsRecommended = true },
+        new() { ModelId = "openai/text-embedding-3-large", DisplayName = "Text Embedding 3 Large", Dimensions = 3072, IsRecommended = false }
     ];
 
-    public AgentEmbeddingProviderDescriptor Descriptor { get; } = new(
-        "openai",
-        "OpenAI",
-        [AgentAuthMode.ApiKey])
+    public AgentEmbeddingProviderDescriptor Descriptor { get; } = new()
     {
-        PackageId = packageContext.PackageId
+        ProviderId = "openai",
+        DisplayName = "OpenAI",
+        SupportedAuthModes = [AgentAuthMode.ApiKey],
+        PackageId = packageContext.PackageId,
     };
 
-    public ValueTask<IReadOnlyList<AgentEmbeddingModelDescriptor>> GetAvailableModelsAsync(CancellationToken cancellationToken = default)
+    public ValueTask<AgentEmbeddingProviderDescriptor> DescribeAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(Descriptor);
+    }
+
+    public ValueTask<IReadOnlyList<AgentEmbeddingModelDescriptor>> ListModelsAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         return ValueTask.FromResult(Models);
     }
 
-    public ValueTask<string> GetEmbeddingSpaceIdentityAsync(
+    public ValueTask<string> SpaceIdentityAsync(
         string modelId,
         CancellationToken cancellationToken = default)
     {
@@ -50,29 +58,27 @@ public sealed class OpenAiEmbeddingProvider(
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        return string.IsNullOrWhiteSpace(await apiKeyAuthStrategy.GetApiKeyAsync(cancellationToken))
-            ? new AgentEmbeddingProviderReadiness(
-                Descriptor.ProviderId,
-                AgentProviderReadinessStatus.NeedsConfiguration,
-                "An OpenAI API key is required for embeddings. You may keep ChatGPT Plus/Pro authorization enabled for chat while also storing an API key for embeddings.")
-            : new AgentEmbeddingProviderReadiness(
-                Descriptor.ProviderId,
-                AgentProviderReadinessStatus.Ready,
-                "OpenAI embeddings are ready via stored API key.");
+        var configured = !string.IsNullOrWhiteSpace(await apiKeyAuthStrategy.GetApiKeyAsync(cancellationToken));
+        return new()
+        {
+            ProviderId = Descriptor.ProviderId,
+            Status = configured ? AgentProviderReadinessStatus.Ready : AgentProviderReadinessStatus.NeedsConfiguration,
+            Message = configured
+                ? "OpenAI embeddings are ready via stored API key."
+                : "An OpenAI API key is required for embeddings. You may keep ChatGPT Plus/Pro authorization enabled for chat while also storing an API key for embeddings.",
+        };
     }
 
-    public async ValueTask<AgentEmbeddingGenerationResult?> GenerateEmbeddingAsync(
-        string modelId,
-        string text,
+    public async ValueTask<AgentEmbeddingGenerationResult?> GenerateAsync(
+        CSunder_Agent_Embedding_Provider_EmbeddingProviderGenerateRequest request,
         CancellationToken cancellationToken = default)
     {
-        var results = await GenerateEmbeddingsAsync(modelId, [text], cancellationToken);
+        var results = await GenerateBatchAsync(new() { ModelId = request.ModelId, Texts = [request.Text] }, cancellationToken);
         return results.Count == 0 ? null : results[0];
     }
 
-    public async ValueTask<IReadOnlyList<AgentEmbeddingGenerationResult?>> GenerateEmbeddingsAsync(
-        string modelId,
-        IReadOnlyList<string> texts,
+    public async ValueTask<IReadOnlyList<AgentEmbeddingGenerationResult?>> GenerateBatchAsync(
+        CSunder_Agent_Embedding_Provider_EmbeddingProviderGenerateBatchRequest request,
         CancellationToken cancellationToken = default)
     {
         var apiKey = await apiKeyAuthStrategy.GetApiKeyAsync(cancellationToken);
@@ -81,23 +87,25 @@ public sealed class OpenAiEmbeddingProvider(
             throw new InvalidOperationException("An OpenAI API key is required for embeddings.");
         }
 
-        var results = ProviderEmbeddingBatch.CreateResultBuffer(texts, out var validTexts);
+        var results = ProviderEmbeddingBatch.CreateResultBuffer<AgentEmbeddingGenerationResult>(request.Texts, out var validTexts);
         if (validTexts.Count == 0)
         {
             return results;
         }
 
-        var client = _clientFactory(ProviderModelId.RemovePrefix(modelId, "openai"), apiKey);
+        var client = _clientFactory(ProviderModelId.RemovePrefix(request.ModelId, "openai"), apiKey);
         var response = await client.GenerateEmbeddingsAsync(
             validTexts.Select(item => item.Text).ToArray(),
             options: null,
             cancellationToken);
         var embeddings = response.Value
-            .Select(embedding => new ProviderIndexedEmbedding(
+            .Select(embedding => new ProviderIndexedEmbedding<AgentEmbeddingGenerationResult>(
                 embedding.Index,
-                new AgentEmbeddingGenerationResult(
-                    modelId,
-                    embedding.ToFloats().ToArray().Select(static value => (double)value).ToArray())))
+                new AgentEmbeddingGenerationResult
+                {
+                    ModelId = request.ModelId,
+                    Values = embedding.ToFloats().ToArray().Select(static value => (double)value).ToArray(),
+                }))
             .ToArray();
 
         ProviderEmbeddingBatch.ApplyIndexedResults(results, validTexts, embeddings);

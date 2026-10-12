@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Runtime.CompilerServices;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Worker;
 using Xunit;
@@ -30,8 +31,12 @@ public sealed partial class OpenAiManagementSourceTests
             => ValueTask.FromResult(false);
         public ValueTask<SunderRpcCatalogSnapshot> DiscoverAsync(string contractId, CancellationToken cancellationToken = default)
         { cancellationToken.ThrowIfCancellationRequested(); return ValueTask.FromResult(new SunderRpcCatalogSnapshot(1, 1, Available && contractId == _provider.ContractId ? [_provider] : [])); }
-        public IAsyncEnumerable<SunderRpcCatalogEvent> WatchAsync(long afterRevision, long afterSequence, CancellationToken cancellationToken = default)
-            => throw new NotSupportedException();
+        public async IAsyncEnumerable<SunderRpcCatalogEvent> WatchAsync(long afterRevision, long afterSequence,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            yield break;
+        }
         public async ValueTask<JsonElement> InvokeAsync(SunderRpcEndpointReference endpoint, string serviceId, string methodId, JsonElement request,
             SunderRpcCallOptions? options = null, CancellationToken cancellationToken = default)
         {
@@ -58,7 +63,7 @@ public sealed partial class OpenAiManagementSourceTests
             public ValueTask<SunderRpcCatalogSnapshot> DiscoverAsync(string contractId, CancellationToken cancellationToken = default)
                 => owner.DiscoverAsync(contractId, cancellationToken);
             public IAsyncEnumerable<SunderRpcCatalogEvent> WatchAsync(long afterRevision, long afterSequence, CancellationToken cancellationToken = default)
-                => throw new NotSupportedException();
+                => owner.WatchAsync(afterRevision, afterSequence, cancellationToken);
             public ValueTask<JsonElement> InvokeAsync(SunderRpcEndpointReference endpoint, string serviceId, string methodId, JsonElement request,
                 SunderRpcCallOptions? options = null, CancellationToken cancellationToken = default)
             { ObjectDisposedException.ThrowIf(_disposed, this); return owner.InvokeAsync(endpoint, serviceId, methodId, request, options, cancellationToken); }

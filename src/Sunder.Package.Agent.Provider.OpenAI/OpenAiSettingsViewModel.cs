@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Provider_Openai_Services;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Abstractions;
@@ -14,7 +15,7 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject,
     IDisposable
 {
     private readonly IPackageContext _packageContext;
-    private readonly OpenAiAuthPresentationService _authPresentation;
+    private readonly IManagementService _management;
     private readonly PackageCallbackFlowRunner _callbackFlow;
     private readonly CancellationTokenSource _lifetimeCancellation = new();
     private readonly PresentationOperationObserver _operations;
@@ -47,57 +48,37 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject,
 
     internal OpenAiSettingsViewModel(
         IPackageContext packageContext,
-        IOpenAiOwnerManagementClient management)
+        IManagementService management)
         : this(
             packageContext,
-            new OpenAiAuthPresentationService(management),
+            management,
             new PackageCallbackFlowRunner(packageContext.Callbacks),
-            new ProviderCredentialOwnerClient(management))
-    {
-    }
-
-    internal OpenAiSettingsViewModel(
-        IPackageContext packageContext,
-        OpenAiAuthPresentationService authPresentation,
-        IProviderCredentialOwnerClient credentials)
-        : this(
-            packageContext,
-            authPresentation,
-            new PackageCallbackFlowRunner(packageContext.Callbacks),
-            credentials)
-    {
-    }
-
-    internal OpenAiSettingsViewModel(
-        IPackageContext packageContext,
-        OpenAiAuthPresentationService authPresentation,
-        PackageCallbackFlowRunner callbackFlow,
-        IProviderCredentialOwnerClient credentials)
-        : this(
-            packageContext,
-            authPresentation,
-            callbackFlow,
-            credentials,
             PresentationOperationObserver.CreateUnreported("OpenAI settings"))
     {
     }
 
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
+    internal OpenAiSettingsViewModel(IPackageContext context, IManagementService management, IPackageNotificationService notifications)
+        : this(context, management, new PackageCallbackFlowRunner(context.Callbacks),
+            new PresentationOperationObserver(context, notifications, "OpenAI settings")) { }
+
     internal OpenAiSettingsViewModel(
         IPackageContext packageContext,
-        OpenAiAuthPresentationService authPresentation,
+        IManagementService management,
         PackageCallbackFlowRunner callbackFlow,
-        IProviderCredentialOwnerClient credentials,
         PresentationOperationObserver operationObserver,
         IPresentationDispatcher? uiDispatcher = null)
     {
         _packageContext = packageContext;
-        _authPresentation = authPresentation;
+        _management = management;
         _callbackFlow = callbackFlow;
         _operations = operationObserver;
         _uiDispatcher = uiDispatcher ?? PresentationDispatcher.Capture();
         _selectedAuthMode = ResolveAuthModeOption(OpenAiAuthMode.CodexConnected);
         ApiKeySettings = new ApiKeySettingsState(
-            credentials,
+            management.GetCredentialStatusAsync,
+            management.SetCredentialAsync,
+            management.ClearCredentialAsync,
             "A stored API key enables embeddings and is used for API-key chat. Blank input retains the current key.",
             "sk-...",
             ResolveApiKeyStatus);
@@ -357,7 +338,7 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject,
     private async Task DisconnectCoreAsync(CancellationToken cancellationToken)
     {
         var disconnectGeneration = Interlocked.Increment(ref _statusGeneration);
-        await _authPresentation.DisconnectAsync(cancellationToken);
+        await _management.DisconnectAuthAsync(cancellationToken);
         if (disconnectGeneration != Volatile.Read(ref _statusGeneration))
         {
             return;
@@ -387,7 +368,7 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject,
         var statusGeneration = Interlocked.Increment(ref _statusGeneration);
         var authMode = SelectedAuthMode?.ModeId
             ?? await OpenAiAuthMode.GetSelectedAsync(_packageContext.Settings, cancellationToken);
-        var status = await _authPresentation.GetStatusAsync(cancellationToken);
+        var status = await _management.GetAuthStatusAsync(cancellationToken);
 
         if (statusGeneration != Volatile.Read(ref _statusGeneration))
         {

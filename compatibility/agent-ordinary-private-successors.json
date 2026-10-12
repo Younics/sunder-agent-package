@@ -1,0 +1,137 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Reviewed current private successors; the 31-contract historical oracle remains immutable.",
+  "contracts": [
+    {
+      "packageId": "sunder.package.agent.memory.semantic",
+      "sourceDirectory": "src/Sunder.Package.Agent.Memory.Semantic",
+      "contractId": "sunder.agent.memory.semantic.inspector",
+      "version": "2.0.0",
+      "descriptorSha256": "8cebef5b8d57d0d74798c3353d7f6e2dd83e319bd825bebaf1bac8211904267d",
+      "abiSha256": "48d9aba9d5181010513def724a8892284a84995c7beef406e0329de4ead004fc",
+      "methods": { "memory-inspector": ["changes", "contest", "correct", "details", "forget", "index-status", "memories", "metrics", "pin", "reindex", "semantic-state", "session-checkpoint", "sessions", "supersede", "update", "worker-status", "working-summary"] }
+    },
+    {
+      "packageId": "sunder.package.agent",
+      "sourceDirectory": "src/Sunder.Package.Agent",
+      "contractId": "sunder.agent.owner.runtime",
+      "version": "2.0.0",
+      "descriptorSha256": "ce790ab9e36edaa6afa847836763c6faf82b45e010bf65828f8f18fb4f8aa3f9",
+      "abiSha256": "8fbdcb10d30a693d243d678e521c228e38d795640962108f5e0f613de328f7e2",
+      "methods": {
+        "agent-runtime": [
+          "attachment-discard", "attachment-download", "attachment-upload", "catalog", "changes",
+          "chat-snapshot", "dashboard", "history-command", "history-search", "history-state", "history-status",
+          "permission-command", "profile-command", "run-command", "run-status", "session-command",
+          "tool-presentation", "transcript-around", "transcript-page", "transcript-tool-detail", "transport-profile", "workspace-command"
+        ]
+      }
+    },
+    {
+      "packageId": "sunder.package.agent",
+      "sourceDirectory": "src/Sunder.Package.Agent",
+      "contractId": "sunder.package.agent.agent.profile",
+      "version": "2.0.0",
+      "descriptorSha256": "5489e5712b9455ba9ba3624bf9e0f3026f396427990944b6ba0d063aa7d8e35c",
+      "abiSha256": "2b03a9544688a91becbb41b53c4399fb9705f886af180e67e8641be84d30d9d9",
+      "methods": {
+        "agent-profile": [
+          "create-profile", "delete-profile", "get-chat-provider-readiness", "get-embedding-provider-readiness",
+          "get-profile", "has-profile-capability-consumers", "list-behavior-loop-descriptors", "list-chat-models",
+          "list-chat-provider-descriptors", "list-embedding-models", "list-embedding-provider-descriptors",
+          "list-installed-local-tools", "list-profiles", "list-selectable-profile-capabilities", "save-profile"
+        ]
+      }
+    },
+    {
+      "packageId": "sunder.package.agent.builder",
+      "sourceDirectory": "src/Sunder.Package.Agent.Builder",
+      "contractId": "sunder.package.agent.builder.runtime",
+      "version": "2.0.0",
+      "descriptorSha256": "628438323b3b0efd427dbdbcc3d9b2c4e197211f53e7a3b47c41fae0971f18c9",
+      "abiSha256": "8bf0712f891f35a8545522115e48a6ebad29617c597b642d21152e8111db974c",
+      "methods": { "builder-runtime": ["add-path-entry", "execute-process", "execute-shell", "list-workspaces", "map-to-host-path", "resolve-workspace"] }
+    },
+    {
+      "packageId": "sunder.package.agent.execution.docker",
+      "sourceDirectory": "src/Sunder.Package.Agent.Execution.Docker",
+      "contractId": "sunder.package.agent.execution.docker.presentation",
+      "version": "2.0.0",
+      "descriptorSha256": "a7b163464d3065ed186ddde4388badbbf1e3ddad903a4928281c8f7d726a435c",
+      "abiSha256": "b17bd027d95f5c4de119c28687d5a8312d622251d7f0c0984550dce1e754eb01",
+      "methods": { "presentation": ["add-image", "delete-image", "get-settings", "pull-image", "refresh-image", "refresh-images", "save-settings", "test-docker"] }
+    },
+    {
+      "packageId": "sunder.package.agent.execution.local",
+      "sourceDirectory": "src/Sunder.Package.Agent.Execution.Local",
+      "contractId": "sunder.package.agent.execution.local.presentation",
+      "version": "2.0.0",
+      "descriptorSha256": "fefd1ffb4baf1fb21209c943efda738c78d4889626e6ce1feb07b703ae11eb14",
+      "abiSha256": "c1c277ee6a416291fa31904e76c258a6147a803bdc0efbefe0dcdadd47dd5904",
+      "methods": { "presentation": ["get-settings", "save-settings", "save-shells"] }
+    },
+    {
+      "packageId": "sunder.package.agent.mcp",
+      "sourceDirectory": "src/Sunder.Package.Agent.Mcp",
+      "contractId": "sunder.package.agent.mcp.management",
+      "version": "2.0.0",
+      "descriptorSha256": "9a3747b21d4487a875af58cacfdd2aca23d5a60f72111fb01aea398bba13e5db",
+      "abiSha256": "562f1ca927c722c73cac4fa53544c24eb21c6fb36ba4ebbe83a8b8e9d9a5ed6f",
+      "methods": { "management": ["catalog", "changes", "clear-authorization", "delete", "disconnect", "discover", "document", "import-common", "import-document", "initialize", "presentation", "save"] }
+    },
+    {
+      "packageId": "sunder.package.agent.provider.anthropic",
+      "sourceDirectory": "src/Sunder.Package.Agent.Provider.Anthropic",
+      "contractId": "sunder.package.agent.provider.anthropic.credentials",
+      "version": "2.0.0",
+      "descriptorSha256": "7108eb422345b3b2b0dfa96ee081beb0b9f93a827ecbcabd4bedc0b7a5034961",
+      "abiSha256": "8d3f0333172d6015f48619bf4087df618922ad4b1377e211fcd5e352db31a60a",
+      "methods": { "credential-settings": ["clear", "get-status", "set"] }
+    },
+    {
+      "packageId": "sunder.package.agent.provider.gemini",
+      "sourceDirectory": "src/Sunder.Package.Agent.Provider.Gemini",
+      "contractId": "sunder.package.agent.provider.gemini.credentials",
+      "version": "2.0.0",
+      "descriptorSha256": "afb3a84948140e14d353d5673de42524c26e7aed5fac3396c40d8460f204e365",
+      "abiSha256": "f7f82e06c61d00553077fd9136fb7115cddc1c425cbe86c3554f0dd7e8775521",
+      "methods": { "credential-settings": ["clear", "get-status", "set"] }
+    },
+    {
+      "packageId": "sunder.package.agent.provider.lmstudio",
+      "sourceDirectory": "src/Sunder.Package.Agent.Provider.LMStudio",
+      "contractId": "sunder.package.agent.provider.lmstudio.credentials",
+      "version": "2.0.0",
+      "descriptorSha256": "64885a17a466be79a71d1bb5800e47b33e88d706af55cc08b3dd0e2bd8178313",
+      "abiSha256": "07f08a78015ecad76b5a2191de550ee7c80d50492788a76957ff2d73e48e2b41",
+      "methods": { "credential-settings": ["clear", "get-status", "set"] }
+    },
+    {
+      "packageId": "sunder.package.agent.provider.openai",
+      "sourceDirectory": "src/Sunder.Package.Agent.Provider.OpenAI",
+      "contractId": "sunder.package.agent.provider.openai.management",
+      "version": "2.0.0",
+      "descriptorSha256": "bea4ba2d0da4ec03591451bf64283e0ae6a7698ac668155c11b8d98a51131e3f",
+      "abiSha256": "41def5fedaa0077923ae539b7f0908f2914ef030c703918b9fb7be4196857999",
+      "methods": { "management": ["clear-credential", "disconnect-auth", "get-auth-status", "get-credential-status", "set-credential"] }
+    },
+    {
+      "packageId": "sunder.package.agent.skills",
+      "sourceDirectory": "src/Sunder.Package.Agent.Skills",
+      "contractId": "sunder.package.agent.skills.owner",
+      "version": "2.0.0",
+      "descriptorSha256": "328bc8ab6a0db779b7e8a368e8afce0c83d4e9f29cb5c919672ab47851f18235",
+      "abiSha256": "ab5926dd3bee0352052c41d03d429ff20267904ce516f3995ea07d680da96863",
+      "methods": { "skills-management": ["changes", "delete", "import-common", "import-git-hub", "import-transfer", "query"] }
+    },
+    {
+      "packageId": "sunder.package.agent.subagents",
+      "sourceDirectory": "src/Sunder.Package.Agent.Subagents",
+      "contractId": "sunder.package.agent.subagents.owner",
+      "version": "2.0.0",
+      "descriptorSha256": "f2e3eb2c132c792e5632f39a402d7fa8bfda659d73a2c50679e724184e34b5bf",
+      "abiSha256": "8abe1fe127d530e03d0477531f54996ea95382edaf7cf3291fdb1b74d1518269",
+      "methods": { "subagents-management": ["around-turn", "changes", "create", "delete", "management", "provider-models", "recent-turns", "runtime-catalog", "save", "tool-detail", "turns-after", "turns-before"] }
+    }
+  ]
+}

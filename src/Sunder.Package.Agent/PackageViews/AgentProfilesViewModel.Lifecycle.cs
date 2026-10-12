@@ -20,8 +20,8 @@ public sealed partial class AgentProfilesViewModel
         _tasks.Dispose();
         _operation.PropertyChanged -= OnOperationPropertyChanged;
         _operation.Dispose();
-        _profileService.ProfileChanged -= OnProfileChanged;
-        _profileService.SelectableCapabilitiesChanged -= OnSelectableCapabilitiesChanged;
+        _profileNotifications.ProfileChanged -= OnProfileChanged;
+        _profileNotifications.SelectableCapabilitiesChanged -= OnSelectableCapabilitiesChanged;
         if (_dashboardLoader is not null)
         {
             _dashboardLoader.DashboardInvalidated -= OnDashboardInvalidated;

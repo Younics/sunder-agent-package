@@ -9,6 +9,8 @@ using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Services;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.PackageViews;
 
@@ -22,7 +24,9 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
     private readonly IAgentExecutionGateway _executionGateway;
     private readonly IAgentDashboardLoader? _dashboardLoader;
     private readonly IAgentWorkspaceCommandGateway? _workspaceCommands;
-    private readonly AgentRpcCatalog _rpcCatalog;
+    private readonly IServiceProviders<AgentServices.IWorkspaceEditorService> _editors;
+    private readonly IAgentProfileGateway? _catalogNotifications;
+    private int _editorObservationStarted;
     private readonly IPackageSettingsNavigationService? _settingsNavigationService;
     private readonly IAgentRuntimeAvailability? _runtimeAvailability;
     private readonly CancellationTokenSource _lifetimeCancellation = new();
@@ -53,12 +57,12 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
     public AgentWorkspacesViewModel(
         IAgentWorkspaceGateway workspaceService,
         IAgentExecutionGateway executionGateway,
-        AgentRpcCatalog rpcCatalog,
+        IServiceProviders<AgentServices.IWorkspaceEditorService> editors,
         IPackageSettingsNavigationService? settingsNavigationService = null)
         : this(
             workspaceService,
             executionGateway,
-            rpcCatalog,
+            editors,
             settingsNavigationService,
             PresentationDispatcher.Capture())
     {
@@ -67,7 +71,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
     internal AgentWorkspacesViewModel(
         IAgentWorkspaceGateway workspaceService,
         IAgentExecutionGateway executionGateway,
-        AgentRpcCatalog rpcCatalog,
+        IServiceProviders<AgentServices.IWorkspaceEditorService> editors,
         IPackageSettingsNavigationService? settingsNavigationService,
         IPresentationDispatcher uiDispatcher)
     {
@@ -75,7 +79,8 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
         _executionGateway = executionGateway;
         _dashboardLoader = workspaceService as IAgentDashboardLoader;
         _workspaceCommands = workspaceService as IAgentWorkspaceCommandGateway;
-        _rpcCatalog = rpcCatalog;
+        _editors = editors;
+        _catalogNotifications = workspaceService as IAgentProfileGateway;
         _settingsNavigationService = settingsNavigationService;
         _uiDispatcher = uiDispatcher;
         _tasks = new PresentationTaskScope(exception => _uiDispatcher.InvokeAsync(() =>
@@ -107,7 +112,8 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
         {
             _dashboardLoader.DashboardInvalidated += OnDashboardInvalidated;
         }
-        _rpcCatalog.Changed += OnRpcCatalogChanged;
+        if (_catalogNotifications is not null)
+            _catalogNotifications.SelectableCapabilitiesChanged += OnEditorCatalogChanged;
     }
 
     public ObservableCollection<AgentWorkspaceRecord> Workspaces { get; } = [];
@@ -290,7 +296,8 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
         {
             _dashboardLoader.DashboardInvalidated -= OnDashboardInvalidated;
         }
-        _rpcCatalog.Changed -= OnRpcCatalogChanged;
+        if (_catalogNotifications is not null)
+            _catalogNotifications.SelectableCapabilitiesChanged -= OnEditorCatalogChanged;
 
         _listDetail.PropertyChanged -= OnListDetailPropertyChanged;
         _listDetail.SelectionChanging -= OnWorkspaceSelectionChanging;
@@ -375,7 +382,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
             {
                 if (_workspaceCommands is null)
                 {
-                    _workspaceService.DeleteWorkspace(workspaceId);
+                    await _workspaceService.DeleteWorkspaceAsync(workspaceId, _lifetimeCancellation.Token);
                 }
                 else
                 {
@@ -484,6 +491,8 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
 
     private async Task InitializeCoreAsync(CancellationToken cancellationToken)
     {
+        if (Interlocked.Exchange(ref _editorObservationStarted, 1) == 0)
+            _tasks.Run(ObserveEditorProvidersAsync);
         while (true)
         {
             var request = _requests.Begin(ListRefreshChannel, cancellationToken);
@@ -493,9 +502,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
             Task targetReplay = Task.CompletedTask;
             try
             {
-                var targetsTask = _executionGateway is IAgentExecutionTargetLoader loader
-                    ? loader.ListTargetsAsync(request.CancellationToken)
-                    : Task.FromResult(_executionGateway.ListTargets());
+                var targetsTask = _executionGateway.ListTargetsAsync(request.CancellationToken);
                 await Task.WhenAll(
                         _workspaceService.InitializeAsync(request.CancellationToken),
                         targetsTask)
@@ -665,58 +672,6 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
         => _workspaceService.ListBindings(workspaceId)
             .FirstOrDefault(item => string.Equals(item.Role, AgentWorkspaceBindingRoles.PrimaryExecutionTarget, StringComparison.OrdinalIgnoreCase))
             ?.ContributionId;
-
-    private void RunOnUiThread(Action action)
-    {
-        _tasks.Run(_ => _uiDispatcher.InvokeAsync(() =>
-        {
-            if (!_disposed)
-            {
-                action();
-            }
-        }));
-    }
-
-    private void ClearStatus()
-        => SetStatus(string.Empty, AgentWorkspaceStatusKind.None);
-
-    internal void ReportPresentationFailure(Exception exception)
-        => SetStatus(exception.Message, AgentWorkspaceStatusKind.Error);
-
-    private void SetStatus(string message, AgentWorkspaceStatusKind kind, bool autoClear = false)
-    {
-        _statusClear.Cancel();
-        StatusKind = string.IsNullOrWhiteSpace(message) ? AgentWorkspaceStatusKind.None : kind;
-        StatusText = message;
-        if (autoClear && StatusKind == AgentWorkspaceStatusKind.Success)
-        {
-            _tasks.Run(_ => _statusClear.ScheduleAsync(SuccessStatusDisplayDuration, () =>
-            {
-                if (StatusKind == AgentWorkspaceStatusKind.Success
-                    && string.Equals(StatusText, message, StringComparison.Ordinal))
-                {
-                    ClearStatus();
-                }
-            }));
-        }
-    }
-
-    private OperationGeneration BeginOperation(AgentWorkspaceOperation operation)
-    {
-        var generation = _operation.Begin(operation, canCancel: false);
-        OnOperationPropertyChanged(this, new PropertyChangedEventArgs(nameof(OperationState.IsBusy)));
-        return generation;
-    }
-
-    private void EndOperation(OperationGeneration generation)
-        => _operation.TryComplete(generation);
-
-    private void OnOperationPropertyChanged(object? sender, PropertyChangedEventArgs e)
-    {
-        OnPropertyChanged(nameof(IsBusy));
-        SaveWorkspaceCommand.NotifyCanExecuteChanged();
-        DeleteWorkspaceCommand.NotifyCanExecuteChanged();
-    }
 
     private static StringComparison GetPathStringComparison()
         => OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()

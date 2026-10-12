@@ -1,10 +1,12 @@
 using System.Text.Json;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Stacks;
+using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Execution.Docker;
 
-internal sealed class DockerImageStackContributor(
+[SunderServiceProvider(typeof(IPackageStackContributor), ProviderId = "docker.stack")]
+internal sealed partial class DockerImageStackContributor(
     DockerImageCatalogService imageCatalog,
     IPackageContext packageContext) : IPackageStackExporter, IPackageStackImporter, IPackageStackImportAppliedHandler
 {

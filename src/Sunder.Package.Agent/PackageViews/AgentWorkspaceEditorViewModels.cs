@@ -6,6 +6,8 @@ using CommunityToolkit.Mvvm.Input;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
+using Sunder.Sdk.Services;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.PackageViews;
 
@@ -19,7 +21,7 @@ public enum AgentWorkspaceStatusKind
 
 public sealed class AgentEditorSectionViewModel : ObservableObject
 {
-    private readonly AgentRpcReference<IAgentWorkspaceEditorContributor> _contributorReference;
+    private readonly ServiceProvider<AgentServices.IWorkspaceEditorService> _contributorReference;
     private readonly AgentEditorRetryState? _retryState;
     private readonly RelayCommand? _retryCommand;
     private bool _isRetrying;
@@ -27,7 +29,7 @@ public sealed class AgentEditorSectionViewModel : ObservableObject
     internal event Action? Changed;
 
     internal AgentEditorSectionViewModel(
-        AgentRpcReference<IAgentWorkspaceEditorContributor> contributorReference,
+        ServiceProvider<AgentServices.IWorkspaceEditorService> contributorReference,
         AgentWorkspaceEditorContext context,
         AgentEditorSection section)
     {
@@ -40,7 +42,7 @@ public sealed class AgentEditorSectionViewModel : ObservableObject
     }
 
     private AgentEditorSectionViewModel(
-        AgentRpcReference<IAgentWorkspaceEditorContributor> contributorReference,
+        ServiceProvider<AgentServices.IWorkspaceEditorService> contributorReference,
         AgentWorkspaceEditorContext context,
         AgentEditorInvocationFailure failure,
         AgentEditorRetryState retryState,
@@ -62,7 +64,7 @@ public sealed class AgentEditorSectionViewModel : ObservableObject
     }
 
     internal static AgentEditorSectionViewModel CreateError(
-        AgentRpcReference<IAgentWorkspaceEditorContributor> contributorReference,
+        ServiceProvider<AgentServices.IWorkspaceEditorService> contributorReference,
         AgentWorkspaceEditorContext context,
         AgentEditorInvocationFailure failure,
         AgentEditorRetryState retryState,
@@ -71,7 +73,7 @@ public sealed class AgentEditorSectionViewModel : ObservableObject
 
     internal AgentWorkspaceEditorContext Context { get; }
 
-    internal AgentRpcReference<IAgentWorkspaceEditorContributor> ContributorReference
+    internal ServiceProvider<AgentServices.IWorkspaceEditorService> ContributorReference
         => _contributorReference;
 
     internal AgentEditorRetryState RetryState
@@ -115,47 +117,35 @@ public sealed class AgentEditorSectionViewModel : ObservableObject
     internal void SetRetrying(bool value) => IsRetrying = value;
 
     internal ValueTask<AgentEditorInvocationResult<AgentEditorSaveResult>> TrySaveAsync(
-        AgentRpcCatalog rpcCatalog,
         CancellationToken cancellationToken = default)
-        => AgentWorkspaceEditorInvocation.InvokeAsync(
+        => AgentWorkspaceEditorInvocation.SaveSectionAsync(
             _contributorReference,
-            rpcCatalog,
-            AgentEditorInvocationOperation.Save,
-            cancellationToken,
-            (contributor, token) => contributor.SaveSectionAsync(
-                Context,
+            Context,
                 new AgentEditorSaveRequest(
                     SectionId,
                     Fields.ToDictionary(field => field.FieldId, field => field.ToValue(), StringComparer.OrdinalIgnoreCase)),
-                token));
+            cancellationToken);
 
     internal ValueTask<AgentEditorInvocationResult<IReadOnlyList<AgentEditorSection>>> TryGetApplicableSectionsAsync(
         AgentWorkspaceEditorContext context,
-        AgentRpcCatalog rpcCatalog,
         AgentEditorInvocationOperation operation,
         CancellationToken cancellationToken = default)
         => TryGetApplicableSectionsAsync(
             _contributorReference,
             context,
-            rpcCatalog,
             operation,
             cancellationToken);
 
     internal static ValueTask<AgentEditorInvocationResult<IReadOnlyList<AgentEditorSection>>> TryGetApplicableSectionsAsync(
-        AgentRpcReference<IAgentWorkspaceEditorContributor> contributorReference,
+        ServiceProvider<AgentServices.IWorkspaceEditorService> contributorReference,
         AgentWorkspaceEditorContext context,
-        AgentRpcCatalog rpcCatalog,
         AgentEditorInvocationOperation operation,
         CancellationToken cancellationToken = default)
-        => AgentWorkspaceEditorInvocation.InvokeAsync(
+        => AgentWorkspaceEditorInvocation.ReadSectionsAsync(
             contributorReference,
-            rpcCatalog,
+            context,
             operation,
-            cancellationToken,
-            (contributor, token) => AgentWorkspaceEditorInvocation.GetSectionsSnapshotAsync(
-                contributor,
-                context,
-                token));
+            cancellationToken);
 
     private AgentEditorFieldViewModel CreateField(AgentEditorField field)
     {

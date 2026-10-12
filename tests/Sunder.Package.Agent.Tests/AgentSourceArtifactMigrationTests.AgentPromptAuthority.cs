@@ -10,6 +10,8 @@ using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
 
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+
 public sealed partial class AgentSourceArtifactMigrationTests
 {
     private static async Task VerifyAgentPromptAuthority(Assembly owner)
@@ -19,9 +21,11 @@ public sealed partial class AgentSourceArtifactMigrationTests
             using var package = RegressionTestPackageScope.Create();
             using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
             var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
+            await using var providerReceiver = new GeneratedServiceTestScope(rpc);
+            using var providers = new RegressionTestSourceProviders();
             await using var host = new AgentPromptHost(owner, package.Context, rpc);
             var peer = new AgentPromptPeer { ContributorId = "workspace-files" };
-            var registration = SurfaceRegistration(AgentRoleBoundary.Create(owner.GetType("Sunder.Package.Agent.Rpc.Public.PromptContextContributorService", true)!, peer, null));
+            var registration = providers.Create(RegressionTestBindings.PromptContextContributors, peer, providerReceiver);
             var packageId = required ? "sunder.package.agent.tools.files" : "example.untrusted.prompt";
             var handler = AddSurfaceProvider(state, packageId, registration);
             var built = await host.Build("What instruction should you follow?");
@@ -49,7 +53,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 await Assert.ThrowsAsync<InvalidOperationException>(() => host.Acknowledge(receipt));
                 await host.Build("What instruction should you follow?"); host.Discard(receipt.TranscriptEpoch);
                 await Assert.ThrowsAsync<InvalidOperationException>(() => host.Acknowledge(receipt)); Assert.Equal(1, peer.Acknowledgments);
-                Assert.Single((await host.Build("hello")).Blocks); Assert.False(peer.Request!.ContextPlan.ShouldContribute);
+                Assert.Single((await host.Build("hello")).Blocks); Assert.False(peer.Request!.ContextPlan.ShouldContribute());
                 handler.FailMethod = "acknowledge";
                 var failedAck = await Assert.ThrowsAsync<InvalidOperationException>(() => host.Acknowledge(receipt));
                 Assert.DoesNotContain("private-surface", failedAck.Message, StringComparison.Ordinal);
@@ -70,7 +74,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 Assert.Equal(1, peer.Acknowledgments);
                 await host.Build("hello"); await host.Acknowledge(receipt); Assert.Equal(2, peer.Acknowledgments);
                 var duplicate = new SurfaceHandler(registration.Handler);
-                state.Add(packageId, RegressionTestRpcDescriptors.Get(registration.ContractId), duplicate, duplicate, Noop.Instance, "fixture.prompt.duplicate", "2.0.0");
+                state.Add(packageId, CurrentPublicRpcDescriptors.Get(registration.ContractId), duplicate, duplicate, Noop.Instance, "fixture.prompt.duplicate", "2.0.0");
                 Assert.Equal(2, (await host.Build("hello")).Blocks.Count);
                 await Assert.ThrowsAsync<InvalidOperationException>(() => host.Acknowledge(receipt)); Assert.Equal(2, peer.Acknowledgments);
                 await state.RetireAsync(duplicate);
@@ -95,23 +99,23 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Documents: [new("document", "prompt.documentation", path, 0, now, now)]);
         await using var host = new AgentPromptHost(owner, package.Context, rpc, workspace);
         var contributor = AgentRoleBoundary.As<IAgentPromptContextContributor>(host.Services.GetRequiredService(owner.GetType("Sunder.Package.Agent.Services.WorkspaceDocumentationContextService", true)!));
-        AddSurfaceProvider(state, "sunder.package.agent", SurfaceRegistration(AgentRoleBoundary.Create(owner.GetType("Sunder.Package.Agent.Rpc.Public.PromptContextContributorService", true)!, contributor, null)));
-        var client = CreateAgentPromptClient(owner, rpc, Assert.Single((await rpc.DiscoverAsync(AgentRpcContractIds.PromptContextContributor)).Providers));
-        await using var lifetime = (IAsyncDisposable)client;
-        Assert.Equal(contributor.ContributorId, ((IAgentPromptContextAcknowledgmentSink)client).AcknowledgmentSinkId);
+        await using var receiver = new GeneratedServiceTestScope(rpc);
+        using var providers = new RegressionTestSourceProviders();
+        AddSurfaceProvider(state, "sunder.package.agent", providers.Create(RegressionTestBindings.PromptContextContributors, contributor, receiver));
+        var client = Assert.Single((await receiver.Providers<AgentServices.IPromptContextContributorService>().ListAsync()).Providers).Service;
+        Assert.Equal(contributor.ContributorId, (await client.DescribeAsync()).ContributorId);
         var built = await host.Build("What repository information do you know?");
         var block = Assert.Single(built.Blocks);
         Assert.Contains("Untrusted workspace reference 漢字", block.Content, StringComparison.Ordinal);
         Assert.Equal(AgentContextProvenance.Tool, block.Provenance); Assert.Equal(AgentContextTrust.Untrusted, block.Trust);
         Assert.Equal(AgentPromptContextAuthority.Reference, block.Authority); Assert.Null(block.Scope); Assert.Null(block.HostIdentity);
-        await ((IAgentPromptContextAcknowledgmentSink)client).AcknowledgePromptContextAsync(host.Receipt(built));
+        await client.AcknowledgeAsync(host.Receipt(built));
     }
 
     private sealed class AgentPromptHost : IAsyncDisposable
     {
         internal IServiceProvider Services { get; }
         private readonly IAsyncDisposable _lifetime;
-        internal AgentRpcCatalog Catalog { get; }
         internal AgentWorkspaceRecord Workspace { get; private set; }
         internal AgentWorkspaceBindingRecord? Binding { get; }
         internal AgentSessionRecord Session { get; }
@@ -127,7 +131,6 @@ public sealed partial class AgentSourceArtifactMigrationTests
         internal AgentPromptHost(Assembly owner, IPackageContext context, ISunderRpcClient rpc, AgentWorkspaceRecord? workspace = null, string? targetId = null)
         {
             (_, _lifetime, Services) = CreateGeneratedWorker(owner, context, rpc);
-            Catalog = AgentRoleBoundary.As<AgentRpcCatalog>(Services.GetRequiredService(owner.GetType("Sunder.Package.Agent.Protocol.AgentRpcCatalog", true)!));
             var workspaces = Services.GetRequiredService(owner.GetType("Sunder.Package.Agent.Services.AgentWorkspaceService", true)!);
             _workspaces = workspaces;
             if (workspace is null) Workspace = (AgentWorkspaceRecord)SurfaceCall(workspaces, "CreateWorkspace", "Prompt context")!;
@@ -166,7 +169,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Workspace = (AgentWorkspaceRecord)SurfaceCall(_workspaces, "GetWorkspace", Workspace.WorkspaceId)!;
         }
         internal void Discard(long epoch) => _discard(Session.SessionId, RunId, epoch);
-        public async ValueTask DisposeAsync() { await _lifetime.DisposeAsync(); Catalog.Dispose(); }
+        public ValueTask DisposeAsync() => _lifetime.DisposeAsync();
     }
 
     private sealed record AgentPromptSnapshot(string? SystemInstructions, IReadOnlyList<AgentPromptContextBlock> Blocks, long TranscriptEpoch);

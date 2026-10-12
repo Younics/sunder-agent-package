@@ -28,6 +28,7 @@ public sealed class AgentPresentationThreadAffinityTests
         var gateway = new DeferredProfileGateway(mutation, fail);
         using var viewModel = new AgentProfilesViewModel(
             gateway,
+            gateway,
             settingsNavigationService: null,
             dispatcher);
 
@@ -240,7 +241,7 @@ public sealed class AgentPresentationThreadAffinityTests
     private sealed class DeferredProfileGateway(
         string deferredMutation,
         bool failMutation) :
-        IAgentProfileGateway,
+        IProfileServiceFixture,
         IAgentDashboardLoader,
         IAgentProfileCommandGateway
     {
@@ -387,10 +388,13 @@ public sealed class AgentPresentationThreadAffinityTests
             DeleteProfile(profileId);
         }
 
-        public IReadOnlyList<AgentBehaviorLoopDescriptor> ListBehaviorLoopDescriptors() => [];
-        public IReadOnlyList<AgentProviderDescriptor> ListChatProviderDescriptors() => [];
-        public IReadOnlyList<AgentEmbeddingProviderDescriptor> ListEmbeddingProviderDescriptors() => [];
-        public bool HasProfileCapabilityConsumers(string capabilityKind) => false;
+        public Task<IReadOnlyList<AgentBehaviorLoopDescriptor>> ListBehaviorLoopDescriptorsAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<AgentBehaviorLoopDescriptor>>([]);
+        public Task<IReadOnlyList<AgentProviderDescriptor>> ListChatProviderDescriptorsAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<AgentProviderDescriptor>>([]);
+        public Task<IReadOnlyList<AgentEmbeddingProviderDescriptor>> ListEmbeddingProviderDescriptorsAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<AgentEmbeddingProviderDescriptor>>([]);
+        public Task<bool> HasProfileCapabilityConsumersAsync(string capabilityKind, CancellationToken cancellationToken = default) => Task.FromResult(false);
 
         public Task<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>>
             ListSelectableProfileCapabilitiesAsync(
@@ -476,10 +480,13 @@ public sealed class AgentPresentationThreadAffinityTests
             string? behaviorLoopId = null, string? behaviorLoopSourceId = null,
             string? behaviorLoopSettingsJson = null, string? chatModelSettingsJson = null) { }
         public void DeleteProfile(string profileId) { }
-        public IReadOnlyList<AgentBehaviorLoopDescriptor> ListBehaviorLoopDescriptors() => [];
-        public IReadOnlyList<AgentProviderDescriptor> ListChatProviderDescriptors() => [];
-        public IReadOnlyList<AgentEmbeddingProviderDescriptor> ListEmbeddingProviderDescriptors() => [];
-        public bool HasProfileCapabilityConsumers(string capabilityKind) => false;
+        public Task<IReadOnlyList<AgentBehaviorLoopDescriptor>> ListBehaviorLoopDescriptorsAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<AgentBehaviorLoopDescriptor>>([]);
+        public Task<IReadOnlyList<AgentProviderDescriptor>> ListChatProviderDescriptorsAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<AgentProviderDescriptor>>([]);
+        public Task<IReadOnlyList<AgentEmbeddingProviderDescriptor>> ListEmbeddingProviderDescriptorsAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<AgentEmbeddingProviderDescriptor>>([]);
+        public Task<bool> HasProfileCapabilityConsumersAsync(string capabilityKind, CancellationToken cancellationToken = default) => Task.FromResult(false);
         public Task<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>> ListSelectableProfileCapabilitiesAsync(
             AgentProfileRecord? profile = null, CancellationToken cancellationToken = default)
             => Task.FromResult<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>>([]);
@@ -523,7 +530,7 @@ public sealed class AgentPresentationThreadAffinityTests
         public void SaveWorkspaceAggregate(string workspaceId, string displayName, string? description,
             IReadOnlyList<AgentWorkspacePathRecord> paths, IReadOnlyList<AgentWorkspaceDocumentRecord> documents,
             string? executionTargetId) => throw new NotSupportedException();
-        public void DeleteWorkspace(string workspaceId) => throw new NotSupportedException();
+        public Task DeleteWorkspaceAsync(string workspaceId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public IReadOnlyList<AgentWorkspaceBindingRecord> ListBindings(string workspaceId) => [];
         public AgentWorkspaceBindingRecord SavePrimaryExecutionBinding(string workspaceId, string contributionId,
             string displayRole = AgentWorkspaceBindingRoles.PrimaryExecutionTarget) => throw new NotSupportedException();
@@ -594,7 +601,7 @@ public sealed class AgentPresentationThreadAffinityTests
             string? agentKind = null, string? workspaceId = null) => throw new NotSupportedException();
         public AgentSessionRecord? GetSession(Guid sessionId) => sessionId == _session.SessionId ? _session : null;
         public void UpdateSession(AgentSessionRecord session) => throw new NotSupportedException();
-        public void DeleteSession(Guid sessionId) => throw new NotSupportedException();
+        public Task DeleteSessionAsync(Guid sessionId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public IReadOnlyList<AgentTurnRecord> ListTurns(Guid sessionId) => [Turn];
         public IReadOnlyList<AgentTurnRecord> ListRecentTurns(Guid sessionId, int limit) => [Turn];
         public IReadOnlyList<AgentTurnRecord> ListTurnsBefore(
@@ -627,7 +634,8 @@ public sealed class AgentPresentationThreadAffinityTests
 
         public AgentSessionPermissionState GetSessionState(Guid sessionId) => new(sessionId, false);
         public void SetSessionUnrestrictedMode(Guid sessionId, bool isEnabled) { }
-        public IReadOnlyList<AgentPermissionActionDescriptor> ListActions() => [];
+        public Task<IReadOnlyList<AgentPermissionActionDescriptor>> ListActionsAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<AgentPermissionActionDescriptor>>([]);
         public IReadOnlyList<AgentPermissionOverride> ListOverrides() => [];
         public void SaveOverride(string actionId, string boundaryId, AgentPermissionDecision decision) { }
         public void DeleteOverride(string actionId, string boundaryId) { }

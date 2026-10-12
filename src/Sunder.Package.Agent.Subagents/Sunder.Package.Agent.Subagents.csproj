@@ -13,16 +13,17 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
-    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" />
     <PackageReference Include="Avalonia" />
     <PackageReference Include="Avalonia.Controls.ItemsRepeater" />
     <PackageReference Include="CommunityToolkit.Mvvm" />
     <PackageReference Include="LiveMarkdown.Avalonia" />
-    <Compile Include="@(SunderAgentSubagentsSource->Distinct())" LinkBase="Domain" />
+    <Compile Include="$(_AgentModels)Tools\AgentToolArgumentObject.cs;$(_AgentModels)Tools\AgentPayloadLimits.cs;$(_AgentModels)Tools\AgentToolResultErrorCodes.cs;$(_AgentModels)Providers\AgentModelCapabilityKinds.cs;$(_AgentModels)Providers\AgentModelOrdering.cs;$(_AgentModels)Providers\AgentChatModelSettings.cs;$(_AgentModels)Providers\AgentChatModelSettingsJson.cs;$(_AgentModels)Extensions\AgentProfileSelectableCapabilityKinds.cs;$(_AgentSource)Runtime\AgentBehaviorLoopIds.cs;$(_AgentSource)Runtime\AgentTurnMutation.cs;$(_AgentSource)Runtime\AgentTranscriptTurnWindow.cs" LinkBase="Domain" />
   </ItemGroup>
 
   <ItemGroup>
     <SunderSdkCapability Include="rpc.extended-deadline.v1" />
+    <AvaloniaResource Include="..\Sunder.Package.Agent.Shared\Presentation\ModelBindingStyles.axaml"
+                      Link="Presentation\ModelBindingStyles.axaml" />
   </ItemGroup>
 
   <Import Project="..\Sunder.Package.Agent.Shared\Sunder.Package.Agent.Shared.props" />

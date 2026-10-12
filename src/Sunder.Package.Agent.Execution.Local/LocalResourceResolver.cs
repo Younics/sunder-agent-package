@@ -10,15 +10,12 @@ internal static class LocalResourceResolver
     public static IReadOnlyList<AgentResolvedExecutionResource> ResolveResources(IReadOnlyList<AgentExecutionResourceDescriptor> resources)
         => resources
             .Where(resource => !string.IsNullOrWhiteSpace(resource.HostPath))
-            .Select(resource => new AgentResolvedExecutionResource(
-                resource.ResourceId,
-                resource.ResourceKind,
-                resource.SourceId,
-                resource.DisplayName,
-                resource.HostPath,
-                resource.HostPath,
-                resource.AccessMode,
-                resource.Metadata))
+            .Select(resource => new AgentResolvedExecutionResource
+            {
+                ResourceId = resource.ResourceId, ResourceKind = resource.ResourceKind, SourceId = resource.SourceId,
+                DisplayName = resource.DisplayName, HostPath = resource.HostPath, ExecutionPath = resource.HostPath,
+                AccessMode = resource.AccessMode, Metadata = resource.Metadata,
+            })
             .ToArray();
 
     public static AgentResolvedResource ResolveFileResource(
@@ -41,7 +38,7 @@ internal static class LocalResourceResolver
             context,
             authority,
             issueOutsideAuthority: context?.ResourceOperation is { CanIssueOutsideAuthority: true },
-            context?.ResourceOperation?.AuthorityUseCount ?? 1,
+            checked((int)(context?.ResourceOperation?.AuthorityUseCount ?? 1)),
             resourceReferences);
     }
 
@@ -152,13 +149,10 @@ internal static class LocalResourceResolver
                     "Outside Local authority requires an exact host-owned invocation binding.");
             }
             var resourceReference = HostResourceClaim.CreateReference(claim);
-            return new AgentResolvedResource(
-                binding.TargetKind == LocalSecureNodeKind.Directory ? "directory" : "file",
-                binding.FullPath,
-                resourceReference,
-                boundary,
-                binding.Exists)
+            return new AgentResolvedResource
             {
+                ResourceKind = binding.TargetKind == LocalSecureNodeKind.Directory ? "directory" : "file",
+                DisplayName = binding.FullPath, CanonicalReference = resourceReference, PermissionBoundaryId = boundary, Exists = binding.Exists,
                 ScopeClassificationBasis = ToContractBasis(scope.Basis),
                 ResourceClaim = claim,
                 AuthorityReferences = authorityReferences,
@@ -296,7 +290,7 @@ internal static class LocalResourceResolver
         }
 
         // Mapping is advisory. Structured operations must reacquire their own secure handle chain.
-        return new AgentExecutionPathMapping(fullPath, fullPath, IsInsideAllowedRoot: true);
+        return new AgentExecutionPathMapping { ExecutionPath = fullPath, HostPath = fullPath, IsInsideAllowedRoot = true };
     }
 
     private static void RejectUnconfiguredMissingIntermediate(

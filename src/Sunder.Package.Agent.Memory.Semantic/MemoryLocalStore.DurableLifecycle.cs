@@ -203,7 +203,8 @@ public sealed partial class MemoryLocalStore
 
             var now = lifecycleEvent.OccurredAtUtc == default
                 ? DateTimeOffset.UtcNow
-                : lifecycleEvent.OccurredAtUtc;
+                : lifecycleEvent.OccurredAtUtc.TryGetDateTimeOffset(out var occurredAt) ? occurredAt
+                    : throw new AgentDurableLifecycleIntegrityException("The lifecycle timestamp is not exactly representable.");
             var mergedCandidate = mergeTarget is null
                 ? candidate
                 : SemanticMemoryPromotionService.MergeCandidate(candidate, mergeTarget);

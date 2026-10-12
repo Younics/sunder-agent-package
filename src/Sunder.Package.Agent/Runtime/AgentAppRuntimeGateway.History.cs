@@ -21,7 +21,7 @@ internal sealed partial class AgentAppRuntimeGateway :
         HistorySearchRequest request,
         CancellationToken cancellationToken = default)
     {
-        var response = await InvokeAsync(AgentRuntimeOperations.HistorySearch, request, cancellationToken)
+        var response = await InvokeAsync(_owner.SearchHistoryAsync, request, cancellationToken)
             .ConfigureAwait(false);
         ObserveHistoryStatus(response.Status, publishStatus: false);
         return response;
@@ -31,7 +31,7 @@ internal sealed partial class AgentAppRuntimeGateway :
         HistorySearchStateRequest request,
         CancellationToken cancellationToken = default)
     {
-        var state = await InvokeAsync(AgentRuntimeOperations.HistoryState, request, cancellationToken)
+        var state = await InvokeAsync(_owner.GetHistoryStateAsync, request, cancellationToken)
             .ConfigureAwait(false);
         ObserveHistoryStatus(state.Status, publishStatus: false);
         return state;
@@ -41,7 +41,7 @@ internal sealed partial class AgentAppRuntimeGateway :
         HistorySearchCommand command,
         CancellationToken cancellationToken = default)
     {
-        var result = await InvokeAsync(AgentRuntimeOperations.HistoryCommands, command, cancellationToken)
+        var result = await InvokeAsync(_owner.ExecuteHistoryCommandAsync, command, cancellationToken)
             .ConfigureAwait(false);
         ObserveHistoryStatus(result.Status, publishStatus: false);
         return result;
@@ -51,7 +51,7 @@ internal sealed partial class AgentAppRuntimeGateway :
         AgentTranscriptAroundTurnRequest request,
         CancellationToken cancellationToken = default)
     {
-        var page = await InvokeAsync(AgentRuntimeOperations.TranscriptAround, request, cancellationToken)
+        var page = await InvokeAsync(_owner.GetTranscriptAroundAsync, request, cancellationToken)
             .ConfigureAwait(false);
         CacheTurns(page.Turns);
         return page;
@@ -61,7 +61,7 @@ internal sealed partial class AgentAppRuntimeGateway :
         AgentTranscriptToolDetailRequest request,
         CancellationToken cancellationToken = default)
         => (await InvokeAsync(
-                AgentRuntimeOperations.TranscriptToolDetail,
+                _owner.GetTranscriptToolDetailAsync,
                 request,
                 cancellationToken)
             .ConfigureAwait(false)).Detail;
@@ -100,9 +100,10 @@ internal sealed partial class AgentAppRuntimeGateway :
                         runtimeInstanceId = _runtimeInstanceId;
                     }
                 }
-                await foreach (var status in _ownerClient.SubscribeAsync(
-                                   AgentRuntimeOperations.HistoryStatus,
-                                   new HistorySearchStatusSubscription(afterRevision, runtimeInstanceId),
+                var subscription = new HistorySearchStatusSubscription(afterRevision, runtimeInstanceId);
+                await _resources.PrepareAsync(subscription, cancellationToken).ConfigureAwait(false);
+                await foreach (var status in _owner.WatchHistoryStatusAsync(
+                                   subscription,
                                    cancellationToken).ConfigureAwait(false))
                 {
                     ObserveHistoryStatus(status, publishStatus: true);

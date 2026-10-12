@@ -1,16 +1,17 @@
-using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Mcp.Runtime;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using Sunder.Sdk.Services;
+using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Mcp.Services;
 
 public sealed partial class McpSunderConfigurationSyncService(
     McpEcosystemConfigurationImporter importer,
-    IMcpWorkspaceCatalog workspaceCatalog,
+    IServiceProviders<IRuntimeCatalogService> workspaceCatalog,
     string? userProfilePath = null,
     string? applicationDataPath = null)
 {
     private readonly McpEcosystemConfigurationImporter _importer = importer;
-    private readonly IMcpWorkspaceCatalog _workspaceCatalog = workspaceCatalog;
+    private readonly IServiceProviders<IRuntimeCatalogService> _workspaceCatalog = workspaceCatalog;
     private readonly string? _userProfilePath = userProfilePath;
     private readonly string? _applicationDataPath = applicationDataPath;
     private readonly SemaphoreSlim _syncGate = new(1, 1);
@@ -136,8 +137,41 @@ public sealed partial class McpSunderConfigurationSyncService(
         }
     }
 
-    private Task<IReadOnlyList<AgentWorkspaceRecord>> ListKnownWorkspacesAsync(CancellationToken cancellationToken)
-        => _workspaceCatalog.ListKnownWorkspacesAsync(cancellationToken);
+    private async Task<IReadOnlyList<AgentWorkspaceRecord>> ListKnownWorkspacesAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var catalog = await _workspaceCatalog.ListAsync(cancellationToken).ConfigureAwait(false);
+            var result = new List<AgentWorkspaceRecord>();
+            foreach (var provider in catalog.Providers)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (provider.State != ServiceProviderState.Active || !await IsCurrentAsync(provider, cancellationToken).ConfigureAwait(false)) continue;
+                IReadOnlyList<AgentWorkspaceRecord> workspaces;
+                using var invocation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, provider.RetirementToken);
+                try { workspaces = await provider.Service.ListWorkspacesAsync(invocation.Token).ConfigureAwait(false); }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+                catch
+                {
+                    // Optional-provider failure does not discard the other workspace catalogs.
+                    cancellationToken.ThrowIfCancellationRequested();
+                    continue;
+                }
+                cancellationToken.ThrowIfCancellationRequested();
+                if (await IsCurrentAsync(provider, cancellationToken).ConfigureAwait(false)) result.AddRange(workspaces);
+            }
+            return result;
+        }
+        catch (SunderRpcException error) when (!cancellationToken.IsCancellationRequested && error.Error.Kind == SunderRpcErrorKind.Unavailable)
+        { return []; }
+    }
+
+    private static async ValueTask<bool> IsCurrentAsync(ServiceProvider<IRuntimeCatalogService> provider, CancellationToken token)
+    {
+        try { await provider.EnsureCurrentAsync(token).ConfigureAwait(false); return true; }
+        catch (SunderRpcException error) when (error.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable)
+        { token.ThrowIfCancellationRequested(); return false; }
+    }
 
     private static IEnumerable<string> EnumerateWorkspaceConfigurationPaths(AgentWorkspaceRecord workspace)
     {

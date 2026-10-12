@@ -1,9 +1,12 @@
 using Microsoft.Extensions.Logging;
+using System.Text;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Mcp_Services;
 using Sunder.Package.Agent.Mcp.Services;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Callbacks;
 using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Mcp.Runtime;
 
@@ -14,7 +17,7 @@ internal sealed partial class McpAppRuntimeGateway :
     IAsyncDisposable
 {
     private const int MaxImportBytes = 1024 * 1024;
-    private readonly IMcpOwnerManagementClient _client;
+    private readonly IManagementService _client;
     private readonly PackageCallbackFlowRunner _callbackFlow;
     private readonly CancellationTokenSource _lifetime = new();
     private readonly ILogger<McpAppRuntimeGateway>? _logger;
@@ -25,7 +28,7 @@ internal sealed partial class McpAppRuntimeGateway :
     private int _lifetimeDisposed;
 
     internal McpAppRuntimeGateway(
-        IMcpOwnerManagementClient client,
+        IManagementService client,
         IPackageCallbackClient callbacks,
         ILoggerFactory? loggerFactory = null)
     {
@@ -51,7 +54,7 @@ internal sealed partial class McpAppRuntimeGateway :
     public async Task<IReadOnlyList<ConfiguredMcpServerRecord>> ListAsync(
         CancellationToken cancellationToken = default)
     {
-        var result = await QueryAsync(new McpQuery(McpQueryKind.Catalog), cancellationToken);
+        var result = await McpManagementContent.ReadResponseAsync<McpProjection>(_client.CatalogAsync(cancellationToken), cancellationToken);
         _diagnostics = result.Diagnostics ?? [];
         return result.Servers ?? [];
     }
@@ -59,7 +62,7 @@ internal sealed partial class McpAppRuntimeGateway :
     public async Task<string?> LoadDocumentAsync(
         string serverId,
         CancellationToken cancellationToken = default)
-        => (await QueryAsync(new McpQuery(McpQueryKind.Document, serverId), cancellationToken)).Document;
+        => (await McpManagementContent.ReadResponseAsync<McpProjection>(_client.DocumentAsync(serverId, cancellationToken), cancellationToken)).Document;
 
     public string NormalizeName(string? name) => McpServerName.Normalize(name);
 
@@ -86,21 +89,22 @@ internal sealed partial class McpAppRuntimeGateway :
     public async Task<string> SaveAsync(
         ParsedMcpServerConfiguration parsed,
         CancellationToken cancellationToken = default)
-        => (await CommandAsync(
-                new McpCommand(McpCommandKind.Save, Configuration: parsed),
-                cancellationToken)).Document
-           ?? throw new InvalidOperationException("The Runtime did not return the saved MCP editor document.");
+    {
+        await using var content = McpManagementContent.Create(parsed, "mcp-configuration.json");
+        return (await McpManagementContent.ReadResponseAsync<McpProjection>(_client.SaveAsync(content, cancellationToken), cancellationToken)).Document
+            ?? throw new InvalidOperationException("The Runtime did not return the saved MCP editor document.");
+    }
 
     public async Task DeleteAsync(string serverId, CancellationToken cancellationToken = default)
-        => _ = await CommandAsync(new McpCommand(McpCommandKind.Delete, serverId), cancellationToken);
+        => _ = await McpManagementContent.ReadResponseAsync<McpProjection>(_client.DeleteAsync(serverId, cancellationToken), cancellationToken);
 
     public async Task<McpConfigurationImportResult> InitializeAsync(
         CancellationToken cancellationToken = default)
-        => (await CommandAsync(new McpCommand(McpCommandKind.Initialize), cancellationToken)).ImportResult!;
+        => (await McpManagementContent.ReadResponseAsync<McpProjection>(_client.InitializeAsync(cancellationToken), cancellationToken)).ImportResult!;
 
     public async Task<McpConfigurationImportResult> ImportCommonAsync(
         CancellationToken cancellationToken = default)
-        => (await CommandAsync(new McpCommand(McpCommandKind.ImportCommon), cancellationToken)).ImportResult!;
+        => (await McpManagementContent.ReadResponseAsync<McpProjection>(_client.ImportCommonAsync(cancellationToken), cancellationToken)).ImportResult!;
 
     public async Task<McpConfigurationImportResult> ImportFileAsync(
         string filePath,
@@ -114,36 +118,26 @@ internal sealed partial class McpAppRuntimeGateway :
             filePath,
             MaxImportBytes,
             cancellationToken).ConfigureAwait(false);
-        return (await CommandAsync(
-            new McpCommand(
-                McpCommandKind.ImportDocument,
-                Document: document,
-                FileName: Path.GetFileName(filePath)),
-            cancellationToken)).ImportResult!;
+        await using var content = SunderContent.FromBytes(Encoding.UTF8.GetBytes(document), "application/json", Path.GetFileName(filePath));
+        return (await McpManagementContent.ReadResponseAsync<McpProjection>(_client.ImportDocumentAsync(content, cancellationToken), cancellationToken)).ImportResult!;
     }
 
     public async Task<IReadOnlyList<string>> DiscoverAsync(
         ConfiguredMcpServerRecord server,
         bool reconnect,
         CancellationToken cancellationToken)
-        => (await CommandAsync(
-                new McpCommand(
-                    reconnect ? McpCommandKind.Reconnect : McpCommandKind.Discover,
-                    server.ServerId),
-                cancellationToken)).ToolNames
+        => (await McpManagementContent.ReadResponseAsync<McpProjection>(_client.DiscoverAsync(server.ServerId, reconnect, cancellationToken), cancellationToken)).ToolNames
            ?? [];
 
     public async Task DisconnectAsync(
         string serverId,
         CancellationToken cancellationToken = default)
-        => _ = await CommandAsync(new McpCommand(McpCommandKind.Disconnect, serverId), cancellationToken);
+        => _ = await McpManagementContent.ReadResponseAsync<McpProjection>(_client.DisconnectAsync(serverId, cancellationToken), cancellationToken);
 
     public async Task<McpConnectionPresentation> GetPresentationAsync(
         ConfiguredMcpServerRecord server,
         CancellationToken cancellationToken = default)
-        => (await QueryAsync(
-                new McpQuery(McpQueryKind.Presentation, server.ServerId),
-                cancellationToken)).Presentation!;
+        => (await McpManagementContent.ReadResponseAsync<McpProjection>(_client.PresentationAsync(server.ServerId, cancellationToken), cancellationToken)).Presentation!;
 
     public async Task AuthorizeAsync(
         ConfiguredMcpServerRecord server,
@@ -163,22 +157,14 @@ internal sealed partial class McpAppRuntimeGateway :
     public async Task ClearAuthorizationAsync(
         ConfiguredMcpServerRecord server,
         CancellationToken cancellationToken)
-        => _ = await CommandAsync(
-            new McpCommand(McpCommandKind.ClearAuthorization, server.ServerId),
-            cancellationToken);
-
-    private async Task<McpProjection> QueryAsync(McpQuery query, CancellationToken cancellationToken)
-        => await _client.QueryAsync(query, cancellationToken).ConfigureAwait(false);
-
-    private async Task<McpProjection> CommandAsync(McpCommand command, CancellationToken cancellationToken)
-        => await _client.CommandAsync(command, cancellationToken).ConfigureAwait(false);
+        => _ = await McpManagementContent.ReadResponseAsync<McpProjection>(_client.ClearAuthorizationAsync(server.ServerId, cancellationToken), cancellationToken);
 
     private async Task ObserveChangesOnceAsync(
         Action markAvailable,
         CancellationToken cancellationToken)
     {
         var connected = false;
-        await foreach (var change in _client.WatchChangesAsync(cancellationToken))
+        await foreach (var change in _client.ChangesAsync(cancellationToken))
         {
             if (!connected)
             {

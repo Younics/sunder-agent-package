@@ -2,6 +2,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
 using Sunder.Package.Agent.Provider.Shared;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Provider_Lmstudio_Services;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Rpc;
 
@@ -12,7 +13,7 @@ public sealed partial class LMStudioSettingsViewModel : ObservableObject,
     IDisposable
 {
     private readonly IPackageContext _packageContext;
-    private readonly IProviderCredentialOwnerClient _credentials;
+    private readonly ICredentialSettingsService _credentials;
     private readonly ILogger _logger;
     private readonly object _initializationSyncRoot = new();
     private readonly SemaphoreSlim _navigationLoadGate = new(1, 1);
@@ -28,25 +29,18 @@ public sealed partial class LMStudioSettingsViewModel : ObservableObject,
         LMStudioProviderConfiguration.UtilityModelKey,
     ];
 
-    public LMStudioSettingsViewModel(
-        IPackageContext packageContext,
-        ISunderRpcClient rpcClient)
-        : this(
-            packageContext,
-            new ProviderCredentialOwnerRpcClient(rpcClient))
-    {
-    }
-
     [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
     internal LMStudioSettingsViewModel(
         IPackageContext packageContext,
-        IProviderCredentialOwnerClient credentials)
+        ICredentialSettingsService credentials)
     {
         _packageContext = packageContext;
         _credentials = credentials;
         _logger = packageContext.Logging.LoggerFactory.CreateLogger<LMStudioSettingsViewModel>();
         ApiKeySettings = new ApiKeySettingsState(
-            credentials,
+            credentials.GetStatusAsync,
+            credentials.SetAsync,
+            credentials.ClearAsync,
             "The bearer key is optional. Blank input retains a stored key; use Clear Stored Key to remove it.",
             "lm-studio-key",
             static hasCredential => hasCredential
@@ -143,7 +137,7 @@ public sealed partial class LMStudioSettingsViewModel : ObservableObject,
 
             BaseUrl = baseUrl;
             UtilityModelId = utilityModelId;
-            ApiKeySettings.ApplyCredentialStatus(credentialStatus.HasStoredCredential);
+            ApiKeySettings.ApplyCredentialStatus(credentialStatus);
             ClearRuntimeError();
             StatusText = string.Empty;
             RefreshConnectionStatus();

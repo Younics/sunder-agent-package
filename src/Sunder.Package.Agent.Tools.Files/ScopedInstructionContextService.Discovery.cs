@@ -1,4 +1,3 @@
-using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 
 namespace Sunder.Package.Agent.Tools.Files;
@@ -6,7 +5,7 @@ namespace Sunder.Package.Agent.Tools.Files;
 internal sealed partial class ScopedInstructionContextService
 {
     private static async ValueTask<AgentScopedInstructionDiscoveryResult> DiscoverBatchedAsync(
-        IAgentScopedInstructionDiscoveryTarget target,
+        FileExecutionTarget target,
         AgentExecutionTargetContext context,
         IReadOnlyList<AgentScopedInstructionProbe> probes,
         CancellationToken cancellationToken)
@@ -21,10 +20,8 @@ internal sealed partial class ScopedInstructionContextService
         var scopes = new List<AgentScopedInstructionScope>();
         foreach (var batch in probes.Chunk(MaxMutationPaths))
         {
-            var result = await target.DiscoverScopedInstructionsAsync(
-                context,
-                new AgentScopedInstructionDiscoveryRequest(batch),
-                cancellationToken).ConfigureAwait(false);
+            var result = await target.Service.DiscoverInstructionsAsync(new()
+            { Context = context, Request = new() { Probes = batch } }, cancellationToken).ConfigureAwait(false);
             ValidateCompleteDiscovery(result, batch.Length);
             targetFingerprint ??= result.TargetFingerprint;
             scopeFingerprint ??= result.ScopeFingerprint;
@@ -49,12 +46,9 @@ internal sealed partial class ScopedInstructionContextService
                 return selected;
             })
             .ToArray();
-        return new AgentScopedInstructionDiscoveryResult(
-            targetFingerprint!,
-            scopeFingerprint!,
-            mergedScopes,
-            WasTruncated: false)
+        return new AgentScopedInstructionDiscoveryResult
         {
+            TargetFingerprint = targetFingerprint!, ScopeFingerprint = scopeFingerprint!, Scopes = mergedScopes, WasTruncated = false,
             ProcessedProbeCount = probes.Count,
         };
     }

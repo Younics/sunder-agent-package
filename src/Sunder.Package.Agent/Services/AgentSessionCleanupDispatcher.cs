@@ -1,6 +1,7 @@
-using Sunder.Package.Agent.Contracts.Contracts;
-using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Storage;
+using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.Services;
 
@@ -10,13 +11,13 @@ internal sealed class AgentSessionCleanupDispatcher : IAsyncDisposable
     private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(250);
 
     private readonly AgentLocalStore _store;
-    private readonly AgentRpcCatalog _rpcCatalog;
+    private readonly IServiceProviders<AgentServices.ISessionCleanerService> _cleaners;
     private readonly object _syncRoot = new();
     private readonly SemaphoreSlim _dispatchGate = new(1, 1);
     private readonly SemaphoreSlim _wakeSignal = new(0, 1);
 
-    private IReadOnlyDictionary<AgentSessionDataCleanerIdentity, AgentRpcReference<IAgentSessionDataCleaner>>
-        _activeCleaners = new Dictionary<AgentSessionDataCleanerIdentity, AgentRpcReference<IAgentSessionDataCleaner>>();
+    private IReadOnlyDictionary<AgentSessionDataCleanerIdentity, ServiceProvider<AgentServices.ISessionCleanerService>>
+        _activeCleaners = new Dictionary<AgentSessionDataCleanerIdentity, ServiceProvider<AgentServices.ISessionCleanerService>>();
     private CancellationTokenSource? _lifetime;
     private Task? _worker;
     private bool _startupRecoveryPending;
@@ -24,26 +25,19 @@ internal sealed class AgentSessionCleanupDispatcher : IAsyncDisposable
 
     public AgentSessionCleanupDispatcher(
         AgentLocalStore store,
-        AgentRpcCatalog rpcCatalog)
+        IServiceProviders<AgentServices.ISessionCleanerService> cleaners)
     {
         _store = store;
-        _rpcCatalog = rpcCatalog;
+        _cleaners = cleaners;
         _store.SessionCleanupJobsChanged += Wake;
     }
 
-    internal static void DispatchAvailableNow(
+    internal static async Task DispatchAvailableNowAsync(
         AgentLocalStore store,
-        AgentRpcCatalog rpcCatalog)
+        IServiceProviders<AgentServices.ISessionCleanerService> cleaners)
     {
-        var dispatcher = new AgentSessionCleanupDispatcher(store, rpcCatalog);
-        try
-        {
-            dispatcher.FlushAsync(CancellationToken.None).GetAwaiter().GetResult();
-        }
-        finally
-        {
-            dispatcher.DisposeAsync().AsTask().GetAwaiter().GetResult();
-        }
+        await using var dispatcher = new AgentSessionCleanupDispatcher(store, cleaners);
+        await dispatcher.FlushAsync(CancellationToken.None).ConfigureAwait(false);
     }
 
     internal Task StartAsync(CancellationToken cancellationToken = default)
@@ -59,7 +53,6 @@ internal sealed class AgentSessionCleanupDispatcher : IAsyncDisposable
 
             _lifetime = new CancellationTokenSource();
             _startupRecoveryPending = true;
-            _rpcCatalog.Changed += OnCatalogChanged;
             _worker = RunAsync(_lifetime.Token);
         }
         Wake();
@@ -80,7 +73,6 @@ internal sealed class AgentSessionCleanupDispatcher : IAsyncDisposable
             }
             _worker = null;
             _lifetime = null;
-            _rpcCatalog.Changed -= OnCatalogChanged;
         }
 
         await lifetime.CancelAsync().ConfigureAwait(false);
@@ -108,7 +100,7 @@ internal sealed class AgentSessionCleanupDispatcher : IAsyncDisposable
     internal async Task FlushAsync(CancellationToken cancellationToken = default)
     {
         _store.EnsureRuntimeGenerationCurrent();
-        ReconcileCleaners(DateTimeOffset.UtcNow);
+        await ReconcileCleanersAsync(DateTimeOffset.UtcNow, cancellationToken).ConfigureAwait(false);
         var recoveryPending = false;
         lock (_syncRoot)
         {
@@ -124,7 +116,7 @@ internal sealed class AgentSessionCleanupDispatcher : IAsyncDisposable
         var dispatchPending = false;
         try
         {
-            dispatchPending = DispatchAvailable(cancellationToken);
+            dispatchPending = await DispatchAvailableAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -172,13 +164,13 @@ internal sealed class AgentSessionCleanupDispatcher : IAsyncDisposable
         }
     }
 
-    private bool DispatchAvailable(CancellationToken cancellationToken)
+    private async Task<bool> DispatchAvailableAsync(CancellationToken cancellationToken)
     {
         var dispatchCount = 0;
         var unavailable = new HashSet<AgentSessionDataCleanerIdentity>();
         while (dispatchCount < AgentLocalStore.MaxSessionCleanupJobsPerPass)
         {
-            KeyValuePair<AgentSessionDataCleanerIdentity, AgentRpcReference<IAgentSessionDataCleaner>>[] cleaners;
+            KeyValuePair<AgentSessionDataCleanerIdentity, ServiceProvider<AgentServices.ISessionCleanerService>>[] cleaners;
             lock (_syncRoot)
             {
                 cleaners = _activeCleaners
@@ -208,40 +200,31 @@ internal sealed class AgentSessionCleanupDispatcher : IAsyncDisposable
                 madeProgress = true;
                 dispatchCount++;
 
-                if (!reference.TryAcquire(out var lease))
+                try
+                {
+                    await reference.Service.DeleteSessionAsync(claim.SessionId, cancellationToken).ConfigureAwait(false);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (reference.RetirementToken.IsCancellationRequested)
+                    {
+                        _store.ReleaseSessionCleanupJob(claim, DateTimeOffset.UtcNow);
+                        unavailable.Add(identity);
+                    }
+                    else _store.CompleteSessionCleanupJob(claim, DateTimeOffset.UtcNow);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    _store.ReleaseSessionCleanupJob(claim, DateTimeOffset.UtcNow);
+                    throw;
+                }
+                catch (Exception exception) when (reference.RetirementToken.IsCancellationRequested
+                    || exception is SunderRpcException { Error.Kind: SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable })
                 {
                     _store.ReleaseSessionCleanupJob(claim, DateTimeOffset.UtcNow);
                     unavailable.Add(identity);
-                    continue;
                 }
-
-                using (lease)
+                catch (Exception exception)
                 {
-                    try
-                    {
-                        lease.Service.DeleteSessionData(claim.SessionId);
-                        if (lease.RetirementToken.IsCancellationRequested)
-                        {
-                            _store.ReleaseSessionCleanupJob(claim, DateTimeOffset.UtcNow);
-                            unavailable.Add(identity);
-                        }
-                        else
-                        {
-                            _store.CompleteSessionCleanupJob(claim, DateTimeOffset.UtcNow);
-                        }
-                    }
-                    catch (Exception exception)
-                    {
-                        if (lease.RetirementToken.IsCancellationRequested)
-                        {
-                            _store.ReleaseSessionCleanupJob(claim, DateTimeOffset.UtcNow);
-                            unavailable.Add(identity);
-                        }
-                        else
-                        {
-                            _store.FailSessionCleanupJob(claim, exception, DateTimeOffset.UtcNow);
-                        }
-                    }
+                    _store.FailSessionCleanupJob(claim, exception, DateTimeOffset.UtcNow);
                 }
             }
 
@@ -253,27 +236,29 @@ internal sealed class AgentSessionCleanupDispatcher : IAsyncDisposable
         return true;
     }
 
-    private void ReconcileCleaners(DateTimeOffset now)
+    private async Task ReconcileCleanersAsync(DateTimeOffset now, CancellationToken cancellationToken)
     {
         var active = new Dictionary<
             AgentSessionDataCleanerIdentity,
-            AgentRpcReference<IAgentSessionDataCleaner>>();
-        foreach (var reference in _rpcCatalog.GetServiceReferences(Sunder.Package.Agent.Runtime.Rpc.AgentCleanupBindings.SessionCleaners))
+            ServiceProvider<AgentServices.ISessionCleanerService>>();
+        var catalog = await _cleaners.ListAsync(cancellationToken).ConfigureAwait(false);
+        foreach (var provider in catalog.Providers)
         {
-            if (!reference.TryAcquire(out var lease))
+            cancellationToken.ThrowIfCancellationRequested();
+            if (provider.State != ServiceProviderState.Active) continue;
+            try
             {
-                continue;
-            }
-            using (lease)
-            {
-                var packageId = lease.PackageId.Trim();
-                var cleanerId = lease.Service.CleanerId?.Trim() ?? string.Empty;
+                var descriptor = await provider.Service.DescribeAsync(cancellationToken).ConfigureAwait(false);
+                var packageId = provider.PackageId.Trim();
+                var cleanerId = descriptor.Id?.Trim() ?? string.Empty;
                 if (packageId.Length is < 1 or > 256 || cleanerId.Length is < 1 or > 512)
                 {
                     continue;
                 }
-                active.TryAdd(new AgentSessionDataCleanerIdentity(packageId, cleanerId), reference);
+                active.TryAdd(new AgentSessionDataCleanerIdentity(packageId, cleanerId), provider);
             }
+            catch (SunderRpcException exception) when (!cancellationToken.IsCancellationRequested
+                && exception.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable) { }
         }
 
         _store.RegisterSessionDataCleaners(active.Keys.ToArray(), now);
@@ -281,11 +266,6 @@ internal sealed class AgentSessionCleanupDispatcher : IAsyncDisposable
         {
             _activeCleaners = active;
         }
-    }
-
-    private void OnCatalogChanged(object? sender, AgentRpcCatalogChangedEventArgs e)
-    {
-        if (e.IncludesContract(AgentRpcContractIds.SessionCleaner)) Wake();
     }
 
     private void Wake()

@@ -1,47 +1,40 @@
-using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Shared.PackageViews;
+using Sunder.Package.Agent.Shared.Presentation;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.Services;
 
-public sealed partial class AgentToolPresentationService
+public sealed class AgentToolPresentationService
 {
-    private readonly TranscriptToolPresentationService _shared;
+    private readonly TranscriptToolPresentationService _shared = new();
+    private readonly AgentServices.IAgentRuntimeService? _owner;
 
-    public AgentToolPresentationService(
-        AgentRpcCatalog? rpcCatalog = null)
+    public AgentToolPresentationService() { }
+
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
+    internal AgentToolPresentationService(AgentServices.IAgentRuntimeService owner)
+        => _owner = owner;
+
+    public async ValueTask<AgentToolPresentation> ResolveAsync(AgentTurnItemRecord item, CancellationToken cancellationToken = default)
     {
-        _shared = new TranscriptToolPresentationService(() =>
+        cancellationToken.ThrowIfCancellationRequested();
+        if (_owner is not null)
         {
-            return rpcCatalog is null
-                ? []
-                : rpcCatalog.GetServiceReferences(Sunder.Package.Agent.Runtime.Rpc.AgentToolBindings.Service)
-                    .Select(static reference =>
-                        (IAgentToolPresentationResolver)new RpcToolSourcePresentationResolver(reference))
-                    .ToArray();
-        });
-    }
-
-    public AgentToolPresentation Resolve(AgentTurnItemRecord item) => _shared.Resolve(item);
-}
-
-internal sealed class RpcToolSourcePresentationResolver(
-    AgentRpcReference<IAgentToolSource> reference) : IAgentToolPresentationResolver
-{
-    public AgentToolPresentation? ResolveToolPresentation(AgentToolPresentationRequest request)
-    {
-        if (!reference.TryAcquire(out var lease))
-        {
-            return null;
+            try
+            {
+                var request = TranscriptToolPresentationService.CreateRequest(item);
+                var presentation = await _owner.GetToolPresentationAsync(request, cancellationToken).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (presentation is not null) return _shared.Resolve(item, presentation);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (Exception exception) when (!PresentationExceptionPolicy.IsFatal(exception))
+            {
+                // The locally derived transcript presentation remains available offline.
+            }
         }
-
-        using (lease)
-        {
-            var presentation = lease.Service is IAgentToolPresentationResolver resolver
-                ? resolver.ResolveToolPresentation(request)
-                : null;
-            return lease.RetirementToken.IsCancellationRequested ? null : presentation;
-        }
+        cancellationToken.ThrowIfCancellationRequested();
+        return _shared.Resolve(item);
     }
 }

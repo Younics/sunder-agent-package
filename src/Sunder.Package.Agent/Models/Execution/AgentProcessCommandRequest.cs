@@ -23,4 +23,4 @@ public sealed record AgentProcessCommandRequest(
     string FileName,
     IReadOnlyList<string> Arguments,
     string? WorkingDirectory = null,
-    int? TimeoutSeconds = null);
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] int? TimeoutSeconds = null);

@@ -13,7 +13,7 @@ internal static partial class AgentSourceMigrationProjectChanges
             const string selected = "    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]\n"
                 + "    internal McpClientConnectionManager(Sunder.Sdk.Abstractions.IPackageContext context, McpOAuthService oauth)\n"
                 + "        : this(context.Logging.LoggerFactory, oauth) { }\n\n";
-            Assert.Equal(2, text.Split(selected, StringSplitOptions.None).Length);
+            RequireOnce(selected);
             text = text.Replace(selected, "", StringComparison.Ordinal);
         }
         if (Path.GetFileName(path) == "McpSunderConfigurationSyncService.cs")
@@ -33,7 +33,7 @@ internal static partial class AgentSourceMigrationProjectChanges
             };
             foreach (var (after, before) in replacements)
             {
-                Assert.Equal(2, text.Split(after, StringSplitOptions.None).Length);
+                RequireOnce(after);
                 text = text.Replace(after, before, StringComparison.Ordinal);
             }
         }
@@ -41,7 +41,7 @@ internal static partial class AgentSourceMigrationProjectChanges
         {
             var legacy = ReadMigrationSourceText(Path.Combine(Path.GetDirectoryName(path)!, "McpManagementRpcProvider.Legacy.cs"));
             const string marker = "internal sealed class McpLocalManagementGateway";
-            Assert.Equal(2, text.Split(marker, StringSplitOptions.None).Length);
+            RequireOnce(marker);
             var provider = legacy[legacy.IndexOf("internal sealed class McpManagementRpcProvider", StringComparison.Ordinal)..].TrimEnd();
             text = text.Replace("using System.Threading.Channels;", "using System.Threading.Channels;\nusing Sunder.Package.Agent.Mcp.Protocol.Generated;", StringComparison.Ordinal)
                 .Replace(marker, provider + "\n\n" + marker, StringComparison.Ordinal);
@@ -50,7 +50,7 @@ internal static partial class AgentSourceMigrationProjectChanges
         {
             var legacy = ReadMigrationSourceText(Path.Combine(Path.GetDirectoryName(path)!, "McpOwnerManagementRpcClient.Legacy.cs"));
             const string marker = "internal sealed class McpAppRuntimeGateway";
-            Assert.Equal(2, text.Split(marker, StringSplitOptions.None).Length);
+            RequireOnce(marker);
             var client = legacy[legacy.IndexOf("internal sealed class McpOwnerManagementRpcClient", StringComparison.Ordinal)..].TrimEnd();
             text = "using System.Runtime.CompilerServices;\n" + text.Replace("using Microsoft.Extensions.Logging;", "using Microsoft.Extensions.Logging;\nusing Sunder.Package.Agent.Mcp.Protocol.Generated;", StringComparison.Ordinal)
                 .Replace(marker, client + "\n\n" + marker, StringComparison.Ordinal)
@@ -64,5 +64,11 @@ internal static partial class AgentSourceMigrationProjectChanges
             text = text.Replace("Services.McpOAuthConstants.HandlerId", "\"mcp.oauth.v1\"", StringComparison.Ordinal)
                 .Replace("Services.McpOAuthConstants.ServerIdParameter", "\"serverId\"", StringComparison.Ordinal);
         return text;
+
+        void RequireOnce(string marker)
+        {
+            var count = text.Split(marker, StringSplitOptions.None).Length - 1;
+            Assert.True(count == 1, $"{path}: expected one pre-natural MCP occurrence of '{marker}', found {count}.");
+        }
     }
 }

@@ -11,10 +11,8 @@ namespace Sunder.Package.Agent.Runtime;
 internal sealed class AgentWorkerLifecycle : ISunderWorkerLifecycleService
 {
     private static readonly TimeSpan DefaultCleanupTimeout = TimeSpan.FromSeconds(5);
-    private readonly IServiceProvider? _services;
-    private readonly Func<AgentRpcCatalog> _catalog;
+    private readonly object _generationSync = new();
     private readonly Func<AgentRuntimeStartupService> _createStartup;
-    private readonly IReadOnlyList<DeferredAgentRpcServiceHandler> _providers;
     private readonly TimeSpan _cleanupTimeout;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly TaskCompletionSource _completion = new(
@@ -22,28 +20,21 @@ internal sealed class AgentWorkerLifecycle : ISunderWorkerLifecycleService
     private PackageRuntimeGeneration? _generation;
     private AgentRuntimeStartupService? _startup;
     private bool _active;
-    private int _catalogDisposed;
     private int _generationFaultObserved;
     private int _stopping;
 
     [ActivatorUtilitiesConstructor]
-    internal AgentWorkerLifecycle(AgentRpcCatalog catalog, Lazy<AgentRuntimeStartupService> startup)
+    internal AgentWorkerLifecycle(Lazy<AgentRuntimeStartupService> startup)
     {
-        _catalog = () => catalog;
         _createStartup = () => startup.Value;
-        _providers = [];
         _cleanupTimeout = DefaultCleanupTimeout;
     }
 
     internal AgentWorkerLifecycle(
         IServiceProvider services,
-        IReadOnlyList<DeferredAgentRpcServiceHandler> providers,
         TimeSpan? cleanupTimeout = null)
     {
-        _services = services;
-        _catalog = services.GetRequiredService<AgentRpcCatalog>;
         _createStartup = services.GetRequiredService<AgentRuntimeStartupService>;
-        _providers = providers;
         _cleanupTimeout = cleanupTimeout ?? DefaultCleanupTimeout;
         if (_cleanupTimeout <= TimeSpan.Zero)
         {
@@ -74,7 +65,7 @@ internal sealed class AgentWorkerLifecycle : ISunderWorkerLifecycleService
 
     internal void CommitGeneration(PackageRuntimeGeneration committed)
     {
-        lock (_providers)
+        lock (_generationSync)
         {
             if (_generation is not null && _generation != committed)
             {
@@ -106,19 +97,14 @@ internal sealed class AgentWorkerLifecycle : ISunderWorkerLifecycleService
                 ?? throw new InvalidOperationException(
                     "The Agent Worker must receive an exact Runtime generation before activation.");
 
-            var catalog = _catalog();
             var startup = _createStartup();
             try
             {
                 await startup.StartAsync(cancellationToken).ConfigureAwait(false);
                 await startup.CommitGenerationAsync(generation, cancellationToken).ConfigureAwait(false);
-                catalog.StartWatching();
-                foreach (var provider in _providers) provider.Activate(_services!);
             }
             catch
             {
-                DeactivateProviders();
-                _ = DisposeCatalog();
                 _ = await StopStartupBoundedAsync(startup).ConfigureAwait(false);
                 throw;
             }
@@ -140,8 +126,7 @@ internal sealed class AgentWorkerLifecycle : ISunderWorkerLifecycleService
         {
             if (IsStopping) return;
             Volatile.Write(ref _stopping, 1);
-            DeactivateProviders();
-            Exception? failure = DisposeCatalog();
+            Exception? failure = null;
             if (_startup is not null)
             {
                 failure = await StopStartupBoundedAsync(_startup).ConfigureAwait(false)
@@ -201,33 +186,12 @@ internal sealed class AgentWorkerLifecycle : ISunderWorkerLifecycleService
                 // The Host may already be withdrawing this exact generation.
             }
 
-            DeactivateProviders();
-            _ = DisposeCatalog();
             _ = await StopStartupBoundedAsync(startup).ConfigureAwait(false);
             _completion.TrySetException(exception);
         }
     }
 
     private bool IsStopping => Volatile.Read(ref _stopping) != 0;
-
-    private void DeactivateProviders()
-    {
-        foreach (var provider in _providers) provider.Deactivate();
-    }
-
-    private Exception? DisposeCatalog()
-    {
-        if (Interlocked.Exchange(ref _catalogDisposed, 1) != 0) return null;
-        try
-        {
-            _catalog().Dispose();
-            return null;
-        }
-        catch (Exception exception)
-        {
-            return exception;
-        }
-    }
 
     private async Task<Exception?> StopStartupBoundedAsync(AgentRuntimeStartupService startup)
     {

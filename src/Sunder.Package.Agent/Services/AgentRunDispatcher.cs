@@ -330,7 +330,6 @@ internal sealed class AgentRunDispatcher : IAsyncDisposable
             // The durable run ordering remains authoritative.
         }
 
-        AgentRunPlan? preparedPlan = null;
         CancellationTokenRegistration providerRetirementRegistration = default;
         try
         {
@@ -353,7 +352,6 @@ internal sealed class AgentRunDispatcher : IAsyncDisposable
             }
 
             var plan = ((AgentRunPrepared)preparation).Plan;
-            preparedPlan = plan;
             providerRetirementRegistration = plan.ProviderSelection.RetirementToken.Register(
                 static state => ((CancellationTokenSource)state!).Cancel(),
                 runCancellation);
@@ -400,7 +398,6 @@ internal sealed class AgentRunDispatcher : IAsyncDisposable
         finally
         {
             providerRetirementRegistration.Dispose();
-            preparedPlan?.Dispose();
             _activeRunRegistry.Complete(run.Key.SessionId, run.Key.RunId, run.Key.RunRevision);
             if (_sessionService.GetRun(run.Key.RunId)?.Status == AgentDurableRunStatus.WaitingForApproval)
             {

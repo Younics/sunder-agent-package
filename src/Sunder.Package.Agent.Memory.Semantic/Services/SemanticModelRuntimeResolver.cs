@@ -1,628 +1,347 @@
 using System.Security.Cryptography;
 using System.Text;
-using Sunder.Package.Agent.Contracts.Contracts;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Memory.Semantic.Runtime;
 using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
+using Sunder.Sdk.Worker;
 
 namespace Sunder.Package.Agent.Memory.Semantic.Services;
 
-public sealed partial class SemanticModelRuntimeResolver : IDisposable
+public sealed class SemanticModelRuntimeResolver : IDisposable, IAsyncDisposable, ISunderWorkerLifecycleService
 {
     private static readonly TimeSpan DefaultConfigurationCacheDuration = TimeSpan.FromMinutes(5);
-
-    private readonly ISemanticMemoryRpcCatalog _rpcCatalog;
+    private readonly IServiceProviders<IRuntimeCatalogService> _catalogs;
+    private readonly IServiceProviders<IEmbeddingProviderService> _embeddings;
     private readonly MemorySemanticSettingsService _settingsService;
     private readonly TimeSpan _configurationCacheDuration;
-    private readonly object _configurationCacheSync = new();
+    private readonly object _gate = new();
     private readonly Dictionary<string, CachedEmbeddingConfiguration> _configurationCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<RuntimeCatalogSubscription> _subscriptions = [];
+    private readonly CancellationTokenSource _lifetime = new();
+    private Task _completion = Task.CompletedTask;
+    private Task? _stop;
     private long _catalogRevision;
+    private bool _started;
     private bool _disposed;
 
-    public SemanticModelRuntimeResolver(
-        ISemanticMemoryRpcCatalog rpcCatalog,
-        MemorySemanticSettingsService settingsService,
-        TimeSpan? configurationCacheDuration = null)
+    public SemanticModelRuntimeResolver(IServiceProviders<IRuntimeCatalogService> catalogs, IServiceProviders<IEmbeddingProviderService> embeddings,
+        MemorySemanticSettingsService settingsService, TimeSpan? configurationCacheDuration = null)
     {
-        _rpcCatalog = rpcCatalog;
-        _settingsService = settingsService;
+        _catalogs = catalogs; _embeddings = embeddings; _settingsService = settingsService;
         _configurationCacheDuration = configurationCacheDuration ?? DefaultConfigurationCacheDuration;
-        if (_configurationCacheDuration <= TimeSpan.Zero)
-        {
-            throw new ArgumentOutOfRangeException(nameof(configurationCacheDuration));
-        }
-        _rpcCatalog.Changed += OnCatalogChanged;
+        if (_configurationCacheDuration <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(configurationCacheDuration));
     }
 
-    public Task<ResolvedEmbeddingProvider?> ResolveForProfileAsync(
-        string profileId,
-        CancellationToken cancellationToken = default)
-        => ResolveForProfileCoreAsync(profileId, canInvokeProvider: null, cancellationToken);
+    public Task Completion { get { lock (_gate) return _completion; } }
+    public ValueTask PrepareCandidateAsync(CancellationToken token = default) { token.ThrowIfCancellationRequested(); return ValueTask.CompletedTask; }
+    public ValueTask CommitGenerationAsync(SunderWorkerGenerationContext generation, CancellationToken token = default) { token.ThrowIfCancellationRequested(); return ValueTask.CompletedTask; }
+    public ValueTask ActivateAsync(SunderWorkerContext context, CancellationToken token = default)
+    {
+        token.ThrowIfCancellationRequested();
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (!_started)
+            {
+                _started = true;
+                _completion = Task.WhenAll(Task.Run(() => WatchProvidersAsync(_catalogs)), Task.Run(() => WatchProvidersAsync(_embeddings)));
+            }
+        }
+        return ValueTask.CompletedTask;
+    }
+    public ValueTask ShutdownAsync(SunderWorkerShutdownContext context, CancellationToken token = default) => DisposeAsync();
 
-    internal Task<ResolvedEmbeddingProvider?> ResolveForProfileAsync(
-        string profileId,
-        Func<CancellationToken, Task<bool>> canInvokeProvider,
-        CancellationToken cancellationToken)
+    public Task<ResolvedEmbeddingProvider?> ResolveForProfileAsync(string profileId, CancellationToken cancellationToken = default)
+        => ResolveForProfileCoreAsync(profileId, null, cancellationToken);
+    internal Task<ResolvedEmbeddingProvider?> ResolveForProfileAsync(string profileId, Func<CancellationToken, Task<bool>> canInvokeProvider, CancellationToken cancellationToken)
         => ResolveForProfileCoreAsync(profileId, canInvokeProvider, cancellationToken);
 
-    private async Task<ResolvedEmbeddingProvider?> ResolveForProfileCoreAsync(
-        string profileId,
-        Func<CancellationToken, Task<bool>>? canInvokeProvider,
-        CancellationToken cancellationToken)
+    private async Task<ResolvedEmbeddingProvider?> ResolveForProfileCoreAsync(string profileId, Func<CancellationToken, Task<bool>>? canInvokeProvider, CancellationToken token)
     {
-        var resolved = await ResolveConfigurationForProfileAsync(
-            profileId,
-            cancellationToken,
-            forceProviderIdentityRefresh: true,
-            canInvokeProvider).ConfigureAwait(false);
-        if (resolved is null)
-        {
-            return null;
-        }
-
-        try
-        {
-            if (!await CanInvokeProviderAsync(canInvokeProvider, cancellationToken).ConfigureAwait(false))
-            {
-                return null;
-            }
-            var readiness = await resolved.GetReadinessAsync(cancellationToken).ConfigureAwait(false);
-            return readiness.Status == AgentProviderReadinessStatus.Ready
-                ? resolved
-                : null;
-        }
-        catch (EmbeddingProviderRetiredException)
-        {
-            return null;
-        }
+        var resolved = await ResolveConfigurationForProfileAsync(profileId, token, true, canInvokeProvider).ConfigureAwait(false);
+        if (resolved is null || !await CanInvokeProviderAsync(canInvokeProvider, token).ConfigureAwait(false)) return null;
+        try { return (await resolved.GetReadinessAsync(token).ConfigureAwait(false)).Status == AgentProviderReadinessStatus.Ready ? resolved : null; }
+        catch (EmbeddingProviderRetiredException) { return null; }
     }
 
-    internal async Task<ResolvedEmbeddingProvider?> ResolveConfigurationForProfileAsync(
-        string profileId,
-        CancellationToken cancellationToken = default,
-        bool forceProviderIdentityRefresh = false,
+    internal async Task<ResolvedEmbeddingProvider?> ResolveConfigurationForProfileAsync(string profileId, CancellationToken cancellationToken = default,
+        bool forceProviderIdentityRefresh = false, Func<CancellationToken, Task<bool>>? canInvokeProvider = null)
+    {
+        if (string.IsNullOrWhiteSpace(profileId)) return null;
+        var binding = await InvokeRuntimeCatalogAsync(async (catalog, token) =>
+            await catalog.GetModelBindingAsync(new() { ProfileId = profileId, CapabilityKind = AgentModelCapabilityKinds.Embedding }, token).ConfigureAwait(false)
+                ?? ResolveLegacyBinding(await catalog.GetProfileAsync(profileId, token).ConfigureAwait(false)),
+            null as AgentProfileModelBindingRecord, cancellationToken).ConfigureAwait(false);
+        return await ResolveConfigurationAsync(profileId, binding, forceProviderIdentityRefresh, canInvokeProvider, cancellationToken).ConfigureAwait(false);
+    }
+
+    internal async Task<bool> IsCurrentConfigurationAsync(string profileId, ResolvedEmbeddingProvider expected, CancellationToken cancellationToken = default,
         Func<CancellationToken, Task<bool>>? canInvokeProvider = null)
     {
-        if (string.IsNullOrWhiteSpace(profileId))
-        {
-            return null;
-        }
-
-        var binding = InvokeRuntimeCatalog(
-            catalog => catalog.GetModelBinding(profileId, AgentModelCapabilityKinds.Embedding)
-                       ?? ResolveLegacyBinding(catalog.GetProfile(profileId)),
-            fallback: null as AgentProfileModelBindingRecord);
-        return await ResolveConfigurationAsync(
-            profileId,
-            binding,
-            forceProviderIdentityRefresh,
-            canInvokeProvider,
-            cancellationToken).ConfigureAwait(false);
+        var current = await ResolveConfigurationForProfileAsync(profileId, cancellationToken, true, canInvokeProvider).ConfigureAwait(false);
+        return current is not null && current.IsSameActivation(expected)
+            && string.Equals(current.ProviderId, expected.ProviderId, StringComparison.Ordinal)
+            && string.Equals(current.ModelId, expected.ModelId, StringComparison.Ordinal)
+            && string.Equals(current.ConfigurationFingerprint, expected.ConfigurationFingerprint, StringComparison.Ordinal);
     }
 
-    internal async Task<bool> IsCurrentConfigurationAsync(
-        string profileId,
-        ResolvedEmbeddingProvider expected,
-        CancellationToken cancellationToken = default,
-        Func<CancellationToken, Task<bool>>? canInvokeProvider = null)
-    {
-        var current = await ResolveConfigurationForProfileAsync(
-            profileId,
-            cancellationToken,
-            forceProviderIdentityRefresh: true,
-            canInvokeProvider).ConfigureAwait(false);
-        return current is not null
-               && current.IsSameActivation(expected)
-               && string.Equals(current.ProviderId, expected.ProviderId, StringComparison.Ordinal)
-               && string.Equals(current.ModelId, expected.ModelId, StringComparison.Ordinal)
-               && string.Equals(
-                   current.ConfigurationFingerprint,
-                   expected.ConfigurationFingerprint,
-                   StringComparison.Ordinal);
-    }
-
-    public async Task<SemanticEmbeddingContext> ResolveForSessionAsync(
-        Guid sessionId,
-        string? profileId = null,
-        CancellationToken cancellationToken = default)
+    public async Task<SemanticEmbeddingContext> ResolveForSessionAsync(Guid sessionId, string? profileId = null, CancellationToken cancellationToken = default)
     {
         if (!await _settingsService.IsSemanticRetrievalEnabledAsync(cancellationToken).ConfigureAwait(false))
-        {
             return SemanticEmbeddingContext.Disabled("Semantic retrieval is disabled in package settings.");
-        }
-
-        var sessionConfiguration = InvokeRuntimeCatalog(
-            catalog =>
-            {
-                if (catalog.GetSession(sessionId) is null)
-                {
-                    return null;
-                }
-
-                var profile = string.IsNullOrWhiteSpace(profileId)
-                    ? catalog.GetSessionProfile(sessionId)
-                    : catalog.GetProfile(profileId);
-                var binding = string.IsNullOrWhiteSpace(profileId)
-                    ? catalog.GetSessionModelBinding(sessionId, AgentModelCapabilityKinds.Embedding)
-                    : catalog.GetModelBinding(profileId, AgentModelCapabilityKinds.Embedding);
-                return new SessionEmbeddingConfiguration(binding ?? ResolveLegacyBinding(profile));
-            },
-            fallback: null as SessionEmbeddingConfiguration);
-        if (sessionConfiguration is null)
+        var configuration = await InvokeRuntimeCatalogAsync(async (catalog, token) =>
         {
-            return SemanticEmbeddingContext.Unavailable("Session not found.");
-        }
-
-        var binding = sessionConfiguration.Binding;
+            if (await catalog.GetSessionAsync(sessionId, token).ConfigureAwait(false) is null) return null;
+            var profile = string.IsNullOrWhiteSpace(profileId)
+                ? await catalog.GetSessionProfileAsync(sessionId, token).ConfigureAwait(false)
+                : await catalog.GetProfileAsync(profileId, token).ConfigureAwait(false);
+            var binding = string.IsNullOrWhiteSpace(profileId)
+                ? await catalog.GetSessionModelBindingAsync(new() { SessionId = sessionId, CapabilityKind = AgentModelCapabilityKinds.Embedding }, token).ConfigureAwait(false)
+                : await catalog.GetModelBindingAsync(new() { ProfileId = profileId, CapabilityKind = AgentModelCapabilityKinds.Embedding }, token).ConfigureAwait(false);
+            return new SessionEmbeddingConfiguration(binding ?? ResolveLegacyBinding(profile));
+        }, null as SessionEmbeddingConfiguration, cancellationToken).ConfigureAwait(false);
+        if (configuration is null) return SemanticEmbeddingContext.Unavailable("Session not found.");
+        var binding = configuration.Binding;
         if (binding is null || string.IsNullOrWhiteSpace(binding.ProviderId) || string.IsNullOrWhiteSpace(binding.ModelId))
-        {
             return SemanticEmbeddingContext.Disabled("No embedding provider/model is configured on this agent.");
-        }
-
-        var resolved = await ResolveConfigurationAsync(
-            binding.ProfileId,
-            binding,
-            forceProviderIdentityRefresh: true,
-            canInvokeProvider: null,
-            cancellationToken).ConfigureAwait(false);
-        if (resolved is null)
-        {
-            return SemanticEmbeddingContext.Unavailable($"Embedding provider '{binding.ProviderId}' is not installed.");
-        }
-
+        var resolved = await ResolveConfigurationAsync(binding.ProfileId, binding, true, null, cancellationToken).ConfigureAwait(false);
+        if (resolved is null) return SemanticEmbeddingContext.Unavailable($"Embedding provider '{binding.ProviderId}' is not installed.");
         try
         {
             var readiness = await resolved.GetReadinessAsync(cancellationToken).ConfigureAwait(false);
             return readiness.Status == AgentProviderReadinessStatus.Ready
-                ? SemanticEmbeddingContext.Ready(
-                    resolved.ProviderId,
-                    resolved.ModelId,
-                    resolved.ProviderDisplayName,
-                    resolved.ConfigurationFingerprint)
-                : SemanticEmbeddingContext.Unavailable(
-                    $"Embedding provider '{resolved.ProviderDisplayName}' is not ready: {readiness.Message}");
+                ? SemanticEmbeddingContext.Ready(resolved.ProviderId, resolved.ModelId, resolved.ProviderDisplayName, resolved.ConfigurationFingerprint)
+                : SemanticEmbeddingContext.Unavailable($"Embedding provider '{resolved.ProviderDisplayName}' is not ready: {readiness.Message}");
         }
-        catch (EmbeddingProviderRetiredException)
-        {
-            return SemanticEmbeddingContext.Unavailable($"Embedding provider '{resolved.ProviderDisplayName}' is no longer available.");
-        }
+        catch (EmbeddingProviderRetiredException) { return SemanticEmbeddingContext.Unavailable($"Embedding provider '{resolved.ProviderDisplayName}' is no longer available."); }
     }
 
-    internal AgentProfileModelBindingRecord? ResolveSessionBinding(Guid sessionId)
-        => InvokeRuntimeCatalog(
-            catalog => catalog.GetSessionModelBinding(sessionId, AgentModelCapabilityKinds.Embedding)
-                       ?? ResolveLegacyBinding(catalog.GetSessionProfile(sessionId)),
-            fallback: null as AgentProfileModelBindingRecord);
+    internal TResult InvokeRuntimeCatalog<TResult>(Func<IRuntimeCatalogService, CancellationToken, ValueTask<TResult>> callback, TResult fallback)
+        => InvokeRuntimeCatalogAsync(callback, fallback, CancellationToken.None).AsTask().GetAwaiter().GetResult();
 
-    internal TResult InvokeRuntimeCatalog<TResult>(
-        Func<IAgentRuntimeCatalog, TResult> callback,
-        TResult fallback)
+    internal async ValueTask<TResult> InvokeRuntimeCatalogAsync<TResult>(Func<IRuntimeCatalogService, CancellationToken, ValueTask<TResult>> callback,
+        TResult fallback, CancellationToken token)
     {
-        foreach (var reference in _rpcCatalog.GetRuntimeCatalogs())
+        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(token, _lifetime.Token);
+        var snapshot = await _catalogs.ListAsync(lifetime.Token).ConfigureAwait(false);
+        foreach (var provider in snapshot.Providers.Where(value => value.State == ServiceProviderState.Active))
         {
-            if (!reference.TryAcquire(out var lease))
-            {
-                continue;
-            }
-
-            using (lease)
-            {
-                if (!lease.RetirementToken.IsCancellationRequested)
-                {
-                    return callback(lease.Service);
-                }
-            }
+            if (provider.RetirementToken.IsCancellationRequested) continue;
+            using var invocation = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token, provider.RetirementToken);
+            try { await provider.EnsureCurrentAsync(invocation.Token).ConfigureAwait(false); }
+            catch (SunderRpcException error) when (error.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable) { continue; }
+            var result = await callback(provider.Service, invocation.Token).ConfigureAwait(false);
+            await provider.EnsureCurrentAsync(invocation.Token).ConfigureAwait(false);
+            return result;
         }
-
         return fallback;
     }
 
-    internal IDisposable SubscribeToSessionChanges(
-        Action<Guid> handler,
-        Action resetHandler)
-        => SubscribeToRuntimeCatalog(
-            catalog =>
-            {
-                catalog.SessionChanged += handler;
-                catalog.ResetRequired += resetHandler;
-            },
-            catalog =>
-            {
-                catalog.SessionChanged -= handler;
-                catalog.ResetRequired -= resetHandler;
-            });
-
-    private IDisposable SubscribeToRuntimeCatalog(
-        Action<IAgentRuntimeCatalog> subscribe,
-        Action<IAgentRuntimeCatalog> unsubscribe)
+    internal IDisposable SubscribeToSessionChanges(Action<Guid> handler, Action resetHandler)
     {
-        foreach (var reference in _rpcCatalog.GetRuntimeCatalogs())
+        lock (_gate)
         {
-            if (reference.TryAcquire(out var lease))
-            {
-                return new RuntimeCatalogSubscription(lease, subscribe, unsubscribe);
-            }
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            foreach (var completed in _subscriptions.Where(value => value.Completion.IsCompletedSuccessfully).ToArray())
+            { completed.Release(); _subscriptions.Remove(completed); }
+            var subscription = new RuntimeCatalogSubscription(_catalogs, handler, resetHandler, _lifetime.Token);
+            _subscriptions.Add(subscription);
+            return subscription;
         }
-
-        return EmptySubscription.Instance;
     }
 
-    public void Dispose()
+    private async Task<ResolvedEmbeddingProvider?> ResolveConfigurationAsync(string profileId, AgentProfileModelBindingRecord? binding,
+        bool forceProviderIdentityRefresh, Func<CancellationToken, Task<bool>>? canInvokeProvider, CancellationToken cancellationToken)
     {
-        if (_disposed)
-        {
-            return;
-        }
-
-        _disposed = true;
-        _rpcCatalog.Changed -= OnCatalogChanged;
-        DisposeOwnedCatalogAdapter();
-        lock (_configurationCacheSync)
-        {
-            _configurationCache.Clear();
-        }
-        GC.SuppressFinalize(this);
-    }
-
-    partial void DisposeOwnedCatalogAdapter();
-
-    private async Task<ResolvedEmbeddingProvider?> ResolveConfigurationAsync(
-        string profileId,
-        AgentProfileModelBindingRecord? binding,
-        bool forceProviderIdentityRefresh,
-        Func<CancellationToken, Task<bool>>? canInvokeProvider,
-        CancellationToken cancellationToken)
-    {
-        if (binding is null
-            || string.IsNullOrWhiteSpace(binding.ProviderId)
-            || string.IsNullOrWhiteSpace(binding.ModelId))
-        {
-            return null;
-        }
-
+        if (binding is null || string.IsNullOrWhiteSpace(binding.ProviderId) || string.IsNullOrWhiteSpace(binding.ModelId)) return null;
         var providerId = NormalizeProviderId(binding.ProviderId);
-        var bindingFingerprint = BuildBindingFingerprint(binding, providerId);
-        var catalogRevision = Volatile.Read(ref _catalogRevision);
+        var fingerprint = BuildBindingFingerprint(binding, providerId);
+        var revision = Volatile.Read(ref _catalogRevision);
         if (!forceProviderIdentityRefresh)
         {
-            lock (_configurationCacheSync)
-            {
-                if (_configurationCache.TryGetValue(profileId, out var cached)
-                    && cached.CatalogRevision == catalogRevision
-                    && string.Equals(cached.BindingFingerprint, bindingFingerprint, StringComparison.Ordinal)
-                    && DateTimeOffset.UtcNow - cached.CachedAtUtc < _configurationCacheDuration)
-                {
-                    return cached.Provider;
-                }
-            }
+            lock (_gate)
+                if (_configurationCache.TryGetValue(profileId, out var cached) && cached.CatalogRevision == revision
+                    && !cached.Provider.IsRetired && string.Equals(cached.BindingFingerprint, fingerprint, StringComparison.Ordinal)
+                    && DateTimeOffset.UtcNow - cached.CachedAtUtc < _configurationCacheDuration) return cached.Provider;
         }
-
-        foreach (var reference in _rpcCatalog.GetEmbeddingProviders())
+        var snapshot = await _embeddings.ListAsync(cancellationToken).ConfigureAwait(false);
+        foreach (var provider in snapshot.Providers.Where(value => value.State == ServiceProviderState.Active))
         {
-            if (!reference.TryAcquire(out var lease))
+            var retirement = provider.RetirementToken;
+            if (retirement.IsCancellationRequested) continue;
+            if (!await CanInvokeProviderAsync(canInvokeProvider, cancellationToken).ConfigureAwait(false)) return null;
+            using var invocation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, retirement, _lifetime.Token);
+            try
             {
-                continue;
-            }
-
-            using (lease)
-            {
-                var retirementToken = lease.RetirementToken;
-                if (retirementToken.IsCancellationRequested)
-                {
-                    continue;
-                }
-                if (!await CanInvokeProviderAsync(canInvokeProvider, cancellationToken).ConfigureAwait(false))
-                {
-                    return null;
-                }
-                using var invocation = CancellationTokenSource.CreateLinkedTokenSource(
-                    cancellationToken,
-                    retirementToken);
-                AgentEmbeddingProviderDescriptor descriptor;
-                string providerSpaceIdentity;
-                try
-                {
-                    descriptor = lease.Service.Descriptor;
-                    if (!string.Equals(descriptor.ProviderId, providerId, StringComparison.OrdinalIgnoreCase))
-                    {
-                        continue;
-                    }
-                    if (lease.Service is IAgentEmbeddingSpaceIdentityProvider
-                        && !await CanInvokeProviderAsync(canInvokeProvider, cancellationToken).ConfigureAwait(false))
-                    {
-                        return null;
-                    }
-                    providerSpaceIdentity = lease.Service is IAgentEmbeddingSpaceIdentityProvider identityProvider
-                        ? await identityProvider.GetEmbeddingSpaceIdentityAsync(binding.ModelId, invocation.Token).ConfigureAwait(false)
-                        : string.Empty;
-                }
-                catch (Exception exception) when (
-                    !cancellationToken.IsCancellationRequested
-                    && (retirementToken.IsCancellationRequested
-                        || exception is SunderRpcException
-                        {
-                            Error.Kind: SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable,
-                        }))
-                {
-                    continue;
-                }
-                var resolved = new ResolvedEmbeddingProvider(
-                    reference,
-                    lease.PackageId,
-                    providerId,
-                    binding.ModelId.Trim(),
+                await provider.EnsureCurrentAsync(invocation.Token).ConfigureAwait(false);
+                var descriptor = await provider.Service.DescribeAsync(invocation.Token).ConfigureAwait(false);
+                if (!string.Equals(descriptor.ProviderId, providerId, StringComparison.OrdinalIgnoreCase)) continue;
+                if (!await CanInvokeProviderAsync(canInvokeProvider, cancellationToken).ConfigureAwait(false)) return null;
+                var space = await provider.Service.SpaceIdentityAsync(binding.ModelId, invocation.Token).ConfigureAwait(false);
+                await provider.EnsureCurrentAsync(invocation.Token).ConfigureAwait(false);
+                var resolved = new ResolvedEmbeddingProvider(provider, providerId, binding.ModelId.Trim(),
                     string.IsNullOrWhiteSpace(descriptor.DisplayName) ? providerId : descriptor.DisplayName,
-                    BuildConfigurationFingerprint(
-                        binding,
-                        lease.PackageId,
-                        providerId,
-                        reference.Provider,
-                        providerSpaceIdentity));
-                lock (_configurationCacheSync)
-                {
-                    _configurationCache[profileId] = new CachedEmbeddingConfiguration(
-                        bindingFingerprint,
-                        catalogRevision,
-                        DateTimeOffset.UtcNow,
-                        resolved);
-                }
+                    BuildConfigurationFingerprint(binding, provider, providerId, space));
+                lock (_gate) _configurationCache[profileId] = new(fingerprint, revision, DateTimeOffset.UtcNow, resolved);
                 return resolved;
             }
+            catch (Exception error) when (Retired(error, retirement, cancellationToken)) { }
         }
-
         return null;
     }
 
-    private static string BuildConfigurationFingerprint(
-        AgentProfileModelBindingRecord binding,
-        string ownerPackageId,
-        string providerId,
-        SunderRpcProviderSnapshot provider,
-        string? providerSpaceIdentity)
+    private async Task WatchProvidersAsync<T>(IServiceProviders<T> providers) where T : class
     {
-        var source = string.Join('\n',
-            "semantic-memory-embedding-space-v2",
-            ownerPackageId.Trim().ToLowerInvariant(),
-            providerId,
-            binding.ModelId!.Trim(),
-            binding.SettingsJson?.Trim() ?? string.Empty,
-            providerSpaceIdentity?.Trim() ?? string.Empty,
-            provider.PackageVersion,
-            provider.ContractVersion,
-            provider.DescriptorSha256,
-            provider.AbiSha256,
-            provider.ProviderId);
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(source))).ToLowerInvariant();
-    }
-
-    private static string BuildBindingFingerprint(AgentProfileModelBindingRecord binding, string providerId)
-    {
-        var source = string.Join('\n',
-            "semantic-memory-binding-v1",
-            providerId,
-            binding.ModelId!.Trim(),
-            binding.SettingsJson?.Trim() ?? string.Empty);
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(source))).ToLowerInvariant();
-    }
-
-    private void OnCatalogChanged()
-    {
-        Interlocked.Increment(ref _catalogRevision);
-        lock (_configurationCacheSync)
+        long revision = 0, sequence = 0;
+        while (!_lifetime.IsCancellationRequested)
         {
-            _configurationCache.Clear();
+            try
+            {
+                await foreach (var change in providers.WatchAsync(revision, sequence, _lifetime.Token).ConfigureAwait(false))
+                {
+                    revision = change.Revision; sequence = change.Sequence;
+                    if (change.Kind == ServiceProviderChangeKind.ResetRequired)
+                    {
+                        var snapshot = await providers.ListAsync(_lifetime.Token).ConfigureAwait(false);
+                        revision = snapshot.Revision; sequence = snapshot.Sequence;
+                    }
+                    OnCatalogChanged();
+                }
+            }
+            catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { return; }
+            catch (Exception error) when (error is SunderRpcException or OperationCanceledException) { OnCatalogChanged(); }
+            try { await Task.Delay(250, _lifetime.Token).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { return; }
         }
     }
 
+    private void OnCatalogChanged() { Interlocked.Increment(ref _catalogRevision); lock (_gate) _configurationCache.Clear(); }
+    internal static bool Retired(Exception error, CancellationToken retirement, CancellationToken caller)
+        => !caller.IsCancellationRequested && (error is SunderRpcException { Error.Kind: SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable }
+            || retirement.IsCancellationRequested && error is OperationCanceledException or SunderRpcException { Error.Kind: SunderRpcErrorKind.Cancelled });
     internal static string NormalizeProviderId(string providerId) => providerId.Trim().ToLowerInvariant();
-
-    private static Task<bool> CanInvokeProviderAsync(
-        Func<CancellationToken, Task<bool>>? canInvokeProvider,
-        CancellationToken cancellationToken)
-        => canInvokeProvider?.Invoke(cancellationToken) ?? Task.FromResult(true);
+    private static Task<bool> CanInvokeProviderAsync(Func<CancellationToken, Task<bool>>? callback, CancellationToken token) => callback?.Invoke(token) ?? Task.FromResult(true);
 
     internal static AgentProfileModelBindingRecord? ResolveLegacyBinding(AgentProfileRecord? profile)
-        => profile is null
-           || string.IsNullOrWhiteSpace(profile.EmbeddingProviderId)
-           || string.IsNullOrWhiteSpace(profile.EmbeddingModelId)
-            ? null
-            : new AgentProfileModelBindingRecord(
-                profile.ProfileId,
-                AgentModelCapabilityKinds.Embedding,
-                profile.EmbeddingProviderId,
-                profile.EmbeddingModelId,
-                SettingsJson: null,
-                profile.UpdatedAtUtc);
+        => profile is null || string.IsNullOrWhiteSpace(profile.EmbeddingProviderId) || string.IsNullOrWhiteSpace(profile.EmbeddingModelId) ? null : new()
+        {
+            ProfileId = profile.ProfileId, CapabilityKind = AgentModelCapabilityKinds.Embedding,
+            ProviderId = profile.EmbeddingProviderId, ModelId = profile.EmbeddingModelId, SettingsJson = null, UpdatedAtUtc = profile.UpdatedAtUtc,
+        };
+    private static string BuildConfigurationFingerprint(AgentProfileModelBindingRecord binding, ServiceProvider<IEmbeddingProviderService> provider, string providerId, string? space)
+        => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\n', "semantic-memory-embedding-space-v2",
+            provider.PackageId.Trim().ToLowerInvariant(), providerId, binding.ModelId!.Trim(), binding.SettingsJson?.Trim() ?? string.Empty,
+            space?.Trim() ?? string.Empty, provider.PackageVersion, provider.ContractVersion, provider.DescriptorSha256, provider.AbiSha256, provider.ProviderId))));
+    private static string BuildBindingFingerprint(AgentProfileModelBindingRecord binding, string providerId)
+        => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\n', "semantic-memory-binding-v1", providerId,
+            binding.ModelId!.Trim(), binding.SettingsJson?.Trim() ?? string.Empty))));
+
+    public void Dispose()
+    {
+        lock (_gate) { if (_disposed) return; _disposed = true; _configurationCache.Clear(); }
+        _lifetime.Cancel();
+    }
+    public ValueTask DisposeAsync()
+    {
+        Dispose();
+        lock (_gate) return new(_stop ??= StopAsync());
+    }
+    private async Task StopAsync()
+    {
+        RuntimeCatalogSubscription[] subscriptions;
+        lock (_gate) subscriptions = _subscriptions.ToArray();
+        try { await Task.WhenAll(new[] { _completion }.Concat(subscriptions.Select(value => value.Completion))).ConfigureAwait(false); }
+        finally { foreach (var subscription in subscriptions) subscription.Release(); _lifetime.Dispose(); }
+    }
 
     private sealed record SessionEmbeddingConfiguration(AgentProfileModelBindingRecord? Binding);
-
-    private sealed record CachedEmbeddingConfiguration(
-        string BindingFingerprint,
-        long CatalogRevision,
-        DateTimeOffset CachedAtUtc,
-        ResolvedEmbeddingProvider Provider);
+    private sealed record CachedEmbeddingConfiguration(string BindingFingerprint, long CatalogRevision, DateTimeOffset CachedAtUtc, ResolvedEmbeddingProvider Provider);
 
     private sealed class RuntimeCatalogSubscription : IDisposable
     {
-        private readonly Action<IAgentRuntimeCatalog> _unsubscribe;
-        private SemanticProviderLease<IAgentRuntimeCatalog>? _lease;
-        private CancellationTokenRegistration _retirementRegistration;
+        private readonly CancellationTokenSource _lifetime;
         private int _disposed;
-
-        public RuntimeCatalogSubscription(
-            SemanticProviderLease<IAgentRuntimeCatalog> lease,
-            Action<IAgentRuntimeCatalog> subscribe,
-            Action<IAgentRuntimeCatalog> unsubscribe)
+        internal RuntimeCatalogSubscription(IServiceProviders<IRuntimeCatalogService> catalogs, Action<Guid> handler, Action reset, CancellationToken lifetime)
         {
-            _lease = lease;
-            _unsubscribe = unsubscribe;
-            subscribe(lease.Service);
-            _retirementRegistration = lease.RetirementToken.UnsafeRegister(
-                static state => ((RuntimeCatalogSubscription)state!).DisposeFromRetirement(),
-                this);
-            if (Volatile.Read(ref _disposed) != 0)
+            _lifetime = CancellationTokenSource.CreateLinkedTokenSource(lifetime);
+            Completion = Task.Run(async () =>
             {
-                _retirementRegistration.Dispose();
-            }
-        }
-
-        public void Dispose() => DisposeCore(disposeRegistration: true);
-
-        private void DisposeFromRetirement() => DisposeCore(disposeRegistration: false);
-
-        private void DisposeCore(bool disposeRegistration)
-        {
-            if (Interlocked.Exchange(ref _disposed, 1) != 0)
-            {
-                return;
-            }
-
-            var lease = Interlocked.Exchange(ref _lease, null);
-            if (lease is not null)
-            {
-                try
+                while (!_lifetime.IsCancellationRequested)
                 {
-                    _unsubscribe(lease.Service);
+                    try
+                    {
+                        var snapshot = await catalogs.ListAsync(_lifetime.Token).ConfigureAwait(false);
+                        var provider = snapshot.Providers.FirstOrDefault(value => value.State == ServiceProviderState.Active);
+                        if (provider is not null)
+                        {
+                            using var invocation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token, provider.RetirementToken);
+                            long expected = 1;
+                            await foreach (var change in provider.Service.WatchAsync(invocation.Token).ConfigureAwait(false))
+                            {
+                                var sequence = change switch
+                                {
+                                    AgentRuntimeCatalogResetEvent value => value.Sequence,
+                                    AgentSessionCatalogEvent value => value.Sequence,
+                                    AgentTurnCatalogEvent value => value.Sequence,
+                                    AgentProfileCatalogEvent value => value.Sequence,
+                                    _ => throw new InvalidDataException("Unknown Runtime catalog event."),
+                                };
+                                if (sequence != expected && change is not AgentRuntimeCatalogResetEvent) reset();
+                                expected = sequence + 1;
+                                if (change is AgentRuntimeCatalogResetEvent) reset();
+                                else if (change is AgentSessionCatalogEvent session) handler(session.SessionId);
+                            }
+                        }
+                        reset();
+                    }
+                    catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { return; }
+                    catch (Exception error) when (error is OperationCanceledException or SunderRpcException) { reset(); }
+                    try { await Task.Delay(250, _lifetime.Token).ConfigureAwait(false); }
+                    catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { return; }
                 }
-                finally
-                {
-                    lease.Dispose();
-                }
-            }
-            if (disposeRegistration)
-            {
-                _retirementRegistration.Dispose();
-            }
+            });
         }
-    }
-
-    private sealed class EmptySubscription : IDisposable
-    {
-        public static EmptySubscription Instance { get; } = new();
-
-        public void Dispose()
-        {
-        }
+        internal Task Completion { get; }
+        public void Dispose() { if (Interlocked.Exchange(ref _disposed, 1) == 0) _lifetime.Cancel(); }
+        internal void Release() { Interlocked.Exchange(ref _disposed, 1); _lifetime.Dispose(); }
     }
 }
 
 public sealed class ResolvedEmbeddingProvider
 {
-    private readonly SemanticProviderReference<IAgentEmbeddingProvider> _reference;
-
-    internal ResolvedEmbeddingProvider(
-        SemanticProviderReference<IAgentEmbeddingProvider> reference,
-        string ownerPackageId,
-        string providerId,
-        string modelId,
-        string providerDisplayName,
-        string configurationFingerprint)
-    {
-        _reference = reference;
-        OwnerPackageId = ownerPackageId;
-        ProviderId = providerId;
-        ModelId = modelId;
-        ProviderDisplayName = providerDisplayName;
-        ConfigurationFingerprint = configurationFingerprint;
-    }
-
-    public string OwnerPackageId { get; }
-
+    private readonly ServiceProvider<IEmbeddingProviderService> _provider;
+    internal ResolvedEmbeddingProvider(ServiceProvider<IEmbeddingProviderService> provider, string providerId, string modelId, string displayName, string fingerprint)
+    { _provider = provider; ProviderId = providerId; ModelId = modelId; ProviderDisplayName = displayName; ConfigurationFingerprint = fingerprint; }
+    public string OwnerPackageId => _provider.PackageId;
     public string ProviderId { get; }
-
     public string ModelId { get; }
-
     public string ProviderDisplayName { get; }
-
     public string ConfigurationFingerprint { get; }
-
-    internal ValueTask<AgentEmbeddingProviderReadiness> GetReadinessAsync(CancellationToken cancellationToken)
-        => InvokeAsync(
-            static (provider, _, token) => provider.GetReadinessAsync(token),
-            state: 0,
-            cancellationToken);
-
-    internal ValueTask<AgentEmbeddingGenerationResult?> GenerateEmbeddingAsync(
-        string text,
-        CancellationToken cancellationToken)
-        => InvokeAsync(
-            static (provider, state, token) => provider.GenerateEmbeddingAsync(state.ModelId, state.Text, token),
-            (ModelId, Text: text),
-            cancellationToken);
-
-    internal ValueTask<IReadOnlyList<AgentEmbeddingGenerationResult?>> GenerateEmbeddingsAsync(
-        IReadOnlyList<string> texts,
-        CancellationToken cancellationToken)
-        => InvokeAsync(
-            static (provider, state, token) => provider.GenerateEmbeddingsAsync(state.ModelId, state.Texts, token),
-            (ModelId, Texts: texts),
-            cancellationToken);
-
+    internal bool IsRetired => _provider.RetirementToken.IsCancellationRequested;
+    internal ValueTask<AgentEmbeddingProviderReadiness> GetReadinessAsync(CancellationToken token)
+        => InvokeAsync((service, cancellation) => service.GetReadinessAsync(cancellation), token);
+    internal ValueTask<AgentEmbeddingGenerationResult?> GenerateEmbeddingAsync(string text, CancellationToken token)
+        => InvokeAsync((service, cancellation) => service.GenerateAsync(new() { ModelId = ModelId, Text = text }, cancellation), token);
+    internal ValueTask<IReadOnlyList<AgentEmbeddingGenerationResult?>> GenerateEmbeddingsAsync(IReadOnlyList<string> texts, CancellationToken token)
+        => InvokeAsync((service, cancellation) => service.GenerateBatchAsync(new() { ModelId = ModelId, Texts = texts }, cancellation), token);
     internal bool IsSameActivation(ResolvedEmbeddingProvider other)
+        => !IsRetired && !other.IsRetired && _provider.RetirementToken == other._provider.RetirementToken;
+    private async ValueTask<T> InvokeAsync<T>(Func<IEmbeddingProviderService, CancellationToken, ValueTask<T>> invoke, CancellationToken caller)
     {
-        if (!_reference.TryAcquire(out var leftLease))
+        if (IsRetired) throw new EmbeddingProviderRetiredException(ProviderId);
+        using var invocation = CancellationTokenSource.CreateLinkedTokenSource(caller, _provider.RetirementToken);
+        try
         {
-            return false;
+            await _provider.EnsureCurrentAsync(invocation.Token).ConfigureAwait(false);
+            var result = await invoke(_provider.Service, invocation.Token).ConfigureAwait(false);
+            await _provider.EnsureCurrentAsync(invocation.Token).ConfigureAwait(false);
+            return result;
         }
-        using (leftLease)
-        {
-            if (!other._reference.TryAcquire(out var rightLease))
-            {
-                return false;
-            }
-            using (rightLease)
-            {
-                return !leftLease.RetirementToken.IsCancellationRequested
-                       && !rightLease.RetirementToken.IsCancellationRequested
-                        && _reference.Provider.ActivationId == other._reference.Provider.ActivationId
-                        && string.Equals(_reference.Endpoint.Value, other._reference.Endpoint.Value, StringComparison.Ordinal);
-            }
-        }
-    }
-
-    private async ValueTask<TResult> InvokeAsync<TState, TResult>(
-        Func<IAgentEmbeddingProvider, TState, CancellationToken, ValueTask<TResult>> callback,
-        TState state,
-        CancellationToken cancellationToken)
-    {
-        if (!_reference.TryAcquire(out var lease))
-        {
-            throw new EmbeddingProviderRetiredException(ProviderId);
-        }
-
-        using (lease)
-        {
-            var retirementToken = lease.RetirementToken;
-            if (retirementToken.IsCancellationRequested)
-            {
-                throw new EmbeddingProviderRetiredException(ProviderId);
-            }
-
-            using var invocation = CancellationTokenSource.CreateLinkedTokenSource(
-                cancellationToken,
-                retirementToken);
-            try
-            {
-                return await callback(lease.Service, state, invocation.Token).ConfigureAwait(false);
-            }
-            catch (Exception ex) when (
-                !cancellationToken.IsCancellationRequested
-                && (retirementToken.IsCancellationRequested
-                    || ex is SunderRpcException
-                    {
-                        Error.Kind: SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable,
-                    }))
-            {
-                throw new EmbeddingProviderRetiredException(ProviderId, ex);
-            }
-        }
+        catch (Exception error) when (SemanticModelRuntimeResolver.Retired(error, _provider.RetirementToken, caller))
+        { throw new EmbeddingProviderRetiredException(ProviderId, error); }
     }
 }
 
-internal sealed class EmbeddingProviderRetiredException : InvalidOperationException
-{
-    public EmbeddingProviderRetiredException(string providerId, Exception? innerException = null)
-        : base($"Embedding provider '{providerId}' retired during invocation.", innerException)
-    {
-    }
-}
+internal sealed class EmbeddingProviderRetiredException(string providerId, Exception? innerException = null)
+    : InvalidOperationException($"Embedding provider '{providerId}' retired during invocation.", innerException);

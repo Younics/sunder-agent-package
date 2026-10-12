@@ -17,7 +17,7 @@ internal static class LocalSecureFileSearch
     {
         if (!HostSecureFileSearch.TryValidateRequest(request, out var validationError))
         {
-            return AgentFileSearchResult.Failure(
+            return FileOperation.SearchFailure(
                 AgentFileSearchErrorCodes.InvalidRequest,
                 validationError!);
         }
@@ -38,17 +38,17 @@ internal static class LocalSecureFileSearch
         }
         catch (Exception ex) when (ex is LocalResourceReapprovalRequiredException or LocalSecureApprovalChangedException)
         {
-            return AgentFileSearchResult.Failure(
+            return FileOperation.SearchFailure(
                 LocalResourceReference.ReapprovalRequiredErrorCode,
                 ex.Message);
         }
         catch (InvalidOperationException ex)
         {
-            return AgentFileSearchResult.Failure(AgentFileSearchErrorCodes.OutsideConfiguredScope, ex.Message);
+            return FileOperation.SearchFailure(AgentFileSearchErrorCodes.OutsideConfiguredScope, ex.Message);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
         {
-            return AgentFileSearchResult.Failure(AgentFileSearchErrorCodes.PathUnresolvable, ex.Message);
+            return FileOperation.SearchFailure(AgentFileSearchErrorCodes.PathUnresolvable, ex.Message);
         }
     }
 }

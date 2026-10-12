@@ -3,7 +3,6 @@ using System.ComponentModel;
 using Avalonia.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Shared.PackageViews;
 using Sunder.Package.Agent.Shared.Presentation;
@@ -63,8 +62,7 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         _operations = operationObserver
             ?? PresentationOperationObserver.CreateUnreported("Subsessions");
         _activityTicker.SetEnabled(false);
-        var toolPresentation = new TranscriptToolPresentationService(
-            static () => []);
+        var toolPresentation = new TranscriptToolPresentationService();
         var rowFactory = new SubsessionTranscriptRowFactory(
             toolPresentation,
             LoadToolDetailAsync,
@@ -272,7 +270,9 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private void JumpToLatestTranscript()
     {
-        if (_timeline.RequestJumpToLatest())
+        var preparingAnchor = IsPreparingAnchoredNavigation;
+        CancelNavigation();
+        if (_timeline.RequestJumpToLatest() || preparingAnchor)
         {
             LoadTranscript(SelectedSubsession?.SessionId);
         }
@@ -318,7 +318,7 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         bool isExpanded)
         => _timeline.SetRowExpanded(row, isExpanded);
 
-    internal async Task ReloadSubsessionsAsync(
+    internal async Task<bool> ReloadSubsessionsAsync(
         Guid? selectedSessionId,
         CancellationToken cancellationToken = default,
         bool suppressTranscriptLoad = false)
@@ -342,7 +342,7 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
             }, refresh.CancellationToken);
             if (!active)
             {
-                return;
+                return false;
             }
 
             Task<SubsessionSessionCatalog> sessionsTask;
@@ -367,8 +367,8 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
             var checkpoints = await checkpointsTask;
             var subsessions = catalog.Sessions
                 .Where(session => session.ParentSessionId is not null)
-                .OrderByDescending(session => session.UpdatedAtUtc)
-                .ThenByDescending(session => session.CreatedAtUtc)
+                .OrderByDescending(session => AgentTranscriptTime.Read(session.UpdatedAtUtc))
+                .ThenByDescending(session => AgentTranscriptTime.Read(session.CreatedAtUtc))
                 .ToArray();
             var applied = false;
             var transcriptLoadOperation = Task.CompletedTask;
@@ -392,7 +392,7 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
                             checkpoints,
                             subsessions,
                             preserveLiveSelection),
-                        suppressTranscriptLoad);
+                        suppressTranscriptLoad || IsPreparingAnchoredNavigation);
                     transcriptLoadOperation = Volatile.Read(ref _transcriptLoadOperation);
                     applied = true;
                 },
@@ -401,11 +401,13 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
             {
                 await transcriptLoadOperation.WaitAsync(refresh.CancellationToken);
             }
+            return applied;
         }
         catch (OperationCanceledException) when (
             refresh.CancellationToken.IsCancellationRequested
             && !cancellationToken.IsCancellationRequested)
         {
+            return false;
         }
         finally
         {
@@ -500,7 +502,7 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
                                   session.ParentToolCallId,
                                   item.CallId,
                                   StringComparison.Ordinal))
-            .OrderBy(session => session.CreatedAtUtc)
+            .OrderBy(session => AgentTranscriptTime.Read(session.CreatedAtUtc))
             .Select(session =>
             {
                 var profileName = string.IsNullOrWhiteSpace(session.ProfileId)
@@ -678,6 +680,8 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
     private void CancelNavigation()
     {
         _requests.Invalidate(NavigationChannel);
+        _preparingAnchoredNavigation = null;
+        _anchoredNavigationTarget = null;
         NavigationAnchorKey = null;
         NavigationSelectionAuthorityRevision = null;
     }
@@ -712,7 +716,6 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         }, cancellationToken);
 
         await ReloadSubsessionsAsync(null, cancellationToken);
-        var forceTranscript = Interlocked.Exchange(ref _forceRuntimeTranscriptRefresh, 0) != 0;
         Task transcriptLoad = Task.CompletedTask;
         await RunOnUiThreadAsync(() =>
         {
@@ -722,10 +725,9 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
                 return;
             }
 
-            if (forceTranscript)
+            if (Volatile.Read(ref _forceRuntimeTranscriptRefresh) != 0)
             {
-                LoadTranscript(selectedSessionId, forceReplacement: true);
-                transcriptLoad = Volatile.Read(ref _transcriptLoadOperation);
+                transcriptLoad = RefreshTranscriptAfterRuntimeResetAsync(cancellationToken);
             }
             if (selectedSessionId is { } sessionId)
             {
@@ -769,24 +771,6 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         {
             _knownCheckpoints[checkpoint.SessionId] = checkpoint;
         }
-    }
-
-    private void SetRuntimePorts(
-        ISubsessionSessionReader sessionReader,
-        ISubsessionCheckpointReader checkpointReader,
-        ISubsessionTranscriptPageReader transcriptReader,
-        ISubsessionChangeNotifications changeNotifications,
-        bool ownsChangeNotifications = false)
-    {
-        _sessionReader = sessionReader;
-        _checkpointReader = checkpointReader;
-        _transcriptReader = transcriptReader;
-        _changeNotifications = changeNotifications;
-        SetOwnerAvailability(changeNotifications);
-        _ownsChangeNotifications = ownsChangeNotifications;
-        changeNotifications.SessionChanged += OnSessionChanged;
-        changeNotifications.TurnChanged += OnTurnChanged;
-        changeNotifications.ResnapshotRequired += OnRuntimeResnapshotRequired;
     }
 
     private static Guid? TryGetSessionId(IReadOnlyDictionary<string, string?> parameters)

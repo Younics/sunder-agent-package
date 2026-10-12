@@ -1,41 +1,13 @@
 namespace Sunder.Package.Agent.Execution.Docker;
 
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
-public interface IDockerExecutionPresentationClient
-{
-    ValueTask<DockerExecutionOperationResponse> ExecuteAsync(
-        DockerExecutionOperationRequest request,
-        CancellationToken cancellationToken = default);
-}
-
-[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
-public enum DockerExecutionOperationKind
-{
-    GetSettings,
-    SaveSettings,
-    AddImage,
-    DeleteImage,
-    RefreshImage,
-    RefreshImages,
-    PullImage,
-    TestDocker,
-}
-
-[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
-public sealed record DockerExecutionOperationRequest(
-    DockerExecutionOperationKind Kind,
-    string? TimeoutSeconds = null,
-    string? DockerCliPath = null,
-    string? ImageReference = null);
-
-[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 public sealed record DockerExecutionOperationResponse(
     string? TimeoutSeconds = null,
     string? DockerCliPath = null,
     IReadOnlyList<DockerImageDefinition>? Images = null,
     bool Success = true,
     string? Message = null,
-    long? CatalogRevision = null,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long? CatalogRevision = null,
     DockerExecutionOperationError? Error = null);
 
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
@@ -47,6 +19,7 @@ public sealed record DockerExecutionOperationError(
 
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 public sealed record DockerImageDefinition(
+    [property: Sunder.Sdk.Services.SunderValueConstraints(MinLength = 1, MaxLength = 512)]
     string ImageReference,
     DockerImageStatus Status,
     DateTimeOffset? LastPulledAtUtc,

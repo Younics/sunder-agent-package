@@ -114,6 +114,11 @@ internal static class HostScopedInstructionDiscovery
                             documents.Add(document);
                         }
                     }
+#if SUNDER_AGENT_PACKAGE_MODELS
+                    scopes.Add(new AgentScopedInstructionScope
+                    { RequestedPath = probe.OriginalPath, TargetDirectory = targetReportedDirectory, ScopeRoot = root.Mount.ReportedPath,
+                        Documents = documents, WasTruncated = false, OmittedAncestorCount = 0 });
+#else
                     scopes.Add(new AgentScopedInstructionScope(
                         probe.OriginalPath,
                         targetReportedDirectory,
@@ -121,6 +126,7 @@ internal static class HostScopedInstructionDiscovery
                         documents,
                         WasTruncated: false,
                         OmittedAncestorCount: 0));
+#endif
                 }
                 finally
                 {
@@ -141,6 +147,10 @@ internal static class HostScopedInstructionDiscovery
                     root.Root.Path,
                     root.Root.Handle.Identity.ToString(),
                 }));
+#if SUNDER_AGENT_PACKAGE_MODELS
+            return new AgentScopedInstructionDiscoveryResult
+            { TargetFingerprint = targetFingerprint, ScopeFingerprint = scopeFingerprint, Scopes = scopes, WasTruncated = false, ProcessedProbeCount = probes.Count };
+#else
             return new AgentScopedInstructionDiscoveryResult(
                 targetFingerprint,
                 scopeFingerprint,
@@ -149,6 +159,7 @@ internal static class HostScopedInstructionDiscovery
             {
                 ProcessedProbeCount = probes.Count,
             };
+#endif
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
         {
@@ -289,6 +300,13 @@ internal static class HostScopedInstructionDiscovery
         }
 
         var content = new string(buffer, 0, read);
+#if SUNDER_AGENT_PACKAGE_MODELS
+        return new AgentScopedInstructionDocument
+        {
+            Path = CombineReportedSegments(reportedDirectory, [InstructionFileName], reportedPathStyle), ScopeRoot = reportedRoot,
+            AppliesToDirectory = reportedDirectory, Content = content, ContentHash = ComputeHash(content), WasTruncated = false,
+        };
+#else
         return new AgentScopedInstructionDocument(
             CombineReportedSegments(reportedDirectory, [InstructionFileName], reportedPathStyle),
             reportedRoot,
@@ -296,6 +314,7 @@ internal static class HostScopedInstructionDiscovery
             content,
             ComputeHash(content),
             WasTruncated: false);
+#endif
     }
 
     private static void ValidateRequest(

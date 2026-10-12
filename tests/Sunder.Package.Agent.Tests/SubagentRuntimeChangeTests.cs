@@ -1,22 +1,49 @@
+extern alias AgentWorker;
 extern alias SubagentsWorker;
 extern alias SubagentsApp;
 
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Runtime.CompilerServices;
-using SubagentsWorker::Sunder.Package.Agent.Contracts.Contracts;
-using SubagentsWorker::Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Contracts.Contracts;
+using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
+using Sunder.Sdk.Services;
+using Sunder.Sdk.Rpc;
 using SubagentsApp::Sunder.Package.Agent.Subagents.PackageViews;
 using SubagentsWorker::Sunder.Package.Agent.Subagents.Runtime;
 using SubagentsWorker::Sunder.Package.Agent.Subagents.Services;
+using AgentTranscriptToolDetailRequest = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTranscriptToolDetailRequest;
+using AppAgentRunCheckpointRecord = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentRunCheckpointRecord;
+using AppAgentTurnRecord = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnRecord;
+using AppAgentTurnItemKind = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnItemKind;
+using AppAgentTurnItemRecord = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnItemRecord;
+using AppAgentTurnKind = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnKind;
+using AppAgentMessageRole = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentMessageRole;
+using AppAgentSessionRecord = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionRecord;
+using AppAgentSessionState = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionState;
+using SubagentSaveRequest = SubagentsApp::Sunder.Package.Agent.Subagents.Runtime.SubagentSaveRequest;
 using SubagentAppRuntimeGateway = SubagentsApp::Sunder.Package.Agent.Subagents.Runtime.SubagentAppRuntimeGateway;
 using AppRuntime = SubagentsApp::Sunder.Package.Agent.Subagents.Runtime;
+using SubagentManagementServices = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Subagents_Services;
+using WorkerAgentRunCheckpointRecord = AgentWorker::Sunder.Package.Agent.Contracts.Models.AgentRunCheckpointRecord;
+using WorkerAgentTurnRecord = AgentWorker::Sunder.Package.Agent.Contracts.Models.AgentTurnRecord;
+using WorkerGeneratedAgentMessageRole = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentMessageRole;
+using WorkerGeneratedAgentSessionRecord = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionRecord;
+using WorkerGeneratedAgentSessionState = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionState;
+using WorkerGeneratedAgentTurnItemKind = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnItemKind;
+using WorkerGeneratedAgentTurnItemRecord = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnItemRecord;
+using WorkerGeneratedAgentTurnKind = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnKind;
+using WorkerGeneratedAgentTurnRecord = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnRecord;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
 
 public sealed class SubagentRuntimeChangeTests
 {
+    private static SunderRpcOffsetDateTime RpcTimestamp(DateTimeOffset value)
+        => new(value.ToString("O", CultureInfo.InvariantCulture));
+
     [Fact]
     public async Task CommittedSubagentMutation_IsolatesThrowingListenerAndPublishesChange()
     {
@@ -24,9 +51,9 @@ public sealed class SubagentRuntimeChangeTests
         using var catalog = new RegressionTestExtensionCatalog();
         var service = new SubagentService(new SubagentStore(scope.Context));
         service.SubagentsChanged += static () => throw new InvalidOperationException("Injected listener failure.");
-        using var stream = new SubagentRuntimeChangeStream(service, catalog.Subagents());
-        await using var subscription = stream.SubscribeAsync(
-            new SubagentChangeSubscription(stream.Revision)).GetAsyncEnumerator();
+        await using var management = await catalog.CreateSubagentRuntimeManagementAsync(service);
+        var stream = management.Changes;
+        await using var subscription = stream.SubscribeAsync(stream.Revision).GetAsyncEnumerator();
         _ = await ReadUntilAsync(subscription, change => change.Kind == SubagentChangeKind.Connected);
 
         var created = service.CreateSubagent("Listener-isolated Subagent");
@@ -60,11 +87,9 @@ public sealed class SubagentRuntimeChangeTests
         using var scope = RegressionTestPackageScope.Create();
         using var catalog = new RegressionTestExtensionCatalog();
         var service = new SubagentService(new SubagentStore(scope.Context));
-        using var stream = new SubagentRuntimeChangeStream(
-            service,
-            catalog.Subagents());
-        await using var subscription = stream.SubscribeAsync(
-            new SubagentChangeSubscription(stream.Revision)).GetAsyncEnumerator();
+        await using var management = await catalog.CreateSubagentRuntimeManagementAsync(service);
+        var stream = management.Changes;
+        await using var subscription = stream.SubscribeAsync(stream.Revision).GetAsyncEnumerator();
         Assert.Equal(
             SubagentChangeKind.Connected,
             (await ReadUntilAsync(subscription, change => change.Kind == SubagentChangeKind.Connected)).Kind);
@@ -91,10 +116,11 @@ public sealed class SubagentRuntimeChangeTests
         using var scope = RegressionTestPackageScope.Create();
         using var catalog = new RegressionTestExtensionCatalog();
         var service = new SubagentService(new SubagentStore(scope.Context));
-        using var stream = new SubagentRuntimeChangeStream(service, catalog.Subagents());
+        await using var management = await catalog.CreateSubagentRuntimeManagementAsync(service);
+        var stream = management.Changes;
         using var subscriptionCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await using var subscription = stream.SubscribeAsync(
-            new SubagentChangeSubscription(stream.Revision),
+            stream.Revision,
             subscriptionCancellation.Token).GetAsyncEnumerator();
         Assert.Equal(
             SubagentChangeKind.Connected,
@@ -142,10 +168,11 @@ public sealed class SubagentRuntimeChangeTests
         using var scope = RegressionTestPackageScope.Create();
         using var catalog = new RegressionTestExtensionCatalog();
         var service = new SubagentService(new SubagentStore(scope.Context));
-        using var stream = new SubagentRuntimeChangeStream(service, catalog.Subagents());
+        await using var management = await catalog.CreateSubagentRuntimeManagementAsync(service);
+        var stream = management.Changes;
         using var subscriptionCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await using var subscription = stream.SubscribeAsync(
-            new SubagentChangeSubscription(stream.Revision),
+            stream.Revision,
             subscriptionCancellation.Token).GetAsyncEnumerator();
         _ = await ReadUntilAsync(subscription, change => change.Kind == SubagentChangeKind.Connected);
         var runtime = new TestRuntimeCatalog();
@@ -165,7 +192,7 @@ public sealed class SubagentRuntimeChangeTests
     public async Task AppGateway_ReconnectsFromLastRevisionAndNewRuntimeRequiresResnapshot()
     {
         var client = new ReconnectingSubagentRuntimeClient();
-        using var gateway = new SubagentAppRuntimeGateway(AgentRoleBoundary.As<AppRuntime.ISubagentOwnerClient>(client));
+        using var gateway = new SubagentAppRuntimeGateway(client);
         var sessionChanged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var resnapshot = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         gateway.SessionChanged += _ => sessionChanged.TrySetResult();
@@ -183,7 +210,7 @@ public sealed class SubagentRuntimeChangeTests
     public async Task AppGateway_OverflowResnapshotResumesFromTerminalRevision()
     {
         var client = new OverflowResnapshotRuntimeClient();
-        using var gateway = new SubagentAppRuntimeGateway(AgentRoleBoundary.As<AppRuntime.ISubagentOwnerClient>(client));
+        using var gateway = new SubagentAppRuntimeGateway(client);
         var resnapshot = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var turnChanged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         gateway.ResnapshotRequired += () => resnapshot.TrySetResult();
@@ -200,7 +227,7 @@ public sealed class SubagentRuntimeChangeTests
     public async Task AppGateway_FailedChangeProcessingReconnectsBeforeAdvancingRevision()
     {
         var client = new FailingCatalogRefreshRuntimeClient();
-        using var gateway = new SubagentAppRuntimeGateway(AgentRoleBoundary.As<AppRuntime.ISubagentOwnerClient>(client));
+        using var gateway = new SubagentAppRuntimeGateway(client);
         var catalogChanged = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
         gateway.CatalogChanged += static () => throw new InvalidOperationException("Injected app listener failure.");
@@ -218,7 +245,7 @@ public sealed class SubagentRuntimeChangeTests
     public async Task AppGateway_MalformedChangeResnapshotsAndViewModelTracksAvailability()
     {
         var client = new MalformedChangeRuntimeClient();
-        using var gateway = new SubagentAppRuntimeGateway(AgentRoleBoundary.As<AppRuntime.ISubagentOwnerClient>(client));
+        using var gateway = new SubagentAppRuntimeGateway(client);
         using var viewModel = new SubagentsViewModel(gateway);
         var resnapshot = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         gateway.ResnapshotRequired += () => resnapshot.TrySetResult();
@@ -236,9 +263,7 @@ public sealed class SubagentRuntimeChangeTests
     public async Task ResnapshotRequired_ReloadsSelectedTranscriptAcrossRowMoveAndAcceptsLaterChange()
     {
         var gateway = new ResnapshotSubsessionGateway();
-        using var viewModel = new SubsessionsViewModel(AgentRoleBoundary.As<AppRuntime.ISubsessionSessionReader>(gateway),
-            AgentRoleBoundary.As<AppRuntime.ISubsessionCheckpointReader>(gateway), AgentRoleBoundary.As<AppRuntime.ISubsessionTranscriptPageReader>(gateway),
-            AgentRoleBoundary.As<AppRuntime.ISubsessionChangeNotifications>(gateway));
+        using var viewModel = new SubsessionsViewModel(gateway, gateway, gateway, gateway);
         await viewModel.InitializeAsync();
         Assert.Equal("initial", Assert.Single(
             viewModel.Messages.OfType<SubsessionTextTranscriptRowViewModel>()).Content);
@@ -273,7 +298,7 @@ public sealed class SubagentRuntimeChangeTests
     [Fact]
     public async Task InitialTranscriptTransportFailureSurfacesActionableStatus()
     {
-        using var gateway = new SubagentAppRuntimeGateway(AgentRoleBoundary.As<AppRuntime.ISubagentOwnerClient>(new MissingPageSubagentRuntimeClient()));
+        using var gateway = new SubagentAppRuntimeGateway(new MissingPageSubagentRuntimeClient());
         using var viewModel = new SubsessionsViewModel(gateway, gateway, gateway, gateway);
 
         await viewModel.InitializeAsync();
@@ -305,7 +330,36 @@ public sealed class SubagentRuntimeChangeTests
         throw new InvalidOperationException("The subagent change stream completed before the expected change.");
     }
 
-    private sealed class ReconnectingSubagentRuntimeClient : ISubagentOwnerClient
+    private abstract class SubagentManagementClientStub : SubagentManagementServices.ISubagentsManagementService
+    {
+        public virtual ValueTask<SunderContent> ManagementAsync(CancellationToken cancellationToken = default) => Unavailable();
+        public virtual ValueTask<SunderContent> ProviderModelsAsync(string providerId, CancellationToken cancellationToken = default) => Unavailable();
+        public virtual ValueTask<SunderContent> RuntimeCatalogAsync(CancellationToken cancellationToken = default) => Unavailable();
+        public virtual ValueTask<SunderContent> RecentTurnsAsync(Guid sessionId, int limit, CancellationToken cancellationToken = default) => Unavailable();
+        public virtual ValueTask<SunderContent> TurnsBeforeAsync(Guid sessionId, DateTimeOffset createdAtUtc, Guid turnId, int limit, CancellationToken cancellationToken = default) => Unavailable();
+        public virtual ValueTask<SunderContent> TurnsAfterAsync(Guid sessionId, DateTimeOffset createdAtUtc, Guid turnId, int limit, CancellationToken cancellationToken = default) => Unavailable();
+        public virtual ValueTask<SunderContent> AroundTurnAsync(Guid sessionId, Guid turnId, DateTimeOffset createdAtUtc, Guid itemId, int beforeLimit, int afterLimit, CancellationToken cancellationToken = default) => Unavailable();
+        public virtual ValueTask<SunderContent> ToolDetailAsync(AgentTranscriptToolDetailRequest request, CancellationToken cancellationToken = default) => Unavailable();
+        public virtual ValueTask<SunderContent> CreateAsync(string displayName, CancellationToken cancellationToken = default) => Unavailable();
+        public virtual ValueTask<SunderContent> SaveAsync(SubagentSaveRequest request, CancellationToken cancellationToken = default) => Unavailable();
+        public virtual ValueTask<SunderContent> DeleteAsync(string subagentId, CancellationToken cancellationToken = default) => Unavailable();
+
+        public virtual async IAsyncEnumerable<SunderContent> ChangesAsync(
+            long afterRevision,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            yield break;
+        }
+
+        protected static SunderContent Content<T>(T projection)
+            => SubagentProjectionContent.Create(projection);
+
+        private static ValueTask<SunderContent> Unavailable()
+            => ValueTask.FromException<SunderContent>(new NotSupportedException());
+    }
+
+    private sealed class ReconnectingSubagentRuntimeClient : SubagentManagementClientStub
     {
         private int _subscriptionCount;
 
@@ -313,123 +367,106 @@ public sealed class SubagentRuntimeChangeTests
         public TaskCompletionSource SecondSubscriptionStarted { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public ValueTask<SubagentProjection> QueryAsync(
-            SubagentQuery request,
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromException<SubagentProjection>(new NotSupportedException(request.Kind.ToString()));
-
-        public ValueTask<SubagentProjection> CommandAsync(
-            SubagentCommand request,
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromException<SubagentProjection>(new NotSupportedException(request.Kind.ToString()));
-
-        public async IAsyncEnumerable<SubagentChanged> SubscribeChangesAsync(
-            SubagentChangeSubscription request,
+        public override async IAsyncEnumerable<SunderContent> ChangesAsync(
+            long afterRevision,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
-            AfterRevisions.Enqueue(request.AfterRevision);
+            AfterRevisions.Enqueue(afterRevision);
             if (Interlocked.Increment(ref _subscriptionCount) == 1)
             {
-                yield return new SubagentChanged(
+                yield return Content(new SubagentChanged(
                     5,
                     SubagentChangeKind.Connected,
-                    RuntimeInstanceId: "runtime-one");
-                yield return new SubagentChanged(
+                    RuntimeInstanceId: "runtime-one"));
+                yield return Content(new SubagentChanged(
                     6,
                     SubagentChangeKind.Session,
                     SessionId: Guid.NewGuid(),
-                    RuntimeInstanceId: "runtime-one");
+                    RuntimeInstanceId: "runtime-one"));
                 yield break;
             }
 
             SecondSubscriptionStarted.TrySetResult();
-            yield return new SubagentChanged(
+            yield return Content(new SubagentChanged(
                 6,
                 SubagentChangeKind.Connected,
-                RuntimeInstanceId: "runtime-two");
+                RuntimeInstanceId: "runtime-two"));
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
         }
     }
 
-    private sealed class OverflowResnapshotRuntimeClient : ISubagentOwnerClient
+    private sealed class OverflowResnapshotRuntimeClient : SubagentManagementClientStub
     {
         private readonly Guid _sessionId = Guid.NewGuid();
         private int _subscriptionCount;
 
         public ConcurrentQueue<long> AfterRevisions { get; } = new();
 
-        public ValueTask<SubagentProjection> QueryAsync(
-            SubagentQuery request,
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromException<SubagentProjection>(new NotSupportedException(request.Kind.ToString()));
-
-        public ValueTask<SubagentProjection> CommandAsync(
-            SubagentCommand request,
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromException<SubagentProjection>(new NotSupportedException(request.Kind.ToString()));
-
-        public async IAsyncEnumerable<SubagentChanged> SubscribeChangesAsync(
-            SubagentChangeSubscription request,
+        public override async IAsyncEnumerable<SunderContent> ChangesAsync(
+            long afterRevision,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
-            AfterRevisions.Enqueue(request.AfterRevision);
+            AfterRevisions.Enqueue(afterRevision);
             if (Interlocked.Increment(ref _subscriptionCount) == 1)
             {
-                yield return new SubagentChanged(
+                yield return Content(new SubagentChanged(
                     1,
                     SubagentChangeKind.Connected,
-                    RuntimeInstanceId: "runtime");
-                yield return new SubagentChanged(
+                    RuntimeInstanceId: "runtime"));
+                yield return Content(new SubagentChanged(
                     65,
                     SubagentChangeKind.ResnapshotRequired,
-                    RuntimeInstanceId: "runtime");
+                    RuntimeInstanceId: "runtime"));
                 yield break;
             }
 
-            yield return new SubagentChanged(
+            yield return Content(new SubagentChanged(
                 65,
                 SubagentChangeKind.Connected,
-                RuntimeInstanceId: "runtime");
-            yield return new SubagentChanged(
+                RuntimeInstanceId: "runtime"));
+            yield return Content(new SubagentChanged(
                 66,
                 SubagentChangeKind.Turn,
                 SessionId: _sessionId,
                 Turn: CreateTurn(_sessionId, "after resnapshot"),
-                RuntimeInstanceId: "runtime");
+                RuntimeInstanceId: "runtime"));
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
         }
 
-        private static AgentTurnRecord CreateTurn(Guid sessionId, string content)
+        private static WorkerGeneratedAgentTurnRecord CreateTurn(Guid sessionId, string content)
         {
             var turnId = Guid.NewGuid();
             var now = DateTimeOffset.UtcNow;
-            return new AgentTurnRecord(
-                turnId,
-                sessionId,
-                AgentMessageRole.Assistant,
-                AgentTurnKind.Message,
-                [new AgentTurnItemRecord(
-                    Guid.NewGuid(),
-                    turnId,
-                    0,
-                    AgentTurnItemKind.Text,
-                    content,
-                    null,
-                    null,
-                    null,
-                    null,
-                    null,
-                    null,
-                    false,
-                    false,
-                    null,
-                    null)],
-                now,
-                now);
+            return new WorkerGeneratedAgentTurnRecord
+            {
+                TurnId = turnId,
+                SessionId = sessionId,
+                Role = WorkerGeneratedAgentMessageRole.Assistant,
+                Kind = WorkerGeneratedAgentTurnKind.Message,
+                Items =
+                [
+                    new WorkerGeneratedAgentTurnItemRecord
+                    {
+                        ItemId = Guid.NewGuid(),
+                        TurnId = turnId,
+                        SequenceNumber = 0,
+                        Kind = WorkerGeneratedAgentTurnItemKind.Text,
+                        TextContent = content,
+                        IsError = false,
+                        IsToolHeaderProjection = false,
+                        ToolDetailRevision = 0,
+                        WasTruncated = false,
+                    },
+                ],
+                ContentRevision = 1,
+                IsStreaming = false,
+                CreatedAtUtc = RpcTimestamp(now),
+                UpdatedAtUtc = RpcTimestamp(now),
+            };
         }
     }
 
-    private sealed class MalformedChangeRuntimeClient : ISubagentOwnerClient
+    private sealed class MalformedChangeRuntimeClient : SubagentManagementClientStub
     {
         private int _subscriptionCount;
 
@@ -437,32 +474,22 @@ public sealed class SubagentRuntimeChangeTests
         internal TaskCompletionSource SecondSubscriptionStarted { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public ValueTask<SubagentProjection> QueryAsync(
-            SubagentQuery request,
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromException<SubagentProjection>(new NotSupportedException(request.Kind.ToString()));
-
-        public ValueTask<SubagentProjection> CommandAsync(
-            SubagentCommand request,
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromException<SubagentProjection>(new NotSupportedException(request.Kind.ToString()));
-
-        public async IAsyncEnumerable<SubagentChanged> SubscribeChangesAsync(
-            SubagentChangeSubscription request,
+        public override async IAsyncEnumerable<SunderContent> ChangesAsync(
+            long afterRevision,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
-            AfterRevisions.Enqueue(request.AfterRevision);
+            AfterRevisions.Enqueue(afterRevision);
             var subscription = Interlocked.Increment(ref _subscriptionCount);
-            yield return new SubagentChanged(
+            yield return Content(new SubagentChanged(
                 0,
                 SubagentChangeKind.Connected,
-                RuntimeInstanceId: "runtime");
+                RuntimeInstanceId: "runtime"));
             if (subscription == 1)
             {
-                yield return new SubagentChanged(
+                yield return Content(new SubagentChanged(
                     1,
                     (SubagentChangeKind)int.MaxValue,
-                    RuntimeInstanceId: "runtime");
+                    RuntimeInstanceId: "runtime"));
                 yield break;
             }
 
@@ -471,74 +498,67 @@ public sealed class SubagentRuntimeChangeTests
         }
     }
 
-    private sealed class FailingCatalogRefreshRuntimeClient : ISubagentOwnerClient
+    private sealed class FailingCatalogRefreshRuntimeClient : SubagentManagementClientStub
     {
         private int _subscriptionCount;
         private int _managementQueryCount;
 
         public ConcurrentQueue<long> AfterRevisions { get; } = new();
 
-        public async ValueTask<SubagentProjection> QueryAsync(
-            SubagentQuery request,
+        public override async ValueTask<SunderContent> ManagementAsync(
             CancellationToken cancellationToken = default)
         {
-            Assert.Equal(SubagentQueryKind.Management, request.Kind);
             await Task.Yield();
             cancellationToken.ThrowIfCancellationRequested();
             if (Interlocked.Increment(ref _managementQueryCount) == 1)
             {
                 throw new IOException("Injected catalog refresh failure.");
             }
-            return new SubagentProjection(Providers:
+            return Content(new SubagentProjection(Providers:
             [
                 new SubagentProviderProjection(
                     "provider.replayed",
                     "Replayed Provider",
                     "test.provider.package"),
-            ]);
+            ]));
         }
 
-        public ValueTask<SubagentProjection> CommandAsync(
-            SubagentCommand request,
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromException<SubagentProjection>(new NotSupportedException(request.Kind.ToString()));
-
-        public async IAsyncEnumerable<SubagentChanged> SubscribeChangesAsync(
-            SubagentChangeSubscription request,
+        public override async IAsyncEnumerable<SunderContent> ChangesAsync(
+            long afterRevision,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
-            AfterRevisions.Enqueue(request.AfterRevision);
+            AfterRevisions.Enqueue(afterRevision);
             if (Interlocked.Increment(ref _subscriptionCount) == 1)
             {
-                yield return new SubagentChanged(
+                yield return Content(new SubagentChanged(
                     1,
                     SubagentChangeKind.Connected,
-                    RuntimeInstanceId: "runtime");
-                yield return new SubagentChanged(
+                    RuntimeInstanceId: "runtime"));
+                yield return Content(new SubagentChanged(
                     2,
                     SubagentChangeKind.Catalog,
-                    RuntimeInstanceId: "runtime");
+                    RuntimeInstanceId: "runtime"));
             }
             else
             {
-                yield return new SubagentChanged(
+                yield return Content(new SubagentChanged(
                     2,
                     SubagentChangeKind.Catalog,
-                    RuntimeInstanceId: "runtime");
-                yield return new SubagentChanged(
+                    RuntimeInstanceId: "runtime"));
+                yield return Content(new SubagentChanged(
                     2,
                     SubagentChangeKind.Connected,
-                    RuntimeInstanceId: "runtime");
+                    RuntimeInstanceId: "runtime"));
             }
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
         }
     }
 
     private sealed class ResnapshotSubsessionGateway :
-        ISubsessionSessionReader,
-        ISubsessionCheckpointReader,
-        ISubsessionTranscriptPageReader,
-        ISubsessionChangeNotifications
+        AppRuntime.ISubsessionSessionReader,
+        AppRuntime.ISubsessionCheckpointReader,
+        AppRuntime.ISubsessionTranscriptPageReader,
+        AppRuntime.ISubsessionChangeNotifications
     {
         private readonly Guid _rootSessionId = Guid.NewGuid();
         private readonly Guid _otherChildSessionId = Guid.NewGuid();
@@ -553,77 +573,83 @@ public sealed class SubagentRuntimeChangeTests
             add { }
             remove { }
         }
-        public event Action<Guid, AgentTurnRecord>? TurnChanged;
+        public event Action<Guid, AppAgentTurnRecord>? TurnChanged;
         public event Action? ResnapshotRequired;
 
-        public Task<SubsessionSessionCatalog> ListSessionsAsync(
+        public Task<AppRuntime.SubsessionSessionCatalog> ListSessionsAsync(
             CancellationToken cancellationToken = default)
         {
             var now = DateTimeOffset.UtcNow;
             var read = Interlocked.Increment(ref _catalogReadCount);
             var selectedUpdatedAt = read == 1 ? now : now.AddMinutes(-1);
             var otherUpdatedAt = read == 1 ? now.AddMinutes(-1) : now;
-            return Task.FromResult(new SubsessionSessionCatalog(
+            return Task.FromResult(new AppRuntime.SubsessionSessionCatalog(
             [
-                new AgentSessionRecord(
-                    _rootSessionId,
-                    "Root",
-                    AgentSessionState.Active,
-                    now,
-                    now,
-                    RootSessionId: _rootSessionId),
-                new AgentSessionRecord(
-                    ChildSessionId,
-                    "Child",
-                    AgentSessionState.Active,
-                    now,
-                    selectedUpdatedAt,
-                    ParentSessionId: _rootSessionId,
-                    RootSessionId: _rootSessionId),
-                new AgentSessionRecord(
-                    _otherChildSessionId,
-                    "Other child",
-                    AgentSessionState.Active,
-                    now,
-                    otherUpdatedAt,
-                    ParentSessionId: _rootSessionId,
-                    RootSessionId: _rootSessionId),
+                new AppAgentSessionRecord
+                {
+                    SessionId = _rootSessionId,
+                    Title = "Root",
+                    State = AppAgentSessionState.Active,
+                    CreatedAtUtc = RpcTimestamp(now),
+                    UpdatedAtUtc = RpcTimestamp(now),
+                    RootSessionId = _rootSessionId,
+                },
+                new AppAgentSessionRecord
+                {
+                    SessionId = ChildSessionId,
+                    Title = "Child",
+                    State = AppAgentSessionState.Active,
+                    CreatedAtUtc = RpcTimestamp(now),
+                    UpdatedAtUtc = RpcTimestamp(selectedUpdatedAt),
+                    ParentSessionId = _rootSessionId,
+                    RootSessionId = _rootSessionId,
+                },
+                new AppAgentSessionRecord
+                {
+                    SessionId = _otherChildSessionId,
+                    Title = "Other child",
+                    State = AppAgentSessionState.Active,
+                    CreatedAtUtc = RpcTimestamp(now),
+                    UpdatedAtUtc = RpcTimestamp(otherUpdatedAt),
+                    ParentSessionId = _rootSessionId,
+                    RootSessionId = _rootSessionId,
+                },
             ],
             []));
         }
 
-        public Task<IReadOnlyList<AgentRunCheckpointRecord>> ListLatestCheckpointsAsync(
+        public Task<IReadOnlyList<AppAgentRunCheckpointRecord>> ListLatestCheckpointsAsync(
             CancellationToken cancellationToken = default)
-            => Task.FromResult<IReadOnlyList<AgentRunCheckpointRecord>>([]);
+            => Task.FromResult<IReadOnlyList<AppAgentRunCheckpointRecord>>([]);
 
-        public Task<SubsessionTranscriptPage> ListRecentTurnsAsync(
+        public Task<AppRuntime.SubsessionTranscriptPage> ListRecentTurnsAsync(
             Guid sessionId,
             int limit,
             CancellationToken cancellationToken = default)
         {
             var read = Interlocked.Increment(ref _recentReadCount);
-            return Task.FromResult(new SubsessionTranscriptPage(
+            return Task.FromResult(new AppRuntime.SubsessionTranscriptPage(
                 [CreateTurn(sessionId, read == 1 ? "initial" : "resnapshot")],
                 false));
         }
 
-        public Task<SubsessionTranscriptPage> ListTurnsBeforeAsync(
+        public Task<AppRuntime.SubsessionTranscriptPage> ListTurnsBeforeAsync(
             Guid sessionId,
             DateTimeOffset beforeCreatedAtUtc,
             Guid beforeTurnId,
             int limit,
             CancellationToken cancellationToken = default)
-            => Task.FromResult(new SubsessionTranscriptPage([], false));
+            => Task.FromResult(new AppRuntime.SubsessionTranscriptPage([], false));
 
-        public Task<SubsessionTranscriptPage> ListTurnsAfterAsync(
+        public Task<AppRuntime.SubsessionTranscriptPage> ListTurnsAfterAsync(
             Guid sessionId,
             DateTimeOffset afterCreatedAtUtc,
             Guid afterTurnId,
             int limit,
             CancellationToken cancellationToken = default)
-            => Task.FromResult(new SubsessionTranscriptPage([], false));
+            => Task.FromResult(new AppRuntime.SubsessionTranscriptPage([], false));
 
-        public Task<SubsessionAroundTurnPage> LoadAroundTurnAsync(
+        public Task<AppRuntime.SubsessionAroundTurnPage> LoadAroundTurnAsync(
             Guid sessionId,
             Guid turnId,
             DateTimeOffset turnCreatedAtUtc,
@@ -631,40 +657,43 @@ public sealed class SubagentRuntimeChangeTests
             int beforeLimit,
             int afterLimit,
             CancellationToken cancellationToken = default)
-            => Task.FromResult(new SubsessionAroundTurnPage([], false, false, turnId));
+            => Task.FromResult(new AppRuntime.SubsessionAroundTurnPage([], false, false, turnId));
 
         internal void RaiseResnapshotRequired() => ResnapshotRequired?.Invoke();
 
         internal void RaiseTurnChanged(string content)
             => TurnChanged?.Invoke(ChildSessionId, CreateTurn(ChildSessionId, content));
 
-        private static AgentTurnRecord CreateTurn(Guid sessionId, string content)
+        private static AppAgentTurnRecord CreateTurn(Guid sessionId, string content)
         {
             var turnId = Guid.NewGuid();
             var now = DateTimeOffset.UtcNow;
-            return new AgentTurnRecord(
-                turnId,
-                sessionId,
-                AgentMessageRole.Assistant,
-                AgentTurnKind.Message,
-                [new AgentTurnItemRecord(
-                    Guid.NewGuid(),
-                    turnId,
-                    0,
-                    AgentTurnItemKind.Text,
-                    content,
-                    null,
-                    null,
-                    null,
-                    null,
-                    null,
-                    null,
-                    false,
-                    false,
-                    null,
-                    null)],
-                now,
-                now);
+            return new AppAgentTurnRecord
+            {
+                TurnId = turnId,
+                SessionId = sessionId,
+                Role = AppAgentMessageRole.Assistant,
+                Kind = AppAgentTurnKind.Message,
+                Items =
+                [
+                    new AppAgentTurnItemRecord
+                    {
+                        ItemId = Guid.NewGuid(),
+                        TurnId = turnId,
+                        SequenceNumber = 0,
+                        Kind = AppAgentTurnItemKind.Text,
+                        TextContent = content,
+                        IsError = false,
+                        IsToolHeaderProjection = false,
+                        ToolDetailRevision = 0,
+                        WasTruncated = false,
+                    },
+                ],
+                ContentRevision = 1,
+                IsStreaming = false,
+                CreatedAtUtc = RpcTimestamp(now),
+                UpdatedAtUtc = RpcTimestamp(now),
+            };
         }
     }
 
@@ -686,7 +715,7 @@ public sealed class SubagentRuntimeChangeTests
             remove => _sessionChanged -= value;
         }
 
-        public event Action<Guid, AgentTurnRecord>? TurnChanged
+        public event Action<Guid, WorkerAgentTurnRecord>? TurnChanged
         {
             add { }
             remove { }
@@ -718,14 +747,14 @@ public sealed class SubagentRuntimeChangeTests
         public AgentProfileRecord? GetSessionProfile(Guid sessionId) => null;
         public AgentWorkingSummaryRecord? GetWorkingSummary(Guid sessionId) => null;
         public AgentSessionContextCheckpointRecord? GetLatestSessionContextCheckpoint(Guid sessionId) => null;
-        public AgentRunCheckpointRecord? GetLatestCheckpoint(Guid sessionId) => null;
-        public IReadOnlyList<AgentTurnRecord> ListRecentTurns(Guid sessionId, int limit) => [];
-        public IReadOnlyList<AgentTurnRecord> ListTurnsBefore(
+        public WorkerAgentRunCheckpointRecord? GetLatestCheckpoint(Guid sessionId) => null;
+        public IReadOnlyList<WorkerAgentTurnRecord> ListRecentTurns(Guid sessionId, int limit) => [];
+        public IReadOnlyList<WorkerAgentTurnRecord> ListTurnsBefore(
             Guid sessionId,
             DateTimeOffset beforeCreatedAtUtc,
             Guid beforeTurnId,
             int limit) => [];
-        public IReadOnlyList<AgentTurnRecord> ListTurnsAfter(
+        public IReadOnlyList<WorkerAgentTurnRecord> ListTurnsAfter(
             Guid sessionId,
             DateTimeOffset afterCreatedAtUtc,
             Guid afterTurnId,
@@ -740,31 +769,29 @@ public sealed class SubagentRuntimeChangeTests
         public void RaiseResetRequired() => _resetRequired?.Invoke();
     }
 
-    private sealed class MissingPageSubagentRuntimeClient : ISubagentOwnerClient
+    private sealed class MissingPageSubagentRuntimeClient : SubagentManagementClientStub
     {
         private readonly Guid _rootSessionId = Guid.NewGuid();
         private readonly Guid _childSessionId = Guid.NewGuid();
 
-        public ValueTask<SubagentProjection> QueryAsync(
-            SubagentQuery request,
+        public override ValueTask<SunderContent> RuntimeCatalogAsync(
             CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var projection = request.Kind == SubagentQueryKind.RuntimeCatalog
-                ? CreateRuntimeCatalog()
-                : request.Kind == SubagentQueryKind.RecentTurns
-                    ? new SubagentProjection()
-                    : throw new NotSupportedException(request.Kind.ToString());
-            return ValueTask.FromResult(projection);
+            return ValueTask.FromResult(Content(CreateRuntimeCatalog()));
         }
 
-        public ValueTask<SubagentProjection> CommandAsync(
-            SubagentCommand request,
+        public override ValueTask<SunderContent> RecentTurnsAsync(
+            Guid sessionId,
+            int limit,
             CancellationToken cancellationToken = default)
-            => ValueTask.FromException<SubagentProjection>(new NotSupportedException(request.Kind.ToString()));
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult(Content(new SubagentProjection()));
+        }
 
-        public async IAsyncEnumerable<SubagentChanged> SubscribeChangesAsync(
-            SubagentChangeSubscription request,
+        public override async IAsyncEnumerable<SunderContent> ChangesAsync(
+            long afterRevision,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
@@ -777,21 +804,25 @@ public sealed class SubagentRuntimeChangeTests
             return new SubagentProjection(
                 Sessions:
                 [
-                    new AgentSessionRecord(
-                        _rootSessionId,
-                        "Root",
-                        AgentSessionState.Active,
-                        now,
-                        now,
-                        RootSessionId: _rootSessionId),
-                    new AgentSessionRecord(
-                        _childSessionId,
-                        "Child",
-                        AgentSessionState.Active,
-                        now,
-                        now,
-                        ParentSessionId: _rootSessionId,
-                        RootSessionId: _rootSessionId),
+                    new WorkerGeneratedAgentSessionRecord
+                    {
+                        SessionId = _rootSessionId,
+                        Title = "Root",
+                        State = WorkerGeneratedAgentSessionState.Active,
+                        CreatedAtUtc = RpcTimestamp(now),
+                        UpdatedAtUtc = RpcTimestamp(now),
+                        RootSessionId = _rootSessionId,
+                    },
+                    new WorkerGeneratedAgentSessionRecord
+                    {
+                        SessionId = _childSessionId,
+                        Title = "Child",
+                        State = WorkerGeneratedAgentSessionState.Active,
+                        CreatedAtUtc = RpcTimestamp(now),
+                        UpdatedAtUtc = RpcTimestamp(now),
+                        ParentSessionId = _rootSessionId,
+                        RootSessionId = _rootSessionId,
+                    },
                 ],
                 Profiles: [],
                 Checkpoints: []);

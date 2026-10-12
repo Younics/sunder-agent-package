@@ -20,6 +20,20 @@ internal static class HostResourceClaim
         ArgumentException.ThrowIfNullOrWhiteSpace(namespaceId);
         ArgumentException.ThrowIfNullOrWhiteSpace(logicalPath);
         ArgumentNullException.ThrowIfNull(authority);
+#if SUNDER_AGENT_PACKAGE_MODELS
+        return new AgentResourceClaim
+        {
+            Version = CurrentVersion, NamespaceId = namespaceId, LogicalPath = logicalPath, ConfiguredRoot = configuredRoot,
+            RootIdentityChainFingerprint = FingerprintIdentityChain(authority.RetainedPathIdentities),
+            TargetExists = authority.Binding.Exists, TargetKind = authority.Binding.TargetKind?.ToString(),
+            TargetIdentity = authority.Binding.TargetIdentity?.ToString(), TargetIsAuthorityRoot = authority.Binding.TargetIsAuthorityRoot,
+            CaseSensitivePath = authority.Binding.CaseSensitivePath, ActionId = operation?.ActionId ?? string.Empty,
+            WorkspaceId = string.Empty, WorkspaceGeneration = operation?.WorkspaceGeneration ?? string.Empty,
+            BindingId = string.Empty, BindingGeneration = operation?.BindingGeneration ?? string.Empty,
+            ToolCallId = operation?.ToolCallId ?? string.Empty, ResourceIndex = operation?.ResourceIndex ?? 0,
+            ToolOwnerPackageId = operation?.ToolOwnerPackageId ?? string.Empty, ExecutionTargetOwnerPackageId = operation?.ExecutionTargetOwnerPackageId ?? string.Empty,
+        };
+#else
         return new AgentResourceClaim(
             CurrentVersion,
             namespaceId,
@@ -40,6 +54,7 @@ internal static class HostResourceClaim
             operation?.ResourceIndex ?? 0,
             operation?.ToolOwnerPackageId ?? string.Empty,
             operation?.ExecutionTargetOwnerPackageId ?? string.Empty);
+#endif
     }
 
     public static AgentResourceClaim BindScope(

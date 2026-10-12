@@ -1,0 +1,58 @@
+using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using Sunder.Sdk.Services;
+
+namespace ControlledNaturalProviders;
+
+[SunderServiceProvider(typeof(IToolSourceService), ProviderId = "fixture.tools")]
+[SunderRuntimeUse(typeof(IExecutionTargetService), Actions = ["discover", "invoke"])]
+public sealed partial class ControlledTools : IToolSourceService
+{
+    private readonly TaskCompletionSource _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _cancelled = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _exited = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public Task Started => _started.Task;
+    public Task Cancelled => _cancelled.Task;
+    public Task Exited => _exited.Task;
+    public string? ConfigurationGeneration { get; private set; }
+    public IReadOnlyList<string> ResourceCapabilities { get; private set; } = [];
+    public void Release() => _release.TrySetResult();
+
+    public ValueTask<AgentToolSourceDescriptor> DescribeAsync(CancellationToken token = default)
+    { token.ThrowIfCancellationRequested(); return ValueTask.FromResult(new AgentToolSourceDescriptor { SourceId = "fixture.tools", DisplayName = "Controlled tools", SourceKind = "fixture" }); }
+    public ValueTask<IReadOnlyList<AgentToolDescriptor>> ListToolsAsync(AgentToolSourceContext context, CancellationToken token = default)
+    { token.ThrowIfCancellationRequested(); return ValueTask.FromResult<IReadOnlyList<AgentToolDescriptor>>([]); }
+    public ValueTask<AgentToolReadiness?> GetReadinessAsync(CSunder_Agent_Tool_Source_ToolSourceGetReadinessRequest request, CancellationToken token = default)
+    { token.ThrowIfCancellationRequested(); return ValueTask.FromResult<AgentToolReadiness?>(null); }
+    public ValueTask<AgentToolResult?> PreflightAsync(CSunder_Agent_Tool_Source_ToolSourcePreflightRequest request, CancellationToken token = default)
+    { token.ThrowIfCancellationRequested(); return ValueTask.FromResult<AgentToolResult?>(null); }
+    public ValueTask<AgentPermissionRequest?> PermissionAsync(CSunder_Agent_Tool_Source_ToolSourcePermissionRequest request, CancellationToken token = default)
+    { token.ThrowIfCancellationRequested(); return ValueTask.FromResult<AgentPermissionRequest?>(null); }
+    public ValueTask<AgentToolPresentation?> PresentationAsync(AgentToolPresentationRequest request, CancellationToken token = default)
+    { token.ThrowIfCancellationRequested(); return ValueTask.FromResult<AgentToolPresentation?>(null); }
+
+    public async ValueTask<AgentToolResult> ExecuteAsync(CSunder_Agent_Tool_Source_ToolSourceExecuteRequest request, CancellationToken token = default)
+    {
+        ConfigurationGeneration = request.Context.ExecutionTargetConfigurationGeneration;
+        ResourceCapabilities = request.Context.ApprovedResourceCapabilities ?? [];
+        _started.TrySetResult();
+        try
+        {
+            await _release.Task.WaitAsync(token).ConfigureAwait(false);
+            var target = request.Context.ExecutionTarget ?? throw new InvalidOperationException("A typed execution target is required.");
+            var descriptor = await target.Service.DescribeAsync(token).ConfigureAwait(false);
+            return Result(request.Request.ToolId, descriptor.TargetId);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        { _cancelled.TrySetResult(); throw; }
+        finally { _exited.TrySetResult(); }
+    }
+
+    internal static AgentToolResult Result(string toolId, string summary) => new()
+    {
+        ToolId = toolId, Summary = summary, Content = null, StructuredPayloadJson = null,
+        Sources = null, WasTruncated = false, IsError = false, ErrorCode = null,
+        BackendId = "fixture.tools", PresentationPayloadJson = null, RequiresPromptContextRefresh = false,
+    };
+}

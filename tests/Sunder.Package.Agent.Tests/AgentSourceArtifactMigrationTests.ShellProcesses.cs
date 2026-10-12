@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Sdk.Rpc;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -9,7 +10,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
 {
     private static async Task VerifyShellProcesses(string root,
         Func<string, object, AgentToolExecutionContext?, CancellationToken, Task<AgentToolResult>> execute,
-        Func<Task> retireAndReplace, IAsyncDisposable lifetime)
+        Func<Task> retireAndReplace, Func<Task> withdrawAndDrainSource)
     {
         var timeout = await execute("shell", new { command = "exec sleep 30", timeoutSeconds = 1 }, null, default);
         Assert.True(timeout.IsError); Assert.Equal(AgentToolResultErrorCodes.ShellTimeout, timeout.ErrorCode); Assert.True(timeout.RequiresPromptContextRefresh);
@@ -32,8 +33,10 @@ public sealed partial class AgentSourceArtifactMigrationTests
             }
             else
             {
-                var shutdown = lifetime.DisposeAsync().AsTask();
-                Assert.Equal(AgentToolResultErrorCodes.PackageUnavailable, (await pending).ErrorCode);
+                var shutdown = withdrawAndDrainSource();
+                var error = await Assert.ThrowsAsync<SunderRpcException>(() => pending.WaitAsync(TimeSpan.FromSeconds(5)));
+                Assert.Equal(SunderRpcErrorKind.StaleEndpoint, error.Error.Kind);
+                Assert.Equal("test.rpc.stale-endpoint", error.Error.Code);
                 await shutdown.WaitAsync(TimeSpan.FromSeconds(10));
             }
             await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));

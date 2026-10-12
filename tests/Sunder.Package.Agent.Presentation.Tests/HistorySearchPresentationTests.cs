@@ -16,11 +16,13 @@ using Microsoft.Extensions.DependencyInjection;
 using AgentApp::Sunder.Package.Agent.Contracts;
 using AgentApp::Sunder.Package.Agent.Contracts.Contracts;
 using AgentApp::Sunder.Package.Agent.Contracts.Models;
+using AgentApp::Sunder.Package.Agent.HistorySearch;
 using AgentApp::Sunder.Package.Agent.PackageViews;
 using AgentApp::Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Tests;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Notifications;
+using AgentServices = AgentApp::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Presentation.Tests;
@@ -195,12 +197,12 @@ public sealed class HistorySearchPresentationTests
 
     private static ServiceProvider CreateServices(
         RegressionTestPackageScope scope,
-        IAgentOwnerClient runtime)
+        AgentServices.IAgentRuntimeService runtime)
     {
         var services = new ServiceCollection();
         services.AddSingleton<IPackageContext>(scope.Context);
         services.AddSingleton(runtime);
-        services.AddSingleton<IAgentOwnerClient>(runtime);
+        services.AddSingleton<AgentServices.IAgentRuntimeService>(runtime);
         services.AddSingleton(new AgentAppRuntimeGateway(runtime));
         services.AddSingleton<IPackageShellViewService, PresentationShellViewService>();
         services.AddSingleton<IPackageNotificationService>(NullPackageNotificationService.Instance);
@@ -218,36 +220,34 @@ public sealed class HistorySearchPresentationTests
         Assert.Same(expected, actual);
     }
 
-    private sealed class PresentationHistoryRuntimeClient : IAgentOwnerClient
+    private sealed class PresentationHistoryRuntimeClient : OwnerServiceStub
     {
-        public ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-            AgentOwnerRpcOperation<TRequest, TResponse> operation,
+        public override ValueTask<TResponse> RespondAsync<TRequest, TResponse>(
             TRequest request,
             CancellationToken cancellationToken = default)
             where TRequest : class
             where TResponse : class
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (operation.Is(AgentRuntimeOperations.HistorySearch))
+            if (request is HistorySearchRequest)
             {
                 return new ValueTask<TResponse>(CreateSearchResponse<TRequest, TResponse>(request));
             }
-            if (operation.Is(AgentRuntimeOperations.HistoryState))
+            if (request is HistorySearchStateRequest)
             {
                 return new ValueTask<TResponse>(CreateStateResponse<TResponse>());
             }
-            if (operation.Is(AgentRuntimeOperations.HistoryCommands))
+            if (request is HistorySearchCommand)
             {
                 return new ValueTask<TResponse>(CreateResponse<TResponse>(new
                 {
                     Status = CreateStatus(),
                 }));
             }
-            throw new NotSupportedException(operation.Describe());
+            throw new NotSupportedException(typeof(TRequest).Name);
         }
 
-        public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-            AgentOwnerRpcStream<TRequest, TEvent> stream,
+        public override async IAsyncEnumerable<TEvent> ObserveAsync<TRequest, TEvent>(
             TRequest request,
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
             where TRequest : class

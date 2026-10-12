@@ -12,11 +12,13 @@ using Sunder.Package.Agent.Storage;
 using Sunder.Sdk.Logging;
 using Sunder.Sdk.Rpc;
 using Xunit;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.Tests;
 
 extern alias MemoryWorker;
 using MemoryWorker::Sunder.Package.Agent.Memory.Semantic;
+using MemoryModels = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
 
 public sealed class AgentLifecycleOutboxTests
 {
@@ -53,7 +55,7 @@ public sealed class AgentLifecycleOutboxTests
     }
 
     [Fact]
-    public void WorkspaceDeletion_OutboxFailure_RollsBackSourceMutation()
+    public async Task WorkspaceDeletion_OutboxFailure_RollsBackSourceMutation()
     {
         using var scope = RegressionTestPackageScope.Create();
         var store = new AgentLocalStore(scope.Context);
@@ -78,7 +80,7 @@ public sealed class AgentLifecycleOutboxTests
             command.ExecuteNonQuery();
         }
 
-        Assert.Throws<SqliteException>(() => workspaces.DeleteWorkspace(workspace.WorkspaceId));
+        await Assert.ThrowsAsync<SqliteException>(() => workspaces.DeleteWorkspaceAsync(workspace.WorkspaceId));
 
         Assert.NotNull(workspaces.GetWorkspace(workspace.WorkspaceId));
         Assert.NotNull(sessions.GetSession(session.SessionId));
@@ -93,15 +95,15 @@ public sealed class AgentLifecycleOutboxTests
         var catalog = new RegressionTestExtensionCatalog();
         var cleaner = new ThrowingSessionDataCleaner();
         catalog.AddProvider(RegressionTestBindings.SessionCleaners, cleaner);
-        var sessions = new AgentSessionService(store, catalog);
-        var workspaces = new AgentWorkspaceService(store, catalog, sessions);
+        var sessions = new AgentSessionService(store, catalog.SessionCleaners);
+        var workspaces = new AgentWorkspaceService(store, catalog.SessionCleaners, sessions, catalog.WorkspacePathMigrators);
         var workspace = workspaces.CreateWorkspace("Lifecycle workspace");
         var session = sessions.CreateSession(
             "Lifecycle session",
             profileId: "profile.lifecycle",
             workspaceId: workspace.WorkspaceId);
 
-        workspaces.DeleteWorkspace(workspace.WorkspaceId);
+        await workspaces.DeleteWorkspaceAsync(workspace.WorkspaceId);
 
         Assert.Equal([session.SessionId], cleaner.SessionIds);
         Assert.Null(workspaces.GetWorkspace(workspace.WorkspaceId));
@@ -118,7 +120,7 @@ public sealed class AgentLifecycleOutboxTests
         Assert.Equal(1, pending.AttemptCount);
         Assert.Equal("cleanup_callback_failure (System.InvalidOperationException)", pending.LastError);
 
-        await using var dispatcher = new AgentSessionCleanupDispatcher(store, catalog);
+        await using var dispatcher = new AgentSessionCleanupDispatcher(store, catalog.SessionCleaners);
         await Task.Delay(300);
         await dispatcher.FlushAsync();
         Assert.Equal("Completed", Assert.Single(store.ListSessionCleanupJobs()).Status);
@@ -157,7 +159,7 @@ public sealed class AgentLifecycleOutboxTests
         var catalog = new RegressionTestExtensionCatalog();
         var observer = new RecordingObserver("duplicate-observer") { FailuresRemaining = 1 };
         catalog.AddProvider(RegressionTestBindings.DurableLifecycleObservers, observer);
-        await using var dispatcher = new AgentLifecycleDispatcher(store, catalog);
+        await using var dispatcher = new AgentLifecycleDispatcher(store, catalog.DurableLifecycleObservers);
 
         await dispatcher.FlushAsync();
         await Task.Delay(300);
@@ -180,7 +182,7 @@ public sealed class AgentLifecycleOutboxTests
         var catalog = new RegressionTestExtensionCatalog();
         var firstActivation = new RecordingObserver("stable-observer");
         catalog.AddProvider(RegressionTestBindings.DurableLifecycleObservers, firstActivation);
-        await using var dispatcher = new AgentLifecycleDispatcher(store, catalog);
+        await using var dispatcher = new AgentLifecycleDispatcher(store, catalog.DurableLifecycleObservers);
         await dispatcher.FlushAsync();
         catalog.RemoveProvider(RegressionTestBindings.DurableLifecycleObservers, firstActivation);
 
@@ -209,7 +211,7 @@ public sealed class AgentLifecycleOutboxTests
         // Establish the durable subscription through a valid remote metadata
         // response before there is anything to deliver. A retired first response
         // cannot legitimately supply an observer id to the dispatcher.
-        await using (var discovery = new AgentLifecycleDispatcher(store, catalog))
+        await using (var discovery = new AgentLifecycleDispatcher(store, catalog.DurableLifecycleObservers))
         {
             await discovery.FlushAsync();
         }
@@ -225,7 +227,8 @@ public sealed class AgentLifecycleOutboxTests
         // A fresh consumer has no cached identity. Retire this same provider
         // activation during rediscovery, before any delivery callback can run.
         observer.RemoveOnMetadataRead = true;
-        using var rediscovery = AgentRpcCatalog.CreateDormant(catalog.RpcForCaller("sunder.package.agent"));
+        var rediscovery = catalog.Receiver("sunder.package.agent.lifecycle.rediscovery")
+            .Providers<AgentServices.IDurableLifecycleObserverService>();
         await using var dispatcher = new AgentLifecycleDispatcher(store, rediscovery);
         await dispatcher.FlushAsync();
 
@@ -246,7 +249,7 @@ public sealed class AgentLifecycleOutboxTests
         var catalog = new RegressionTestExtensionCatalog();
         var observer = new BlockingDurableObserver("blocking-durable-observer");
         catalog.AddProvider(RegressionTestBindings.DurableLifecycleObservers, observer);
-        await using var dispatcher = new AgentLifecycleDispatcher(store, catalog);
+        await using var dispatcher = new AgentLifecycleDispatcher(store, catalog.DurableLifecycleObservers);
 
         var flush = dispatcher.FlushAsync();
         await observer.Started.WaitAsync(TimeSpan.FromSeconds(2));
@@ -272,7 +275,7 @@ public sealed class AgentLifecycleOutboxTests
         var catalog = new RegressionTestExtensionCatalog();
         var observer = new RecordingObserver("poison-observer") { AlwaysFail = true };
         catalog.AddProvider(RegressionTestBindings.DurableLifecycleObservers, observer);
-        await using var dispatcher = new AgentLifecycleDispatcher(store, catalog);
+        await using var dispatcher = new AgentLifecycleDispatcher(store, catalog.DurableLifecycleObservers);
         await dispatcher.StartAsync();
         var subscriptionId = AgentLocalStore.BuildLifecycleSubscriptionId(
             "test.package",
@@ -443,7 +446,7 @@ public sealed class AgentLifecycleOutboxTests
 
         var catalog = new RegressionTestExtensionCatalog();
         catalog.AddProvider(RegressionTestBindings.DurableLifecycleObservers, observer);
-        await using var dispatcher = new AgentLifecycleDispatcher(store, catalog);
+        await using var dispatcher = new AgentLifecycleDispatcher(store, catalog.DurableLifecycleObservers);
         await dispatcher.StartAsync();
         await WaitUntilAsync(
             () => store.GetLifecycleDeliveryState(subscription.SubscriptionId, claim.Event.Sequence)?.Status == "Delivered",
@@ -501,7 +504,7 @@ public sealed class AgentLifecycleOutboxTests
     }
 
     [Fact]
-    public void WorkspaceDeleteRecreateDelete_UsesDistinctDurableIncarnations()
+    public async Task WorkspaceDeleteRecreateDelete_UsesDistinctDurableIncarnations()
     {
         using var scope = RegressionTestPackageScope.Create();
         var store = new AgentLocalStore(scope.Context);
@@ -516,10 +519,10 @@ public sealed class AgentLifecycleOutboxTests
 
         workspaces.ImportWorkspace(imported);
         var first = Assert.IsType<AgentWorkspaceRecord>(workspaces.GetWorkspace(imported.WorkspaceId));
-        workspaces.DeleteWorkspace(imported.WorkspaceId);
+        await workspaces.DeleteWorkspaceAsync(imported.WorkspaceId);
         workspaces.ImportWorkspace(imported);
         var second = Assert.IsType<AgentWorkspaceRecord>(workspaces.GetWorkspace(imported.WorkspaceId));
-        workspaces.DeleteWorkspace(imported.WorkspaceId);
+        await workspaces.DeleteWorkspaceAsync(imported.WorkspaceId);
 
         var deletions = store.ListLifecycleOutboxEvents()
             .Where(item => item.Kind == AgentLifecycleEventKind.WorkspaceDeleted)
@@ -578,15 +581,33 @@ public sealed class AgentLifecycleOutboxTests
         Assert.Throws<MemoryWorker::Sunder.Package.Agent.Contracts.Contracts.AgentDurableLifecycleIntegrityException>(() =>
         {
             _ = semantic.ProcessDurableLifecycleEvent(
-                AgentRoleBoundary.As<MemoryWorker::Sunder.Package.Agent.Contracts.Models.AgentDurableLifecycleEventEnvelope>(manifest), []);
+                ToMemoryEnvelope(manifest), []);
         });
         foreach (var lifecycleEvent in events)
         {
             semantic.ProcessDurableLifecycleEvent(
-                AgentRoleBoundary.As<MemoryWorker::Sunder.Package.Agent.Contracts.Models.AgentDurableLifecycleEventEnvelope>(lifecycleEvent.ToEnvelope()), []);
+                ToMemoryEnvelope(lifecycleEvent.ToEnvelope()), []);
         }
         Assert.True(semantic.HasLifecycleInboxReceipt(
-            AgentRoleBoundary.As<MemoryWorker::Sunder.Package.Agent.Contracts.Models.AgentMemoryConsistencyBarrier>(rollback.MemoryConsistencyBarrier!)));
+            new MemoryModels.AgentMemoryConsistencyBarrier
+            {
+                EventId = rollback.MemoryConsistencyBarrier!.EventId,
+                PayloadHash = rollback.MemoryConsistencyBarrier.PayloadHash,
+            }));
+    }
+
+    private static MemoryModels.AgentDurableLifecycleEventEnvelope ToMemoryEnvelope(AgentDurableLifecycleEventEnvelope envelope)
+    {
+        // This store-to-store assertion projects durable data only. PayloadJson and
+        // its hash remain verbatim; no invocation references belong in the envelope.
+        // Include null members required by the generated data model's JSON contract.
+        var json = new JsonSerializerOptions(RegressionTestRpcValues.Json)
+        {
+            DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.Never,
+        };
+        return JsonSerializer.SerializeToElement(envelope, json)
+            .Deserialize<MemoryModels.AgentDurableLifecycleEventEnvelope>(json)
+            ?? throw new InvalidDataException("The durable lifecycle fixture could not be projected to the Memory model.");
     }
 
     [Fact]
@@ -613,7 +634,7 @@ public sealed class AgentLifecycleOutboxTests
 
         var catalog = new RegressionTestExtensionCatalog();
         catalog.AddProvider(RegressionTestBindings.DurableLifecycleObservers, knownObserver);
-        await using var dispatcher = new AgentLifecycleDispatcher(store, catalog);
+        await using var dispatcher = new AgentLifecycleDispatcher(store, catalog.DurableLifecycleObservers);
         await dispatcher.FlushAsync();
 
         Assert.Collection(
@@ -660,7 +681,7 @@ public sealed class AgentLifecycleOutboxTests
 
         var catalog = new RegressionTestExtensionCatalog();
         catalog.AddProvider(RegressionTestBindings.DurableLifecycleObservers, observer);
-        await using var dispatcher = new AgentLifecycleDispatcher(store, catalog);
+        await using var dispatcher = new AgentLifecycleDispatcher(store, catalog.DurableLifecycleObservers);
         await dispatcher.FlushAsync();
 
         Assert.Collection(
@@ -902,17 +923,17 @@ public sealed class AgentLifecycleOutboxTests
         var catalog = new RegressionTestExtensionCatalog();
         var first = new RecordingSessionDataCleaner("stable-cleaner");
         catalog.AddProvider(RegressionTestBindings.SessionCleaners, first, "package.cleaner");
-        await using var dispatcher = new AgentSessionCleanupDispatcher(store, catalog);
+        await using var dispatcher = new AgentSessionCleanupDispatcher(store, catalog.SessionCleaners);
         await dispatcher.FlushAsync();
         catalog.RemoveProvider(RegressionTestBindings.SessionCleaners, first);
-        var sessions = new AgentSessionService(store, catalog);
+        var sessions = new AgentSessionService(store, catalog.SessionCleaners);
         var workspace = new AgentWorkspaceService(store).CreateWorkspace("Cleaner reactivation workspace");
         var session = sessions.CreateSession(
             "Cleaner reactivation session",
             profileId: "profile.lifecycle",
             workspaceId: workspace.WorkspaceId);
 
-        sessions.DeleteSession(session.SessionId);
+        await sessions.DeleteSessionAsync(session.SessionId);
         await dispatcher.FlushAsync();
 
         Assert.Empty(first.SessionIds);
@@ -1019,7 +1040,7 @@ public sealed class AgentLifecycleOutboxTests
         var observer = new RecordingObserver("bounded-replay-observer");
         var catalog = new RegressionTestExtensionCatalog();
         catalog.AddProvider(RegressionTestBindings.DurableLifecycleObservers, observer);
-        await using var dispatcher = new AgentLifecycleDispatcher(store, catalog);
+        await using var dispatcher = new AgentLifecycleDispatcher(store, catalog.DurableLifecycleObservers);
 
         await dispatcher.FlushAsync();
 
@@ -1056,7 +1077,7 @@ public sealed class AgentLifecycleOutboxTests
         var knownObserver = new RecordingObserver("catch-up-erasure-known-observer");
         var catalog = new RegressionTestExtensionCatalog();
         catalog.AddProvider(RegressionTestBindings.DurableLifecycleObservers, knownObserver);
-        await using var dispatcher = new AgentLifecycleDispatcher(store, catalog);
+        await using var dispatcher = new AgentLifecycleDispatcher(store, catalog.DurableLifecycleObservers);
         await dispatcher.FlushAsync();
         Assert.Equal(AgentLocalStore.MaxLifecycleReconciliationBatchSize, knownObserver.DeliveryCount);
 
@@ -1096,7 +1117,7 @@ public sealed class AgentLifecycleOutboxTests
         var catalog = new RegressionTestExtensionCatalog();
         catalog.AddProvider(RegressionTestBindings.DurableLifecycleObservers, observer);
         var logger = new RecordingEventLogger();
-        await using var dispatcher = new AgentLifecycleDispatcher(store, catalog, logger);
+        await using var dispatcher = new AgentLifecycleDispatcher(store, catalog.DurableLifecycleObservers, logger);
 
         await dispatcher.FlushAsync();
 
@@ -1143,7 +1164,7 @@ public sealed class AgentLifecycleOutboxTests
         var catalog = new RegressionTestExtensionCatalog();
         catalog.AddProvider(RegressionTestBindings.DurableLifecycleObservers, observer);
         var logger = new RecordingEventLogger();
-        await using var dispatcher = new AgentLifecycleDispatcher(store, catalog, logger);
+        await using var dispatcher = new AgentLifecycleDispatcher(store, catalog.DurableLifecycleObservers, logger);
 
         await dispatcher.FlushAsync();
 
@@ -1319,28 +1340,29 @@ public sealed class AgentLifecycleOutboxTests
             Canary("schema-version"),
             Canary("checkpoint-summary"),
         };
+        static string Repeat(string value) => string.Concat(value, value);
         var turnId = Guid.NewGuid();
         var item = new AgentTurnItemRecord(
             Guid.NewGuid(),
             turnId,
             0,
             AgentTurnItemKind.ToolResult,
-            canaries[5],
-            canaries[6],
-            canaries[7],
-            canaries[8],
-            canaries[9],
-            canaries[10],
-            canaries[11],
+            Repeat(canaries[5]),
+            Repeat(canaries[6]),
+            Repeat(canaries[7]),
+            Repeat(canaries[8]),
+            Repeat(canaries[9]),
+            Repeat(canaries[10]),
+            Repeat(canaries[11]),
             WasTruncated: false,
             IsError: true,
-            canaries[12],
-            canaries[13],
-            canaries[14])
+            Repeat(canaries[12]),
+            Repeat(canaries[13]),
+            Repeat(canaries[14]))
         {
-            ToolOwnerPackageId = canaries[15],
-            ToolSchemaId = canaries[16],
-            ToolSchemaVersion = canaries[17],
+            ToolOwnerPackageId = Repeat(canaries[15]),
+            ToolSchemaId = Repeat(canaries[16]),
+            ToolSchemaVersion = Repeat(canaries[17]),
         };
         var now = createdAtUtc ?? DateTimeOffset.UtcNow;
         var turn = new AgentTurnRecord(
@@ -1355,17 +1377,17 @@ public sealed class AgentLifecycleOutboxTests
         var sessionContext = new AgentSessionContextRecord(
             session.SessionId,
             session.ProfileId ?? "profile.lifecycle",
-            canaries[0],
-            canaries[1],
+            Repeat(canaries[0]),
+            Repeat(canaries[1]),
             session.State,
-            canaries[2]);
+            Repeat(canaries[2]));
 #pragma warning restore CS0618
         var payload = new AgentDurableLifecycleEventPayload
         {
             Session = sessionContext,
             Run = new AgentRunContextRecord(Guid.NewGuid(), 1, AgentRunStatus.Running, false, now),
-            UserMessage = canaries[3],
-            WorkingSummary = canaries[4],
+            UserMessage = Repeat(canaries[3]),
+            WorkingSummary = Repeat(canaries[4]),
             Turns = [turn],
             RecentLiveBufferTurns = [turn],
             TriggerTurn = turn,
@@ -1374,7 +1396,7 @@ public sealed class AgentLifecycleOutboxTests
                 session.SessionId,
                 1,
                 AgentRunStatus.Running,
-                canaries[18],
+                Repeat(canaries[18]),
                 now),
             SessionId = session.SessionId,
             RootSessionId = session.RootSessionId ?? session.SessionId,

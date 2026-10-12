@@ -4,17 +4,19 @@ using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Storage;
 using Sunder.Package.Agent.Runtime;
+using Sunder.Sdk.Services;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.Services;
 
-public sealed partial class AgentSessionService(AgentLocalStore store, AgentRpcCatalog? rpcCatalog = null)
+public sealed partial class AgentSessionService(AgentLocalStore store, IServiceProviders<AgentServices.ISessionCleanerService>? cleaners = null)
     : IAgentSessionGateway,
       IAgentTurnMutationGateway,
       IAgentTranscriptHeaderGateway,
       IAgentTranscriptToolDetailGateway
 {
     private readonly AgentLocalStore _store = store;
-    private readonly AgentRpcCatalog? _rpcCatalog = rpcCatalog;
+    private readonly IServiceProviders<AgentServices.ISessionCleanerService>? _cleaners = cleaners;
 
     internal AgentLocalStore Store => _store;
 
@@ -57,19 +59,24 @@ public sealed partial class AgentSessionService(AgentLocalStore store, AgentRpcC
         NotifySessionChanged(session.SessionId);
     }
 
-    public void DeleteSession(Guid sessionId)
+    public async Task DeleteSessionAsync(Guid sessionId, CancellationToken cancellationToken = default)
     {
-        var deletedSessionIds = _store.DeleteSessionTree(sessionId, SnapshotSessionDataCleaners());
-        CompleteSessionDeletion(deletedSessionIds);
+        var cleaners = await SnapshotSessionDataCleanersAsync(cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+        var deletedSessionIds = DeleteSessionRecords(sessionId, cleaners);
+        await CompleteSessionDeletionAsync(deletedSessionIds).ConfigureAwait(false);
     }
 
-    internal void CompleteSessionDeletion(IReadOnlyList<Guid> deletedSessionIds)
+    internal IReadOnlyList<Guid> DeleteSessionRecords(Guid sessionId, IReadOnlyList<AgentSessionDataCleanerIdentity> cleaners)
+        => _store.DeleteSessionTree(sessionId, cleaners);
+
+    internal async Task CompleteSessionDeletionAsync(IReadOnlyList<Guid> deletedSessionIds)
     {
         foreach (var deletedSessionId in deletedSessionIds)
         {
             NotifySessionChanged(deletedSessionId);
         }
-        DispatchPendingSessionCleanup();
+        await DispatchPendingSessionCleanupAsync().ConfigureAwait(false);
     }
 
     private string ResolveWorkspaceId(Guid? parentSessionId, string? workspaceId)
@@ -145,43 +152,42 @@ public sealed partial class AgentSessionService(AgentLocalStore store, AgentRpcC
     private static bool IsUnassignedSessionsWorkspace(string workspaceId)
         => string.Equals(workspaceId, AgentLocalStore.UnassignedSessionsWorkspaceId, StringComparison.OrdinalIgnoreCase);
 
-    internal IReadOnlyList<AgentSessionDataCleanerIdentity> SnapshotSessionDataCleaners()
-        => SnapshotSessionDataCleaners(_rpcCatalog);
+    internal Task<IReadOnlyList<AgentSessionDataCleanerIdentity>> SnapshotSessionDataCleanersAsync(CancellationToken cancellationToken = default)
+        => SnapshotSessionDataCleanersAsync(_cleaners, cancellationToken);
 
-    internal static IReadOnlyList<AgentSessionDataCleanerIdentity> SnapshotSessionDataCleaners(
-        AgentRpcCatalog? rpcCatalog)
+    internal static async Task<IReadOnlyList<AgentSessionDataCleanerIdentity>> SnapshotSessionDataCleanersAsync(
+        IServiceProviders<AgentServices.ISessionCleanerService>? providers, CancellationToken cancellationToken = default)
     {
-        if (rpcCatalog is null)
+        if (providers is null)
         {
             return [];
         }
 
-        var cleaners = AgentRpcInvocation.Snapshot(
-            rpcCatalog,
-            Sunder.Package.Agent.Runtime.Rpc.AgentCleanupBindings.SessionCleaners,
-            static cleaner => cleaner.CleanerId);
-        return cleaners
-            .Where(cleaner => !string.IsNullOrWhiteSpace(cleaner.PackageId)
-                              && cleaner.PackageId.Trim().Length <= 256
-                              && !string.IsNullOrWhiteSpace(cleaner.Metadata)
-                              && cleaner.Metadata.Trim().Length <= 512)
-            .Select(cleaner => new AgentSessionDataCleanerIdentity(
-                cleaner.PackageId.Trim(),
-                cleaner.Metadata.Trim()))
-            .Distinct()
-            .ToArray();
+        var result = new HashSet<AgentSessionDataCleanerIdentity>();
+        var catalog = await providers.ListAsync(cancellationToken).ConfigureAwait(false);
+        foreach (var provider in catalog.Providers)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (provider.State != ServiceProviderState.Active) continue;
+            var descriptor = await provider.Service.DescribeAsync(cancellationToken).ConfigureAwait(false);
+            var id = descriptor.Id?.Trim() ?? string.Empty;
+            var package = provider.PackageId.Trim();
+            if (id.Length is > 0 and <= 512 && package.Length is > 0 and <= 256)
+                result.Add(new AgentSessionDataCleanerIdentity(package, id));
+        }
+        return result.ToArray();
     }
 
-    private void DispatchPendingSessionCleanup()
+    private async Task DispatchPendingSessionCleanupAsync()
     {
-        if (_rpcCatalog is null)
+        if (_cleaners is null)
         {
             return;
         }
 
         try
         {
-            AgentSessionCleanupDispatcher.DispatchAvailableNow(_store, _rpcCatalog);
+            await AgentSessionCleanupDispatcher.DispatchAvailableNowAsync(_store, _cleaners).ConfigureAwait(false);
         }
         catch
         {
@@ -215,11 +221,10 @@ public sealed partial class AgentSessionService(AgentLocalStore store, AgentRpcC
         return transition;
     }
 
-    internal AgentUserTurnAdmissionResult AdmitUserTurn(AgentUserTurnAdmissionRequest request)
+    internal AgentUserTurnAdmissionResult AdmitUserTurn(
+        AgentUserTurnAdmissionRequest request,
+        IReadOnlyList<AgentSessionDataCleanerIdentity> cleaners)
     {
-        var cleaners = request.AdmissionKind == AgentRunAdmissionKind.Rollback
-            ? SnapshotSessionDataCleaners()
-            : [];
         var result = _store.AdmitUserTurn(request, cleaners);
         if (result.IsExisting)
         {
@@ -231,12 +236,13 @@ public sealed partial class AgentSessionService(AgentLocalStore store, AgentRpcC
         {
             NotifySessionChanged(deletedSessionId);
         }
-        if (result.Rollback?.DeletedSessionIds.Count > 0)
-        {
-            DispatchPendingSessionCleanup();
-        }
         return result;
     }
+
+    internal Task CompleteAdmissionCleanupAsync(AgentUserTurnAdmissionResult result)
+        => result.Rollback?.DeletedSessionIds.Count > 0
+            ? DispatchPendingSessionCleanupAsync()
+            : Task.CompletedTask;
 
     internal AgentRunTransitionResult? TryBeginAdmittedRunExecution(
         AgentDurableRunLease lease,
@@ -259,13 +265,13 @@ public sealed partial class AgentSessionService(AgentLocalStore store, AgentRpcC
         return transition;
     }
 
-    internal AgentRunStartPersistenceResult? TryStartRun(
+    internal Task<AgentRunStartPersistenceResult?> TryStartRunAsync(
         AgentDurableRunLease lease,
         string userMessage,
         IReadOnlyList<AgentStoredAttachment> attachments,
         Guid? rollbackAnchorTurnId,
         string runningSummary)
-        => TryStartRun(
+        => TryStartRunAsync(
             lease,
             Guid.NewGuid(),
             userMessage,
@@ -273,7 +279,7 @@ public sealed partial class AgentSessionService(AgentLocalStore store, AgentRpcC
             rollbackAnchorTurnId,
             runningSummary);
 
-    internal AgentRunStartPersistenceResult? TryStartRun(
+    internal async Task<AgentRunStartPersistenceResult?> TryStartRunAsync(
         AgentDurableRunLease lease,
         Guid userTurnId,
         string userMessage,
@@ -283,7 +289,7 @@ public sealed partial class AgentSessionService(AgentLocalStore store, AgentRpcC
     {
         var activeCleaners = rollbackAnchorTurnId is null
             ? []
-            : SnapshotSessionDataCleaners();
+            : await SnapshotSessionDataCleanersAsync().ConfigureAwait(false);
         AgentRunStartPersistenceResult? result;
         lock (lease.SyncRoot)
         {
@@ -317,7 +323,7 @@ public sealed partial class AgentSessionService(AgentLocalStore store, AgentRpcC
             {
                 NotifySessionChanged(deletedSessionId);
             }
-            DispatchPendingSessionCleanup();
+            await DispatchPendingSessionCleanupAsync().ConfigureAwait(false);
         }
 
         return result;

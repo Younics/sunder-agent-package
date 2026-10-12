@@ -26,47 +26,6 @@ internal interface IMcpManagementGateway
 }
 
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
-internal interface IMcpOwnerManagementClient
-{
-    ValueTask<McpProjection> QueryAsync(McpQuery query, CancellationToken cancellationToken = default);
-    ValueTask<McpProjection> CommandAsync(McpCommand command, CancellationToken cancellationToken = default);
-    IAsyncEnumerable<McpChanged> WatchChangesAsync(CancellationToken cancellationToken = default);
-}
-
-[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
-internal enum McpQueryKind
-{
-    Catalog,
-    Document,
-    Presentation,
-}
-
-[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
-internal sealed record McpQuery(McpQueryKind Kind, string? ServerId = null);
-
-[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
-internal enum McpCommandKind
-{
-    Initialize,
-    Save,
-    Delete,
-    ImportCommon,
-    ImportDocument,
-    Discover,
-    Reconnect,
-    Disconnect,
-    ClearAuthorization,
-}
-
-[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
-internal sealed record McpCommand(
-    McpCommandKind Kind,
-    string? ServerId = null,
-    ParsedMcpServerConfiguration? Configuration = null,
-    string? Document = null,
-    string? FileName = null);
-
-[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record McpProjection(
     IReadOnlyList<ConfiguredMcpServerRecord>? Servers = null,
     IReadOnlyList<McpCatalogDiagnostic>? Diagnostics = null,
@@ -78,8 +37,8 @@ internal sealed record McpProjection(
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal enum McpChangeKind
 {
-    Servers,
-    Status,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("servers")] Servers,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("status")] Status,
 }
 
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]

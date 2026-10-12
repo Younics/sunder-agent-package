@@ -1,5 +1,5 @@
 using System.Net;
-using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
 using Sunder.Package.Agent.Provider.TestSupport;
 using Xunit;
 
@@ -87,7 +87,7 @@ public sealed class LMStudioModelCatalogServiceTests
         using var provider = new LMStudioAgentProvider(context, connection, catalog);
         using var canceledWaiter = new CancellationTokenSource();
 
-        var modelsTask = provider.GetAvailableModelsAsync(canceledWaiter.Token).AsTask();
+        var modelsTask = provider.ListModelsAsync(canceledWaiter.Token).AsTask();
         await requestStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
         var readinessTask = provider.GetReadinessAsync().AsTask();
         canceledWaiter.Cancel();
@@ -220,8 +220,8 @@ public sealed class LMStudioModelCatalogServiceTests
         using var connection = new LMStudioConnection(context, handler);
         var catalog = new LMStudioModelCatalogService(connection);
         var result = await catalog.GetCatalogAsync();
-        var chatModels = await new LMStudioAgentProvider(context, connection, catalog).GetAvailableModelsAsync();
-        var embeddingModels = await new LMStudioEmbeddingProvider(context, connection, catalog).GetAvailableModelsAsync();
+        var chatModels = await new LMStudioAgentProvider(context, connection, catalog).ListModelsAsync();
+        var embeddingModels = await new LMStudioEmbeddingProvider(context, connection, catalog).ListModelsAsync();
 
         Assert.True(result.IsSuccess);
         Assert.Equal(

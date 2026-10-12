@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Contracts.Models;
 
@@ -45,6 +46,7 @@ public sealed record AgentPermissionRequest(
     /// <summary>Gets transient process-local authority references for immediate execution.</summary>
     /// <remarks>These values are deliberately excluded from JSON snapshots and durable permission state.</remarks>
     [JsonIgnore]
+    [SunderServiceMember]
     public IReadOnlyList<string> ResourceCapabilities { get; init; } = [];
 
     /// <summary>Gets every immutable canonical resource identity covered by this operation.</summary>

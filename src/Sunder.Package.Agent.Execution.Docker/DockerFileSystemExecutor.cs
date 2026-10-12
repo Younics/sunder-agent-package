@@ -84,13 +84,11 @@ internal sealed class DockerFileSystemExecutor
                 claim = HostResourceClaim.BindScope(claim, context);
             }
             var reference = HostResourceClaim.CreateReference(claim);
-            return new AgentResolvedResource(
-                resourceBinding.TargetKind == LocalSecureNodeKind.Directory ? "directory" : "file",
-                path.ContainerPath,
-                reference,
-                AgentPermissionBoundaryIds.ConfiguredScope,
-                resourceBinding.Exists)
+            return new AgentResolvedResource
             {
+                ResourceKind = resourceBinding.TargetKind == LocalSecureNodeKind.Directory ? "directory" : "file",
+                DisplayName = path.ContainerPath, CanonicalReference = reference, PermissionBoundaryId = AgentPermissionBoundaryIds.ConfiguredScope,
+                Exists = resourceBinding.Exists, AuthorityReferences = [], DeleteAuthorityReferences = [],
                 ScopeClassificationBasis = AgentPermissionScopeClassificationBasis.VerifiedTargetMapping,
                 ResourceClaim = claim,
                 DeleteCanonicalReference = reference,
@@ -175,7 +173,7 @@ internal sealed class DockerFileSystemExecutor
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
         {
             operationAuthority.Dispose();
-            return AgentFileReadResult.Failure(
+            return FileOperation.ReadFailure(
                 request.Path,
                 AgentFileReadErrorCodes.PathCanonicalizationFailed,
                 ex.Message);
@@ -267,7 +265,7 @@ internal sealed class DockerFileSystemExecutor
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
         {
             operationAuthority.Dispose();
-            return AgentFileSearchResult.Failure(AgentFileSearchErrorCodes.PathUnresolvable, ex.Message);
+            return FileOperation.SearchFailure(AgentFileSearchErrorCodes.PathUnresolvable, ex.Message);
         }
     }
 
@@ -289,14 +287,14 @@ internal sealed class DockerFileSystemExecutor
         }
         catch (DockerStructuredBindRequiredException ex)
         {
-            return AgentFileReadResult.Failure(
+            return FileOperation.ReadFailure(
                 request.Path,
                 ex.ErrorCode,
                 ex.Message);
         }
         catch (DockerResourceApprovalException ex)
         {
-            return AgentFileReadResult.Failure(
+            return FileOperation.ReadFailure(
                 request.Path,
                 DockerResourceReference.ApprovalRequiredErrorCode,
                 ex.Message);
@@ -307,7 +305,7 @@ internal sealed class DockerFileSystemExecutor
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
         {
-            return AgentFileReadResult.Failure(
+            return FileOperation.ReadFailure(
                 request.Path,
                 AgentFileReadErrorCodes.PathCanonicalizationFailed,
                 ex.Message);
@@ -421,23 +419,23 @@ internal sealed class DockerFileSystemExecutor
         }
         catch (DockerStructuredBindRequiredException ex)
         {
-            return AgentFileSearchResult.Failure(ex.ErrorCode, ex.Message);
+            return FileOperation.SearchFailure(ex.ErrorCode, ex.Message);
         }
         catch (DockerResourceApprovalException ex)
         {
-            return AgentFileSearchResult.Failure(
+            return FileOperation.SearchFailure(
                 DockerResourceReference.ApprovalRequiredErrorCode,
                 ex.Message);
         }
         catch (InvalidOperationException)
         {
-            return AgentFileSearchResult.Failure(
+            return FileOperation.SearchFailure(
                 DockerPathResolver.StructuredBindRequiredErrorCode,
                 DockerPathResolver.StructuredBindRequiredMessage);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
         {
-            return AgentFileSearchResult.Failure(AgentFileSearchErrorCodes.PathUnresolvable, ex.Message);
+            return FileOperation.SearchFailure(AgentFileSearchErrorCodes.PathUnresolvable, ex.Message);
         }
     }
 
@@ -555,7 +553,7 @@ internal sealed class DockerFileSystemExecutor
     }
 
     private static AgentFileReadResult BindRequiredReadFailure(string path)
-        => AgentFileReadResult.Failure(
+        => FileOperation.ReadFailure(
             path,
             DockerPathResolver.StructuredBindRequiredErrorCode,
             DockerPathResolver.StructuredBindRequiredMessage);

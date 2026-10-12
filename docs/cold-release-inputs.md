@@ -159,10 +159,10 @@ Credentials used for input download/publication are removed from build environme
 ## Local qualification
 
 ```sh
-python3 -B scripts/release/release-inputs.fixture.py
-python3 -B scripts/release/native-family.fixture.py
-bash scripts/release/native-release.fixture.sh
-bash scripts/release/promote-agent-family.fixture.sh
+python3 -B scripts/test/release/release-inputs.fixture.py
+python3 -B scripts/test/release/native-family.fixture.py
+bash scripts/test/release/native-release.fixture.sh
+bash scripts/test/release/promote-agent-family.fixture.sh
 ```
 
 The cold fixture mocks service/tool processes and verifies byte/identity tampering,
@@ -172,12 +172,12 @@ creates fresh schema-3 capture through the native owner's implementation and run
 its real final verifier; it no longer relabels schema-2 marker evidence.
 
 Read-only real-archive comparison is separately available with
-`real-release-metadata.fixture.py <agent-root> <existing-core-cli.dll>`. It inspects
+`scripts/test/release/real-release-metadata.fixture.py <agent-root> <existing-core-cli.dll>`. It inspects
 all fifteen retained Debug archives/committed selections and compares three owning
 Core Format API inspections (base, App-bearing provider, headless tools). It does
 not rebuild or publish any package and does not qualify native production runners.
 
-`real-cold-restore.fixture.py <agent-root> <existing-Sunder.Package.Build.dll>
+`scripts/test/release/real-cold-restore.fixture.py <agent-root> <existing-Sunder.Package.Build.dll>
 <retained-core-catalog.json>` separately executes the real Core restore task against
 isolated copies of all fifteen committed locks. It proves the missing-cache
 diagnostic, exact offline hydration and unchanged replay bytes/mtimes under the

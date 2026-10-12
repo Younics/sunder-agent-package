@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Runtime.Loader;
 using System.Text.Json;
+using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.TestSupport;
@@ -9,6 +10,8 @@ using Sunder.Sdk.Worker;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
+
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 public sealed partial class AgentSourceArtifactMigrationTests
 {
@@ -31,48 +34,58 @@ public sealed partial class AgentSourceArtifactMigrationTests
             await using var ownedLocal = localLifetime;
             var targetRegistration = Assert.Single(localOptions.Providers, provider => provider.ProviderId == "local.execution.target");
             var target = new FilesTargetProbe(targetRegistration.Handler);
-            var descriptor = RegressionTestRpcDescriptors.Get(AgentRpcContractIds.ExecutionTarget);
+            var descriptor = CurrentPublicRpcDescriptors.Get(RegressionTestBindings.ExecutionTargets);
             state.Add(localContext.PackageId, descriptor, target, target, Noop.Instance, targetRegistration.ProviderId, "2.0.0");
-            var targetHandle = ToProviderHandle(Assert.Single(state.Discover(descriptor.ContractId).Providers));
+            var targetClient = new RegressionTestRpcClient(state, localContext.PackageId);
+            await using var targetReceiver = new GeneratedServiceTestScope(targetClient);
+            var targetProvider = Assert.Single((await targetReceiver.Providers<AgentServices.IExecutionTargetService>().ListAsync()).Providers,
+                provider => provider.ProviderId == "local.execution.target");
+            var targetReference = targetProvider.Reference;
             var observer = new FilesRpcObserver(new RegressionTestRpcClient(state, context.PackageId));
             Assert.Null(runtime.GetType("Sunder.Package.Agent.Tools.Files.FilesWorkerComposition"));
             Assert.Null(runtime.GetType("Sunder.Package.Agent.Tools.Files.FilesWorkerBindings"));
-            var (options, lifetime, services) = CreateGeneratedWorker(runtime, context, observer);
+            var (options, lifetime, _) = CreateGeneratedWorker(runtime, context, observer);
             await using var owned = lifetime;
             Assert.Null(options.Composition);
-            Assert.Null(services.GetService(typeof(AgentRpcCatalog)));
+            Assert.Null(runtime.GetType("Sunder.Package.Agent.Runtime.Rpc.AgentRpcCatalog"));
             var registrations = options.Providers.ToDictionary(provider => provider.ProviderId);
             Assert.Equal(new[] { "files.permissions", "files.prompt.context", "files.session.cleaner", "files.tools" }, registrations.Keys.Order(StringComparer.Ordinal));
             foreach (var provider in options.Providers)
             {
-                var expected = RegressionTestRpcDescriptors.Get(provider.ContractId);
+                var expected = CurrentPublicRpcDescriptors.Get(provider.ContractId);
                 Assert.Equal(expected.Sha256, provider.DescriptorSha256); Assert.Equal(expected.AbiSha256, provider.AbiSha256);
                 state.Add(context.PackageId, expected, provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, "2.0.0");
             }
             var host = new RegressionTestRpcClient(state, "sunder.package.agent");
+            await using var toolReceiver = new GeneratedServiceTestScope(host);
+            var promptClient = Assert.Single((await toolReceiver.Providers<AgentServices.IPromptContextContributorService>().ListAsync()).Providers).Service;
+            var permissionClient = Assert.Single((await toolReceiver.Providers<AgentServices.IPermissionSurfaceService>().ListAsync()).Providers).Service;
+            var cleanerClient = Assert.Single((await toolReceiver.Providers<AgentServices.ISessionCleanerService>().ListAsync()).Providers).Service;
             var workspaceRoot = Directory.CreateDirectory(Path.Combine(root, "workspace")).FullName;
             var outsideRoot = Directory.CreateDirectory(Path.Combine(root, "outside")).FullName;
             var now = DateTimeOffset.UtcNow;
             var workspace = new AgentWorkspaceRecord("workspace.files", "Files artifact", null, now, now,
                 [new("path.files", "workspace.files", workspaceRoot, true, 0, now, now)]);
-            var binding = new AgentWorkspaceBindingRecord("binding.files", workspace.WorkspaceId, AgentRpcContractIds.ExecutionTarget, "local", "primary-execution-target", true, 0, now, now);
+            var binding = new AgentWorkspaceBindingRecord("binding.files", workspace.WorkspaceId, RegressionTestBindings.ExecutionTargets, "local", "primary-execution-target", true, 0, now, now);
             var sessionId = Guid.NewGuid(); var runId = Guid.NewGuid();
             var execution = new AgentToolExecutionContext(sessionId, "profile.files", workspace, binding, RunId: runId, RunRevision: 1, ToolCallId: "call.files") { TranscriptEpoch = 1 };
             var operation = new AgentResourceOperationContext(runId, 1, "call.files", "files.mutate", 0, "workspace-generation", "binding-generation",
                 context.PackageId, localContext.PackageId, Guid.NewGuid().ToString("N"), 1, true);
             execution = execution with { ResourceOperation = operation };
-            var generation = (await host.InvokeAsync(new(targetHandle.EndpointReference), "execution-target", "configuration-generation",
-                ExecutionWireContext(new(sessionId, execution.ProfileId, workspace, binding)))).GetString();
-            execution = execution with { ExecutionTargetConfigurationGeneration = generation };
+            var generation = await targetProvider.Service.ConfigurationGenerationAsync(new(sessionId, execution.ProfileId, workspace, binding));
+            execution = execution with { ExecutionTarget = targetReference, ExecutionTargetConfigurationGeneration = generation };
+            var toolSource = Assert.Single((await toolReceiver.Providers<AgentServices.IToolSourceService>().ListAsync()).Providers,
+                provider => provider.ProviderId == "files.tools").Service;
             var claimRoot = context.Storage.RoleLocalWorkspace.GetLocalPath("files/scoped-instruction-claims");
             Assert.False(Directory.Exists(claimRoot));
-            Assert.Equal("failed", (await Ready()).GetProperty("status").GetString());
+            // Construction must be inert; the Worker host admits calls after activation.
             Assert.Empty(observer.Scopes); Assert.Equal(0, observer.ActiveWatches);
             await options.OnActivated!(null!, default); Assert.True(Directory.Exists(claimRoot));
             Assert.Equal("ready", (await Ready()).GetProperty("status").GetString());
-            Assert.Equal(3, (await Rpc("files.permissions", "describe", new { })).GetProperty("actions").GetArrayLength());
-            var tools = await Rpc("files.tools", "list-tools", ToolSourceContext(new(sessionId, null, workspace, binding), targetHandle, generation));
-            Assert.Equal(new[] { "apply_patch", "edit", "glob", "grep", "read", "write" }, tools.EnumerateArray().Select(value => value.GetProperty("toolId").GetString()).Order(StringComparer.Ordinal));
+            Assert.Equal(3, (await permissionClient.DescribeAsync()).Actions.Count);
+            var tools = await toolSource.ListToolsAsync(new(sessionId, null, workspace, binding)
+                { ExecutionTarget = targetReference, ExecutionTargetConfigurationGeneration = generation });
+            Assert.Equal(new[] { "apply_patch", "edit", "glob", "grep", "read", "write" }, tools.Select(value => value.ToolId).Order(StringComparer.Ordinal));
             var file = Path.Combine(workspaceRoot, "file.txt"); var instructions = Path.Combine(workspaceRoot, "AGENTS.md");
             await File.WriteAllTextAsync(file, "first\nneedle\nthird"); await File.WriteAllTextAsync(instructions, "Use fixture policy.");
             var withheld = await Tool("execute", "read", new { path = "file.txt" });
@@ -86,31 +99,23 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.False((await Tool("execute", "edit", new { path = "created.txt", oldString = "created", newString = "edited" })).IsError);
             Assert.Equal("edited", await File.ReadAllTextAsync(Path.Combine(workspaceRoot, "created.txt")));
             Assert.Equal("files-arguments-invalid", (await Tool("preflight", "read", new { path = "file.txt", offset = 0 })).ErrorCode);
-            var presentation = await Rpc("files.tools", "presentation", new AgentToolPresentationRequest("read", "{\"path\":\"file.txt\"}", read.Summary, read.Content, null, null, false, null, read.BackendId));
-            Assert.Equal(JsonValueKind.Object, presentation.ValueKind);
+            Assert.NotNull(await toolSource.PresentationAsync(new AgentToolPresentationRequest("read", "{\"path\":\"file.txt\"}", read.Summary, read.Content, null, null, false, null, read.BackendId)));
             await File.WriteAllTextAsync(instructions, "Changed fixture policy.");
             var deferred = await Tool("execute", "write", new { path = "created.txt", content = "must not write" });
             Assert.Equal("files-prompt-context-refresh-required", deferred.ErrorCode); Assert.Equal("edited", await File.ReadAllTextAsync(Path.Combine(workspaceRoot, "created.txt")));
-            await Assert.ThrowsAsync<SunderRpcException>(() => Rpc("files.prompt.context", "acknowledge", receipt));
+            await Assert.ThrowsAsync<SunderRpcException>(() => promptClient.AcknowledgeAsync(receipt).AsTask());
             await RefreshPrompt();
             var compound = "*** Begin Patch\n*** Update File: AGENTS.md\n@@\n-Changed fixture policy.\n+New policy\n*** Update File: created.txt\n@@\n-edited\n+changed\n*** End Patch";
             Assert.Equal("files-agents-compound-patch-rejected", (await Tool("execute", "apply_patch", new { patchText = compound })).ErrorCode);
             Assert.Equal("edited", await File.ReadAllTextAsync(Path.Combine(workspaceRoot, "created.txt")));
-            await VerifyFilesMutations(target, workspaceRoot, outsideRoot, execution, Tool, Rpc, targetHandle, generation);
-            await Rpc("files.session.cleaner", "delete-session", new { sessionId });
+            await VerifyFilesMutations(target, workspaceRoot, outsideRoot, execution, Tool, toolSource, generation);
+            await cleanerClient.DeleteSessionAsync(sessionId);
             Assert.Equal("files-prompt-context-refresh-required", (await Tool("execute", "read", new { path = "file.txt" })).ErrorCode);
             await RefreshPrompt();
             var wrongBinding = await Tool("execute", "write", new { path = "created.txt", content = "wrong target" },
                 execution with { ExecutionBinding = binding with { ContributionId = "unmatched-target" } });
             Assert.Equal("files-target-required", wrongBinding.ErrorCode);
             Assert.Equal("edited", await File.ReadAllTextAsync(Path.Combine(workspaceRoot, "created.txt")));
-            foreach (var changed in new[]
-            {
-                targetHandle with { PackageId = "example.wrong" }, targetHandle with { PackageVersion = "2.0.1" }, targetHandle with { ProviderId = "wrong" },
-                targetHandle with { ContractId = "example.wrong" }, targetHandle with { ContractVersion = "9.0.0" }, targetHandle with { DescriptorSha256 = new string('0', 64) },
-                targetHandle with { AbiSha256 = new string('0', 64) }, targetHandle with { ActivationId = Guid.NewGuid() }, targetHandle with { ActivationEpoch = targetHandle.ActivationEpoch + 1 },
-                targetHandle with { SessionGeneration = targetHandle.SessionGeneration + 1 }, targetHandle with { EndpointReference = "missing-endpoint" },
-            }) Assert.Equal("failed", (await Ready(changed)).GetProperty("status").GetString());
             target.EmptyFacets = true; Assert.Equal("failed", (await Ready()).GetProperty("status").GetString()); target.EmptyFacets = false;
             observer.LookupFailure = SunderRpcErrorKind.PermissionDenied;
             Assert.Equal(SunderRpcErrorKind.ProviderFaulted, (await Assert.ThrowsAsync<SunderRpcException>(() => Ready())).Error.Kind);
@@ -135,49 +140,75 @@ public sealed partial class AgentSourceArtifactMigrationTests
             target = new FilesTargetProbe(targetRegistration.Handler);
             state.Add(localContext.PackageId, descriptor, target, target, Noop.Instance, targetRegistration.ProviderId, "2.0.0");
             Assert.Equal("failed", (await Ready()).GetProperty("status").GetString());
-            targetHandle = ToProviderHandle(Assert.Single(state.Discover(descriptor.ContractId).Providers));
+            targetReference = Assert.Single((await targetReceiver.Providers<AgentServices.IExecutionTargetService>().ListAsync()).Providers,
+                provider => provider.ProviderId == "local.execution.target").Reference;
+            execution = execution with { ExecutionTarget = targetReference };
             Assert.Equal("ready", (await Ready()).GetProperty("status").GetString());
             target.BlockRead = new FilesCallGate();
-            var stoppingRead = Tool("execute", "read", new { path = "file.txt" });
-            await target.BlockRead.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            var stopped = lifetime.DisposeAsync().AsTask();
-            Assert.Equal(AgentToolResultErrorCodes.PackageUnavailable, (await stoppingRead).ErrorCode);
-            await stopped.WaitAsync(TimeSpan.FromSeconds(5)); await lifetime.DisposeAsync();
-            Assert.Equal(0, observer.ActiveWatches); Assert.Equal(0, observer.UnscopedLookups);
-            Assert.NotEmpty(observer.Scopes); Assert.All(observer.Scopes, scope => Assert.True(scope.Disposed));
-            Assert.All(observer.Scopes, scope => Assert.True(scope.DeadlineUtc <= DateTimeOffset.UtcNow.AddSeconds(31)));
-
-            async Task<JsonElement> Rpc(string id, string method, object request, CancellationToken token = default)
+            using var shutdownCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var stoppingRead = Tool("execute", "read", new { path = "file.txt" }, null, shutdownCancellation.Token);
+            Task? providersDrained = null;
+            try
             {
-                var provider = Assert.Single((await host.DiscoverAsync(registrations[id].ContractId, token)).Providers);
-                var service = id switch { "files.tools" => "tool-source", "files.permissions" => "permission-surface", "files.prompt.context" => "prompt-context-contributor", _ => "session-cleaner" };
-                await using var scope = await host.CreateCallScopeAsync(new(DeadlineUtc: DateTimeOffset.UtcNow.AddSeconds(30)), token);
-                return await scope.InvokeAsync(provider.Endpoint, service, method, JsonSerializer.SerializeToElement(request, MemoryProviderJson), cancellationToken: token).AsTask().WaitAsync(TimeSpan.FromSeconds(15));
+                await target.BlockRead.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                var releases = target.Calls.Count(call => call.Method == "release-resource-authority");
+                // Model the host barrier: withdraw inbound providers and drain their
+                // cancelled operations/finally blocks before OnShutdown disposes DI.
+                providersDrained = Task.WhenAll(registrations.Values.Select(provider => state.RetireAsync(provider.Handler)));
+                Assert.DoesNotContain(state.Discover(string.Empty).Providers, provider => provider.PackageId == context.PackageId);
+                var shutdownFailure = await Assert.ThrowsAsync<SunderRpcException>(() => stoppingRead.WaitAsync(TimeSpan.FromSeconds(5)));
+                Assert.Equal(SunderRpcErrorKind.StaleEndpoint, shutdownFailure.Error.Kind);
+                Assert.Equal("test.rpc.stale-endpoint", shutdownFailure.Error.Code);
+                await target.BlockRead.Cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                await providersDrained.WaitAsync(TimeSpan.FromSeconds(5));
+                Assert.Equal(releases + 1, target.Calls.Count(call => call.Method == "release-resource-authority"));
+                Assert.False(targetReference.RetirementToken.IsCancellationRequested);
+                // The recorded release completed while the foreign target and DI were
+                // usable; composition disposal itself is not proof of remote revocation.
+                await lifetime.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+                await lifetime.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
             }
-            Task<JsonElement> Ready(AgentRpcProviderHandle? selected = null) => Rpc("files.tools", "get-readiness", ToolReadiness("read", new(sessionId, null, workspace, binding), selected ?? targetHandle, generation));
+            finally
+            {
+                await shutdownCancellation.CancelAsync();
+                target.BlockRead.Release.TrySetResult();
+                await Record.ExceptionAsync(() => stoppingRead.WaitAsync(TimeSpan.FromSeconds(5)));
+                if (providersDrained is not null) await providersDrained.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            Assert.Equal(0, observer.ActiveWatches); observer.AssertScopedOperations();
+            Assert.NotEmpty(observer.Scopes); Assert.All(observer.Scopes, scope => Assert.True(scope.Disposed));
+            // These generated nested calls use the regression broker's five-minute
+            // default, not the retired execution wrapper's fixed thirty seconds.
+            Assert.All(observer.Scopes, scope => Assert.InRange(scope.DeadlineUtc - scope.CreatedAtUtc,
+                TimeSpan.Zero, TimeSpan.FromMinutes(5)));
+
+            async Task<JsonElement> Ready() => JsonSerializer.SerializeToElement(await toolSource.GetReadinessAsync("read",
+                new(sessionId, null, workspace, binding) { ExecutionTarget = targetReference, ExecutionTargetConfigurationGeneration = generation }), MemoryProviderJson);
             async Task<AgentToolResult> Tool(string method, string tool, object args, AgentToolExecutionContext? supplied = null, CancellationToken token = default)
             {
                 var current = supplied ?? execution;
-                var result = await Rpc("files.tools", method, RegressionTestRpcValues.ToolInvocation(current,
-                    new(tool, JsonSerializer.Serialize(args)), targetHandle), token);
-                return result.Deserialize<AgentToolResult>(MemoryProviderJson)!;
+                var request = new AgentToolRequest(tool, JsonSerializer.Serialize(args));
+                return method == "preflight"
+                    ? await toolSource.PreflightAsync(current, request, token) ?? new(tool, "No preflight result.", null, null, IsError: true)
+                    : await toolSource.ExecuteAsync(current, request, token);
             }
             async Task<AgentPromptContextReceipt> RefreshPrompt()
             {
-                var value = await Rpc("files.prompt.context", "contribute", new
+                var session = new AgentSessionContextRecord(sessionId, "profile.files", "Files", "Files", AgentSessionState.Active, null);
+                var run = new AgentRunContextRecord(runId, 1, AgentRunStatus.Running, false, now);
+                var value = await promptClient.ContributeAsync(new AgentPromptContextRequest(
+                    session, run, new(session, run, "Work on files", null), [], [],
+                    new("GeneralFact", "files", MaxEntryCount: 20, MaxChars: 48000))
                 {
-                    session = new { sessionId, profileId = "profile.files", profileDisplayName = "Files", sessionTitle = "Files", sessionState = "active" },
-                    run = new { runId, revision = 1, status = "running", isInterrupted = false, startedAtUtc = now },
-                    turn = new { userMessage = "Work on files" }, turns = Array.Empty<object>(), recentLiveBufferTurns = Array.Empty<object>(),
-                    workspace, executionBinding = binding, executionTarget = targetHandle,
-                    contextPlan = new { intent = "GeneralFact", queryText = "files", maxEntryCount = 20, maxChars = 48000, shouldContribute = true },
-                    availableTools = tools, transcriptEpoch = 1,
+                    Workspace = workspace, ExecutionBinding = binding, ExecutionTarget = targetReference,
+                    AvailableTools = tools, TranscriptEpoch = 1,
                 });
-                var blocks = value.Deserialize<AgentPromptContextContribution>(MemoryProviderJson)!.Blocks.Where(block => block.Scope is not null).ToArray();
+                Assert.NotNull(value);
+                var blocks = value.Blocks.Where(block => block.Scope is not null).ToArray();
                 Assert.NotEmpty(blocks); Assert.All(blocks, block => Assert.Equal(AgentContextTrust.Untrusted, block.Trust));
                 var ack = new AgentPromptContextReceipt(sessionId, runId, 1, blocks.Select((block, index) => new AgentPromptContextReceiptBlock("host.files." + index,
                     block.Scope!.ContextIdentity, block.Scope.DocumentPath, block.Scope.ContentHash)).ToArray());
-                await Rpc("files.prompt.context", "acknowledge", ack); return ack;
+                await promptClient.AcknowledgeAsync(ack); return ack;
             }
         }
         finally { load.Unload(); }

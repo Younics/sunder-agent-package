@@ -1,25 +1,24 @@
-using Sunder.Sdk.Rpc;
+using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Rpc.Public;
 
-[SunderRpcService(SunderRpcExposure.Public, ContractId = "sunder.agent.tool.source", ServiceId = "tool-source",
-    IncludeSchemaDialect = true, AdditionalDefinitions = [typeof(CollectionIndex)])]
-[SunderRpcAppUse(Actions = ["discover", "invoke"])]
-[SunderRpcRuntimeUse(Actions = ["discover", "invoke"])]
+[SunderService(SunderServiceExposure.Public, ContractId = "sunder.agent.tool.source", ServiceId = "tool-source", IncludeSchemaDialect = true)]
+[SunderRuntimeUse(Actions = ["discover", "invoke"])]
 public interface ToolSourceService
 {
-    [SunderRpcMethod(Idempotency = SunderRpcMethodIdempotency.Idempotent)]
-    ValueTask<ToolSourceDescription> DescribeAsync(Unit request, CancellationToken cancellationToken = default);
-    [SunderRpcMethod(Idempotency = SunderRpcMethodIdempotency.Idempotent)]
-    ValueTask<AgentToolDescriptorCollection> ListToolsAsync(AgentToolSourceContextWire request, CancellationToken cancellationToken = default);
-    [SunderRpcMethod(Idempotency = SunderRpcMethodIdempotency.Idempotent)]
-    ValueTask<ToolReadinessResult> GetReadinessAsync(ToolReadinessRequest request, CancellationToken cancellationToken = default);
-    [SunderRpcMethod(Idempotency = SunderRpcMethodIdempotency.Idempotent)]
-    ValueTask<ToolPreflightResult> PreflightAsync(ToolInvocationRequest request, CancellationToken cancellationToken = default);
-    [SunderRpcMethod]
-    ValueTask<AgentToolResult> ExecuteAsync(ToolInvocationRequest request, CancellationToken cancellationToken = default);
-    [SunderRpcMethod(Idempotency = SunderRpcMethodIdempotency.Idempotent)]
-    ValueTask<PermissionRequestResult> PermissionAsync(ToolInvocationRequest request, CancellationToken cancellationToken = default);
-    [SunderRpcMethod(Idempotency = SunderRpcMethodIdempotency.Idempotent)]
-    ValueTask<ToolPresentationResult> PresentationAsync(AgentToolPresentationRequest request, CancellationToken cancellationToken = default);
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
+    ValueTask<AgentToolSourceDescriptor> DescribeAsync(CancellationToken cancellationToken = default);
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
+    ValueTask<IReadOnlyList<AgentToolDescriptor>> ListToolsAsync(AgentToolSourceContext context, CancellationToken cancellationToken = default);
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
+    ValueTask<AgentToolReadiness?> GetReadinessAsync(string toolId, AgentToolSourceContext context, CancellationToken cancellationToken = default);
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
+    ValueTask<AgentToolResult?> PreflightAsync(AgentToolExecutionContext context, AgentToolRequest request, CancellationToken cancellationToken = default);
+    [SunderMethod(TimeoutSeconds = 2100)]
+    ValueTask<AgentToolResult> ExecuteAsync(AgentToolExecutionContext context, AgentToolRequest request, CancellationToken cancellationToken = default);
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
+    ValueTask<AgentPermissionRequest?> PermissionAsync(AgentToolExecutionContext context, AgentToolRequest request, CancellationToken cancellationToken = default);
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
+    ValueTask<AgentToolPresentation?> PresentationAsync(AgentToolPresentationRequest request, CancellationToken cancellationToken = default);
 }

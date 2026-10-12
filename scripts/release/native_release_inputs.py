@@ -241,8 +241,12 @@ def qualification(data, package_id, project, rid, version):
             and frame["projectIdentity"] == Path(project).stem
             and frame["assemblyName"] == Path(project).stem, "Mixed/stale package/project/configuration/RID qualification")
     for field in ("ownedBaseline", "contractLock"):
-        relative(frame[field], 1024, 32)
+        path = frame[field]
+        absent = field == "ownedBaseline" and isinstance(path, str) and path.startswith("baseline-absent:")
+        relative(path.removeprefix("baseline-absent:") if absent else path, 1024, 32)
         sha(frame[field + "Sha256"])
+        if absent:
+            require(frame[field + "Sha256"] == digest(b""), "Absent owned baseline must bind the empty-byte SHA-256")
     plan = value["rolePlan"]
     keys(plan, "inputFingerprint nativePlanSha256 hasApp roles")
     sha(plan["inputFingerprint"])

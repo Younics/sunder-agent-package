@@ -39,21 +39,23 @@ public sealed record AgentPromptContextPlan(
     string QueryText,
     string? Reason = null,
     IReadOnlyList<string>? PreferredCategories = null,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")]
     int MaxEntryCount = 6,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")]
     int MaxChars = 2000)
 {
     /// <summary>
-    /// Gets whether the intent permits contributors to provide supplementary context.
+    /// Determines whether the intent permits contributors to provide supplementary context.
     /// </summary>
-    /// <value>
+    /// <returns>
     /// <see langword="false"/> only when <see cref="Intent"/> equals <c>none</c> using ordinal
     /// case-insensitive comparison; otherwise <see langword="true"/>.
-    /// </value>
+    /// </returns>
     /// <remarks>
     /// This property does not validate budgets or authorize retrieval. Contributors must also enforce scope,
     /// permissions, and non-negative limits.
     /// </remarks>
-    public bool ShouldContribute => !string.Equals(Intent, "none", StringComparison.OrdinalIgnoreCase);
+    public bool ShouldContribute() => !string.Equals(Intent, "none", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Creates a plan that suppresses supplementary context contribution.

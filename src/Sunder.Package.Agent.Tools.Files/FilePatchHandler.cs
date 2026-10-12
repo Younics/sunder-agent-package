@@ -1,15 +1,15 @@
 using Sunder.Agent.Execution.Common;
 using System.Text;
-using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
+using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Tools.Files;
 
 internal static class FilePatchHandler
 {
     public static async Task<AgentToolResult> ExecuteAsync(
-        IAgentExecutionTarget target,
+        FileExecutionTarget target,
         AgentExecutionTargetContext context,
         AgentToolRequest request,
         CancellationToken cancellationToken)
@@ -37,12 +37,12 @@ internal static class FilePatchHandler
         }
         finally
         {
-            ReleasePostMutationAuthority(target, plan);
+            await ReleasePostMutationAuthorityAsync(target, plan).ConfigureAwait(false);
         }
     }
 
     private static async Task<AgentToolResult> ApplyPlanAsync(
-        IAgentExecutionTarget target,
+        FileExecutionTarget target,
         AgentExecutionTargetContext context,
         string toolId,
         IReadOnlyList<FilePatchOperation> operations,
@@ -82,22 +82,34 @@ internal static class FilePatchHandler
 
             return BuildCancellationFailure(toolId, plan, applied, currentOperation, compensation);
         }
+        catch (SunderRpcException ex) when (ex.Error.DispatchState == SunderRpcDispatchState.PossiblyDispatched
+            || ex.Error.RetrySafety == SunderRpcRetrySafety.Unsafe)
+        {
+            // Preserve transport uncertainty even when best-effort compensation succeeds.
+            await CompensateAfterFailureAsync(
+                target,
+                context,
+                applied,
+                currentOperation,
+                CancellationToken.None,
+                requireOriginalStateForNoMutation: true);
+            throw;
+        }
         catch (Exception ex)
         {
             var failedOperation = plan.Operations[Math.Min(applied.Count, plan.Operations.Count - 1)];
             return await BuildApplicationFailureAsync(target, context, toolId, plan, applied, failedOperation, ex.Message);
         }
 
-        return new AgentToolResult(
+        return FileToolResult.Success(
             toolId,
             FilePatchParser.BuildSummary(operations),
-            Content: string.Join(Environment.NewLine, plan.Operations.Select(FormatSuccessSummary)),
-            BackendId: FileToolResult.BackendId(target),
-            PresentationPayloadJson: FileDiffPresentation.BuildPayload(plan.Operations.Select(operation => operation.PresentationFile).ToArray()));
+            string.Join(Environment.NewLine, plan.Operations.Select(FormatSuccessSummary)), FileToolResult.BackendId(target),
+            presentationPayloadJson: FileDiffPresentation.BuildPayload(plan.Operations.Select(operation => operation.PresentationFile).ToArray()));
     }
 
     private static async ValueTask<AgentFileMutationResult> ApplyOperationAsync(
-        IAgentExecutionTarget target,
+        FileExecutionTarget target,
         AgentExecutionTargetContext context,
         PlannedFilePatchOperation operation,
         CancellationToken cancellationToken)
@@ -120,7 +132,7 @@ internal static class FilePatchHandler
     }
 
     private static async Task<AgentToolResult> BuildApplicationFailureAsync(
-        IAgentExecutionTarget target,
+        FileExecutionTarget target,
         AgentExecutionTargetContext context,
         string toolId,
         FilePatchPlan plan,
@@ -176,7 +188,7 @@ internal static class FilePatchHandler
     }
 
     private static async Task<FilePatchCompensationAttempt> CompensateAfterFailureAsync(
-        IAgentExecutionTarget target,
+        FileExecutionTarget target,
         AgentExecutionTargetContext context,
         IReadOnlyList<PlannedFilePatchOperation> applied,
         PlannedFilePatchOperation? failed,
@@ -210,7 +222,7 @@ internal static class FilePatchHandler
     }
 
     private static async Task<bool> FailedOperationReachedNextStateAsync(
-        IAgentExecutionTarget target,
+        FileExecutionTarget target,
         AgentExecutionTargetContext context,
         PlannedFilePatchOperation operation,
         CancellationToken cancellationToken,
@@ -226,7 +238,7 @@ internal static class FilePatchHandler
                 : reachedNextState;
         }
 
-        var resource = await target.ResolveFileResourceAsync(context, operation.Path, cancellationToken);
+        var resource = await target.Service.ResolveFileAsync(new() { Context = context, Path = operation.Path }, cancellationToken);
         var readContext = context with
         {
             ApprovedResourceReferences = [resource.CanonicalReference],
@@ -289,7 +301,7 @@ internal static class FilePatchHandler
     }
 
     private static async Task<FilePatchCompensationResult> CompensateAsync(
-        IAgentExecutionTarget target,
+        FileExecutionTarget target,
         AgentExecutionTargetContext context,
         IReadOnlyList<PlannedFilePatchOperation> applied,
         CancellationToken cancellationToken)
@@ -320,13 +332,13 @@ internal static class FilePatchHandler
     }
 
     private static async Task<AgentFileMutationResult> CompensateOperationAsync(
-        IAgentExecutionTarget target,
+        FileExecutionTarget target,
         AgentExecutionTargetContext context,
         PlannedFilePatchOperation operation,
         CancellationToken cancellationToken)
     {
         var resource = operation.PostMutationResource
-                       ?? await target.ResolveFileResourceAsync(context, operation.Path, cancellationToken);
+                       ?? await target.Service.ResolveFileAsync(new() { Context = context, Path = operation.Path }, cancellationToken);
         var operationContext = CreateCompensationContext(context, operation, resource);
         switch (operation.Kind)
         {
@@ -383,12 +395,11 @@ internal static class FilePatchHandler
         };
     }
 
-    private static void ReleasePostMutationAuthority(
-        IAgentExecutionTarget target,
+    private static async ValueTask ReleasePostMutationAuthorityAsync(
+        FileExecutionTarget target,
         FilePatchPlan plan)
     {
-        if (!FilesExecutionFacets.SupportsFacet(target, AgentExecutionFacetIds.ResourceAuthority)
-            || target is not IAgentResourceAuthorityExecutionTarget authorityTarget)
+        if (!FilesExecutionFacets.SupportsFacet(target, AgentExecutionFacetIds.ResourceAuthority))
         {
             return;
         }
@@ -402,18 +413,33 @@ internal static class FilePatchHandler
             .ToArray();
         if (capabilities.Length > 0)
         {
-            authorityTarget.ReleaseResourceAuthority(capabilities);
+            if (target.Reference.RetirementToken.IsCancellationRequested)
+            {
+                return;
+            }
+            try
+            {
+                await target.Service.ReleaseResourceAuthorityAsync(capabilities, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (SunderRpcException exception) when (exception.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable)
+            {
+                // Retired authority is revoked; retain the original patch failure and its dispatch metadata.
+            }
+            catch (OperationCanceledException) when (target.Reference.RetirementToken.IsCancellationRequested)
+            {
+                // The exact activation's authority is already revoked.
+            }
         }
     }
 
     private static async Task<string?> ReadCurrentContentAsync(
-        IAgentExecutionTarget target,
+        FileExecutionTarget target,
         AgentExecutionTargetContext context,
         string path,
         CancellationToken cancellationToken,
         bool requireCompleteRead)
     {
-        var current = await target.ReadFileAsync(context, new AgentFileReadRequest(path), cancellationToken);
+        var current = await target.Service.ReadFileAsync(new() { Context = context, Request = new() { Path = path, Offset = null, Limit = null } }, cancellationToken);
         if (current.IsError || current.IsDirectory || current.WasTruncated)
         {
             if (!requireCompleteRead)
@@ -431,7 +457,8 @@ internal static class FilePatchHandler
         => new($"The current state of '{path}' matches neither the preflight state nor the planned patch state.");
 
     private static AgentFileMutationResult UnsafeCompensation(string path)
-        => new(path, "Current target state no longer matches the applied patch; automatic compensation was skipped.", IsError: true, ErrorCode: "patch-compensation-unsafe");
+        => new() { Path = path, Summary = "Current target state no longer matches the applied patch; automatic compensation was skipped.",
+            IsError = true, ErrorCode = "patch-compensation-unsafe", PostMutationResource = null };
 
     private static AgentToolResult BuildCancellationFailure(
         string toolId,

@@ -17,10 +17,9 @@ public sealed class SkillFolderPickerLifecycleTests
     {
         using var scope = RegressionTestPackageScope.Create();
         var store = new SkillStore(scope.Context);
-        var viewModel = new SkillSettingsViewModel(
-            AgentRoleBoundary.As<SkillsApp::Sunder.Package.Agent.Skills.Runtime.ISkillManagementGateway>(new SkillLocalManagementGateway(
-                store,
-                new SkillImportService(store, new NoOpGitHubSkillClient(), scope.Context))));
+        await using var runtime = SkillManagementGatewayFixture.Create(scope.Context, store,
+            new SkillImportService(store, new NoOpGitHubSkillClient(), scope.Context));
+        var viewModel = new SkillSettingsViewModel(runtime.Gateway);
         await viewModel.InitializeAsync();
         var view = new SkillSettingsView(viewModel);
         var picker = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -43,10 +42,9 @@ public sealed class SkillFolderPickerLifecycleTests
     {
         using var scope = RegressionTestPackageScope.Create();
         var store = new SkillStore(scope.Context);
-        var viewModel = new SkillSettingsViewModel(
-            AgentRoleBoundary.As<SkillsApp::Sunder.Package.Agent.Skills.Runtime.ISkillManagementGateway>(new SkillLocalManagementGateway(
-                store,
-                new SkillImportService(store, new NoOpGitHubSkillClient(), scope.Context))));
+        await using var runtime = SkillManagementGatewayFixture.Create(scope.Context, store,
+            new SkillImportService(store, new NoOpGitHubSkillClient(), scope.Context));
+        var viewModel = new SkillSettingsViewModel(runtime.Gateway);
         await viewModel.InitializeAsync();
         using var view = new SkillSettingsView(viewModel);
 

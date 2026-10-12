@@ -2,6 +2,7 @@ extern alias FilesWorker;
 extern alias WebWorker;
 
 using System.Reflection;
+using Microsoft.Extensions.DependencyInjection;
 using FilesWorker::Sunder.Package.Agent.Tools.Files;
 using WebWorker::Sunder.Package.Agent.Tools.Web;
 using WebWorker::Sunder.Package.Agent.Tools.Web.Services;
@@ -79,7 +80,7 @@ public sealed class ToolPackageRoleCompositionTests
     }
 
     [Fact]
-    public void FilesComposition_DefersDurableWorkspaceCreationUntilActivation()
+    public async Task FilesComposition_DefersDurableWorkspaceCreationUntilActivation()
     {
         using var packageScope = RegressionTestPackageScope.Create();
         var claimsRoot = packageScope.Context.Storage.RoleLocalWorkspace.GetLocalPath(
@@ -88,7 +89,7 @@ public sealed class ToolPackageRoleCompositionTests
 
         Assert.False(Directory.Exists(claimsRoot));
 
-        source.Activate();
+        await source.ActivateAsync(default!);
 
         Assert.True(Directory.Exists(claimsRoot));
     }
@@ -108,6 +109,22 @@ public sealed class ToolPackageRoleCompositionTests
         Assert.Equal("exa-key", await service.GetExaApiKeyAsync());
         Assert.Equal(["search.maxResults.default"], settings.ReadKeys);
         Assert.Equal(["search.exa.apiKey"], secrets.ReadKeys);
+    }
+
+    [Fact]
+    public async Task WebGeneratedComposition_ResolvesAutoSearchWithoutCredentialsOrNetwork()
+    {
+        using var packageScope = RegressionTestPackageScope.Create();
+        using var state = new RegressionTestRpcState();
+        var graph = AgentSourceArtifactMigrationTests.CreateGeneratedWorker(typeof(WebSearchTool).Assembly,
+            packageScope.Context, new RegressionTestRpcClient(state, packageScope.Context.PackageId));
+        await using var lifetime = graph.Lifetime;
+
+        var readiness = await graph.Services.GetRequiredService<WebSearchTool>().GetReadinessAsync();
+
+        Assert.Contains("Parallel", readiness.Message, StringComparison.Ordinal);
+        Assert.Contains("automatic rate-limit failover", readiness.Message, StringComparison.Ordinal);
+        Assert.NotNull(graph.Services.GetRequiredService<WebSearchService>());
     }
 
     private sealed class TestPackageContext(

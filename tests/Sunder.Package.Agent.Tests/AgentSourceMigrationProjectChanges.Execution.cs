@@ -31,9 +31,10 @@ internal static partial class AgentSourceMigrationProjectChanges
         }
         return text;
 
-        static string Replace(string source, string value, string original)
+        string Replace(string source, string value, string original)
         {
-            Assert.Equal(2, source.Split(value, StringSplitOptions.None).Length);
+            var count = source.Split(value, StringSplitOptions.None).Length - 1;
+            Assert.True(count == 1, $"{path}: expected one pre-natural execution occurrence of '{value}', found {count}.");
             return source.Replace(value, original, StringComparison.Ordinal);
         }
     }

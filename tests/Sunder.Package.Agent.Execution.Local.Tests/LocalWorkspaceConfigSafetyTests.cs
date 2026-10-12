@@ -1,10 +1,12 @@
 extern alias LocalWorker;
 
 using LocalWorker::Sunder.Package.Agent.Execution.Local;
-using LocalWorker::Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Tests;
+using Sunder.Sdk.Rpc;
 using Xunit;
+using LocalModels = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentModels = Sunder.Package.Agent.Contracts.Models;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
 
@@ -49,32 +51,40 @@ public sealed class LocalWorkspaceConfigSafetyTests
     {
         using var scope = RegressionTestPackageScope.Create();
         var state = Assert.IsType<RegressionTestKeyValueStore>(scope.Context.Storage.State);
-        var binding = new AgentWorkspaceBindingRecord(
-            "binding",
-            "workspace",
-            "contract",
-            "local",
-            "primary",
-            true,
-            0,
-            DateTimeOffset.UtcNow,
-            DateTimeOffset.UtcNow);
+        var now = new SunderRpcOffsetDateTime(DateTimeOffset.UtcNow.ToString("O"));
+        var binding = new LocalModels.AgentWorkspaceBindingRecord
+        {
+            BindingId = "binding",
+            WorkspaceId = "workspace",
+            ExtensionPointId = "contract",
+            ContributionId = "local",
+            Role = "primary",
+            IsEnabled = true,
+            SortOrder = 0,
+            CreatedAtUtc = now,
+            UpdatedAtUtc = now,
+        };
         var key = LocalExecutionWorkspaceConfigService.BuildKey(binding.BindingId);
         const string json = "{\"AllowedRoots\":[42]}";
         await state.SetValueAsync(key, json);
         var service = new LocalExecutionWorkspaceConfigService(scope.Context);
-        var workspace = new AgentWorkspaceRecord(
-            "workspace",
-            "Workspace",
-            null,
-            DateTimeOffset.UtcNow,
-            DateTimeOffset.UtcNow);
-        var context = new AgentWorkspacePathMigrationContext(
-            workspace,
-            binding);
+        var workspace = new LocalModels.AgentWorkspaceRecord
+        {
+            WorkspaceId = "workspace",
+            DisplayName = "Workspace",
+            CreatedAtUtc = now,
+            UpdatedAtUtc = now,
+            Paths = [],
+            Documents = [],
+        };
+        var context = new LocalModels.AgentWorkspacePathMigrationContext
+        {
+            Workspace = workspace,
+            Binding = binding,
+        };
 
         var exception = await Assert.ThrowsAsync<LocalExecutionDomainException>(() =>
-            service.GetLegacyWorkspacePathsAsync(context));
+            service.ListLegacyPathsAsync(context).AsTask());
 
         Assert.Equal("local.workspace-config.malformed", exception.Code);
         Assert.Equal(json, await state.GetValueAsync(key));
@@ -91,38 +101,25 @@ public sealed class LocalWorkspaceConfigSafetyTests
         await state.SetValueAsync(key, json);
 
         var now = DateTimeOffset.UtcNow;
-        var workspace = new AgentWorkspaceRecord("workspace", "Workspace", null, now, now);
-        var binding = new AgentWorkspaceBindingRecord(
-            bindingId,
-            workspace.WorkspaceId,
-            "contract",
-            "local",
-            "primary",
-            true,
-            0,
-            now,
-            now);
+        var workspace = new AgentModels.AgentWorkspaceRecord("workspace", "Workspace", null, now, now, []);
+        var binding = new AgentModels.AgentWorkspaceBindingRecord(
+            bindingId, workspace.WorkspaceId, "contract", "local", "primary", true, 0, now, now);
         var restartedTarget = new LocalExecutionTarget(
             scope.Context,
             new LocalExecutionWorkspaceConfigService(scope.Context),
             new LocalShellCatalogService(scope.Context));
         using var catalog = new RegressionTestExtensionCatalog();
-        catalog.AddProvider(
-            RegressionTestBindings.ExecutionTargets,
+        catalog.AddGeneratedProvider(
+            "sunder.package.agent.execution.local",
             restartedTarget,
-            "sunder.package.agent.execution.local");
-        var reference = catalog.GetRequiredReference(RegressionTestBindings.ExecutionTargets);
-        Assert.True(reference.TryAcquire(out var lease));
+            restartedTarget.CreateSunderRpcProviderRegistration());
+        var provider = await catalog.GetRequiredProviderAsync(
+            catalog.Receiver("sunder.package.agent").Providers<AgentServices.IExecutionTargetService>());
 
-        AgentExecutionTargetReadiness readiness;
-        using (lease)
-        {
-            readiness = AgentRoleBoundary.As<AgentExecutionTargetReadiness>(await lease.Service.GetReadinessAsync(
-                AgentRoleBoundary.As<Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetContext>(
-                    new AgentExecutionTargetContext(null, null, workspace, binding))));
-        }
+        var readiness = await provider.Service.ReadinessAsync(
+            new AgentModels.AgentExecutionTargetContext(Guid.NewGuid(), null, workspace, binding));
 
-        Assert.Equal(AgentExecutionTargetReadinessStatus.Failed, readiness.Status);
+        Assert.Equal(AgentModels.AgentExecutionTargetReadinessStatus.Failed, readiness.Status);
         Assert.Contains("local.workspace-config.malformed", readiness.Message, StringComparison.Ordinal);
         Assert.Equal(json, await state.GetValueAsync(key));
     }

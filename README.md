@@ -6,6 +6,7 @@
   <p>
     <a href="https://github.com/Younics/sunder-core"><strong>Sunder Core</strong></a> &middot;
     <a href="docs/README.md"><strong>Documentation</strong></a> &middot;
+    <a href="scripts/README.md"><strong>Scripts</strong></a> &middot;
     <a href="#package-family"><strong>Package Family</strong></a> &middot;
     <a href="#recommended-starting-sets"><strong>Starting Sets</strong></a> &middot;
     <a href="#build-from-source"><strong>Build</strong></a>

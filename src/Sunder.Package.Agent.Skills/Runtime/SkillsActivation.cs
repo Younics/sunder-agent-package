@@ -3,7 +3,7 @@ using Sunder.Sdk.Worker;
 
 namespace Sunder.Package.Agent.Skills.Runtime;
 
-internal sealed class SkillsActivation(SkillStore store, SkillRuntimeHandler handler, ISkillsRuntimeBindings runtime)
+internal sealed class SkillsActivation(SkillStore store, SkillRuntimeHandler handler)
     : ISunderWorkerActivationService, IAsyncDisposable
 {
     public async ValueTask ActivateAsync(SunderWorkerContext context, CancellationToken cancellationToken = default)
@@ -11,12 +11,10 @@ internal sealed class SkillsActivation(SkillStore store, SkillRuntimeHandler han
         cancellationToken.ThrowIfCancellationRequested();
         store.Activate();
         await handler.OrphanedTransferCleanup.WaitAsync(cancellationToken).ConfigureAwait(false);
-        await runtime.StartAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async ValueTask DisposeAsync()
     {
-        try { await runtime.DisposeAsync().ConfigureAwait(false); }
-        finally { await handler.StartedTransferCleanup.ConfigureAwait(false); }
+        await handler.StartedTransferCleanup.ConfigureAwait(false);
     }
 }

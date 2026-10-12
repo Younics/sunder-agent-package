@@ -18,13 +18,15 @@ using FilesWorker::Sunder.Package.Agent.Tools.Files;
 using ShellWorker::Sunder.Package.Agent.Tools.Shell;
 using WebWorker::Sunder.Package.Agent.Tools.Web;
 using WebWorker::Sunder.Package.Agent.Tools.Web.Services;
-using DockerModels = DockerWorker::Sunder.Package.Agent.Contracts.Models;
-using ShellModels = ShellWorker::Sunder.Package.Agent.Contracts.Models;
-using WebModels = WebWorker::Sunder.Package.Agent.Contracts.Models;
+using DockerModels = DockerWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using LocalModels = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using ShellModels = ShellWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using WebModels = WebWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
 using HostSecurePathEngine = DockerWorker::Sunder.Agent.Execution.Common.HostSecurePathEngine;
 using HostResourceClaim = DockerWorker::Sunder.Agent.Execution.Common.HostResourceClaim;
 using LocalSecureApprovalLease = DockerWorker::Sunder.Agent.Execution.Common.LocalSecureApprovalLease;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Rpc;
 using Xunit;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
@@ -461,7 +463,7 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
         if (targetKind == "local")
         {
             var configService = new LocalExecutionWorkspaceConfigService(scope.Context);
-            strictTarget = AgentRoleBoundary.As<IAgentExecutionTarget>(new LocalExecutionTarget(
+            strictTarget = new GeneratedLocalExecutionTargetAdapter(new LocalExecutionTarget(
                 scope.Context,
                 configService,
                 new LocalShellCatalogService(scope.Context)));
@@ -477,7 +479,7 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
         var binding = new AgentWorkspaceBindingRecord(
             "binding",
             workspace.WorkspaceId,
-            AgentRpcContractIds.ExecutionTarget,
+            RegressionTestBindings.ExecutionTargets,
             target.Descriptor.TargetId,
             "primary-execution-target",
             true,
@@ -540,7 +542,7 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
             ToolCallId: operation.ToolCallId)
         {
             ResourceOperation = operation,
-            ExecutionTargetReference = catalog.GetRequiredReference(RegressionTestBindings.ExecutionTargets),
+            ExecutionTarget = (await catalog.GetRequiredProviderAsync(catalog.ExecutionTargets)).Reference,
         };
         var permission = Assert.IsType<AgentPermissionRequest>(
             await source.BuildPermissionRequestAsync(planningContext, request));
@@ -810,16 +812,26 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
     }
 
     [Fact]
-    public void FilesShellAndWeb_InvalidRequestPresentation_UsesSharedMarkdownShape()
+    public async Task FilesShellAndWeb_InvalidRequestPresentation_UsesSharedMarkdownShape()
     {
         const string malformedJson = "{";
         var (files, _, _) = CreateSource(new MemoryExecutionTarget());
         var shell = new ShellToolSource();
         var web = new WebFetchTool(new WebFetchService());
 
-        var filesDetail = files.ResolveToolPresentation(PresentationRequest("read", malformedJson))!.DetailMarkdown!;
-        var shellDetail = shell.ResolveToolPresentation(AgentRoleBoundary.As<ShellModels.AgentToolPresentationRequest>(PresentationRequest("shell", malformedJson)))!.DetailMarkdown!;
-        var webDetail = web.ResolveToolPresentation(AgentRoleBoundary.As<WebModels.AgentToolPresentationRequest>(PresentationRequest("web_fetch", malformedJson)))!.DetailMarkdown!;
+        var filesDetail = (await files.PresentationAsync(PresentationRequest("read", malformedJson)))!.DetailMarkdown!;
+        var shellDetail = (await shell.PresentationAsync(new ShellModels.AgentToolPresentationRequest
+        {
+            ToolId = "shell",
+            ArgumentsJson = malformedJson,
+            IsError = false,
+        }))!.DetailMarkdown!;
+        var webDetail = web.ResolveToolPresentation(new WebModels.AgentToolPresentationRequest
+        {
+            ToolId = "web_fetch",
+            ArgumentsJson = malformedJson,
+            IsError = false,
+        })!.DetailMarkdown!;
 
         Assert.Equal(RawRequestBlock(filesDetail), RawRequestBlock(shellDetail));
         Assert.Equal(RawRequestBlock(filesDetail), RawRequestBlock(webDetail));
@@ -859,8 +871,27 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
     public async Task WebFetch_RejectsOutOfRangeTimeoutBeforeNetworkCall(int timeoutSeconds)
     {
         var result = await new WebFetchTool(new WebFetchService()).ExecuteAsync(
-            new WebModels.AgentToolExecutionContext(null),
-            new WebModels.AgentToolRequest("web_fetch", $$"""{"url":"https://example.com","timeoutSeconds":{{timeoutSeconds}}}"""));
+            new WebModels.AgentToolExecutionContext
+            {
+                SessionId = null,
+                ProfileId = null,
+                Workspace = null,
+                ExecutionBinding = null,
+                AllowOutsideConfiguredScope = false,
+                RunId = null,
+                RunRevision = null,
+                UserTurnId = null,
+                ToolCallId = null,
+                TranscriptEpoch = 0,
+                ApprovedResourceReferences = [],
+                ApprovedResourceClaims = [],
+                ApprovedResourceCapabilities = [],
+            },
+            new WebModels.AgentToolRequest
+            {
+                ToolId = "web_fetch",
+                ArgumentsJson = $$"""{"url":"https://example.com","timeoutSeconds":{{timeoutSeconds}}}""",
+            });
 
         Assert.True(result.IsError);
         Assert.Equal("web-fetch-args", result.ErrorCode);
@@ -874,7 +905,7 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
         var binding = new AgentWorkspaceBindingRecord(
             "binding",
             workspace.WorkspaceId,
-            AgentRpcContractIds.ExecutionTarget,
+            RegressionTestBindings.ExecutionTargets,
             target.Descriptor.TargetId,
             "primary-execution-target",
             true,
@@ -886,7 +917,7 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
             target,
             new AgentToolExecutionContext(null, Workspace: workspace, ExecutionBinding: binding)
             {
-                ExecutionTargetReference = catalog.GetRequiredReference(RegressionTestBindings.ExecutionTargets),
+                ExecutionTarget = catalog.GetRequiredProviderAsync(catalog.ExecutionTargets).AsTask().GetAwaiter().GetResult().Reference,
             });
     }
 
@@ -898,7 +929,7 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
         var binding = new AgentWorkspaceBindingRecord(
             "binding",
             workspace.WorkspaceId,
-            AgentRpcContractIds.ExecutionTarget,
+            RegressionTestBindings.ExecutionTargets,
             target.Descriptor.TargetId,
             "primary-execution-target",
             true,
@@ -909,7 +940,7 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
             CreateSourceProbe(catalog, _packageScope.Context),
             new AgentToolExecutionContext(null, Workspace: workspace, ExecutionBinding: binding)
             {
-                ExecutionTargetReference = catalog.GetRequiredReference(RegressionTestBindings.ExecutionTargets),
+                ExecutionTarget = catalog.GetRequiredProviderAsync(catalog.ExecutionTargets).AsTask().GetAwaiter().GetResult().Reference,
             });
     }
 
@@ -935,7 +966,7 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
         var binding = new AgentWorkspaceBindingRecord(
             "binding",
             workspace.WorkspaceId,
-            AgentRpcContractIds.ExecutionTarget,
+            RegressionTestBindings.ExecutionTargets,
             target.Descriptor.TargetId,
             "primary-execution-target",
             true,
@@ -950,7 +981,7 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
             CreateSourceProbe(catalog, scope.Context),
             new AgentToolExecutionContext(null, Workspace: workspace, ExecutionBinding: binding)
             {
-                ExecutionTargetReference = catalog.GetRequiredReference(RegressionTestBindings.ExecutionTargets),
+                ExecutionTarget = (await catalog.GetRequiredProviderAsync(catalog.ExecutionTargets)).Reference,
             });
     }
 
@@ -996,6 +1027,239 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
 
     private static AgentToolPresentationRequest PresentationRequest(string toolId, string argumentsJson)
         => new(toolId, argumentsJson, null, null, null, null, false, null, null);
+
+    private static DockerModels.AgentExecutionTargetContext ToDockerContext(AgentExecutionTargetContext context)
+        => new()
+        {
+            SessionId = context.SessionId,
+            ProfileId = context.ProfileId,
+            Workspace = new DockerModels.AgentWorkspaceRecord
+            {
+                WorkspaceId = context.Workspace.WorkspaceId,
+                DisplayName = context.Workspace.DisplayName,
+                Description = context.Workspace.Description,
+                CreatedAtUtc = new SunderRpcOffsetDateTime(context.Workspace.CreatedAtUtc.ToString("O")),
+                UpdatedAtUtc = new SunderRpcOffsetDateTime(context.Workspace.UpdatedAtUtc.ToString("O")),
+                Paths = context.Workspace.Paths.Select(path => new DockerModels.AgentWorkspacePathRecord
+                {
+                    PathId = path.PathId,
+                    WorkspaceId = path.WorkspaceId,
+                    HostPath = path.HostPath,
+                    IsDefault = path.IsDefault,
+                    SortOrder = path.SortOrder,
+                    CreatedAtUtc = new SunderRpcOffsetDateTime(path.CreatedAtUtc.ToString("O")),
+                    UpdatedAtUtc = new SunderRpcOffsetDateTime(path.UpdatedAtUtc.ToString("O")),
+                }).ToArray(),
+                Documents = [],
+            },
+            Binding = new DockerModels.AgentWorkspaceBindingRecord
+            {
+                BindingId = context.Binding.BindingId,
+                WorkspaceId = context.Binding.WorkspaceId,
+                ExtensionPointId = context.Binding.ExtensionPointId,
+                ContributionId = context.Binding.ContributionId,
+                Role = context.Binding.Role,
+                IsEnabled = context.Binding.IsEnabled,
+                SortOrder = context.Binding.SortOrder,
+                CreatedAtUtc = new SunderRpcOffsetDateTime(context.Binding.CreatedAtUtc.ToString("O")),
+                UpdatedAtUtc = new SunderRpcOffsetDateTime(context.Binding.UpdatedAtUtc.ToString("O")),
+            },
+            AllowOutsideConfiguredScope = context.AllowOutsideConfiguredScope,
+            ApprovedResourceReferences = context.ApprovedResourceReferences,
+            ApprovedResourceClaims = context.ApprovedResourceClaims.Select(ToDockerClaim).ToArray(),
+            ApprovedResourceCapabilities = context.ApprovedResourceCapabilities,
+            ResourceOperation = context.ResourceOperation is null ? null : new DockerModels.AgentResourceOperationContext
+            {
+                RunId = context.ResourceOperation.RunId,
+                RunRevision = context.ResourceOperation.RunRevision,
+                ToolCallId = context.ResourceOperation.ToolCallId,
+                ActionId = context.ResourceOperation.ActionId,
+                ResourceIndex = context.ResourceOperation.ResourceIndex,
+                WorkspaceGeneration = context.ResourceOperation.WorkspaceGeneration,
+                BindingGeneration = context.ResourceOperation.BindingGeneration,
+                ToolOwnerPackageId = context.ResourceOperation.ToolOwnerPackageId,
+                ExecutionTargetOwnerPackageId = context.ResourceOperation.ExecutionTargetOwnerPackageId,
+                AuthorityActivationId = context.ResourceOperation.AuthorityActivationId,
+                AuthorityUseCount = context.ResourceOperation.AuthorityUseCount,
+                CanIssueOutsideAuthority = context.ResourceOperation.CanIssueOutsideAuthority,
+            },
+            CapturePostMutationResource = context.CapturePostMutationResource,
+            ExpectedConfigurationGeneration = context.ExpectedConfigurationGeneration,
+        };
+
+    private static DockerModels.AgentResourceClaim ToDockerClaim(AgentResourceClaim claim)
+        => new()
+        {
+            Version = claim.Version,
+            NamespaceId = claim.NamespaceId,
+            LogicalPath = claim.LogicalPath,
+            ConfiguredRoot = claim.ConfiguredRoot,
+            RootIdentityChainFingerprint = claim.RootIdentityChainFingerprint,
+            TargetExists = claim.TargetExists,
+            TargetKind = claim.TargetKind,
+            TargetIdentity = claim.TargetIdentity,
+            TargetIsAuthorityRoot = claim.TargetIsAuthorityRoot,
+            CaseSensitivePath = claim.CaseSensitivePath,
+            ActionId = claim.ActionId,
+            WorkspaceId = claim.WorkspaceId,
+            WorkspaceGeneration = claim.WorkspaceGeneration,
+            BindingId = claim.BindingId,
+            BindingGeneration = claim.BindingGeneration,
+            ToolCallId = claim.ToolCallId,
+            ResourceIndex = claim.ResourceIndex,
+            ToolOwnerPackageId = claim.ToolOwnerPackageId,
+            ExecutionTargetOwnerPackageId = claim.ExecutionTargetOwnerPackageId,
+        };
+
+    private static DockerModels.AgentFileReadRequest ToDockerRequest(AgentFileReadRequest request)
+        => new() { Path = request.Path, Offset = request.Offset, Limit = request.Limit };
+
+    private static DockerModels.AgentFileWriteRequest ToDockerRequest(AgentFileWriteRequest request)
+        => new() { Path = request.Path, Content = request.Content, Overwrite = request.Overwrite, ExpectedContentHash = request.ExpectedContentHash };
+
+    private static DockerModels.AgentFileDeleteRequest ToDockerRequest(AgentFileDeleteRequest request)
+        => new() { Path = request.Path, Recursive = request.Recursive, ExpectedContentHash = request.ExpectedContentHash };
+
+    private static AgentFileReadResult ToAgentResult(DockerModels.AgentFileReadResult result)
+        => new(result.Path, result.Content, result.IsDirectory, result.WasTruncated)
+        {
+            IsError = result.IsError,
+            ErrorCode = result.ErrorCode,
+            ErrorMessage = result.ErrorMessage,
+            StartLine = result.StartLine is long startLine ? checked((int)startLine) : null,
+            EndLine = result.EndLine is long endLine ? checked((int)endLine) : null,
+            TotalLines = result.TotalLines is long totalLines ? checked((int)totalLines) : null,
+        };
+
+    private static AgentFileMutationResult ToAgentResult(DockerModels.AgentFileMutationResult result)
+        => new(result.Path, result.Summary, result.IsError, result.ErrorCode);
+
+    private static AgentResolvedResource ToAgentResource(DockerModels.AgentResolvedResource resource)
+        => new(resource.ResourceKind, resource.DisplayName, resource.CanonicalReference, resource.PermissionBoundaryId, resource.Exists)
+        {
+            ScopeClassificationBasis = (AgentPermissionScopeClassificationBasis)(int)resource.ScopeClassificationBasis,
+            ResourceClaim = resource.ResourceClaim is null ? null : ToAgentClaim(resource.ResourceClaim),
+            AuthorityReferences = resource.AuthorityReferences,
+            DeleteCanonicalReference = resource.DeleteCanonicalReference,
+            DeleteResourceClaim = resource.DeleteResourceClaim is null ? null : ToAgentClaim(resource.DeleteResourceClaim),
+            DeleteAuthorityReferences = resource.DeleteAuthorityReferences,
+            DeletePermissionBoundaryId = resource.DeletePermissionBoundaryId,
+            IsScopedInstructionDocument = resource.IsScopedInstructionDocument,
+        };
+
+    private static AgentResourceClaim ToAgentClaim(DockerModels.AgentResourceClaim claim)
+        => new(checked((int)claim.Version), claim.NamespaceId, claim.LogicalPath, claim.ConfiguredRoot,
+            claim.RootIdentityChainFingerprint, claim.TargetExists, claim.TargetKind, claim.TargetIdentity,
+            claim.TargetIsAuthorityRoot, claim.CaseSensitivePath, claim.ActionId, claim.WorkspaceId,
+            claim.WorkspaceGeneration, claim.BindingId, claim.BindingGeneration, claim.ToolCallId,
+            checked((int)claim.ResourceIndex), claim.ToolOwnerPackageId, claim.ExecutionTargetOwnerPackageId);
+
+    private static LocalModels.AgentExecutionTargetContext ToLocalContext(AgentExecutionTargetContext context)
+        => new()
+        {
+            SessionId = context.SessionId,
+            ProfileId = context.ProfileId,
+            Workspace = new LocalModels.AgentWorkspaceRecord
+            {
+                WorkspaceId = context.Workspace.WorkspaceId,
+                DisplayName = context.Workspace.DisplayName,
+                Description = context.Workspace.Description,
+                CreatedAtUtc = new SunderRpcOffsetDateTime(context.Workspace.CreatedAtUtc.ToString("O")),
+                UpdatedAtUtc = new SunderRpcOffsetDateTime(context.Workspace.UpdatedAtUtc.ToString("O")),
+                Paths = context.Workspace.Paths.Select(path => new LocalModels.AgentWorkspacePathRecord
+                {
+                    PathId = path.PathId, WorkspaceId = path.WorkspaceId, HostPath = path.HostPath,
+                    IsDefault = path.IsDefault, SortOrder = path.SortOrder,
+                    CreatedAtUtc = new SunderRpcOffsetDateTime(path.CreatedAtUtc.ToString("O")),
+                    UpdatedAtUtc = new SunderRpcOffsetDateTime(path.UpdatedAtUtc.ToString("O")),
+                }).ToArray(),
+                Documents = [],
+            },
+            Binding = new LocalModels.AgentWorkspaceBindingRecord
+            {
+                BindingId = context.Binding.BindingId, WorkspaceId = context.Binding.WorkspaceId,
+                ExtensionPointId = context.Binding.ExtensionPointId, ContributionId = context.Binding.ContributionId,
+                Role = context.Binding.Role, IsEnabled = context.Binding.IsEnabled, SortOrder = context.Binding.SortOrder,
+                CreatedAtUtc = new SunderRpcOffsetDateTime(context.Binding.CreatedAtUtc.ToString("O")),
+                UpdatedAtUtc = new SunderRpcOffsetDateTime(context.Binding.UpdatedAtUtc.ToString("O")),
+            },
+            AllowOutsideConfiguredScope = context.AllowOutsideConfiguredScope,
+            ApprovedResourceReferences = context.ApprovedResourceReferences,
+            ApprovedResourceClaims = context.ApprovedResourceClaims.Select(ToLocalClaim).ToArray(),
+            ApprovedResourceCapabilities = context.ApprovedResourceCapabilities,
+            ResourceOperation = context.ResourceOperation is null ? null : new LocalModels.AgentResourceOperationContext
+            {
+                RunId = context.ResourceOperation.RunId, RunRevision = context.ResourceOperation.RunRevision,
+                ToolCallId = context.ResourceOperation.ToolCallId, ActionId = context.ResourceOperation.ActionId,
+                ResourceIndex = context.ResourceOperation.ResourceIndex,
+                WorkspaceGeneration = context.ResourceOperation.WorkspaceGeneration,
+                BindingGeneration = context.ResourceOperation.BindingGeneration,
+                ToolOwnerPackageId = context.ResourceOperation.ToolOwnerPackageId,
+                ExecutionTargetOwnerPackageId = context.ResourceOperation.ExecutionTargetOwnerPackageId,
+                AuthorityActivationId = context.ResourceOperation.AuthorityActivationId,
+                AuthorityUseCount = context.ResourceOperation.AuthorityUseCount,
+                CanIssueOutsideAuthority = context.ResourceOperation.CanIssueOutsideAuthority,
+            },
+            CapturePostMutationResource = context.CapturePostMutationResource,
+            ExpectedConfigurationGeneration = context.ExpectedConfigurationGeneration,
+        };
+
+    private static LocalModels.AgentResourceClaim ToLocalClaim(AgentResourceClaim claim)
+        => new()
+        {
+            Version = claim.Version, NamespaceId = claim.NamespaceId, LogicalPath = claim.LogicalPath,
+            ConfiguredRoot = claim.ConfiguredRoot, RootIdentityChainFingerprint = claim.RootIdentityChainFingerprint,
+            TargetExists = claim.TargetExists, TargetKind = claim.TargetKind, TargetIdentity = claim.TargetIdentity,
+            TargetIsAuthorityRoot = claim.TargetIsAuthorityRoot, CaseSensitivePath = claim.CaseSensitivePath,
+            ActionId = claim.ActionId, WorkspaceId = claim.WorkspaceId, WorkspaceGeneration = claim.WorkspaceGeneration,
+            BindingId = claim.BindingId, BindingGeneration = claim.BindingGeneration, ToolCallId = claim.ToolCallId,
+            ResourceIndex = claim.ResourceIndex, ToolOwnerPackageId = claim.ToolOwnerPackageId,
+            ExecutionTargetOwnerPackageId = claim.ExecutionTargetOwnerPackageId,
+        };
+
+    private static LocalModels.AgentFileReadRequest ToLocalRequest(AgentFileReadRequest request)
+        => new() { Path = request.Path, Offset = request.Offset, Limit = request.Limit };
+
+    private static LocalModels.AgentFileWriteRequest ToLocalRequest(AgentFileWriteRequest request)
+        => new() { Path = request.Path, Content = request.Content, Overwrite = request.Overwrite, ExpectedContentHash = request.ExpectedContentHash };
+
+    private static LocalModels.AgentFileDeleteRequest ToLocalRequest(AgentFileDeleteRequest request)
+        => new() { Path = request.Path, Recursive = request.Recursive, ExpectedContentHash = request.ExpectedContentHash };
+
+    private static AgentFileReadResult ToAgentResult(LocalModels.AgentFileReadResult result)
+        => new(result.Path, result.Content, result.IsDirectory, result.WasTruncated)
+        {
+            IsError = result.IsError, ErrorCode = result.ErrorCode, ErrorMessage = result.ErrorMessage,
+            StartLine = result.StartLine is long startLine ? checked((int)startLine) : null,
+            EndLine = result.EndLine is long endLine ? checked((int)endLine) : null,
+            TotalLines = result.TotalLines is long totalLines ? checked((int)totalLines) : null,
+        };
+
+    private static AgentFileMutationResult ToAgentResult(LocalModels.AgentFileMutationResult result)
+        => new(result.Path, result.Summary, result.IsError, result.ErrorCode)
+        {
+            PostMutationResource = result.PostMutationResource is null ? null : ToAgentResource(result.PostMutationResource),
+        };
+
+    private static AgentResolvedResource ToAgentResource(LocalModels.AgentResolvedResource resource)
+        => new(resource.ResourceKind, resource.DisplayName, resource.CanonicalReference, resource.PermissionBoundaryId, resource.Exists)
+        {
+            ScopeClassificationBasis = (AgentPermissionScopeClassificationBasis)(int)resource.ScopeClassificationBasis,
+            ResourceClaim = resource.ResourceClaim is null ? null : ToAgentClaim(resource.ResourceClaim),
+            AuthorityReferences = resource.AuthorityReferences,
+            DeleteCanonicalReference = resource.DeleteCanonicalReference,
+            DeleteResourceClaim = resource.DeleteResourceClaim is null ? null : ToAgentClaim(resource.DeleteResourceClaim),
+            DeleteAuthorityReferences = resource.DeleteAuthorityReferences,
+            DeletePermissionBoundaryId = resource.DeletePermissionBoundaryId,
+            IsScopedInstructionDocument = resource.IsScopedInstructionDocument,
+        };
+
+    private static AgentResourceClaim ToAgentClaim(LocalModels.AgentResourceClaim claim)
+        => new(checked((int)claim.Version), claim.NamespaceId, claim.LogicalPath, claim.ConfiguredRoot,
+            claim.RootIdentityChainFingerprint, claim.TargetExists, claim.TargetKind, claim.TargetIdentity,
+            claim.TargetIsAuthorityRoot, claim.CaseSensitivePath, claim.ActionId, claim.WorkspaceId,
+            claim.WorkspaceGeneration, claim.BindingId, claim.BindingGeneration, claim.ToolCallId,
+            checked((int)claim.ResourceIndex), claim.ToolOwnerPackageId, claim.ExecutionTargetOwnerPackageId);
 
     private static string RawRequestBlock(string markdown)
     {
@@ -1334,7 +1598,13 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
     {
         public int MutationCallCount { get; private set; }
 
-        public AgentExecutionTargetDescriptor Descriptor => inner.Descriptor;
+        public AgentExecutionTargetDescriptor Descriptor { get; } = new(
+            "local",
+            "local",
+            "Local",
+            null,
+            SupportsShell: true,
+            SupportsFiles: true);
 
         public ValueTask<AgentExecutionTargetReadiness> GetReadinessAsync(
             AgentExecutionTargetContext context,
@@ -1449,12 +1719,12 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
             AgentExecutionTargetContext context,
             string path,
             CancellationToken cancellationToken = default)
-            => ValueTask.FromResult(AgentRoleBoundary.As<AgentResolvedResource>(_executor.ResolveFileResource(
+            => ValueTask.FromResult(ToAgentResource(_executor.ResolveFileResource(
                 _config,
                 path,
                 NamespaceFingerprint,
                 cancellationToken,
-                context: AgentRoleBoundary.As<DockerModels.AgentExecutionTargetContext>(context))));
+                context: ToDockerContext(context))));
 
         public ValueTask<AgentShellCommandResult> ExecuteShellAsync(
             AgentExecutionTargetContext context,
@@ -1462,14 +1732,14 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
             CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
-        public ValueTask<AgentFileReadResult> ReadFileAsync(
+        public async ValueTask<AgentFileReadResult> ReadFileAsync(
             AgentExecutionTargetContext context,
             AgentFileReadRequest request,
             CancellationToken cancellationToken = default)
         {
             var (authority, _) = CaptureAndValidate(context, request.Path, cancellationToken);
-            return AgentRoleBoundary.As<ValueTask<AgentFileReadResult>>(_executor.ReadFileAsync(_config,
-                AgentRoleBoundary.As<DockerModels.AgentFileReadRequest>(request), authority, cancellationToken));
+            return ToAgentResult(await _executor.ReadFileAsync(_config,
+                ToDockerRequest(request), authority, cancellationToken));
         }
 
         public async ValueTask<AgentFileMutationResult> WriteFileAsync(
@@ -1481,9 +1751,9 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
             LocalSecureApprovalLease? postMutationAuthority = null;
             try
             {
-                var result = AgentRoleBoundary.As<AgentFileMutationResult>(await _executor.WriteFileAsync(
+                var result = ToAgentResult(await _executor.WriteFileAsync(
                     _config,
-                    AgentRoleBoundary.As<DockerModels.AgentFileWriteRequest>(request),
+                    ToDockerRequest(request),
                     authority,
                     cancellationToken,
                     postMutationAuthoritySink: context.CapturePostMutationResource
@@ -1511,9 +1781,9 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
             LocalSecureApprovalLease? postMutationAuthority = null;
             try
             {
-                var result = AgentRoleBoundary.As<AgentFileMutationResult>(await _executor.DeleteFileAsync(
+                var result = ToAgentResult(await _executor.DeleteFileAsync(
                     _config,
-                    AgentRoleBoundary.As<DockerModels.AgentFileDeleteRequest>(request),
+                    ToDockerRequest(request),
                     authority,
                     chains,
                     cancellationToken,
@@ -1577,12 +1847,12 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
                         : null,
                 };
                 HostResourceClaim.Validate(
-                    AgentRoleBoundary.As<DockerModels.AgentResourceClaim>(claim),
+                    ToDockerClaim(claim),
                     DockerFileSystemExecutor.ClaimNamespacePrefix + NamespaceFingerprint,
                     path.ContainerPath,
                     path.Mount.ContainerPath,
                     authority,
-                    AgentRoleBoundary.As<DockerModels.AgentExecutionTargetContext>(exactContext));
+                    ToDockerContext(exactContext));
                 return (authority, chains);
             }
             catch
@@ -1615,16 +1885,106 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
             postMutationAuthority = null;
             return result with
             {
-                PostMutationResource = AgentRoleBoundary.As<AgentResolvedResource>(_executor.ResolveFileResource(
+                PostMutationResource = ToAgentResource(_executor.ResolveFileResource(
                     _config,
                     path,
                     NamespaceFingerprint,
                     CancellationToken.None,
                     authority,
                     chains,
-                    AgentRoleBoundary.As<DockerModels.AgentExecutionTargetContext>(context))),
+                    ToDockerContext(context))),
             };
         }
+    }
+
+    private sealed class GeneratedLocalExecutionTargetAdapter(LocalExecutionTarget target)
+        : IAgentExecutionTarget, IAgentResourceAuthorityExecutionTarget
+    {
+        public AgentExecutionTargetDescriptor Descriptor { get; } = new(
+            "local",
+            "local",
+            "Local",
+            null,
+            SupportsShell: true,
+            SupportsFiles: true);
+
+        public async ValueTask<AgentExecutionTargetReadiness> GetReadinessAsync(
+            AgentExecutionTargetContext context,
+            CancellationToken cancellationToken = default)
+        {
+            var readiness = await target.ReadinessAsync(ToLocalContext(context), cancellationToken);
+            return new AgentExecutionTargetReadiness(
+                readiness.TargetId,
+                readiness.TargetKind,
+                (AgentExecutionTargetReadinessStatus)(int)readiness.Status,
+                readiness.Message);
+        }
+
+        public async ValueTask<AgentExecutionShellDescriptor> GetShellAsync(
+            AgentExecutionTargetContext context,
+            CancellationToken cancellationToken = default)
+        {
+            var shell = await target.ShellAsync(ToLocalContext(context), cancellationToken);
+            return new AgentExecutionShellDescriptor(shell.ShellId, shell.DisplayName, shell.ExecutablePath,
+                shell.SyntaxKind, shell.Description);
+        }
+
+        public async ValueTask<AgentResolvedResource> ResolveFileResourceAsync(
+            AgentExecutionTargetContext context,
+            string path,
+            CancellationToken cancellationToken = default)
+            => ToAgentResource(await target.ResolveFileAsync(new LocalModels.CSunder_Agent_Execution_Target_ExecutionTargetResolveFileRequest
+            {
+                Context = ToLocalContext(context),
+                Path = path,
+            }, cancellationToken));
+
+        public ValueTask<AgentShellCommandResult> ExecuteShellAsync(
+            AgentExecutionTargetContext context,
+            AgentShellCommandRequest request,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public async ValueTask<AgentFileReadResult> ReadFileAsync(
+            AgentExecutionTargetContext context,
+            AgentFileReadRequest request,
+            CancellationToken cancellationToken = default)
+            => ToAgentResult(await target.ReadFileAsync(new LocalModels.CSunder_Agent_Execution_Target_ExecutionTargetReadFileRequest
+            {
+                Context = ToLocalContext(context),
+                Request = ToLocalRequest(request),
+            }, cancellationToken));
+
+        public async ValueTask<AgentFileMutationResult> WriteFileAsync(
+            AgentExecutionTargetContext context,
+            AgentFileWriteRequest request,
+            CancellationToken cancellationToken = default)
+            => ToAgentResult(await target.WriteFileAsync(new LocalModels.CSunder_Agent_Execution_Target_ExecutionTargetWriteFileRequest
+            {
+                Context = ToLocalContext(context),
+                Request = ToLocalRequest(request),
+            }, cancellationToken));
+
+        public async ValueTask<AgentFileMutationResult> DeleteFileAsync(
+            AgentExecutionTargetContext context,
+            AgentFileDeleteRequest request,
+            CancellationToken cancellationToken = default)
+            => ToAgentResult(await target.DeleteFileAsync(new LocalModels.CSunder_Agent_Execution_Target_ExecutionTargetDeleteFileRequest
+            {
+                Context = ToLocalContext(context),
+                Request = ToLocalRequest(request),
+            }, cancellationToken));
+
+        public async ValueTask<AgentResourceAuthorityValidation> ValidateResourceAuthorityAsync(
+            AgentExecutionTargetContext context,
+            CancellationToken cancellationToken = default)
+        {
+            var validation = await target.ValidateResourceAuthorityAsync(ToLocalContext(context), cancellationToken);
+            return new AgentResourceAuthorityValidation(validation.IsValid, validation.ErrorCode, validation.ErrorMessage);
+        }
+
+        public void ReleaseResourceAuthority(IReadOnlyList<string> resourceCapabilities)
+            => target.ReleaseResourceAuthorityAsync(resourceCapabilities).AsTask().GetAwaiter().GetResult();
     }
 
     private sealed class TrackingPlanningExecutionTarget

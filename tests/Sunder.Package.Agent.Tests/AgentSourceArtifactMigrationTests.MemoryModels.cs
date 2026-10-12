@@ -28,14 +28,14 @@ public sealed partial class AgentSourceArtifactMigrationTests
     {
         AssertMemorySemanticOwnership(worker, app: false);
         AssertMemorySemanticOwnership(app, app: true);
-        Assert.NotSame(worker.GetType("Sunder.Package.Agent.Contracts.Models.AgentSessionRecord"), app.GetType("Sunder.Package.Agent.Contracts.Models.AgentSessionRecord"));
+        Assert.NotSame(worker.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionRecord", true), app.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionRecord", true));
         foreach (var assembly in new[] { worker, app })
             Assert.DoesNotContain(assembly.GetReferencedAssemblies(), reference => reference.Name == "Sunder.Package.Agent.Memory.Semantic.Protocol");
         foreach (var name in new[] { "Sunder.Package.Agent.Memory.Semantic.StoredMemoryRecord",
             "Sunder.Package.Agent.Memory.Semantic.Services.SemanticEmbeddingContext",
             "Sunder.Package.Agent.Memory.Semantic.Services.SemanticMemoryMetricsSnapshot",
-            "Sunder.Package.Agent.Memory.Semantic.Runtime.MemoryProjection",
-            "Sunder.Package.Agent.Memory.Semantic.Runtime.IMemoryInspectorGateway" })
+            "Sunder.Package.Agent.Memory.Semantic.Runtime.ProjectionContent",
+            "Sunder.Generated.Packages.Sunder_Package_Agent_Memory_Semantic_Services.IMemoryInspectorService" })
         {
             Assert.Same(worker, worker.GetType(name, true)!.Assembly);
             Assert.Same(app, app.GetType(name, true)!.Assembly);
@@ -53,7 +53,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.IsType<SunderWorkerComposition>(options.Composition);
         Assert.Null(options.OnActivated); Assert.Null(options.OnShutdown);
         Assert.Same(worker.GetType("Sunder.Package.Agent.Memory.Semantic.MemorySemanticPackageConfiguration", true)!.GetProperty("Schema")!.GetValue(null), options.SettingsSchema);
-        Assert.Null(options.Composition!.Services.GetService(worker.GetType("Sunder.Package.Agent.Protocol.AgentRpcCatalog", true)!));
+        Assert.Null(worker.GetType("Sunder.Package.Agent.Protocol.AgentRpcCatalog"));
         var storeType = worker.GetType("Sunder.Package.Agent.Memory.Semantic.MemoryLocalStore", true)!;
         var store = options.Composition!.Services.GetService(storeType)!;
         Assert.False((bool)storeType.GetProperty("IsInitialized", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(store)!);
@@ -73,7 +73,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         await VerifyRoleLocalMemoryEmbedding(worker, options.Composition.Services, store, state);
         foreach (var registration in options.Providers)
             state.Add("sunder.package.agent.memory.semantic",
-                registration.ProviderId == "semantic.memory.inspector" ? RegressionTestRpcDescriptors.Get("sunder.agent.memory.semantic.inspector") : RegressionTestRpcDescriptors.Get(registration.ContractId),
+                registration.ProviderId == "semantic.memory.inspector" ? CurrentPrivateRpcDescriptors.Get("sunder.agent.memory.semantic.inspector") : CurrentPublicRpcDescriptors.Get(registration.ContractId),
                 registration.Handler, registration.Handler, Noop.Instance, registration.ProviderId, "2.0.0");
 
         await VerifyAgentMemoryCleanup(agentOwner, store, state);
@@ -126,7 +126,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.Equal("semantic-memory.inspector-unavailable", unavailable.Error.Code);
         var reconnected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         gatewayType.GetEvent("ResetRequired")!.AddEventHandler(gateway, (Action)(() => reconnected.TrySetResult()));
-        state.Add("sunder.package.agent.memory.semantic", RegressionTestRpcDescriptors.Get("sunder.agent.memory.semantic.inspector"), new object(), inspector.Handler, Noop.Instance, inspector.ProviderId, "2.0.0");
+        state.Add("sunder.package.agent.memory.semantic", CurrentPrivateRpcDescriptors.Get("sunder.agent.memory.semantic.inspector"), new object(), inspector.Handler, Noop.Instance, inspector.ProviderId, "2.0.0");
         await reconnected.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Single(((IEnumerable)(await Call("ListMemoriesAsync", session, null, false, CancellationToken.None))!).Cast<object>());
         await ((IAsyncDisposable)gateway).DisposeAsync();

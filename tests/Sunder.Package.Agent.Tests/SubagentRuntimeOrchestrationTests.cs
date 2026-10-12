@@ -1,5 +1,11 @@
+extern alias AgentWorker;
+extern alias SubagentsWorker;
+
 using System.Text.Json;
 using Microsoft.Extensions.AI;
+using AgentWorker::Sunder.Package.Agent.Contracts.Contracts;
+using AgentWorker::Sunder.Package.Agent.Contracts.Models;
+using AgentWorker::Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
 using Sunder.Sdk.Stacks;
@@ -8,11 +14,10 @@ using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
 
-extern alias SubagentsWorker;
-using SubagentsWorker::Sunder.Package.Agent.Contracts.Contracts;
-using SubagentsWorker::Sunder.Package.Agent.Contracts.Models;
 using SubagentsWorker::Sunder.Package.Agent.Subagents.Models;
 using SubagentsWorker::Sunder.Package.Agent.Subagents.Services;
+using SubagentModels = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using SubagentServices = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 public sealed class SubagentRuntimeOrchestrationTests
 {
@@ -41,7 +46,8 @@ public sealed class SubagentRuntimeOrchestrationTests
         using var scope = RegressionTestPackageScope.Create();
         var service = new SubagentService(new SubagentStore(scope.Context));
         using var catalog = new RegressionTestExtensionCatalog();
-        var adapter = new SubagentPermissionStatusAdapter(catalog.Subagents());
+        var adapter = new SubagentPermissionStatusAdapter(
+            catalog.Subagents().Providers<SubagentServices.IToolSourceService>());
         var renderer = new SubagentBatchResultRenderer(service, new SubagentRequestParser(), adapter);
         var completed = CreateTaskResult(SubagentTaskResultState.Completed, "completed");
         var failed = CreateTaskResult(SubagentTaskResultState.Failed, "failed");
@@ -67,11 +73,21 @@ public sealed class SubagentRuntimeOrchestrationTests
     {
         var runtime = new RecordingInnerLoopRuntime();
         var loop = new OrchestratedAgentBehaviorLoop();
+        using var catalog = new RegressionTestExtensionCatalog();
+        var registry = new AgentRoleRunControls(typeof(AgentActiveRunRegistry).Assembly, catalog.ActiveRuns);
+        var runControl = Assert.Single((await catalog.Receiver("sunder.package.agent.subagents")
+            .Providers<SubagentServices.IRunControlService>().ListAsync()).Providers).Reference;
+        using var grant = registry.Open(runtime, "sunder.package.agent.subagents", out var invocationId);
 
-        var result = await loop.RunAsync(null!, runtime);
+        var result = await loop.RunAsync(new()
+        {
+            Context = CreateSubagentLoopContext(runtime.Context),
+            InvocationId = invocationId,
+            RunControl = runControl,
+        });
 
         Assert.Equal(1, runtime.InvocationCount);
-        Assert.Equal(AgentBehaviorLoopCompletionKind.Completed, result.CompletionKind);
+        Assert.Equal(SubagentModels.AgentBehaviorLoopCompletionKind.Completed, result.CompletionKind);
     }
 
     [Fact]
@@ -80,21 +96,22 @@ public sealed class SubagentRuntimeOrchestrationTests
         using var scope = RegressionTestPackageScope.Create();
         var catalog = new RegressionTestExtensionCatalog();
         var store = new AgentLocalStore(scope.Context);
-        var sessionService = new AgentSessionService(store, catalog);
-        var workspaceService = new AgentWorkspaceService(store, catalog, sessionService);
+        var sessionService = new AgentSessionService(store, catalog.SessionCleaners);
+        var workspaceService = new AgentWorkspaceService(store, catalog.SessionCleaners, sessionService, catalog.WorkspacePathMigrators);
         var toolService = new AgentToolService(
             sessionService,
             workspaceService,
-            new AgentExecutionTargetService(catalog),
-            catalog);
-        var profileService = new AgentProfileService(store, toolService, catalog, catalog.BehaviorLoops);
+            new AgentExecutionTargetService(catalog.ExecutionTargets),
+            catalog.ToolSources,
+            catalog.ObservedToolExecutions);
+        var profileService = catalog.CreateProfileService(store, toolService);
         var childSessions = new AgentChildRunSessionService(sessionService, profileService);
         var parent = sessionService.CreateSession("Parent", workspaceId: "workspace");
 
-        var first = childSessions.PrepareChildSession(AgentRoleBoundary.As<Sunder.Package.Agent.Contracts.Models.AgentChildRunRequest>(
-            CreateChildRequest(parent.SessionId, CreateProfile("subagent-reviewer"))));
-        var second = childSessions.PrepareChildSession(AgentRoleBoundary.As<Sunder.Package.Agent.Contracts.Models.AgentChildRunRequest>(
-            CreateChildRequest(parent.SessionId, CreateProfile("subagent-researcher"))));
+        var first = childSessions.PrepareChildSession(
+            CreateChildRequest(parent.SessionId, CreateProfile("subagent-reviewer")));
+        var second = childSessions.PrepareChildSession(
+            CreateChildRequest(parent.SessionId, CreateProfile("subagent-researcher")));
 
         Assert.NotEqual(first.ChildSession.SessionId, second.ChildSession.SessionId);
         Assert.Equal(2, sessionService.ListSessions().Count(session =>
@@ -139,26 +156,33 @@ public sealed class SubagentRuntimeOrchestrationTests
     {
         var now = DateTimeOffset.UtcNow;
         var subagent = CreateSubagent("reviewer");
-        AgentProfileRecord Parent(string id, string model) => new(
-            id,
-            id,
-            null,
-            null,
-            "provider",
-            model,
-            null,
-            null,
-            now,
-            now,
-            [new AgentProfileModelBindingRecord(
-                id,
-                AgentModelCapabilityKinds.Chat,
-                "provider",
-                model,
-                null,
-                now)],
-            [],
-            AgentBehaviorLoopIds.Default);
+        SubagentModels.AgentProfileRecord Parent(string id, string model)
+        {
+            var timestamp = new Sunder.Sdk.Rpc.SunderRpcOffsetDateTime(now.ToString("O"));
+            return new()
+            {
+                ProfileId = id,
+                DisplayName = id,
+                ChatProviderId = "provider",
+                ChatModelId = model,
+                CreatedAtUtc = timestamp,
+                UpdatedAtUtc = timestamp,
+                ModelBindings =
+                [
+                    new SubagentModels.AgentProfileModelBindingRecord
+                    {
+                        ProfileId = id,
+                        CapabilityKind = AgentModelCapabilityKinds.Chat,
+                        ProviderId = "provider",
+                        ModelId = model,
+                        UpdatedAtUtc = timestamp,
+                    },
+                ],
+                SelectableCapabilityAssignments = [],
+                BehaviorLoopId = AgentBehaviorLoopIds.Default,
+                IsInternal = false,
+            };
+        }
 
         var profiles = await Task.WhenAll(
             Task.Run(() => SubagentChildRunCoordinator.BuildChildProfile(
@@ -265,7 +289,11 @@ public sealed class SubagentRuntimeOrchestrationTests
         File.WriteAllText(filePath, corruptContent);
         var service = new SubagentService(new SubagentStore(scope.Context));
         using var catalog = new RegressionTestExtensionCatalog();
-        var contributor = new SubagentStackContributor(service, scope.Context, catalog.Subagents());
+        var contributor = new SubagentStackContributor(
+            service,
+            scope.Context,
+            catalog.Subagents().Providers<SubagentServices.IChatProviderService>(),
+            catalog.Subagents().Providers<SubagentServices.ISelectableCapabilityProviderService>());
         const string fragmentId = "subagent.reviewer";
         const string subagentId = "reviewer";
         var fragment = new StackFragmentImport(
@@ -310,12 +338,75 @@ public sealed class SubagentRuntimeOrchestrationTests
         });
         return new SubagentTaskResult(
             state,
-            new AgentToolResult(
-                SubagentConstants.DelegateTasksToolId,
-                label,
-                Content: label,
-                StructuredPayloadJson: payload,
-                BackendId: sessionId.ToString("N")));
+            new SubagentModels.AgentToolResult
+            {
+                ToolId = SubagentConstants.DelegateTasksToolId,
+                Summary = label,
+                Content = label,
+                StructuredPayloadJson = payload,
+                BackendId = sessionId.ToString("N"),
+                IsError = false,
+                RequiresPromptContextRefresh = false,
+                WasTruncated = false,
+            });
+    }
+
+    private static SubagentModels.AgentBehaviorLoopContext CreateSubagentLoopContext(
+        AgentBehaviorLoopContext context)
+    {
+        var session = context.Session;
+        var profile = context.Profile;
+        var checkpoint = context.RunningCheckpoint;
+        return new()
+        {
+            Session = new SubagentModels.AgentSessionRecord
+            {
+                SessionId = session.SessionId,
+                Title = session.Title,
+                State = Enum.Parse<SubagentModels.AgentSessionState>(session.State.ToString(), ignoreCase: false),
+                CreatedAtUtc = new Sunder.Sdk.Rpc.SunderRpcOffsetDateTime(session.CreatedAtUtc.ToString("O")),
+                UpdatedAtUtc = new Sunder.Sdk.Rpc.SunderRpcOffsetDateTime(session.UpdatedAtUtc.ToString("O")),
+            },
+            Profile = new SubagentModels.AgentProfileRecord
+            {
+                ProfileId = profile.ProfileId,
+                DisplayName = profile.DisplayName,
+                ChatProviderId = profile.ChatProviderId,
+                ChatModelId = profile.ChatModelId,
+                CreatedAtUtc = new Sunder.Sdk.Rpc.SunderRpcOffsetDateTime(profile.CreatedAtUtc.ToString("O")),
+                UpdatedAtUtc = new Sunder.Sdk.Rpc.SunderRpcOffsetDateTime(profile.UpdatedAtUtc.ToString("O")),
+                ModelBindings = [],
+                SelectableCapabilityAssignments = [],
+                IsInternal = profile.IsInternal,
+            },
+            ProviderId = context.ProviderId,
+            ModelId = context.ModelId,
+            RunCapabilities = new SubagentModels.AgentProviderRunCapabilities
+            {
+                SupportsNativeToolCalling = context.RunCapabilities.SupportsNativeToolCalling,
+                SupportsStreamingToolCalls = context.RunCapabilities.SupportsStreamingToolCalls,
+                SupportsMultipleToolCalls = context.RunCapabilities.SupportsMultipleToolCalls,
+                SupportsAudioInput = context.RunCapabilities.SupportsAudioInput,
+                SupportsImageInput = context.RunCapabilities.SupportsImageInput,
+                SupportsPdfInput = context.RunCapabilities.SupportsPdfInput,
+                SupportsVideoInput = context.RunCapabilities.SupportsVideoInput,
+                Summary = context.RunCapabilities.Summary,
+            },
+            RunId = context.RunId,
+            RunRevision = context.RunRevision,
+            RunningCheckpoint = new SubagentModels.AgentRunCheckpointRecord
+            {
+                CheckpointId = checkpoint.CheckpointId,
+                SessionId = checkpoint.SessionId,
+                RunRevision = checkpoint.RunRevision,
+                Status = Enum.Parse<SubagentModels.AgentRunStatus>(checkpoint.Status.ToString(), ignoreCase: false),
+                Summary = checkpoint.Summary,
+                CreatedAtUtc = new Sunder.Sdk.Rpc.SunderRpcOffsetDateTime(checkpoint.CreatedAtUtc.ToString("O")),
+            },
+            RunStartedAtUtc = new Sunder.Sdk.Rpc.SunderRpcOffsetDateTime(context.RunStartedAtUtc.ToString("O")),
+            UserMessage = context.UserMessage,
+            UserTurnId = context.UserTurnId,
+        };
     }
 
     private static SubagentRecord CreateSubagent(string id)
@@ -336,6 +427,8 @@ public sealed class SubagentRuntimeOrchestrationTests
     private sealed class RecordingInnerLoopRuntime : IAgentBehaviorLoopRuntime, IAgentInnerBehaviorLoopRuntime
     {
         public int InvocationCount { get; private set; }
+
+        public AgentBehaviorLoopContext Context { get; } = CreateContext();
 
         public ValueTask<AgentBehaviorLoopResult> RunDefaultLoopAsync(
             AgentBehaviorLoopContext context,
@@ -405,5 +498,25 @@ public sealed class SubagentRuntimeOrchestrationTests
             AgentTurnRecord? assistantTurn,
             CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
+
+        private static AgentBehaviorLoopContext CreateContext()
+        {
+            var now = DateTimeOffset.UtcNow;
+            var sessionId = Guid.NewGuid();
+            return new AgentBehaviorLoopContext(
+                new AgentSessionRecord(sessionId, "Session", AgentSessionState.Active, now, now),
+                new AgentProfileRecord("profile", "Profile", null, null, "provider", "model", null, null, now, now),
+                "provider",
+                "model",
+                new AgentProviderRunCapabilities(false, false, false, "Subagent orchestration test."),
+                Workspace: null,
+                ExecutionBinding: null,
+                Guid.NewGuid(),
+                RunRevision: 1,
+                new AgentRunCheckpointRecord(Guid.NewGuid(), sessionId, 1, AgentRunStatus.Running, "Running.", now),
+                now,
+                "Run the subagent orchestration test.",
+                Guid.NewGuid());
+        }
     }
 }

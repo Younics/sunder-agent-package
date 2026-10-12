@@ -52,18 +52,18 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.NotNull(options.SettingsSchema); Assert.Empty(factoryKeys);
             var registrations = options.Providers.ToDictionary(value => value.ProviderId);
             Assert.Equal(new[] { "anthropic.chat", "anthropic.credentials" }, registrations.Keys.Order(StringComparer.Ordinal));
-            var credentialDescriptor = RegressionTestRpcDescriptors.Get("sunder.package.agent.provider.anthropic.credentials");
+            var credentialDescriptor = CurrentPrivateRpcDescriptors.Get("sunder.package.agent.provider.anthropic.credentials");
             foreach (var provider in options.Providers)
             {
-                var descriptor = provider.ProviderId == "anthropic.credentials" ? credentialDescriptor : RegressionTestRpcDescriptors.Get(provider.ContractId);
+                var descriptor = provider.ProviderId == "anthropic.credentials" ? credentialDescriptor : CurrentPublicRpcDescriptors.Get(provider.ContractId);
                 Assert.Equal(descriptor.Sha256, provider.DescriptorSha256); Assert.Equal(descriptor.AbiSha256, provider.AbiSha256);
                 state.Add(context.PackageId, descriptor, provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, "2.0.0");
             }
             await using var appServices = CreateGeneratedApp(presentation, context, rpc);
-            var credentials = appServices.GetRequiredService(presentation.GetType("Sunder.Package.Agent.Provider.Anthropic.ProviderCredentialOwnerRpcClient", true)!);
-            var selectedChat = Assert.Single((await rpc.DiscoverAsync(AgentRpcContractIds.ChatProvider)).Providers);
+            var credentials = appServices.GetRequiredService(presentation.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Provider_Anthropic_Services.ICredentialSettingsService", true)!);
+            var selectedChat = Assert.Single((await rpc.DiscoverAsync(RegressionTestBindings.ChatProviders)).Providers);
             var endpoint = selectedChat.Endpoint;
-            var chatProvider = CreateAgentChatProvider(agentOwner, rpc.ForCaller("sunder.package.agent"), selectedChat);
+            var chatProvider = await CreateAgentChatProvider(agentOwner, rpc.ForCaller("sunder.package.agent"), selectedChat);
             await using var chatLifetime = (IAsyncDisposable)chatProvider;
             using var chat = await CreateAgentChatClientAsync(chatProvider, new("anthropic", "anthropic/claude-opus-4-8"));
             Assert.False(await Credential("GetStatusAsync", [CancellationToken.None]));
@@ -77,7 +77,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             var models = await Rpc("list-models", new { }); Assert.NotEmpty(models.EnumerateArray());
             Assert.Contains(models.EnumerateArray(), value => value.GetProperty("modelId").GetString() == "anthropic/claude-opus-4-8");
             Assert.Equal("anthropic/claude-haiku-4-5", (await Rpc("resolve-utility-model", new { })).GetString());
-            var capabilities = await Rpc("get-capabilities", new { modelId = "anthropic/claude-opus-4-8" });
+            var capabilities = await Rpc("get-capabilities", "anthropic/claude-opus-4-8");
             Assert.True(capabilities.GetProperty("supportsImageInput").GetBoolean()); Assert.True(capabilities.GetProperty("supportsPdfInput").GetBoolean());
             Assert.False(capabilities.GetProperty("supportsStreamingToolCalls").GetBoolean()); Assert.Empty(factoryKeys);
 
@@ -170,7 +170,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             var oldCredentials = Assert.Single((await rpc.DiscoverAsync(credentialDescriptor.ContractId)).Providers).Endpoint;
             var credentialRegistration = registrations["anthropic.credentials"];
             await state.RetireAsync(credentialRegistration.Handler).WaitAsync(TimeSpan.FromSeconds(5));
-            Assert.Equal("provider.credential.unavailable", (await Assert.ThrowsAsync<SunderRpcException>(() => Credential("GetStatusAsync", [CancellationToken.None]))).Error.Code);
+            Assert.Equal("rpc.provider-not-found", (await Assert.ThrowsAsync<SunderRpcException>(() => Credential("GetStatusAsync", [CancellationToken.None]))).Error.Code);
             state.Add(context.PackageId, credentialDescriptor, credentialRegistration.Handler, credentialRegistration.Handler, Noop.Instance, credentialRegistration.ProviderId, "2.0.0");
             Assert.NotEqual(oldCredentials, Assert.Single((await rpc.DiscoverAsync(credentialDescriptor.ContractId)).Providers).Endpoint);
             Assert.False(await Credential("GetStatusAsync", [CancellationToken.None]));
@@ -184,8 +184,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 var task = (Task)value.GetType().GetMethod("AsTask")!.Invoke(value, null)!;
                 await task.WaitAsync(TimeSpan.FromSeconds(10));
                 var result = task.GetType().GetProperty("Result")!.GetValue(task)!;
-                Assert.Same(presentation, result.GetType().Assembly);
-                return (bool)result.GetType().GetProperty("HasStoredCredential")!.GetValue(result)!;
+                return Assert.IsType<bool>(result);
             }
             Task<JsonElement> Rpc(string method, object request)
                 => rpc.InvokeAsync(endpoint, "chat-provider", method, JsonSerializer.SerializeToElement(request, MemoryProviderJson)).AsTask().WaitAsync(TimeSpan.FromSeconds(10));

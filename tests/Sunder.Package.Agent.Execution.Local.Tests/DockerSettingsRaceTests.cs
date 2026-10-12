@@ -4,7 +4,9 @@ using DockerApp::Sunder.Package.Agent.Execution.Docker;
 using Sunder.Package.Agent.TestSupport.Avalonia;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
 using Xunit;
+using DockerPresentationService = DockerApp::Sunder.Generated.Packages.Sunder_Package_Agent_Execution_Docker_Services.IPresentationService;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
 
@@ -398,28 +400,54 @@ public sealed class DockerSettingsRaceTests
             "The Docker presentation provider is unavailable.")));
     }
 
-    private sealed class BlockingDockerRuntimeClient : IDockerExecutionPresentationClient
+    private sealed class BlockingDockerRuntimeClient : DockerPresentationService
     {
         private int _requestIndex;
 
         public PendingRequest[] Requests { get; } =
             Enumerable.Range(0, 12).Select(_ => new PendingRequest()).ToArray();
 
-        public async ValueTask<DockerExecutionOperationResponse> ExecuteAsync(
-            DockerExecutionOperationRequest request,
+        public ValueTask<SunderContent> GetSettingsAsync(CancellationToken cancellationToken = default)
+            => ExecuteCatalogAsync(cancellationToken);
+
+        public ValueTask<SunderContent> AddImageAsync(string? imageReference, CancellationToken cancellationToken = default)
+            => ExecuteCatalogAsync(cancellationToken);
+
+        public ValueTask<SunderContent> DeleteImageAsync(string? imageReference, CancellationToken cancellationToken = default)
+            => ExecuteCatalogAsync(cancellationToken);
+
+        public ValueTask<SunderContent> RefreshImageAsync(string? imageReference, CancellationToken cancellationToken = default)
+            => ExecuteCatalogAsync(cancellationToken);
+
+        public ValueTask<SunderContent> RefreshImagesAsync(CancellationToken cancellationToken = default)
+            => ExecuteCatalogAsync(cancellationToken);
+
+        public ValueTask<SunderContent> PullImageAsync(string? imageReference, CancellationToken cancellationToken = default)
+            => ExecuteCatalogAsync(cancellationToken);
+
+        public ValueTask<DockerExecutionOperationResponse> SaveSettingsAsync(
+            string? timeoutSeconds,
+            string? dockerCliPath,
             CancellationToken cancellationToken = default)
+            => ExecuteAsync(cancellationToken);
+
+        public ValueTask<DockerExecutionOperationResponse> TestDockerAsync(CancellationToken cancellationToken = default)
+            => ExecuteAsync(cancellationToken);
+
+        private async ValueTask<SunderContent> ExecuteCatalogAsync(CancellationToken cancellationToken)
+            => DockerPresentationTestContent.Create(await ExecuteAsync(cancellationToken));
+
+        private async ValueTask<DockerExecutionOperationResponse> ExecuteAsync(
+            CancellationToken cancellationToken)
         {
             var pending = Requests[Interlocked.Increment(ref _requestIndex) - 1];
-            pending.Request = request;
             pending.Started.TrySetResult();
-            return await pending.Response.Task;
+            return await pending.Response.Task.WaitAsync(cancellationToken);
         }
     }
 
     private sealed class PendingRequest
     {
-        public DockerExecutionOperationRequest? Request { get; set; }
-
         public TaskCompletionSource Started { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 

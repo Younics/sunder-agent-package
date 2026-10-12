@@ -27,11 +27,14 @@ public sealed partial class AgentSourceArtifactMigrationTests
         {
             var services = plan.RootElement.GetProperty("composition").GetProperty("worker").EnumerateArray().ToArray();
             const string prefix = "global::Sunder.Package.Agent.Tools.Web.";
-            foreach (var name in new[] { "Rpc.ToolSourceProvider", "Services.WebToolSource", "Services.WebToolsSettingsService",
+            Assert.DoesNotContain(services, service => service.GetProperty("type").GetString() == prefix + "Rpc.ToolSourceProvider");
+            foreach (var name in new[] { "Services.WebToolSource", "Services.WebToolsSettingsService",
                 "Services.SystemWebHostResolver", "Services.PinnedWebFetchHttpClientFactory" })
                 Assert.Single(services, service => service.GetProperty("type").GetString() == prefix + name);
             var search = Assert.Single(services, service => service.GetProperty("type").GetString() == prefix + "Backends.ExaWebSearchBackend");
             Assert.Equal(prefix + "Services.WebToolsSettingsService", Assert.Single(search.GetProperty("arguments").EnumerateArray()).GetProperty("serviceType").GetString());
+            Assert.Single(services, service => service.GetProperty("type").GetString() == prefix + "Backends.ParallelWebSearchBackend");
+            Assert.Single(services, service => service.GetProperty("type").GetString() == prefix + "Services.WebSearchService");
             var fetch = Assert.Single(services, service => service.GetProperty("type").GetString() == prefix + "Services.WebFetchService");
             Assert.Equal(new[] { prefix + "Services.WebUrlNetworkPolicy", prefix + "Services.PinnedWebFetchHttpClientFactory" },
                 fetch.GetProperty("arguments").EnumerateArray().Select(argument => argument.GetProperty("serviceType").GetString()));
@@ -57,8 +60,14 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.Equal(inventory.RootElement.GetProperty("capabilities").GetProperty("sunder.package.agent.tools.web").EnumerateArray().Select(item => item.GetString()).Order(StringComparer.Ordinal),
             value.GetProperty("targets").EnumerateArray().SelectMany(target => target.GetProperty("requiredHostCapabilities").EnumerateArray())
                 .Select(item => item.GetString()).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal));
-        Assert.Single(value.GetProperty("contractBundles").EnumerateArray()); Assert.Single(value.GetProperty("provides").EnumerateArray());
-        Assert.True(!value.TryGetProperty("usesContracts", out var uses) || uses.GetArrayLength() == 0);
+        Assert.Equal(new[] { "sunder.agent.execution.target", "sunder.agent.tool.source" },
+            value.GetProperty("contractBundles").EnumerateArray().Select(bundle => bundle.GetProperty("contractId").GetString()).Order(StringComparer.Ordinal));
+        Assert.Single(value.GetProperty("provides").EnumerateArray());
+        var use = Assert.Single(value.GetProperty("usesContracts").EnumerateArray());
+        Assert.Equal("sunder.agent.execution.target", use.GetProperty("contractId").GetString());
+        Assert.Equal("runtime", use.GetProperty("role").GetString());
+        Assert.False(use.GetProperty("required").GetBoolean());
+        Assert.Equal("discover", Assert.Single(use.GetProperty("actions").EnumerateArray()).GetString());
         Assert.Single(value.GetProperty("providerImports").EnumerateArray()); Assert.Single(value.GetProperty("targets").EnumerateArray());
         Assert.True(!value.TryGetProperty("packageApiImports", out var imports) || imports.GetArrayLength() == 0);
         Assert.True(!value.TryGetProperty("platformImports", out var platforms) || platforms.GetArrayLength() == 0);
@@ -72,7 +81,14 @@ public sealed partial class AgentSourceArtifactMigrationTests
             await active.Prepare(); await active.Activate();
             Assert.Equal(JsonValueKind.Object, active.Contributions.GetProperty("settingsSchema").ValueKind);
             Assert.Equal("web", (await active.Invoke("web.tools", "tool-source", "describe", new { })).GetProperty("sourceId").GetString());
-            var listed = await active.Invoke("web.tools", "tool-source", "list-tools", new { context = new { } });
+            // Context-free discovery still carries every required nullable wire member;
+            // ordinary domain JSON intentionally ignores the service-reference members.
+            var listed = await active.Invoke("web.tools", "tool-source", "list-tools", new
+            {
+                sessionId = (Guid?)null, profile = (object?)null, workspace = (object?)null,
+                executionBinding = (object?)null, executionTarget = (object?)null,
+                executionTargetConfigurationGeneration = (string?)null,
+            });
             Assert.Equal(2, listed.GetArrayLength());
             await active.Shutdown();
         }

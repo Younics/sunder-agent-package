@@ -1,12 +1,14 @@
-using Sunder.Package.Agent.Contracts.Contracts;
-using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using Sunder.Sdk.Services;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.Tools.Web.Services;
 
-internal sealed class WebToolSource(WebFetchTool fetch, WebSearchTool search)
-    : IAgentToolSource, IAgentPermissionAwareToolSource, IAgentToolPresentationResolver, IAsyncDisposable
+[SunderServiceProvider(typeof(IToolSourceService), ProviderId = "web.tools")]
+[SunderRuntimeUse(typeof(AgentServices.IExecutionTargetService), Actions = ["discover"])]
+internal sealed partial class WebToolSource(WebFetchTool fetch, WebSearchTool search) : IToolSourceService, IAsyncDisposable
 {
-    private readonly IAgentTool[] _tools = [fetch, search];
     private readonly object _gate = new();
     private readonly CancellationTokenSource _lifetime = new();
     private readonly TaskCompletionSource _drained = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -17,20 +19,44 @@ internal sealed class WebToolSource(WebFetchTool fetch, WebSearchTool search)
     public string SourceId => "web";
     public string DisplayName => "Web Tools";
     public string SourceKind => "web";
+    public ValueTask<AgentToolSourceDescriptor> DescribeAsync(CancellationToken cancellationToken = default)
+    { cancellationToken.ThrowIfCancellationRequested(); return ValueTask.FromResult(new AgentToolSourceDescriptor { SourceId = SourceId, DisplayName = DisplayName, SourceKind = SourceKind }); }
     public ValueTask<IReadOnlyList<AgentToolDescriptor>> ListToolsAsync(AgentToolSourceContext context, CancellationToken cancellationToken = default)
-    { cancellationToken.ThrowIfCancellationRequested(); return ValueTask.FromResult<IReadOnlyList<AgentToolDescriptor>>(_tools.Select(tool => tool.Descriptor).ToArray()); }
-    public ValueTask<AgentToolReadiness?> GetReadinessAsync(string toolId, AgentToolSourceContext context, CancellationToken cancellationToken = default)
-        => InvokeAsync<AgentToolReadiness?>(async token => Find(toolId) is { } tool ? await tool.GetReadinessAsync(token).ConfigureAwait(false) : null, cancellationToken);
-    public ValueTask<AgentToolResult> ExecuteAsync(AgentToolExecutionContext context, AgentToolRequest request, CancellationToken cancellationToken = default)
-        => InvokeAsync(token => Find(request.ToolId) is { } tool ? tool.ExecuteAsync(context, request, token)
-            : ValueTask.FromResult(new AgentToolResult(request.ToolId, "Tool not found.", IsError: true, ErrorCode: "tool-not-found", BackendId: SourceId)), cancellationToken);
-    public ValueTask<AgentPermissionRequest?> BuildPermissionRequestAsync(AgentToolExecutionContext context, AgentToolRequest request, CancellationToken cancellationToken = default)
-        => InvokeAsync(token => Find(request.ToolId) is IAgentPermissionAwareTool permission ? permission.BuildPermissionRequestAsync(context, request, token)
-            : ValueTask.FromResult<AgentPermissionRequest?>(null), cancellationToken);
-    public AgentToolPresentation? ResolveToolPresentation(AgentToolPresentationRequest request)
-        => Find(request.ToolId) is IAgentToolPresentationResolver presentation ? presentation.ResolveToolPresentation(request) : null;
+    { cancellationToken.ThrowIfCancellationRequested(); return ValueTask.FromResult<IReadOnlyList<AgentToolDescriptor>>([fetch.Descriptor, search.Descriptor]); }
+    public ValueTask<AgentToolReadiness?> GetReadinessAsync(CSunder_Agent_Tool_Source_ToolSourceGetReadinessRequest request, CancellationToken cancellationToken = default)
+        => InvokeAsync<AgentToolReadiness?>(async token => request.ToolId.ToLowerInvariant() switch
+        {
+            "web_fetch" => await fetch.GetReadinessAsync(token).ConfigureAwait(false),
+            "web_search" => await search.GetReadinessAsync(token).ConfigureAwait(false),
+            _ => null,
+        }, cancellationToken);
+    public ValueTask<AgentToolResult?> PreflightAsync(CSunder_Agent_Tool_Source_ToolSourcePreflightRequest request, CancellationToken cancellationToken = default)
+    { cancellationToken.ThrowIfCancellationRequested(); return ValueTask.FromResult<AgentToolResult?>(null); }
+    public ValueTask<AgentToolResult> ExecuteAsync(CSunder_Agent_Tool_Source_ToolSourceExecuteRequest request, CancellationToken cancellationToken = default)
+        => InvokeAsync(token => request.Request.ToolId.ToLowerInvariant() switch
+        {
+            "web_fetch" => fetch.ExecuteAsync(request.Context, request.Request, token),
+            "web_search" => search.ExecuteAsync(request.Context, request.Request, token),
+            _ => ValueTask.FromResult(new AgentToolResult
+            {
+                ToolId = request.Request.ToolId, Summary = "Tool not found.", Content = null, StructuredPayloadJson = null,
+                Sources = null, WasTruncated = false, IsError = true, ErrorCode = "tool-not-found", BackendId = SourceId,
+                PresentationPayloadJson = null, RequiresPromptContextRefresh = false,
+            }),
+        }, cancellationToken);
+    public ValueTask<AgentPermissionRequest?> PermissionAsync(CSunder_Agent_Tool_Source_ToolSourcePermissionRequest request, CancellationToken cancellationToken = default)
+        => InvokeAsync(_ => ValueTask.FromResult<AgentPermissionRequest?>(null), cancellationToken);
+    public ValueTask<AgentToolPresentation?> PresentationAsync(AgentToolPresentationRequest request, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(request.ToolId.ToLowerInvariant() switch
+        {
+            "web_fetch" => fetch.ResolveToolPresentation(request),
+            "web_search" => search.ResolveToolPresentation(request),
+            _ => null,
+        });
+    }
 
-    private IAgentTool? Find(string id) => _tools.FirstOrDefault(tool => string.Equals(tool.Descriptor.ToolId, id, StringComparison.OrdinalIgnoreCase));
     private async ValueTask<T> InvokeAsync<T>(Func<CancellationToken, ValueTask<T>> operation, CancellationToken caller)
     {
         caller.ThrowIfCancellationRequested();

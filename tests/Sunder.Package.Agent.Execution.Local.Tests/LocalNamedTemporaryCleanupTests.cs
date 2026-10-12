@@ -1,9 +1,11 @@
 extern alias LocalWorker;
 
 using System.Runtime.Versioning;
-using LocalWorker::Sunder.Package.Agent.Contracts.Models;
 using LocalWorker::Sunder.Package.Agent.Execution.Local;
 using Xunit;
+using AgentFileReadErrorCodes = Sunder.Package.Agent.Contracts.Models.AgentFileReadErrorCodes;
+using LocalModels = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using AgentFileWriteRequest = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileWriteRequest;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
 
@@ -214,7 +216,7 @@ public sealed class LocalNamedTemporaryCleanupTests : IDisposable
         return workspace;
     }
 
-    private static ValueTask<AgentFileMutationResult> WriteAsync(
+    private static ValueTask<LocalModels.AgentFileMutationResult> WriteAsync(
         string workspace,
         string path,
         string content,
@@ -223,7 +225,7 @@ public sealed class LocalNamedTemporaryCleanupTests : IDisposable
         ILocalFileWriteFaultInjector? faultInjector = null)
         => LocalFileSystemExecutor.WriteFileAsync(
             new LocalExecutionRuntimeConfig([workspace], workspace),
-            new AgentFileWriteRequest(path, content, Overwrite: false),
+            new AgentFileWriteRequest { Path = path, Content = content, Overwrite = false },
             allowOutsideConfiguredScope: false,
             cancellationToken,
             faultInjector: faultInjector,

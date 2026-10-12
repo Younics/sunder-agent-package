@@ -19,4 +19,13 @@ public sealed class WebToolsSettingsService(IPackageContext packageContext) : IS
 
     public Task<string?> GetExaApiKeyAsync(CancellationToken cancellationToken = default)
         => _packageContext.Secrets.GetSecretAsync("search.exa.apiKey", cancellationToken);
+
+    public Task<string?> GetParallelApiKeyAsync(CancellationToken cancellationToken = default)
+        => _packageContext.Secrets.GetSecretAsync("search.parallel.apiKey", cancellationToken);
+
+    public async Task<string> GetSearchProviderAsync(CancellationToken cancellationToken = default)
+    {
+        var value = (await _packageContext.Settings.GetValueAsync("search.provider", cancellationToken))?.Trim().ToLowerInvariant();
+        return value is "exa" or "parallel" ? value : "auto";
+    }
 }

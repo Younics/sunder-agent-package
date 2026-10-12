@@ -14,6 +14,22 @@ namespace Sunder.Package.Agent.Tests;
 public sealed partial class RepositoryArchitectureTests
 {
     [Fact]
+    public void MainAgent_UsesGeneratedServicesWithoutAnAuthoredTransportTier()
+    {
+        var sourceRoot = Path.Combine(AgentPackageRepositoryInventory.RepositoryRoot.FullName, "src/Sunder.Package.Agent");
+        var consumers = Path.Combine(sourceRoot, "Rpc/Consumers");
+        Assert.False(Directory.Exists(consumers) && Directory.EnumerateFiles(consumers, "*.cs", SearchOption.AllDirectories).Any());
+        var forbidden = new Regex(
+            @"\b(?:AgentRpcCatalog|AgentRpcInvocation|AgentRpcReference|AgentRpcLease|AgentRpcProviderHandle|GeneratedProviderCallLifetime|DeferredAgentRpcServiceHandler)\b|Sunder\.Generated\.Rpc|\b(?:CreateCallScopeAsync|RegisterContentAsync|RegisterContentFileAsync|OpenContentAsync)\s*\(",
+            RegexOptions.CultureInvariant);
+        var offenders = Directory.EnumerateFiles(sourceRoot, "*.cs", SearchOption.AllDirectories)
+            .Where(AgentPackageRepositoryInventory.IsSourceFile)
+            .Where(path => forbidden.IsMatch(File.ReadAllText(path)))
+            .Select(path => Path.GetRelativePath(sourceRoot, path)).ToArray();
+        Assert.Empty(offenders);
+    }
+
+    [Fact]
     public void SharedRegressionHarnesses_RemainSplitAndResponsibilityCapped()
     {
         var testRoot = Path.Combine(
@@ -23,6 +39,7 @@ public sealed partial class RepositoryArchitectureTests
         var lineCaps = new Dictionary<string, int>(StringComparer.Ordinal)
         {
             ["RegressionTestInfrastructure.cs"] = 1080,
+            ["RegressionTestRpcInfrastructure.cs"] = 1080,
             ["RegressionTestSourceProviders.cs"] = 230,
             ["RegressionTestRpcState.FailureBoundary.cs"] = 80,
             ["RegressionTestPackageContext.cs"] = 60,
@@ -36,7 +53,9 @@ public sealed partial class RepositoryArchitectureTests
                 $"{item.Key} exceeds its {item.Value}-line test-harness responsibility cap.");
         }
 
-        var rpcInfrastructure = File.ReadAllText(Path.Combine(testRoot, "RegressionTestInfrastructure.cs"));
+        var rpcInfrastructure = string.Join('\n',
+            File.ReadAllText(Path.Combine(testRoot, "RegressionTestInfrastructure.cs")),
+            File.ReadAllText(Path.Combine(testRoot, "RegressionTestRpcInfrastructure.cs")));
         Assert.DoesNotContain("IPackageContext", rpcInfrastructure, StringComparison.Ordinal);
         Assert.DoesNotContain("IPackageStorageContext", rpcInfrastructure, StringComparison.Ordinal);
         Assert.Equal(
@@ -52,7 +71,7 @@ public sealed partial class RepositoryArchitectureTests
     {
         var repository = AgentPackageRepositoryInventory.RepositoryRoot.FullName;
         var entries = CanonicalDescriptorInventory.PublicAgent();
-        var checkedIn = entries.Select(entry => RegressionTestRpcDescriptors.Get(entry.Descriptor.ContractId))
+        var checkedIn = entries.Select(entry => CurrentPublicRpcDescriptors.Get(entry.Descriptor.ContractId))
             .OrderBy(static descriptor => descriptor.ContractId, StringComparer.Ordinal)
             .ToArray();
         var source = Path.Combine(repository, "src/Sunder.Package.Agent");
@@ -89,17 +108,15 @@ public sealed partial class RepositoryArchitectureTests
                 Assert.NotEqual("#/$defs/Payload", method.RequestSchemaReference);
                 Assert.NotEqual("#/$defs/Payload", method.OutputSchemaReference);
             }
-            var serviceName = string.Concat(Assert.Single(descriptor.Services).ServiceId
-                .Split('-')
-                .Select(static part => char.ToUpperInvariant(part[0]) + part[1..]));
-            var generated = SunderRpcCSharpGenerator.Generate(
-                descriptor,
-                "Sunder.Generated.Rpc." + serviceName);
-            Assert.DoesNotContain("AgentRpcPayload", generated, StringComparison.Ordinal);
-            Assert.Contains("Provider", generated, StringComparison.Ordinal);
-            Assert.Contains("Client", generated, StringComparison.Ordinal);
             var generatedPath = Path.Combine(generatedRoot, slots[descriptor.ContractId] + ".g.cs");
-            Assert.Equal(generated, File.ReadAllText(generatedPath));
+            var generated = File.ReadAllText(generatedPath);
+            Assert.Contains("Sunder.Generated.Packages.", generated, StringComparison.Ordinal);
+            Assert.DoesNotContain("Sunder.Generated.Rpc.", generated, StringComparison.Ordinal);
+            Assert.DoesNotContain("AgentRpcPayload", generated, StringComparison.Ordinal);
+            Assert.Contains($"ContractId = \"{descriptor.ContractId}\"", generated, StringComparison.Ordinal);
+            Assert.Contains($"ContractVersion = \"{descriptor.Version}\"", generated, StringComparison.Ordinal);
+            Assert.Contains($"DescriptorSha256 = \"{descriptor.Sha256}\"", generated, StringComparison.Ordinal);
+            Assert.Contains($"AbiSha256 = \"{descriptor.AbiSha256}\"", generated, StringComparison.Ordinal);
         }
     }
 
@@ -107,17 +124,17 @@ public sealed partial class RepositoryArchitectureTests
     public void AllRpcBindings_AreGeneratedFromTheirExactDescriptors()
     {
         var bindings = CanonicalDescriptorInventory.Read();
-        Assert.Equal(31, bindings.Count);
+        Assert.Equal(32, bindings.Count);
         Assert.Equal(19, bindings.Count(static binding => binding.Exposure == "public"));
-        Assert.Equal(12, bindings.Count(static binding => binding.Exposure == "package"));
+        Assert.Equal(13, bindings.Count(static binding => binding.Exposure == "package"));
         foreach (var binding in bindings)
         {
             var generatedPath = Path.Combine(CanonicalPackageRoles.Analysis(binding.ProjectDirectory), "bindings", binding.Slot + ".g.cs");
-            var generatedNamespace = "Sunder.Generated.Rpc." + string.Concat(binding.Slot.Split('-').Select(part => char.ToUpperInvariant(part[0]) + part[1..]));
+            var generatedNamespace = GeneratedBindingNamespace(binding.ProjectDirectory, binding.Descriptor.ContractId);
             Assert.True(File.Exists(generatedPath), $"Generated RPC binding was not found: {generatedPath}");
             Assert.Equal(
                 SunderRpcCSharpGenerator.Generate(binding.Descriptor, generatedNamespace,
-                    binding.Exposure == "package" ? SunderRpcCSharpAccessibility.Internal : SunderRpcCSharpAccessibility.Public),
+                    SunderRpcCSharpAccessibility.Internal),
                 File.ReadAllText(generatedPath));
         }
     }
@@ -143,7 +160,7 @@ public sealed partial class RepositoryArchitectureTests
     [Fact]
     public void ExecutionTargetContract_ExposesOnlyStructuredFileSearch()
     {
-        var descriptor = RegressionTestRpcDescriptors.Get(AgentRpcContractIds.ExecutionTarget);
+        var descriptor = CurrentPublicRpcDescriptors.Get("sunder.agent.execution.target");
         var methods = Assert.Single(descriptor.Services).Methods
             .Select(static method => method.MethodId)
             .ToHashSet(StringComparer.Ordinal);
@@ -178,6 +195,9 @@ public sealed partial class RepositoryArchitectureTests
             .Where(path => !path.EndsWith(".Legacy.cs", StringComparison.Ordinal))
             .SelectMany(path => DomainErrorPattern().Matches(File.ReadAllText(path)).Select(static match =>
                 match.Groups["code"].Value))
+            .Concat(Directory.EnumerateFiles(sourceRoot, "*.cs", SearchOption.AllDirectories).Where(AgentPackageRepositoryInventory.IsSourceFile)
+                .SelectMany(path => DomainErrorDeclarationPattern().Matches(File.ReadAllText(path)).Select(static match =>
+                    match.Groups["code"].Value)))
             .Where(code => code.StartsWith("agent.execution.", StringComparison.Ordinal) || code.StartsWith("agent.run-control.", StringComparison.Ordinal))
             .ToHashSet(StringComparer.Ordinal);
 
@@ -209,44 +229,21 @@ public sealed partial class RepositoryArchitectureTests
             .Where(item => item.GetProperty("source").GetString() == "owned" && item.GetProperty("exposure").GetString() == "public")
             .OrderBy(static item => item.GetProperty("contractId").GetString(), StringComparer.Ordinal)
             .ToArray();
-        var expectedIdentities = new Dictionary<string, (string DescriptorSha256, string AbiSha256)>(StringComparer.Ordinal)
-        {
-            ["sunder.agent.behavior.loop"] = ("4dc81c63ef4a45a64e2480229d4690c2210b646b381638da5bb187e47aea66f7", "c28bdf697a3664559718d3f558869096adc04db9ece92a71d5942053cebe1763"),
-            ["sunder.agent.chat.provider"] = ("c6a1a870a284725ce59536aaa1d3ec3cbf12b50b9909cf1bb8dcc586b5314c72", "43872bd38b25104499ff1cba52767190088e9015dd83d69e625b76e2ce9509db"),
-            ["sunder.agent.child.run.executor"] = ("d5e153b17714eabf425aa3fa5728d8810eb3f774730445bd285246d6bc9ebeac", "1885862bedcb08cec9a8d65c1205c8dbdf78107a5edb2865d0e3d8cf4154557d"),
-            ["sunder.agent.durable.lifecycle.observer"] = ("68a9c908358b8ff607f528c3779d58b9040e64818ac2f45621b36177e7611b21", "bd385af872f26796ecd33d3ce66268d3c642c8e924f6c90e4ee717eb5b727f24"),
-            ["sunder.agent.embedding.provider"] = ("cd0992243e8eb038124965c0b51d559d555b984459bd7246ca23e2d61cec6cab", "c8e646ba1457b3b0cce307aa465ff1ce53724d083c65af6bde5393c39dcbbb40"),
-            ["sunder.agent.execution.target"] = ("e9aac73111d41b661fd95a461cc71cc131884fed2dafd44a752237920fcd8390", "bbec3990bf9b88ffbe4707166bc58d9112e9df6ee9c9ffa11d0cee80f7673438"),
-            ["sunder.agent.permission.surface"] = ("a4fdf925ca509da5e4be8a28a3e790c973a2d3f7a7da1fdd79b21bf91864f7f6", "305a6656e50d62e52ea327753bde3151970b0923fc819332e6dd87dc4e8b9d47"),
-            ["sunder.agent.profile.capability.consumer"] = ("9aa38121fe4fa67ceb9cb1332d1f3a4829d1db62242597eb54a6ade8c9fe10ed", "db8148cfdbe1f3e50e134f6e900dd360ca9af8fe1eb263df2f11bf907b3fe5e4"),
-            ["sunder.agent.prompt.context.contributor"] = ("95f76fbab4aba10a06eab8e3410743be5e98b8f9d91eeb81f7c7be104729a7b3", "e32be8205c41e1e4227e7a4f9007ceb379d100a2c8be511024a36fbdcac661bd"),
-            ["sunder.agent.run.control"] = ("2ed3085b36e7c825ef937cdd83fbe1ce0ed8a9baf00289c91787503b6467aa1e", "95daf0091c5ecdeba030a07221370040d988ebaa7c167e42d1a9c35057cb60b2"),
-            ["sunder.agent.runtime.catalog"] = ("dd6245bee39a521c1c3b288ad28bf2c23a118cd360e8e617b3e2d4ec4432703c", "e6da2ed724d23c5d0d309f3ebe1a36b57808a1b3537fc70fe3bbd3eee5ace1b4"),
-            ["sunder.agent.selectable.capability.provider"] = ("8d51b029826f5f9340de91b60b32404a62345074cc37f1dcf2901716d5e7881a", "b52793dac4c103576164d66420274481a34f0f06aebe263b9d3b330f33d06bdf"),
-            ["sunder.agent.session.cleaner"] = ("2df009ae5253633c434bc1dde894978f6b83bd0503aaea1889307287b090d2e2", "74e6274596c87d937531d2bcdbf30572a0ab614a9812d28497f43c59525ee5f8"),
-            ["sunder.agent.system.prompt.contributor"] = ("954dabe043ff5b591bdec78b1a6ea4a55c2a154c47e49016879fde2a27f3a03a", "83622fbc8c16bc257dfb7b39a4712811d58dc00b6ed9d4cf2b03f1b1dcd7a16d"),
-            ["sunder.agent.tool.source"] = ("d3b481e2f4b9d8a0ae9362f9770dd557a1513f87b33f96925081b7653a6fd4b3", "21b8195d6ede07c53513184fed6feaadf2546e0314045e4819ab0c6d29a2148a"),
-            ["sunder.agent.tool.execution.observed"] = ("1e80a60bbba1d0bbfdcd20992b3ad6e6b6d9166fc987056d6945316a611bbee2", "1a34bc8a004d854ae180dd9ac5a9fb4c346de4bd3360c0ec53821d74e361657d"),
-            ["sunder.agent.workspace.editor"] = ("2f3bfe7f9c2a4cb32bf629797616c6061d78d14c2027912f32eac3cbb7c1e157", "f5c581cd4a5fd005ea3fd001dd4966f854d97bbeaeb3993e89b032201d9ae200"),
-            ["sunder.agent.workspace.execution.resolver"] = ("110f0cc5ee549de495af7211cb2146c57ce59b26fea0f22c9330c6d6981d0714", "90144d8d520d4373d4abd46bd69727e3fd63b847246d604a75d81c92c6572ff6"),
-            ["sunder.agent.workspace.path.migrator"] = ("671e522803ab5b2932787dee390b4c75420771951d8c5645c42b92ea6fb049c2", "1f07223e762b7240715ef8f02826094c75ebb42d8cb778721b08c044f637735c"),
-        };
         Assert.Equal(19, descriptors.Length);
-        Assert.Equal(descriptors.Length, expectedIdentities.Count);
         Assert.Equal(
             descriptors.Select(static descriptor => descriptor.ContractId),
             buildAssets.Select(static item => item.GetProperty("contractId").GetString()));
         Assert.All(descriptors, descriptor =>
         {
-            var expectedIdentity = expectedIdentities[descriptor.ContractId];
             Assert.Equal(SunderRpcProtocol.DescriptorVersion, descriptor.DescriptorVersion);
-            Assert.Equal("1.0.0", descriptor.Version);
-            Assert.Equal(expectedIdentity.DescriptorSha256, descriptor.Sha256);
-            Assert.Equal(expectedIdentity.AbiSha256, descriptor.AbiSha256);
+            CurrentPublicRpcDescriptors.AssertCurrent(descriptor);
         });
         Assert.All(buildAssets, item =>
         {
-            Assert.Equal("1.0.0", item.GetProperty("version").GetString());
+            var descriptor = CurrentPublicRpcDescriptors.Get(item.GetProperty("contractId").GetString()!);
+            Assert.Equal(descriptor.Version, item.GetProperty("version").GetString());
+            Assert.Equal(descriptor.Sha256, item.GetProperty("descriptorSha256").GetString());
+            Assert.Equal(descriptor.AbiSha256, item.GetProperty("abiSha256").GetString());
             Assert.Equal("public", item.GetProperty("exposure").GetString());
         });
 
@@ -301,44 +298,48 @@ public sealed partial class RepositoryArchitectureTests
                 {
                     Assert.Equal("content-reference", logicalType.GetString());
                 }
-                if (definition.Value.TryGetProperty("type", out var typeElement)
-                    && typeElement.GetString() == "number")
-                {
-                    numberDefinitions.Add((
-                        $"{contractName}:{definition.Name}",
-                        definition.Value.GetProperty("format").GetString()!));
-                }
+                CollectNumberDefinitions(definition.Value, $"{contractName}:{definition.Name}", numberDefinitions);
             }
         }
 
         Assert.Equal(
-            new[]
-            {
-                ("chat-provider:ChatOptionValue", "float32"),
-                ("embedding-provider:EmbeddingValue", "float64"),
-                ("run-control:ChatOptionValue", "float32"),
-            },
+            [
+                ("chat-provider:AgentChatOptions.properties.frequencyPenalty.oneOf.1", "float32"),
+                ("chat-provider:AgentChatOptions.properties.presencePenalty.oneOf.1", "float32"),
+                ("chat-provider:AgentChatOptions.properties.temperature.oneOf.1", "float32"),
+                ("chat-provider:AgentChatOptions.properties.topP.oneOf.1", "float32"),
+                ("embedding-provider:AgentEmbeddingGenerationResult.properties.values.items", "float64"),
+                ("run-control:AgentChatOptions.properties.frequencyPenalty.oneOf.1", "float32"),
+                ("run-control:AgentChatOptions.properties.presencePenalty.oneOf.1", "float32"),
+                ("run-control:AgentChatOptions.properties.temperature.oneOf.1", "float32"),
+                ("run-control:AgentChatOptions.properties.topP.oneOf.1", "float32"),
+            ],
             numberDefinitions.OrderBy(static item => item.Name, StringComparer.Ordinal));
 
         using (var chatDescriptor = CanonicalDescriptorInventory.Document("sunder.agent.chat.provider"))
         {
             var chatDefinitions = chatDescriptor.RootElement.GetProperty("$defs");
-            Assert.Equal("float32", chatDefinitions.GetProperty("ChatOptionValue").GetProperty("format").GetString());
-            Assert.Equal("base64", chatDefinitions.GetProperty("InlineContinuationBytes").GetProperty("contentEncoding").GetString());
-            Assert.Equal("uri", chatDefinitions.GetProperty("AbsoluteUri").GetProperty("format").GetString());
-            Assert.Empty(chatDefinitions.GetProperty("JSON").EnumerateObject());
+            var chatOptions = chatDefinitions.GetProperty("AgentChatOptions").GetProperty("properties");
+            foreach (var option in new[] { "frequencyPenalty", "presencePenalty", "temperature", "topP" })
+            {
+                Assert.Contains(chatOptions.GetProperty(option).GetProperty("oneOf").EnumerateArray(), branch =>
+                    branch.GetProperty("type").GetString() == "number"
+                    && branch.GetProperty("format").GetString() == "float32");
+            }
+            Assert.Contains(chatOptions.GetProperty("continuationHandle").GetProperty("oneOf").EnumerateArray(), branch =>
+                branch.GetProperty("type").GetString() == "string"
+                && branch.GetProperty("contentEncoding").GetString() == "base64");
+            Assert.All(new[] { "ChatOptionValue", "InlineContinuationBytes", "AbsoluteUri", "JSON", "UtilityModelResolution" },
+                definitionName => Assert.False(chatDefinitions.TryGetProperty(definitionName, out _), definitionName));
             Assert.Equal(
-                ["null", "$ref"],
-                chatDefinitions.GetProperty("UtilityModelResolution")
-                    .GetProperty("oneOf")
-                    .EnumerateArray()
-                    .Select(static branch => branch.TryGetProperty("type", out var type) ? type.GetString() : "$ref"));
-            Assert.Equal(
-                "#/$defs/CalendarDate",
+                "date",
                 chatDefinitions.GetProperty("AgentModelDescriptor")
                     .GetProperty("properties")
                     .GetProperty("releaseDate")
-                    .GetProperty("$ref")
+                    .GetProperty("oneOf")
+                    .EnumerateArray()
+                    .Single(static branch => branch.GetProperty("type").GetString() != "null")
+                    .GetProperty("format")
                     .GetString());
             Assert.Equal(
                 ["#/$defs/AgentChatUpdateEvent", "#/$defs/AgentChatErrorEvent"],
@@ -347,11 +348,14 @@ public sealed partial class RepositoryArchitectureTests
                     .EnumerateArray()
                     .Select(static branch => branch.GetProperty("$ref").GetString()));
             Assert.Equal(
-                "#/$defs/Timestamp",
+                "date-time",
                 chatDefinitions.GetProperty("AgentChatUpdateEvent")
                     .GetProperty("properties")
                     .GetProperty("createdAt")
-                    .GetProperty("$ref")
+                    .GetProperty("oneOf")
+                    .EnumerateArray()
+                    .Single(static branch => branch.GetProperty("type").GetString() != "null")
+                    .GetProperty("format")
                     .GetString());
             Assert.Equal(
                 "#/$defs/AgentChatProviderFailureKind",
@@ -366,22 +370,19 @@ public sealed partial class RepositoryArchitectureTests
         {
             var ownerRoot = ownerDescriptor.RootElement;
             Assert.Equal("sunder.rpc.values.v1", ownerRoot.GetProperty("schemaProfile").GetString());
-            Assert.Equal("1.0.0", ownerRoot.GetProperty("version").GetString());
+            Assert.Equal("2.0.0", ownerRoot.GetProperty("version").GetString());
             var ownerDefinitions = ownerRoot.GetProperty("$defs");
-            var date = ownerDefinitions.GetProperty("ModelReleaseDate");
+            var date = Assert.Single(ownerDefinitions.GetProperty("AgentModelDescriptor").GetProperty("properties")
+                .GetProperty("releaseDate").GetProperty("oneOf").EnumerateArray(), value => value.GetProperty("type").GetString() != "null");
             Assert.Equal("string", date.GetProperty("type").GetString());
             Assert.Equal("date", date.GetProperty("format").GetString());
             Assert.Equal(
-                "#/$defs/ModelReleaseDate",
-                ownerDefinitions.GetProperty("AgentModelDescriptor")
-                    .GetProperty("properties")
-                    .GetProperty("releaseDate")
-                    .GetProperty("$ref")
-                    .GetString());
-            Assert.Equal(
                 "content-reference",
-                ownerDefinitions.GetProperty("ContentReference").GetProperty("logicalType").GetString());
-            Assert.True(ownerDefinitions.TryGetProperty("JsonText", out _));
+                ownerDefinitions.GetProperty("AgentAttachmentContentUploadRequest").GetProperty("properties")
+                    .GetProperty("content").GetProperty("logicalType").GetString());
+            Assert.Contains(ownerDefinitions.GetProperty("AgentProfileRecord").GetProperty("properties")
+                .GetProperty("behaviorLoopSettingsJson").GetProperty("oneOf").EnumerateArray(),
+                value => value.GetProperty("type").GetString() == "string");
             Assert.False(ownerDefinitions.TryGetProperty("AgentAttachmentTransferRequest", out _));
             Assert.False(ownerDefinitions.TryGetProperty("DateOnly", out _));
             Assert.False(ownerDefinitions.TryGetProperty("DayOfWeek", out _));
@@ -390,37 +391,44 @@ public sealed partial class RepositoryArchitectureTests
         using (var runControlDescriptor = CanonicalDescriptorInventory.Document("sunder.agent.run.control"))
         {
             var definitions = runControlDescriptor.RootElement.GetProperty("$defs");
-            Assert.Equal("float32", definitions.GetProperty("ChatOptionValue").GetProperty("format").GetString());
+            using var chatDescriptor = CanonicalDescriptorInventory.Document("sunder.agent.chat.provider");
+            Assert.Equal(
+                JsonSerializer.Serialize(chatDescriptor.RootElement.GetProperty("$defs").GetProperty("AgentChatOptions")),
+                JsonSerializer.Serialize(definitions.GetProperty("AgentChatOptions")));
             Assert.Equal(2, definitions.GetProperty("AgentChatStreamEvent").GetProperty("oneOf").GetArrayLength());
             Assert.Equal(
                 "#/$defs/AgentReasoningEffort",
                 definitions.GetProperty("AgentModelVariantDescriptor")
                     .GetProperty("properties")
                     .GetProperty("reasoningEffort")
+                    .GetProperty("oneOf")
+                    .EnumerateArray()
+                    .Single(static branch => branch.TryGetProperty("$ref", out _))
                     .GetProperty("$ref")
                     .GetString());
         }
 
-        var assembly = typeof(Sunder.Package.Agent.Contracts.Models.AgentEmbeddingGenerationResult).Assembly;
+        using var roles = new CanonicalPackageRoles();
+        var assembly = roles.Load("Memory.Semantic", "worker");
         Assert.Equal(
             typeof(IReadOnlyList<double>),
             typeof(Sunder.Package.Agent.Contracts.Models.AgentEmbeddingGenerationResult)
                 .GetProperty("Values")!.PropertyType);
         Assert.Equal(
             typeof(IReadOnlyList<double>),
-            assembly.GetType("Sunder.Generated.Rpc.EmbeddingProvider.AgentEmbeddingGenerationResult", true)!
+            assembly.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentEmbeddingGenerationResult", true)!
                 .GetProperty("Values")!.PropertyType);
         Assert.Equal(
             typeof(float?),
-            assembly.GetType("Sunder.Generated.Rpc.ChatProvider.AgentChatOptions", true)!
+            assembly.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentChatOptions", true)!
                 .GetProperty("Temperature")!.PropertyType);
         Assert.Equal(
             typeof(byte[]),
-            assembly.GetType("Sunder.Generated.Rpc.ChatProvider.AgentChatOptions", true)!
+            assembly.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentChatOptions", true)!
                 .GetProperty("ContinuationHandle")!.PropertyType);
         Assert.Equal(
             typeof(SunderRpcOffsetDateTime),
-            assembly.GetType("Sunder.Generated.Rpc.RunControl.AgentTurnRecord", true)!
+            assembly.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnRecord", true)!
                 .GetProperty("UpdatedAtUtc")!.PropertyType);
         Assert.Equal(
             typeof(SunderRpcOffsetDateTime?),
@@ -429,6 +437,7 @@ public sealed partial class RepositoryArchitectureTests
             typeof(SunderRpcOptional<JsonElement>),
             typeof(AgentChatContent).GetProperty(nameof(AgentChatContent.Json))!.PropertyType);
         Assert.Null(assembly.GetType("Sunder.Package.Agent.Protocol.AgentRpcOptional`1"));
+        Assert.Null(typeof(AgentChatContent).Assembly.GetType("Sunder.Package.Agent.Protocol.AgentRpcOptional`1"));
     }
 
     [Fact]
@@ -520,44 +529,27 @@ public sealed partial class RepositoryArchitectureTests
         var toolSourceDefinitions = toolSource.RootElement.GetProperty("$defs");
         var observedDefinitions = observedExecution.RootElement.GetProperty("$defs");
 
-        foreach (var definitionName in new[]
-                 {
-                     "TextValue",
-                     "Timestamp",
-                     "Flag",
-                     "SignedInteger",
-                     "AgentWorkspaceBindingRecord",
-                     "EntityId",
-                     "AgentWorkspaceDocumentRecord",
-                     "AgentWorkspaceDocumentRecordCollection",
-                     "AgentWorkspacePathRecord",
-                     "AgentWorkspacePathRecordCollection",
-                     "AgentWorkspaceRecord",
-                     "AgentRpcProviderHandle",
-                     "TextValues",
-                     "AgentResourceClaim",
-                     "AgentResourceClaimCollection",
-                     "AgentToolExecutionContext",
-                     "AgentResourceOperationContextWire",
-                     "AgentToolExecutionContextWire",
-                     "AgentToolRequest",
-                     "ToolInvocationRequest",
-                     "AgentToolSourceItem",
-                     "AgentToolSourceItemCollection",
-                     "AgentToolResult",
-                     "Identifier",
-                     "IdentifierOrEmpty",
-                     "VersionText",
-                     "PathText",
-                     "DisplayText",
-                     "ContentText",
-                     "JsonText",
-                     "Sha256Text",
-                     "SortOrder",
-                     "ResourceOperationIndex",
-                     "Revision",
-                     "Count",
-                 })
+        var sharedDefinitions = new[]
+        {
+            "AgentResourceClaim",
+            "AgentResourceOperationContext",
+            "AgentToolExecutionContext",
+            "AgentToolRequest",
+            "AgentToolResult",
+            "AgentToolSourceItem",
+            "AgentWorkspaceBindingRecord",
+            "AgentWorkspaceDocumentRecord",
+            "AgentWorkspacePathRecord",
+            "AgentWorkspaceRecord",
+            "CSunder_Agent_Execution_Target_ExecutionTarget_ServiceReference",
+            "Unit",
+        };
+        Assert.Equal(
+            sharedDefinitions,
+            toolSourceDefinitions.EnumerateObject().Select(static definition => definition.Name)
+                .Intersect(observedDefinitions.EnumerateObject().Select(static definition => definition.Name), StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal));
+        foreach (var definitionName in sharedDefinitions)
         {
             Assert.Equal(
                 JsonSerializer.Serialize(toolSourceDefinitions.GetProperty(definitionName)),
@@ -571,7 +563,31 @@ public sealed partial class RepositoryArchitectureTests
         var relocations = AgentSourceMigrationProjectChanges.CentralSemanticRelocations;
         Assert.Equal(142, relocations.Count);
         Assert.Equal(38, AgentSourceMigrationProjectChanges.CentralInterfaceRelocations.Count);
-        foreach (var relocation in AgentSourceMigrationProjectChanges.ReviewedCentralRelocations)
+        foreach (var relocation in AgentSourceMigrationProjectChanges.CentralSemanticRelocations)
+        {
+            Assert.StartsWith("src/Sunder.Package.Agent/", relocation.Value, StringComparison.Ordinal);
+            var path = Path.Combine(AgentPackageRepositoryInventory.RepositoryRoot.FullName, relocation.Value);
+            Assert.True(File.Exists(path)
+                || AgentSourceMigrationProjectChanges.TryReadNaturalServiceHistory(
+                    AgentPackageRepositoryInventory.RepositoryRoot.FullName,
+                    path,
+                    out _), relocation.Value);
+        }
+        var testOnlyRelocations = AgentSourceMigrationProjectChanges.CentralInterfaceRelocations
+            .Where(static relocation => relocation.Value.StartsWith("tests/", StringComparison.Ordinal))
+            .ToArray();
+        Assert.Equal(
+            [
+                "tests/Sunder.Package.Agent.Tests/LocalProviderFakes/IAgentChatProvider.cs",
+                "tests/Sunder.Package.Agent.Tests/LocalProviderFakes/IAgentPermissionSurface.cs",
+                "tests/Sunder.Package.Agent.Tests/LocalProviderFakes/IAgentSystemPromptContributor.cs",
+                "tests/Sunder.Package.Agent.Tests/LocalProviderFakes/IAgentUtilityModelProvider.cs",
+                "tests/Sunder.Package.Agent.Tests/LocalProviderFakes/IAgentWorkspaceExecutionResolver.cs",
+            ],
+            testOnlyRelocations.Select(static relocation => relocation.Value).Order(StringComparer.Ordinal));
+        Assert.All(testOnlyRelocations, relocation => Assert.True(File.Exists(Path.Combine(
+            AgentPackageRepositoryInventory.RepositoryRoot.FullName, relocation.Value)), relocation.Value));
+        foreach (var relocation in AgentSourceMigrationProjectChanges.CentralInterfaceRelocations.Except(testOnlyRelocations))
         {
             Assert.StartsWith("src/Sunder.Package.Agent/", relocation.Value, StringComparison.Ordinal);
             Assert.True(File.Exists(Path.Combine(AgentPackageRepositoryInventory.RepositoryRoot.FullName, relocation.Value)), relocation.Value);
@@ -769,6 +785,12 @@ public sealed partial class RepositoryArchitectureTests
         foreach (var workflow in new[] { "sunder-package-smoke.yml", "sunder-package-release.yml" })
         {
             var source = File.ReadAllText(Path.Combine(repositoryRoot, ".github", "workflows", workflow));
+            if (workflow == "sunder-package-release.yml")
+            {
+                Assert.Contains("scripts/release/build-native-family.ps1", source, StringComparison.Ordinal);
+                source += File.ReadAllText(Path.Combine(repositoryRoot, "scripts/release/build-native-family.ps1"));
+                source += File.ReadAllText(Path.Combine(repositoryRoot, "scripts/release/native-family.py"));
+            }
             Assert.Contains("-p:SunderAgentVersion=", source, StringComparison.Ordinal);
             Assert.DoesNotContain("-p:Version=", source, StringComparison.Ordinal);
             Assert.DoesNotContain("-p:PackageVersion=", source, StringComparison.Ordinal);
@@ -901,7 +923,7 @@ public sealed partial class RepositoryArchitectureTests
         {
             "Sunder.Package.Agent/Runtime/AgentAppRuntimeGateway.cs",
             "Sunder.Package.Agent/Runtime/AgentAppRuntimeGateway.Commands.cs",
-            "Sunder.Package.Agent.Memory.Semantic/Runtime/MemoryRuntimeBridge.cs",
+            "Sunder.Package.Agent.Memory.Semantic/App/MemoryAppRuntimeGateway.cs",
             "Sunder.Package.Agent.Subagents/Runtime/SubagentRuntimeBridge.cs",
         };
         foreach (var bridgePath in bridgePaths)
@@ -1028,6 +1050,33 @@ public sealed partial class RepositoryArchitectureTests
     private static string NormalizePath(string path)
         => path.Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
 
+    private static string GeneratedBindingNamespace(string projectDirectory, string contractId)
+    {
+        using var owned = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(projectDirectory, "sunder-contracts.owned.json")));
+        var packageStem = string.Join("_", owned.RootElement.GetProperty("packageId").GetString()!
+            .Split('.').Select(static segment => char.ToUpperInvariant(segment[0]) + segment[1..]));
+        var contractStem = string.Join("_", contractId.Split('.').Select(static segment => char.ToUpperInvariant(segment[0]) + segment[1..]));
+        return $"Sunder.Generated.Packages.{packageStem}_Internal.C{contractStem}";
+    }
+
+    private static void CollectNumberDefinitions(JsonElement value, string path, ICollection<(string Name, string Format)> numbers)
+    {
+        if (value.ValueKind == JsonValueKind.Object)
+        {
+            if (value.TryGetProperty("type", out var type) && type.GetString() == "number")
+                numbers.Add((path, value.GetProperty("format").GetString()!));
+            foreach (var property in value.EnumerateObject())
+                CollectNumberDefinitions(property.Value, path + "." + property.Name, numbers);
+            return;
+        }
+        if (value.ValueKind == JsonValueKind.Array)
+        {
+            var index = 0;
+            foreach (var item in value.EnumerateArray())
+                CollectNumberDefinitions(item, path + "." + index++, numbers);
+        }
+    }
+
     private static string ResolveTargetFramework()
         => new DirectoryInfo(AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)).Name;
 
@@ -1040,6 +1089,9 @@ public sealed partial class RepositoryArchitectureTests
 
     [GeneratedRegex("SunderRpcErrorKind\\.Domain,\\s*\"(?<code>[a-z0-9.-]+)\"", RegexOptions.CultureInvariant)]
     private static partial Regex DomainErrorPattern();
+
+    [GeneratedRegex("SunderServiceError\\(\"(?<code>[a-z0-9.-]+)\"", RegexOptions.CultureInvariant)]
+    private static partial Regex DomainErrorDeclarationPattern();
 
     [GeneratedRegex(@"\basync\s+void\s+(?<method>[A-Za-z_][A-Za-z0-9_]*)\s*\(", RegexOptions.CultureInvariant)]
     private static partial Regex AsyncVoidMethodPattern();

@@ -1,5 +1,4 @@
 using Sunder.Agent.Execution.Common;
-using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 
 namespace Sunder.Package.Agent.Tools.Files;
@@ -7,7 +6,7 @@ namespace Sunder.Package.Agent.Tools.Files;
 internal static class FilePatchPlanner
 {
     public static async Task<FilePatchPlan> PreflightAsync(
-        IAgentExecutionTarget target,
+        FileExecutionTarget target,
         AgentExecutionTargetContext context,
         IReadOnlyList<FilePatchOperation> operations,
         CancellationToken cancellationToken)
@@ -30,7 +29,7 @@ internal static class FilePatchPlanner
         {
             cancellationToken.ThrowIfCancellationRequested();
             var operation = operations[resourceIndex];
-            var resource = await target.ResolveFileResourceAsync(context, operation.Path, cancellationToken);
+            var resource = await target.Service.ResolveFileAsync(new() { Context = context, Path = operation.Path }, cancellationToken);
             planned.Add(operation.Kind switch
             {
                 FilePatchOperationKind.Add => PlanAdd(operation, resourceIndex, resource),
@@ -66,7 +65,7 @@ internal static class FilePatchPlanner
     }
 
     private static async Task<PlannedFilePatchOperation> PlanUpdateAsync(
-        IAgentExecutionTarget target,
+        FileExecutionTarget target,
         AgentExecutionTargetContext context,
         FilePatchOperation operation,
         int resourceIndex,
@@ -74,7 +73,7 @@ internal static class FilePatchPlanner
         CancellationToken cancellationToken)
     {
         var current = await ReadExistingFileAsync(target, context, operation.Path, resource, cancellationToken);
-        var mutationResource = await target.ResolveFileResourceAsync(context, operation.Path, cancellationToken);
+        var mutationResource = await target.Service.ResolveFileAsync(new() { Context = context, Path = operation.Path }, cancellationToken);
         var next = FileDiffPresentation.ApplyHunks(current, operation.Hunks, out var diffLines);
         return new PlannedFilePatchOperation(
             operation.Kind,
@@ -88,7 +87,7 @@ internal static class FilePatchPlanner
     }
 
     private static async Task<PlannedFilePatchOperation> PlanDeleteAsync(
-        IAgentExecutionTarget target,
+        FileExecutionTarget target,
         AgentExecutionTargetContext context,
         FilePatchOperation operation,
         int resourceIndex,
@@ -96,7 +95,7 @@ internal static class FilePatchPlanner
         CancellationToken cancellationToken)
     {
         var current = await ReadExistingFileAsync(target, context, operation.Path, resource, cancellationToken);
-        var mutationResource = await target.ResolveFileResourceAsync(context, operation.Path, cancellationToken);
+        var mutationResource = await target.Service.ResolveFileAsync(new() { Context = context, Path = operation.Path }, cancellationToken);
         return new PlannedFilePatchOperation(
             operation.Kind,
             operation.Path,
@@ -109,7 +108,7 @@ internal static class FilePatchPlanner
     }
 
     private static async Task<string> ReadExistingFileAsync(
-        IAgentExecutionTarget target,
+        FileExecutionTarget target,
         AgentExecutionTargetContext context,
         string path,
         AgentResolvedResource resource,
@@ -120,7 +119,7 @@ internal static class FilePatchPlanner
             throw new InvalidOperationException($"Patch target does not exist: {path}");
         }
 
-        var current = await target.ReadFileAsync(context, new AgentFileReadRequest(path), cancellationToken);
+        var current = await target.Service.ReadFileAsync(new() { Context = context, Request = new() { Path = path, Offset = null, Limit = null } }, cancellationToken);
         if (current.IsError)
         {
             throw new InvalidOperationException(current.ErrorMessage ?? $"Unable to read patch target: {path}");

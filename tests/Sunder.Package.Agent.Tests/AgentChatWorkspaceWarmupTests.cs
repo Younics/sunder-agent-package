@@ -19,10 +19,10 @@ public sealed class AgentChatWorkspaceWarmupTests
         var store = new AgentLocalStore(scope.Context);
         var sessions = new AgentSessionService(store);
         var workspaces = new AgentWorkspaceService(store);
-        var targets = new AgentExecutionTargetService(catalog);
-        var tools = new AgentToolService(sessions, workspaces, targets, catalog);
-        var profiles = new AgentProfileService(store, tools, catalog, catalog.BehaviorLoops);
-        var permissions = new AgentPermissionService(store, catalog);
+        var targets = new AgentExecutionTargetService(catalog.ExecutionTargets);
+        var tools = new AgentToolService(sessions, workspaces, targets, catalog.ToolSources, catalog.ObservedToolExecutions);
+        var profiles = catalog.CreateProfileService(store, tools);
+        var permissions = new AgentPermissionService(store, catalog.PermissionSurfaces);
         var warmup = new BlockingExecutionGateway();
         var profile = await profiles.CreateProfileAsync("Profile");
         var workspace = workspaces.CreateWorkspace("Workspace");
@@ -60,7 +60,8 @@ public sealed class AgentChatWorkspaceWarmupTests
         public TaskCompletionSource Completed { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public IReadOnlyList<AgentExecutionTargetDescriptor> ListTargets() => [];
+        public Task<IReadOnlyList<AgentExecutionTargetDescriptor>> ListTargetsAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<AgentExecutionTargetDescriptor>>([]);
 
         public async Task<AgentExecutionTargetWarmupResult> WarmWorkspaceAsync(
             AgentWorkspaceRecord workspace,

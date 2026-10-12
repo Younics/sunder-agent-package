@@ -1,13 +1,16 @@
 using Anthropic;
 using Microsoft.Extensions.AI;
-using Sunder.Package.Agent.Contracts.Contracts;
-using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Services;
+using AgentChatClientContext = Sunder.Package.Agent.Contracts.Models.AgentChatClientContext;
 
 namespace Sunder.Package.Agent.Provider.Anthropic;
 
-public sealed class AnthropicAgentProvider : IAgentChatProvider, IAgentUtilityModelProvider
+[SunderServiceProvider(typeof(IChatProviderService), ProviderId = "anthropic.chat")]
+public sealed partial class AnthropicAgentProvider : IChatProviderService
 {
     private readonly IPackageContext _packageContext;
     private readonly ProviderCredentialAccessor _credentials;
@@ -30,26 +33,32 @@ public sealed class AnthropicAgentProvider : IAgentChatProvider, IAgentUtilityMo
         _packageContext = packageContext;
         _credentials = credentials;
         _clientFactory = clientFactory ?? (apiKey => new AnthropicClient { ApiKey = apiKey });
-        Descriptor = new AgentProviderDescriptor(
-            "anthropic",
-            "Anthropic",
-            [AgentAuthMode.ApiKey],
-            SupportsStreaming: true,
-            SupportsInterruptibleRuns: true)
+        Descriptor = new AgentProviderDescriptor
         {
+            ProviderId = "anthropic",
+            DisplayName = "Anthropic",
+            SupportedAuthModes = [AgentAuthMode.ApiKey],
+            SupportsStreaming = true,
+            SupportsInterruptibleRuns = true,
             PackageId = packageContext.PackageId,
         };
     }
 
     public AgentProviderDescriptor Descriptor { get; }
 
-    public ValueTask<IReadOnlyList<AgentModelDescriptor>> GetAvailableModelsAsync(CancellationToken cancellationToken = default)
+    public ValueTask<AgentProviderDescriptor> DescribeAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(Descriptor);
+    }
+
+    public ValueTask<IReadOnlyList<AgentModelDescriptor>> ListModelsAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         return ValueTask.FromResult(AnthropicModelCatalog.Models);
     }
 
-    public async ValueTask<string?> ResolveUtilityModelIdAsync(CancellationToken cancellationToken = default)
+    public async ValueTask<string?> ResolveUtilityModelAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         return await AnthropicProviderConfiguration.UtilityModelSelection
@@ -59,28 +68,37 @@ public sealed class AnthropicAgentProvider : IAgentChatProvider, IAgentUtilityMo
     public async ValueTask<AgentProviderReadiness> GetReadinessAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return !await _credentials.HasCredentialAsync(cancellationToken)
-            ? new AgentProviderReadiness(
-                Descriptor.ProviderId,
-                AgentProviderReadinessStatus.NeedsConfiguration,
-                "An Anthropic API key is required. Open Settings -> Packages -> Sunder Agent Provider Anthropic and enter an API key.")
-            : new AgentProviderReadiness(
-                Descriptor.ProviderId,
-                AgentProviderReadinessStatus.Ready,
-                "Anthropic API-key mode is configured.");
+        var configured = await _credentials.HasCredentialAsync(cancellationToken);
+        return new()
+        {
+            ProviderId = Descriptor.ProviderId,
+            Status = configured ? AgentProviderReadinessStatus.Ready : AgentProviderReadinessStatus.NeedsConfiguration,
+            Message = configured
+                ? "Anthropic API-key mode is configured."
+                : "An Anthropic API key is required. Open Settings -> Packages -> Sunder Agent Provider Anthropic and enter an API key.",
+        };
     }
 
-    public ValueTask<AgentProviderRunCapabilities> GetRunCapabilitiesAsync(string? modelId, CancellationToken cancellationToken = default)
+    public ValueTask<AgentProviderRunCapabilities> GetCapabilitiesAsync(string? modelId, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult(new AgentProviderRunCapabilities(
-            SupportsNativeToolCalling: true,
-            SupportsStreamingToolCalls: false,
-            SupportsMultipleToolCalls: true,
-            Summary: "Anthropic supports native tool use and Sunder can run parallel-safe tools concurrently.",
-            SupportsImageInput: true,
-            SupportsPdfInput: true));
+        return ValueTask.FromResult(new AgentProviderRunCapabilities
+        {
+            SupportsNativeToolCalling = true,
+            SupportsStreamingToolCalls = false,
+            SupportsMultipleToolCalls = true,
+            Summary = "Anthropic supports native tool use and Sunder can run parallel-safe tools concurrently.",
+            SupportsImageInput = true,
+            SupportsPdfInput = true,
+            SupportsAudioInput = false,
+            SupportsVideoInput = false,
+            ContextWindowTokens = null,
+            MaxOutputTokens = null,
+        });
     }
+
+    public IAsyncEnumerable<AgentChatStreamEvent> StreamChatAsync(AgentChatStreamRequest request, CancellationToken cancellationToken = default)
+        => ProviderChatStream.ReadAsync(CreateChatClientAsync, request, cancellationToken);
 
     public ValueTask<IChatClient> CreateChatClientAsync(AgentChatClientContext context, CancellationToken cancellationToken = default)
     {

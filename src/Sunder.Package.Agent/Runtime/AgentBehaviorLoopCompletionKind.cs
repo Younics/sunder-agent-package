@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Sunder.Package.Agent.Contracts.Models;
 
 /// <summary>
@@ -6,17 +8,17 @@ namespace Sunder.Package.Agent.Contracts.Models;
 public enum AgentBehaviorLoopCompletionKind
 {
     /// <summary>The loop produced its intended successful terminal result.</summary>
-    Completed = 0,
+    [JsonStringEnumMemberName("completed")] Completed = 0,
 
     /// <summary>The loop terminated because provider, tool, budget, persistence, or extension work failed.</summary>
-    Failed = 1,
+    [JsonStringEnumMemberName("failed")] Failed = 1,
 
     /// <summary>The loop durably suspended pending user approval and can resume the same run revision.</summary>
-    WaitingForApproval = 2,
+    [JsonStringEnumMemberName("waiting-for-approval")] WaitingForApproval = 2,
 
     /// <summary>The loop observed an explicit stop and returned without further mutations.</summary>
-    Stopped = 3,
+    [JsonStringEnumMemberName("stopped")] Stopped = 3,
 
     /// <summary>The loop lost current-run ownership or observed cancellation/interruption.</summary>
-    Interrupted = 4,
+    [JsonStringEnumMemberName("interrupted")] Interrupted = 4,
 }

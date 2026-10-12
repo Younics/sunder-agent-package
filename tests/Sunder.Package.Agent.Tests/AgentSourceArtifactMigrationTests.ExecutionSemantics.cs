@@ -19,13 +19,14 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.Same(assembly, assembly.GetType("Sunder.Package.Agent.Contracts.Models.AgentShellSyntaxKinds", true)!.Assembly);
         // The context is a shared value used by Builder's typed proxy; it does not
         // own any backend authority. The authority implementations above stay Worker-only.
-        if (!app) Assert.Same(assembly, assembly.GetType("Sunder.Package.Agent.Contracts.Models.AgentResourceOperationContext", true)!.Assembly);
-        if (!app) Assert.Same(assembly, assembly.GetType("Sunder.Package.Agent.Contracts.Contracts.IAgentExecutionTarget", true)!.Assembly);
+        AssertImportedRoleModel(assembly, "AgentResourceOperationContext");
+        Assert.Null(assembly.GetType("Sunder.Package.Agent.Contracts.Contracts.IAgentExecutionTarget"));
+        Assert.Same(assembly, assembly.GetType(ImportedServices + "IExecutionTargetService", true)!.Assembly);
         if (app)
             foreach (var family in new[] { "Local", "Docker" })
                 Assert.Null(assembly.GetType($"Sunder.Package.Agent.Execution.{family}.{family}ExecutionTarget"));
-        if (!app) Assert.Same(assembly, assembly.GetType("Sunder.Package.Agent.Contracts.Models.AgentExecutionShellDescriptor", true)!.Assembly);
-        Assert.Null(assembly.GetType("Sunder.Package.Agent.Protocol.AgentRpcCatalog"));
-        Assert.Null(assembly.GetType("Sunder.Package.Agent.Protocol.AgentRpcServices"));
+        AssertImportedRoleModel(assembly, "AgentExecutionShellDescriptor");
+        Assert.Equal(new[] { "Sunder.Package.Agent.Protocol.AgentExecutionFacetIds" },
+            assembly.DefinedTypes.Where(type => type.Namespace == "Sunder.Package.Agent.Protocol").Select(type => type.FullName));
     }
 }

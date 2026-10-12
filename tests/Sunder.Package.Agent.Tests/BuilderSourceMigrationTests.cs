@@ -47,12 +47,16 @@ public sealed partial class BuilderSourceMigrationTests
             Assert.Equal("builder.runtime", registration.ProviderId);
             Assert.Equal(generated.Sha256, registration.DescriptorSha256);
             Assert.Equal(generated.AbiSha256, registration.AbiSha256);
-            Assert.Equal(6, Assert.Single(registration.DeclaredErrors["builder-runtime"]).Value.Count);
+            var service = Assert.Single(generated.Services);
+            var declaredErrors = registration.DeclaredErrors[service.ServiceId];
+            Assert.Equal(service.Methods.Count, declaredErrors.Count);
+            foreach (var method in service.Methods)
+                Assert.Equal(method.Errors, declaredErrors[method.MethodId]);
             state.Add("sunder.package.agent.builder", generated, registration.Handler, registration.Handler, NoopDisposable.Instance, registration.ProviderId, packageVersion: "2.0.0");
-            await composition.Options.OnActivated!(null!, CancellationToken.None);
+            await AgentSourceArtifactMigrationTests.ActivateGeneratedComposition(composition.Options);
             var provider = Assert.Single((await client.DiscoverAsync(generated.ContractId)).Providers);
             var error = await Assert.ThrowsAsync<SunderRpcException>(async () => await client.InvokeAsync(provider.Endpoint,
-                "builder-runtime", "execute", JsonSerializer.SerializeToElement(new { kind = "list-workspaces", timeoutSeconds = 600 })));
+                "builder-runtime", "list-workspaces", JsonSerializer.SerializeToElement(new { })));
             Assert.Equal(SunderRpcErrorKind.Domain, error.Error.Kind);
             Assert.Equal("agent.builder.workspace-execution-unavailable", error.Error.Code);
             await VerifyAppAsync(root, app, context, generated, registration, lifetime, state, client);

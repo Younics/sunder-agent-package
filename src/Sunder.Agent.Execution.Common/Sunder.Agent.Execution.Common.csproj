@@ -6,6 +6,7 @@
   <!-- This retained security/OS library owns its local domain values. Runtime
        packages compile the same reviewed source into their isolated Worker role. -->
   <ItemGroup>
+    <Compile Include="..\Sunder.Package.Agent\Models\Tools\AgentPermissionBoundaryIds.cs;..\Sunder.Package.Agent\Models\Tools\AgentFileReadErrorCodes.cs;..\Sunder.Package.Agent\Models\Execution\AgentFileSearchErrorCodes.cs" LinkBase="Models\Constants" />
     <Compile Include="..\Sunder.Package.Agent\Models\AgentWorkspaceRecord.cs" Link="Models\AgentWorkspaceRecord.cs" />
     <Compile Include="..\Sunder.Package.Agent\Models\Execution\AgentWorkspaceBindingRecord.cs;..\Sunder.Package.Agent\Models\Execution\AgentExecutionTargetContext.cs;..\Sunder.Package.Agent\Models\Execution\AgentExecutionTargetDescriptor.cs;..\Sunder.Package.Agent\Models\Execution\AgentFileSearchModels.cs;..\Sunder.Package.Agent\Models\Execution\AgentScopedInstructionDiscoveryModels.cs"
              LinkBase="Models\Execution" />

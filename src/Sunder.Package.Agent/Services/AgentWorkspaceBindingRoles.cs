@@ -4,4 +4,6 @@ namespace Sunder.Package.Agent.Services;
 public static class AgentWorkspaceBindingRoles
 {
     public const string PrimaryExecutionTarget = "primary-execution-target";
+    // Persisted workspace extension-point identity; it is not a client/dispatch registry.
+    public const string ExecutionTargetExtensionPoint = "sunder.agent.execution.target";
 }

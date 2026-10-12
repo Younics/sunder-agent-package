@@ -57,9 +57,6 @@ internal sealed partial class ProviderModelCatalogAdapter(
             model.SpeedOptions,
             model.ModeOptions);
 
-    public static ProviderModelCatalogOption ToCatalogOption(AgentEmbeddingModelDescriptor model)
-        => new(model.ModelId, model.DisplayName);
-
 }
 
 internal sealed class ProviderModelLoader(IProviderModelCatalog catalog) : IDisposable

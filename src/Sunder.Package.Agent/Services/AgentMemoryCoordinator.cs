@@ -1,27 +1,27 @@
 using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 using Sunder.Package.Agent.Contracts;
-using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Protocol;
+using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.Services;
 
 public sealed class AgentMemoryCoordinator(
     AgentSessionService sessionService,
-    AgentRpcCatalog rpcCatalog,
-    AgentLifecycleDispatcher? lifecycleDispatcher = null,
+    IServiceProviders<AgentServices.IPromptContextContributorService> contributors,
+    AgentLifecycleDispatcher lifecycleDispatcher,
     AgentExecutionTargetService? executionTargetService = null)
 {
     private const int MaxRecentLiveBufferTurns = 8;
     private const int MaxPromptContextTurns = 64;
 
     private readonly AgentSessionService _sessionService = sessionService;
-    private readonly AgentLifecycleDispatcher _lifecycleDispatcher =
-        lifecycleDispatcher ?? new AgentLifecycleDispatcher(sessionService.Store, rpcCatalog);
+    private readonly AgentLifecycleDispatcher _lifecycleDispatcher = lifecycleDispatcher;
     private readonly AgentExecutionTargetService? _executionTargetService = executionTargetService;
     private readonly ConcurrentDictionary<PromptContextAcknowledgmentKey,
-        IReadOnlyList<AgentRpcOwnedReference<IAgentPromptContextContributor, PromptContextContributorMetadata>>>
+        IReadOnlyList<ServiceProvider<AgentServices.IPromptContextContributorService>>>
         _promptContextAcknowledgments = new();
 
     public Task<AgentInstructionContext> BuildInstructionContextAsync(
@@ -143,7 +143,7 @@ public sealed class AgentMemoryCoordinator(
             AvailableTools = availableTools ?? [],
             MemoryConsistencyBarrier = _sessionService.GetMemoryConsistencyBarrier(runId),
             TranscriptEpoch = transcriptEpoch,
-            ExecutionTargetReference = ResolveExecutionTargetReference(executionBinding),
+            ExecutionTarget = await ResolveExecutionTargetAsync(executionBinding, cancellationToken).ConfigureAwait(false),
         };
         var collected = await CollectPromptContextBlocksAsync(
             promptContextRequest,
@@ -187,24 +187,32 @@ public sealed class AgentMemoryCoordinator(
         await _lifecycleDispatcher.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    private IReadOnlyList<AgentRpcOwnedReference<IAgentPromptContextContributor, PromptContextContributorMetadata>>
-        GetPromptContextContributors()
-        => AgentRpcInvocation.Snapshot(
-                rpcCatalog,
-                Sunder.Package.Agent.Runtime.Rpc.AgentPromptContextBindings.Service,
-                static contributor => new PromptContextContributorMetadata(
-                    contributor.ContributorId,
-                    contributor.DisplayName,
-                    contributor is IAgentPromptContextAcknowledgmentSink))
-            .OrderBy(contributor => contributor.Metadata.DisplayName, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(contributor => contributor.PackageId, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-
-    private AgentRpcReference<IAgentExecutionTarget>? ResolveExecutionTargetReference(
-        AgentWorkspaceBindingRecord? binding)
+    private async Task<IReadOnlyList<(ServiceProvider<AgentServices.IPromptContextContributorService> Provider, AgentPromptContextContributorDescriptor Descriptor)>>
+        GetPromptContextContributorsAsync(CancellationToken cancellationToken)
     {
-        return _executionTargetService?.ResolveTargetReference(binding);
+        var descriptions = new List<(ServiceProvider<AgentServices.IPromptContextContributorService> Provider, AgentPromptContextContributorDescriptor Descriptor)>();
+        var catalog = await contributors.ListAsync(cancellationToken).ConfigureAwait(false);
+        foreach (var provider in catalog.Providers)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (provider.State != ServiceProviderState.Active) continue;
+            // Description errors are not optional: the trusted contributor identity
+            // is needed before deciding whether scoped instruction context is required.
+            var descriptor = await provider.Service.DescribeAsync(cancellationToken).ConfigureAwait(false);
+            descriptions.Add((provider, descriptor));
+        }
+        return descriptions
+            .OrderBy(contributor => contributor.Descriptor.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(contributor => contributor.Provider.PackageId, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
+
+    private async ValueTask<ServiceReference<AgentServices.IExecutionTargetService>?> ResolveExecutionTargetAsync(
+        AgentWorkspaceBindingRecord? binding,
+        CancellationToken cancellationToken)
+        => _executionTargetService is null
+            ? null
+            : (await _executionTargetService.ResolveTargetAsync(binding, cancellationToken).ConfigureAwait(false))?.Reference;
 
     private static AgentSessionContextRecord CreateSessionContext(
         AgentSessionRecord session,
@@ -223,32 +231,29 @@ public sealed class AgentMemoryCoordinator(
         CancellationToken cancellationToken)
     {
         var blocks = new List<AgentPromptContextBlock>();
-        var acknowledgmentSinks = new List<
-            AgentRpcOwnedReference<IAgentPromptContextContributor, PromptContextContributorMetadata>>();
-        foreach (var ownedContributor in GetPromptContextContributors())
+        var acknowledgmentSinks = new List<ServiceProvider<AgentServices.IPromptContextContributorService>>();
+        foreach (var (provider, descriptor) in await GetPromptContextContributorsAsync(cancellationToken).ConfigureAwait(false))
         {
-            var required = AgentPromptContextHostPolicy.IsRequiredScopedInstructionContributor(ownedContributor);
-            if (required && ownedContributor.Metadata.SupportsAcknowledgment)
+            var required = AgentPromptContextHostPolicy.IsRequiredScopedInstructionContributor(provider.PackageId, descriptor.ContributorId);
+            if (required && !string.IsNullOrWhiteSpace(descriptor.AcknowledgmentSinkId))
             {
-                acknowledgmentSinks.Add(ownedContributor);
+                acknowledgmentSinks.Add(provider);
             }
-            if (!request.ContextPlan.ShouldContribute && !required)
+            if (!request.ContextPlan.ShouldContribute() && !required)
             {
                 continue;
             }
             try
             {
-                var contribution = await AgentRpcInvocation.InvokeAsync(
-                    ownedContributor,
-                    cancellationToken,
-                    (contributor, token) => contributor.ContributeContextAsync(request, token));
+                var contribution = await provider.Service.ContributeAsync(request, cancellationToken).ConfigureAwait(false);
                 if (contribution?.Blocks is { Count: > 0 })
                 {
                     blocks.AddRange(contribution.Blocks.Select(block =>
                         AgentPromptContextHostPolicy.Normalize(block, required)));
                 }
             }
-            catch (AgentPackageUnavailableException ex)
+            catch (SunderRpcException ex) when (!cancellationToken.IsCancellationRequested
+                && ex.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable)
             {
                 if (required)
                 {
@@ -299,14 +304,10 @@ public sealed class AgentMemoryCoordinator(
 
         try
         {
-            await AgentRpcInvocation.InvokeAsync(
-                sinks[0],
-                cancellationToken,
-                (contributor, token) =>
-                    ((IAgentPromptContextAcknowledgmentSink)contributor)
-                    .AcknowledgePromptContextAsync(receipt, token)).ConfigureAwait(false);
+            await sinks[0].Service.AcknowledgeAsync(receipt, cancellationToken).ConfigureAwait(false);
         }
-        catch (AgentPackageUnavailableException ex)
+        catch (SunderRpcException ex) when (!cancellationToken.IsCancellationRequested
+            && ex.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable)
         {
             throw new InvalidOperationException(
                 $"Required scoped instruction acknowledgment is unavailable: {AgentPromptContextHostPolicy.BoundMessage(ex.Message)}",
@@ -464,11 +465,6 @@ public sealed class AgentMemoryCoordinator(
     private static string NormalizeRecallText(string text)
         => Regex.Replace(text.Trim().ToLowerInvariant(), "[^a-z0-9]+", " ").Trim();
 
-    internal sealed record PromptContextContributorMetadata(
-        string ContributorId,
-        string DisplayName,
-        bool SupportsAcknowledgment);
-
     private readonly record struct PromptContextAcknowledgmentKey(
         Guid SessionId,
         Guid RunId,
@@ -476,8 +472,7 @@ public sealed class AgentMemoryCoordinator(
 
     private sealed record CollectedPromptContext(
         IReadOnlyList<AgentPromptContextBlock> Blocks,
-        IReadOnlyList<AgentRpcOwnedReference<IAgentPromptContextContributor, PromptContextContributorMetadata>>
-            AcknowledgmentSinks);
+        IReadOnlyList<ServiceProvider<AgentServices.IPromptContextContributorService>> AcknowledgmentSinks);
 }
 
 internal static class AgentPromptContextHostPolicy
@@ -488,11 +483,11 @@ internal static class AgentPromptContextHostPolicy
     internal const string ProfileInstructionIdentity = "sunder.host.profile-standing-instruction.v1";
 
     public static bool IsRequiredScopedInstructionContributor(
-        AgentRpcOwnedReference<IAgentPromptContextContributor, AgentMemoryCoordinator.PromptContextContributorMetadata>
-            contribution)
-        => string.Equals(contribution.PackageId, ScopedInstructionPackageId, StringComparison.OrdinalIgnoreCase)
+        string packageId,
+        string contributorId)
+        => string.Equals(packageId, ScopedInstructionPackageId, StringComparison.OrdinalIgnoreCase)
            && string.Equals(
-                contribution.Metadata.ContributorId,
+                contributorId,
                 ScopedInstructionContributorId,
                 StringComparison.Ordinal);
 

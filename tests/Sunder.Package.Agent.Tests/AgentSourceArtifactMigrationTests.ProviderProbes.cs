@@ -29,6 +29,16 @@ public sealed partial class AgentSourceArtifactMigrationTests
         {
             var source = Path.Combine(BuilderSourceMigrationTests.FindRepository(), "tests/Sunder.Package.Agent.Tests/Fixtures", fixture);
             File.Copy(source, Path.Combine(directory, "Probe.cs"));
+            if (fixture == "ProviderRoleLocalProbes.cs.txt")
+            {
+                var family = runtime.GetName().Name!.Split('.').Last();
+                Assert.Contains(family, new[] { "Gemini", "Anthropic", "LMStudio", "OpenAI" });
+                var hasEmbedding = family is "Gemini" or "LMStudio" or "OpenAI";
+                Assert.Equal(hasEmbedding, runtime.GetType(ImportedServices + "IEmbeddingProviderService") is not null);
+                if (hasEmbedding)
+                    File.Copy(Path.Combine(Path.GetDirectoryName(source)!, "ProviderEmbeddingRoleLocalProbe.cs.txt"),
+                        Path.Combine(directory, "EmbeddingProbe.cs"));
+            }
         }
         if (controlledComposition) WriteControlledWorkerEntry(worker, directory);
         var references = new[]

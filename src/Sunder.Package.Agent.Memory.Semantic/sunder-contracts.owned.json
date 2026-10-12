@@ -3,7 +3,8 @@
   "authorityKind": "package",
   "authorityId": "sunder.package.agent.memory.semantic",
   "packageId": "sunder.package.agent.memory.semantic",
-  "contracts": {
+  "contracts": {},
+  "retiredPrivateContracts": {
     "management": {
       "contractId": "sunder.agent.memory.semantic.inspector",
       "current": {

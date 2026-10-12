@@ -13,6 +13,7 @@ import tempfile
 import zipfile
 import zlib
 
+from agent_release import owned_contracts, has_public_evidence, version as semantic_version
 from native_release_inputs import (
     MAX_DOCUMENT, MAX_LEAF, MAX_RUN, RIDS, ROLE_INPUTS, compact, digest, file_record,
     file_set, integer, json_file, keys, parse, projection, qualification, read_bytes, regular,
@@ -36,8 +37,10 @@ def inventory(repository):
 
 
 def release_version(value):
-    require(re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?", value),
-            "Expected an explicit release version")
+    try:
+        semantic_version(value)
+    except ValueError as error:
+        raise ValueError("Expected an explicit release version (full strict SemVer)") from error
 
 
 def identity(version, agent_commit, core_tag, core_commit, core_version):
@@ -88,13 +91,20 @@ def frozen_baselines(repository, rows, version):
     release_version(version)
     for row in rows:
         path = repository / Path(row["projectPath"]).parent / "sunder-contracts.owned.json"
+        regular(path.parent, directory=True)
+        require(not path.is_symlink(), "Owned baseline cannot be a link")
+        if not path.exists():
+            # Core's source/qualified role checks reject lost public evidence.
+            # Private-only authoring has no independent Accept/Freeze file.
+            continue
         baseline = json_file(path)
-        require(baseline["packageId"] == row["packageId"], "Mixed owned baseline")
-        for contract in baseline["contracts"].values():
+        for contract in owned_contracts(baseline, row["packageId"]).values():
             current = contract.get("current")
             if current is not None:
+                require(has_public_evidence(contract),
+                        "rpc-authoring.private-baseline-migration-required: run MigratePrivateSunderContracts before native Build: " + str(path))
                 require(current["state"] in ("release-frozen", "published"),
-                        "Freeze every owned baseline for this release before native Build: " + str(path))
+                        "Freeze every public owned baseline for this release before native Build: " + str(path))
 
 
 def record_shape(record, path, maximum=MAX_LEAF):

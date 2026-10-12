@@ -5,6 +5,7 @@ namespace Sunder.Package.Agent.Contracts;
 /// <summary>
 /// Exposes the immutable identity and lifecycle snapshot of one Agent run generation.
 /// </summary>
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 public interface IAgentRunContext
 {
     /// <summary>Gets the globally unique durable-run identifier.</summary>
@@ -36,7 +37,7 @@ public interface IAgentRunContext
 /// <param name="StartedAtUtc">The UTC time at which the run generation started.</param>
 public sealed record AgentRunContextRecord(
     Guid RunId,
-    long Revision,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long Revision,
     AgentRunStatus Status,
     bool IsInterrupted,
     DateTimeOffset StartedAtUtc) : IAgentRunContext;

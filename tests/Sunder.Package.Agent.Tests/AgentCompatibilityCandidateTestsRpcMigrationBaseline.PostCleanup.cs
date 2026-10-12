@@ -6,14 +6,30 @@ namespace Sunder.Package.Agent.Tests;
 public sealed partial class AgentCompatibilityCandidateTestsRpcMigrationBaseline
 {
     [Fact]
-    public void SemanticSourceMap_IsHistoricalDataAndAll142RelocationsRemainLive()
+    public void SemanticSourceMap_IsHistoricalDataAndAll142RelocationsHaveReviewedDisposition()
     {
         var root = AgentPackageRepositoryInventory.RepositoryRoot.FullName;
         Assert.False(File.Exists(Path.Combine(root, "src/Sunder.Package.Agent/Models/AgentSemanticSources.props")));
         Assert.Equal(142, AgentSourceMigrationProjectChanges.ReadSemanticSourceMapHistory(root).Descendants("SunderAgentSemanticSource").Count());
         Assert.Equal(142, AgentSourceMigrationProjectChanges.CentralSemanticRelocations.Count);
-        Assert.All(AgentSourceMigrationProjectChanges.CentralSemanticRelocations.Values,
-            relative => Assert.True(File.Exists(Path.Combine(root, relative)), $"Missing actual relocated source: {relative}"));
+        var retired = new[]
+        {
+            "src/Sunder.Package.Agent/Runtime/Rpc/AgentRpcCatalog.cs",
+            "src/Sunder.Package.Agent/Runtime/Rpc/AgentRpcCatalog.Async.cs",
+            "src/Sunder.Package.Agent/Models/Extensions/AgentProfileSelectableCapabilityChangeObserver.cs",
+        };
+        Assert.All(retired, relative => Assert.Contains(relative, AgentSourceMigrationProjectChanges.CentralSemanticRelocations.Values));
+        Assert.All(AgentSourceMigrationProjectChanges.CentralSemanticRelocations.Values, relative =>
+        {
+            var path = Path.Combine(root, relative);
+            if (retired.Contains(relative, StringComparer.Ordinal))
+            {
+                Assert.False(File.Exists(path), $"Retired catalog helper reintroduced: {relative}");
+                Assert.True(AgentSourceMigrationProjectChanges.TryReadNaturalServiceHistory(root, path, out var history));
+                Assert.NotEmpty(history);
+            }
+            else Assert.True(File.Exists(path), $"Missing actual relocated business source: {relative}");
+        });
     }
 
     [Fact]
@@ -27,6 +43,10 @@ public sealed partial class AgentCompatibilityCandidateTestsRpcMigrationBaseline
         foreach (var change in changes)
         {
             var current = AgentSourceMigrationProjectChanges.ReadNormalizedProjectText(Path.Combine(root, change.Path));
+            // Compare this cleanup phase with its authenticated post-cleanup input,
+            // after guarding and undoing the later natural-service project changes.
+            if (AgentSourceMigrationProjectChanges.TryReadNaturalServiceDelta(root, Path.Combine(root, change.Path), current, out var preNatural))
+                current = preNatural;
             Assert.Equal(change.AfterSha256, AgentSourceMigrationProjectChanges.ProjectTextHash(current));
             var expected = XDocument.Parse(change.BeforeText);
             if (change.Path.EndsWith(".csproj", StringComparison.Ordinal))

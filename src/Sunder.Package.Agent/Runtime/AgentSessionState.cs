@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Sunder.Package.Agent.Contracts.Models;
 
 /// <summary>
@@ -11,17 +13,17 @@ namespace Sunder.Package.Agent.Contracts.Models;
 public enum AgentSessionState
 {
     /// <summary>The session can accept work and its latest run is preparing, running, idle, or waiting for approval.</summary>
-    Active = 0,
+    [JsonStringEnumMemberName("active")] Active = 0,
 
     /// <summary>The latest applicable run ended through cancellation, supersession, recovery, or another interruption.</summary>
-    Interrupted = 1,
+    [JsonStringEnumMemberName("interrupted")] Interrupted = 1,
 
     /// <summary>The latest applicable run was explicitly stopped.</summary>
-    Stopped = 2,
+    [JsonStringEnumMemberName("stopped")] Stopped = 2,
 
     /// <summary>The latest applicable run completed successfully.</summary>
-    Completed = 3,
+    [JsonStringEnumMemberName("completed")] Completed = 3,
 
     /// <summary>The latest applicable run failed.</summary>
-    Failed = 5,
+    [JsonStringEnumMemberName("failed")] Failed = 5,
 }

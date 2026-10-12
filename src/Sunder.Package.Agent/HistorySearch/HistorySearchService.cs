@@ -379,8 +379,8 @@ internal sealed partial class HistorySearchService(
                 indexer.RequestProviderRefresh();
                 return ([], true);
             }
-            var readiness = await embeddingProviders
-                .GetReadinessAsync(resolved, lease.CancellationToken).ConfigureAwait(false);
+            var readiness = await resolved.OwnedProvider.Provider.Service
+                .GetReadinessAsync(lease.CancellationToken).ConfigureAwait(false);
             lease.ThrowIfCurrent();
             if (readiness.Status != AgentProviderReadinessStatus.Ready)
             {
@@ -389,8 +389,8 @@ internal sealed partial class HistorySearchService(
                     "The selected embedding provider is not ready. Lexical search remains available.");
                 return ([], true);
             }
-            var generated = await embeddingProviders.GenerateEmbeddingAsync(
-                resolved,
+            var generated = await resolved.OwnedProvider.Provider.Service.GenerateAsync(
+                resolved.ModelId,
                 request.Query,
                 lease.CancellationToken).ConfigureAwait(false);
             lease.ThrowIfCurrent();

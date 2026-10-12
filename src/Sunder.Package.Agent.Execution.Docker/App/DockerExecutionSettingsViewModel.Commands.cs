@@ -23,9 +23,8 @@ public sealed partial class DockerExecutionSettingsViewModel
         var request = _requests.Begin(ImageListChannel, _lifetime.Token);
         try
         {
-            var response = await RunOperationAsync(new DockerExecutionOperationRequest(
-                    DockerExecutionOperationKind.AddImage,
-                    ImageReference: imageReference),
+            var response = await RunOperationAsync("AddImage",
+                token => ReadCatalogAsync(_presentationClient.AddImageAsync(imageReference, token), token),
                 request.CancellationToken,
                 showBusy: true,
                 () => _requests.IsCurrent(request)).ConfigureAwait(false);
@@ -73,9 +72,8 @@ public sealed partial class DockerExecutionSettingsViewModel
         var request = _requests.Begin(ImageListChannel, _lifetime.Token);
         try
         {
-            var response = await RunOperationAsync(new DockerExecutionOperationRequest(
-                    DockerExecutionOperationKind.DeleteImage,
-                    ImageReference: imageReference),
+            var response = await RunOperationAsync("DeleteImage",
+                token => ReadCatalogAsync(_presentationClient.DeleteImageAsync(imageReference, token), token),
                 request.CancellationToken,
                 showBusy: true,
                 () => _requests.IsCurrent(request)).ConfigureAwait(false);
@@ -126,9 +124,9 @@ public sealed partial class DockerExecutionSettingsViewModel
                     async context =>
                     {
                         context.ReportIndeterminate($"Pulling Docker image '{imageReference}'...");
-                        var response = await InvokePresentationRpcAsync(new DockerExecutionOperationRequest(
-                            DockerExecutionOperationKind.PullImage,
-                            ImageReference: imageReference), context.CancellationToken).ConfigureAwait(false);
+                        var response = await ReadCatalogAsync(
+                            _presentationClient.PullImageAsync(imageReference, context.CancellationToken),
+                            context.CancellationToken).ConfigureAwait(false);
                         if (response.Error is not null)
                         {
                             throw new InvalidOperationException(FormatOperationError(response.Error));
@@ -180,9 +178,8 @@ public sealed partial class DockerExecutionSettingsViewModel
         var request = _requests.Begin(ImageListChannel, _lifetime.Token);
         try
         {
-            var response = await RunOperationAsync(new DockerExecutionOperationRequest(
-                    DockerExecutionOperationKind.RefreshImage,
-                    ImageReference: selected.ImageReference),
+            var response = await RunOperationAsync("RefreshImage",
+                token => ReadCatalogAsync(_presentationClient.RefreshImageAsync(selected.ImageReference, token), token),
                 request.CancellationToken,
                 showBusy: true,
                 () => _requests.IsCurrent(request)).ConfigureAwait(false);
@@ -226,7 +223,7 @@ public sealed partial class DockerExecutionSettingsViewModel
         try
         {
             var response = await RunOperationAsync(
-                new DockerExecutionOperationRequest(DockerExecutionOperationKind.RefreshImages),
+                "RefreshImages", token => ReadCatalogAsync(_presentationClient.RefreshImagesAsync(token), token),
                 request.CancellationToken,
                 showBusy: true,
                 () => _requests.IsCurrent(request)).ConfigureAwait(false);
@@ -275,10 +272,8 @@ public sealed partial class DockerExecutionSettingsViewModel
             cancellationToken,
             _lifetime.Token);
         var dockerCliPath = DockerCliPath.Trim();
-        var response = await RunOperationAsync(new DockerExecutionOperationRequest(
-                DockerExecutionOperationKind.SaveSettings,
-                TimeoutSeconds: timeoutSeconds.ToString(),
-                DockerCliPath: dockerCliPath),
+        var response = await RunOperationAsync("SaveSettings",
+            token => _presentationClient.SaveSettingsAsync(timeoutSeconds.ToString(), dockerCliPath, token),
             linkedCancellation.Token,
             showBusy: true).ConfigureAwait(false);
         if (response is null)
@@ -313,7 +308,7 @@ public sealed partial class DockerExecutionSettingsViewModel
             cancellationToken,
             _lifetime.Token);
         var response = await RunOperationAsync(
-            new DockerExecutionOperationRequest(DockerExecutionOperationKind.TestDocker),
+            "TestDocker", _presentationClient.TestDockerAsync,
             linkedCancellation.Token,
             showBusy: true).ConfigureAwait(false);
         if (response is not null)

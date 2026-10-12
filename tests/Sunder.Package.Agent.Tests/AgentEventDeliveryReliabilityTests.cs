@@ -4,14 +4,16 @@ extern alias SubagentsWorker;
 
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Services;
 using McpWorker::Sunder.Package.Agent.Mcp.Runtime;
 using MemoryWorker::Sunder.Package.Agent.Memory.Semantic.Runtime;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Rpc;
-using CatalogApi = SubagentsWorker::Sunder.Generated.Rpc.ImportApis.CSunder_Agent_Runtime_Catalog;
-using RuntimeCatalogClient = SubagentsWorker::Sunder.Package.Agent.Subagents.Rpc.RuntimeCatalogClient;
+using RuntimeCatalogServices = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using RuntimeCatalogModels = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -21,9 +23,16 @@ public sealed class AgentEventDeliveryReliabilityTests
     [Fact]
     public async Task RuntimeCatalogStream_SaturationCoalescesDroppedRangeIntoReset()
     {
-        var catalog = new TestRuntimeCatalog();
+        using var scope = RegressionTestPackageScope.Create();
+        await using var services = RegressionTestRuntime.Create(scope.Context);
+        var sessions = services.GetRequiredService<AgentSessionService>();
+        var workspaces = services.GetRequiredService<AgentWorkspaceService>();
+        var catalog = new AgentRuntimeCatalog(
+            sessions,
+            services.GetRequiredService<AgentProfileService>(),
+            workspaces);
         using var cancellation = new CancellationTokenSource();
-        await using var events = new Rpc.Public.RuntimeCatalogService(catalog).CreateSunderRpcProviderRegistration().Handler
+        await using var events = catalog.CreateSunderRpcProviderRegistration().Handler
             .InvokeServerStreamAsync(
                 null!,
                 "runtime-catalog",
@@ -34,14 +43,15 @@ public sealed class AgentEventDeliveryReliabilityTests
 
         Assert.True(await events.MoveNextAsync());
         Assert.Equal("reset", events.Current.GetProperty("kind").GetString());
-        Assert.True(RegressionTestRpcDescriptors.Get(AgentRpcContractIds.RuntimeCatalog).IsValid(
+        Assert.True(CurrentPublicRpcDescriptors.Get(RegressionTestBindings.RuntimeCatalog).IsValid(
             "#/$defs/AgentRuntimeCatalogEvent",
             events.Current,
             out var schemaError), schemaError);
 
         for (var index = 0; index < 300; index++)
         {
-            catalog.RaiseSessionChanged(Guid.NewGuid());
+            var workspace = workspaces.CreateWorkspace($"Runtime catalog {index}");
+            sessions.CreateSession($"Session {index}", workspaceId: workspace.WorkspaceId);
         }
 
         Assert.True(await events.MoveNextAsync());
@@ -56,14 +66,22 @@ public sealed class AgentEventDeliveryReliabilityTests
     {
         var sessionId = Guid.NewGuid();
         var transport = new RetryingRuntimeCatalogRpcClient(sessionId);
-        await using var client = CreateRuntimeCatalogClient(transport);
-        var reset = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var session = new TaskCompletionSource<Guid>(TaskCreationOptions.RunContinuationsAsynchronously);
-        client.ResetRequired += () => reset.TrySetResult();
-        client.SessionChanged += id => session.TrySetResult(id);
+        await using var services = new GeneratedServiceTestScope(transport);
+        var client = await ResolveRuntimeCatalogClientAsync(services);
 
-        await reset.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Equal(sessionId, await session.Task.WaitAsync(TimeSpan.FromSeconds(5)));
+        await using (var initial = client.WatchAsync().GetAsyncEnumerator())
+        {
+            var error = await Assert.ThrowsAsync<SunderRpcException>(() => initial.MoveNextAsync().AsTask());
+            Assert.Equal(SunderRpcErrorKind.Unavailable, error.Error.Kind);
+        }
+
+        await using var events = client.WatchAsync().GetAsyncEnumerator();
+        Assert.True(await events.MoveNextAsync());
+        Assert.Equal(1, Assert.IsType<RuntimeCatalogModels.AgentRuntimeCatalogResetEvent>(events.Current).Sequence);
+        Assert.True(await events.MoveNextAsync());
+        var session = Assert.IsType<RuntimeCatalogModels.AgentSessionCatalogEvent>(events.Current);
+        Assert.Equal(2, session.Sequence);
+        Assert.Equal(sessionId, session.SessionId);
         Assert.True(transport.SubscriptionAttempts >= 2);
     }
 
@@ -73,13 +91,18 @@ public sealed class AgentEventDeliveryReliabilityTests
     public async Task RuntimeCatalogWorkspaceHandlers_PreserveRoutesAndPropagateCancellation(
         string methodId)
     {
-        var catalog = new TestRuntimeCatalog();
-        var handler = new Rpc.Public.RuntimeCatalogService(catalog).CreateSunderRpcProviderRegistration().Handler;
+        using var scope = RegressionTestPackageScope.Create();
+        await using var services = RegressionTestRuntime.Create(scope.Context);
+        var catalog = new AgentRuntimeCatalog(
+            services.GetRequiredService<AgentSessionService>(),
+            services.GetRequiredService<AgentProfileService>(),
+            services.GetRequiredService<AgentWorkspaceService>());
+        var handler = catalog.CreateSunderRpcProviderRegistration().Handler;
         using var cancellation = new CancellationTokenSource();
         await cancellation.CancelAsync();
         var request = methodId == "list-workspaces"
             ? JsonSerializer.SerializeToElement(new { })
-            : JsonSerializer.SerializeToElement(new { value = "workspace" });
+            : JsonSerializer.SerializeToElement("workspace");
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => handler.InvokeUnaryAsync(
             null!,
@@ -87,19 +110,14 @@ public sealed class AgentEventDeliveryReliabilityTests
             methodId,
             request,
             cancellation.Token).AsTask());
-
-        Assert.Equal(
-            cancellation.Token,
-            methodId == "list-workspaces"
-                ? catalog.ListWorkspacesCancellationToken
-                : catalog.GetWorkspaceCancellationToken);
     }
 
     [Fact]
     public async Task RuntimeCatalogWorkspaceClient_LinksListCallToClientLifetime()
     {
         var transport = new RetryingRuntimeCatalogRpcClient(Guid.NewGuid());
-        var client = CreateRuntimeCatalogClient(transport);
+        await using var services = new GeneratedServiceTestScope(transport);
+        var client = await ResolveRuntimeCatalogClientAsync(services);
         var disposed = false;
         try
         {
@@ -109,16 +127,19 @@ public sealed class AgentEventDeliveryReliabilityTests
             Assert.Equal("runtime-catalog", route.ServiceId);
             Assert.Equal("list-workspaces", route.MethodId);
 
-            await client.DisposeAsync();
+            await services.DisposeAsync();
             disposed = true;
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => listing)
-                .WaitAsync(TimeSpan.FromSeconds(5));
+            var retired = await Assert.ThrowsAsync<SunderRpcException>(() => listing);
+            Assert.Equal(SunderRpcErrorKind.Unavailable, retired.Error.Kind);
+            Assert.Equal("rpc.binding.retired", retired.Error.Code);
+            Assert.Equal(SunderRpcDispatchState.PossiblyDispatched, retired.Error.DispatchState);
+            Assert.Equal(SunderRpcRetrySafety.Unsafe, retired.Error.RetrySafety);
         }
         finally
         {
             if (!disposed)
             {
-                await client.DisposeAsync();
+                await services.DisposeAsync();
             }
         }
     }
@@ -197,9 +218,10 @@ public sealed class AgentEventDeliveryReliabilityTests
             delivered.Select(static change => change.Kind));
     }
 
-    private static RuntimeCatalogClient CreateRuntimeCatalogClient(RetryingRuntimeCatalogRpcClient transport)
-        => new(transport, new SubagentsWorker::Sunder.Generated.Rpc.AgentPackageApi(transport).CSunder_Agent_Runtime_Catalog,
-            new CatalogApi.Provider(transport.Provider), CancellationToken.None);
+    private static async ValueTask<RuntimeCatalogServices.IRuntimeCatalogService> ResolveRuntimeCatalogClientAsync(
+        GeneratedServiceTestScope services)
+        => Assert.Single((await services.Providers<RuntimeCatalogServices.IRuntimeCatalogService>().ListAsync()).Providers,
+            static provider => provider.ProviderId == "agent.runtime.catalog").Service;
 
     private sealed class RetryingRuntimeCatalogRpcClient(Guid sessionId) : ISunderRpcCallScope
     {
@@ -218,7 +240,7 @@ public sealed class AgentEventDeliveryReliabilityTests
 
         private static SunderRpcProviderSnapshot CreateProvider()
         {
-            var descriptor = RegressionTestRpcDescriptors.Get(AgentRpcContractIds.RuntimeCatalog);
+            var descriptor = CurrentPublicRpcDescriptors.Get(RegressionTestBindings.RuntimeCatalog);
             return new("sunder.package.agent", "2.0.0", "agent.runtime.catalog", descriptor.ContractId,
                 descriptor.Version, descriptor.Sha256, descriptor.AbiSha256!, Guid.NewGuid(), 1, 1,
                 new("rpc1_runtime_catalog_reliability"), 1, SunderRpcProviderState.Active);
@@ -243,13 +265,22 @@ public sealed class AgentEventDeliveryReliabilityTests
         public ValueTask<SunderRpcCatalogSnapshot> DiscoverAsync(
             string contractId,
             CancellationToken cancellationToken = default)
-            => throw new NotSupportedException();
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult(new SunderRpcCatalogSnapshot(
+                1,
+                1,
+                contractId == Provider.ContractId ? [Provider] : []));
+        }
 
-        public IAsyncEnumerable<SunderRpcCatalogEvent> WatchAsync(
+        public async IAsyncEnumerable<SunderRpcCatalogEvent> WatchAsync(
             long afterRevision,
             long afterSequence,
-            CancellationToken cancellationToken = default)
-            => throw new NotSupportedException();
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            yield break;
+        }
 
         public async ValueTask<JsonElement> InvokeAsync(
             SunderRpcEndpointReference endpoint,
@@ -282,6 +313,7 @@ public sealed class AgentEventDeliveryReliabilityTests
                     "Injected transient watch failure."));
             }
 
+            yield return JsonSerializer.SerializeToElement(new { kind = "reset", sequence = 1 });
             yield return JsonSerializer.SerializeToElement(new { kind = "session", sequence = 2, sessionId });
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
         }

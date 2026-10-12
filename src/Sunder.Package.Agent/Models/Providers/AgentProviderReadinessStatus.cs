@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Sunder.Package.Agent.Contracts.Models;
 
 /// <summary>
@@ -11,11 +13,14 @@ namespace Sunder.Package.Agent.Contracts.Models;
 public enum AgentProviderReadinessStatus
 {
     /// <summary>The provider has the configuration and credentials needed to attempt a request.</summary>
+    [JsonStringEnumMemberName("ready")]
     Ready = 0,
 
     /// <summary>User configuration, authorization, a secret, or a local model selection is required.</summary>
+    [JsonStringEnumMemberName("needs-configuration")]
     NeedsConfiguration = 1,
 
     /// <summary>The provider is configured but an operational check failed.</summary>
+    [JsonStringEnumMemberName("failed")]
     Failed = 2,
 }

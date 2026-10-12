@@ -15,7 +15,7 @@ internal sealed class LocalProcessExecutor(IPackageContext packageContext)
     {
         if (string.IsNullOrWhiteSpace(request.FileName))
         {
-            return new AgentShellCommandResult(1, "Command file name cannot be empty.");
+            return new AgentShellCommandResult { ExitCode = 1, Output = "Command file name cannot be empty.", TimedOut = false, WorkingDirectory = null, WasTruncated = false };
         }
 
         var workingDirectory = LocalPathResolver.ResolveWorkingDirectory(config, request.WorkingDirectory, context.AllowOutsideConfiguredScope);
@@ -45,7 +45,7 @@ internal sealed class LocalProcessExecutor(IPackageContext packageContext)
         LocalCommandRunner.ApplyPathEnvironment(startInfo, pathEntries);
         return await LocalCommandRunner.ExecuteAsync(
             startInfo,
-            request.TimeoutSeconds
+            checked((int?)request.TimeoutSeconds)
             ?? config.DefaultTimeoutSeconds
             ?? await LocalExecutionConfiguration.ResolveDefaultTimeoutSecondsAsync(packageContext, cancellationToken),
             workingDirectory,

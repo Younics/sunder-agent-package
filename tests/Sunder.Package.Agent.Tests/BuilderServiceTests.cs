@@ -3,35 +3,28 @@ extern alias BuilderApp;
 
 using System.Text.Json;
 using BuilderApp::Sunder.Package.Agent.Builder;
-using BuilderWorker::Sunder.Package.Agent.Builder.Rpc;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
 using Xunit;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using BuilderRuntimeModels = BuilderApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using BuilderRuntimeServices = BuilderApp::Sunder.Generated.Packages.Sunder_Package_Agent_Builder_Services;
 
 namespace Sunder.Package.Agent.Tests;
 
 public sealed class BuilderServiceTests
 {
     [Fact]
-    public void RpcPayloadLimits_RejectInconsistentRegisteredContentMetadata()
+    public async Task WorkspaceExecutionService_RejectsInconsistentContentLength()
     {
-        var bytes = BuilderRpcPayloadLimits.SerializeResponse(new BuilderRpcResponse());
-        var deadlineUtc = DateTimeOffset.UtcNow.AddMinutes(1);
-        var reference = new SunderRpcContentReference(
-            "builder-result",
-            bytes.LongLength,
-            new string('0', 64),
-            "application/json",
-            "builder-result.json",
-            deadlineUtc,
-            SunderRpcContentRepeatability.SingleUse);
+        var service = new BuilderWorkspaceExecutionService(new InconsistentContentRuntimeService());
 
-        Assert.Throws<InvalidDataException>(() =>
-            BuilderRpcPayloadLimits.ValidateRegisteredContent(reference, bytes, deadlineUtc));
+        await Assert.ThrowsAsync<InvalidDataException>(() => service.ListWorkspacesAsync());
     }
 
     [Fact]
@@ -235,7 +228,7 @@ public sealed class BuilderServiceTests
         {
             var result = service.ValidateProject(
                 CreateInitializedRecord(projectLink),
-                [AgentRoleBoundary.As<BuilderApp::Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord>(workspace)],
+                [ToBuilderWorkspace(workspace)],
                 requireExistingFolder: true,
                 requireInitializedPaths: true);
 
@@ -254,7 +247,7 @@ public sealed class BuilderServiceTests
         var workspace = CreateWorkspace(Path.GetTempPath());
         var target = new TestExecutionTarget(output: "Runtime output");
         using var runtime = CreateBuilderRpcClient(workspace, target);
-        var service = new BuilderWorkspaceExecutionService(new BuilderRpcGateway(runtime));
+        var service = new BuilderWorkspaceExecutionService(runtime);
 
         Assert.Equal(
             workspace.WorkspaceId,
@@ -280,7 +273,7 @@ public sealed class BuilderServiceTests
         var target = new ShellOnlyExecutionTarget();
         using var runtime = new LoopbackBuilderRpcClient(
             new ShellOnlyWorkspaceExecutionResolver(workspace, target));
-        var execution = await new BuilderWorkspaceExecutionService(new BuilderRpcGateway(runtime))
+        var execution = await new BuilderWorkspaceExecutionService(runtime)
             .ResolveAsync(workspace.WorkspaceId);
 
         var exception = await Assert.ThrowsAsync<NotSupportedException>(() => execution.RunProcessAsync(
@@ -299,7 +292,7 @@ public sealed class BuilderServiceTests
         var workspace = CreateWorkspace(Path.GetTempPath());
         var target = new TestExecutionTarget(output: new string('x', (512 * 1024) + 1));
         using var runtime = CreateBuilderRpcClient(workspace, target);
-        var execution = await new BuilderWorkspaceExecutionService(new BuilderRpcGateway(runtime)).ResolveAsync(workspace.WorkspaceId);
+        var execution = await new BuilderWorkspaceExecutionService(runtime).ResolveAsync(workspace.WorkspaceId);
 
         var result = await execution.RunShellAsync("dotnet build");
 
@@ -342,7 +335,7 @@ public sealed class BuilderServiceTests
         using var runtime = new LoopbackBuilderRpcClient(
             new ListOnlyWorkspaceExecutionResolver(workspaces));
 
-        var projected = await new BuilderWorkspaceExecutionService(new BuilderRpcGateway(runtime)).ListWorkspacesAsync();
+        var projected = await new BuilderWorkspaceExecutionService(runtime).ListWorkspacesAsync();
 
         Assert.Equal(workspaces.Length, projected.Count);
         var first = projected[0];
@@ -359,10 +352,10 @@ public sealed class BuilderServiceTests
     {
         var resolver = new BlockingWorkspaceExecutionResolver();
         using var runtime = new LoopbackBuilderRpcClient(resolver);
-        var service = new BuilderWorkspaceExecutionService(new BuilderRpcGateway(runtime));
+        var service = new BuilderWorkspaceExecutionService(runtime);
         using var cancellation = new CancellationTokenSource();
         using var allowCallerToExit = new ManualResetEventSlim();
-        var callReturned = new TaskCompletionSource<Task<IReadOnlyList<BuilderApp::Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord>>>(
+        var callReturned = new TaskCompletionSource<Task<IReadOnlyList<BuilderRuntimeModels.AgentWorkspaceRecord>>>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var callerThread = new Thread(() =>
         {
@@ -417,7 +410,7 @@ public sealed class BuilderServiceTests
     {
         var resolver = new CancellationAwareWorkspaceExecutionResolver();
         using var runtime = new LoopbackBuilderRpcClient(resolver);
-        var service = new BuilderWorkspaceExecutionService(new BuilderRpcGateway(runtime));
+        var service = new BuilderWorkspaceExecutionService(runtime);
         using var cancellation = new CancellationTokenSource();
 
         var listing = service.ListWorkspacesAsync(cancellation.Token);
@@ -468,9 +461,9 @@ public sealed class BuilderServiceTests
 
     [Theory]
     [InlineData(null)]
+    [InlineData("create")]
     [InlineData("restore")]
-    [InlineData("accept")]
-    public async Task InitializeProject_UsesOneRootAndExplicitInitialContractWorkflow(string? failStep)
+    public async Task InitializeProject_CreatesAndRestoresOneRootBeforeOrdinaryBuild(string? failStep)
     {
         var root = CreateProjectFolder();
         try
@@ -479,12 +472,15 @@ public sealed class BuilderServiceTests
             var workspace = CreateWorkspace(root);
             var service = CreateApplicationService(workspace, target, new RecordingProjectStore());
             var project = CreateRecord("sample") with { WorkspacePathId = "workspace.path" };
+            var progress = new List<string>();
+            var context = new BackgroundProcessContext(CancellationToken.None, _ => { }, (_, _) => { }, progress.Add);
             var initialize = service.InitializeProjectAsync(project,
-                AgentRoleBoundary.As<BuilderApp::Sunder.Package.Agent.Contracts.Models.AgentWorkspacePathRecord>(Assert.Single(workspace.Paths)), CreateContext());
+                ToBuilderWorkspacePath(Assert.Single(workspace.Paths)), context);
             if (failStep is null)
             {
                 var initialized = await initialize;
                 Assert.EndsWith("sample", initialized.Project.ExecutionProjectFolder, StringComparison.Ordinal);
+                await service.BuildProjectAsync(initialized.Project, context);
             }
             else
             {
@@ -493,10 +489,18 @@ public sealed class BuilderServiceTests
             }
             var create = Assert.Single(target.Requests, request => request.Arguments.Count > 1 && request.Arguments[1] == "sunder-package");
             Assert.DoesNotContain("--createInPlace", create.Arguments);
-            Assert.Single(target.Requests, request => request.Arguments[0] == "restore");
-            var accepts = target.Requests.Where(request => request.Arguments.Contains("-t:AcceptSunderContracts")).ToArray();
-            if (failStep == "restore") Assert.Empty(accepts);
-            else Assert.Equal(new[] { "msbuild", "-t:AcceptSunderContracts", "-p:SunderContractKey=sample", "-p:SunderContractNextVersion=2.0.0" }, Assert.Single(accepts).Arguments);
+            var projectFolder = create.Arguments[create.Arguments.ToList().IndexOf("--output") + 1];
+            Assert.Equal(root, create.WorkingDirectory);
+            var operations = target.Requests.Where(request => request.Arguments[0] is "restore" or "build" or "msbuild").ToArray();
+            string[] expectedOperations = failStep switch { "create" => [], "restore" => ["restore"], _ => ["restore", "build"] };
+            Assert.Equal(expectedOperations, operations.Select(request => request.Arguments[0]).ToArray());
+            Assert.All(operations, request =>
+            {
+                Assert.Equal("dotnet", request.FileName);
+                Assert.Equal(new[] { request.Arguments[0], projectFolder }, request.Arguments);
+                Assert.Equal(projectFolder, request.WorkingDirectory);
+            });
+            Assert.DoesNotContain(progress, message => message.Contains("contract", StringComparison.OrdinalIgnoreCase));
         }
         finally { Directory.Delete(root, recursive: true); }
     }
@@ -554,7 +558,7 @@ public sealed class BuilderServiceTests
                 pathService,
                 dispatcher);
             var project = new BuilderProjectViewModel(CreateInitializedRecord(root));
-            viewModel.Workspaces.Add(AgentRoleBoundary.As<BuilderApp::Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord>(workspace));
+            viewModel.Workspaces.Add(ToBuilderWorkspace(workspace));
             viewModel.Projects.Add(project);
             viewModel.ActivateProject(project);
             await viewModel.BuildSelectedProjectAsync();
@@ -598,7 +602,7 @@ public sealed class BuilderServiceTests
         pathService ??= new BuilderPathService();
         return new BuilderProjectApplicationService(
             new BuilderSetupService(),
-            new BuilderWorkspaceExecutionService(new BuilderRpcGateway(CreateBuilderRpcClient(workspace, target))),
+            new BuilderWorkspaceExecutionService(CreateBuilderRpcClient(workspace, target)),
             store,
             pathService);
     }
@@ -658,6 +662,41 @@ public sealed class BuilderServiceTests
             [new AgentWorkspacePathRecord("workspace.path", "workspace.local", root, true, 0, now, now)]);
     }
 
+    private static BuilderRuntimeModels.AgentWorkspaceRecord ToBuilderWorkspace(AgentWorkspaceRecord workspace)
+        => new()
+        {
+            WorkspaceId = workspace.WorkspaceId,
+            DisplayName = workspace.DisplayName,
+            Description = workspace.Description,
+            CreatedAtUtc = ToWireTimestamp(workspace.CreatedAtUtc),
+            UpdatedAtUtc = ToWireTimestamp(workspace.UpdatedAtUtc),
+            Paths = workspace.Paths.Select(ToBuilderWorkspacePath).ToArray(),
+            Documents = workspace.Documents.Select(document => new BuilderRuntimeModels.AgentWorkspaceDocumentRecord
+            {
+                DocumentId = document.DocumentId,
+                WorkspaceId = document.WorkspaceId,
+                FilePath = document.FilePath,
+                SortOrder = document.SortOrder,
+                CreatedAtUtc = ToWireTimestamp(document.CreatedAtUtc),
+                UpdatedAtUtc = ToWireTimestamp(document.UpdatedAtUtc),
+            }).ToArray(),
+        };
+
+    private static BuilderRuntimeModels.AgentWorkspacePathRecord ToBuilderWorkspacePath(AgentWorkspacePathRecord path)
+        => new()
+        {
+            PathId = path.PathId,
+            WorkspaceId = path.WorkspaceId,
+            HostPath = path.HostPath,
+            IsDefault = path.IsDefault,
+            SortOrder = path.SortOrder,
+            CreatedAtUtc = ToWireTimestamp(path.CreatedAtUtc),
+            UpdatedAtUtc = ToWireTimestamp(path.UpdatedAtUtc),
+        };
+
+    private static SunderRpcOffsetDateTime ToWireTimestamp(DateTimeOffset value)
+        => new(value.ToString("O"));
+
     private static LoopbackBuilderRpcClient CreateBuilderRpcClient(
         AgentWorkspaceRecord workspace,
         TestExecutionTarget target)
@@ -665,6 +704,30 @@ public sealed class BuilderServiceTests
 
     private static BackgroundProcessContext CreateContext(CancellationToken cancellationToken = default)
         => new(cancellationToken, _ => { }, (_, _) => { }, _ => { });
+
+    private sealed class InconsistentContentRuntimeService : BuilderRuntimeServices.IBuilderRuntimeService
+    {
+        public ValueTask<SunderContent> ListWorkspacesAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new SunderContent(
+                "application/json",
+                "builder-result.json",
+                length: 1,
+                sha256: new string('0', 64),
+                expiresAtUtc: null,
+                isRepeatable: true,
+                _ => ValueTask.FromResult<Stream>(new MemoryStream([0, 1]))));
+
+        public ValueTask AddPathEntryAsync(string workspaceId, string executionPath, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+        public ValueTask<SunderContent> ExecuteProcessAsync(string workspaceId, BuilderRuntimeModels.AgentProcessCommandRequest request,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public ValueTask<SunderContent> ExecuteShellAsync(string workspaceId, BuilderRuntimeModels.AgentShellCommandRequest request,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public ValueTask<BuilderRuntimeModels.AgentExecutionPathMapping> MapToHostPathAsync(string workspaceId, string executionPath,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public ValueTask<SunderContent> ResolveWorkspaceAsync(string workspaceId, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+    }
 
     private sealed class RecordingProjectStore(bool blockFirstSave = false) : IBuilderProjectStore
     {
@@ -842,42 +905,32 @@ public sealed class BuilderServiceTests
         }
     }
 
-    private sealed class TestExtensionCatalog : RegressionTestExtensionCatalog
-    {
-        public TestExtensionCatalog(IAgentWorkspaceExecutionResolver resolver)
-        {
-            if (resolver is ITestWorkspaceExecutionResolverBinding testResolver)
-            {
-                AddProvider(RegressionTestBindings.ExecutionTargets, testResolver.Target);
-                testResolver.BindTargetReference(GetRequiredReference(RegressionTestBindings.ExecutionTargets));
-            }
-            AddProvider(AgentRpcContractIds.WorkspaceExecutionResolver, resolver, "sunder.package.agent");
-        }
-    }
-
     private sealed class TestWorkspaceExecutionResolver :
         IAgentWorkspaceExecutionResolver,
-        ITestWorkspaceExecutionResolverBinding
+        ITestWorkspaceExecutionResolverBinding,
+        IAsyncDisposable
     {
         private readonly AgentWorkspaceRecord _workspace;
         private readonly TestExecutionTarget _target;
-        private readonly RegressionTestExtensionCatalog _targetCatalog = new();
-        private AgentRpcReference<IAgentExecutionTarget> _targetReference;
+        private readonly FakeServiceCatalog<AgentServices.IExecutionTargetService> _targetCatalog = new(
+            CurrentPublicRpcDescriptors.Get(RegressionTestBindings.ExecutionTargets));
+        private ServiceReference<AgentServices.IExecutionTargetService> _targetReference;
 
         public TestWorkspaceExecutionResolver(AgentWorkspaceRecord workspace, TestExecutionTarget target)
         {
             _workspace = workspace;
             _target = target;
-            _targetCatalog.AddProvider(RegressionTestBindings.ExecutionTargets, target);
-            _targetReference = _targetCatalog.GetRequiredReference(RegressionTestBindings.ExecutionTargets);
+            _targetReference = _targetCatalog.Add(new RegressionTestExecutionProvider(target), "test.execution.target").Reference;
         }
 
         public TestExecutionTarget Target => _target;
 
         IAgentExecutionTarget ITestWorkspaceExecutionResolverBinding.Target => _target;
 
-        public void BindTargetReference(AgentRpcReference<IAgentExecutionTarget> targetReference)
+        public void BindTargetReference(ServiceReference<AgentServices.IExecutionTargetService> targetReference)
             => _targetReference = targetReference;
+
+        public ValueTask DisposeAsync() => _targetCatalog.DisposeAsync();
 
         public ValueTask<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesAsync(
             CancellationToken cancellationToken = default)
@@ -891,7 +944,7 @@ public sealed class BuilderServiceTests
             var binding = new AgentWorkspaceBindingRecord(
                 "binding.local",
                 _workspace.WorkspaceId,
-                AgentRpcContractIds.ExecutionTarget,
+                RegressionTestBindings.ExecutionTargets,
                 "local",
                 "primary",
                 true,
@@ -907,11 +960,7 @@ public sealed class BuilderServiceTests
                 binding,
                 _target.Descriptor,
                 scope,
-                _target)
-            {
-                ExecutionTargetReference = _targetReference,
-                ExecutionTargetHandle = _targetReference.ToHandle(),
-            });
+                _targetReference));
         }
     }
 
@@ -1043,8 +1092,8 @@ public sealed class BuilderServiceTests
                 return new AgentShellCommandResult(0, "sunder-package");
             if (failInitializationStep == "restore" && request.Arguments[0] == "restore")
                 return new AgentShellCommandResult(1, "restore failed");
-            if (failInitializationStep == "accept" && request.Arguments.Contains("-t:AcceptSunderContracts"))
-                return new AgentShellCommandResult(1, "accept failed");
+            if (failInitializationStep == "create" && request.Arguments.Take(2).SequenceEqual(["new", "sunder-package"]))
+                return new AgentShellCommandResult(1, "create failed");
             LastProjectOperation = request.Arguments.FirstOrDefault();
             LastProjectArguments = request.Arguments.ToArray();
             ProjectOperationStarted.TrySetResult();
@@ -1075,22 +1124,34 @@ public sealed class BuilderServiceTests
             => ValueTask.FromResult(new AgentFileMutationResult(request.Path, "Deleted"));
     }
 
-    private sealed class ShellOnlyWorkspaceExecutionResolver(
-        AgentWorkspaceRecord workspace,
-        ShellOnlyExecutionTarget target) :
+    private sealed class ShellOnlyWorkspaceExecutionResolver :
         IAgentWorkspaceExecutionResolver,
-        ITestWorkspaceExecutionResolverBinding
+        ITestWorkspaceExecutionResolverBinding,
+        IAsyncDisposable
     {
-        private AgentRpcReference<IAgentExecutionTarget>? _targetReference;
+        private readonly AgentWorkspaceRecord _workspace;
+        private readonly ShellOnlyExecutionTarget _target;
+        private readonly FakeServiceCatalog<AgentServices.IExecutionTargetService> _targetCatalog = new(
+            CurrentPublicRpcDescriptors.Get(RegressionTestBindings.ExecutionTargets));
+        private ServiceReference<AgentServices.IExecutionTargetService> _targetReference;
 
-        IAgentExecutionTarget ITestWorkspaceExecutionResolverBinding.Target => target;
+        public ShellOnlyWorkspaceExecutionResolver(AgentWorkspaceRecord workspace, ShellOnlyExecutionTarget target)
+        {
+            _workspace = workspace;
+            _target = target;
+            _targetReference = _targetCatalog.Add(new RegressionTestExecutionProvider(target), "test.shellonly.execution.target").Reference;
+        }
 
-        public void BindTargetReference(AgentRpcReference<IAgentExecutionTarget> targetReference)
+        IAgentExecutionTarget ITestWorkspaceExecutionResolverBinding.Target => _target;
+
+        public void BindTargetReference(ServiceReference<AgentServices.IExecutionTargetService> targetReference)
             => _targetReference = targetReference;
+
+        public ValueTask DisposeAsync() => _targetCatalog.DisposeAsync();
 
         public ValueTask<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesAsync(
             CancellationToken cancellationToken = default)
-            => ValueTask.FromResult<IReadOnlyList<AgentWorkspaceRecord>>([workspace]);
+            => ValueTask.FromResult<IReadOnlyList<AgentWorkspaceRecord>>([_workspace]);
 
         public ValueTask<AgentWorkspaceExecutionResolution> ResolveAsync(
             string workspaceId,
@@ -1099,8 +1160,8 @@ public sealed class BuilderServiceTests
             var now = DateTimeOffset.UtcNow;
             var binding = new AgentWorkspaceBindingRecord(
                 "binding.shell-only",
-                workspace.WorkspaceId,
-                AgentRpcContractIds.ExecutionTarget,
+                _workspace.WorkspaceId,
+                RegressionTestBindings.ExecutionTargets,
                 "shell-only",
                 "primary",
                 true,
@@ -1108,19 +1169,14 @@ public sealed class BuilderServiceTests
                 now,
                 now);
             return ValueTask.FromResult(new AgentWorkspaceExecutionResolution(
-                workspace,
+                _workspace,
                 binding,
-                target.Descriptor,
+                _target.Descriptor,
                 new AgentExecutionScopeDescriptor(
                     "Shell only",
-                    [workspace.Paths[0].HostPath],
-                    workspace.Paths[0].HostPath),
-                target)
-            {
-                ExecutionTargetReference = _targetReference
-                    ?? throw new InvalidOperationException("Shell-only target was not bound."),
-                ExecutionTargetHandle = _targetReference.ToHandle(),
-            });
+                    [_workspace.Paths[0].HostPath],
+                    _workspace.Paths[0].HostPath),
+                _targetReference));
         }
     }
 
@@ -1191,127 +1247,124 @@ public sealed class BuilderServiceTests
             => throw new NotSupportedException();
     }
 
-    internal sealed class LoopbackBuilderRpcClient : ISunderRpcClient, IDisposable
+    internal sealed class LoopbackBuilderRpcClient : BuilderRuntimeServices.IBuilderRuntimeService, IDisposable
     {
-        private readonly RegressionTestExtensionCatalog _catalog = new();
-        private readonly BuilderExecutionBindings _bindings;
-        private readonly RegressionTestRpcState _state;
-        private readonly RegressionTestRpcClient _client;
+        private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
+        {
+            Converters = { new SunderRpcJsonConverterFactory() },
+        };
+        private readonly IAgentWorkspaceExecutionResolver _resolver;
+        private readonly IAgentExecutionTarget? _target;
 
         public LoopbackBuilderRpcClient(IAgentWorkspaceExecutionResolver resolver)
         {
-            _client = (RegressionTestRpcClient)_catalog.RpcForCaller("sunder.package.agent.builder");
-            _state = _client.State;
+            _resolver = resolver;
             if (resolver is ITestWorkspaceExecutionResolverBinding testResolver)
             {
-                _catalog.AddProvider(RegressionTestBindings.ExecutionTargets, testResolver.Target, "test.execution.target");
-                testResolver.BindTargetReference(
-                    _catalog.GetRequiredReference(RegressionTestBindings.ExecutionTargets));
+                _target = testResolver.Target;
             }
-            _catalog.AddProvider(AgentRpcContractIds.WorkspaceExecutionResolver, resolver, "sunder.package.agent");
-            _bindings = new BuilderExecutionBindings(_client);
-            _bindings.StartAsync().GetAwaiter().GetResult();
-            var provider = new BuilderWorker::Sunder.Package.Agent.Builder.BuilderRuntimeService(_bindings);
-            var recordingProvider = new RecordingBuilderRuntimeHandler(this, provider.CreateSunderRpcProviderRegistration().Handler);
-            _state.AddGenerated(
-                "sunder.package.agent.builder",
-                recordingProvider,
-                BuilderWorker::Sunder.Package.Agent.Builder.BuilderRuntimeService.DeclareSunderRpcProvider(recordingProvider),
-                NoopDisposable.Instance,
-                "builder.runtime");
         }
 
         public List<string> RequestKinds { get; } = [];
 
         public int MaximumResponseBytes { get; private set; }
 
-        public ValueTask<ISunderRpcCallScope> CreateCallScopeAsync(
-            SunderRpcCallOptions? options = null,
-            CancellationToken cancellationToken = default)
-            => _client.CreateCallScopeAsync(options, cancellationToken);
+        public async ValueTask<Sunder.Sdk.Services.SunderContent> ListWorkspacesAsync(CancellationToken cancellationToken = default)
+        {
+            RequestKinds.Add("ListWorkspaces");
+            return Content(await _resolver.ListWorkspacesAsync(cancellationToken));
+        }
 
-        public ValueTask<SunderRpcProviderSnapshot?> GetProviderAsync(
-            SunderRpcEndpointReference endpoint,
-            CancellationToken cancellationToken = default)
-            => _client.GetProviderAsync(endpoint, cancellationToken);
+        public async ValueTask<Sunder.Sdk.Services.SunderContent> ResolveWorkspaceAsync(string workspaceId, CancellationToken cancellationToken = default)
+        {
+            RequestKinds.Add("ResolveWorkspace");
+            var resolution = await _resolver.ResolveAsync(workspaceId, cancellationToken);
+            var target = RequireTarget();
+            var context = new AgentExecutionTargetContext(null, null, resolution.Workspace, resolution.Binding);
+            var shell = await target.GetShellAsync(context, cancellationToken);
+            return Content(new
+            {
+                resolution.Workspace,
+                resolution.Binding,
+                resolution.Target,
+                resolution.Scope,
+                Shell = shell,
+                SupportsPathMapping = target is IAgentExecutionPathMapper,
+                SupportsPathEnvironment = target is IAgentExecutionPathEnvironment,
+            });
+        }
 
-        public ValueTask<bool> TryReportInvariantViolationAsync(
-            SunderRpcEndpointReference endpoint,
-            Exception exception,
+        public async ValueTask<Sunder.Sdk.Services.SunderContent> ExecuteProcessAsync(
+            string workspaceId,
+            BuilderRuntimeModels.AgentProcessCommandRequest request,
             CancellationToken cancellationToken = default)
-            => _client.TryReportInvariantViolationAsync(endpoint, exception, cancellationToken);
+        {
+            RequestKinds.Add("ExecuteProcess");
+            var resolution = await _resolver.ResolveAsync(workspaceId, cancellationToken);
+            var target = RequireTarget() as IAgentProcessExecutionTarget
+                ?? throw new NotSupportedException("Package Builder requires the execution target's structured process-execution facet.");
+            var result = await target.ExecuteProcessAsync(new AgentExecutionTargetContext(null, null, resolution.Workspace, resolution.Binding),
+                new AgentProcessCommandRequest(request.FileName, request.Arguments, request.WorkingDirectory,
+                    request.TimeoutSeconds is { } timeout ? checked((int)timeout) : null), cancellationToken);
+            return Content(ProcessResult(result));
+        }
 
-        public ValueTask<SunderRpcCatalogSnapshot> DiscoverAsync(
-            string contractId,
+        public async ValueTask<Sunder.Sdk.Services.SunderContent> ExecuteShellAsync(
+            string workspaceId,
+            BuilderRuntimeModels.AgentShellCommandRequest request,
             CancellationToken cancellationToken = default)
-            => _client.DiscoverAsync(contractId, cancellationToken);
+        {
+            RequestKinds.Add("ExecuteShell");
+            var resolution = await _resolver.ResolveAsync(workspaceId, cancellationToken);
+            var result = await RequireTarget().ExecuteShellAsync(new AgentExecutionTargetContext(null, null, resolution.Workspace, resolution.Binding),
+                new AgentShellCommandRequest(request.Command, request.WorkingDirectory,
+                    request.TimeoutSeconds is { } timeout ? checked((int)timeout) : null), cancellationToken);
+            return Content(ProcessResult(result));
+        }
 
-        public IAsyncEnumerable<SunderRpcCatalogEvent> WatchAsync(
-            long afterRevision,
-            long afterSequence,
+        public async ValueTask<BuilderRuntimeModels.AgentExecutionPathMapping> MapToHostPathAsync(
+            string workspaceId,
+            string executionPath,
             CancellationToken cancellationToken = default)
-            => _client.WatchAsync(afterRevision, afterSequence, cancellationToken);
+        {
+            var resolution = await _resolver.ResolveAsync(workspaceId, cancellationToken);
+            var mapping = await (RequireTarget() as IAgentExecutionPathMapper
+                ?? throw new NotSupportedException()).MapToHostPathAsync(new AgentExecutionTargetContext(null, null, resolution.Workspace, resolution.Binding), executionPath, cancellationToken);
+            return JsonSerializer.Deserialize<BuilderRuntimeModels.AgentExecutionPathMapping>(JsonSerializer.SerializeToUtf8Bytes(mapping, Json), Json)!;
+        }
 
-        public ValueTask<JsonElement> InvokeAsync(
-            SunderRpcEndpointReference endpoint,
-            string serviceId,
-            string methodId,
-            JsonElement request,
-            SunderRpcCallOptions? options = null,
-            CancellationToken cancellationToken = default)
-            => _client.InvokeAsync(endpoint, serviceId, methodId, request, options, cancellationToken);
-
-        public IAsyncEnumerable<JsonElement> SubscribeAsync(
-            SunderRpcEndpointReference endpoint,
-            string serviceId,
-            string methodId,
-            JsonElement request,
-            SunderRpcCallOptions? options = null,
-            CancellationToken cancellationToken = default)
-            => _client.SubscribeAsync(endpoint, serviceId, methodId, request, options, cancellationToken);
+        public async ValueTask AddPathEntryAsync(string workspaceId, string executionPath, CancellationToken cancellationToken = default)
+        {
+            var resolution = await _resolver.ResolveAsync(workspaceId, cancellationToken);
+            await (RequireTarget() as IAgentExecutionPathEnvironment
+                ?? throw new NotSupportedException()).AddPathEntryAsync(new AgentExecutionTargetContext(null, null, resolution.Workspace, resolution.Binding), executionPath, cancellationToken);
+        }
 
         public void Dispose()
         {
-            try { Task.Run(async () => await _bindings.DisposeAsync().ConfigureAwait(false)).GetAwaiter().GetResult(); }
-            finally { _catalog.Dispose(); }
+            if (_resolver is IAsyncDisposable disposable)
+            {
+                disposable.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            }
         }
 
-        private sealed class RecordingBuilderRuntimeHandler(
-            LoopbackBuilderRpcClient owner,
-            ISunderRpcServiceHandler provider) : ISunderRpcServiceHandler, ISunderRpcDeclaredErrorMetadata
+        private IAgentExecutionTarget RequireTarget()
+            => _target ?? throw new InvalidOperationException("The workspace execution target was not bound.");
+
+        private static BuilderProcessResult ProcessResult(AgentShellCommandResult result)
         {
-            public IReadOnlyDictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>> DeclaredErrors
-                => ((ISunderRpcDeclaredErrorMetadata)provider).DeclaredErrors;
-
-            public async ValueTask<JsonElement> InvokeUnaryAsync(
-                SunderRpcInvocationContext context,
-                string serviceId,
-                string methodId,
-                JsonElement request,
-                CancellationToken cancellationToken = default)
-            {
-                owner.RequestKinds.Add(Enum.Parse<BuilderRpcOperationKind>(request.GetProperty("kind").GetString()!.Replace("-", "", StringComparison.Ordinal), ignoreCase: true).ToString());
-                var response = await provider.InvokeUnaryAsync(context, serviceId, methodId, request, cancellationToken).ConfigureAwait(false);
-                var options = new JsonSerializerOptions(JsonSerializerDefaults.Web) { Converters = { new SunderRpcJsonConverterFactory() } };
-                var content = response.GetProperty("content").Deserialize<SunderRpcContentReference>(options)!;
-                owner.MaximumResponseBytes = Math.Max(
-                    owner.MaximumResponseBytes,
-                    checked((int)content.Length));
-                return response;
-            }
-
-            public IAsyncEnumerable<JsonElement> InvokeServerStreamAsync(SunderRpcInvocationContext context, string serviceId,
-                string methodId, JsonElement request, CancellationToken cancellationToken = default)
-                => provider.InvokeServerStreamAsync(context, serviceId, methodId, request, cancellationToken);
+            const int maximum = 512 * 1024;
+            return new BuilderProcessResult(result.ExitCode,
+                result.Output.Length <= maximum ? result.Output : result.Output[..maximum],
+                string.Empty,
+                result.WasTruncated || result.Output.Length > maximum);
         }
 
-        private sealed class NoopDisposable : IDisposable
+        private Sunder.Sdk.Services.SunderContent Content<T>(T value)
         {
-            public static NoopDisposable Instance { get; } = new();
-
-            public void Dispose()
-            {
-            }
+            var bytes = JsonSerializer.SerializeToUtf8Bytes(value, Json);
+            MaximumResponseBytes = Math.Max(MaximumResponseBytes, bytes.Length);
+            return Sunder.Sdk.Services.SunderContent.FromBytes(bytes, "application/json", "builder-result.json");
         }
     }
 }
@@ -1320,5 +1373,5 @@ internal interface ITestWorkspaceExecutionResolverBinding
 {
     IAgentExecutionTarget Target { get; }
 
-    void BindTargetReference(AgentRpcReference<IAgentExecutionTarget> targetReference);
+    void BindTargetReference(ServiceReference<AgentServices.IExecutionTargetService> targetReference);
 }

@@ -10,5 +10,5 @@ public sealed record AgentPromptContextScope(
     string ScopeRoot,
     string AppliesToDirectory,
     string DocumentPath,
-    string ContentHash,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(MinLength = 64, MaxLength = 64)] string ContentHash,
     string ContextIdentity);

@@ -17,8 +17,7 @@
     <PackageReference Include="OpenAI" />
     <PackageReference Include="Avalonia" />
     <PackageReference Include="CommunityToolkit.Mvvm" />
-    <_ProviderDomainSource Include="@(SunderAgentProviderRuntimeSource);@(SunderAgentProviderAppSource)" />
-    <Compile Include="@(_ProviderDomainSource->Distinct())" LinkBase="Domain" />
+    <Compile Include="@(SunderAgentProviderSupportSource)" LinkBase="Domain" />
     <Compile Include="..\Sunder.Package.Agent.Provider.Shared\*.cs"
              Exclude="..\Sunder.Package.Agent.Provider.Shared\ApiKeySettingsState.cs;..\Sunder.Package.Agent.Provider.Shared\ApiKeyUtilitySettingsState.cs;..\Sunder.Package.Agent.Provider.Shared\ProviderConfigurationSections.cs;..\Sunder.Package.Agent.Provider.Shared\UtilityModelSettingsState.cs"
              Link="Provider.Shared\%(Filename)%(Extension)" />

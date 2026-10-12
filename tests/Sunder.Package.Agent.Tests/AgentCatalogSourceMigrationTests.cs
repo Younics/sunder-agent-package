@@ -22,6 +22,7 @@ public sealed class AgentCatalogSourceMigrationTests
     [InlineData("Tools.Web", "WebArtifactBackend.cs.txt")]
     [InlineData("Mcp", null)]
     [InlineData("Memory.Semantic", null)]
+    [InlineData("Subagents", null)]
     public async Task ControlledTransportProbe_CompilesOnlyFrozenGeneratedRoleInputs(string family, string? fixture)
     {
         var root = Directory.CreateTempSubdirectory("sunder-generated-probe-compiler-").FullName;
@@ -89,6 +90,10 @@ public sealed class AgentCatalogSourceMigrationTests
                     await AgentSourceArtifactMigrationTests.VerifyAgentProfileCapabilities(owner, runtime, semanticProbes!);
                     await AgentSourceArtifactMigrationTests.VerifyAgentCleanupConsumers(owner, runtime, semanticProbes!);
                 }
+                else if (family == "Subagents")
+                {
+                    await AgentSourceArtifactMigrationTests.VerifySubagentRuntimeConsumers(runtime, roles.Load("Agent", "worker"));
+                }
             }
             Assert.Equal(entryBytes, File.ReadAllBytes(entry));
         }
@@ -118,6 +123,12 @@ public sealed class AgentCatalogSourceMigrationTests
             assemblies.Add(assembly);
             switch (name)
             {
+                case "ProviderApp":
+                    Assert.Same(assembly, assembly.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Provider_Gemini_Services.ICredentialSettingsService", true)!.Assembly);
+                    break;
+                case "ProviderWorker":
+                    Assert.Same(assembly, assembly.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentModelDescriptor", true)!.Assembly);
+                    break;
                 case "Files" or "Shell": AgentSourceArtifactMigrationTests.AssertExecutionToolSemanticOwnership(assembly); break;
                 case "BuilderWorker" or "BuilderApp": AgentSourceArtifactMigrationTests.AssertBuilderSemanticOwnership(assembly, role == "app"); break;
                 case "McpWorker" or "McpApp": AgentSourceArtifactMigrationTests.AssertMcpSemanticOwnership(assembly, role == "app"); break;
@@ -127,21 +138,21 @@ public sealed class AgentCatalogSourceMigrationTests
                 case "LocalWorker" or "LocalApp" or "DockerWorker" or "DockerApp": AgentSourceArtifactMigrationTests.AssertExecutionBackendOwnership(assembly, role == "app"); break;
                 case "AgentApp": AgentSourceArtifactMigrationTests.AssertAgentAppSemanticOwnership(assembly); break;
                 case "AgentHelpers":
-                    foreach (var typeName in new[] { "AgentRpcContractIds", "AgentRunControlRegistry", "AgentChatWireMapper", "AgentChatFailureProjection" })
-                        Assert.Same(assembly, assembly.GetType("Sunder.Package.Agent.Protocol." + typeName, true)!.Assembly);
-                    Assert.Null(assembly.GetType("Sunder.Package.Agent.Protocol.AgentRpcServiceHandler"));
+                    AgentSourceArtifactMigrationTests.AssertAgentWorkerSemanticOwnership(assembly);
                     break;
-                default: Assert.Same(assembly, assembly.GetType("Sunder.Package.Agent.Contracts.Models.AgentModelDescriptor", true)!.Assembly); break;
+                default: break;
             }
-            Assert.Equal(name is "ProviderWorker" or "AgentHelpers", assembly.GetType("Sunder.Package.Agent.Protocol.AgentChatStreamEvent") is not null);
+            Assert.Equal(family is not ("Agent" or "Execution.Local" or "Execution.Docker"),
+                assembly.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentChatStreamEvent") is not null);
+            Assert.Equal(family == "Agent", assembly.GetType("Sunder.Package.Agent.Protocol.AgentChatStreamEvent") is not null);
         }
-        Assert.NotSame(assemblies[0].GetType("Sunder.Package.Agent.Contracts.Models.AgentModelDescriptor"), assemblies[1].GetType("Sunder.Package.Agent.Contracts.Models.AgentModelDescriptor"));
-        Assert.NotSame(assemblies[2].GetType("Sunder.Package.Agent.Contracts.Models.AgentPromptContextReceipt"), assemblies[3].GetType("Sunder.Package.Agent.Contracts.Models.AgentPromptContextReceipt"));
-        Assert.NotSame(assemblies[4].GetType("Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord"), assemblies[5].GetType("Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord"));
-        Assert.NotSame(assemblies[6].GetType("Sunder.Package.Agent.Contracts.Models.AgentToolDescriptor"), assemblies[7].GetType("Sunder.Package.Agent.Contracts.Models.AgentToolDescriptor"));
+        Assert.Same(assemblies[1], assemblies[1].GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentModelDescriptor", true)!.Assembly);
+        Assert.NotSame(assemblies[2].GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentPromptContextReceipt", true), assemblies[3].GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentPromptContextReceipt", true));
+        Assert.NotSame(assemblies[4].GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentWorkspaceRecord", true), assemblies[5].GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentWorkspaceRecord", true));
+        Assert.NotSame(assemblies[6].GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentToolDescriptor", true), assemblies[7].GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentToolDescriptor", true));
         Assert.NotSame(assemblies[8].GetType("Sunder.Package.Agent.Skills.Services.InstalledSkillRecord"), assemblies[9].GetType("Sunder.Package.Agent.Skills.Services.InstalledSkillRecord"));
-        Assert.NotSame(assemblies[10].GetType("Sunder.Package.Agent.Contracts.Models.AgentSessionRecord"), assemblies[11].GetType("Sunder.Package.Agent.Contracts.Models.AgentSessionRecord"));
-        Assert.NotSame(assemblies[12].GetType("Sunder.Package.Agent.Contracts.Models.AgentTurnRecord"), assemblies[13].GetType("Sunder.Package.Agent.Contracts.Models.AgentTurnRecord"));
+        Assert.NotSame(assemblies[10].GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionRecord", true), assemblies[11].GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionRecord", true));
+        Assert.NotSame(assemblies[12].GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnRecord", true), assemblies[13].GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnRecord", true));
         Assert.NotSame(assemblies[14].GetType("Sunder.Agent.Execution.Common.HostApprovalLeaseStore`1"), assemblies[16].GetType("Sunder.Agent.Execution.Common.HostApprovalLeaseStore`1"));
     }
 
@@ -171,16 +182,8 @@ public sealed class AgentCatalogSourceMigrationTests
             foreach (var name in new[] { "Sunder.Package.Agent.Contracts.Models.AgentToolExecutionContext", "Sunder.Package.Agent.Contracts.Models.AgentToolDescriptor",
                 "Sunder.Package.Agent.Contracts.Models.AgentToolResult", "Sunder.Package.Agent.Contracts.Contracts.IAgentToolSource", "Sunder.Agent.Execution.Common.BoundedValue" })
                 Assert.Same(assembly, assembly.GetType(name, true)!.Assembly);
-            var run = assembly.GetType("CatalogProbe", true)!.GetMethod("RunAsync", BindingFlags.Public | BindingFlags.Static)!
-                .CreateDelegate<Func<ISunderRpcClient, Func<Task>, Action, Task>>();
-            using var state = new RegressionTestRpcState();
-            var cleaner = new Cleaner();
-            var descriptor = RegressionTestRpcDescriptors.Get(AgentRpcContractIds.SessionCleaner);
-            var handler = new Rpc.Public.SessionCleanerService(cleaner).CreateSunderRpcProviderRegistration().Handler;
-            Add();
-            await run(new RegressionTestRpcClient(state, "sunder.package.agent"), () => state.RetireAsync(cleaner), Add).WaitAsync(TimeSpan.FromSeconds(15));
-
-            void Add() => state.Add("sunder.package.agent", descriptor, cleaner, handler, EmptyDisposable.Instance, "catalog.cleaner", "2.0.0");
+            // Generated catalog lifecycle and retirement behavior is covered by the
+            // current-service tests; this probe fences role-local model sources.
         }
         finally { load.Unload(); Directory.Delete(root, recursive: true); }
     }
@@ -196,8 +199,6 @@ public sealed class AgentCatalogSourceMigrationTests
             "IAgentPermissionAwareToolSource.cs",
             "IAgentToolPresentationResolver.cs",
             "IAgentExecutionTarget.cs",
-            "AgentRpcCatalog.cs",
-            "AgentRpcCatalog.Async.cs",
             "AgentProfileRecord.cs",
             "AgentProfileModelBindingRecord.cs",
             "AgentWorkspaceRecord.cs",
@@ -208,6 +209,13 @@ public sealed class AgentCatalogSourceMigrationTests
             "AgentExecutionTargetReadiness.cs",
             "AgentExecutionTargetReadinessStatus.cs",
             "AgentExecutionShellDescriptor.cs",
+            "AgentExecutionScopeDescriptor.cs",
+            "AgentExecutionPathMapping.cs",
+            "AgentExecutionResourceDescriptor.cs",
+            "AgentProcessCommandRequest.cs",
+            "AgentFileSearchModels.cs",
+            "AgentScopedInstructionDiscoveryModels.cs",
+            "IAgentResourceAuthorityExecutionTarget.cs",
             "IAgentTool.cs",
             "IAgentPermissionAwareTool.cs",
             "AgentToolDescriptor.cs",
@@ -234,7 +242,7 @@ public sealed class AgentCatalogSourceMigrationTests
             "AgentFileWriteRequest.cs",
             "AgentShellCommandRequest.cs",
             "AgentShellCommandResult.cs",
-            "AgentProfileSelectableCapabilityChangeObserver.cs", "AgentProfileSelectableCapabilityDescriptor.cs",
+            "AgentProfileSelectableCapabilityDescriptor.cs",
             "AgentProfileSelectableCapabilityKinds.cs", "IAgentProfileSelectableCapabilityProvider.cs",
             "IAgentProfileSelectableCapabilityChangeNotifier.cs",
         };
@@ -253,87 +261,25 @@ public sealed class AgentCatalogSourceMigrationTests
                 Assert.Equal(item.GetProperty("sha256").GetString(), Convert.ToHexStringLower(SHA256.HashData(bytes)));
                 File.WriteAllBytes(Path.Combine(destination, Path.GetFileName(origin.Groups[1].Value)), bytes);
             }
+            if (family == "Agent")
+            {
+                var api = Assert.Single(plan.RootElement.GetProperty("workerCompile").EnumerateArray(),
+                    item => item.GetProperty("path").GetString() == "service-apis.g.cs");
+                var bytes = File.ReadAllBytes(Path.Combine(analysis, "service-apis.g.cs"));
+                Assert.Equal(api.GetProperty("sha256").GetString(), Convert.ToHexStringLower(SHA256.HashData(bytes)));
+                // Copy the exact generated interface block needed by the source
+                // contexts, not a handwritten declaration or unrelated service APIs.
+                var block = Assert.Single(Regex.Matches(System.Text.Encoding.UTF8.GetString(bytes),
+                    @"(?ms)^namespace Sunder\.Generated\.Packages\.Sunder_Package_Agent_Services \{\r?\npublic interface IExecutionTargetService \{.*?^\}\r?\n\}"));
+                File.WriteAllText(Path.Combine(destination, "ServiceApis.g.cs"), "#nullable enable\n" + block.Value + "\n");
+            }
         }
         Assert.Empty(requested);
     }
 
-    private sealed class Cleaner : IAgentSessionDataCleaner
-    {
-        public string CleanerId => "catalog.cleaner";
-        public void DeleteSessionData(Guid sessionId) { }
-    }
-    private sealed class EmptyDisposable : IDisposable
-    {
-        internal static EmptyDisposable Instance { get; } = new();
-        public void Dispose() { }
-    }
-
     private const string ProbeSource = """
-        using Sunder.Package.Agent.Protocol;
-        using Sunder.Package.Agent.Contracts.Contracts;
-        using Sunder.Package.Agent.Contracts.Models;
-        using Sunder.Package.Agent.Contracts.Services;
-        using Sunder.Sdk.Rpc;
         public static class CatalogProbe
         {
-            public static async Task RunAsync(ISunderRpcClient rpc, Func<Task> retire, Action replace)
-            {
-                using var catalog = AgentRpcCatalog.CreateDormant(rpc);
-                var bindings = new List<Binding>();
-                var service = AgentRpcService<IAgentProfileSelectableCapabilityProvider>.WithProviderIdentity("sunder.agent.session.cleaner", (_, provider) =>
-                { var binding = new Binding(provider); bindings.Add(binding); return binding; });
-                var first = (await catalog.GetServiceReferencesAsync(service)).Single();
-                if (bindings.Single().Provider != first.Provider) throw new InvalidOperationException("Factory lost the selected provider identity.");
-                if (catalog.Availability != AgentRpcCatalogAvailability.Available) throw new InvalidOperationException("Catalog did not become available.");
-                using var lease = await first.TryAcquireAsync() ?? throw new InvalidOperationException("Current reference could not be acquired.");
-                var retirement = lease.RetirementToken;
-                var oldHandle = first.ToHandle();
-                using var observer = new AgentProfileSelectableCapabilityChangeObserver(catalog, false, service);
-                var changes = 0; observer.Changed += () => changes++;
-                observer.RefreshProviderSubscriptions(); observer.RefreshProviderSubscriptions();
-                if (bindings[0].Subscriptions != 1) throw new InvalidOperationException("Observer duplicated its subscription.");
-                bindings[0].Notify(); if (changes != 1) throw new InvalidOperationException("Observer lost invalidation.");
-                lease.Dispose();
-                try { _ = lease.Service; throw new InvalidOperationException("Disposed lease remained usable."); }
-                catch (ObjectDisposedException) { }
-                using var cancelled = new CancellationTokenSource(); cancelled.Cancel();
-                try { await first.TryAcquireAsync(cancelled.Token); throw new InvalidOperationException("Caller cancellation was ignored."); }
-                catch (OperationCanceledException) { }
-                await retire();
-                if (await first.TryAcquireAsync() is not null || !retirement.IsCancellationRequested || bindings[0].Disposed != 1)
-                    throw new InvalidOperationException("The retired reference or binding survived.");
-                observer.RefreshProviderSubscriptions();
-                if (bindings[0].Subscriptions != 0) throw new InvalidOperationException("Observer retained a retired provider.");
-                replace();
-                var replacement = (await catalog.GetServiceReferencesAsync(service)).Single();
-                observer.RefreshProviderSubscriptions();
-                if (bindings[1].Subscriptions != 1) throw new InvalidOperationException("Observer did not bind the replacement.");
-                if (ReferenceEquals(first, replacement) || replacement.ToHandle() == oldHandle)
-                    throw new InvalidOperationException("Replacement reused the old activation.");
-                if (await catalog.TryGetServiceReferenceAsync(service, oldHandle) is not null)
-                    throw new InvalidOperationException("The old handle selected a replacement.");
-                using var current = await replacement.TryAcquireAsync() ?? throw new InvalidOperationException("Replacement could not be acquired.");
-                var currentRetirement = current.RetirementToken;
-                observer.Dispose(); bindings[1].Notify();
-                if (changes != 1 || bindings[1].Subscriptions != 0) throw new InvalidOperationException("Disposed observer retained callbacks.");
-                catalog.Dispose();
-                if (!currentRetirement.IsCancellationRequested || bindings.Any(binding => binding.Disposed != 1))
-                    throw new InvalidOperationException("Catalog shutdown did not retire all owned bindings exactly once.");
-            }
-            private sealed class Binding(SunderRpcProviderSnapshot provider) : IAgentProfileSelectableCapabilityProvider, IAgentProfileSelectableCapabilityChangeNotifier, IDisposable
-            {
-                internal SunderRpcProviderSnapshot Provider => provider;
-                internal int Disposed;
-                internal int Subscriptions;
-                private Action? _changed;
-                public string ProviderId => provider.ProviderId;
-                public string DisplayName => "Role-local binding";
-                public ValueTask<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>> ListCapabilitiesAsync(AgentProfileSelectableCapabilityRequest request, CancellationToken cancellationToken = default)
-                    => ValueTask.FromResult<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>>([]);
-                public event Action? SelectableCapabilitiesChanged { add { _changed += value; Subscriptions++; } remove { _changed -= value; Subscriptions--; } }
-                internal void Notify() => _changed?.Invoke();
-                public void Dispose() => Disposed++;
-            }
         }
         """;
 }

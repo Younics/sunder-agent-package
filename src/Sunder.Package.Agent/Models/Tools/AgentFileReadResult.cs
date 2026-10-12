@@ -50,39 +50,3 @@ public sealed record AgentFileReadResult(
             ErrorMessage = errorMessage,
         };
 }
-
-/// <summary>
-/// Defines common execution-target file-read failure codes.
-/// </summary>
-public static class AgentFileReadErrorCodes
-{
-    /// <summary>The resolved path does not exist.</summary>
-    public const string FileNotFound = "file-not-found";
-
-    /// <summary>The operation required a regular file but resolved another resource kind.</summary>
-    public const string NotAFile = "file-not-regular";
-
-    /// <summary>The target detected binary content where a text read was required.</summary>
-    public const string BinaryFile = "file-binary";
-
-    /// <summary>The resolved path is outside configured workspace scope without explicit authorization.</summary>
-    public const string OutsideConfiguredScope = "file-outside-scope";
-
-    /// <summary>The requested one-based offset or line limit is invalid.</summary>
-    public const string InvalidRange = "file-range-invalid";
-
-    /// <summary>The requested starting line is beyond the available file content.</summary>
-    public const string RangeOutsideFile = "file-range-out-of-bounds";
-
-    /// <summary>The target could not securely canonicalize and classify the requested path.</summary>
-    public const string PathCanonicalizationFailed = "file-path-unresolvable";
-
-    /// <summary>An I/O or access failure occurred after path resolution.</summary>
-    public const string ReadFailed = "file-read-failed";
-
-    /// <summary>The execution target's read timeout elapsed.</summary>
-    public const string TimedOut = "file-read-timeout";
-
-    /// <summary>A full read exceeded the target's byte limit and a ranged read is required.</summary>
-    public const string TooLarge = "file-too-large";
-}

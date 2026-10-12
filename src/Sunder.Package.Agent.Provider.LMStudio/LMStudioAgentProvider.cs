@@ -1,12 +1,15 @@
-using Sunder.Package.Agent.Contracts.Contracts;
-using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Services;
 using AIChatClient = Microsoft.Extensions.AI.IChatClient;
+using AgentChatClientContext = Sunder.Package.Agent.Contracts.Models.AgentChatClientContext;
 
 namespace Sunder.Package.Agent.Provider.LMStudio;
 
-public sealed class LMStudioAgentProvider : IAgentChatProvider, IAgentUtilityModelProvider, IDisposable
+[SunderServiceProvider(typeof(IChatProviderService), ProviderId = "lmstudio.chat")]
+public sealed partial class LMStudioAgentProvider : IChatProviderService, IDisposable
 {
     private const int DefaultContextWindow = 131072;
     private const int DefaultMaxOutputTokens = 8192;
@@ -39,23 +42,36 @@ public sealed class LMStudioAgentProvider : IAgentChatProvider, IAgentUtilityMod
 
     public AgentProviderDescriptor Descriptor { get; }
 
-    public async ValueTask<IReadOnlyList<AgentModelDescriptor>> GetAvailableModelsAsync(
+    public ValueTask<AgentProviderDescriptor> DescribeAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(Descriptor);
+    }
+
+    public async ValueTask<IReadOnlyList<AgentModelDescriptor>> ListModelsAsync(
         CancellationToken cancellationToken = default)
     {
         var result = await _catalog.GetCatalogAsync(cancellationToken).ConfigureAwait(false);
         return result.IsSuccess
             ? result.Models
                 .Where(model => model.IsChatCandidate)
-                .Select(model => new AgentModelDescriptor(
-                    $"lmstudio/{model.Id}",
-                    model.DisplayName,
-                    model.ContextWindow ?? DefaultContextWindow,
-                    model.MaxOutputTokens ?? DefaultMaxOutputTokens))
+                .Select(model => new AgentModelDescriptor
+                {
+                    ModelId = $"lmstudio/{model.Id}",
+                    DisplayName = model.DisplayName,
+                    ContextWindow = model.ContextWindow ?? DefaultContextWindow,
+                    MaxOutputTokens = model.MaxOutputTokens ?? DefaultMaxOutputTokens,
+                    IsRecommended = false,
+                    Variants = null,
+                    SpeedOptions = null,
+                    ModeOptions = null,
+                    ReleaseDate = null,
+                })
                 .ToArray()
             : [];
     }
 
-    public async ValueTask<string?> ResolveUtilityModelIdAsync(CancellationToken cancellationToken = default)
+    public async ValueTask<string?> ResolveUtilityModelAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var configuredModelId = (await _packageContext.Settings
@@ -65,7 +81,7 @@ public sealed class LMStudioAgentProvider : IAgentChatProvider, IAgentUtilityMod
             return ProviderModelId.EnsurePrefix(configuredModelId, "lmstudio");
         }
 
-        return (await GetAvailableModelsAsync(cancellationToken).ConfigureAwait(false)).FirstOrDefault()?.ModelId;
+        return (await ListModelsAsync(cancellationToken).ConfigureAwait(false)).FirstOrDefault()?.ModelId;
     }
 
     public async ValueTask<AgentProviderReadiness> GetReadinessAsync(
@@ -75,43 +91,60 @@ public sealed class LMStudioAgentProvider : IAgentChatProvider, IAgentUtilityMod
         var connection = await _connection.GetOptionsAsync(cancellationToken);
         if (connection.Options is null)
         {
-            return new AgentProviderReadiness(
-                Descriptor.ProviderId,
-                AgentProviderReadinessStatus.NeedsConfiguration,
-                $"The LM Studio base URL is invalid: {connection.ValidationError}");
+            return new()
+            {
+                ProviderId = Descriptor.ProviderId,
+                Status = AgentProviderReadinessStatus.NeedsConfiguration,
+                Message = $"The LM Studio base URL is invalid: {connection.ValidationError}",
+            };
         }
 
         var result = await _catalog.GetCatalogAsync(cancellationToken).ConfigureAwait(false);
         if (!result.IsSuccess)
         {
-            return new AgentProviderReadiness(
-                Descriptor.ProviderId,
-                AgentProviderReadinessStatus.Failed,
-                result.Failure!.Message);
+            return new()
+            {
+                ProviderId = Descriptor.ProviderId,
+                Status = AgentProviderReadinessStatus.Failed,
+                Message = result.Failure!.Message,
+            };
         }
 
         var hasChatModel = result.Models.Any(model => model.IsChatCandidate);
-        return new AgentProviderReadiness(
-            Descriptor.ProviderId,
-            hasChatModel
+        return new()
+        {
+            ProviderId = Descriptor.ProviderId,
+            Status = hasChatModel
                 ? AgentProviderReadinessStatus.Ready
                 : AgentProviderReadinessStatus.NeedsConfiguration,
-            hasChatModel
+            Message = hasChatModel
                 ? "LM Studio is reachable and ready."
-                : "LM Studio is reachable, but no chat model is loaded or discoverable.");
+                : "LM Studio is reachable, but no chat model is loaded or discoverable.",
+        };
     }
 
-    public ValueTask<AgentProviderRunCapabilities> GetRunCapabilitiesAsync(
+    public ValueTask<AgentProviderRunCapabilities> GetCapabilitiesAsync(
         string? modelId,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult(new AgentProviderRunCapabilities(
-            SupportsNativeToolCalling: true,
-            SupportsStreamingToolCalls: true,
-            SupportsMultipleToolCalls: true,
-            Summary: "LM Studio can expose OpenAI-compatible native tool calls when the loaded model supports them, and Sunder can run parallel-safe tools concurrently."));
+        return ValueTask.FromResult(new AgentProviderRunCapabilities
+        {
+            SupportsNativeToolCalling = true,
+            SupportsStreamingToolCalls = true,
+            SupportsMultipleToolCalls = true,
+            Summary = "LM Studio can expose OpenAI-compatible native tool calls when the loaded model supports them, and Sunder can run parallel-safe tools concurrently.",
+            SupportsImageInput = false,
+            SupportsPdfInput = false,
+            SupportsAudioInput = false,
+            SupportsVideoInput = false,
+            ContextWindowTokens = null,
+            MaxOutputTokens = null,
+        });
     }
+
+    public IAsyncEnumerable<AgentChatStreamEvent> StreamChatAsync(AgentChatStreamRequest request, CancellationToken cancellationToken = default)
+        => ProviderChatStream.ReadAsync(CreateChatClientAsync, request, cancellationToken);
 
     public ValueTask<AIChatClient> CreateChatClientAsync(
         AgentChatClientContext context,
@@ -130,13 +163,13 @@ public sealed class LMStudioAgentProvider : IAgentChatProvider, IAgentUtilityMod
     }
 
     private static AgentProviderDescriptor CreateDescriptor(string packageId)
-        => new(
-            "lmstudio",
-            "LM Studio",
-            [],
-            SupportsStreaming: true,
-            SupportsInterruptibleRuns: true)
+        => new()
         {
+            ProviderId = "lmstudio",
+            DisplayName = "LM Studio",
+            SupportedAuthModes = [],
+            SupportsStreaming = true,
+            SupportsInterruptibleRuns = true,
             PackageId = packageId,
         };
 }

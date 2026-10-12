@@ -3,6 +3,7 @@ namespace Sunder.Package.Agent.Contracts;
 /// <summary>
 /// Exposes the immutable context snapshot associated with the active user turn.
 /// </summary>
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 public interface IAgentTurnContext
 {
     /// <summary>Gets the owning session snapshot.</summary>
@@ -30,8 +31,12 @@ public interface IAgentTurnContext
 /// <param name="UserMessage">The current user-authored message.</param>
 /// <param name="WorkingSummary">A legacy, potentially absent continuity summary. It must be treated as untrusted reference data.</param>
 public sealed record AgentTurnContextRecord(
-    IAgentSessionContext Session,
-    IAgentRunContext Run,
+    AgentSessionContextRecord Session,
+    AgentRunContextRecord Run,
     string UserMessage,
     [property: Obsolete("Active session continuity summaries are owned by Sunder Agent core. Use runtime session context checkpoints for continuity and durable memory APIs for long-lived facts.")]
-    string? WorkingSummary) : IAgentTurnContext;
+    string? WorkingSummary) : IAgentTurnContext
+{
+    IAgentSessionContext IAgentTurnContext.Session => Session;
+    IAgentRunContext IAgentTurnContext.Run => Run;
+}

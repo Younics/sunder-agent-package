@@ -11,42 +11,12 @@ using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Package.Agent.Skills.Services;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
+#if SUNDER_SKILLS_APP
+using Sunder.Generated.Packages.Sunder_Package_Agent_Skills_Services;
+#endif
 
 namespace Sunder.Package.Agent.Skills.Runtime;
-
-#if SUNDER_SKILLS_WORKER
-internal sealed class SkillLocalManagementGateway(SkillStore store, SkillImportService importer)
-    : ISkillManagementGateway
-{
-    public event Action? SkillsChanged
-    {
-        add => store.SkillsChanged += value;
-        remove => store.SkillsChanged -= value;
-    }
-
-    public Task<IReadOnlyList<InstalledSkillRecord>> ListAsync(CancellationToken cancellationToken = default)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromResult(store.ListSkills());
-    }
-
-    public Task<IReadOnlyList<InstalledSkillRecord>> ImportGitHubAsync(string url, CancellationToken cancellationToken = default)
-        => importer.ImportGitHubAsync(url, cancellationToken);
-
-    public Task<IReadOnlyList<InstalledSkillRecord>> ImportCommonAsync(CancellationToken cancellationToken = default)
-        => importer.ImportCommonSkillFoldersAsync(cancellationToken);
-
-    public Task<IReadOnlyList<InstalledSkillRecord>> ImportLocalAsync(string folderPath, CancellationToken cancellationToken = default)
-        => importer.ImportLocalSkillsAsync(folderPath, cancellationToken);
-
-    public Task DeleteAsync(string skillId, CancellationToken cancellationToken = default)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        store.DeleteSkill(skillId);
-        return Task.CompletedTask;
-    }
-}
-#endif
 
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal static class SkillRuntimeExceptionPolicy
@@ -67,7 +37,7 @@ internal sealed partial class SkillAppRuntimeGateway :
     IDisposable,
     IAsyncDisposable
 {
-    private readonly ISkillOwnerClient _client;
+    private readonly ISkillsManagementService _client;
     private readonly IPackageContext _context;
     private readonly ILogger<SkillAppRuntimeGateway> _logger;
     private readonly CancellationTokenSource _lifetime = new();
@@ -76,12 +46,7 @@ internal sealed partial class SkillAppRuntimeGateway :
     private int _disposed;
     private int _lifetimeDisposed;
 
-    public SkillAppRuntimeGateway(ISunderRpcClient client, IPackageContext context)
-        : this(new SkillOwnerClient(client), context)
-    {
-    }
-
-    internal SkillAppRuntimeGateway(ISkillOwnerClient client, IPackageContext context)
+    public SkillAppRuntimeGateway(ISkillsManagementService client, IPackageContext context)
     {
         _client = client;
         _context = context;
@@ -102,13 +67,13 @@ internal sealed partial class SkillAppRuntimeGateway :
     internal Task ObservationTask => _observationTask;
 
     public async Task<IReadOnlyList<InstalledSkillRecord>> ListAsync(CancellationToken cancellationToken = default)
-        => (await _client.QueryAsync(cancellationToken).ConfigureAwait(false)).Skills;
+        => (await SkillProjectionContent.ReadAsync(_client.QueryAsync(cancellationToken), cancellationToken).ConfigureAwait(false)).Skills;
 
     public async Task<IReadOnlyList<InstalledSkillRecord>> ImportGitHubAsync(string url, CancellationToken cancellationToken = default)
-        => await InvokeImportedAsync(new SkillCommand(SkillCommandKind.ImportGitHub, url), cancellationToken);
+        => await ReadImportedAsync(_client.ImportGitHubAsync(url, cancellationToken), cancellationToken);
 
     public async Task<IReadOnlyList<InstalledSkillRecord>> ImportCommonAsync(CancellationToken cancellationToken = default)
-        => await InvokeImportedAsync(new SkillCommand(SkillCommandKind.ImportCommon), cancellationToken);
+        => await ReadImportedAsync(_client.ImportCommonAsync(cancellationToken), cancellationToken);
 
     public async Task<IReadOnlyList<InstalledSkillRecord>> ImportLocalAsync(
         string folderPath,
@@ -156,8 +121,8 @@ internal sealed partial class SkillAppRuntimeGateway :
                 hash));
             uploadedPaths.Add(manifestPath);
             await _context.Storage.Files.WriteAsync(manifestPath, manifest, cancellationToken).ConfigureAwait(false);
-            return await InvokeImportedAsync(
-                new SkillCommand(SkillCommandKind.ImportTransfer, transferId),
+            return await ReadImportedAsync(
+                _client.ImportTransferAsync(transferId, cancellationToken),
                 cancellationToken);
         }
         finally
@@ -176,15 +141,13 @@ internal sealed partial class SkillAppRuntimeGateway :
     }
 
     public async Task DeleteAsync(string skillId, CancellationToken cancellationToken = default)
-        => _ = await _client.CommandAsync(
-            new SkillCommand(SkillCommandKind.Delete, skillId),
-            cancellationToken).ConfigureAwait(false);
+        => await _client.DeleteAsync(skillId, cancellationToken).ConfigureAwait(false);
 
-    private async Task<IReadOnlyList<InstalledSkillRecord>> InvokeImportedAsync(
-        SkillCommand command,
+    private static async Task<IReadOnlyList<InstalledSkillRecord>> ReadImportedAsync(
+        ValueTask<SunderContent> result,
         CancellationToken cancellationToken)
     {
-        var projection = await _client.CommandAsync(command, cancellationToken)
+        var projection = await SkillProjectionContent.ReadAsync(result, cancellationToken)
             .ConfigureAwait(false);
         return projection.Skills
             .Where(skill => projection.ImportedSkillIds.Contains(skill.SkillId, StringComparer.OrdinalIgnoreCase))
@@ -265,6 +228,9 @@ internal sealed partial class SkillAppRuntimeGateway :
 #endif
 
 #if SUNDER_SKILLS_WORKER
+[SunderService(Key = "management", ContractId = "sunder.package.agent.skills.owner", ServiceId = "skills-management", IncludeSchemaDialect = true)]
+[SunderServiceProvider(ProviderId = "skills.management")]
+[SunderServiceError("skills.owner.operation-failed", Description = "The requested Skills operation could not be completed.")]
 internal sealed partial class SkillRuntimeHandler(
     SkillStore store,
     SkillImportService importer,
@@ -277,35 +243,62 @@ internal sealed partial class SkillRuntimeHandler(
     internal Task OrphanedTransferCleanup => _orphanedTransferCleanup.Value;
     internal Task StartedTransferCleanup => _orphanedTransferCleanup.IsValueCreated ? _orphanedTransferCleanup.Value : Task.CompletedTask;
 
-    public ValueTask<SkillProjection> HandleAsync(SkillQuery request, CancellationToken cancellationToken = default)
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent, Errors = ["skills.owner.operation-failed"])]
+    public ValueTask<SunderContent> QueryAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult(Project([]));
+        return ValueTask.FromResult(SkillProjectionContent.Create(Project([])));
     }
 
-    public async ValueTask<SkillProjection> HandleAsync(
-        SkillCommand request,
-        CancellationToken cancellationToken = default)
+    [SunderMethod(Errors = ["skills.owner.operation-failed"])]
+    public ValueTask<SunderContent> ImportGitHubAsync(string url, CancellationToken token = default)
+        => ImportAsync(() => importer.ImportGitHubAsync(Require(url), token));
+
+    [SunderMethod(Errors = ["skills.owner.operation-failed"])]
+    public ValueTask<SunderContent> ImportCommonAsync(CancellationToken token = default)
+        => ImportAsync(() => importer.ImportCommonSkillFoldersAsync(token));
+
+    [SunderMethod(Errors = ["skills.owner.operation-failed"])]
+    public ValueTask<SunderContent> ImportTransferAsync(string transferId, CancellationToken token = default)
+        => ImportAsync(() => ImportTransferCoreAsync(Require(transferId), token));
+
+    private async ValueTask<SunderContent> ImportAsync(Func<Task<IReadOnlyList<InstalledSkillRecord>>> import)
     {
-        IReadOnlyList<InstalledSkillRecord> imported = request.Kind switch
+        try
         {
-            SkillCommandKind.ImportGitHub => await importer.ImportGitHubAsync(Require(request.Value), cancellationToken),
-            SkillCommandKind.ImportCommon => await importer.ImportCommonSkillFoldersAsync(cancellationToken),
-            SkillCommandKind.ImportTransfer => await ImportTransferAsync(Require(request.Value), cancellationToken),
-            SkillCommandKind.Delete => Delete(Require(request.Value), cancellationToken),
-            _ => throw new SkillOwnerOperationException("Unknown skill command."),
-        };
-        return Project(imported.Select(skill => skill.SkillId).ToArray());
+            var imported = await import().ConfigureAwait(false);
+            return SkillProjectionContent.Create(Project(imported.Select(skill => skill.SkillId).ToArray()));
+        }
+        catch (SkillOwnerOperationException error) { throw OwnerJson.Map(error); }
     }
 
-    private IReadOnlyList<InstalledSkillRecord> Delete(string skillId, CancellationToken cancellationToken)
+    [SunderMethod(Errors = ["skills.owner.operation-failed"])]
+    public ValueTask DeleteAsync(string skillId, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        store.DeleteSkill(skillId);
-        return [];
+        try { store.DeleteSkill(Require(skillId)); }
+        catch (SkillOwnerOperationException error) { throw OwnerJson.Map(error); }
+        return ValueTask.CompletedTask;
     }
 
-    private async Task<IReadOnlyList<InstalledSkillRecord>> ImportTransferAsync(
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent, Errors = ["skills.owner.operation-failed"])]
+    public async IAsyncEnumerable<long> ChangesAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        var channel = Channel.CreateBounded<long>(new BoundedChannelOptions(1)
+        { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true, SingleWriter = false });
+        long revision = 0;
+        void Changed() => channel.Writer.TryWrite(Interlocked.Increment(ref revision));
+        store.SkillsChanged += Changed;
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            yield return 0;
+            await foreach (var change in channel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false)) yield return change;
+        }
+        finally { store.SkillsChanged -= Changed; channel.Writer.TryComplete(); }
+    }
+
+    private async Task<IReadOnlyList<InstalledSkillRecord>> ImportTransferCoreAsync(
         string transferId,
         CancellationToken cancellationToken)
     {
@@ -531,46 +524,6 @@ internal sealed partial class SkillRuntimeHandler(
         return Convert.ToHexString(await SHA256.HashDataAsync(stream, cancellationToken)).ToLowerInvariant();
     }
 
-}
-
-internal sealed class SkillRuntimeChangeStream
-{
-    private readonly SkillStore _store;
-    private readonly Action? _subscriptionEstablished;
-
-    public SkillRuntimeChangeStream(SkillStore store, Action? subscriptionEstablished = null)
-    {
-        _store = store;
-        _subscriptionEstablished = subscriptionEstablished;
-    }
-
-    public async IAsyncEnumerable<SkillChanged> SubscribeAsync(
-        SkillChangeSubscription request,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
-        var channel = Channel.CreateBounded<SkillChanged>(new BoundedChannelOptions(1)
-        {
-            FullMode = BoundedChannelFullMode.DropOldest,
-            SingleReader = true,
-            SingleWriter = false,
-        });
-        void Changed() => channel.Writer.TryWrite(new SkillChanged());
-        _store.SkillsChanged += Changed;
-        try
-        {
-            _subscriptionEstablished?.Invoke();
-            yield return new SkillChanged();
-            await foreach (var change in channel.Reader.ReadAllAsync(cancellationToken))
-            {
-                yield return change;
-            }
-        }
-        finally
-        {
-            _store.SkillsChanged -= Changed;
-            channel.Writer.TryComplete();
-        }
-    }
 }
 
 #endif

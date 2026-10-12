@@ -30,7 +30,7 @@ internal static class HostFileSystemExecutor
         using var approvedAuthority = pathContext.ApprovedAuthority;
         if (!FileOperation.TryValidateRange(request.Offset, request.Limit, out var rangeError))
         {
-            return AgentFileReadResult.Failure(pathContext.ReportedPath, AgentFileReadErrorCodes.InvalidRange, rangeError!);
+            return FileOperation.ReadFailure(pathContext.ReportedPath, AgentFileReadErrorCodes.InvalidRange, rangeError!);
         }
 
         var displayPath = pathContext.ReportedPath;
@@ -54,14 +54,14 @@ internal static class HostFileSystemExecutor
             if ((request.Offset is not null || request.Limit is not null)
                 && openedLength > HostFileSystemLimits.MaxRangedReadBytes)
             {
-                return AgentFileReadResult.Failure(
+                return FileOperation.ReadFailure(
                     displayPath,
                     AgentFileReadErrorCodes.TooLarge,
                     $"Ranged reads support at most {HostFileSystemLimits.MaxRangedReadBytes} bytes.");
             }
             if (await IsBinaryFileAsync(stream, cancellationToken).ConfigureAwait(false))
             {
-                return AgentFileReadResult.Failure(
+                return FileOperation.ReadFailure(
                     displayPath,
                     AgentFileReadErrorCodes.BinaryFile,
                     $"Binary file reads are not supported: {displayPath}");
@@ -72,7 +72,7 @@ internal static class HostFileSystemExecutor
                 : await ReadFullAsync(stream, displayPath, cancellationToken).ConfigureAwait(false);
             if (!result.IsError && stream.Length != openedLength)
             {
-                return AgentFileReadResult.Failure(
+                return FileOperation.ReadFailure(
                     displayPath,
                     AgentFileReadErrorCodes.ReadFailed,
                     $"File changed while it was being read: {displayPath}");
@@ -81,18 +81,18 @@ internal static class HostFileSystemExecutor
         }
         catch (LocalSecurePathNotFoundException)
         {
-            return AgentFileReadResult.Failure(
+            return FileOperation.ReadFailure(
                 displayPath,
                 AgentFileReadErrorCodes.FileNotFound,
                 $"File not found: {displayPath}");
         }
         catch (InvalidOperationException ex)
         {
-            return AgentFileReadResult.Failure(displayPath, AgentFileReadErrorCodes.OutsideConfiguredScope, ex.Message);
+            return FileOperation.ReadFailure(displayPath, AgentFileReadErrorCodes.OutsideConfiguredScope, ex.Message);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
         {
-            return AgentFileReadResult.Failure(
+            return FileOperation.ReadFailure(
                 displayPath,
                 AgentFileReadErrorCodes.PathCanonicalizationFailed,
                 ex.Message);
@@ -423,13 +423,13 @@ internal static class HostFileSystemExecutor
         }
 
         var wasTruncated = entries.Count > HostFileSystemLimits.MaxDirectoryEntries;
-        return new AgentFileReadResult(
+        return FileOperation.ReadResult(
             path,
             string.Join(
                 Environment.NewLine,
                 entries.Take(HostFileSystemLimits.MaxDirectoryEntries).OrderBy(entry => entry, StringComparer.Ordinal)),
-            IsDirectory: true,
-            WasTruncated: wasTruncated);
+            isDirectory: true,
+            wasTruncated: wasTruncated);
     }
 
     private static void CapturePostMutationAuthority(
@@ -563,18 +563,13 @@ internal static class HostFileSystemExecutor
         var content = await ReadBoundedTextAsync(stream, cancellationToken).ConfigureAwait(false);
         if (content is null)
         {
-            return AgentFileReadResult.Failure(
+            return FileOperation.ReadFailure(
                 path,
                 AgentFileReadErrorCodes.TooLarge,
                 $"File exceeds the {HostFileSystemLimits.MaxFullFileReadBytes}-byte full-read limit; use offset and limit.");
         }
         var totalLines = FileOperation.CountLines(content);
-        return new AgentFileReadResult(path, content)
-        {
-            StartLine = 1,
-            EndLine = totalLines,
-            TotalLines = totalLines,
-        };
+        return FileOperation.ReadResult(path, content, startLine: 1, endLine: totalLines, totalLines: totalLines);
     }
 
     private static async Task<string?> ReadBoundedTextAsync(FileStream stream, CancellationToken cancellationToken)
@@ -607,8 +602,8 @@ internal static class HostFileSystemExecutor
         AgentFileReadRequest request,
         CancellationToken cancellationToken)
     {
-        var offset = request.Offset ?? 1;
-        var limit = request.Limit ?? FileOperation.DefaultReadLimit;
+        var offset = checked((int)(request.Offset ?? 1));
+        var limit = checked((int)(request.Limit ?? FileOperation.DefaultReadLimit));
         var lines = new List<string>(limit);
         var scan = await HostBoundedLineReader.ScanAsync(
             stream,
@@ -625,7 +620,7 @@ internal static class HostFileSystemExecutor
             cancellationToken).ConfigureAwait(false);
         if (scan.ExceededByteLimit || scan.ExceededLineLimit)
         {
-            return AgentFileReadResult.Failure(
+            return FileOperation.ReadFailure(
                 path,
                 AgentFileReadErrorCodes.TooLarge,
                 $"Ranged reads support at most {HostFileSystemLimits.MaxRangedReadBytes} bytes and {HostFileSystemLimits.MaxLineCharacters} characters per line.");
@@ -633,7 +628,7 @@ internal static class HostFileSystemExecutor
         var totalLines = scan.TotalLines;
         if (offset > totalLines && !(offset == 1 && totalLines == 0))
         {
-            return AgentFileReadResult.Failure(
+            return FileOperation.ReadFailure(
                 path,
                 AgentFileReadErrorCodes.RangeOutsideFile,
                 $"Line offset {offset} is outside the file's {totalLines} line(s).") with
@@ -643,12 +638,8 @@ internal static class HostFileSystemExecutor
         }
 
         var endLine = lines.Count == 0 ? 0 : offset + lines.Count - 1;
-        return new AgentFileReadResult(path, string.Join('\n', lines), WasTruncated: endLine < totalLines)
-        {
-            StartLine = offset,
-            EndLine = endLine,
-            TotalLines = totalLines,
-        };
+        return FileOperation.ReadResult(path, string.Join('\n', lines), wasTruncated: endLine < totalLines,
+            startLine: offset, endLine: endLine, totalLines: totalLines);
     }
 
     private static string EscapeEntryName(string name)

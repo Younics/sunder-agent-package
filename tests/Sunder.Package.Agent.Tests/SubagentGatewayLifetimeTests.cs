@@ -2,7 +2,11 @@ extern alias SubagentsApp;
 
 using SubagentsApp::Sunder.Package.Agent.Subagents.Runtime;
 using SubagentsApp::Sunder.Package.Agent.Subagents.PackageViews;
+using SubagentsApp::Sunder.Package.Agent.Subagents.Models;
+using Sunder.Sdk.Services;
 using Xunit;
+using SubagentManagementServices = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Subagents_Services;
+using AgentTranscriptToolDetailRequest = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTranscriptToolDetailRequest;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -40,26 +44,50 @@ public sealed class SubagentGatewayLifetimeTests
         await gateway.InitializeAsync();
     }
 
-    private sealed class NullOwnerClient : ISubagentOwnerClient
+    private sealed class NullOwnerClient : SubagentManagementServices.ISubagentsManagementService
     {
         internal static NullOwnerClient Instance { get; } = new();
 
-        public ValueTask<SubagentProjection> QueryAsync(
-            SubagentQuery request,
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromException<SubagentProjection>(new InvalidOperationException("Runtime is unavailable."));
+        public ValueTask<SunderContent> ManagementAsync(CancellationToken cancellationToken = default)
+            => Unavailable();
 
-        public ValueTask<SubagentProjection> CommandAsync(
-            SubagentCommand request,
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromException<SubagentProjection>(new InvalidOperationException("Runtime is unavailable."));
+        public ValueTask<SunderContent> CreateAsync(string displayName, CancellationToken cancellationToken = default)
+            => Unavailable();
 
-        public async IAsyncEnumerable<SubagentChanged> SubscribeChangesAsync(
-            SubagentChangeSubscription request,
-            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        public ValueTask<SunderContent> SaveAsync(SubagentSaveRequest request, CancellationToken cancellationToken = default)
+            => Unavailable();
+
+        public ValueTask<SunderContent> DeleteAsync(string subagentId, CancellationToken cancellationToken = default)
+            => Unavailable();
+
+        public ValueTask<SunderContent> ProviderModelsAsync(string providerId, CancellationToken cancellationToken = default)
+            => Unavailable();
+
+        public ValueTask<SunderContent> RuntimeCatalogAsync(CancellationToken cancellationToken = default)
+            => Unavailable();
+
+        public ValueTask<SunderContent> RecentTurnsAsync(Guid sessionId, int limit, CancellationToken cancellationToken = default)
+            => Unavailable();
+
+        public ValueTask<SunderContent> TurnsBeforeAsync(Guid sessionId, DateTimeOffset beforeCreatedAtUtc, Guid beforeTurnId, int limit, CancellationToken cancellationToken = default)
+            => Unavailable();
+
+        public ValueTask<SunderContent> TurnsAfterAsync(Guid sessionId, DateTimeOffset afterCreatedAtUtc, Guid afterTurnId, int limit, CancellationToken cancellationToken = default)
+            => Unavailable();
+
+        public ValueTask<SunderContent> AroundTurnAsync(Guid sessionId, Guid turnId, DateTimeOffset createdAtUtc, Guid itemId, int beforeLimit, int afterLimit, CancellationToken cancellationToken = default)
+            => Unavailable();
+
+        public ValueTask<SunderContent> ToolDetailAsync(AgentTranscriptToolDetailRequest request, CancellationToken cancellationToken = default)
+            => Unavailable();
+
+        public async IAsyncEnumerable<SunderContent> ChangesAsync(long afterRevision, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             yield break;
         }
+
+        private static ValueTask<SunderContent> Unavailable()
+            => ValueTask.FromException<SunderContent>(new InvalidOperationException("Runtime is unavailable."));
     }
 }

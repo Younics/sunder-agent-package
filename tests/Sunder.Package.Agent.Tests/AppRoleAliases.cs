@@ -2,7 +2,7 @@ extern alias AgentApp;
 
 // Presentation-only contracts are asserted in the App role that owns them.
 // Worker services cross these boundaries through the explicit test port adapters.
-global using IAgentWorkspaceEditorContributor = AgentApp::Sunder.Package.Agent.Contracts.Contracts.IAgentWorkspaceEditorContributor;
+global using IAgentWorkspaceEditorContributor = AgentApp::Sunder.Generated.Packages.Sunder_Package_Agent_Services.IWorkspaceEditorService;
 global using AgentWorkspaceEditorContext = AgentApp::Sunder.Package.Agent.Contracts.Models.AgentWorkspaceEditorContext;
 global using AgentEditorSection = AgentApp::Sunder.Package.Agent.Contracts.Models.AgentEditorSection;
 global using AgentEditorField = AgentApp::Sunder.Package.Agent.Contracts.Models.AgentEditorField;
@@ -16,4 +16,3 @@ global using AgentEditorSaveRequest = AgentApp::Sunder.Package.Agent.Contracts.M
 global using AgentEditorSaveResult = AgentApp::Sunder.Package.Agent.Contracts.Models.AgentEditorSaveResult;
 global using IAgentRuntimeAvailability = AgentApp::Sunder.Package.Agent.Runtime.IAgentRuntimeAvailability;
 global using AgentRuntimeConnectionState = AgentApp::Sunder.Package.Agent.Runtime.AgentRuntimeConnectionState;
-global using IAgentExecutionTargetLoader = AgentApp::Sunder.Package.Agent.Runtime.IAgentExecutionTargetLoader;

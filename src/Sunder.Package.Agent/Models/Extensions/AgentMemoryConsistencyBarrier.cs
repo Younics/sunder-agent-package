@@ -5,4 +5,5 @@ namespace Sunder.Package.Agent.Contracts.Models;
 /// </summary>
 /// <param name="EventId">The stable lifecycle event identifier.</param>
 /// <param name="PayloadHash">The lowercase SHA-256 hash of the immutable event payload.</param>
-public sealed record AgentMemoryConsistencyBarrier(string EventId, string PayloadHash);
+public sealed record AgentMemoryConsistencyBarrier(string EventId,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(MinLength = 64, MaxLength = 64)] string PayloadHash);

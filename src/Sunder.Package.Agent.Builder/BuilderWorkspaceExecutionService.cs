@@ -1,40 +1,32 @@
 using System.Diagnostics;
 using System.Runtime.ExceptionServices;
-using Sunder.Package.Agent.Contracts.Contracts;
-using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Builder_Services;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Shared.Presentation;
-using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Builder;
 
-public sealed partial class BuilderWorkspaceExecutionService
+public sealed class BuilderWorkspaceExecutionService
 {
-    private readonly IBuilderRpcGateway _rpc;
+    private readonly IBuilderRuntimeService? _runtime;
 
-    public BuilderWorkspaceExecutionService()
-        : this(EmptyBuilderRpcGateway.Instance)
-    {
-    }
+    public BuilderWorkspaceExecutionService() { }
 
-    private BuilderWorkspaceExecutionService(IBuilderRpcGateway rpc)
-    {
-        _rpc = rpc;
-    }
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
+    public BuilderWorkspaceExecutionService(IBuilderRuntimeService runtime) => _runtime = runtime;
 
     public async Task<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesAsync(
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (_runtime is null) return [];
         var invocation = Task.Run(
-            () => _rpc.InvokeAsync(
-                new BuilderRpcRequest(BuilderRpcOperationKind.ListWorkspaces),
-                cancellationToken).AsTask(),
+            () => BuilderContent.ReadAsync<IReadOnlyList<AgentWorkspaceRecord>>(_runtime.ListWorkspacesAsync(cancellationToken), cancellationToken).AsTask(),
             CancellationToken.None);
         try
         {
-            var response = await invocation.WaitAsync(cancellationToken).ConfigureAwait(false);
-            return response.Workspaces ?? [];
+            return await invocation.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException exception) when (
             cancellationToken.IsCancellationRequested
@@ -79,38 +71,18 @@ public sealed partial class BuilderWorkspaceExecutionService
         string workspaceId,
         CancellationToken cancellationToken = default)
     {
-        var resolution = (await _rpc.InvokeAsync(new BuilderRpcRequest(
-                BuilderRpcOperationKind.ResolveWorkspace,
-                workspaceId), cancellationToken).ConfigureAwait(false)).Execution
-            ?? throw new InvalidDataException("Runtime did not return workspace execution details.");
-        var context = new AgentExecutionTargetContext(null, null, resolution.Workspace, resolution.Binding);
-        var proxy = new BuilderRpcExecutionTargetProxy(_rpc, resolution);
+        if (_runtime is null) throw new InvalidOperationException("Agent workspace execution service is unavailable.");
+        var resolution = await BuilderContent.ReadAsync<BuilderWorkspaceExecutionProjection>(
+            _runtime.ResolveWorkspaceAsync(workspaceId, cancellationToken), cancellationToken).ConfigureAwait(false);
         return new BuilderWorkspaceExecution(
             resolution.Workspace,
             resolution.Binding,
             resolution.Target,
             resolution.Scope,
-            proxy,
-            context,
             resolution.Shell,
-            resolution.SupportsPathMapping ? proxy : null,
-            resolution.SupportsPathEnvironment ? proxy : null);
-    }
-}
-
-internal sealed class EmptyBuilderRpcGateway : IBuilderRpcGateway
-{
-    internal static EmptyBuilderRpcGateway Instance { get; } = new();
-
-    public ValueTask<BuilderRpcResponse> InvokeAsync(
-        BuilderRpcRequest request,
-        CancellationToken cancellationToken = default)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        return request.Kind == BuilderRpcOperationKind.ListWorkspaces
-            ? ValueTask.FromResult(new BuilderRpcResponse(Workspaces: []))
-            : ValueTask.FromException<BuilderRpcResponse>(
-                new InvalidOperationException("Agent workspace execution service is unavailable."));
+            resolution.SupportsPathMapping,
+            resolution.SupportsPathEnvironment,
+            _runtime);
     }
 }
 
@@ -119,15 +91,14 @@ public sealed record BuilderWorkspaceExecution(
     AgentWorkspaceBindingRecord Binding,
     AgentExecutionTargetDescriptor Target,
     AgentExecutionScopeDescriptor Scope,
-    IAgentExecutionTarget ExecutionTarget,
-    AgentExecutionTargetContext Context,
     AgentExecutionShellDescriptor Shell,
-    IAgentExecutionPathMapper? PathMapper,
-    IAgentExecutionPathEnvironment? PathEnvironment)
+    bool SupportsPathMapping,
+    bool SupportsPathEnvironment,
+    IBuilderRuntimeService Runtime)
 {
-    public bool IsWindows => Shell.SyntaxKind is AgentShellSyntaxKinds.PowerShell or AgentShellSyntaxKinds.Cmd;
+    public bool IsWindows => Shell.SyntaxKind is "powershell" or "cmd";
 
-    public bool IsPosix => Shell.SyntaxKind == AgentShellSyntaxKinds.PosixSh;
+    public bool IsPosix => Shell.SyntaxKind == "posix-sh";
 
     public string DefaultExecutionRoot => Scope.DefaultWorkingDirectory ?? Scope.WorkspacePaths.First();
 
@@ -138,18 +109,15 @@ public sealed record BuilderWorkspaceExecution(
         int timeoutSeconds = 600,
         CancellationToken cancellationToken = default)
     {
-        if (!Target.SupportsFacet(AgentExecutionFacetIds.ProcessExecution)
-            || ExecutionTarget is not IAgentProcessExecutionTarget processTarget)
+        if (!Target.Facets.Contains(AgentExecutionFacetIds.ProcessExecution, StringComparer.Ordinal))
         {
             throw new NotSupportedException(
                 "Package Builder requires the execution target's structured process-execution facet.");
         }
 
-        var result = await processTarget.ExecuteProcessAsync(
-            Context,
-            new AgentProcessCommandRequest(fileName, arguments, workingDirectory, timeoutSeconds),
-            cancellationToken);
-        return new BuilderProcessResult(result.ExitCode, result.Output, string.Empty, result.WasTruncated);
+        return await BuilderContent.ReadAsync<BuilderProcessResult>(Runtime.ExecuteProcessAsync(Workspace.WorkspaceId,
+            new AgentProcessCommandRequest { FileName = fileName, Arguments = arguments, WorkingDirectory = workingDirectory, TimeoutSeconds = timeoutSeconds },
+            cancellationToken), cancellationToken).ConfigureAwait(false);
     }
 
     public async ValueTask<BuilderProcessResult> RunShellAsync(
@@ -158,23 +126,21 @@ public sealed record BuilderWorkspaceExecution(
         int timeoutSeconds = 600,
         CancellationToken cancellationToken = default)
     {
-        var result = await ExecutionTarget.ExecuteShellAsync(
-            Context,
-            new AgentShellCommandRequest(command, workingDirectory, timeoutSeconds),
-            cancellationToken);
-        return new BuilderProcessResult(result.ExitCode, result.Output, string.Empty, result.WasTruncated);
+        return await BuilderContent.ReadAsync<BuilderProcessResult>(Runtime.ExecuteShellAsync(Workspace.WorkspaceId,
+            new AgentShellCommandRequest { Command = command, WorkingDirectory = workingDirectory, TimeoutSeconds = timeoutSeconds },
+            cancellationToken), cancellationToken).ConfigureAwait(false);
     }
 
     public async ValueTask<AgentExecutionPathMapping> MapToHostPathAsync(
         string executionPath,
         CancellationToken cancellationToken = default)
     {
-        if (PathMapper is null)
+        if (!SupportsPathMapping)
         {
-            return new AgentExecutionPathMapping(executionPath, executionPath, IsInsideWorkspacePath(executionPath));
+            return new AgentExecutionPathMapping { ExecutionPath = executionPath, HostPath = executionPath, IsInsideAllowedRoot = IsInsideWorkspacePath(executionPath) };
         }
 
-        return await PathMapper.MapToHostPathAsync(Context, executionPath, cancellationToken);
+        return await Runtime.MapToHostPathAsync(Workspace.WorkspaceId, executionPath, cancellationToken);
     }
 
     public string ResolveExecutionWorkspacePath(AgentWorkspacePathRecord workspacePath)
@@ -192,7 +158,7 @@ public sealed record BuilderWorkspaceExecution(
             return Scope.WorkspacePaths[index];
         }
 
-        if (PathMapper is null)
+        if (!SupportsPathMapping)
         {
             return selectedHostPath;
         }
@@ -202,12 +168,12 @@ public sealed record BuilderWorkspaceExecution(
 
     public async ValueTask AddPathEntryAsync(string executionPath, CancellationToken cancellationToken = default)
     {
-        if (PathEnvironment is null)
+        if (!SupportsPathEnvironment)
         {
             return;
         }
 
-        await PathEnvironment.AddPathEntryAsync(Context, executionPath, cancellationToken);
+        await Runtime.AddPathEntryAsync(Workspace.WorkspaceId, executionPath, cancellationToken);
     }
 
     public string CombinePath(string root, string leaf)

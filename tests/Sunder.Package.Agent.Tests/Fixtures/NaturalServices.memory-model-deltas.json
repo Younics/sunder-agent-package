@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Authenticated pre-natural memory inspector envelope and port declarations; historical data only.",
+  "sources": [
+    {
+      "path": "src/Sunder.Package.Agent.Memory.Semantic/Models/MemoryInspectorModels.cs",
+      "currentSha256": "51dd09ebdbc324ce8ddf7ec55e91a0ab8ba84a890bfcafb42591d507174cc16b",
+      "beforeSha256": "9bfbf597f3c020b040cba44795e859744799376e2f4c1ee79024f30cdbad0502",
+      "indexBlob": "cbbb66068fb084ff83cf3736fbbd5b2ddd2fae38",
+      "provenance": "git-index-blob",
+      "textChunks": [
+        "H4sIAAAAAAAC/81WzY7TMBC+9yly3JVQXgDYCpUFVWyhJCAOaA+uPZuaOnbwT7UV4t2ZxHbqtNmqcNjSQ5qM55vMzzczcYbLKiudZKDzJaEbUkH+pgJp85mSVhNqTb5QDIR5OXFPKy+gVnqXl1ATaTnFG73lFBA0kaQG0xAK5yELh381IPB70C/ZJmDw9bkXBhsz9KxQAq7OV83LNdHAru8njVsJTjOQrs68F58d6N0HLtnk1yTDXwnGcCXNi/Rptga6aRSX1ou/Kb3Bt5WuroneeVlnjkMAvgVLuOit+EBLSywMRXN097GVO7M3DTqVLMBqTvHh97PlxwARwDINVGmWJupqH+o+c1l78b6+d5xNY9bmLHudSSdEeuaxB0cGI5RVCySarr/Aox0cr5QS2VxS4RjMJfKTbwEVHogwMDSw1OqBCzgwX1qF4fk3F11M0Y+hWqjJbb0CxtBe2w7oy7Q/CYKAur4I",
+        "YWcKSSdZQtmvDet5teTS33SumsDXd0pXEO5L14A2wCDqaSxzOCuAt3y8NNVCiCnZkqgP6NYzasiEGaakOqxwf9gmR9rRs4/Kwgj7DGZWAjuPds/IjLH8oTs/sKbYgj6F8wII+yTF7o4b+6qbwaFFfTfc9C1rBpGnmoH6+0kYG2kvOcYO52REDKUD1NDT4769mfZz9kzc7ZYzkBR6fBT804QYUYv9hBGNIM4IqG9I9peh9RZCD2OV7rgEZMvAQGygqFOAccKmqBH1kf0UA05Eo+MzGuho0628PlXpHjyBDWMoOjp4PAFLV2fKtSg7AQ07tpSkMWtlp3Hp/h/9PFsTWUHpVoZq3rQVu8zm6dw4/lZKP1ziHjGAA+Kn42jr4tukc5tdHQbh98gTnyxY8T/FCmdXKAsAAA=="
+      ]
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Memory.Semantic/Runtime/MemoryInspectorContracts.cs",
+      "currentSha256": "0a3f7fbcc25ee098bdec92113e10e3f6085beab7c87722511b3972a203bf8543",
+      "beforeSha256": "a4c79adab148fc8297997f9c57bea7fe540bf0bd90ad7a83b104aa97eef3b571",
+      "indexBlob": "53276f82d07fcd31721651655ad6d6f7bfeabd21",
+      "provenance": "git-index-blob",
+      "textChunks": [
+        "H4sIAAAAAAAC/8VXzW4aMRC+8xQ+NlLEAzQJKEJptFKipGzaHqoejD0BF6+99Q+FVn33jn8WlkASGki6F9iZ8cznzzOeWW+FGpPSKw6me0vZlI6hez4G5boDrZyhzNnuteYg7UnHP258DZU2i24JFVVOMPxjZoLBw0Uln3aHNTvpdBStwNaUwW7+hh5/KsCFX1uu0hr0303C7GOAeIdawrvdTbvlhBrgR986tR9JwYhQDsx9wFckLIWyNTCnzSV18JMuOr87BJ87aqekUMIJKsUvOLcLxd4NqGIgJXVCqzs9BUXYhuSMcLinXrqj6Cc8Z73oDpmvagkOeHjDLQcdzJAWcs6Cg9NLL3ivT0qwFl8HE6rGwE827IJF4u+LNlMwpaPO2yfMh2DBDeGHF6YxCBBOiyFQfqPk4kpYdxpPKMceAtOG93okaLLMvoSEVrS2/5CEMHeDCbBprfFQUsB+j1zCozYpfiCJ",
+        "2GRS8GOyH57AIGZP6auKmkUbxbrmwLHXmS8x/YCnfFxjPooE2O3RrTMIsI8iatjkDrnCYMpLeUxGWkvMdSY9h0JhtYsZoPKeSguvAvtiJjigjzX4jbAFv0pFtw93m2zltPE1GAscOUnKw4bd8cgaFFm5fnhvB2OgjYFY/ldCAd6Ir30GPfKp5niFPkF9ylcM4WCMopUgFLpyq4RW2sGBwZXgboVSwLciS+Vik8WBI8drLJfy4vVP4YM2Y3izaMtsf42Ayecqk7GNoQUyagBTKMsbRO0rUnvDMqKd8m5PhE03LnAAmadm3PATu9mGNmHd5DOTdrzs7xfVCHi40HIv7CfM830wN74b7LGdBFywBXRb/XQTqo2+FxIKvuxBB0I4BBGYaw4/v2Zg/wlTe+7awlpbvefQtB73GnBnzJaK1naiXQz6QPayeH86zw/IOODn8T/PyJ+p9NCqg1ujv6dK7ZGPHpqaXM7B",
+        "aUJHN4WaaRaR5LxepvXSNnmMXojByRVv0JXyX3f3LFqczJFmvjfe7OdAiIuI50L5CgwdSWguxDToI+r4x+6POvop/cgyI+qwYP8NYELFTFJUhvlUAidMUmvJg6S6wf4RXVzMGcTYaSf5isaPSYvDS8KxNOmT0KjN8j2X9xF5j59sM/xg41vcNq4erEWsfwGQ9N4wLQ8AAA=="
+      ]
+    }
+  ]
+}

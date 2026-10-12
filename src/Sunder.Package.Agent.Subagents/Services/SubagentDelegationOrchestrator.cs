@@ -40,11 +40,8 @@ internal sealed class SubagentDelegationOrchestrator(
             return _permissionStatusAdapter.CreateError(request.ToolId, error!, "task-arguments-invalid");
         }
 
-        if (!_childRunCoordinator.TryPrepare(
-                context,
-                SubagentConstants.TaskToolId,
-                out var environment,
-                out var preparationFailure))
+        var (environment, preparationFailure) = await _childRunCoordinator.PrepareAsync(context, SubagentConstants.TaskToolId, cancellationToken).ConfigureAwait(false);
+        if (environment is null)
         {
             return preparationFailure!.ToolResult;
         }
@@ -75,11 +72,8 @@ internal sealed class SubagentDelegationOrchestrator(
                 "task-arguments-invalid");
         }
 
-        if (!_childRunCoordinator.TryPrepare(
-                context,
-                SubagentConstants.DelegateTasksToolId,
-                out var environment,
-                out var preparationFailure))
+        var (environment, preparationFailure) = await _childRunCoordinator.PrepareAsync(context, SubagentConstants.DelegateTasksToolId, cancellationToken).ConfigureAwait(false);
+        if (environment is null)
         {
             return preparationFailure!.ToolResult;
         }

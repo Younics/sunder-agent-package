@@ -3,6 +3,7 @@ using System.Text.Json;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
+using Sunder.Package.Agent.Services;
 using Sunder.Sdk.Rpc;
 using Xunit;
 
@@ -16,7 +17,6 @@ public sealed partial class AgentPublicSourceMigrationTests
         await using var fixture = await CreateBehaviorFixture(assembly, descriptors, loop);
         var host = new FullRunControlProbe();
         using var registration = fixture.Registry.Open(host, fixture.LoopPackage, out var invocationId);
-        var request = new BehaviorLoopRunRequest(invocationId, fixture.ControlHandle, host.Context);
         foreach (var descriptor in new[]
         {
             loop.Descriptor,
@@ -26,8 +26,8 @@ public sealed partial class AgentPublicSourceMigrationTests
         {
             loop.Descriptor = descriptor;
             var expected = RunJson(descriptor);
-            var actual = await InvokeGeneratedClient(fixture.Client, "DescribeAsync", EmptyRequest());
-            Assert.True(JsonElement.DeepEquals(expected, actual));
+            var actual = await fixture.Client.DescribeAsync();
+            Assert.True(JsonElement.DeepEquals(expected, RunJson(actual)));
         }
         foreach (var kind in Enum.GetValues<AgentBehaviorLoopCompletionKind>())
         {
@@ -41,8 +41,8 @@ public sealed partial class AgentPublicSourceMigrationTests
             };
             var expected = RunJson(new AgentBehaviorLoopResult(host.Context.RunningCheckpoint, kind));
             var arguments = RunJson(host.Context);
-            var actual = await InvokeGeneratedClient(fixture.Client, "RunAsync", RunJson(request));
-            Assert.True(JsonElement.DeepEquals(expected, actual));
+            var actual = await fixture.Client.RunAsync(host.Context, invocationId, fixture.ControlReference);
+            Assert.True(JsonElement.DeepEquals(expected, RunJson(actual)));
             Assert.True(JsonElement.DeepEquals(arguments, RunJson(loop.Context)));
         }
         var minimal = host.Context with
@@ -51,41 +51,28 @@ public sealed partial class AgentPublicSourceMigrationTests
             Profile = host.Context.Profile with { ModelBindings = null, SelectableCapabilityAssignments = null, BehaviorLoopSettingsJson = null },
             RunCapabilities = host.Context.RunCapabilities with { ContextWindowTokens = null, MaxOutputTokens = null },
         };
-        await InvokeGeneratedClient(fixture.Client, "RunAsync", RunJson(request with { Context = minimal }));
+        await fixture.Client.RunAsync(minimal, invocationId, fixture.ControlReference);
         Assert.True(JsonElement.DeepEquals(RunJson(minimal), RunJson(loop.Context)));
 
-        await VerifyBehaviorHandleIntegrityAsync(fixture, loop, host, request);
+        // Denial permanently retires received references. Keep that hostile
+        // scenario separate from the later valid invocation-lifecycle checks.
+        await using (var integrity = await CreateBehaviorFixture(assembly, descriptors, loop))
+        {
+            using var integrityGrant = integrity.Registry.Open(host, integrity.LoopPackage, out var integrityId);
+            await VerifyBehaviorHandleIntegrityAsync(integrity, loop, host, integrityId);
+        }
         await VerifyBehaviorRegistrationLifecycleAsync(fixture, loop, host);
         await VerifyBehaviorRetirementAsync(assembly, descriptors);
         await VerifyDefaultBehaviorAsync(assembly, descriptors);
     }
 
-    private static async Task VerifyBehaviorHandleIntegrityAsync(BehaviorFixture fixture, BehaviorProbe loop, FullRunControlProbe host, BehaviorLoopRunRequest request)
+    private static async Task VerifyBehaviorHandleIntegrityAsync(BehaviorFixture fixture, BehaviorProbe loop, FullRunControlProbe host, Guid invocationId)
     {
-        var handle = request.RunControl;
-        var mismatches = new[]
-        {
-            handle with { PackageId = "different.package" }, handle with { PackageVersion = "2.0.1" },
-            handle with { ProviderId = "different.provider" }, handle with { ContractId = "different.contract" },
-            handle with { ContractVersion = "1.0.1" }, handle with { DescriptorSha256 = new string('0', 64) },
-            handle with { AbiSha256 = new string('0', 64) }, handle with { ActivationId = Guid.NewGuid() },
-            handle with { ActivationEpoch = handle.ActivationEpoch + 1 }, handle with { SessionGeneration = handle.SessionGeneration + 1 },
-            handle with { EndpointReference = "test.rpc.missing" },
-        };
         var calls = loop.Calls;
-        foreach (var mismatch in mismatches)
-        {
-            var invalid = RunJson(request with { RunControl = mismatch });
-            var error = await Assert.ThrowsAsync<SunderRpcException>(() => InvokeGeneratedClient(fixture.Client, "RunAsync", invalid));
-            Assert.Equal(SunderRpcErrorKind.ProviderFaulted, error.Error.Kind);
-            Assert.Equal(mismatch.ContractId == handle.ContractId ? SunderRpcErrorKind.StaleEndpoint : SunderRpcErrorKind.Validation,
-                Assert.IsType<SunderRpcException>(fixture.State.LastInvocationFailure).Error.Kind);
-            Assert.Equal(calls, loop.Calls);
-        }
         fixture.State.SetProviderLookupFailure(fixture.LoopPackage, SunderRpcErrorKind.PermissionDenied);
         try
         {
-            await Assert.ThrowsAsync<SunderRpcException>(() => InvokeGeneratedClient(fixture.Client, "RunAsync", RunJson(request)));
+            await Assert.ThrowsAsync<SunderRpcException>(() => fixture.Client.RunAsync(host.Context, invocationId, fixture.ControlReference).AsTask());
             Assert.Equal(calls, loop.Calls);
             Assert.Equal(SunderRpcErrorKind.PermissionDenied, Assert.IsType<SunderRpcException>(fixture.State.LastInvocationFailure).Error.Kind);
         }
@@ -93,7 +80,7 @@ public sealed partial class AgentPublicSourceMigrationTests
 
         using var wrongCaller = fixture.Registry.Open(host, fixture.LoopPackage.ToUpperInvariant(), out var wrongId);
         var hostCalls = host.Calls;
-        await Assert.ThrowsAsync<SunderRpcException>(() => InvokeGeneratedClient(fixture.Client, "RunAsync", RunJson(request with { InvocationId = wrongId })));
+        await Assert.ThrowsAsync<SunderRpcException>(() => fixture.Client.RunAsync(host.Context, wrongId, fixture.ControlReference).AsTask());
         Assert.Equal(hostCalls, host.Calls);
     }
 
@@ -103,26 +90,25 @@ public sealed partial class AgentPublicSourceMigrationTests
         Assert.True(JsonElement.DeepEquals(RunJson(loop.Descriptor), RunJson(bridge.Descriptor)));
         loop.Execute = (context, runtime, _) =>
         {
+            var calls = host.Calls;
             Assert.True(runtime.IsCurrentRun());
-            Assert.Same(host, fixture.Registry.Resolve(fixture.Owner.LastRun!.InvocationId, fixture.LoopPackage));
-            Assert.Throws<SunderRpcException>(() => fixture.Registry.Resolve(fixture.Owner.LastRun.InvocationId, "sunder.package.agent"));
+            Assert.Equal(calls + 1, host.Calls);
             return ValueTask.FromResult(new AgentBehaviorLoopResult(context.RunningCheckpoint, AgentBehaviorLoopCompletionKind.Completed));
         };
         var result = await bridge.RunAsync(host.Context, host);
         Assert.Equal(AgentBehaviorLoopCompletionKind.Completed, result.CompletionKind);
         var sent = Assert.IsType<BehaviorLoopRunRequest>(fixture.Owner.LastRun);
-        Assert.Equal(fixture.ControlHandle, sent.RunControl);
         Assert.InRange(fixture.Owner.LastRunOptions!.DeadlineUtc!.Value - DateTimeOffset.UtcNow, TimeSpan.FromMinutes(34), TimeSpan.FromMinutes(36));
-        AssertClosed(sent.InvocationId);
+        await AssertClosedAsync(sent.InvocationId);
         var runtimeCalls = host.Calls;
-        await Assert.ThrowsAsync<SunderRpcException>(() => InvokeGeneratedClient(fixture.Client, "RunAsync", RunJson(sent)));
+        await Assert.ThrowsAsync<SunderRpcException>(() => fixture.Client.RunAsync(sent.Context, sent.InvocationId, fixture.ControlReference).AsTask());
         Assert.Equal(runtimeCalls, host.Calls);
 
         loop.Execute = (_, _, _) => throw new IOException("private behavior implementation detail");
         var failure = await Assert.ThrowsAsync<SunderRpcException>(() => bridge.RunAsync(host.Context, host).AsTask());
         Assert.Equal(SunderRpcErrorKind.ProviderFaulted, failure.Error.Kind);
         Assert.DoesNotContain("private behavior", failure.Message, StringComparison.Ordinal);
-        AssertClosed(fixture.Owner.LastRun!.InvocationId);
+        await AssertClosedAsync(fixture.Owner.LastRun!.InvocationId);
 
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         loop.Execute = async (_, _, token) =>
@@ -136,10 +122,19 @@ public sealed partial class AgentPublicSourceMigrationTests
         await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
         cancellation.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending.WaitAsync(TimeSpan.FromSeconds(5)));
-        AssertClosed(fixture.Owner.LastRun!.InvocationId);
+        await AssertClosedAsync(fixture.Owner.LastRun!.InvocationId);
 
-        void AssertClosed(Guid id)
-            => Assert.Equal("agent.run-control.invalid-invocation", Assert.Throws<SunderRpcException>(() => fixture.Registry.Resolve(id, fixture.LoopPackage)).Error.Code);
+        async Task AssertClosedAsync(Guid id)
+        {
+            var calls = host.Calls;
+            var error = await Assert.ThrowsAsync<SunderRpcException>(() => fixture.ControlClient.IsCurrentAsync(id).AsTask());
+            Assert.Equal(calls, host.Calls);
+            Assert.Equal(SunderRpcErrorKind.ProviderFaulted, error.Error.Kind);
+            Assert.Equal("rpc.provider.handler-fault", error.Error.Code);
+            var rejected = Assert.IsType<SunderRpcException>(fixture.State.LastInvocationFailure);
+            Assert.Equal(SunderRpcErrorKind.PermissionDenied, rejected.Error.Kind);
+            Assert.Equal("agent.run-control.invalid-invocation", rejected.Error.Code);
+        }
     }
 
     private static async Task VerifyBehaviorRetirementAsync(Assembly assembly, IReadOnlyDictionary<string, SunderRpcContractDescriptor> descriptors)
@@ -161,28 +156,66 @@ public sealed partial class AgentPublicSourceMigrationTests
             await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
             if (!retireControl) await host.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
             await fixture.State.RetireAsync(retireControl ? fixture.Control : fixture.Implementation).WaitAsync(TimeSpan.FromSeconds(5));
-            if (retireControl) await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending.WaitAsync(TimeSpan.FromSeconds(5)));
-            else Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => pending.WaitAsync(TimeSpan.FromSeconds(5)))).Error.Kind);
-            Assert.Throws<SunderRpcException>(() => fixture.Registry.Resolve(fixture.Owner.LastRun!.InvocationId, fixture.LoopPackage));
             if (retireControl)
             {
-                var controlDescriptor = descriptors[AgentRpcContractIds.RunControl];
-                fixture.State.Add("test.foreign.control", controlDescriptor, new object(), new Rpc.Public.RunControlService(fixture.Registry).CreateSunderRpcProviderRegistration().Handler,
+                // The transferred reference retired, not the caller token. Its
+                // owned call must retain the SDK retirement/unsafe-dispatch result.
+                var fault = await Assert.ThrowsAsync<SunderRpcException>(() => pending.WaitAsync(TimeSpan.FromSeconds(5)));
+                Assert.True(fault.Error.Kind == SunderRpcErrorKind.Unavailable,
+                    $"Run-control retirement boundary: kind={fault.Error.Kind}, code={fault.Error.Code}, "
+                     + $"dispatch={fault.Error.DispatchState}, retry={fault.Error.RetrySafety}; "
+                     + $"owner reference retired={fixture.ControlReference.RetirementToken.IsCancellationRequested}; "
+                     + $"provider failure={fixture.State.LastInvocationFailure}");
+                Assert.Equal("rpc.binding.retired", fault.Error.Code);
+                Assert.Equal(SunderRpcDispatchState.PossiblyDispatched, fault.Error.DispatchState);
+                Assert.Equal(SunderRpcRetrySafety.Unsafe, fault.Error.RetrySafety);
+                var cancellation = Assert.IsAssignableFrom<OperationCanceledException>(fixture.State.LastInvocationFailure);
+                Assert.True(cancellation.CancellationToken.IsCancellationRequested);
+            }
+            else Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => pending.WaitAsync(TimeSpan.FromSeconds(5)))).Error.Kind);
+            if (retireControl)
+            {
+                var retired = await Assert.ThrowsAsync<SunderRpcException>(() => fixture.ControlClient.IsCurrentAsync(fixture.Owner.LastRun!.InvocationId).AsTask());
+                Assert.Equal(SunderRpcErrorKind.StaleEndpoint, retired.Error.Kind);
+                var stale = await Assert.ThrowsAsync<SunderRpcException>(() => fixture.ControlReference.EnsureCurrentAsync().AsTask());
+                Assert.Equal(SunderRpcErrorKind.StaleEndpoint, stale.Error.Kind);
+            }
+            else
+            {
+                var closed = await Assert.ThrowsAsync<SunderRpcException>(() => fixture.ControlClient.IsCurrentAsync(fixture.Owner.LastRun!.InvocationId).AsTask());
+                Assert.Equal(SunderRpcErrorKind.ProviderFaulted, closed.Error.Kind);
+                Assert.Equal("rpc.provider.handler-fault", closed.Error.Code);
+                var denied = Assert.IsType<SunderRpcException>(fixture.State.LastInvocationFailure);
+                Assert.Equal(SunderRpcErrorKind.PermissionDenied, denied.Error.Kind);
+                Assert.Equal("agent.run-control.invalid-invocation", denied.Error.Code);
+            }
+            if (retireControl)
+            {
+                var controlDescriptor = descriptors[RegressionTestBindings.RunControls];
+                var foreignControl = new AgentRunControlService((AgentActiveRunRegistry)fixture.Registry.Value);
+                var foreignRegistration = fixture.OwnerReceiver.Register(foreignControl, controlDescriptor.ContractId);
+                fixture.State.Add("test.foreign.control", controlDescriptor, foreignControl, foreignRegistration.Handler,
                     EmptyDisposable.Instance, "agent.run.control", "2.0.0");
-                fixture.State.Add("sunder.package.agent", controlDescriptor, new object(), new Rpc.Public.RunControlService(fixture.Registry).CreateSunderRpcProviderRegistration().Handler,
+                var differentControl = new AgentRunControlService((AgentActiveRunRegistry)fixture.Registry.Value);
+                var differentRegistration = fixture.OwnerReceiver.Register(differentControl, controlDescriptor.ContractId);
+                fixture.State.Add("sunder.package.agent", controlDescriptor, differentControl, differentRegistration.Handler,
                     EmptyDisposable.Instance, "different.run.control", "2.0.0");
                 var calls = loop.Calls;
+                var peerCalls = fixture.State.InvocationAttemptCount;
                 var unavailable = await Assert.ThrowsAsync<SunderRpcException>(() => fixture.Bridge.RunAsync(host.Context, host).AsTask().WaitAsync(TimeSpan.FromSeconds(5)));
-                Assert.Equal("agent.run-control.unavailable", unavailable.Error.Code);
+                Assert.Equal(SunderRpcErrorKind.StaleEndpoint, unavailable.Error.Kind);
+                Assert.Equal("rpc.stale-endpoint", unavailable.Error.Code);
+                Assert.Equal(peerCalls, fixture.State.InvocationAttemptCount);
                 Assert.Equal(calls, loop.Calls);
 
-                var registration = (Sunder.Sdk.Worker.SunderWorkerProviderRegistration)fixture.Control.GetType()
-                    .GetMethod("CreateSunderRpcProviderRegistration")!.Invoke(fixture.Control, null)!;
+                var registration = fixture.OwnerReceiver.Register(fixture.Control, controlDescriptor.ContractId);
                 fixture.State.Add("sunder.package.agent", controlDescriptor, fixture.Control, registration.Handler, EmptyDisposable.Instance, registration.ProviderId, "2.0.0");
                 using var invocation = fixture.Registry.Open(host, fixture.LoopPackage, out var id);
                 var retained = fixture.Owner.LastRun! with { InvocationId = id };
-                await Assert.ThrowsAsync<SunderRpcException>(() => InvokeGeneratedClient(fixture.Client, "RunAsync", RunJson(retained)).WaitAsync(TimeSpan.FromSeconds(5)));
-                Assert.Equal("agent.rpc.provider-stale", Assert.IsType<SunderRpcException>(fixture.State.LastInvocationFailure).Error.Code);
+                var stale = await Assert.ThrowsAsync<SunderRpcException>(() => fixture.Client.RunAsync(retained.Context, retained.InvocationId, fixture.ControlReference).AsTask().WaitAsync(TimeSpan.FromSeconds(5)));
+                Assert.Equal(SunderRpcErrorKind.StaleEndpoint, stale.Error.Kind);
+                Assert.Equal("rpc.stale-endpoint", stale.Error.Code);
+                Assert.Equal(peerCalls, fixture.State.InvocationAttemptCount);
                 Assert.Equal(calls, loop.Calls);
             }
         }

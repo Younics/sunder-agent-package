@@ -37,7 +37,7 @@ public sealed partial class AgentToolInvocationRowViewModel : AgentTranscriptRow
         _detailState = new TranscriptToolDetailState(
             projection,
             loadDetail,
-            presentationService.Resolve);
+            presentationService.ResolveAsync);
         _detailState.Changed += OnDetailStateChanged;
         _detailState.Invalidated += OnDetailVisualInvalidated;
         ApplyHeaderProjection();
@@ -109,7 +109,7 @@ public sealed partial class AgentToolInvocationRowViewModel : AgentTranscriptRow
 
     internal TranscriptToolExpansionRequest? BeginExpansion() => _detailState.BeginExpansion();
 
-    internal Task<AgentTranscriptToolDetailRecord?> LoadDetailsAsync(
+    internal Task<TranscriptToolDetailData?> LoadDetailsAsync(
         TranscriptToolExpansionRequest request,
         CancellationToken cancellationToken)
         => _detailState.LoadAsync(request, cancellationToken);
@@ -119,7 +119,7 @@ public sealed partial class AgentToolInvocationRowViewModel : AgentTranscriptRow
 
     internal bool TryMaterializeDetails(
         TranscriptToolExpansionRequest request,
-        AgentTranscriptToolDetailRecord? detail,
+        TranscriptToolDetailData? detail,
         out TranscriptToolDetailViewModel? details)
         => _detailState.TryMaterialize(request, detail, out details);
 

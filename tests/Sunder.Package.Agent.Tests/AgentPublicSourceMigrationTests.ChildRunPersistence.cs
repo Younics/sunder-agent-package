@@ -33,7 +33,7 @@ public sealed partial class AgentPublicSourceMigrationTests
         var profile = ChildProfile(parentProfile, "child.profile") with { DisplayName = "Child profile 漢字", IsInternal = false };
         var request = new AgentChildRunRequest(parent.SessionId, Guid.NewGuid(), 1, "call.one", workspace.WorkspaceId,
             " task.one ", profile, "First delegated task", "   ", "custom-child");
-        await using var fixture = await CreateChildRunFixture(assembly, descriptor, services.GetRequiredService<AgentRunCoordinator>());
+        await using var fixture = await CreateChildRunFixture(assembly, descriptor, services.GetRequiredService<AgentChildRunExecutor>());
         var first = await fixture.Run(request).WaitAsync(TimeSpan.FromSeconds(15));
         Assert.Equal(AgentRunStatus.Completed, first.Status);
         Assert.Equal("child reply 1 漢字", first.Content);
@@ -66,19 +66,39 @@ public sealed partial class AgentPublicSourceMigrationTests
         Assert.Equal(2, sessions.ListTurns(child.SessionId).Count(turn => turn.Role == AgentMessageRole.User));
         Assert.Equal(2, sessions.ListTurns(child.SessionId).Count(turn => turn.Role == AgentMessageRole.Assistant));
 
-        var untasked = request with { TaskId = null, Title = " Untasked " };
-        var third = await fixture.Run(untasked).WaitAsync(TimeSpan.FromSeconds(15));
-        var fourth = await fixture.Run(untasked).WaitAsync(TimeSpan.FromSeconds(15));
-        Assert.NotEqual(first.SessionId, third.SessionId);
-        Assert.NotEqual(third.SessionId, fourth.SessionId);
-        Assert.Null(sessions.GetSession(third.SessionId)!.TaskId);
-        Assert.Equal("Untasked", third.Title);
+        // Send each absence spelling unchanged over the real typed client. The
+        // coordinator's actual child-session preparation owns normalization and
+        // must create a fresh session on every call, including repeated spellings.
+        var untaskedSessions = new HashSet<Guid>();
+        foreach (var absentTaskId in new string?[] { null, "", " \t " })
+        {
+            var untasked = request with { TaskId = absentTaskId, Title = " Untasked " };
+            for (var attempt = 0; attempt < 2; attempt++)
+            {
+                var result = await fixture.Run(untasked).WaitAsync(TimeSpan.FromSeconds(15));
+                Assert.Equal(AgentRunStatus.Completed, result.Status);
+                var sentTaskId = fixture.State.LastInvocationRequest.GetProperty("taskId");
+                Assert.Equal(absentTaskId is null ? JsonValueKind.Null : JsonValueKind.String, sentTaskId.ValueKind);
+                Assert.Equal(absentTaskId, sentTaskId.GetString());
+                Assert.Equal(absentTaskId, untasked.TaskId);
+                Assert.NotEqual(first.SessionId, result.SessionId);
+                Assert.True(untaskedSessions.Add(result.SessionId), "An absent TaskId must never reuse an earlier child session.");
+                var saved = Assert.IsType<AgentSessionRecord>(sessions.GetSession(result.SessionId));
+                Assert.Null(saved.TaskId);
+                Assert.Equal(parent.SessionId, saved.ParentSessionId);
+                Assert.Equal(profile.ProfileId, saved.ProfileId);
+                Assert.Equal(workspace.WorkspaceId, saved.WorkspaceId);
+                Assert.Equal("Untasked", result.Title);
+                Assert.Equal(1, sessions.GetLatestRun(result.SessionId)!.Key.RunRevision);
+            }
+        }
+        Assert.Equal(6, untaskedSessions.Count);
         var otherProfile = await fixture.Run(request with { ChildProfile = ChildProfile(profile, "child.other") }).WaitAsync(TimeSpan.FromSeconds(15));
         var otherParent = await fixture.Run(request with { ParentSessionId = root.SessionId }).WaitAsync(TimeSpan.FromSeconds(15));
         Assert.NotEqual(first.SessionId, otherProfile.SessionId);
         Assert.NotEqual(first.SessionId, otherParent.SessionId);
         Assert.Equal(root.SessionId, sessions.GetSession(otherParent.SessionId)!.ParentSessionId);
-        Assert.Equal(6, provider.Clients.Count);
+        Assert.Equal(10, provider.Clients.Count);
         Assert.All(provider.Clients, chat => { Assert.True(chat.Disposed); Assert.True(chat.EnumerationDisposed); });
 
         var count = sessions.ListSessions().Count;
@@ -101,7 +121,7 @@ public sealed partial class AgentPublicSourceMigrationTests
         Assert.Equal(AgentRunStatus.Failed, notReady.Status);
         Assert.Equal("Configure child provider", notReady.Summary);
         provider.Readiness = new("child.provider", AgentProviderReadinessStatus.Ready, "Ready");
-        Assert.Equal(6, provider.Clients.Count);
+        Assert.Equal(10, provider.Clients.Count);
 
         var wrongWorkspace = workspaces.CreateWorkspace("Other workspace");
         var workspaceError = await Assert.ThrowsAsync<SunderRpcException>(() => fixture.Run(request with { TaskId = "wrong-workspace", WorkspaceId = wrongWorkspace.WorkspaceId }));

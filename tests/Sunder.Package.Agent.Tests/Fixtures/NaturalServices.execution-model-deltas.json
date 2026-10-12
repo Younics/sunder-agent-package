@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Authenticated pre-natural execution presentation envelope declarations; historical data only.",
+  "sources": [
+    {
+      "path": "src/Sunder.Package.Agent.Execution.Local/Models/LocalExecutionPresentationModels.cs",
+      "currentSha256": "fcaae8c61c2bf0f8674a5dd0dacd5a320a8d4ac18c2139f685d71191ad3f8389",
+      "beforeSha256": "993fd0d86fb0003007c6d5a9b4c3e8c21c62d17cbbe2db63203ae0b5ed2c912b",
+      "indexBlob": "bdccfec7f6b6afc135938e009fe404d4cac29a7d",
+      "provenance": "git-index-blob",
+      "textChunks": [
+        "H4sIAAAAAAAC/81VwW7bMAy9+yt0TIDCP5CtReEEhbFuDeJgl2EHRmISIYrkiVKRoOi/j7bcNt6arCiGIjrYMvko8z1KlIUtUg0SRRWtQp9PQW5ghfn1Cm3IJzuUMWhn81snwYyy7EeHq9Smw2q7ypOxiy2cwpkzOHg7NK/W4FENf2Z1XBgthbYB/bLJq2z//JzI1CNxZtDMC6N5mj1kgsd3MBHnQJtP/YC7Gn2LnjFRZwkvRfLhNe2tHLTBzTga9isiBeHT++IZX4CVaEwLmrsNWiH/snwWCpcQTRiOsscPEw9t3B6j80Vb1Sl2g6HCEHhdSqwquMdXLGvmxN8flz8hGFSsuHRe/aMuqX4nyIrmkdhQ8JzElZjrLbrI5KWzirhINhqTIOUMQd1Zs7/VFNJOavmPcamtbta8vBJJkV6ccc3Ck12NMqBqAQUEMG41w3tNHNfBh6NzkzGdisF/VWiM4UWId8QX",
+        "kYLbHtX5hL79Sn9FIpao51s4Z7jbSck+dgQf8eLUJpp47zzXtnmdaRHb3A4rKJr1DqV4UuJAgpLmHiw1LZRpLcEQ9sUrnPeYulmpzoL5Hxulx7j1lb2TLsaaagP7b3zJ9exJQVgYnEJY91zVni+X3UvP6KR62tDM/zcBVAyoMwcAAA=="
+      ]
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Execution.Docker/Models/DockerExecutionPresentationModels.cs",
+      "currentSha256": "ffb2956cf2cc6918e885a7fd3830c132426cf80d54505969473b1cff2ac8247c",
+      "beforeSha256": "229cec9682af42d8c5138dca420cbf4eb9c3aba7fbf5a8d012c818576208a3a4",
+      "indexBlob": "7a4bcde8659f8fbc36798942398a97c407e6b2ef",
+      "provenance": "git-index-blob",
+      "textChunks": [
+        "H4sIAAAAAAAC/81VS28aMRC+76/wESS06utGE4QgrVDTgFjaS9WDY8+ChbGpPY4aVf3vHa+ddDcJfUgVZQ+763l55puX4Tvwey6AVcFIcOWCiy1fQzleg8Hy4iuIgMqacmrFFtywKD5lwUpus7Ay6zIRs/LESlhaDb0/Fy2rDXcg+5+LfbjWSjBlEFwdHZulq+9dWTjw5BuP/xOt6Lf4VjB6PnIdYMX99vUDjfkeXCO+pFit8XDOEg/G/taIXqMdn8N6XwJ4ZC59B/cKE24EaN0IrewWDBOPKGdMQs2Dxv6w+H40/MCE3cF43ikjM2hvAStAJMM+hVXxG+hSxlLOdnRXOk1BA0KLsISaMrI5QMk2FkHrlsSKUEzODY6IiQeuQVIWhXXyd8lOVfErBFl8pXg8OnJjxFZqBzYQosIa6Sn1huLuiiSLVLgLjpsnJRqcCENwQLWURfrDk4Mp9VLv3wEwWwKXc6Nv",
+        "L5XH3MQNGFOolVHx1vMMT9f0tbWaBpgQ4CMDXYDune+JQVodJW0jZ8KRa7tewo3yZL8jcSj0C+esG7Hmc6rpaZxr54ZFg21U7kBpQTjzK8eNjzN10FV1DtJMm8n/HOqDguiE2O2cdhIbTkVLI3iWPpnLEWLNzuvaA47YJfcYZxXIMX5A0a2iyMygnQIIsVuUIX967QxG6u3hPD8JYm6qUwgqgk+jhdZl71Fr/2VURw+qtXNb9ZYX7ZXNhUUT49ndnqRU0fH5zx0ZIztjLxLhDVdJ/mU6XwFIP0ak9kyj6lXcnj8Ado21JcMJAAA="
+      ]
+    }
+  ]
+}

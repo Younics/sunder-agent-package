@@ -1,36 +1,6 @@
 namespace Sunder.Package.Agent.Contracts.Models;
 
 /// <summary>
-/// Defines stable syntax discriminators understood by Agent shell consumers.
-/// </summary>
-/// <remarks>
-/// A syntax kind describes command language and quoting expectations, not the identity or trustworthiness of a particular executable.
-/// </remarks>
-[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
-public static class AgentShellSyntaxKinds
-{
-    /// <summary>
-    /// PowerShell command language, including PowerShell quoting, variables, and pipelines.
-    /// </summary>
-    public const string PowerShell = "powershell";
-
-    /// <summary>
-    /// Windows Command Prompt (<c>cmd.exe</c>) command language.
-    /// </summary>
-    public const string Cmd = "cmd";
-
-    /// <summary>
-    /// POSIX <c>sh</c>-compatible command language and path conventions.
-    /// </summary>
-    public const string PosixSh = "posix-sh";
-
-    /// <summary>
-    /// Target-specific syntax for which generic consumers must not assume standard quoting or path rules.
-    /// </summary>
-    public const string Custom = "custom";
-}
-
-/// <summary>
 /// Describes the command interpreter selected for a workspace execution binding.
 /// </summary>
 /// <remarks>

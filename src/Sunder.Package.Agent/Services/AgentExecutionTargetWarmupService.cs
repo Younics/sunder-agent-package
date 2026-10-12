@@ -1,5 +1,6 @@
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Runtime;
+using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Services;
 
@@ -23,36 +24,27 @@ public sealed class AgentExecutionTargetWarmupService(
 
         try
         {
-            var target = await executionTargetService.ResolveTargetReferenceAsync(binding, cancellationToken)
+            var target = await executionTargetService.ResolveTargetAsync(binding, cancellationToken)
                 .ConfigureAwait(false);
             if (target is null)
             {
                 return AgentExecutionTargetWarmupResult.Failed("The selected workspace is not bound to an installed execution target.");
             }
 
-            var lease = await target.TryAcquireAsync(cancellationToken).ConfigureAwait(false);
-            if (lease is null)
-            {
-                return AgentExecutionTargetWarmupResult.Failed("The selected execution target is unavailable.");
-            }
-            AgentExecutionTargetReadiness readiness;
-            using (lease)
-            using (var invocation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lease.RetirementToken))
-            {
-                readiness = await lease.Service.GetReadinessAsync(
-                    new AgentExecutionTargetContext(null, null, workspace, binding),
-                    invocation.Token).ConfigureAwait(false);
-            }
+            var readiness = await target.Service.ReadinessAsync(
+                new AgentExecutionTargetContext(null, null, workspace, binding),
+                cancellationToken).ConfigureAwait(false);
             return readiness.Status == AgentExecutionTargetReadinessStatus.Ready
                 ? AgentExecutionTargetWarmupResult.Ready(readiness.Message)
                 : AgentExecutionTargetWarmupResult.Failed(readiness.Message);
         }
-        catch (AgentPackageUnavailableException ex)
+        catch (SunderRpcException ex) when (!cancellationToken.IsCancellationRequested
+            && ex.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable)
         {
             return AgentExecutionTargetWarmupResult.Failed(ex.Message);
         }
     }
 
-    public IReadOnlyList<AgentExecutionTargetDescriptor> ListTargets()
-        => executionTargetService.ListTargets();
+    public Task<IReadOnlyList<AgentExecutionTargetDescriptor>> ListTargetsAsync(CancellationToken cancellationToken = default)
+        => executionTargetService.ListTargetsAsync(cancellationToken);
 }

@@ -103,7 +103,7 @@ internal sealed partial class AgentAppRuntimeGateway
 
     private async Task<AgentDashboardProjection> PopulateDashboardLoadAsync()
         => await InvokeAsync(
-                AgentRuntimeOperations.Dashboard,
+                _owner.GetDashboardAsync,
                 new AgentDashboardRequest(),
                 _lifetime.Token)
             .ConfigureAwait(false);
@@ -132,7 +132,7 @@ internal sealed partial class AgentAppRuntimeGateway
         var lazy = _catalogs.GetOrAdd(key, _ => new Lazy<Task<AgentCatalogProjection>>(
             () => StartRetainedProducerTask(
                 () => Task.Run(() =>
-                    InvokeAsync(AgentRuntimeOperations.Catalog, request, _lifetime.Token).AsTask())),
+                    InvokeAsync(_owner.GetCatalogAsync, request, _lifetime.Token).AsTask())),
             LazyThreadSafetyMode.ExecutionAndPublication));
         if (lazy.IsValueCreated
             && lazy.Value is { IsFaulted: true } or { IsCanceled: true }

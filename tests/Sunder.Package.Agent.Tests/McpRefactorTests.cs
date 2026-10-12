@@ -17,10 +17,19 @@ using McpWorker::Sunder.Package.Agent.Mcp.Runtime;
 using McpWorker::Sunder.Package.Agent.Mcp.Services;
 using AgentMcpSettingsViewModel = McpApp::Sunder.Package.Agent.Mcp.AgentMcpSettingsViewModel;
 using McpAppRuntimeGateway = McpApp::Sunder.Package.Agent.Mcp.Runtime.McpAppRuntimeGateway;
+using McpAppManagementService = McpApp::Sunder.Generated.Packages.Sunder_Package_Agent_Mcp_Services.IManagementService;
+using AgentToolDispatchedEvent = McpWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentToolDispatchedEvent;
+using AgentToolExecutionCompletedEvent = McpWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentToolExecutionCompletedEvent;
+using AgentToolExecutionContext = McpWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentToolExecutionContext;
+using AgentToolRequest = McpWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentToolRequest;
+using AgentToolResult = McpWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentToolResult;
+using ObservedToolExecutionRequest = McpWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.CSunder_Agent_Tool_Execution_Observed_ToolExecutionObservedExecuteRequest;
+using ToolSourceExecuteRequest = McpWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.CSunder_Agent_Tool_Source_ToolSourceExecuteRequest;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Logging;
 using Sunder.Sdk.Callbacks;
 using Sunder.Sdk.Storage;
+using Sunder.Sdk.Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -200,8 +209,8 @@ public sealed class McpRefactorTests
         var source = new McpToolSource(catalog, manager);
 
         var result = await source.ExecuteAsync(
-            new AgentToolExecutionContext(Guid.NewGuid()),
-            new AgentToolRequest("foo_run", "{}"));
+            CreateToolExecutionContext(Guid.NewGuid()),
+            CreateToolRequest("foo_run", "{}"));
 
         Assert.True(result.IsError);
         Assert.Equal(McpToolIdentity.CreateStable("one", "run"), result.ToolId);
@@ -221,8 +230,8 @@ public sealed class McpRefactorTests
         var source = new McpToolSource(catalog, manager);
 
         var result = await source.ExecuteAsync(
-            new AgentToolExecutionContext(Guid.NewGuid()),
-            new AgentToolRequest(McpToolIdentity.CreateStable("one", "run"), "{}"));
+            CreateToolExecutionContext(Guid.NewGuid()),
+            CreateToolRequest(McpToolIdentity.CreateStable("one", "run"), "{}"));
 
         Assert.True(result.IsError);
         Assert.StartsWith("MCP: ", result.Summary, StringComparison.Ordinal);
@@ -247,8 +256,8 @@ public sealed class McpRefactorTests
         var source = new McpToolSource(catalog, manager);
 
         var result = await source.ExecuteAsync(
-            new AgentToolExecutionContext(Guid.NewGuid()),
-            new AgentToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"));
+            CreateToolExecutionContext(Guid.NewGuid()),
+            CreateToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"));
 
         Assert.False(result.WasTruncated);
         Assert.NotNull(result.Content);
@@ -274,8 +283,8 @@ public sealed class McpRefactorTests
         var source = new McpToolSource(catalog, manager);
 
         var result = await source.ExecuteAsync(
-            new AgentToolExecutionContext(Guid.NewGuid()),
-            new AgentToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"));
+            CreateToolExecutionContext(Guid.NewGuid()),
+            CreateToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"));
 
         Assert.False(result.WasTruncated);
         Assert.NotNull(result.Content);
@@ -566,18 +575,16 @@ public sealed class McpRefactorTests
         var source = new McpToolSource(catalog, manager);
         var dispatchCount = 0;
 
-        var result = await source.ExecuteAsync(
-            new AgentToolExecutionContext(Guid.NewGuid())
-            {
-                DispatchStarted = () => Interlocked.Increment(ref dispatchCount),
-            },
-            new AgentToolRequest(
+        var result = await source.ExecuteObservedAsync(
+            CreateToolExecutionContext(Guid.NewGuid()),
+            CreateToolRequest(
                 McpToolIdentity.CreateStable("one", "edit_screens"),
                 JsonSerializer.Serialize(new Dictionary<string, object?>
                 {
                     [McpToolTimeoutMetadata.MetadataMarkerPropertyName] = McpToolTimeoutMetadata.MetadataMarkerValue,
                     [McpToolTimeoutMetadata.TimeoutPropertyName] = "60",
-                })));
+                })),
+            () => Interlocked.Increment(ref dispatchCount));
 
         Assert.Equal(0, dispatchCount);
         Assert.Equal(0, factory.ConnectCount);
@@ -601,8 +608,8 @@ public sealed class McpRefactorTests
         var source = new McpToolSource(catalog, manager);
 
         var result = await source.ExecuteAsync(
-            new AgentToolExecutionContext(Guid.NewGuid()),
-            new AgentToolRequest(
+            CreateToolExecutionContext(Guid.NewGuid()),
+            CreateToolRequest(
                 McpToolIdentity.CreateStable("one", "edit_screens"),
                 JsonSerializer.Serialize(new Dictionary<string, object?>
                 {
@@ -634,8 +641,8 @@ public sealed class McpRefactorTests
         var source = new McpToolSource(catalog, manager);
 
         var result = await source.ExecuteAsync(
-            new AgentToolExecutionContext(Guid.NewGuid()),
-            new AgentToolRequest(
+            CreateToolExecutionContext(Guid.NewGuid()),
+            CreateToolRequest(
                 McpToolIdentity.CreateStable("one", "edit_screens"),
                 JsonSerializer.Serialize(new Dictionary<string, object?>
                 {
@@ -673,8 +680,8 @@ public sealed class McpRefactorTests
         var source = new McpToolSource(catalog, manager);
 
         var result = await source.ExecuteAsync(
-            new AgentToolExecutionContext(Guid.NewGuid()),
-            new AgentToolRequest(
+            CreateToolExecutionContext(Guid.NewGuid()),
+            CreateToolRequest(
                 McpToolIdentity.CreateStable("one", "edit_screens"),
                 JsonSerializer.Serialize(new Dictionary<string, object?>
                 {
@@ -711,8 +718,8 @@ public sealed class McpRefactorTests
         var source = new McpToolSource(catalog, manager);
 
         var result = await source.ExecuteAsync(
-            new AgentToolExecutionContext(Guid.NewGuid()),
-            new AgentToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"));
+            CreateToolExecutionContext(Guid.NewGuid()),
+            CreateToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"));
 
         Assert.False(result.IsError);
         Assert.False(canBeCanceled);
@@ -736,8 +743,8 @@ public sealed class McpRefactorTests
         using var cancellation = new CancellationTokenSource();
 
         var invocation = source.ExecuteAsync(
-            new AgentToolExecutionContext(Guid.NewGuid()),
-            new AgentToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"),
+            CreateToolExecutionContext(Guid.NewGuid()),
+            CreateToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"),
             cancellation.Token).AsTask();
         await invocationStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
         await Task.Delay(150);
@@ -763,12 +770,10 @@ public sealed class McpRefactorTests
         var source = new McpToolSource(catalog, manager);
 
         var dispatchCount = 0;
-        var result = await source.ExecuteAsync(
-            new AgentToolExecutionContext(Guid.NewGuid())
-            {
-                DispatchStarted = () => Interlocked.Increment(ref dispatchCount),
-            },
-            new AgentToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"));
+        var result = await source.ExecuteObservedAsync(
+            CreateToolExecutionContext(Guid.NewGuid()),
+            CreateToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"),
+            () => Interlocked.Increment(ref dispatchCount));
 
         Assert.Equal(1, dispatchCount);
         Assert.True(result.IsError);
@@ -795,8 +800,8 @@ public sealed class McpRefactorTests
         var source = new McpToolSource(catalog, manager);
 
         var result = await source.ExecuteAsync(
-            new AgentToolExecutionContext(Guid.NewGuid()),
-            new AgentToolRequest(
+            CreateToolExecutionContext(Guid.NewGuid()),
+            CreateToolRequest(
                 McpToolIdentity.CreateStable("one", "edit_screens"),
                 JsonSerializer.Serialize(new Dictionary<string, object?>
                 {
@@ -825,8 +830,8 @@ public sealed class McpRefactorTests
         var source = new McpToolSource(catalog, manager);
 
         var result = await source.ExecuteAsync(
-            new AgentToolExecutionContext(Guid.NewGuid()),
-            new AgentToolRequest(
+            CreateToolExecutionContext(Guid.NewGuid()),
+            CreateToolRequest(
                 McpToolIdentity.CreateStable("one", "edit_screens"),
                 JsonSerializer.Serialize(new Dictionary<string, object?>
                 {
@@ -853,8 +858,8 @@ public sealed class McpRefactorTests
         var source = new McpToolSource(catalog, manager);
 
         var result = await source.ExecuteAsync(
-            new AgentToolExecutionContext(Guid.NewGuid()),
-            new AgentToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"));
+            CreateToolExecutionContext(Guid.NewGuid()),
+            CreateToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"));
 
         Assert.True(result.IsError);
         Assert.Equal(AgentToolResultErrorCodes.ToolOutcomeAmbiguous, result.ErrorCode);
@@ -881,12 +886,10 @@ public sealed class McpRefactorTests
         var source = new McpToolSource(catalog, manager);
         var dispatchCount = 0;
 
-        var result = await source.ExecuteAsync(
-            new AgentToolExecutionContext(Guid.NewGuid())
-            {
-                DispatchStarted = () => Interlocked.Increment(ref dispatchCount),
-            },
-            new AgentToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"));
+        var result = await source.ExecuteObservedAsync(
+            CreateToolExecutionContext(Guid.NewGuid()),
+            CreateToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"),
+            () => Interlocked.Increment(ref dispatchCount));
 
         Assert.Equal(1, dispatchCount);
         Assert.True(result.IsError);
@@ -908,8 +911,8 @@ public sealed class McpRefactorTests
         var source = new McpToolSource(catalog, manager);
 
         var result = await source.ExecuteAsync(
-            new AgentToolExecutionContext(Guid.NewGuid()),
-            new AgentToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"));
+            CreateToolExecutionContext(Guid.NewGuid()),
+            CreateToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"));
 
         Assert.Equal(AgentToolResultErrorCodes.ToolOutcomeAmbiguous, result.ErrorCode);
     }
@@ -939,8 +942,8 @@ public sealed class McpRefactorTests
         var source = new McpToolSource(catalog, manager);
 
         var result = await source.ExecuteAsync(
-            new AgentToolExecutionContext(Guid.NewGuid()),
-            new AgentToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"));
+            CreateToolExecutionContext(Guid.NewGuid()),
+            CreateToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"));
 
         Assert.Equal(AgentToolResultErrorCodes.ToolOutcomeAmbiguous, result.ErrorCode);
         Assert.Contains("timed out after 50 milliseconds", result.Summary, StringComparison.OrdinalIgnoreCase);
@@ -961,8 +964,8 @@ public sealed class McpRefactorTests
         var source = new McpToolSource(catalog, manager);
 
         var result = await source.ExecuteAsync(
-            new AgentToolExecutionContext(Guid.NewGuid()),
-            new AgentToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"));
+            CreateToolExecutionContext(Guid.NewGuid()),
+            CreateToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"));
 
         Assert.Equal(AgentToolResultErrorCodes.ToolOutcomeAmbiguous, result.ErrorCode);
         Assert.DoesNotContain("timed out", result.Summary, StringComparison.OrdinalIgnoreCase);
@@ -987,8 +990,8 @@ public sealed class McpRefactorTests
         var source = new McpToolSource(catalog, manager);
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => source.ExecuteAsync(
-            new AgentToolExecutionContext(Guid.NewGuid()),
-            new AgentToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"),
+            CreateToolExecutionContext(Guid.NewGuid()),
+            CreateToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"),
             cancellation.Token).AsTask());
     }
 
@@ -1007,8 +1010,8 @@ public sealed class McpRefactorTests
         var source = new McpToolSource(catalog, manager);
 
         var result = await source.ExecuteAsync(
-            new AgentToolExecutionContext(Guid.NewGuid()),
-            new AgentToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"));
+            CreateToolExecutionContext(Guid.NewGuid()),
+            CreateToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"));
 
         Assert.True(result.IsError);
         Assert.Equal(AgentToolResultErrorCodes.ToolOutcomeAmbiguous, result.ErrorCode);
@@ -1027,8 +1030,8 @@ public sealed class McpRefactorTests
         var source = new McpToolSource(catalog, manager);
 
         var result = await source.ExecuteAsync(
-            new AgentToolExecutionContext(Guid.NewGuid()),
-            new AgentToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"));
+            CreateToolExecutionContext(Guid.NewGuid()),
+            CreateToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"));
 
         Assert.True(result.IsError);
         Assert.Equal(AgentToolResultErrorCodes.ToolOutcomeAmbiguous, result.ErrorCode);
@@ -1051,12 +1054,10 @@ public sealed class McpRefactorTests
         await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance, factory);
         var source = new McpToolSource(catalog, manager);
 
-        var result = await source.ExecuteAsync(
-            new AgentToolExecutionContext(Guid.NewGuid())
-            {
-                DispatchStarted = () => Thread.Sleep(100),
-            },
-            new AgentToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"));
+        var result = await source.ExecuteObservedAsync(
+            CreateToolExecutionContext(Guid.NewGuid()),
+            CreateToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"),
+            () => Thread.Sleep(100));
 
         Assert.Equal("mcp-protocol-error", result.ErrorCode);
         Assert.DoesNotContain("timed out", result.Summary, StringComparison.OrdinalIgnoreCase);
@@ -1077,12 +1078,10 @@ public sealed class McpRefactorTests
         var source = new McpToolSource(catalog, manager);
         var dispatchCount = 0;
 
-        var result = await source.ExecuteAsync(
-            new AgentToolExecutionContext(Guid.NewGuid())
-            {
-                DispatchStarted = () => Interlocked.Increment(ref dispatchCount),
-            },
-            new AgentToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"));
+        var result = await source.ExecuteObservedAsync(
+            CreateToolExecutionContext(Guid.NewGuid()),
+            CreateToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"),
+            () => Interlocked.Increment(ref dispatchCount));
 
         Assert.Equal(0, dispatchCount);
         Assert.True(result.IsError);
@@ -1102,12 +1101,10 @@ public sealed class McpRefactorTests
         var dispatchCount = 0;
         using var cancellation = new CancellationTokenSource();
 
-        var invocation = source.ExecuteAsync(
-            new AgentToolExecutionContext(Guid.NewGuid())
-            {
-                DispatchStarted = () => Interlocked.Increment(ref dispatchCount),
-            },
-            new AgentToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"),
+        var invocation = source.ExecuteObservedAsync(
+            CreateToolExecutionContext(Guid.NewGuid()),
+            CreateToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"),
+            () => Interlocked.Increment(ref dispatchCount),
             cancellation.Token).AsTask();
         await factory.ConnectStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
         await cancellation.CancelAsync();
@@ -1136,12 +1133,10 @@ public sealed class McpRefactorTests
         var dispatchCount = 0;
         using var cancellation = new CancellationTokenSource();
 
-        var invocation = source.ExecuteAsync(
-            new AgentToolExecutionContext(Guid.NewGuid())
-            {
-                DispatchStarted = () => Interlocked.Increment(ref dispatchCount),
-            },
-            new AgentToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"),
+        var invocation = source.ExecuteObservedAsync(
+            CreateToolExecutionContext(Guid.NewGuid()),
+            CreateToolRequest(McpToolIdentity.CreateStable("one", "edit_screens"), "{}"),
+            () => Interlocked.Increment(ref dispatchCount),
             cancellation.Token).AsTask();
         await secrets.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
         await cancellation.CancelAsync();
@@ -1239,7 +1234,7 @@ public sealed class McpRefactorTests
             NullLoggerFactory.Instance,
             new FakeConnectionFactory());
         var connectionService = new McpServerConnectionService(catalog, connections, oauthService: null);
-        var handler = new McpRuntimeHandler(
+        var management = new McpManagementService(
             catalog,
             editor,
             configuration: null!,
@@ -1247,7 +1242,7 @@ public sealed class McpRefactorTests
             oauth: null!,
             context);
         using var appGateway = new McpAppRuntimeGateway(
-            AgentRoleBoundary.As<McpApp::Sunder.Package.Agent.Mcp.Runtime.IMcpOwnerManagementClient>(new McpHandlerManagementClient(handler)),
+            new McpManagementClient(management),
             NullPackageCallbackClient.Instance);
 
         var remoteDocument = (await appGateway.LoadDocumentAsync(remote.Server.ServerId))!;
@@ -1293,13 +1288,14 @@ public sealed class McpRefactorTests
             }
             """,
             persistedRemote);
-        var command = new McpCommand(McpCommandKind.Save, Configuration: update);
-        var commandJson = JsonSerializer.Serialize(command);
-
-        var saveProjection = await handler.HandleAsync(command);
+        var configurationJson = JsonSerializer.Serialize(update);
+        await using var configuration = McpManagementContent.Create(update, "mcp-configuration.json");
+        var saveProjection = await McpManagementContent.ReadResponseAsync<McpProjection>(
+            management.SaveAsync(configuration),
+            CancellationToken.None);
         var responseJson = JsonSerializer.Serialize(saveProjection);
 
-        Assert.Contains(replacementCanary, commandJson, StringComparison.Ordinal);
+        Assert.Contains(replacementCanary, configurationJson, StringComparison.Ordinal);
         Assert.DoesNotContain(retainedCanary, responseJson, StringComparison.Ordinal);
         Assert.DoesNotContain(clearedCanary, responseJson, StringComparison.Ordinal);
         Assert.DoesNotContain(replacedCanary, responseJson, StringComparison.Ordinal);
@@ -1338,16 +1334,18 @@ public sealed class McpRefactorTests
             }
             """,
             persistedLocal);
-        var environmentCommand = new McpCommand(
-            McpCommandKind.Save,
-            Configuration: environmentUpdate);
-
-        var environmentProjection = await handler.HandleAsync(environmentCommand);
+        var environmentConfigurationJson = JsonSerializer.Serialize(environmentUpdate);
+        await using var environmentConfiguration = McpManagementContent.Create(
+            environmentUpdate,
+            "mcp-configuration.json");
+        var environmentProjection = await McpManagementContent.ReadResponseAsync<McpProjection>(
+            management.SaveAsync(environmentConfiguration),
+            CancellationToken.None);
         var environmentResponseJson = JsonSerializer.Serialize(environmentProjection);
 
         Assert.Contains(
             environmentReplacementCanary,
-            JsonSerializer.Serialize(environmentCommand),
+            environmentConfigurationJson,
             StringComparison.Ordinal);
         Assert.DoesNotContain(retainedEnvironmentCanary, environmentResponseJson, StringComparison.Ordinal);
         Assert.DoesNotContain(clearedEnvironmentCanary, environmentResponseJson, StringComparison.Ordinal);
@@ -1480,7 +1478,7 @@ public sealed class McpRefactorTests
             McpConnectionScope.For(retainedSessionId, "workspace"));
         var cleaner = new McpSessionConnectionCleaner(manager);
 
-        var cleanup = Task.Run(() => cleaner.DeleteSessionData(deletedSessionId));
+        var cleanup = cleaner.DeleteSessionAsync(deletedSessionId).AsTask();
         await WaitUntilAsync(() => manager.CachedConnectionCount == 1);
 
         Assert.False(cleanup.IsCompleted);
@@ -1614,15 +1612,13 @@ public sealed class McpRefactorTests
             var catalog = new McpServerCatalogService(context);
             var importer = new McpEcosystemConfigurationImporter(catalog);
             using var extensions = new RegressionTestExtensionCatalog();
-            await using var workspaces = new McpWorker::Sunder.Package.Agent.Mcp.Rpc.RuntimeWorkspaceCatalog(extensions.RpcForCaller("sunder.package.agent.mcp"));
-            await workspaces.StartAsync();
-            var sync = new McpSunderConfigurationSyncService(importer, workspaces, userProfilePath: root);
+            var sync = new McpSunderConfigurationSyncService(importer, extensions.McpWorkspaces(), userProfilePath: root);
             var coordinator = new McpConfigurationCoordinator(importer, sync);
             await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance, new FakeConnectionFactory());
             var source = new McpToolSource(catalog, manager, coordinator);
 
-            var firstDiscovery = source.ListConfiguredServersAsync().AsTask();
-            var secondDiscovery = source.ListConfiguredServersAsync().AsTask();
+            var firstDiscovery = source.ListAsync(profile: null).AsTask();
+            var secondDiscovery = source.ListAsync(profile: null).AsTask();
             await state.SetStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
             Assert.False(firstDiscovery.IsCompleted);
             Assert.False(secondDiscovery.IsCompleted);
@@ -1666,7 +1662,7 @@ public sealed class McpRefactorTests
         var source = new McpToolSource(catalog, manager);
         var writesBefore = context.State.SetCount;
 
-        var servers = await source.ListConfiguredServersAsync();
+        var servers = await source.ListAsync(profile: null);
 
         Assert.Single(servers);
         Assert.Equal(writesBefore, context.State.SetCount);
@@ -1679,9 +1675,7 @@ public sealed class McpRefactorTests
         var catalog = new McpServerCatalogService(context);
         var importer = new McpEcosystemConfigurationImporter(catalog);
         using var extensions = new RegressionTestExtensionCatalog();
-        await using var workspaces = new McpWorker::Sunder.Package.Agent.Mcp.Rpc.RuntimeWorkspaceCatalog(extensions.RpcForCaller("sunder.package.agent.mcp"));
-        await workspaces.StartAsync();
-        var sync = new McpSunderConfigurationSyncService(importer, workspaces);
+        var sync = new McpSunderConfigurationSyncService(importer, extensions.McpWorkspaces());
         var path = Path.Combine(Path.GetTempPath(), "sunder-mcp-sync-" + Guid.NewGuid().ToString("N") + ".json");
         try
         {
@@ -1843,7 +1837,8 @@ public sealed class McpRefactorTests
         await catalog.SaveServerAsync(CreateServer("one", "one"), Empty, Empty);
         var factory = new FakeConnectionFactory { BlockConnect = true };
         await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance, factory);
-        using var viewModel = CreateSettingsViewModel(catalog, manager);
+        using var fixture = CreateSettingsViewModel(context, catalog, manager);
+        var viewModel = fixture.ViewModel;
         await WaitUntilAsync(() => viewModel.SelectedServer is not null);
 
         var discovery = viewModel.DiscoverToolsCommand.ExecuteAsync(null);
@@ -1867,7 +1862,8 @@ public sealed class McpRefactorTests
         await catalog.SaveServerAsync(CreateServer("one", "one"), Empty, Empty);
         var factory = new FakeConnectionFactory { BlockConnect = true };
         await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance, factory);
-        using var viewModel = CreateSettingsViewModel(catalog, manager);
+        using var fixture = CreateSettingsViewModel(context, catalog, manager);
+        var viewModel = fixture.ViewModel;
         await viewModel.Initialization;
 
         var discovery = viewModel.DiscoverToolsCommand.ExecuteAsync(null);
@@ -1960,17 +1956,30 @@ public sealed class McpRefactorTests
         string ProcessIdsPath,
         List<int> ProcessIds);
 
-    private static AgentMcpSettingsViewModel CreateSettingsViewModel(
+    private static McpSettingsViewModelFixture CreateSettingsViewModel(
+        TestPackageContext context,
         McpServerCatalogService catalog,
         McpClientConnectionManager connections)
-        => new(
-            AgentRoleBoundary.As<McpApp::Sunder.Package.Agent.Mcp.Runtime.IMcpManagementGateway>(new McpLocalManagementGateway(
-                new McpSettingsEditorService(catalog),
-                new McpConfigurationCoordinator(
-                    new McpEcosystemConfigurationImporter(catalog),
-                    syncService: null),
-                new McpServerConnectionService(catalog, connections, oauthService: null),
-                new McpOAuthCoordinator(oauthService: null, connections))));
+    {
+        var configuration = new McpConfigurationCoordinator(
+            new McpEcosystemConfigurationImporter(catalog),
+            syncService: null);
+        var management = new McpManagementService(
+            catalog,
+            new McpSettingsEditorService(catalog),
+            configuration,
+            new McpServerConnectionService(catalog, connections, oauthService: null),
+            new McpOAuthCoordinator(oauthService: null, connections),
+            context);
+        var gateway = new McpAppRuntimeGateway(
+            new McpManagementClient(management),
+            NullPackageCallbackClient.Instance);
+        return new McpSettingsViewModelFixture(
+            new AgentMcpSettingsViewModel(
+                AgentRoleBoundary.As<McpApp::Sunder.Package.Agent.Mcp.Runtime.IMcpManagementGateway>(gateway)),
+            gateway,
+            configuration);
+    }
 
     private static ConfiguredMcpServerRecord CreateServer(string id, string name)
         => new()
@@ -1984,6 +1993,32 @@ public sealed class McpRefactorTests
             CreatedAtUtc = DateTimeOffset.UtcNow,
             UpdatedAtUtc = DateTimeOffset.UtcNow,
         };
+
+    private static AgentToolExecutionContext CreateToolExecutionContext(Guid sessionId) => new()
+    {
+        AllowOutsideConfiguredScope = false,
+        ApprovedResourceCapabilities = [],
+        ApprovedResourceClaims = [],
+        ApprovedResourceReferences = [],
+        ExecutionBinding = null,
+        ExecutionTarget = null,
+        ExecutionTargetConfigurationGeneration = null,
+        ProfileId = null,
+        ResourceOperation = null,
+        RunId = null,
+        RunRevision = null,
+        SessionId = sessionId,
+        ToolCallId = null,
+        TranscriptEpoch = 0,
+        UserTurnId = null,
+        Workspace = null,
+    };
+
+    private static AgentToolRequest CreateToolRequest(string toolId, string argumentsJson) => new()
+    {
+        ToolId = toolId,
+        ArgumentsJson = argumentsJson,
+    };
 
     private static async Task WaitUntilAsync(Func<bool> predicate, TimeSpan? maximumWait = null)
     {
@@ -2148,21 +2183,85 @@ public sealed class McpRefactorTests
         public IPackageLogging Logging { get; } = NullPackageLogging.Instance;
     }
 
-    private sealed class McpHandlerManagementClient(McpRuntimeHandler handler) : IMcpOwnerManagementClient
+    private sealed class McpSettingsViewModelFixture(
+        AgentMcpSettingsViewModel viewModel,
+        McpAppRuntimeGateway gateway,
+        McpConfigurationCoordinator configuration) : IDisposable
     {
-        public ValueTask<McpProjection> QueryAsync(
-            McpQuery query,
-            CancellationToken cancellationToken = default)
-            => handler.HandleAsync(query, cancellationToken);
+        public AgentMcpSettingsViewModel ViewModel { get; } = viewModel;
 
-        public ValueTask<McpProjection> CommandAsync(
-            McpCommand command,
-            CancellationToken cancellationToken = default)
-            => handler.HandleAsync(command, cancellationToken);
+        public void Dispose()
+        {
+            ViewModel.Dispose();
+            gateway.Dispose();
+            configuration.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+    }
 
-        public IAsyncEnumerable<McpChanged> WatchChangesAsync(
+    private sealed class McpManagementClient(McpManagementService service) : McpAppManagementService
+    {
+        public ValueTask<SunderContent> CatalogAsync(
             CancellationToken cancellationToken = default)
-            => throw new NotSupportedException();
+            => service.CatalogAsync(cancellationToken);
+
+        public ValueTask<SunderContent> DocumentAsync(
+            string serverId,
+            CancellationToken cancellationToken = default)
+            => service.DocumentAsync(serverId, cancellationToken);
+
+        public ValueTask<SunderContent> PresentationAsync(
+            string serverId,
+            CancellationToken cancellationToken = default)
+            => service.PresentationAsync(serverId, cancellationToken);
+
+        public ValueTask<SunderContent> InitializeAsync(
+            CancellationToken cancellationToken = default)
+            => service.InitializeAsync(cancellationToken);
+
+        public ValueTask<SunderContent> SaveAsync(
+            SunderContent configurationDocument,
+            CancellationToken cancellationToken = default)
+            => service.SaveAsync(configurationDocument, cancellationToken);
+
+        public ValueTask<SunderContent> DeleteAsync(
+            string serverId,
+            CancellationToken cancellationToken = default)
+            => service.DeleteAsync(serverId, cancellationToken);
+
+        public ValueTask<SunderContent> ImportCommonAsync(
+            CancellationToken cancellationToken = default)
+            => service.ImportCommonAsync(cancellationToken);
+
+        public ValueTask<SunderContent> ImportDocumentAsync(
+            SunderContent document,
+            CancellationToken cancellationToken = default)
+            => service.ImportDocumentAsync(document, cancellationToken);
+
+        public ValueTask<SunderContent> DiscoverAsync(
+            string serverId,
+            bool reconnect,
+            CancellationToken cancellationToken = default)
+            => service.DiscoverAsync(serverId, reconnect, cancellationToken);
+
+        public ValueTask<SunderContent> DisconnectAsync(
+            string serverId,
+            CancellationToken cancellationToken = default)
+            => service.DisconnectAsync(serverId, cancellationToken);
+
+        public ValueTask<SunderContent> ClearAuthorizationAsync(
+            string serverId,
+            CancellationToken cancellationToken = default)
+            => service.ClearAuthorizationAsync(serverId, cancellationToken);
+
+        public async IAsyncEnumerable<McpApp::Sunder.Package.Agent.Mcp.Runtime.McpChanged> ChangesAsync(
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await foreach (var change in service.ChangesAsync(cancellationToken).ConfigureAwait(false))
+            {
+                yield return new McpApp::Sunder.Package.Agent.Mcp.Runtime.McpChanged(
+                    (McpApp::Sunder.Package.Agent.Mcp.Runtime.McpChangeKind)(int)change.Kind);
+            }
+        }
     }
 
     private sealed class TestStorage(IPackageKeyValueStore state) : IPackageStorageContext
@@ -2414,4 +2513,40 @@ public sealed class McpRefactorTests
     }
 
     private sealed class EmptySettings : EmptyPackageSettings;
+}
+
+internal static class McpToolSourceTestAdapter
+{
+    public static ValueTask<AgentToolResult> ExecuteAsync(
+        this McpToolSource source,
+        AgentToolExecutionContext context,
+        AgentToolRequest request,
+        CancellationToken cancellationToken = default)
+        => source.ExecuteAsync(
+            new ToolSourceExecuteRequest { Context = context, Request = request },
+            cancellationToken);
+
+    public static async ValueTask<AgentToolResult> ExecuteObservedAsync(
+        this McpToolSource source,
+        AgentToolExecutionContext context,
+        AgentToolRequest request,
+        Action dispatchStarted,
+        CancellationToken cancellationToken = default)
+    {
+        await foreach (var @event in source.ExecuteAsync(
+            new ObservedToolExecutionRequest { Context = context, Request = request },
+            cancellationToken))
+        {
+            switch (@event)
+            {
+                case AgentToolDispatchedEvent:
+                    dispatchStarted();
+                    break;
+                case AgentToolExecutionCompletedEvent completed:
+                    return completed.Result;
+            }
+        }
+
+        throw new InvalidOperationException("The MCP observed tool execution completed without a result.");
+    }
 }

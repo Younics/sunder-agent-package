@@ -1,0 +1,34 @@
+using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using Sunder.Sdk.Services;
+
+namespace RegressionTestGeneratedProviders;
+
+[SunderServiceProvider(typeof(IRuntimeCatalogService), ProviderId = "fixture.regression.runtime.catalog")]
+public sealed partial class RuntimeCatalogProvider(Func<string, Type, object?[], CancellationToken, object> invoke) : IRuntimeCatalogService
+{
+    private ValueTask<T> Reply<T>(string operation, object?[] arguments, CancellationToken token) => (ValueTask<T>)invoke(operation, typeof(T), arguments, token);
+    private IAsyncEnumerable<T> Stream<T>(string operation, object?[] arguments, CancellationToken token) => (IAsyncEnumerable<T>)invoke(operation, typeof(T), arguments, token);
+    public ValueTask<IReadOnlyList<AgentSessionRecord>> ListSessionsAsync(CancellationToken token = default) => Reply<IReadOnlyList<AgentSessionRecord>>(nameof(ListSessionsAsync), [], token);
+    public ValueTask<IReadOnlyList<AgentSessionRecord>> ListSessionsForProfileAsync(string request, CancellationToken token = default) => Reply<IReadOnlyList<AgentSessionRecord>>(nameof(ListSessionsForProfileAsync), [request], token);
+    public ValueTask<IReadOnlyList<AgentSessionRecord>> ListSessionsForWorkspaceAsync(string request, CancellationToken token = default) => Reply<IReadOnlyList<AgentSessionRecord>>(nameof(ListSessionsForWorkspaceAsync), [request], token);
+    public ValueTask<AgentSessionRecord?> GetSessionAsync(Guid request, CancellationToken token = default) => Reply<AgentSessionRecord?>(nameof(GetSessionAsync), [request], token);
+    public ValueTask<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesAsync(CancellationToken token = default) => Reply<IReadOnlyList<AgentWorkspaceRecord>>(nameof(ListWorkspacesAsync), [], token);
+    public ValueTask<AgentWorkspaceRecord?> GetWorkspaceAsync(string request, CancellationToken token = default) => Reply<AgentWorkspaceRecord?>(nameof(GetWorkspaceAsync), [request], token);
+    public ValueTask<AgentProfileRecord?> GetSessionProfileAsync(Guid request, CancellationToken token = default) => Reply<AgentProfileRecord?>(nameof(GetSessionProfileAsync), [request], token);
+    public ValueTask<AgentWorkingSummaryRecord?> GetWorkingSummaryAsync(Guid request, CancellationToken token = default) => Reply<AgentWorkingSummaryRecord?>(nameof(GetWorkingSummaryAsync), [request], token);
+    public ValueTask<AgentSessionContextCheckpointRecord?> GetSessionContextCheckpointAsync(Guid request, CancellationToken token = default) => Reply<AgentSessionContextCheckpointRecord?>(nameof(GetSessionContextCheckpointAsync), [request], token);
+    public ValueTask<AgentRunCheckpointRecord?> GetLatestCheckpointAsync(Guid request, CancellationToken token = default) => Reply<AgentRunCheckpointRecord?>(nameof(GetLatestCheckpointAsync), [request], token);
+    public ValueTask<IReadOnlyList<AgentTurnRecord>> ListRecentTurnsAsync(CSunder_Agent_Runtime_Catalog_RuntimeCatalogListRecentTurnsRequest request, CancellationToken token = default) => Reply<IReadOnlyList<AgentTurnRecord>>(nameof(ListRecentTurnsAsync), [request], token);
+    public ValueTask<IReadOnlyList<AgentTurnRecord>> ListTurnsBeforeAsync(CSunder_Agent_Runtime_Catalog_RuntimeCatalogListTurnsBeforeRequest request, CancellationToken token = default) => Reply<IReadOnlyList<AgentTurnRecord>>(nameof(ListTurnsBeforeAsync), [request], token);
+    public ValueTask<IReadOnlyList<AgentTurnRecord>> ListTurnsAfterAsync(CSunder_Agent_Runtime_Catalog_RuntimeCatalogListTurnsAfterRequest request, CancellationToken token = default) => Reply<IReadOnlyList<AgentTurnRecord>>(nameof(ListTurnsAfterAsync), [request], token);
+    public ValueTask<IReadOnlyList<AgentTurnRecord>> ListRecentTranscriptHeadersAsync(CSunder_Agent_Runtime_Catalog_RuntimeCatalogListRecentTranscriptHeadersRequest request, CancellationToken token = default) => Reply<IReadOnlyList<AgentTurnRecord>>(nameof(ListRecentTranscriptHeadersAsync), [request], token);
+    public ValueTask<IReadOnlyList<AgentTurnRecord>> ListTranscriptHeadersBeforeAsync(CSunder_Agent_Runtime_Catalog_RuntimeCatalogListTranscriptHeadersBeforeRequest request, CancellationToken token = default) => Reply<IReadOnlyList<AgentTurnRecord>>(nameof(ListTranscriptHeadersBeforeAsync), [request], token);
+    public ValueTask<IReadOnlyList<AgentTurnRecord>> ListTranscriptHeadersAfterAsync(CSunder_Agent_Runtime_Catalog_RuntimeCatalogListTranscriptHeadersAfterRequest request, CancellationToken token = default) => Reply<IReadOnlyList<AgentTurnRecord>>(nameof(ListTranscriptHeadersAfterAsync), [request], token);
+    public ValueTask<AgentTranscriptToolDetailRecord?> GetTranscriptToolDetailAsync(AgentTranscriptToolDetailRequest request, CancellationToken token = default) => Reply<AgentTranscriptToolDetailRecord?>(nameof(GetTranscriptToolDetailAsync), [request], token);
+    public ValueTask<IReadOnlyList<AgentProfileRecord>> ListProfilesAsync(CancellationToken token = default) => Reply<IReadOnlyList<AgentProfileRecord>>(nameof(ListProfilesAsync), [], token);
+    public ValueTask<AgentProfileRecord?> GetProfileAsync(string request, CancellationToken token = default) => Reply<AgentProfileRecord?>(nameof(GetProfileAsync), [request], token);
+    public ValueTask<AgentProfileModelBindingRecord?> GetSessionModelBindingAsync(CSunder_Agent_Runtime_Catalog_RuntimeCatalogGetSessionModelBindingRequest request, CancellationToken token = default) => Reply<AgentProfileModelBindingRecord?>(nameof(GetSessionModelBindingAsync), [request], token);
+    public ValueTask<AgentProfileModelBindingRecord?> GetModelBindingAsync(CSunder_Agent_Runtime_Catalog_RuntimeCatalogGetModelBindingRequest request, CancellationToken token = default) => Reply<AgentProfileModelBindingRecord?>(nameof(GetModelBindingAsync), [request], token);
+    public IAsyncEnumerable<AgentRuntimeCatalogEvent> WatchAsync(CancellationToken token = default) => Stream<AgentRuntimeCatalogEvent>(nameof(WatchAsync), [], token);
+}

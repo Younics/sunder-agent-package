@@ -28,7 +28,7 @@ namespace Sunder.Package.Agent.Contracts.Models;
 public sealed record AgentTurnItemRecord(
     Guid ItemId,
     Guid TurnId,
-    int SequenceNumber,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] int SequenceNumber,
     AgentTurnItemKind Kind,
     string? TextContent,
     string? CallId,
@@ -65,6 +65,7 @@ public sealed record AgentTurnItemRecord(
     public string? ToolErrorSummary { get; init; }
 
     /// <summary>Gets the authoritative detail revision represented by this lightweight transcript item.</summary>
+    [Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")]
     public long ToolDetailRevision { get; init; }
 
     /// <summary>Gets whether an exact detail lookup can return presentable fields for this tool invocation.</summary>

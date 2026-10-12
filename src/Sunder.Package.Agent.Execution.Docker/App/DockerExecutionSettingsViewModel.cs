@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Sunder.Package.Agent.Shared.Presentation;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Execution_Docker_Services;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Execution.Docker;
@@ -26,7 +27,7 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
     internal static IReadOnlyCollection<string> OwnedConfigurationKeys { get; } =
         [DockerExecutionPresentationDefaults.TimeoutKey, DockerExecutionPresentationDefaults.DockerCliPathKey];
 
-    private readonly IDockerExecutionPresentationClient _presentationClient;
+    private readonly IPresentationService _presentationClient;
     private readonly IBackgroundProcessQueue _backgroundProcessQueue;
     private bool _suppressRevisionTracking;
     private bool _disposed;
@@ -40,7 +41,7 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
     private Task? _initialization;
 
     internal DockerExecutionSettingsViewModel(
-        IDockerExecutionPresentationClient presentationClient,
+        IPresentationService presentationClient,
         IBackgroundProcessQueue backgroundProcessQueue,
         ILogger? logger = null,
         IPresentationDispatcher? uiDispatcher = null)
@@ -259,7 +260,7 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
             }
 
             var response = await RunOperationAsync(
-                new DockerExecutionOperationRequest(DockerExecutionOperationKind.GetSettings),
+                "GetSettings", token => ReadCatalogAsync(_presentationClient.GetSettingsAsync(token), token),
                 settingsRequest.CancellationToken,
                 showBusy: false,
                 () => _requests.IsCurrent(settingsRequest)).ConfigureAwait(false);
@@ -389,7 +390,7 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
         try
         {
             var response = await RunOperationAsync(
-                new DockerExecutionOperationRequest(DockerExecutionOperationKind.GetSettings),
+                "GetSettings", token => ReadCatalogAsync(_presentationClient.GetSettingsAsync(token), token),
                 request.CancellationToken,
                 showBusy: false,
                 () => _requests.IsCurrent(request)).ConfigureAwait(false);

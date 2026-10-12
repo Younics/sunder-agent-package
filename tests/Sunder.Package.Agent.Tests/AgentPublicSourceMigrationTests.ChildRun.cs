@@ -1,10 +1,16 @@
+extern alias SubagentsWorker;
+
 using System.Reflection;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Worker;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using ChildConsumerServices = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using ChildConsumerModels = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -22,14 +28,25 @@ public sealed partial class AgentPublicSourceMigrationTests
         foreach (var present in new[] { false, true })
         {
             probe.Result = probe.Result with { Status = status, Content = present ? "Content 漢字" : null, Title = present ? "" : null };
-            var json = RunJson(request);
             var expected = RunJson(probe.Result);
             var domainRequest = RunJson(request);
-            var actual = await InvokeGeneratedClient(fixture.Client, "RunChildAsync", json);
-            Assert.True(JsonElement.DeepEquals(expected, actual));
+            var actual = await fixture.Run(request);
+            Assert.True(JsonElement.DeepEquals(expected, RunJson(actual)));
             Assert.True(JsonElement.DeepEquals(domainRequest, RunJson(probe.Request)));
-            Assert.Equal(present, actual.TryGetProperty("title", out _));
-            Assert.Equal(present, actual.TryGetProperty("content", out _));
+            Assert.Equal(present, actual.Title is not null);
+            Assert.Equal(present, actual.Content is not null);
+        }
+        foreach (var absentTaskId in new string?[] { null, "", " \t " })
+        {
+            var absentTask = request with { TaskId = absentTaskId };
+            var calls = probe.Calls;
+            await fixture.Run(absentTask);
+            Assert.Equal(calls + 1, probe.Calls);
+            Assert.Equal(absentTaskId, probe.Request!.TaskId);
+            Assert.True(JsonElement.DeepEquals(RunJson(absentTask), RunJson(probe.Request)));
+            var sentTaskId = fixture.State.LastInvocationRequest.GetProperty("taskId");
+            Assert.Equal(absentTaskId is null ? JsonValueKind.Null : JsonValueKind.String, sentTaskId.ValueKind);
+            Assert.Equal(absentTaskId, sentTaskId.GetString());
         }
         var minimal = request with
         {
@@ -41,26 +58,44 @@ public sealed partial class AgentPublicSourceMigrationTests
                 BehaviorLoopSettingsJson = null, Description = null, Instructions = null, IsInternal = false,
             },
         };
-        await InvokeGeneratedClient(fixture.Client, "RunChildAsync", RunJson(minimal));
+        await fixture.Run(minimal);
         Assert.True(JsonElement.DeepEquals(RunJson(minimal), RunJson(probe.Request)));
-        foreach (var invalid in new[] { request with { ParentRunRevision = -1 }, request with { TaskId = "" }, request with { ParentToolCallId = "" } })
-        {
-            var calls = probe.Calls;
-            var error = await Assert.ThrowsAsync<SunderRpcException>(() => InvokeGeneratedClient(fixture.Client, "RunChildAsync", RunJson(invalid)));
-            Assert.Equal(SunderRpcErrorKind.Validation, error.Error.Kind);
-            Assert.Equal(calls, probe.Calls);
-        }
+        var validGeneratedRequest = fixture.State.LastInvocationRequest;
+        var beforeCalls = probe.Calls;
+        var beforePeer = fixture.State.InvocationAttemptCount;
+        await Assert.ThrowsAsync<JsonException>(() => fixture.Run(request with { ParentRunRevision = -1 }));
+        Assert.Equal(beforePeer, fixture.State.InvocationAttemptCount);
+        Assert.Equal(beforeCalls, probe.Calls);
+        var invalidRevisionWire = JsonNode.Parse(validGeneratedRequest.GetRawText())!.AsObject();
+        invalidRevisionWire["parentRunRevision"] = -1;
+        var invalidRevision = await Assert.ThrowsAsync<SunderRpcException>(() => fixture.Rpc.InvokeAsync(fixture.Source,
+            "child-run-executor", "run-child", JsonSerializer.SerializeToElement(invalidRevisionWire)).AsTask());
+        Assert.Equal(SunderRpcErrorKind.Validation, invalidRevision.Error.Kind);
+        Assert.Equal(beforePeer + 1, fixture.State.InvocationAttemptCount);
+        Assert.Equal(beforeCalls, probe.Calls);
+        beforeCalls = probe.Calls;
+        beforePeer = fixture.State.InvocationAttemptCount;
+        await Assert.ThrowsAsync<JsonException>(() => fixture.Run(request with { ParentToolCallId = "" }));
+        Assert.Equal(beforePeer, fixture.State.InvocationAttemptCount);
+        Assert.Equal(beforeCalls, probe.Calls);
+        var invalidCorrelationWire = JsonNode.Parse(validGeneratedRequest.GetRawText())!.AsObject();
+        invalidCorrelationWire["parentToolCallId"] = "";
+        var invalidCorrelation = await Assert.ThrowsAsync<SunderRpcException>(() => fixture.Rpc.InvokeAsync(fixture.Source,
+            "child-run-executor", "run-child", JsonSerializer.SerializeToElement(invalidCorrelationWire)).AsTask());
+        Assert.Equal(SunderRpcErrorKind.Validation, invalidCorrelation.Error.Kind);
+        Assert.Equal(beforePeer + 1, fixture.State.InvocationAttemptCount);
+        Assert.Equal(beforeCalls, probe.Calls);
         using (var cancellation = new CancellationTokenSource())
         {
             cancellation.Cancel();
             var calls = probe.Calls;
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => InvokeGeneratedClient(fixture.Client, "RunChildAsync", RunJson(request), cancellation.Token));
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => fixture.Run(request, cancellation.Token));
             Assert.Equal(calls, probe.Calls);
         }
         using (var cancellation = new CancellationTokenSource())
         {
             probe.Block = true;
-            var pending = InvokeGeneratedClient(fixture.Client, "RunChildAsync", RunJson(request), cancellation.Token);
+            var pending = fixture.Run(request, cancellation.Token);
             await probe.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
             cancellation.Cancel();
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending.WaitAsync(TimeSpan.FromSeconds(5)));
@@ -73,57 +108,68 @@ public sealed partial class AgentPublicSourceMigrationTests
         })
         {
             probe.Failure = failure;
-            var error = await Assert.ThrowsAsync<SunderRpcException>(() => InvokeGeneratedClient(fixture.Client, "RunChildAsync", RunJson(request)));
+            var error = await Assert.ThrowsAsync<SunderRpcException>(() => fixture.Run(request));
             Assert.Equal(SunderRpcErrorKind.ProviderFaulted, error.Error.Kind);
             Assert.DoesNotContain("private child", error.Message, StringComparison.Ordinal);
         }
         probe.Failure = null;
         var recorder = new ChildRunCallRecorder(fixture.Rpc);
-        using var roles = new RegressionTestProviderRoles();
-        var bindings = roles.CreateObject("Subagents", "Rpc.SubagentRuntimeBindings", recorder);
-        await using var bindingLifetime = (IAsyncDisposable)bindings;
-        await (ValueTask)AgentRoleBoundary.Call(bindings, "StartAsync", CancellationToken.None)!;
-        var selected = Assert.Single(((System.Collections.IEnumerable)AgentRoleBoundary.Call(bindings, "GetChildRunExecutors")!).Cast<object>());
-        object?[] acquisition = [null];
-        Assert.True((bool)selected.GetType().GetMethod("TryAcquire")!.Invoke(selected, acquisition)!);
-        using var lease = (IDisposable)acquisition[0]!;
-        var bridge = AgentRoleBoundary.As<IAgentChildRunExecutor>(lease.GetType().GetProperty("Service")!.GetValue(lease)!);
-        await bridge.RunChildAsync(request);
+        await using var consumer = new GeneratedServiceTestScope(recorder);
+        var selected = Assert.Single((await consumer.Providers<ChildConsumerServices.IChildRunExecutorService>().ListAsync()).Providers);
+        await selected.EnsureCurrentAsync();
+        await InvokeChildRunAsync(selected.Service, consumer, request, default);
         Assert.True(JsonElement.DeepEquals(RunJson(request), RunJson(probe.Request)));
-        Assert.InRange(recorder.Options!.DeadlineUtc!.Value - DateTimeOffset.UtcNow, TimeSpan.FromMinutes(34), TimeSpan.FromMinutes(36));
+        var recordedCall = Assert.Single(recorder.CreatedScopes);
+        Assert.True(recordedCall.Options?.DeadlineUtc is not null,
+            $"Child-run scope creation received no explicit deadline. Actual scope deadline: {recordedCall.Scope.DeadlineUtc:O}");
+        Assert.Equal(recordedCall.Options!.DeadlineUtc!.Value, recordedCall.Scope.DeadlineUtc);
+        Assert.InRange(recordedCall.Scope.DeadlineUtc - DateTimeOffset.UtcNow, TimeSpan.FromMinutes(34), TimeSpan.FromMinutes(36));
 
         await VerifyChildRunPersistenceAsync(assembly, descriptor);
     }
 
-    private static async Task<ChildRunFixture> CreateChildRunFixture(Assembly assembly, SunderRpcContractDescriptor descriptor, IAgentChildRunExecutor executor)
+    private static async Task<ChildRunFixture> CreateChildRunFixture(Assembly assembly, SunderRpcContractDescriptor descriptor, object executor)
     {
-        var type = assembly.GetType("Sunder.Package.Agent.Rpc.Public.ChildRunExecutorService", true)!;
-        var implementation = Activator.CreateInstance(type, executor)!;
-        var registration = Assert.IsType<SunderWorkerProviderRegistration>(type.GetMethod("CreateSunderRpcProviderRegistration")!.Invoke(implementation, null));
-        Assert.Equal("agent.child.runs", registration.ProviderId);
-        Assert.Equal(descriptor.Sha256, registration.DescriptorSha256);
-        Assert.Equal(descriptor.AbiSha256, registration.AbiSha256);
+        var type = assembly.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Services.IChildRunExecutorService", true)!;
+        Assert.True(type.IsInterface);
+        var implementation = executor;
         var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
         var rpc = new RegressionTestRpcClient(state, "sunder.package.agent.subagents");
+        var receiver = new GeneratedServiceTestScope(rpc);
+        using var providers = new RegressionTestSourceProviders();
+        var registration = providers.Create(descriptor.ContractId, implementation, receiver);
+        Assert.Equal(executor is ChildRunProbe ? "fixture.regression.child.run" : "agent.child.runs", registration.ProviderId);
+        Assert.Equal(descriptor.Sha256, registration.DescriptorSha256);
+        Assert.Equal(descriptor.AbiSha256, registration.AbiSha256);
         state.Add("sunder.package.agent", descriptor, implementation, registration.Handler, EmptyDisposable.Instance, registration.ProviderId, "2.0.0");
-        var providers = (await rpc.DiscoverAsync(descriptor.ContractId)).Providers;
-        var source = providers.Single(value => value.ProviderId == registration.ProviderId).Endpoint;
-        var scope = await rpc.CreateCallScopeAsync(new(DateTimeOffset.UtcNow.AddMinutes(35)));
-        var client = Activator.CreateInstance(assembly.GetType("Sunder.Generated.Rpc.ChildRunExecutor.ChildRunExecutorClient", true)!, scope, source)!;
-        return new(state, rpc, scope, client, implementation, source);
+        var provider = Assert.Single((await receiver.Providers<ChildConsumerServices.IChildRunExecutorService>().ListAsync()).Providers,
+            value => value.ProviderId == registration.ProviderId);
+        var endpoint = Assert.Single(state.Discover(descriptor.ContractId).Providers,
+            value => value.ProviderId == registration.ProviderId).Endpoint;
+        return new(state, rpc, receiver, provider.Service, implementation, endpoint);
     }
 
-    private sealed class ChildRunFixture(RegressionTestRpcState state, RegressionTestRpcClient rpc, ISunderRpcCallScope scope,
-        object client, object implementation, SunderRpcEndpointReference source) : IAsyncDisposable
+    private sealed class ChildRunFixture(RegressionTestRpcState state, RegressionTestRpcClient rpc, GeneratedServiceTestScope receiver,
+        ChildConsumerServices.IChildRunExecutorService client, object implementation, SunderRpcEndpointReference source) : IAsyncDisposable
     {
         public RegressionTestRpcState State { get; } = state;
         public RegressionTestRpcClient Rpc { get; } = rpc;
-        public object Client { get; } = client;
         public object Implementation { get; } = implementation;
         public SunderRpcEndpointReference Source { get; } = source;
         public async Task<AgentChildRunResult> Run(AgentChildRunRequest request, CancellationToken token = default)
-            => (await InvokeGeneratedClient(Client, "RunChildAsync", RunJson(request), token)).Deserialize<AgentChildRunResult>(ExecutionJson)!;
-        public async ValueTask DisposeAsync() { await scope.DisposeAsync(); State.Dispose(); }
+            => await InvokeChildRunAsync(client, receiver, request, token);
+        public async ValueTask DisposeAsync() { await receiver.DisposeAsync(); State.Dispose(); }
+    }
+
+    private static async Task<AgentChildRunResult> InvokeChildRunAsync(ChildConsumerServices.IChildRunExecutorService client,
+        GeneratedServiceTestScope receiver, AgentChildRunRequest request, CancellationToken token)
+    {
+        var projection = RegressionTestGeneratedProviderProjection.FromCandidate(
+            Environment.GetEnvironmentVariable("SUNDER_AGENT_PUBLIC_FIXTURE_CANDIDATE")!, RegressionTestBindings.ChildRunExecutor);
+        var input = (ChildConsumerModels.AgentChildRunRequest)(await projection.ProjectAsync(
+            request, typeof(ChildConsumerModels.AgentChildRunRequest), receiver, token))!;
+        var result = await client.RunChildAsync(input, token);
+        return (AgentChildRunResult)(await projection.ProjectAsync(result, typeof(AgentChildRunResult), receiver, token))!;
     }
 
     private sealed class ChildRunProbe : IAgentChildRunExecutor
@@ -147,10 +193,13 @@ public sealed partial class AgentPublicSourceMigrationTests
     private sealed class ChildRunCallRecorder(ISunderRpcClient inner) : ISunderRpcClient
     {
         public SunderRpcCallOptions? Options { get; private set; }
-        public ValueTask<ISunderRpcCallScope> CreateCallScopeAsync(SunderRpcCallOptions? options = null, CancellationToken cancellationToken = default)
+        public List<(SunderRpcCallOptions? Options, ISunderRpcCallScope Scope)> CreatedScopes { get; } = [];
+        public async ValueTask<ISunderRpcCallScope> CreateCallScopeAsync(SunderRpcCallOptions? options = null, CancellationToken cancellationToken = default)
         {
             Options = options;
-            return inner.CreateCallScopeAsync(options, cancellationToken);
+            var scope = await inner.CreateCallScopeAsync(options, cancellationToken);
+            CreatedScopes.Add((options, scope));
+            return scope;
         }
         public ValueTask<JsonElement> InvokeAsync(SunderRpcEndpointReference endpoint, string serviceId, string methodId, JsonElement request,
             SunderRpcCallOptions? options = null, CancellationToken cancellationToken = default)

@@ -3,16 +3,22 @@ extern alias MemoryApp;
 
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Reflection;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Xml.Linq;
 using MemoryWorker::Sunder.Package.Agent.Contracts.Models;
 using MemoryWorker::Sunder.Package.Agent.Memory.Semantic;
 using MemoryWorker::Sunder.Package.Agent.Memory.Semantic.Runtime;
 using MemoryWorker::Sunder.Package.Agent.Memory.Semantic.Services;
-using ManagementService = MemoryWorker::Sunder.Package.Agent.Memory.Semantic.Rpc.ManagementService;
-using MemoryAppRuntimeGateway = MemoryApp::Sunder.Package.Agent.Memory.Semantic.MemoryAppRuntimeGateway;
+using MemoryAppGateway = MemoryApp::Sunder.Package.Agent.Memory.Semantic.Runtime.IMemoryInspectorGateway;
+using MemoryAppServices = MemoryApp::Sunder.Generated.Packages.Sunder_Package_Agent_Memory_Semantic_Services;
+using AppMemoryChanged = MemoryApp::Sunder.Package.Agent.Memory.Semantic.Runtime.MemoryChanged;
+using AppMemoryChangeKind = MemoryApp::Sunder.Package.Agent.Memory.Semantic.Runtime.MemoryChangeKind;
+using AppSemanticEmbeddingContext = MemoryApp::Sunder.Package.Agent.Memory.Semantic.Services.SemanticEmbeddingContext;
 using Sunder.Package.Agent.Tests;
 using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
 using Sunder.Sdk.Worker;
 using Xunit;
 
@@ -21,7 +27,7 @@ namespace Sunder.Package.Agent.Memory.Semantic.Tests;
 public sealed class MemorySemanticWorkerTopologyTests
 {
     private const string InspectorProviderId = "semantic.memory.inspector";
-    private static SunderRpcContractDescriptor Inspector => RegressionTestRpcDescriptors.Get("sunder.agent.memory.semantic.inspector");
+    private static SunderRpcContractDescriptor Inspector => CurrentPrivateRpcDescriptors.Get("sunder.agent.memory.semantic.inspector");
 
     [Fact]
     [Trait("Lane", "PackageCompatibility")]
@@ -59,6 +65,7 @@ public sealed class MemorySemanticWorkerTopologyTests
                 "logging.v1",
                 "packaging.v1",
                 "role-local-workspace.v1",
+                "rpc.extended-deadline.v1",
                 "rpc.v1",
                 "runtime-generations.v1",
                 "sdk-baseline-1-1.v1",
@@ -115,26 +122,10 @@ public sealed class MemorySemanticWorkerTopologyTests
     }
 
     [Fact]
-    public async Task AppGateway_UsesExactOwnerRpcForUnaryAndStreamingCalls()
+    public async Task AppGateway_UsesGeneratedInspectorContentValuesForUnaryAndStreamingCalls()
     {
-        using var state = new RegressionTestRpcState();
-        var ignoredService = new RecordingInspectorService();
         var ownerService = new RecordingInspectorService();
-        state.AddGenerated(
-            "sunder.package.agent.memory.semantic",
-            ignoredService,
-            new ManagementService(ignoredService).CreateSunderRpcProviderRegistration(),
-            new NoOpDisposable(),
-            "semantic.memory.unrelated");
-        state.AddGenerated(
-            "sunder.package.agent.memory.semantic",
-            ownerService,
-            new ManagementService(ownerService).CreateSunderRpcProviderRegistration(),
-            new NoOpDisposable(),
-            InspectorProviderId);
-        using var gateway = new MemoryAppRuntimeGateway(new RegressionTestRpcClient(
-            state,
-            "sunder.package.agent.memory.semantic"));
+        var (gateway, lifetime) = CreateGateway(ownerService);
         var sessionChanged = new TaskCompletionSource<Guid>(TaskCreationOptions.RunContinuationsAsynchronously);
         var workerChanged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var resetRequired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -155,55 +146,38 @@ public sealed class MemorySemanticWorkerTopologyTests
 
         Assert.Equal(JsonSerializer.Serialize(ownerService.Memory), JsonSerializer.Serialize(Assert.Single(memories)));
         Assert.Equal("Updated through owner RPC.", updated.Content);
-        Assert.Equal(MemoryQueryKind.Memories, ownerService.LastQuery?.Kind);
-        Assert.Equal("durable", ownerService.LastQuery?.SearchText);
-        Assert.True(ownerService.LastQuery?.IncludeInactive);
-        Assert.Equal(MemoryCommandKind.Update, ownerService.LastCommand?.Kind);
-        Assert.Null(ignoredService.LastQuery);
-        Assert.Null(ignoredService.LastCommand);
+        Assert.Equal(ownerService.Memory.SessionId, ownerService.LastMemorySessionId);
+        Assert.Equal("durable", ownerService.LastMemorySearchText);
+        Assert.True(ownerService.LastMemoryIncludeInactive);
+        Assert.Equal(ownerService.Memory.MemoryId, ownerService.LastUpdatedMemoryId);
+        Assert.Equal("preference", ownerService.LastUpdatedCategory);
         Assert.Equal(
             ownerService.Memory.SessionId,
             await sessionChanged.Task.WaitAsync(TimeSpan.FromSeconds(5)));
         await workerChanged.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await resetRequired.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await lifetime.DisposeAsync();
     }
 
     [Fact]
     public async Task AppGateway_TransfersLargeMemoryProjectionThroughContentReference()
     {
         var content = new string('m', (1024 * 1024) + 64 * 1024);
-        using var state = new RegressionTestRpcState();
         var service = new RecordingInspectorService(content);
-        state.AddGenerated(
-            "sunder.package.agent.memory.semantic",
-            service,
-            new ManagementService(service).CreateSunderRpcProviderRegistration(),
-            new NoOpDisposable(),
-            InspectorProviderId);
-        using var gateway = new MemoryAppRuntimeGateway(new RegressionTestRpcClient(
-            state,
-            "sunder.package.agent.memory.semantic"));
+        var (gateway, lifetime) = CreateGateway(service);
 
         var memory = Assert.Single(await gateway.ListMemoriesAsync(service.Memory.SessionId));
 
         Assert.Equal(content, memory.Content);
         Assert.Equal("sunder.rpc.values.v1", Inspector.SchemaProfile);
+        await lifetime.DisposeAsync();
     }
 
     [Fact]
     public async Task AppGateway_MalformedChangeReconnectsAndResnapshots()
     {
-        using var state = new RegressionTestRpcState();
         var service = new ReconnectingInspectorService();
-        state.AddGenerated(
-            "sunder.package.agent.memory.semantic",
-            service,
-            new ManagementService(service).CreateSunderRpcProviderRegistration(),
-            new NoOpDisposable(),
-            InspectorProviderId);
-        var gateway = new MemoryAppRuntimeGateway(new RegressionTestRpcClient(
-            state,
-            "sunder.package.agent.memory.semantic"));
+        var (gateway, lifetime) = CreateGateway(service);
         var resetCount = 0;
         var resnapshot = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         gateway.ResetRequired += () =>
@@ -219,16 +193,16 @@ public sealed class MemorySemanticWorkerTopologyTests
             await service.SecondSubscriptionStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
             await resnapshot.Task.WaitAsync(TimeSpan.FromSeconds(3));
 
-            Assert.True(gateway.IsOwnerStreamAvailable);
+            Assert.True(IsOwnerStreamAvailable(lifetime));
             Assert.Equal(2, service.SubscriptionCount);
 
-            await gateway.DisposeAsync();
-            Assert.True(gateway.ObservationTask!.IsCompletedSuccessfully);
-            Assert.False(gateway.IsOwnerStreamAvailable);
+            await lifetime.DisposeAsync();
+            Assert.True(ObservationTask(lifetime)!.IsCompletedSuccessfully);
+            Assert.False(IsOwnerStreamAvailable(lifetime));
         }
         finally
         {
-            gateway.Dispose();
+            await lifetime.DisposeAsync();
         }
     }
 
@@ -335,7 +309,60 @@ public sealed class MemorySemanticWorkerTopologyTests
         return document.RootElement.GetProperty("libraries").EnumerateObject().Select(library => library.Name).ToArray();
     }
 
-    private sealed class RecordingInspectorService : IMemoryInspectorRpcService
+    private static (MemoryAppGateway Gateway, IAsyncDisposable Lifetime) CreateGateway(
+        MemoryAppServices.IMemoryInspectorService service)
+    {
+        var type = typeof(MemoryAppGateway).Assembly.GetType(
+            "Sunder.Package.Agent.Memory.Semantic.MemoryAppRuntimeGateway", true)!;
+        var instance = Activator.CreateInstance(type, BindingFlags.Instance | BindingFlags.NonPublic,
+            binder: null, args: [service], culture: null)!;
+        return (AgentRoleBoundary.As<MemoryAppGateway>(instance), (IAsyncDisposable)instance);
+    }
+
+    private static Task? ObservationTask(IAsyncDisposable gateway)
+        => (Task?)gateway.GetType().GetProperty("ObservationTask", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(gateway);
+
+    private static bool IsOwnerStreamAvailable(IAsyncDisposable gateway)
+        => (bool)gateway.GetType().GetProperty("IsOwnerStreamAvailable")!.GetValue(gateway)!;
+
+    private abstract class InspectorService : MemoryAppServices.IMemoryInspectorService
+    {
+        private static readonly JsonSerializerOptions ContentJson = new(JsonSerializerDefaults.Web)
+        {
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+            PropertyNameCaseInsensitive = false,
+            UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
+            Converters = { new SunderRpcJsonConverterFactory(), new JsonStringEnumConverter(JsonNamingPolicy.KebabCaseLower) },
+        };
+
+        protected static ValueTask<SunderContent> Projection(MemoryProjection projection)
+            => ValueTask.FromResult(SunderContent.FromBytes(JsonSerializer.SerializeToUtf8Bytes(projection, ContentJson),
+                "application/json", "memory-projection.json"));
+
+        protected static ValueTask<SunderContent> Unsupported()
+            => ValueTask.FromException<SunderContent>(new NotSupportedException());
+
+        public virtual ValueTask<SunderContent> SessionsAsync(CancellationToken token = default) => Unsupported();
+        public virtual ValueTask<SunderContent> SessionCheckpointAsync(Guid sessionId, CancellationToken token = default) => Unsupported();
+        public virtual ValueTask<SunderContent> WorkingSummaryAsync(Guid sessionId, CancellationToken token = default) => Unsupported();
+        public virtual ValueTask<SunderContent> MemoriesAsync(Guid sessionId, string? searchText, bool includeInactive, CancellationToken token = default) => Unsupported();
+        public virtual ValueTask<SunderContent> DetailsAsync(Guid memoryId, CancellationToken token = default) => Unsupported();
+        public virtual ValueTask<SunderContent> SemanticStateAsync(Guid sessionId, string? profileId, CancellationToken token = default) => Unsupported();
+        public virtual ValueTask<SunderContent> IndexStatusAsync(Guid memoryId, AppSemanticEmbeddingContext? context, CancellationToken token = default) => Unsupported();
+        public virtual ValueTask<SunderContent> WorkerStatusAsync(CancellationToken token = default) => Unsupported();
+        public virtual ValueTask<SunderContent> MetricsAsync(CancellationToken token = default) => Unsupported();
+        public virtual ValueTask<SunderContent> UpdateAsync(Guid memoryId, string category, string content, string? note, CancellationToken token = default) => Unsupported();
+        public virtual ValueTask<SunderContent> PinAsync(Guid memoryId, bool isPinned, CancellationToken token = default) => Unsupported();
+        public virtual ValueTask<SunderContent> ContestAsync(Guid memoryId, CancellationToken token = default) => Unsupported();
+        public virtual ValueTask<SunderContent> ForgetAsync(Guid memoryId, CancellationToken token = default) => Unsupported();
+        public virtual ValueTask<SunderContent> SupersedeAsync(Guid memoryId, CancellationToken token = default) => Unsupported();
+        public virtual ValueTask<SunderContent> CorrectAsync(Guid memoryId, string category, string content, CancellationToken token = default) => Unsupported();
+        public virtual ValueTask<SunderContent> ReindexAsync(Guid sessionId, string? profileId, CancellationToken token = default) => Unsupported();
+        public abstract IAsyncEnumerable<AppMemoryChanged> ChangesAsync(CancellationToken token = default);
+    }
+
+    private sealed class RecordingInspectorService : InspectorService
     {
         public RecordingInspectorService(string content = "Durable semantic memory.")
         {
@@ -364,49 +391,46 @@ public sealed class MemorySemanticWorkerTopologyTests
 
         public StoredMemoryRecord Memory { get; }
 
-        public MemoryQuery? LastQuery { get; private set; }
+        public Guid? LastMemorySessionId { get; private set; }
+        public string? LastMemorySearchText { get; private set; }
+        public bool LastMemoryIncludeInactive { get; private set; }
+        public Guid? LastUpdatedMemoryId { get; private set; }
+        public string? LastUpdatedCategory { get; private set; }
 
-        public MemoryCommand? LastCommand { get; private set; }
-
-        public ValueTask<MemoryProjection> QueryAsync(
-            SunderRpcInvocationContext context,
-            MemoryQuery request,
-            CancellationToken cancellationToken = default)
+        public override ValueTask<SunderContent> MemoriesAsync(Guid sessionId, string? searchText, bool includeInactive,
+            CancellationToken token = default)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            LastQuery = request;
-            return ValueTask.FromResult(request.Kind == MemoryQueryKind.Memories
-                ? new MemoryProjection(Memories: [Memory])
-                : new MemoryProjection());
+            token.ThrowIfCancellationRequested();
+            LastMemorySessionId = sessionId;
+            LastMemorySearchText = searchText;
+            LastMemoryIncludeInactive = includeInactive;
+            return Projection(new MemoryProjection(Memories: [Memory]));
         }
 
-        public ValueTask<MemoryProjection> CommandAsync(
-            SunderRpcInvocationContext context,
-            MemoryCommand request,
-            CancellationToken cancellationToken = default)
+        public override ValueTask<SunderContent> UpdateAsync(Guid memoryId, string category, string content, string? note,
+            CancellationToken token = default)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            LastCommand = request;
-            return ValueTask.FromResult(new MemoryProjection(Memory: Memory with
+            token.ThrowIfCancellationRequested();
+            LastUpdatedMemoryId = memoryId;
+            LastUpdatedCategory = category;
+            return Projection(new MemoryProjection(Memory: Memory with
             {
-                Category = request.Category ?? Memory.Category,
-                Content = request.Content ?? Memory.Content,
+                Category = category,
+                Content = content,
             }));
         }
 
-        public async IAsyncEnumerable<MemoryChanged> ChangesAsync(
-            SunderRpcInvocationContext context,
-            MemoryChangeSubscription request,
-            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        public override async IAsyncEnumerable<AppMemoryChanged> ChangesAsync(
+            [EnumeratorCancellation] CancellationToken token = default)
         {
-            yield return new MemoryChanged(MemoryChangeKind.Session, Memory.SessionId);
-            yield return new MemoryChanged(MemoryChangeKind.Worker);
-            yield return new MemoryChanged(MemoryChangeKind.ResetRequired);
-            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            yield return new(AppMemoryChangeKind.Session, Memory.SessionId);
+            yield return new(AppMemoryChangeKind.Worker);
+            yield return new(AppMemoryChangeKind.ResetRequired);
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
         }
     }
 
-    private sealed class ReconnectingInspectorService : IMemoryInspectorRpcService
+    private sealed class ReconnectingInspectorService : InspectorService
     {
         private int _subscriptionCount;
 
@@ -414,43 +438,22 @@ public sealed class MemorySemanticWorkerTopologyTests
         internal TaskCompletionSource SecondSubscriptionStarted { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public ValueTask<MemoryProjection> QueryAsync(
-            SunderRpcInvocationContext context,
-            MemoryQuery request,
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromResult(new MemoryProjection());
-
-        public ValueTask<MemoryProjection> CommandAsync(
-            SunderRpcInvocationContext context,
-            MemoryCommand request,
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromResult(new MemoryProjection());
-
-        public async IAsyncEnumerable<MemoryChanged> ChangesAsync(
-            SunderRpcInvocationContext context,
-            MemoryChangeSubscription request,
-            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        public override async IAsyncEnumerable<AppMemoryChanged> ChangesAsync(
+            [EnumeratorCancellation] CancellationToken token = default)
         {
             var subscription = Interlocked.Increment(ref _subscriptionCount);
             if (subscription == 2)
             {
                 SecondSubscriptionStarted.TrySetResult();
             }
-            yield return new MemoryChanged(MemoryChangeKind.ResetRequired);
+            yield return new(AppMemoryChangeKind.ResetRequired);
             if (subscription == 1)
             {
-                yield return new MemoryChanged((MemoryChangeKind)int.MaxValue);
+                yield return new((AppMemoryChangeKind)int.MaxValue);
                 yield break;
             }
 
-            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
-        }
-    }
-
-    private sealed class NoOpDisposable : IDisposable
-    {
-        public void Dispose()
-        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
         }
     }
 }

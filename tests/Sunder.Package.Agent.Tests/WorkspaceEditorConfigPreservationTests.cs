@@ -1,15 +1,15 @@
-using Sunder.Package.Agent.Contracts.Contracts;
-using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Rpc;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
 
 extern alias DockerWorker;
 extern alias LocalWorker;
-extern alias AgentApp;
 using DockerWorker::Sunder.Package.Agent.Execution.Docker;
 using LocalWorker::Sunder.Package.Agent.Execution.Local;
+using DockerWorkerModels = DockerWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using LocalWorkerModels = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
 
 public sealed class WorkspaceEditorConfigPreservationTests
 {
@@ -21,18 +21,23 @@ public sealed class WorkspaceEditorConfigPreservationTests
         var pathEntries = new[] { Path.Combine(scope.RootPath, "bin") };
         var configService = new LocalExecutionWorkspaceConfigService(scope.Context);
         await configService.SaveConfigAsync(bindingId, new LocalExecutionWorkspaceConfig("bash", pathEntries));
-        var contributor = AgentRoleBoundary.As<IAgentWorkspaceEditorContributor>(new LocalExecutionWorkspaceEditorContributor(
+        var contributor = new LocalExecutionWorkspaceEditorContributor(
             configService,
-            new LocalShellCatalogService(scope.Context)));
+            new LocalShellCatalogService(scope.Context));
 
         var result = await contributor.SaveSectionAsync(
-            CreateContext("local", bindingId),
-            new AgentEditorSaveRequest(
-                "local-execution-settings",
-                new Dictionary<string, AgentEditorFieldValue>
+            new LocalWorkerModels.CSunder_Agent_Workspace_Editor_WorkspaceEditorSaveSectionRequest
+            {
+                Context = CreateLocalContext("local", bindingId),
+                Request = new LocalWorkerModels.AgentEditorSaveRequest
                 {
-                    ["shell"] = new("zsh"),
-                }));
+                    SectionId = "local-execution-settings",
+                    Fields = new Dictionary<string, LocalWorkerModels.AgentEditorFieldValue>
+                    {
+                        ["shell"] = new() { Value = "zsh", Items = null },
+                    },
+                },
+            });
 
         Assert.True(result.Success);
         var saved = await configService.GetConfigAsync(bindingId);
@@ -56,17 +61,22 @@ public sealed class WorkspaceEditorConfigPreservationTests
                 "preserved-container",
                 "/bin/sh",
                 ["/opt/tools", "/usr/local/bin"]));
-        var contributor = AgentRoleBoundary.As<IAgentWorkspaceEditorContributor>(new DockerExecutionWorkspaceEditorContributor(configService, imageCatalog));
+        var contributor = new DockerExecutionWorkspaceEditorContributor(configService, imageCatalog);
 
         var result = await contributor.SaveSectionAsync(
-            CreateContext("docker", bindingId),
-            new AgentEditorSaveRequest(
-                "docker-execution-settings",
-                new Dictionary<string, AgentEditorFieldValue>
+            new DockerWorkerModels.CSunder_Agent_Workspace_Editor_WorkspaceEditorSaveSectionRequest
+            {
+                Context = CreateDockerContext("docker", bindingId),
+                Request = new DockerWorkerModels.AgentEditorSaveRequest
                 {
-                    ["image"] = new("test-image:1.0"),
-                    ["shell-path"] = new("/bin/bash"),
-                }));
+                    SectionId = "docker-execution-settings",
+                    Fields = new Dictionary<string, DockerWorkerModels.AgentEditorFieldValue>
+                    {
+                        ["image"] = new() { Value = "test-image:1.0", Items = null },
+                        ["shell-path"] = new() { Value = "/bin/bash", Items = null },
+                    },
+                },
+            });
 
         Assert.True(result.Success);
         var saved = await configService.GetConfigAsync(bindingId);
@@ -76,11 +86,46 @@ public sealed class WorkspaceEditorConfigPreservationTests
         Assert.Equal(["/opt/tools", "/usr/local/bin"], saved.PathEntries);
     }
 
-    private static AgentWorkspaceEditorContext CreateContext(string targetId, string bindingId)
+    private static LocalWorkerModels.AgentWorkspaceEditorContext CreateLocalContext(string targetId, string bindingId)
     {
         var now = DateTimeOffset.UtcNow;
-        var workspace = new AgentApp::Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord("workspace", "Workspace", null, now, now);
-        return new AgentWorkspaceEditorContext(workspace, targetId, bindingId);
+        var timestamp = new SunderRpcOffsetDateTime(now.ToString("O"));
+        return new()
+        {
+            ConfigurationId = bindingId,
+            TargetId = targetId,
+            Workspace = new()
+            {
+                WorkspaceId = "workspace",
+                DisplayName = "Workspace",
+                Description = null,
+                CreatedAtUtc = timestamp,
+                UpdatedAtUtc = timestamp,
+                Paths = [],
+                Documents = [],
+            },
+        };
+    }
+
+    private static DockerWorkerModels.AgentWorkspaceEditorContext CreateDockerContext(string targetId, string bindingId)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var timestamp = new SunderRpcOffsetDateTime(now.ToString("O"));
+        return new()
+        {
+            ConfigurationId = bindingId,
+            TargetId = targetId,
+            Workspace = new()
+            {
+                WorkspaceId = "workspace",
+                DisplayName = "Workspace",
+                Description = null,
+                CreatedAtUtc = timestamp,
+                UpdatedAtUtc = timestamp,
+                Paths = [],
+                Documents = [],
+            },
+        };
     }
 
     private sealed class ReadyDockerCliRunner(IPackageContext context) : DockerCliRunner(context)

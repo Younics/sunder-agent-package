@@ -8,6 +8,7 @@ using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.TestSupport;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Worker;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -47,27 +48,23 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var context = new TestPackageContext("sunder.package.agent.memory.semantic", package.RootPath, version: "2.0.0", storage: package.Context.Storage);
         var graph = CreateGeneratedWorker(worker, context, client);
         await using var graphLifetime = graph.Lifetime;
-        var generated = Service("Rpc.SemanticMemoryRpcCatalog");
-        var catalogType = generated.GetType();
-        var lifetime = (IAsyncDisposable)generated;
-        await ((ISunderWorkerLifecycleService)generated).PrepareCandidateAsync();
-        Assert.Empty((IEnumerable)AgentRoleBoundary.Call(generated, "GetRuntimeCatalogs")!);
-        Assert.Empty((IEnumerable)AgentRoleBoundary.Call(generated, "GetEmbeddingProviders")!);
-        Assert.Equal(0, client.DiscoveryCount);
-        var start = catalogType.GetMethod("StartAsync")!.CreateDelegate<Func<CancellationToken, ValueTask>>(generated);
-        await start(default);
         var resolver = Service("Services.SemanticModelRuntimeResolver");
+        var lifetime = (IAsyncDisposable)resolver;
+        await ((ISunderWorkerLifecycleService)resolver).PrepareCandidateAsync();
+        Assert.Equal(0, client.DiscoveryCount);
+        await ((ISunderWorkerLifecycleService)resolver).ActivateAsync(null!);
         var resolved = await Current();
         Assert.Equal("Original embeddings", Property(resolved, "ProviderDisplayName"));
         Assert.Equal("example.embedding", Property(resolved, "OwnerPackageId"));
         var fingerprint = Property(resolved, "ConfigurationFingerprint");
-        var result = AgentRoleBoundary.As<AgentEmbeddingGenerationResult>((await Generate(resolved, "one"))!);
-        Assert.Equal(new double[] { 1, 0, 0 }, result.Values);
-        var batch = AgentRoleBoundary.As<IReadOnlyList<AgentEmbeddingGenerationResult?>>((await Call(resolved,
-            "GenerateEmbeddingsAsync", new[] { "first", "", "third" }, CancellationToken.None))!);
-        Assert.Equal(3, batch.Count);
+        var result = (await Generate(resolved, "one"))!;
+        Assert.Same(worker, result.GetType().Assembly);
+        Assert.Equal(new double[] { 1, 0, 0 }, Assert.IsAssignableFrom<IReadOnlyList<double>>(Property(result, "Values")));
+        var batch = ((System.Collections.IEnumerable)(await Call(resolved,
+            "GenerateEmbeddingsAsync", new[] { "first", "", "third" }, CancellationToken.None))!).Cast<object?>().ToArray();
+        Assert.Equal(3, batch.Length);
         Assert.Null(batch[1]);
-        Assert.Equal("embedding/model", batch[2]!.ModelId);
+        Assert.Equal("embedding/model", Property(batch[2]!, "ModelId"));
         using (var cancelled = new CancellationTokenSource())
         {
             cancelled.Cancel();
@@ -100,23 +97,38 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.Equal(runtime.Session.SessionId, await sessionChanged.Task.WaitAsync(TimeSpan.FromSeconds(5)));
         runtime.NotifyReset();
         await reset.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Equal(runtime.Session, InvokeRuntimeCatalog(value => value.GetSession(runtime.Session.SessionId)));
-        Assert.Null(InvokeRuntimeCatalog(value => value.GetProfile("missing")));
+        var returnedSession = InvokeRuntimeCatalog(async (value, token) =>
+            await Call(value, "GetSessionAsync", runtime.Session.SessionId, token));
+        await using var assertionReceiver = new GeneratedServiceTestScope(client);
+        var projection = RegressionTestGeneratedProviderProjection.FromCandidate(
+            Environment.GetEnvironmentVariable("SUNDER_AGENT_PUBLIC_FIXTURE_CANDIDATE")!, RegressionTestBindings.RuntimeCatalog);
+        Assert.Equal(runtime.Session, await projection.ProjectAsync(returnedSession, typeof(AgentSessionRecord), assertionReceiver, default));
+        Assert.Null(InvokeRuntimeCatalog(async (value, token) => await Call(value, "GetProfileAsync", "missing", token)));
 
         client.LookupFailure = SunderRpcErrorKind.Unavailable;
         Assert.Null(await Resolve());
         client.LookupFailure = SunderRpcErrorKind.PermissionDenied;
         var denied = await Assert.ThrowsAsync<SunderRpcException>(Resolve);
-        Assert.Equal(SunderRpcErrorKind.PermissionDenied, denied.Error.Kind);
+        Assert.True(denied.Error.Kind == SunderRpcErrorKind.PermissionDenied, denied.ToString());
         client.LookupFailure = null;
         Assert.NotNull(await Resolve());
         client.ChangeEmbeddingGeneration = true;
-        Assert.Equal(false, AgentRoleBoundary.Call(resolved, "IsSameActivation", resolved));
+        var beforeStale = embedding.GenerationCount;
         await Assert.ThrowsAsync(Type("Services.EmbeddingProviderRetiredException"), () => Generate(resolved, "stale"));
+        Assert.Equal(beforeStale, embedding.GenerationCount);
+        Assert.Equal(false, AgentRoleBoundary.Call(resolved, "IsSameActivation", resolved));
         client.ChangeEmbeddingGeneration = false;
+        await Assert.ThrowsAsync(Type("Services.EmbeddingProviderRetiredException"), () => Generate(resolved, "still retired"));
+        Assert.Equal(beforeStale, embedding.GenerationCount);
+        await state.RetireAsync(embedding).WaitAsync(TimeSpan.FromSeconds(5));
+        AddEmbedding(embedding);
+        var retiredSelection = resolved;
 
         embedding.Block = true;
         resolved = await Current();
+        Assert.Equal(false, AgentRoleBoundary.Call(retiredSelection, "IsSameActivation", resolved));
+        await Assert.ThrowsAsync(Type("Services.EmbeddingProviderRetiredException"), () => Generate(retiredSelection, "replacement must not run"));
+        Assert.Equal(beforeStale, embedding.GenerationCount);
         var inFlight = Generate(resolved, "retire in flight");
         await embedding.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await state.RetireAsync(embedding).WaitAsync(TimeSpan.FromSeconds(5));
@@ -136,13 +148,15 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var repeatedStop = lifetime.DisposeAsync().AsTask();
         Assert.Same(stopping, repeatedStop);
         await stopping;
-        Assert.True(((ISunderWorkerLifecycleService)generated).Completion.IsCompletedSuccessfully);
+        Assert.True(((ISunderWorkerLifecycleService)resolver).Completion.IsCompletedSuccessfully);
         Assert.Equal(0, runtime.SessionSubscriberCount);
+        await assertionReceiver.DisposeAsync();
+        await graphLifetime.DisposeAsync();
         Assert.Equal(0, client.ActiveWatches);
-        Assert.Throws<ObjectDisposedException>(() => AgentRoleBoundary.Call(generated, "GetRuntimeCatalogs"));
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => Call(resolver, "SubscribeToSessionChanges", (Action<Guid>)(_ => { }), (Action)(() => { })));
 
-        void AddRuntime(MemoryConsumerRuntime value) => AddGeneratedPeer(state, "sunder.package.agent", AgentRpcContractIds.RuntimeCatalog, value, "agent.runtime.catalog");
-        void AddEmbedding(MemoryConsumerEmbedding value) => AddGeneratedPeer(state, "example.embedding", AgentRpcContractIds.EmbeddingProvider, value, "example.embedding.provider");
+        void AddRuntime(MemoryConsumerRuntime value) => AddGeneratedPeer(state, "sunder.package.agent", RegressionTestBindings.RuntimeCatalog, value, "agent.runtime.catalog");
+        void AddEmbedding(MemoryConsumerEmbedding value) => AddGeneratedPeer(state, "example.embedding", RegressionTestBindings.EmbeddingProviders, value, "example.embedding.provider");
         Type Type(string name) => worker.GetType("Sunder.Package.Agent.Memory.Semantic." + name, true)!;
         object Service(string name) => graph.Services.GetRequiredService(Type(name));
         static object? Property(object value, string name) => value.GetType().GetProperty(name)!.GetValue(value);
@@ -155,7 +169,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         }
         static Task<object?> Generate(object value, string text, CancellationToken token = default)
             => Call(value, "GenerateEmbeddingAsync", text, token);
-        object? InvokeRuntimeCatalog(Func<IAgentRuntimeCatalog, object?> callback)
+        object? InvokeRuntimeCatalog(Func<object, CancellationToken, ValueTask<object?>> callback)
         {
             var method = resolver.GetType().GetMethod("InvokeRuntimeCatalog", BindingFlags.Instance | BindingFlags.NonPublic)!.MakeGenericMethod(typeof(object));
             return method.Invoke(resolver, [AgentRoleBoundary.Convert(callback, method.GetParameters()[0].ParameterType), null]);

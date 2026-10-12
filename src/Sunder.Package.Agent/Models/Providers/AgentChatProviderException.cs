@@ -1,12 +1,16 @@
+using System.Text.Json.Serialization;
+
 namespace Sunder.Package.Agent.Contracts.Models;
 
 /// <summary>Identifies normalized provider failure categories that callers can handle consistently.</summary>
 public enum AgentChatProviderFailureKind
 {
     /// <summary>The provider failure has no normalized classification.</summary>
+    [JsonStringEnumMemberName("unknown")]
     Unknown = 0,
 
     /// <summary>The request exceeded the selected model's context window.</summary>
+    [JsonStringEnumMemberName("context-window-exceeded")]
     ContextWindowExceeded = 1,
 }
 

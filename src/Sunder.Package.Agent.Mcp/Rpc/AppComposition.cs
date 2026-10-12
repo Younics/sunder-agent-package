@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Mcp.Runtime;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Abstractions;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Mcp_Services;
 
 namespace Sunder.Package.Agent.Mcp
 {
@@ -17,7 +18,7 @@ namespace Sunder.Package.Agent.Mcp.Runtime
     internal sealed partial class McpAppRuntimeGateway
     {
         [ActivatorUtilitiesConstructor]
-        internal McpAppRuntimeGateway(McpOwnerManagementRpcClient client, IPackageContext context)
-            : this((IMcpOwnerManagementClient)client, context.Callbacks, context.Logging.LoggerFactory) { }
+        internal McpAppRuntimeGateway(IManagementService client, IPackageContext context)
+            : this(client, context.Callbacks, context.Logging.LoggerFactory) { }
     }
 }

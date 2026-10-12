@@ -6,11 +6,13 @@ using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
 
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+
 public sealed partial class AgentSourceArtifactMigrationTests
 {
     private static async Task VerifyFilesMutations(FilesTargetProbe target, string workspace, string outside, AgentToolExecutionContext context,
         Func<string, string, object, AgentToolExecutionContext?, CancellationToken, Task<AgentToolResult>> tool,
-        Func<string, string, object, CancellationToken, Task<JsonElement>> rpc, AgentRpcProviderHandle handle, string? generation)
+        AgentServices.IToolSourceService toolSource, string? generation)
     {
         var added = await tool("execute", "apply_patch", new { patchText = "*** Begin Patch\n*** Add File: patch.txt\n+patched\n*** End Patch" }, null, default);
         Assert.False(added.IsError, added.Content);
@@ -42,9 +44,10 @@ public sealed partial class AgentSourceArtifactMigrationTests
         // Resource-authority transport is also available outside a durable transcript.
         // The separate durable-session scenarios verify instruction acknowledgment.
         var planning = context with { SessionId = null, TranscriptEpoch = 0, AllowOutsideConfiguredScope = true };
-        var permission = ReadToolPermission(await rpc("files.tools", "permission", RegressionTestRpcValues.ToolInvocation(
+        var permission = await toolSource.PermissionAsync(
             planning with { ApprovedResourceCapabilities = [], ExecutionTargetConfigurationGeneration = generation },
-            new("write", JsonSerializer.Serialize(new { path = outsideFile, content = "approved" })), handle), default));
+            new("write", JsonSerializer.Serialize(new { path = outsideFile, content = "approved" })));
+        Assert.NotNull(permission);
         Assert.Equal(AgentPermissionBoundaryIds.OutsideConfiguredScope, permission.BoundaryId);
         Assert.NotEmpty(permission.ResourceCapabilities); Assert.NotEmpty(permission.ResourceClaims);
         var approved = planning with
@@ -59,7 +62,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.Equal("outside", await File.ReadAllTextAsync(outsideFile));
         var written = await tool("execute", "write", new { path = outsideFile, content = "approved" }, approved, default);
         Assert.False(written.IsError, written.Content); Assert.Equal("approved", await File.ReadAllTextAsync(outsideFile));
-        Assert.Contains(target.Calls, call => call.Method == "release-resource-authority" && call.Request.GetProperty("capabilities").GetArrayLength() > 0);
+        Assert.Contains(target.Calls, call => call.Method == "release-resource-authority" && call.Request.GetArrayLength() > 0);
         Assert.Contains(target.Calls, call => call.Method == "write-file"
             && call.Request.GetProperty("context").GetProperty("approvedResourceCapabilities").GetArrayLength() > 0
             && call.Request.GetProperty("context").GetProperty("resourceOperation").GetProperty("authorityActivationId").GetString() == approved.ResourceOperation!.AuthorityActivationId);

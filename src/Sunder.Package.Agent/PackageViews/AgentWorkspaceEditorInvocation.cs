@@ -1,9 +1,10 @@
 using System.Collections.ObjectModel;
-using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Services;
 using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.PackageViews;
 
@@ -104,81 +105,67 @@ internal sealed record AgentEditorRetryState(
 
 internal static class AgentWorkspaceEditorInvocation
 {
-    public static async ValueTask<AgentEditorInvocationResult<TResult>> InvokeAsync<TResult>(
-        AgentRpcReference<IAgentWorkspaceEditorContributor> contributorReference,
-        AgentRpcCatalog rpcCatalog,
+    public static async ValueTask<AgentEditorInvocationResult<IReadOnlyList<AgentEditorSection>>> ReadSectionsAsync(
+        ServiceProvider<AgentServices.IWorkspaceEditorService> selected,
+        AgentWorkspaceEditorContext context,
         AgentEditorInvocationOperation operation,
-        CancellationToken cancellationToken,
-        Func<IAgentWorkspaceEditorContributor, CancellationToken, ValueTask<TResult>> callback)
+        CancellationToken cancellationToken)
     {
-        if (!contributorReference.TryAcquire(out var lease))
+        try
         {
-            return AgentEditorInvocationResult<TResult>.Failed(
-                AgentEditorInvocationFailure.Unavailable(packageId: null, operation: operation));
+            var sections = await GetSectionsSnapshotAsync(selected.Service, context, cancellationToken).ConfigureAwait(false);
+            await selected.EnsureCurrentAsync(cancellationToken).ConfigureAwait(false);
+            return AgentEditorInvocationResult<IReadOnlyList<AgentEditorSection>>.Succeeded(sections);
         }
-
-        string? packageId;
-        Exception? invariantFailure = null;
-        using (lease)
+        catch (Exception exception)
         {
-            packageId = lease.PackageId;
-            var retirementToken = lease.RetirementToken;
-            using var invocation = CancellationTokenSource.CreateLinkedTokenSource(
-                cancellationToken,
-                retirementToken);
-            try
-            {
-                var result = await callback(lease.Service, invocation.Token).ConfigureAwait(false);
-                cancellationToken.ThrowIfCancellationRequested();
-                if (retirementToken.IsCancellationRequested)
-                {
-                    return AgentEditorInvocationResult<TResult>.Failed(
-                        AgentEditorInvocationFailure.Unavailable(packageId, operation));
-                }
-
-                return AgentEditorInvocationResult<TResult>.Succeeded(result);
-            }
-            catch (SunderRpcException exception) when (
-                exception.Error.Kind != SunderRpcErrorKind.Validation
-                &&
-                !AgentRpcInvocation.IsUnavailableFailure(exception, cancellationToken))
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                return AgentEditorInvocationResult<TResult>.Failed(
-                    retirementToken.IsCancellationRequested
-                        ? AgentEditorInvocationFailure.Unavailable(packageId, operation)
-                        : AgentEditorInvocationFailure.Runtime(packageId, operation, exception));
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception exception) when (
-                retirementToken.IsCancellationRequested
-                || AgentRpcInvocation.IsUnavailableFailure(exception, cancellationToken))
-            {
-                return AgentEditorInvocationResult<TResult>.Failed(
-                    AgentEditorInvocationFailure.Unavailable(packageId, operation));
-            }
-            catch (Exception exception)
-            {
-                invariantFailure = exception;
-            }
+            return AgentEditorInvocationResult<IReadOnlyList<AgentEditorSection>>.Failed(
+                await DescribeFailureAsync(selected, operation, exception, cancellationToken).ConfigureAwait(false));
         }
+    }
 
-        return rpcCatalog.TryReportInvariantViolation(contributorReference, invariantFailure!)
-            ? AgentEditorInvocationResult<TResult>.Failed(
-                AgentEditorInvocationFailure.OwnerFaulted(packageId))
-            : AgentEditorInvocationResult<TResult>.Failed(
-                AgentEditorInvocationFailure.Unavailable(packageId, operation));
+    public static async ValueTask<AgentEditorInvocationResult<AgentEditorSaveResult>> SaveSectionAsync(
+        ServiceProvider<AgentServices.IWorkspaceEditorService> selected,
+        AgentWorkspaceEditorContext context,
+        AgentEditorSaveRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await selected.Service.SaveSectionAsync(context, request, cancellationToken).ConfigureAwait(false);
+            ArgumentNullException.ThrowIfNull(result);
+            await selected.EnsureCurrentAsync(cancellationToken).ConfigureAwait(false);
+            return AgentEditorInvocationResult<AgentEditorSaveResult>.Succeeded(result);
+        }
+        catch (Exception exception)
+        {
+            return AgentEditorInvocationResult<AgentEditorSaveResult>.Failed(
+                await DescribeFailureAsync(selected, AgentEditorInvocationOperation.Save, exception, cancellationToken).ConfigureAwait(false));
+        }
+    }
+
+    private static async ValueTask<AgentEditorInvocationFailure> DescribeFailureAsync(
+        ServiceProvider<AgentServices.IWorkspaceEditorService> selected,
+        AgentEditorInvocationOperation operation, Exception exception, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (exception is SunderRpcException { Error.Kind: SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable })
+            return AgentEditorInvocationFailure.Unavailable(selected.PackageId, operation);
+        if (exception is SunderRpcException rpc && rpc.Error.Kind != SunderRpcErrorKind.Validation)
+            return AgentEditorInvocationFailure.Runtime(selected.PackageId, operation, rpc);
+        if (selected.RetirementToken.IsCancellationRequested)
+            return AgentEditorInvocationFailure.Unavailable(selected.PackageId, operation);
+        return await selected.TryReportInvariantViolationAsync(exception, cancellationToken).ConfigureAwait(false)
+            ? AgentEditorInvocationFailure.OwnerFaulted(selected.PackageId)
+            : AgentEditorInvocationFailure.Unavailable(selected.PackageId, operation);
     }
 
     public static async ValueTask<IReadOnlyList<AgentEditorSection>> GetSectionsSnapshotAsync(
-        IAgentWorkspaceEditorContributor contributor,
+        AgentServices.IWorkspaceEditorService contributor,
         AgentWorkspaceEditorContext context,
         CancellationToken cancellationToken)
     {
-        if (!await Sunder.Package.Agent.Runtime.Rpc.AgentWorkspaceEditorBindings.CanEditAsync(contributor, context, cancellationToken).ConfigureAwait(false))
+        if (!await contributor.CanEditAsync(context, cancellationToken).ConfigureAwait(false))
         {
             return Array.Empty<AgentEditorSection>();
         }

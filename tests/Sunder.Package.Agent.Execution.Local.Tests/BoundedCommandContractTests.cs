@@ -6,6 +6,7 @@ using LocalWorker::Sunder.Package.Agent.Contracts.Models;
 using DockerWorker::Sunder.Package.Agent.Execution.Docker;
 using LocalWorker::Sunder.Package.Agent.Execution.Local;
 using Xunit;
+using LocalModels = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
 
@@ -48,7 +49,7 @@ public sealed class BoundedCommandContractTests
             await ExecuteAsync(backend, "sleep 5", timeoutSeconds: 10, cancellation.Token));
     }
 
-    private static async Task<AgentShellCommandResult> ExecuteAsync(
+    private static async Task<LocalModels.AgentShellCommandResult> ExecuteAsync(
         string backend,
         string command,
         int timeoutSeconds,
@@ -91,6 +92,13 @@ public sealed class BoundedCommandContractTests
         return startInfo;
     }
 
-    private static AgentShellCommandResult ToShellResult(DockerCliRunResult result, string workingDirectory)
-        => new(result.ExitCode, result.Output, result.TimedOut, workingDirectory, result.WasTruncated);
+    private static LocalModels.AgentShellCommandResult ToShellResult(DockerCliRunResult result, string workingDirectory)
+        => new()
+        {
+            ExitCode = result.ExitCode,
+            Output = result.Output,
+            TimedOut = result.TimedOut,
+            WorkingDirectory = workingDirectory,
+            WasTruncated = result.WasTruncated,
+        };
 }

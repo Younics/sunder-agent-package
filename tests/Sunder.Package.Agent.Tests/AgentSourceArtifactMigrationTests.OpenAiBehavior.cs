@@ -39,8 +39,10 @@ public sealed partial class AgentSourceArtifactMigrationTests
             foreach (var assembly in new[] { runtime, presentation })
             {
                 Assert.DoesNotContain(assembly.GetReferencedAssemblies(), reference => reference.Name == "Sunder.Package.Agent.Provider.OpenAI.Shared");
-                foreach (var name in new[] { "OpenAiAuthOperationResult", "IOpenAiOwnerManagementClient", "OpenAiUtilityModelSelection", "OpenAiAuthMode", "OpenAiModelCatalog" })
+                foreach (var name in new[] { "OpenAiAuthOperationResult", "OpenAiUtilityModelSelection", "OpenAiAuthMode", "OpenAiModelCatalog" })
                     Assert.Same(assembly, assembly.GetType("Sunder.Package.Agent.Provider.OpenAI." + name, true)!.Assembly);
+                Assert.Null(assembly.GetType("Sunder.Package.Agent.Provider.OpenAI.IOpenAiOwnerManagementClient"));
+                Assert.Same(assembly, assembly.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Provider_Openai_Services.IManagementService", true)!.Assembly);
             }
             Assert.DoesNotContain(presentation.GetReferencedAssemblies(), reference => reference.Name is "Sunder.Package.Agent.Provider.OpenAI" or "Sunder.Sdk.Worker" or "OpenAI");
             using var package = RegressionTestPackageScope.Create();
@@ -78,19 +80,19 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.NotNull(options.SettingsSchema); Assert.NotNull(options.AuthHandler); Assert.Empty(backend.Requests);
             var registrations = options.Providers.ToDictionary(value => value.ProviderId);
             Assert.Equal(new[] { "openai.chat", "openai.continuation.cleaner", "openai.embedding", "openai.management" }, registrations.Keys.Order(StringComparer.Ordinal));
-            var descriptor = RegressionTestRpcDescriptors.Get("sunder.package.agent.provider.openai.management");
+            var descriptor = CurrentPrivateRpcDescriptors.Get("sunder.package.agent.provider.openai.management");
             foreach (var provider in options.Providers)
             {
-                var expected = provider.ProviderId == "openai.management" ? descriptor : RegressionTestRpcDescriptors.Get(provider.ContractId);
+                var expected = provider.ProviderId == "openai.management" ? descriptor : CurrentPublicRpcDescriptors.Get(provider.ContractId);
                 Assert.Equal(expected.Sha256, provider.DescriptorSha256); Assert.Equal(expected.AbiSha256, provider.AbiSha256);
                 state.Add(context.PackageId, expected, provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, "2.0.0");
             }
             await using var appServices = CreateGeneratedApp(presentation, context, rpc);
-            var management = appServices.GetRequiredService(presentation.GetType("Sunder.Package.Agent.Provider.OpenAI.OpenAiOwnerManagementRpcClient", true)!);
-            var chatProvider = CreateAgentChatProvider(agentOwner, rpc.ForCaller("sunder.package.agent"), Assert.Single((await rpc.DiscoverAsync(AgentRpcContractIds.ChatProvider)).Providers));
+            var management = appServices.GetRequiredService(presentation.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Provider_Openai_Services.IManagementService", true)!);
+            var chatProvider = await CreateAgentChatProvider(agentOwner, rpc.ForCaller("sunder.package.agent"), Assert.Single((await rpc.DiscoverAsync(RegressionTestBindings.ChatProviders)).Providers));
             await using var chatLifetime = (IAsyncDisposable)chatProvider;
             using var chat = await CreateAgentChatClientAsync(chatProvider, new("openai", "openai/gpt-5.4"));
-            Assert.False((await Manage("HasCredentialAsync", [CancellationToken.None])).GetBoolean());
+            Assert.False((await Manage("GetCredentialStatusAsync", [CancellationToken.None])).GetBoolean());
             Assert.False((await Manage("GetAuthStatusAsync", [CancellationToken.None])).GetProperty("isConnected").GetBoolean());
             Assert.Equal(PackageAuthStatusKind.Unavailable, (await options.AuthHandler.GetStatusAsync()).Status);
             foreach (var kind in new[] { "chat", "embedding" })
@@ -106,13 +108,14 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.Equal("openai.management.failed", (await Assert.ThrowsAsync<SunderRpcException>(() => Manage("SetCredentialAsync", [" ", CancellationToken.None]))).Error.Code);
             foreach (var kind in new[] { "chat", "embedding" }) Assert.Equal("ready", (await Rpc(kind, "get-readiness", new { })).GetProperty("status").GetString());
             Assert.Equal("openai/gpt-5.4-mini", (await Rpc("chat", "resolve-utility-model", new { })).GetString());
-            Assert.True((await Rpc("chat", "get-capabilities", new { modelId = "openai/gpt-5.4" })).GetProperty("supportsPdfInput").GetBoolean());
-            Assert.Equal("https://api.openai.com/v1", (await Rpc("embedding", "space-identity", new { value = "openai/text-embedding-3-small" })).GetString());
+            Assert.True((await Rpc("chat", "get-capabilities", "openai/gpt-5.4")).GetProperty("supportsPdfInput").GetBoolean());
+            Assert.Equal("https://api.openai.com/v1", (await Rpc("embedding", "space-identity", "openai/text-embedding-3-small")).GetString());
             Assert.Empty(backend.Requests);
             var batch = await Rpc("embedding", "generate-batch", new { modelId = "openai/text-embedding-3-small", texts = new[] { "first", " ", "second" } });
             Assert.Equal(3, batch.GetArrayLength()); Assert.Equal(JsonValueKind.Null, batch[1].ValueKind);
             Assert.Equal(0.25, batch[0].GetProperty("values")[0].GetDouble()); Assert.Equal(1.25, batch[2].GetProperty("values")[0].GetDouble());
-            Assert.Equal(3, batch[0].GetProperty("dimensions").GetInt32());
+            Assert.Equal(3, batch[0].GetProperty("values").GetArrayLength());
+            Assert.False(batch[0].TryGetProperty("dimensions", out _));
             Assert.Equal("openai/text-embedding-3-small", batch[2].GetProperty("modelId").GetString());
             var count = backend.Requests.Count;
             Assert.Equal(JsonValueKind.Null, (await Rpc("embedding", "generate", new { modelId = "openai/text-embedding-3-small", text = " " })).ValueKind);
@@ -154,14 +157,24 @@ public sealed partial class AgentSourceArtifactMigrationTests
             var registration = registrations["openai.management"];
             var old = Assert.Single((await rpc.DiscoverAsync(descriptor.ContractId)).Providers).Endpoint;
             await state.RetireAsync(registration.Handler).WaitAsync(TimeSpan.FromSeconds(5));
-            await Assert.ThrowsAsync<InvalidOperationException>(() => Manage("HasCredentialAsync", [CancellationToken.None]));
+            var missingManagement = await Assert.ThrowsAsync<SunderRpcException>(() => Manage("GetCredentialStatusAsync", [CancellationToken.None]));
+            Assert.Equal(SunderRpcErrorKind.NotFound, missingManagement.Error.Kind);
+            Assert.Equal("rpc.provider-not-found", missingManagement.Error.Code);
+            Assert.Null(await rpc.GetProviderAsync(old));
             state.Add(context.PackageId, descriptor, registration.Handler, registration.Handler, Noop.Instance, registration.ProviderId, "2.0.0");
             Assert.NotEqual(old, Assert.Single((await rpc.DiscoverAsync(descriptor.ContractId)).Providers).Endpoint);
-            Assert.True((await Manage("HasCredentialAsync", [CancellationToken.None])).GetBoolean());
+            Assert.True((await Manage("GetCredentialStatusAsync", [CancellationToken.None])).GetBoolean());
             Assert.False((await Manage("ClearCredentialAsync", [CancellationToken.None])).GetBoolean());
             Assert.Equal("needs-configuration", (await Rpc("embedding", "get-readiness", new { })).GetProperty("status").GetString());
             await VerifyProviderStreamLifecycle(runtime, "OpenAI", agentOwner, probes);
             await VerifyOpenAiAppCallbackLifetime(presentation, context, rpc);
+            await appServices.GetRequiredService<SunderRpcServiceBindingLifetime>().DisposeAsync();
+            var disposedManagement = await Assert.ThrowsAsync<SunderRpcException>(() => Manage("GetCredentialStatusAsync", [CancellationToken.None]));
+            Assert.Equal(SunderRpcErrorKind.Unavailable, disposedManagement.Error.Kind);
+            Assert.Equal("rpc.binding.lifetime-disposed", disposedManagement.Error.Code);
+            await appServices.DisposeAsync();
+            var disposedClient = await Assert.ThrowsAsync<ObjectDisposedException>(() => Manage("GetCredentialStatusAsync", [CancellationToken.None]));
+            Assert.Equal("Sunder.Generated.Packages.Sunder_Package_Agent_Provider_Openai_Internal.ServiceClientLifetime", disposedClient.ObjectName);
 
             async Task<JsonElement> Manage(string method, object[] args)
             {

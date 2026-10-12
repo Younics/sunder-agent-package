@@ -3,8 +3,11 @@ using System.Text.Json;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
+using Sunder.Package.Agent.Services;
 using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
 using Sunder.Sdk.Worker;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -16,62 +19,83 @@ public sealed partial class AgentPublicSourceMigrationTests
     {
         var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
         var owner = new BehaviorCallRecorder(new RegressionTestRpcClient(state, "sunder.package.agent"));
-        var ownerCatalog = new AgentRpcCatalog(owner);
-        var providerCatalog = new AgentRpcCatalog(new RegressionTestRpcClient(state, loopPackage));
-        var registry = new AgentRunControlRegistry();
-        var controlType = assembly.GetType("Sunder.Package.Agent.Rpc.Public.RunControlService", true)!;
-        var control = Activator.CreateInstance(controlType, registry)!;
-        var controlRegistration = Registration(controlType, control);
-        state.Add("sunder.package.agent", descriptors[AgentRpcContractIds.RunControl], control, controlRegistration.Handler,
+        var ownerReceiver = new GeneratedServiceTestScope(owner);
+        var providerReceiver = new GeneratedServiceTestScope(new RegressionTestRpcClient(state, loopPackage));
+        var activeRuns = new AgentActiveRunRegistry();
+        var registry = new AgentRoleRunControls(assembly, activeRuns);
+        var control = new AgentRunControlService(activeRuns);
+        var controlRegistration = ownerReceiver.Register(control, descriptors[RegressionTestBindings.RunControls].ContractId);
+        state.Add("sunder.package.agent", descriptors[RegressionTestBindings.RunControls], control, controlRegistration.Handler,
             EmptyDisposable.Instance, controlRegistration.ProviderId, "2.0.0");
         var loopType = assembly.GetType("Sunder.Package.Agent.Rpc.Public.BehaviorLoopService", true)!;
-        var implementation = Activator.CreateInstance(loopType, loop, providerCatalog)!;
-        var registration = Registration(loopType, implementation);
-        var descriptor = descriptors[AgentRpcContractIds.BehaviorLoop];
-        Assert.Equal("agent.behavior.loop", registration.ProviderId);
+        Assert.True(loopType.IsInterface);
+        var implementation = loop;
+        using var providers = new RegressionTestSourceProviders();
+        var registration = providers.Create(descriptors[RegressionTestBindings.BehaviorLoops].ContractId, implementation, providerReceiver);
+        var descriptor = descriptors[RegressionTestBindings.BehaviorLoops];
+        Assert.Equal(loop is BehaviorProbe ? "fixture.regression.behavior.loop" : "agent.behavior.loop", registration.ProviderId);
         Assert.Equal(descriptor.Sha256, registration.DescriptorSha256);
         Assert.Equal(descriptor.AbiSha256, registration.AbiSha256);
         state.Add(loopPackage, descriptor, implementation, registration.Handler, EmptyDisposable.Instance, registration.ProviderId, "2.0.0");
-        var providers = (await owner.DiscoverAsync(descriptor.ContractId)).Providers;
-        var source = providers.Single(value => value.ProviderId == registration.ProviderId);
-        var scope = await owner.CreateCallScopeAsync(new(DateTimeOffset.UtcNow.AddMinutes(35)));
-        var client = Activator.CreateInstance(assembly.GetType("Sunder.Generated.Rpc.BehaviorLoop.BehaviorLoopClient", true)!, scope, source.Endpoint)!;
-        var bridge = (IAgentBehaviorLoop)Activator.CreateInstance(assembly.GetType("Sunder.Package.Agent.Runtime.Rpc.GeneratedBehaviorLoopClient", true)!,
-            owner, source, registry, ownerCatalog)!;
-        return new(state, owner, ownerCatalog, providerCatalog, registry, scope, client, implementation, control, source, loopPackage, bridge);
-
-        static SunderWorkerProviderRegistration Registration(Type type, object value)
-            => Assert.IsType<SunderWorkerProviderRegistration>(type.GetMethod("CreateSunderRpcProviderRegistration")!.Invoke(value, null));
+        var provider = Assert.Single((await ownerReceiver.Providers<AgentServices.IBehaviorLoopService>().ListAsync()).Providers,
+            value => value.ProviderId == registration.ProviderId);
+        var controlReference = Assert.Single((await ownerReceiver.Providers<AgentServices.IRunControlService>().ListAsync()).Providers,
+            value => value.ProviderId == controlRegistration.ProviderId).Reference;
+        var controlClient = Assert.Single((await providerReceiver.Providers<AgentServices.IRunControlService>().ListAsync()).Providers,
+            value => value.ProviderId == controlRegistration.ProviderId).Service;
+        var bridge = new GeneratedBehaviorLoopBridge(provider.Service, controlReference, registry, loopPackage);
+        return new(state, owner, ownerReceiver, providerReceiver, registry, provider.Service, implementation, control, provider, loopPackage, bridge, controlReference, controlClient);
     }
 
-    private sealed class BehaviorFixture(RegressionTestRpcState state, BehaviorCallRecorder owner, AgentRpcCatalog ownerCatalog,
-        AgentRpcCatalog providerCatalog, AgentRunControlRegistry registry, ISunderRpcCallScope scope, object client,
-        object implementation, object control, SunderRpcProviderSnapshot source, string loopPackage, IAgentBehaviorLoop bridge) : IAsyncDisposable
+    private sealed class BehaviorFixture(RegressionTestRpcState state, BehaviorCallRecorder owner, GeneratedServiceTestScope ownerReceiver,
+        GeneratedServiceTestScope providerReceiver, AgentRoleRunControls registry, AgentServices.IBehaviorLoopService client,
+        object implementation, object control, ServiceProvider<AgentServices.IBehaviorLoopService> source, string loopPackage,
+        IAgentBehaviorLoop bridge, ServiceReference<AgentServices.IRunControlService> controlReference,
+        AgentServices.IRunControlService controlClient) : IAsyncDisposable
     {
         public RegressionTestRpcState State { get; } = state;
         public BehaviorCallRecorder Owner { get; } = owner;
-        public AgentRpcCatalog OwnerCatalog { get; } = ownerCatalog;
-        public AgentRpcCatalog ProviderCatalog { get; } = providerCatalog;
-        public AgentRunControlRegistry Registry { get; } = registry;
-        public object Client { get; } = client;
+        public GeneratedServiceTestScope OwnerReceiver { get; } = ownerReceiver;
+        public AgentRoleRunControls Registry { get; } = registry;
+        public AgentServices.IBehaviorLoopService Client { get; } = client;
         public object Implementation { get; } = implementation;
         public object Control { get; } = control;
-        public SunderRpcProviderSnapshot Source { get; } = source;
+        public ServiceProvider<AgentServices.IBehaviorLoopService> Source { get; } = source;
         public string LoopPackage { get; } = loopPackage;
-        public AgentRpcProviderHandle ControlHandle => AgentRpcProviderHandle.From(Assert.Single(State.Discover(AgentRpcContractIds.RunControl).Providers,
-            provider => provider.PackageId == "sunder.package.agent" && provider.ProviderId == "agent.run.control"));
+        public ServiceReference<AgentServices.IRunControlService> ControlReference { get; } = controlReference;
+        public AgentServices.IRunControlService ControlClient { get; } = controlClient;
         public IAgentBehaviorLoop Bridge { get; } = bridge;
         public async ValueTask DisposeAsync()
         {
-            await scope.DisposeAsync();
+            await OwnerReceiver.DisposeAsync();
             await ((IAsyncDisposable)Bridge).DisposeAsync();
-            ProviderCatalog.Dispose(); OwnerCatalog.Dispose(); State.Dispose();
+            await providerReceiver.DisposeAsync();
+            State.Dispose();
             Assert.All(Owner.Scopes, item => Assert.True(item.Disposed));
         }
     }
 
+    private sealed class GeneratedBehaviorLoopBridge(AgentServices.IBehaviorLoopService client,
+        ServiceReference<AgentServices.IRunControlService> control, AgentRoleRunControls registry, string packageId) : IAgentBehaviorLoop, IAsyncDisposable
+    {
+        public AgentBehaviorLoopDescriptor Descriptor => client.DescribeAsync().AsTask().GetAwaiter().GetResult();
+
+        public async ValueTask<AgentBehaviorLoopResult> RunAsync(AgentBehaviorLoopContext context, IAgentBehaviorLoopRuntime runtime,
+            CancellationToken cancellationToken = default)
+        {
+            using var grant = registry.Open(runtime, packageId, out var invocationId);
+            return await client.RunAsync(context, invocationId, control, cancellationToken);
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
     private sealed class BehaviorCallRecorder(ISunderRpcClient inner) : ISunderRpcClient
     {
+        private static readonly JsonSerializerOptions ObservationJson = new(JsonSerializerDefaults.Web)
+        {
+            Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter(JsonNamingPolicy.KebabCaseLower, allowIntegerValues: false) },
+        };
         public BehaviorLoopRunRequest? LastRun { get; private set; }
         public SunderRpcCallOptions? LastRunOptions { get; private set; }
         public List<Scope> Scopes { get; } = [];
@@ -80,7 +104,7 @@ public sealed partial class AgentPublicSourceMigrationTests
         {
             if (serviceId == "behavior-loop" && methodId == "run")
             {
-                LastRun = request.Deserialize<BehaviorLoopRunRequest>(ExecutionJson)!;
+                LastRun = request.Deserialize<BehaviorLoopRunRequest>(ObservationJson)!;
                 LastRunOptions = options;
             }
             return inner.InvokeAsync(endpoint, serviceId, methodId, request, options, cancellationToken);
@@ -113,7 +137,7 @@ public sealed partial class AgentPublicSourceMigrationTests
                 SunderRpcCallOptions? options = null, CancellationToken cancellationToken = default)
             {
                 if (serviceId == "behavior-loop" && methodId == "run")
-                { owner.LastRun = request.Deserialize<BehaviorLoopRunRequest>(ExecutionJson)!; owner.LastRunOptions = options ?? new(DeadlineUtc); }
+                { owner.LastRun = request.Deserialize<BehaviorLoopRunRequest>(ObservationJson)!; owner.LastRunOptions = options ?? new(DeadlineUtc); }
                 return innerScope.InvokeAsync(endpoint, serviceId, methodId, request, options, cancellationToken);
             }
             public ValueTask<SunderRpcProviderSnapshot?> GetProviderAsync(SunderRpcEndpointReference endpoint, CancellationToken cancellationToken = default)

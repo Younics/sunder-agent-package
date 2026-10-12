@@ -4,21 +4,15 @@ using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Subagents.Runtime;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal static class SubagentOwnerJson
 {
     internal static JsonSerializerOptions Options { get; } = new(JsonSerializerDefaults.Web)
     {
         PropertyNameCaseInsensitive = false,
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
+        Converters = { new SunderRpcJsonConverterFactory() },
     };
-
-    internal static SunderRpcContentRegistrationOptions ContentOptions(string fileName, long length)
-        => new(
-            "application/json",
-            fileName,
-            length,
-            Repeatability: SunderRpcContentRepeatability.SingleUse,
-            MaximumUses: 1);
 
     internal static bool ShouldMap(Exception exception)
         => exception is SubagentOwnerOperationException;
@@ -39,6 +33,7 @@ internal static class SubagentOwnerJson
     }
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed class SubagentOwnerOperationException(
     string message,
     Exception? innerException = null) : InvalidOperationException(message, innerException);

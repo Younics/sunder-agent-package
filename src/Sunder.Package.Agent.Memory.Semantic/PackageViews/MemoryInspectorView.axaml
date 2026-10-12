@@ -3,7 +3,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
               xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
               xmlns:vm="using:Sunder.Package.Agent.Memory.Semantic.PackageViews"
-              xmlns:m="using:Sunder.Package.Agent.Contracts.Models"
+              xmlns:m="using:Sunder.Generated.Packages.Sunder_Package_Agent_Models"
               xmlns:shared="using:Sunder.Package.Agent.Shared.PackageViews"
               x:Class="Sunder.Package.Agent.Memory.Semantic.PackageViews.MemoryInspectorView"
              x:DataType="vm:MemoryInspectorViewModel"

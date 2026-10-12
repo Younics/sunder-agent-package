@@ -123,11 +123,13 @@ def safe_relative(value):
     return value
 
 
-def source_file(root, relative):
+def source_file(root, relative, *, optional=False):
     path = Path(root)
     for part in safe_relative(relative).split("/"):
         path /= part
         require(not path.is_symlink(), "Source input contains a symlink")
+    if optional and not path.exists():
+        return None
     return regular(path)
 
 
@@ -183,6 +185,93 @@ def locks(source):
     records.sort(key=lambda r: r["path"])
     # Canonical UTF-8, sorted object keys, no BOM or final newline (Workstream H).
     return sha(canonical(records))
+
+
+def package_imports(lock):
+    """Read reviewed role intent, never the legacy missing-field migration shape."""
+    imports = lock["packageImports"]
+    require(type(imports) is dict, "Invalid packageImports")
+    for package_id, entry in imports.items():
+        require(type(entry) is dict, "Invalid package API selection")
+        require("consumerRoles" in entry,
+                f"{package_id}: package-api.consumer-roles-migration-required; run MigrateSunderPackageApiConsumerRoles explicitly")
+        closed(entry, "localName presence requiredContracts consumerRoles")
+        require(entry["consumerRoles"] in (["app"], ["runtime"], ["app", "runtime"]),
+                f"{package_id}: package-api.consumer-roles-invalid")
+        require(type(entry["localName"]) is str and re.fullmatch(r"[a-z][A-Za-z0-9]{0,127}", entry["localName"]),
+                "Invalid package API local name")
+        require(entry["presence"] in ("required", "optional"), "Invalid package API presence")
+        required = entry["requiredContracts"]
+        require(type(required) is list and all(type(key) is str for key in required)
+                and required == sorted(set(required)), "Invalid required-contract readiness")
+        require(package_id in lock["packageArtifacts"], "Package API has no selected artifact")
+        contracts = lock["packageArtifacts"][package_id]["contracts"]
+        require(set(required) <= {key for key, record in contracts.items() if record["authorityKind"] == "package"},
+                "Required contract is outside the selected consumer subset")
+    return imports
+
+
+def verify_consumer_projection(lock, manifest):
+    imports = package_imports(lock)
+    groups = {item["packageId"]: item for item in manifest.get("packageApiImports", [])}
+    require(len(groups) == len(manifest.get("packageApiImports", [])) and set(groups) == set(imports),
+            "Packed package API import set differs from committed lock")
+    present = {target["role"] for target in manifest.get("targets", [])}
+    readiness = {}
+    for package_id, entry in imports.items():
+        group = groups[package_id]
+        roles = set(entry["consumerRoles"]) & present
+        require(roles, f"{package_id}: package-api.consumer-roles-unavailable")
+        contracts = lock["packageArtifacts"][package_id]["contracts"]
+        bundles = sorted((key, record["resolvedContractVersion"]) for key, record in contracts.items()
+                         if record["authorityKind"] == "package")
+        expected_bundles = [{"contractId": key, "contractVersion": version} for key, version in bundles]
+        expected_uses = [{"role": role, **bundle} for role in sorted(roles) for bundle in expected_bundles]
+        require(group["presence"] == entry["presence"] and group["bundleRefs"] == expected_bundles
+                and group["useRefs"] == expected_uses, "Packed consumer role/bundle projection differs from reviewed intent")
+        for role in roles:
+            for key, version in bundles:
+                identity = (role, key, version)
+                readiness[identity] = readiness.get(identity, False) or key in entry["requiredContracts"]
+    imported = {(bundle["contractId"], bundle["version"]) for bundle in manifest.get("contractBundles", [])
+                if bundle["source"] == "imported"}
+    actual = {}
+    for use in manifest.get("usesContracts", []):
+        if (use["contractId"], use["contractVersion"]) not in imported:
+            continue
+        identity = (use["role"], use["contractId"], use["contractVersion"])
+        require(identity not in actual and type(use["required"]) is bool, "Invalid duplicate imported use/readiness")
+        actual[identity] = use["required"]
+    require(actual == readiness, "Packed imported uses/readiness differ from role-scoped reviewed intent")
+
+
+def snapshots(contract):
+    return ([contract["current"]] if "current" in contract else []) + contract["history"]
+
+
+def has_public_evidence(contract):
+    return any(snapshot["exposure"] == "public" for snapshot in snapshots(contract))
+
+
+def owned_contracts(baseline, package_id):
+    fields = "schemaVersion authorityKind authorityId packageId contracts"
+    closed(baseline, fields + (" retiredPrivateContracts" if "retiredPrivateContracts" in baseline else ""))
+    require(type(baseline["schemaVersion"]) is int and baseline["schemaVersion"] == 1
+            and baseline["authorityKind"] == "package"
+            and baseline["authorityId"] == baseline["packageId"] == package_id, "Mixed owned baseline")
+    active, retired = baseline["contracts"], baseline.get("retiredPrivateContracts", {})
+    require(type(active) is dict and type(retired) is dict and len(active) + len(retired) <= 128,
+            "Invalid combined active/retired baseline maps")
+    for contracts in (active, retired):
+        for record in contracts.values():
+            closed(record, "contractId history" + (" current" if "current" in record else ""))
+            require(type(record["history"]) is list and len(record["history"]) <= 256
+                    and ("current" in record or record["history"]), "Invalid owned contract history")
+            for snapshot in snapshots(record):
+                require(type(snapshot) is dict and snapshot["exposure"] in ("public", "package")
+                        and snapshot["state"] in ("draft", "release-frozen", "published"), "Invalid owned snapshot")
+                require(contracts is not retired or snapshot["exposure"] == "package", "Retired private record contains public evidence")
+    return active
 
 
 def archive_metadata(path):
@@ -261,6 +350,7 @@ def family_plan(source, assets, registry, owner):
             require(satisfies(metadata[target][0]["version"], dependency["versionRange"]), "Retained dependency fails ordinary range")
         relative = str(PurePosixPath(package["projectPath"]).parent / "sunder-contracts.lock.json")
         lock = load(source_file(source, relative))
+        verify_consumer_projection(lock, manifest)
         imports = {i["packageId"]: i for i in manifest.get("packageArtifactImports", [])}
         require(len(imports) == len(manifest.get("packageArtifactImports", [])), "Duplicate artifact import")
         require(set(imports) == set(lock["packageArtifacts"]), "Archive/committed lock import set differs")
@@ -359,6 +449,12 @@ def git(source, *args):
     return subprocess.check_output(["git", "-C", str(source), *args])
 
 
+def baseline_at(source, commit, relative):
+    entry = git(source, "ls-tree", "--format=%(objecttype) %(objectmode)", commit, "--", relative).decode().strip()
+    require(entry in ("", "blob 100644"), "Owned baseline tree entry is not a regular file")
+    return git(source, "show", f"{commit}:{relative}") if entry else None
+
+
 def verify_evidence_commit(source, evidence_commit, provenance):
     artifact = provenance["artifactSourceCommit"]
     digest(evidence_commit, 40)
@@ -377,21 +473,28 @@ def verify_evidence_commit(source, evidence_commit, provenance):
     records = {r["packageId"]: r for r in provenance["artifacts"]}
     confirmed = 0
     for relative, package_id in allowed.items():
-        original_bytes = git(source, "show", f"{artifact}:{relative}")
-        require(source_file(source, relative).read_bytes() == original_bytes, "Baseline checkout differs from artifact-source tree")
+        original_bytes = baseline_at(source, artifact, relative)
+        actual_bytes = baseline_at(source, evidence_commit, relative)
+        path = source_file(source, relative, optional=True)
+        require((path.read_bytes() if path else None) == original_bytes, "Baseline checkout differs from artifact-source tree")
+        if original_bytes is None:
+            require(actual_bytes is None, "Evidence cannot create a private-only baseline")
+            continue
+        require(actual_bytes is not None, "Evidence cannot remove an owned baseline")
         before = decode(original_bytes)
-        after = decode(git(source, "show", f"{evidence_commit}:{relative}"))
+        after = decode(actual_bytes)
+        owned_contracts(before, package_id)
+        owned_contracts(after, package_id)
         stripped = copy.deepcopy(after)
         require(set(before["contracts"]) == set(after["contracts"]), "Evidence commit changes owned contract set")
         for key, original in before["contracts"].items():
             actual = after["contracts"][key]
             require(len(original["history"]) == len(actual["history"]), "Evidence commit changes history")
-            for old, new, reset in zip([original["current"], *original["history"]],
-                                       [actual["current"], *actual["history"]],
-                                       [stripped["contracts"][key]["current"], *stripped["contracts"][key]["history"]]):
-                if old is None:
-                    require(new is None, "Evidence cannot add a current contract")
-                    continue
+            require(("current" in original) == ("current" in actual), "Evidence cannot add/remove a current contract")
+            if not has_public_evidence(original):
+                require(canonical(actual) == canonical(original), "Private baseline history is immutable publication evidence")
+                continue
+            for old, new, reset in zip(snapshots(original), snapshots(actual), snapshots(stripped["contracts"][key])):
                 if old["state"] == "published" or old.get("packageRelease", {}).get("packageVersion") != records[package_id]["version"]:
                     require(old["state"] != "draft", "Release source contains an unfrozen contract")
                     require(canonical(new) == canonical(old), "Previously published evidence is immutable")
@@ -449,9 +552,10 @@ def main():
         family = inventory(source)
         package = next(p for p in family["packages"] if p["packageId"] == package_id)
         relative = str(PurePosixPath(package["projectPath"]).parent / "sunder-contracts.owned.json")
-        baseline = decode(git(source, "show", f"{commit}:{relative}"))
-        times = {s["publication"]["publishedAtUtc"] for c in baseline["contracts"].values()
-                 for s in [c["current"], *c["history"]] if s is not None and s["state"] == "published"
+        data = baseline_at(source, commit, relative)
+        contracts = owned_contracts(decode(data), package_id) if data is not None else {}
+        times = {s["publication"]["publishedAtUtc"] for c in contracts.values() if has_public_evidence(c)
+                 for s in snapshots(c) if s["state"] == "published"
                  and s["publication"]["packageVersion"] == family["releaseVersion"]}
         require(len(times) <= 1, "Owned publication timestamps disagree")
         print(next(iter(times), ""))

@@ -4,11 +4,11 @@ namespace Sunder.Package.Agent.Contracts.Models;
 public enum AgentPromptContextUsage
 {
     /// <summary>Reference data that does not independently direct model behavior.</summary>
-    Reference = 0,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("reference")] Reference = 0,
 
     /// <summary>Untrusted instructions that may guide work only inside their explicitly declared directory subtree.</summary>
-    ScopedInstruction = 1,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("scoped-instruction")] ScopedInstruction = 1,
 
     /// <summary>User-authored standing instructions selected through the host's profile workflow.</summary>
-    StandingInstruction = 2,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("standing-instruction")] StandingInstruction = 2,
 }

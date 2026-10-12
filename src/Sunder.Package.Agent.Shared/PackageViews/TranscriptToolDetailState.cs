@@ -19,6 +19,10 @@ internal sealed record TranscriptToolExpansionRequest(
     AgentTranscriptToolDetailRequest DetailRequest,
     CancellationToken CancellationToken);
 
+internal sealed record TranscriptToolDetailData(
+    AgentTranscriptToolDetailRecord Detail,
+    AgentToolPresentation Presentation);
+
 internal sealed class TranscriptToolDetailViewModel : IDisposable
 {
     private readonly int _diffLineCount;
@@ -75,7 +79,7 @@ internal sealed class TranscriptToolDetailViewModel : IDisposable
 internal sealed class TranscriptToolDetailState : IDisposable
 {
     private readonly Func<AgentTranscriptToolDetailRequest, CancellationToken, Task<AgentTranscriptToolDetailRecord?>> _loadDetail;
-    private readonly Func<AgentTurnItemRecord, AgentToolPresentation> _resolvePresentation;
+    private readonly Func<AgentTurnItemRecord, CancellationToken, ValueTask<AgentToolPresentation>> _resolvePresentation;
     private TranscriptToolProjection _projection;
     private TranscriptToolDetailViewModel? _details;
     private CancellationTokenSource? _requestCancellation;
@@ -85,7 +89,7 @@ internal sealed class TranscriptToolDetailState : IDisposable
     internal TranscriptToolDetailState(
         TranscriptToolProjection projection,
         Func<AgentTranscriptToolDetailRequest, CancellationToken, Task<AgentTranscriptToolDetailRecord?>> loadDetail,
-        Func<AgentTurnItemRecord, AgentToolPresentation> resolvePresentation)
+        Func<AgentTurnItemRecord, CancellationToken, ValueTask<AgentToolPresentation>> resolvePresentation)
     {
         _projection = projection;
         _loadDetail = loadDetail;
@@ -133,6 +137,13 @@ internal sealed class TranscriptToolDetailState : IDisposable
             _projection.SessionId,
             _projection.AnchorKey,
             _projection.DetailRevision,
+#if SUNDER_SUBAGENTS_APP || SUNDER_SUBAGENTS_WORKER
+            new AgentTranscriptToolDetailRequest
+            {
+                SessionId = _projection.SessionId, ToolExecutionId = _projection.ToolExecutionId, CallId = _projection.CallId,
+                ItemId = _projection.ItemId, RunId = _projection.RunId, RunRevision = _projection.RunRevision,
+            },
+#else
             new AgentTranscriptToolDetailRequest(
                 _projection.SessionId,
                 _projection.ToolExecutionId,
@@ -140,12 +151,13 @@ internal sealed class TranscriptToolDetailState : IDisposable
                 _projection.ItemId,
                 _projection.RunId,
                 _projection.RunRevision),
+#endif
             _requestCancellation.Token);
         Changed?.Invoke();
         return request;
     }
 
-    internal async Task<AgentTranscriptToolDetailRecord?> LoadAsync(
+    internal async Task<TranscriptToolDetailData?> LoadAsync(
         TranscriptToolExpansionRequest request,
         CancellationToken cancellationToken)
     {
@@ -155,7 +167,13 @@ internal sealed class TranscriptToolDetailState : IDisposable
         TranscriptToolDiagnostics.DetailLoadStarted();
         try
         {
-            return await _loadDetail(request.DetailRequest, linked.Token).ConfigureAwait(false);
+            var detail = await _loadDetail(request.DetailRequest, linked.Token).ConfigureAwait(false);
+            linked.Token.ThrowIfCancellationRequested();
+            if (detail is null || !MatchesDetail(request, detail)) return null;
+            TranscriptToolDiagnostics.ResolverCalled();
+            var presentation = await _resolvePresentation(CreateItem(request, detail), linked.Token).ConfigureAwait(false);
+            linked.Token.ThrowIfCancellationRequested();
+            return new TranscriptToolDetailData(detail, presentation);
         }
         catch (OperationCanceledException) when (linked.IsCancellationRequested)
         {
@@ -180,33 +198,56 @@ internal sealed class TranscriptToolDetailState : IDisposable
 
     internal bool TryMaterialize(
         TranscriptToolExpansionRequest request,
-        AgentTranscriptToolDetailRecord? detail,
+        TranscriptToolDetailData? loaded,
         out TranscriptToolDetailViewModel? details)
     {
         details = null;
-        if (!IsCurrent(request)
-            || detail is null
-            || detail.SessionId != request.SessionId
-            || detail.Revision != request.Revision
-            || request.DetailRequest.ToolExecutionId is { } executionId
-               && detail.ToolExecutionId != executionId
-            || request.DetailRequest.ToolExecutionId is null
-               && request.DetailRequest.ItemId is { } itemId
-               && detail.CallItemId != itemId
-               && detail.ResultItemId != itemId
-            || request.DetailRequest.RunId is { } runId
-               && detail.RunId != runId
-            || request.DetailRequest.RunRevision is { } runRevision
-               && detail.RunRevision != runRevision
-            || !string.IsNullOrWhiteSpace(request.DetailRequest.CallId)
-               && !string.Equals(request.DetailRequest.CallId, detail.CallId, StringComparison.Ordinal))
+        if (!IsCurrent(request) || loaded is null || !MatchesDetail(request, loaded.Detail))
         {
             return false;
         }
 
-        var resolvedItemId = detail.ResultItemId ?? detail.CallItemId ?? request.DetailRequest.ItemId ?? Guid.Empty;
-        var item = new AgentTurnItemRecord(
-            resolvedItemId,
+        var detail = loaded.Detail;
+        var diff = ToolDiffViewModel.TryCreate(
+            detail.ToolId,
+            detail.ArgumentsJson ?? "{}",
+            detail.ResultSummary,
+            detail.OutputText,
+            detail.IsError,
+            detail.PresentationPayloadJson);
+        details = new TranscriptToolDetailViewModel(detail, loaded.Presentation, diff);
+        _details = details;
+        Changed?.Invoke();
+        return true;
+    }
+
+    private static bool MatchesDetail(TranscriptToolExpansionRequest request, AgentTranscriptToolDetailRecord detail)
+        => detail.SessionId == request.SessionId
+           && detail.Revision == request.Revision
+           && (request.DetailRequest.ToolExecutionId is not { } executionId || detail.ToolExecutionId == executionId)
+           && (request.DetailRequest.ToolExecutionId is not null || request.DetailRequest.ItemId is not { } itemId
+               || detail.CallItemId == itemId || detail.ResultItemId == itemId)
+           && (request.DetailRequest.RunId is not { } runId || detail.RunId == runId)
+           && (request.DetailRequest.RunRevision is not { } runRevision || detail.RunRevision == runRevision)
+           && (string.IsNullOrWhiteSpace(request.DetailRequest.CallId)
+               || string.Equals(request.DetailRequest.CallId, detail.CallId, StringComparison.Ordinal));
+
+    private static AgentTurnItemRecord CreateItem(TranscriptToolExpansionRequest request, AgentTranscriptToolDetailRecord detail)
+#if SUNDER_SUBAGENTS_APP || SUNDER_SUBAGENTS_WORKER
+        => new()
+        {
+            ItemId = detail.ResultItemId ?? detail.CallItemId ?? request.DetailRequest.ItemId ?? Guid.Empty,
+            TurnId = Guid.Empty, SequenceNumber = 0, Kind = detail.ResultItemId is null ? AgentTurnItemKind.ToolCall : AgentTurnItemKind.ToolResult,
+            TextContent = detail.OutputText, CallId = detail.CallId, ToolId = detail.ToolId, ArgumentsJson = detail.ArgumentsJson,
+            ResultSummary = detail.ResultSummary, StructuredPayloadJson = detail.StructuredPayloadJson, SourcesJson = detail.SourcesJson,
+            WasTruncated = detail.WasTruncated, IsError = detail.IsError, ErrorCode = detail.ErrorCode, BackendId = detail.BackendId,
+            PresentationPayloadJson = detail.PresentationPayloadJson, ToolExecutionId = detail.ToolExecutionId, ToolExecutionStatus = detail.Status,
+            ToolOwnerPackageId = detail.ToolOwnerPackageId, ToolSchemaId = detail.ToolSchemaId, ToolSchemaVersion = detail.ToolSchemaVersion,
+            ToolHeaderHint = null, ToolErrorSummary = null, ToolDetailRevision = 0, ToolHasDetails = null, IsToolHeaderProjection = false,
+        };
+#else
+        => new(
+            detail.ResultItemId ?? detail.CallItemId ?? request.DetailRequest.ItemId ?? Guid.Empty,
             Guid.Empty,
             0,
             detail.ResultItemId is null ? AgentTurnItemKind.ToolCall : AgentTurnItemKind.ToolResult,
@@ -229,20 +270,7 @@ internal sealed class TranscriptToolDetailState : IDisposable
             ToolSchemaId = detail.ToolSchemaId,
             ToolSchemaVersion = detail.ToolSchemaVersion,
         };
-        TranscriptToolDiagnostics.ResolverCalled();
-        var presentation = _resolvePresentation(item);
-        var diff = ToolDiffViewModel.TryCreate(
-            detail.ToolId,
-            detail.ArgumentsJson ?? "{}",
-            detail.ResultSummary,
-            detail.OutputText,
-            detail.IsError,
-            detail.PresentationPayloadJson);
-        details = new TranscriptToolDetailViewModel(detail, presentation, diff);
-        _details = details;
-        Changed?.Invoke();
-        return true;
-    }
+#endif
 
     internal bool CommitExpanded(TranscriptToolExpansionRequest request)
     {

@@ -33,8 +33,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="..\Sunder.Package.Agent.Provider.Shared\Models\ProviderChatModels.cs"
-             Link="Models\ProviderChatModels.cs" />
     <Compile Include="..\Sunder.Package.Agent.Shared\Execution\AgentExecutionFacetIds.cs"
              Link="Models\AgentExecutionFacetIds.cs" />
     <Compile Include="..\Sunder.Package.Agent.Shared\Storage\SqliteWalCheckpointMaintenance.cs"
@@ -43,6 +41,8 @@
 
   <ItemGroup>
     <AvaloniaResource Include="Assets\**" />
+    <AvaloniaResource Include="..\Sunder.Package.Agent.Shared\Presentation\ModelBindingStyles.axaml"
+                      Link="Presentation\ModelBindingStyles.axaml" />
   </ItemGroup>
 
   <ItemGroup>

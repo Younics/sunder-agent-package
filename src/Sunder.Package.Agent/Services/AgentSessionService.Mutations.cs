@@ -49,12 +49,14 @@ public sealed partial class AgentSessionService
         return turn;
     }
 
-    public AgentTranscriptRollbackResult RollbackTranscript(Guid sessionId, Guid anchorTurnId)
+    public async Task<AgentTranscriptRollbackResult> RollbackTranscriptAsync(Guid sessionId, Guid anchorTurnId, CancellationToken cancellationToken = default)
     {
+        var cleaners = await SnapshotSessionDataCleanersAsync(cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
         var result = _store.RollbackTranscript(
             sessionId,
             anchorTurnId,
-            SnapshotSessionDataCleaners());
+            cleaners);
         NotifyTranscriptResetAndSessionChanged(sessionId);
         foreach (var deletedSessionId in result.DeletedSessionIds)
         {
@@ -62,7 +64,7 @@ public sealed partial class AgentSessionService
         }
         if (result.DeletedSessionIds.Count > 0)
         {
-            DispatchPendingSessionCleanup();
+            await DispatchPendingSessionCleanupAsync().ConfigureAwait(false);
         }
         return result;
     }

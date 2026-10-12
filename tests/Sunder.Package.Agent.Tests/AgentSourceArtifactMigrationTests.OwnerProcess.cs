@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Text.Json;
+using Sunder.Package.Agent.Runtime;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -29,11 +30,15 @@ public sealed partial class AgentSourceArtifactMigrationTests
             await active.Prepare();
             await active.Activate();
             Assert.True(File.Exists(Path.Combine(workspace, "agent/agent.db")));
-            var profile = await active.Invoke("agent.owner.runtime", "agent-runtime", "profile-command", new { kind = 0, displayName = "Native source profile" });
-            profileId = profile.GetProperty("profile").GetProperty("profileId").GetString()!;
-            var createdWorkspace = await active.Invoke("agent.owner.runtime", "agent-runtime", "workspace-command", new { kind = 0, displayName = "Native source workspace" });
+            var profile = await active.Invoke("sunder.package.agent.agent.profile.provider", "agent-profile", "create-profile", "Native source profile");
+            profileId = profile.GetProperty("profileId").GetString()!;
+            var createdWorkspace = await active.Invoke("agent.owner.runtime", "agent-runtime", "workspace-command",
+                JsonSerializer.SerializeToElement(new AgentWorkspaceCommand(AgentWorkspaceCommandKind.Create, DisplayName: "Native source workspace"),
+                    CurrentPrivateRpcDescriptors.OwnerJson));
             workspaceId = createdWorkspace.GetProperty("workspace").GetProperty("workspaceId").GetString()!;
-            var session = await active.Invoke("agent.owner.runtime", "agent-runtime", "session-command", new { kind = 0, title = "Native source session", profileId, workspaceId });
+            var session = await active.Invoke("agent.owner.runtime", "agent-runtime", "session-command",
+                JsonSerializer.SerializeToElement(new AgentSessionCommand(AgentSessionCommandKind.Create, Title: "Native source session",
+                    ProfileId: profileId, WorkspaceId: workspaceId), CurrentPrivateRpcDescriptors.OwnerJson));
             sessionId = session.GetProperty("session").GetProperty("session").GetProperty("sessionId").GetGuid();
             var dashboard = await active.Invoke("agent.owner.runtime", "agent-runtime", "dashboard", new { });
             Assert.Contains(dashboard.GetProperty("profiles").EnumerateArray(), item => item.GetProperty("profileId").GetString() == profileId);

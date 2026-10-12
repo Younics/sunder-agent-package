@@ -1,10 +1,11 @@
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Storage;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Logging;
 using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.Services;
 
@@ -15,7 +16,7 @@ public sealed class AgentLifecycleDispatcher : IAsyncDisposable
     private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(250);
 
     private readonly AgentLocalStore _store;
-    private readonly AgentRpcCatalog _rpcCatalog;
+    private readonly IServiceProviders<AgentServices.IDurableLifecycleObserverService> _observers;
     private readonly IPackageEventLogger _eventLogger;
     private readonly object _syncRoot = new();
     private readonly SemaphoreSlim _dispatchGate = new(1, 1);
@@ -29,16 +30,17 @@ public sealed class AgentLifecycleDispatcher : IAsyncDisposable
     private bool _disposed;
 
     [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
-    internal AgentLifecycleDispatcher(AgentLocalStore store, AgentRpcCatalog catalog, IPackageContext context)
-        : this(store, catalog, context.Logging.Events) { }
+    internal AgentLifecycleDispatcher(AgentLocalStore store,
+        IServiceProviders<AgentServices.IDurableLifecycleObserverService> observers, IPackageContext context)
+        : this(store, observers, context.Logging.Events) { }
 
     public AgentLifecycleDispatcher(
         AgentLocalStore store,
-        AgentRpcCatalog rpcCatalog,
+        IServiceProviders<AgentServices.IDurableLifecycleObserverService> observers,
         IPackageEventLogger? eventLogger = null)
     {
         _store = store;
-        _rpcCatalog = rpcCatalog;
+        _observers = observers;
         _eventLogger = eventLogger ?? NullPackageLogging.Instance.Events;
         _store.LifecycleOutboxChanged += Wake;
     }
@@ -58,13 +60,11 @@ public sealed class AgentLifecycleDispatcher : IAsyncDisposable
             _lifetime = lifetime;
             try
             {
-                _rpcCatalog.Changed += OnCatalogChanged;
                 _startupRecoveryPending = true;
                 _worker = RunAsync(lifetime.Token);
             }
             catch
             {
-                _rpcCatalog.Changed -= OnCatalogChanged;
                 _lifetime = null;
                 lifetime.Dispose();
                 throw;
@@ -88,7 +88,6 @@ public sealed class AgentLifecycleDispatcher : IAsyncDisposable
             }
             _worker = null;
             _lifetime = null;
-            _rpcCatalog.Changed -= OnCatalogChanged;
         }
 
         await lifetime.CancelAsync().ConfigureAwait(false);
@@ -118,7 +117,7 @@ public sealed class AgentLifecycleDispatcher : IAsyncDisposable
         cancellationToken.ThrowIfCancellationRequested();
         _store.EnsureRuntimeGenerationCurrent();
         var recoveryPending = RecoverStartupDeliveries();
-        var replayPending = ReconcileSubscriptions(cancellationToken);
+        var replayPending = await ReconcileSubscriptionsAsync(cancellationToken).ConfigureAwait(false);
         var maintenancePending = _store.MaintainLifecycleState(DateTimeOffset.UtcNow);
         var dispatchPending = false;
         await _dispatchGate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -227,21 +226,19 @@ public sealed class AgentLifecycleDispatcher : IAsyncDisposable
                 try
                 {
                     var envelope = claim.Event.ToEnvelope();
-                    var outcome = await active.DeliverAsync(envelope, cancellationToken).ConfigureAwait(false);
-                    if (outcome == LifecycleDeliveryOutcome.OwnerRetired)
-                    {
-                        _store.ReleaseLifecycleDelivery(claim, DateTimeOffset.UtcNow);
-                        unavailableSubscriptions.Add(active.Subscription.SubscriptionId);
-                    }
-                    else
-                    {
-                        _store.CompleteLifecycleDelivery(claim, DateTimeOffset.UtcNow);
-                    }
+                    await active.Provider.Service.HandleAsync(envelope, cancellationToken).ConfigureAwait(false);
+                    _store.CompleteLifecycleDelivery(claim, DateTimeOffset.UtcNow);
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
                     _store.ReleaseLifecycleDelivery(claim, DateTimeOffset.UtcNow);
                     throw;
+                }
+                catch (SunderRpcException exception) when (!cancellationToken.IsCancellationRequested
+                    && exception.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable)
+                {
+                    _store.ReleaseLifecycleDelivery(claim, DateTimeOffset.UtcNow);
+                    unavailableSubscriptions.Add(active.Subscription.SubscriptionId);
                 }
                 catch (Exception ex)
                 {
@@ -262,28 +259,35 @@ public sealed class AgentLifecycleDispatcher : IAsyncDisposable
         return true;
     }
 
-    private bool ReconcileSubscriptions(CancellationToken cancellationToken)
+    private async Task<bool> ReconcileSubscriptionsAsync(CancellationToken cancellationToken)
     {
         var now = DateTimeOffset.UtcNow;
         var replayPending = false;
         var active = new Dictionary<string, ActiveLifecycleSubscription>(StringComparer.Ordinal);
-        var observers = AgentRpcInvocation.Snapshot(
-            _rpcCatalog,
-            Sunder.Package.Agent.Runtime.Rpc.AgentCleanupBindings.DurableLifecycleObservers,
-            static observer => (observer.ObserverId, observer.DisplayName),
-            cancellationToken,
-            omitUnavailable: true);
-        foreach (var observer in observers)
+        ServiceProviderCatalog<AgentServices.IDurableLifecycleObserverService>? catalog;
+        try
+        {
+            catalog = await _observers.ListAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (SunderRpcException exception) when (!cancellationToken.IsCancellationRequested
+            && exception.Error.Kind == SunderRpcErrorKind.Unavailable)
+        {
+            catalog = null;
+        }
+        foreach (var observer in catalog?.Providers ?? [])
         {
             cancellationToken.ThrowIfCancellationRequested();
-            replayPending |= AddSubscription(
-                active,
-                observer.PackageId,
-                observer.Metadata.ObserverId,
-                observer.Metadata.DisplayName,
-                "Durable",
-                subscription => new DurableLifecycleSubscription(subscription, observer.Reference),
-                now);
+            if (observer.State != ServiceProviderState.Active) continue;
+            try
+            {
+                var identity = await observer.Service.DescribeAsync(cancellationToken).ConfigureAwait(false);
+                replayPending |= AddSubscription(active, observer, identity.Id, identity.DisplayName, now);
+            }
+            catch (SunderRpcException exception) when (!cancellationToken.IsCancellationRequested
+                && exception.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable)
+            {
+                // The existing bounded outbox poll reconciles reappearing owners.
+            }
         }
 
         cancellationToken.ThrowIfCancellationRequested();
@@ -314,13 +318,13 @@ public sealed class AgentLifecycleDispatcher : IAsyncDisposable
 
     private bool AddSubscription(
         IDictionary<string, ActiveLifecycleSubscription> active,
-        string packageId,
+        ServiceProvider<AgentServices.IDurableLifecycleObserverService> provider,
         string observerId,
         string displayName,
-        string contractKind,
-        Func<AgentLifecycleSubscription, ActiveLifecycleSubscription> createSubscription,
         DateTimeOffset now)
     {
+        var packageId = provider.PackageId;
+        const string contractKind = "Durable";
         if (string.IsNullOrWhiteSpace(observerId) || observerId.Trim().Length > 512)
         {
             _ = LogSafelyAsync(
@@ -362,51 +366,8 @@ public sealed class AgentLifecycleDispatcher : IAsyncDisposable
         }
 
         var replayPending = _store.ReconcileLifecycleSubscription(subscription, now);
-        active.Add(subscriptionId, createSubscription(subscription));
+        active.Add(subscriptionId, new ActiveLifecycleSubscription(subscription, provider));
         return replayPending;
-    }
-
-    private static async ValueTask<LifecycleDeliveryOutcome> DeliverWithLeaseAsync<TObserver>(
-        AgentRpcReference<TObserver> reference,
-        AgentDurableLifecycleEventEnvelope envelope,
-        CancellationToken cancellationToken,
-        Func<TObserver, AgentDurableLifecycleEventEnvelope, CancellationToken, ValueTask> deliver)
-        where TObserver : class
-    {
-        if (!reference.TryAcquire(out var lease))
-        {
-            return LifecycleDeliveryOutcome.OwnerRetired;
-        }
-
-        using (lease)
-        {
-            var retirementToken = lease.RetirementToken;
-            if (retirementToken.IsCancellationRequested)
-            {
-                return LifecycleDeliveryOutcome.OwnerRetired;
-            }
-
-            using var invocation = CancellationTokenSource.CreateLinkedTokenSource(
-                cancellationToken,
-                retirementToken);
-            try
-            {
-                await deliver(lease.Service, envelope, invocation.Token).ConfigureAwait(false);
-                return retirementToken.IsCancellationRequested
-                    ? LifecycleDeliveryOutcome.OwnerRetired
-                    : LifecycleDeliveryOutcome.Delivered;
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception exception) when (
-                retirementToken.IsCancellationRequested
-                || AgentRpcInvocation.IsUnavailableFailure(exception, cancellationToken))
-            {
-                return LifecycleDeliveryOutcome.OwnerRetired;
-            }
-        }
     }
 
     private async Task LogDeliveryFailureAsync(
@@ -456,11 +417,6 @@ public sealed class AgentLifecycleDispatcher : IAsyncDisposable
         {
             // Diagnostics must not affect source or delivery state.
         }
-    }
-
-    private void OnCatalogChanged(object? sender, AgentRpcCatalogChangedEventArgs e)
-    {
-        if (e.IncludesContract(AgentRpcContractIds.DurableLifecycleObserver)) Wake();
     }
 
     private static string GetBoundedExceptionType(Exception exception)
@@ -530,32 +486,8 @@ public sealed class AgentLifecycleDispatcher : IAsyncDisposable
         }
     }
 
-    private enum LifecycleDeliveryOutcome
-    {
-        Delivered,
-        OwnerRetired,
-    }
-
-    private abstract record ActiveLifecycleSubscription(AgentLifecycleSubscription Subscription)
-    {
-        public abstract ValueTask<LifecycleDeliveryOutcome> DeliverAsync(
-            AgentDurableLifecycleEventEnvelope envelope,
-            CancellationToken cancellationToken);
-    }
-
-    private sealed record DurableLifecycleSubscription(
+    private sealed record ActiveLifecycleSubscription(
         AgentLifecycleSubscription Subscription,
-        AgentRpcReference<IAgentDurableLifecycleObserver> Reference)
-        : ActiveLifecycleSubscription(Subscription)
-    {
-        public override ValueTask<LifecycleDeliveryOutcome> DeliverAsync(
-            AgentDurableLifecycleEventEnvelope envelope,
-            CancellationToken cancellationToken)
-            => DeliverWithLeaseAsync(
-                Reference,
-                envelope,
-                cancellationToken,
-                static (observer, item, token) => observer.HandleDurableLifecycleEventAsync(item, token));
-    }
+        ServiceProvider<AgentServices.IDurableLifecycleObserverService> Provider);
 
 }

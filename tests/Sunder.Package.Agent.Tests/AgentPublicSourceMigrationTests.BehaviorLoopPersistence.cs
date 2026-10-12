@@ -9,6 +9,8 @@ using Sunder.Package.Agent.Services.BehaviorLoops;
 using Sunder.Package.Agent.Storage;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -42,8 +44,9 @@ public sealed partial class AgentPublicSourceMigrationTests
                 {
                     Failure = providerFailure ? new AgentChatProviderException("Request rejected", "Safe rejection content", "test.provider-rejected") : null,
                 };
+                await using var chatProviders = new FakeServiceCatalog<AgentServices.IChatProviderService>(CurrentPublicRpcDescriptors.Get(RegressionTestBindings.ChatProviders));
                 var provider = new RunControlProvider(() => chat);
-                var host = services.GetRequiredService<AgentBehaviorLoopHostFactory>().Create(provider, session, profile, workspace,
+                var host = services.GetRequiredService<AgentBehaviorLoopHostFactory>().Create(new(null, chatProviders.Add(provider), provider.Descriptor), session, profile, workspace,
                     run.Key.RunId, run.Key.RunRevision, run.StartedAtUtc, run.UserMessage, started.UserTurn.TurnId, null);
                 var loop = services.GetRequiredService<DefaultAgentBehaviorLoop>();
                 await using var fixture = await CreateBehaviorFixture(assembly, descriptors, loop, "sunder.package.agent");
@@ -68,7 +71,7 @@ public sealed partial class AgentPublicSourceMigrationTests
                 Assert.Contains(chat.Messages, message => message.Role == ChatRole.User && message.Text.Contains("Hello behavior loop", StringComparison.Ordinal));
                 Assert.Equal("model.one", Assert.IsType<AgentChatClientContext>(provider.LastContext).ModelId);
                 Assert.Equal("provider.one", provider.LastContext!.ProviderId);
-                Assert.Throws<SunderRpcException>(() => fixture.Registry.Resolve(fixture.Owner.LastRun!.InvocationId, "sunder.package.agent"));
+                await Assert.ThrowsAsync<SunderRpcException>(() => fixture.ControlClient.IsCurrentAsync(fixture.Owner.LastRun!.InvocationId).AsTask());
             }
             finally { activeRuns.Complete(session.SessionId, run.Key.RunId, run.Key.RunRevision); }
         }

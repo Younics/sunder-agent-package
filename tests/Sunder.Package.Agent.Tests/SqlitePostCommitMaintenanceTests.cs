@@ -357,19 +357,15 @@ public sealed class SqlitePostCommitMaintenanceTests
         using var scope = RegressionTestPackageScope.Create();
         var store = new AgentLocalStore(scope.Context);
         using var catalog = new RegressionTestExtensionCatalog();
-        var sessions = new AgentSessionService(store, catalog);
-        var workspaces = new AgentWorkspaceService(store, catalog, sessions);
+        var sessions = new AgentSessionService(store, catalog.SessionCleaners);
+        var workspaces = new AgentWorkspaceService(store, catalog.SessionCleaners, sessions, catalog.WorkspacePathMigrators);
         var tools = new AgentToolService(
             sessions,
             workspaces,
-            new AgentExecutionTargetService(catalog),
-            catalog);
-        using var profiles = new AgentProfileService(
-            store,
-            tools,
-            catalog,
-            catalog.BehaviorLoops,
-            refreshProviderSubscriptions: false);
+            new AgentExecutionTargetService(catalog.ExecutionTargets),
+            catalog.ToolSources,
+            catalog.ObservedToolExecutions);
+        using var profiles = catalog.CreateProfileService(store, tools);
         try
         {
             string? observedProfileId = null;
@@ -395,19 +391,15 @@ public sealed class SqlitePostCommitMaintenanceTests
         using var scope = RegressionTestPackageScope.Create();
         var store = new AgentLocalStore(scope.Context);
         using var catalog = new RegressionTestExtensionCatalog();
-        var sessions = new AgentSessionService(store, catalog);
-        var workspaces = new AgentWorkspaceService(store, catalog, sessions);
+        var sessions = new AgentSessionService(store, catalog.SessionCleaners);
+        var workspaces = new AgentWorkspaceService(store, catalog.SessionCleaners, sessions, catalog.WorkspacePathMigrators);
         var tools = new AgentToolService(
             sessions,
             workspaces,
-            new AgentExecutionTargetService(catalog),
-            catalog);
-        using var profiles = new AgentProfileService(
-            store,
-            tools,
-            catalog,
-            catalog.BehaviorLoops,
-            refreshProviderSubscriptions: false);
+            new AgentExecutionTargetService(catalog.ExecutionTargets),
+            catalog.ToolSources,
+            catalog.ObservedToolExecutions);
+        using var profiles = catalog.CreateProfileService(store, tools);
         try
         {
             var fatal = new Exception(

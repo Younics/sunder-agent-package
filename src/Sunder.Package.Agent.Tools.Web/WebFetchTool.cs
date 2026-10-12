@@ -1,25 +1,26 @@
 using Sunder.Agent.Execution.Common;
-using Sunder.Package.Agent.Contracts.Contracts;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Package.Agent.Tools.Web.Services;
 
 namespace Sunder.Package.Agent.Tools.Web;
 
-public sealed class WebFetchTool(WebFetchService fetchService) : IAgentTool, IAgentToolPresentationResolver
+public sealed class WebFetchTool(WebFetchService fetchService)
 {
     private readonly WebFetchService _fetchService = fetchService;
 
-    public AgentToolDescriptor Descriptor { get; } = new(
-        "web_fetch",
-        "Web Fetch",
-        "Fetch a known URL and return it as text, markdown, or raw HTML.",
-        IsReadOnly: true,
-        RequiresNetwork: true,
-        SourceKind: "web",
-        SourceId: "web-tools",
-        SourceDisplayName: "Web Tools",
-        ArgumentsJsonSchema:
+    public AgentToolDescriptor Descriptor { get; } = new()
+    {
+        ToolId = "web_fetch",
+        DisplayName = "Web Fetch",
+        Description = "Fetch a known URL and return it as text, markdown, or raw HTML.",
+        IsReadOnly = true,
+        RequiresNetwork = true,
+        SourceKind = "web",
+        SourceId = "web-tools",
+        SourceDisplayName = "Web Tools",
+        ArgumentsJsonSchema =
         """
         {
           "type": "object",
@@ -43,8 +44,10 @@ public sealed class WebFetchTool(WebFetchService fetchService) : IAgentTool, IAg
           "required": ["url"],
           "additionalProperties": false
         }
-        """)
-    {
+        """,
+        Aliases = null, SelectionScope = AgentToolSelectionScope.Tool, SelectionGroupId = null,
+        SelectionGroupDisplayName = null, SelectionGroupDescription = null, RuntimeInstructions = null,
+        ActivationRequirement = null, Priority = AgentToolPriority.Medium,
         ConcurrencyMode = AgentToolConcurrencyMode.ParallelSafe,
     };
 
@@ -56,21 +59,23 @@ public sealed class WebFetchTool(WebFetchService fetchService) : IAgentTool, IAg
         }
 
         var parsed = TryParseArguments(request.ArgumentsJson, out var args, out var error);
-        return new AgentToolPresentation(
-            HeaderText: request.ResultSummary ?? (parsed ? args.Url : null),
-            DetailMarkdown: !parsed
+        return new AgentToolPresentation
+        {
+            HeaderText = request.ResultSummary ?? (parsed ? args.Url : null),
+            DetailMarkdown = !parsed
                 ? AgentToolPresentationMarkdown.BuildRawRequestMarkdown(request.ArgumentsJson, error)
                 : AgentToolPresentationMarkdown.BuildRequestMarkdown(
                     ("URL", args.Url),
                     ("Format", string.IsNullOrWhiteSpace(args.Format) ? "markdown" : args.Format),
                     ("Timeout", args.TimeoutSeconds is null ? null : $"{args.TimeoutSeconds.Value}s")),
-            OutputText: request.TextContent);
+            OutputText = request.TextContent,
+        };
     }
 
     public ValueTask<AgentToolReadiness> GetReadinessAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult(new AgentToolReadiness(Descriptor.ToolId, AgentToolReadinessStatus.Ready, "Web fetch is available."));
+        return ValueTask.FromResult(new AgentToolReadiness { ToolId = Descriptor.ToolId, Status = AgentToolReadinessStatus.Ready, Message = "Web fetch is available." });
     }
 
     public async ValueTask<AgentToolResult> ExecuteAsync(
@@ -80,68 +85,41 @@ public sealed class WebFetchTool(WebFetchService fetchService) : IAgentTool, IAg
     {
         if (!TryParseArguments(request.ArgumentsJson, out var arguments, out var error))
         {
-            return new AgentToolResult(
-                Descriptor.ToolId,
-                error!,
-                Content: AgentToolPresentationMarkdown.BuildFailureMarkdown("Web fetch failed", error!),
-                IsError: true,
-                ErrorCode: "web-fetch-args");
+            return Failure(error!, error!, "web-fetch-args");
         }
 
         if (string.IsNullOrWhiteSpace(arguments.Url))
         {
-            return new AgentToolResult(
-                Descriptor.ToolId,
-                "The url parameter is required.",
-                Content: AgentToolPresentationMarkdown.BuildFailureMarkdown("Web fetch failed", "The `url` parameter is required."),
-                IsError: true,
-                ErrorCode: "web-fetch-url-required");
+            return Failure("The url parameter is required.", "The `url` parameter is required.", "web-fetch-url-required");
         }
 
         var format = string.IsNullOrWhiteSpace(arguments.Format) ? "markdown" : arguments.Format.ToLowerInvariant();
         if (format is not ("text" or "markdown" or "html"))
         {
-            return new AgentToolResult(
-                Descriptor.ToolId,
-                "Format must be text, markdown, or html.",
-                Content: AgentToolPresentationMarkdown.BuildFailureMarkdown("Web fetch failed", "`format` must be one of `text`, `markdown`, or `html`."),
-                IsError: true,
-                ErrorCode: "web-fetch-format-invalid");
+            return Failure("Format must be text, markdown, or html.", "`format` must be one of `text`, `markdown`, or `html`.", "web-fetch-format-invalid");
         }
 
         if (!Uri.TryCreate(arguments.Url, UriKind.Absolute, out var uri)
             || uri.Scheme is not ("http" or "https"))
         {
-            return new AgentToolResult(
-                Descriptor.ToolId,
-                "URL must start with http:// or https://.",
-                Content: AgentToolPresentationMarkdown.BuildFailureMarkdown("Web fetch failed", "`url` must be an absolute HTTP or HTTPS URL."),
-                IsError: true,
-                ErrorCode: "web-fetch-url-invalid");
+            return Failure("URL must start with http:// or https://.", "`url` must be an absolute HTTP or HTTPS URL.", "web-fetch-url-invalid");
         }
 
         try
         {
             var result = await _fetchService.FetchAsync(uri.ToString(), format, arguments.TimeoutSeconds, cancellationToken);
-            return new AgentToolResult(
-                Descriptor.ToolId,
-                result.Summary,
-                Content: result.Content,
-                StructuredPayloadJson: result.StructuredPayloadJson,
-                Sources: [new AgentToolSourceItem(result.Title ?? result.FinalUrl, result.FinalUrl)],
-                WasTruncated: result.WasTruncated,
-                BackendId: "http");
+            return new AgentToolResult
+            {
+                ToolId = Descriptor.ToolId, Summary = result.Summary, Content = result.Content,
+                StructuredPayloadJson = result.StructuredPayloadJson,
+                Sources = [new() { Title = result.Title ?? result.FinalUrl, Url = result.FinalUrl, Snippet = null }],
+                WasTruncated = result.WasTruncated, BackendId = "http", IsError = false, ErrorCode = null,
+                PresentationPayloadJson = null, RequiresPromptContextRefresh = false,
+            };
         }
         catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
         {
-            return new AgentToolResult(
-                Descriptor.ToolId,
-                ex.Message,
-                Content: AgentToolPresentationMarkdown.BuildFailureMarkdown(
-                    "Web fetch failed",
-                    $"The web fetch timed out or was canceled before the resource could be reached.\n\n{ex.Message}"),
-                IsError: true,
-                ErrorCode: "web-fetch-http");
+            return Failure(ex.Message, $"The web fetch timed out or was canceled before the resource could be reached.\n\n{ex.Message}", "web-fetch-http");
         }
         catch (OperationCanceledException)
         {
@@ -149,14 +127,16 @@ public sealed class WebFetchTool(WebFetchService fetchService) : IAgentTool, IAg
         }
         catch (Exception ex)
         {
-            return new AgentToolResult(
-                Descriptor.ToolId,
-                ex.Message,
-                Content: AgentToolPresentationMarkdown.BuildFailureMarkdown("Web fetch failed", ex.Message),
-                IsError: true,
-                ErrorCode: "web-fetch-http");
+            return Failure(ex.Message, ex.Message, "web-fetch-http");
         }
     }
+
+    private AgentToolResult Failure(string summary, string detail, string code) => new()
+    {
+        ToolId = Descriptor.ToolId, Summary = summary, Content = AgentToolPresentationMarkdown.BuildFailureMarkdown("Web fetch failed", detail),
+        StructuredPayloadJson = null, Sources = null, WasTruncated = false, IsError = true, ErrorCode = code, BackendId = null,
+        PresentationPayloadJson = null, RequiresPromptContextRefresh = false,
+    };
 
     private static bool TryParseArguments(string argumentsJson, out WebFetchArguments arguments, out string? error)
     {

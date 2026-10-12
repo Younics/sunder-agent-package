@@ -5,17 +5,21 @@ extern alias SubagentsApp;
 
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Protocol;
-using SkillsApp::Sunder.Package.Agent.Skills.Runtime;
+using SkillsWorker::Sunder.Package.Agent.Skills.Runtime;
 using SkillsWorker::Sunder.Package.Agent.Skills.Services;
-using SubagentsApp::Sunder.Package.Agent.Subagents.Runtime;
+using SubagentsWorker::Sunder.Package.Agent.Subagents.Runtime;
 using SubagentsWorker::Sunder.Package.Agent.Subagents.Services;
-using SkillRuntimeHandler = SkillsWorker::Sunder.Package.Agent.Skills.Runtime.SkillRuntimeHandler;
-using SkillRuntimeChangeStream = SkillsWorker::Sunder.Package.Agent.Skills.Runtime.SkillRuntimeChangeStream;
-using SkillRuntimeOwnerClient = SkillsWorker::Sunder.Package.Agent.Skills.Runtime.SkillRuntimeOwnerClient;
-using SubagentRuntimeOwnerClient = SubagentsWorker::Sunder.Package.Agent.Subagents.Runtime.SubagentRuntimeOwnerClient;
-using SkillsManagementService = SkillsWorker::Sunder.Package.Agent.Skills.Rpc.ManagementService;
-using SubagentsManagementService = SubagentsWorker::Sunder.Package.Agent.Subagents.Rpc.ManagementService;
+using SubagentsManagementService = SubagentsWorker::Sunder.Package.Agent.Subagents.Runtime.SubagentManagementService;
 using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
+using AppSubagentChangeKind = SubagentsApp::Sunder.Package.Agent.Subagents.Runtime.SubagentChangeKind;
+using AppSubagentChanged = SubagentsApp::Sunder.Package.Agent.Subagents.Runtime.SubagentChanged;
+using AppSubagentProjection = SubagentsApp::Sunder.Package.Agent.Subagents.Runtime.SubagentProjection;
+using AppSubagentProjectionContent = SubagentsApp::Sunder.Package.Agent.Subagents.Runtime.SubagentProjectionContent;
+using SkillProjection = SkillsApp::Sunder.Package.Agent.Skills.Runtime.SkillProjection;
+using SkillProjectionContent = SkillsApp::Sunder.Package.Agent.Skills.Runtime.SkillProjectionContent;
+using SkillsManagementServices = SkillsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Skills_Services;
+using SubagentManagementServices = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Subagents_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -46,52 +50,56 @@ public sealed class ExtensionOwnerRpcTests
             new Dictionary<string, string>(),
             []));
         var importer = new SkillImportService(store, new UnusedGitHubSkillClient(), scope.Context);
-        var provider = new SkillsManagementService(new SkillRuntimeOwnerClient(
-            new SkillRuntimeHandler(store, importer, scope.Context),
-            new SkillRuntimeChangeStream(store)));
+        var provider = new SkillRuntimeHandler(store, importer, scope.Context);
         using var state = new RegressionTestRpcState();
+        await using var receiver = new GeneratedServiceTestScope(
+            new RegressionTestRpcClient(state, SkillConstants.PackageId));
         AddSkillsProvider(state, provider, "skills.unrelated");
         AddSkillsProvider(state, provider, "skills.management");
-        var client = new SkillOwnerClient(new RegressionTestRpcClient(state, SkillConstants.PackageId));
+        var client = Assert.Single((await receiver.Providers<SkillsManagementServices.ISkillsManagementService>()
+            .ListAsync()).Providers, static provider => provider.ProviderId == "skills.management").Service;
 
-        Assert.Equal("rpc-skill", Assert.Single((await client.QueryAsync()).Skills).SkillId);
-        await using var changes = client.SubscribeChangesAsync().GetAsyncEnumerator();
+        Assert.Equal("rpc-skill", Assert.Single((await ReadSkillProjectionAsync(client.QueryAsync())).Skills).SkillId);
+        await using var changes = client.ChangesAsync().GetAsyncEnumerator();
+        Assert.True(await changes.MoveNextAsync());
+        Assert.Equal(0, changes.Current);
         var nextChange = changes.MoveNextAsync().AsTask();
 
-        var projection = await client.CommandAsync(new SkillCommand(SkillCommandKind.Delete, "rpc-skill"));
+        await client.DeleteAsync("rpc-skill");
 
-        Assert.Empty(projection.Skills);
         Assert.True(await nextChange.WaitAsync(TimeSpan.FromSeconds(5)));
-        Assert.Empty((await client.QueryAsync()).Skills);
+        Assert.Equal(1, changes.Current);
+        Assert.Empty((await ReadSkillProjectionAsync(client.QueryAsync())).Skills);
     }
 
     [Fact]
     public async Task SubagentsOwnerRpc_UsesExactProviderForContentBackedUnaryAndStreamingCalls()
     {
         using var scope = RegressionTestPackageScope.Create();
-        using var catalog = new RegressionTestExtensionCatalog();
+        var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
+        await using var catalog = new RegressionTestExtensionCatalog(
+            new RegressionTestRpcClient(state, "sunder.package.agent.subagents"));
         var store = new SubagentStore(scope.Context);
         store.Activate();
         var service = new SubagentService(store);
-        using var handler = new SubagentRuntimeHandler(service, catalog.Subagents());
-        using var changes = new SubagentRuntimeChangeStream(service, catalog.Subagents());
-        var provider = new SubagentsManagementService(new SubagentRuntimeOwnerClient(handler, changes));
-        using var state = new RegressionTestRpcState();
-        AddSubagentsProvider(state, provider, "subagents.unrelated");
-        AddSubagentsProvider(state, provider, "subagents.management");
-        var client = new SubagentOwnerClient(new RegressionTestRpcClient(state, "sunder.package.agent.subagents"));
+        await using var management = await catalog.CreateSubagentRuntimeManagementAsync(service);
+        AddSubagentsProvider(state, management.Service, "subagents.unrelated");
+        AddSubagentsProvider(state, management.Service, "subagents.management");
+        var client = Assert.Single((await catalog.Subagents()
+            .Providers<SubagentManagementServices.ISubagentsManagementService>()
+            .ListAsync()).Providers, provider => provider.ProviderId == "subagents.management").Service;
 
-        Assert.Empty((await client.QueryAsync(new(SubagentQueryKind.Management))).Subagents ?? []);
-        await using var subscription = client.SubscribeChangesAsync(new()).GetAsyncEnumerator();
-        await MoveToSubagentChangeAsync(subscription, SubagentChangeKind.Connected);
+        Assert.Empty((await ReadSubagentProjectionAsync(client.ManagementAsync())).Subagents ?? []);
+        await using var subscription = client.ChangesAsync(0).GetAsyncEnumerator();
+        await MoveToSubagentChangeAsync(subscription, AppSubagentChangeKind.Connected);
 
-        var projection = await client.CommandAsync(new(SubagentCommandKind.Create, "RPC Subagent"));
+        var projection = await ReadSubagentProjectionAsync(client.CreateAsync("RPC Subagent"));
 
         Assert.Equal("RPC Subagent", projection.Subagent?.DisplayName);
-        await MoveToSubagentChangeAsync(subscription, SubagentChangeKind.Subagents);
+        await MoveToSubagentChangeAsync(subscription, AppSubagentChangeKind.Subagents);
         Assert.Equal(
             "RPC Subagent",
-            Assert.Single((await client.QueryAsync(new(SubagentQueryKind.Management))).Subagents ?? []).DisplayName);
+            Assert.Single((await ReadSubagentProjectionAsync(client.ManagementAsync())).Subagents ?? []).DisplayName);
     }
 
     [Theory]
@@ -104,22 +112,22 @@ public sealed class ExtensionOwnerRpcTests
         string errorCode)
     {
         using var boundary = new SubagentOwnerBoundary();
-        await using var subscription = boundary.Client.SubscribeChangesAsync(new())
+        await using var subscription = boundary.Client.ChangesAsync(0)
             .GetAsyncEnumerator();
-        var connected = await MoveToSubagentChangeAsync(subscription, SubagentChangeKind.Connected);
-        boundary.State.FailNextResponseContentRegistration(new SunderRpcException(
+        var connected = await MoveToSubagentChangeAsync(subscription, AppSubagentChangeKind.Connected);
+        var authorityFailure = new SunderRpcException(
             new SunderRpcError(errorKind, errorCode, "Authenticated Host retirement."),
-            hostAuthenticated: true));
+            hostAuthenticated: true);
+        boundary.State.FailNextResponseContentRegistration(authorityFailure);
 
         boundary.Service.NotifySubagentsImported();
 
         Assert.False(await subscription.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5)));
-        await using var replay = boundary.Client.SubscribeChangesAsync(
-                new SubagentChangeSubscription(connected.Revision))
+        await using var replay = boundary.Client.ChangesAsync(connected.Revision)
             .GetAsyncEnumerator();
-        var replayed = await MoveToSubagentChangeAsync(replay, SubagentChangeKind.Subagents);
+        var replayed = await MoveToSubagentChangeAsync(replay, AppSubagentChangeKind.Subagents);
         Assert.Equal(connected.Revision + 1, replayed.Revision);
-        Assert.Empty((await boundary.Client.QueryAsync(new(SubagentQueryKind.Management))).Subagents ?? []);
+        Assert.Empty((await ReadSubagentProjectionAsync(boundary.Client.ManagementAsync())).Subagents ?? []);
     }
 
     [Fact]
@@ -130,22 +138,23 @@ public sealed class ExtensionOwnerRpcTests
         {
             boundary.Service.NotifySubagentsImported();
         }
-        boundary.State.FailNextResponseContentRegistration(new SunderRpcException(
+        var authorityFailure = new SunderRpcException(
             new SunderRpcError(
                 SunderRpcErrorKind.Unavailable,
                 "rpc.content.authority-revoked",
                 "The invocation content authority retired."),
-            hostAuthenticated: true));
+            hostAuthenticated: true);
+        boundary.State.FailNextResponseContentRegistration(authorityFailure);
 
-        await using (var stale = boundary.Client.SubscribeChangesAsync(new()).GetAsyncEnumerator())
+        await using (var stale = boundary.Client.ChangesAsync(0).GetAsyncEnumerator())
         {
             Assert.False(await stale.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5)));
         }
 
-        await using var reconnect = boundary.Client.SubscribeChangesAsync(new()).GetAsyncEnumerator();
+        await using var reconnect = boundary.Client.ChangesAsync(0).GetAsyncEnumerator();
         var resnapshot = await MoveToSubagentChangeAsync(
             reconnect,
-            SubagentChangeKind.ResnapshotRequired);
+            AppSubagentChangeKind.ResnapshotRequired);
         Assert.Equal(boundary.Changes.Revision, resnapshot.Revision);
     }
 
@@ -155,7 +164,7 @@ public sealed class ExtensionOwnerRpcTests
         const string canary = "subagents-content-registration-secret-canary";
         using var boundary = new SubagentOwnerBoundary();
         boundary.State.FailNextResponseContentRegistration(new InvalidOperationException(canary));
-        await using var subscription = boundary.Client.SubscribeChangesAsync(new())
+        await using var subscription = boundary.Client.ChangesAsync(0)
             .GetAsyncEnumerator();
 
         var exception = await Assert.ThrowsAsync<SunderRpcException>(async () =>
@@ -164,51 +173,37 @@ public sealed class ExtensionOwnerRpcTests
         Assert.Equal(SunderRpcErrorKind.ProviderFaulted, exception.Error.Kind);
         Assert.Equal("rpc.provider.handler-fault", exception.Error.Code);
         Assert.DoesNotContain(canary, exception.Error.Message, StringComparison.Ordinal);
-        Assert.Empty((await boundary.Client.QueryAsync(new(SubagentQueryKind.Management))).Subagents ?? []);
+        Assert.Empty((await ReadSubagentProjectionAsync(boundary.Client.ManagementAsync())).Subagents ?? []);
     }
 
     [Fact]
     public async Task SubagentsChangeStream_IgnoresUnrelatedCatalogTransitions()
     {
         using var boundary = new SubagentOwnerBoundary();
-        await using var subscription = boundary.Client.SubscribeChangesAsync(new())
+        await using var subscription = boundary.Client.ChangesAsync(0)
             .GetAsyncEnumerator();
-        _ = await MoveToSubagentChangeAsync(subscription, SubagentChangeKind.Connected);
+        _ = await MoveToSubagentChangeAsync(subscription, AppSubagentChangeKind.Connected);
         var revision = boundary.Changes.Revision;
-        var observed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        void CatalogChanged(object? sender, AgentRpcCatalogChangedEventArgs args)
-        {
-            if (args.IncludesContract(AgentRpcContractIds.SessionCleaner))
-            {
-                observed.TrySetResult();
-            }
-        }
-        boundary.Catalog.Changed += CatalogChanged;
-        try
-        {
-            boundary.Catalog.AddProvider(
-                RegressionTestBindings.SessionCleaners,
-                new NoOpSessionDataCleaner());
-            await observed.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        }
-        finally
-        {
-            boundary.Catalog.Changed -= CatalogChanged;
-        }
+        boundary.Catalog.AddProvider(
+            RegressionTestBindings.SessionCleaners,
+            new NoOpSessionDataCleaner());
 
         Assert.Equal(revision, boundary.Changes.Revision);
     }
 
-    private static async Task<SubagentChanged> MoveToSubagentChangeAsync(
-        IAsyncEnumerator<SubagentChanged> subscription,
-        SubagentChangeKind expected)
+    private static async Task<AppSubagentChanged> MoveToSubagentChangeAsync(
+        IAsyncEnumerator<SunderContent> subscription,
+        AppSubagentChangeKind expected)
     {
         for (var attempt = 0; attempt < 8; attempt++)
         {
             Assert.True(await subscription.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5)));
-            if (subscription.Current.Kind == expected)
+            var change = await AppSubagentProjectionContent.ReadAsync<AppSubagentChanged>(
+                ValueTask.FromResult(subscription.Current),
+                CancellationToken.None);
+            if (change.Kind == expected)
             {
-                return subscription.Current;
+                return change;
             }
         }
 
@@ -218,7 +213,7 @@ public sealed class ExtensionOwnerRpcTests
 
     private static void AddSkillsProvider(
         RegressionTestRpcState state,
-        SkillsManagementService provider,
+        SkillRuntimeHandler provider,
         string providerId)
         => state.AddGenerated(
             SkillConstants.PackageId,
@@ -226,6 +221,9 @@ public sealed class ExtensionOwnerRpcTests
             provider.CreateSunderRpcProviderRegistration(),
             new NoOpDisposable(),
             providerId);
+
+    private static ValueTask<SkillProjection> ReadSkillProjectionAsync(ValueTask<SunderContent> content)
+        => SkillProjectionContent.ReadAsync(content, CancellationToken.None);
 
     private static void AddSubagentsProvider(
         RegressionTestRpcState state,
@@ -275,22 +273,23 @@ public sealed class ExtensionOwnerRpcTests
     private sealed class SubagentOwnerBoundary : IDisposable
     {
         private readonly RegressionTestPackageScope _scope = RegressionTestPackageScope.Create();
-        private readonly RegressionTestExtensionCatalog _catalog = new();
-        private readonly SubagentRuntimeHandler _handler;
+        private readonly RegressionTestExtensionCatalog _catalog;
+        private readonly RegressionSubagentManagement _management;
 
         public SubagentOwnerBoundary()
         {
+            State = new RegressionTestRpcState(workerStyleProviderBoundary: true);
+            _catalog = new RegressionTestExtensionCatalog(
+                new RegressionTestRpcClient(State, "sunder.package.agent.subagents"));
             var store = new SubagentStore(_scope.Context);
             store.Activate();
             Service = new SubagentService(store);
-            _handler = new SubagentRuntimeHandler(Service, _catalog.Subagents());
-            Changes = new SubagentRuntimeChangeStream(Service, _catalog.Subagents());
-            var provider = new SubagentsManagementService(new SubagentRuntimeOwnerClient(_handler, Changes));
-            State = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-            AddSubagentsProvider(State, provider, "subagents.management");
-            Client = new SubagentOwnerClient(new RegressionTestRpcClient(
-                State,
-                "sunder.package.agent.subagents"));
+            _management = _catalog.CreateSubagentRuntimeManagementAsync(Service).AsTask().GetAwaiter().GetResult();
+            Changes = _management.Changes;
+            AddSubagentsProvider(State, _management.Service, "subagents.management");
+            Client = Assert.Single(_catalog.Subagents()
+                .Providers<SubagentManagementServices.ISubagentsManagementService>()
+                .ListAsync().AsTask().GetAwaiter().GetResult().Providers).Service;
         }
 
         public SubagentService Service { get; }
@@ -301,17 +300,19 @@ public sealed class ExtensionOwnerRpcTests
 
         public RegressionTestRpcState State { get; }
 
-        public SubagentOwnerClient Client { get; }
+        public SubagentManagementServices.ISubagentsManagementService Client { get; }
 
         public void Dispose()
         {
-            State.Dispose();
-            Changes.Dispose();
-            _handler.Dispose();
+            _management.DisposeAsync().AsTask().GetAwaiter().GetResult();
             _catalog.Dispose();
             _scope.Dispose();
         }
     }
+
+    private static ValueTask<AppSubagentProjection> ReadSubagentProjectionAsync(
+        ValueTask<SunderContent> content)
+        => AppSubagentProjectionContent.ReadAsync<AppSubagentProjection>(content, CancellationToken.None);
 
     private sealed class NoOpSessionDataCleaner : IAgentSessionDataCleaner
     {

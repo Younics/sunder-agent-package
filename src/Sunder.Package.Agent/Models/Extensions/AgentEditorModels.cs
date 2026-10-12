@@ -13,18 +13,18 @@ public enum AgentEditorFieldKind
     /// <summary>
     /// A single free-form string value edited as text.
     /// </summary>
-    Text = 0,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("text")] Text = 0,
 
     /// <summary>
     /// A single opaque value selected from the field's ordered options.
     /// </summary>
-    Select = 1,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("select")] Select = 1,
 
     /// <summary>
     /// An ordered collection of string items with an optional secondary value and one preferred item.
     /// </summary>
     /// <remarks>Folder-picker flags are convenience UI only; selected paths remain untrusted input.</remarks>
-    PathList = 2,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("path-list")] PathList = 2,
 }
 
 /// <summary>
@@ -41,7 +41,7 @@ public enum AgentEditorActionKind
     /// Requests navigation to the settings UI for the action's package identifier.
     /// </summary>
     /// <remarks>Navigation availability is host-dependent, and parameters must not carry credentials or secrets.</remarks>
-    OpenPackageSettings = 0,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("open-package-settings")] OpenPackageSettings = 0,
 
     /// <summary>
     /// Requests a fresh section snapshot and reapplies the matching field descriptor.
@@ -50,7 +50,7 @@ public enum AgentEditorActionKind
     /// Refresh is an invalidation operation, not a save. Matching uses section and field identities, and failure can
     /// surface as an editor error without changing persisted Runtime configuration.
     /// </remarks>
-    RefreshField = 2,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("refresh-field")] RefreshField = 2,
 }
 
 /// <summary>

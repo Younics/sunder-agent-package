@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Authenticated pre-natural candidate inventories. These historical paths are independent of current test fixture inventories.",
+  "inventories": [
+    {
+      "name": "AgentCanonicalSourceMigrationTests.EmbeddingSources",
+      "sourcePath": "tests/Sunder.Package.Agent.Tests/AgentCanonicalSourceMigrationTests.cs",
+      "indexBlob": "1198385f7b17c7cf6fec0766d006fbe5eeb5e4ea",
+      "sourceSha256": "68e47b2c3d5f71d13a2f86827da1f37d886fce24737fb11b8db59d727b88e217",
+      "provenance": "git-index-declaration",
+      "declaration": "    internal static readonly string[] EmbeddingSources = Consumers(\"AgentEmbeddingBindings.cs\", \"GeneratedEmbeddingProviderClient.cs\", \"GeneratedProviderCallLifetime.cs\");",
+      "declarationSha256": "3cc29877fc29b4e41f41b76f6dba06d687f40f2ac4225aa1caeab083c5b35aa8",
+      "paths": [
+        "src/Sunder.Package.Agent/Rpc/Consumers/AgentEmbeddingBindings.cs",
+        "src/Sunder.Package.Agent/Rpc/Consumers/GeneratedEmbeddingProviderClient.cs",
+        "src/Sunder.Package.Agent/Rpc/Consumers/GeneratedProviderCallLifetime.cs"
+      ]
+    },
+    {
+      "name": "AgentCanonicalSourceMigrationTests.ToolProfileSources",
+      "sourcePath": "tests/Sunder.Package.Agent.Tests/AgentCanonicalSourceMigrationTests.cs",
+      "indexBlob": "1198385f7b17c7cf6fec0766d006fbe5eeb5e4ea",
+      "sourceSha256": "68e47b2c3d5f71d13a2f86827da1f37d886fce24737fb11b8db59d727b88e217",
+      "provenance": "git-index-declaration",
+      "declaration": "    internal static readonly string[] ToolProfileSources = [\"src/Sunder.Package.Agent/Runtime/IAgentToolProfileCatalog.cs\",\n        .. Consumers(\"AgentToolProfileBindings.cs\", \"GeneratedToolProfileCatalogClient.cs\")];",
+      "declarationSha256": "d250965299d9fc186ab7d357a78e63dcbf8bcba693dbd4e5eb5899f93c8bbb87",
+      "paths": [
+        "src/Sunder.Package.Agent/Runtime/IAgentToolProfileCatalog.cs",
+        "src/Sunder.Package.Agent/Rpc/Consumers/AgentToolProfileBindings.cs",
+        "src/Sunder.Package.Agent/Rpc/Consumers/GeneratedToolProfileCatalogClient.cs"
+      ]
+    },
+    {
+      "name": "DockerPresentationSourceMigrationTests.SourcePaths",
+      "sourcePath": "tests/Sunder.Package.Agent.Tests/DockerPresentationSourceMigrationTests.cs",
+      "indexBlob": "fca1f4c1a26c1e2ae083ac5a1c2f79edf7b07244",
+      "sourceSha256": "1251e23bd28f16196a3954ff7d3be7535989cddef93364272d7726466fff71c0",
+      "provenance": "git-index-declaration",
+      "declaration": "    internal static readonly string[] SourcePaths =\n    [\n        \"src/Sunder.Package.Agent.Execution.Docker/Rpc/ManagementService.cs\",\n        \"src/Sunder.Package.Agent.Execution.Docker/Rpc/ManagementClient.cs\",\n        \"src/Sunder.Package.Agent.Execution.Docker/Rpc/ImageCatalogContent.cs\",\n    ];",
+      "declarationSha256": "a942513cc6e7b499fdbff0460d223f137838d478162fd34b63877fbe10c6109f",
+      "paths": [
+        "src/Sunder.Package.Agent.Execution.Docker/Rpc/ManagementService.cs",
+        "src/Sunder.Package.Agent.Execution.Docker/Rpc/ManagementClient.cs",
+        "src/Sunder.Package.Agent.Execution.Docker/Rpc/ImageCatalogContent.cs"
+      ]
+    },
+    {
+      "name": "LocalPresentationSourceMigrationTests.SourcePaths",
+      "sourcePath": "tests/Sunder.Package.Agent.Tests/LocalPresentationSourceMigrationTests.cs",
+      "indexBlob": "5b20b567d2d4e666aa0f8a0cb13893db51e4e812",
+      "sourceSha256": "5f775a2a9eadcef6d067b60e3e9dd8d7ffb2cbea3e0c9900c09cbb15105a8e38",
+      "provenance": "git-index-declaration",
+      "declaration": "    internal static readonly string[] SourcePaths =\n    [\n        \"src/Sunder.Package.Agent.Execution.Local/Rpc/ManagementService.cs\",\n        \"src/Sunder.Package.Agent.Execution.Local/Rpc/ManagementClient.cs\",\n    ];",
+      "declarationSha256": "f501c328409bf27dde6b3111b71657dcc89607324692893c839edf6edf6de3ea",
+      "paths": [
+        "src/Sunder.Package.Agent.Execution.Local/Rpc/ManagementService.cs",
+        "src/Sunder.Package.Agent.Execution.Local/Rpc/ManagementClient.cs"
+      ]
+    },
+    {
+      "name": "McpManagementSourceMigrationTests.SourcePaths",
+      "sourcePath": "tests/Sunder.Package.Agent.Tests/McpManagementSourceMigrationTests.cs",
+      "indexBlob": "dfe7c747349878ad86437ee6115bf55ea85e3305",
+      "sourceSha256": "75259c8efae9eeda1b9c65b33e4116079d4a0e90c030879048bc0485bc882f81",
+      "provenance": "git-index-declaration",
+      "declaration": "    internal static readonly string[] SourcePaths =\n    [\n        \"src/Sunder.Package.Agent.Mcp/Rpc/ManagementService.cs\",\n        \"src/Sunder.Package.Agent.Mcp/Rpc/ManagementClient.cs\",\n        \"src/Sunder.Package.Agent.Mcp/Runtime/McpRuntimeManagementClient.cs\",\n    ];",
+      "declarationSha256": "5693f2c410436338742ef8b54e34a691101c46d17679a3dff4ffeb0ea324d952",
+      "paths": [
+        "src/Sunder.Package.Agent.Mcp/Rpc/ManagementService.cs",
+        "src/Sunder.Package.Agent.Mcp/Rpc/ManagementClient.cs",
+        "src/Sunder.Package.Agent.Mcp/Runtime/McpRuntimeManagementClient.cs"
+      ]
+    },
+    {
+      "name": "SkillsManagementSourceMigrationTests.SourcePaths",
+      "sourcePath": "tests/Sunder.Package.Agent.Tests/SkillsManagementSourceMigrationTests.cs",
+      "indexBlob": "5d015676030053b0f33564eb745df5951c669507",
+      "sourceSha256": "71264f240f647a9279d8ff51360e821d39ddb292769e98d31c78e3511a99e816",
+      "provenance": "git-index-declaration",
+      "declaration": "    internal static readonly string[] SourcePaths =\n    [\n        \"src/Sunder.Package.Agent.Skills/Rpc/ManagementService.cs\",\n        \"src/Sunder.Package.Agent.Skills/Rpc/ManagementClient.cs\",\n        \"src/Sunder.Package.Agent.Skills/Runtime/SkillRuntimeOwnerClient.cs\",\n    ];",
+      "declarationSha256": "2218764f76bdf251605d4d937202396b55f97eab066396725bd6e6ff7f28f5fa",
+      "paths": [
+        "src/Sunder.Package.Agent.Skills/Rpc/ManagementService.cs",
+        "src/Sunder.Package.Agent.Skills/Rpc/ManagementClient.cs",
+        "src/Sunder.Package.Agent.Skills/Runtime/SkillRuntimeOwnerClient.cs"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using Sunder.Sdk.Services;
+
+namespace RegressionTestGeneratedProviders;
+
+[SunderServiceProvider(typeof(IChatProviderService), ProviderId = "fixture.regression.chat.provider")]
+public sealed partial class ChatProvider(Func<string, Type, object?[], CancellationToken, object> invoke) : IChatProviderService
+{
+    private ValueTask<T> Reply<T>(string operation, object?[] arguments, CancellationToken token) => (ValueTask<T>)invoke(operation, typeof(T), arguments, token);
+    private IAsyncEnumerable<T> Stream<T>(string operation, object?[] arguments, CancellationToken token) => (IAsyncEnumerable<T>)invoke(operation, typeof(T), arguments, token);
+    public ValueTask<AgentProviderDescriptor> DescribeAsync(CancellationToken token = default) => Reply<AgentProviderDescriptor>(nameof(DescribeAsync), [], token);
+    public ValueTask<IReadOnlyList<AgentModelDescriptor>> ListModelsAsync(CancellationToken token = default) => Reply<IReadOnlyList<AgentModelDescriptor>>(nameof(ListModelsAsync), [], token);
+    public ValueTask<AgentProviderReadiness> GetReadinessAsync(CancellationToken token = default) => Reply<AgentProviderReadiness>(nameof(GetReadinessAsync), [], token);
+    public ValueTask<AgentProviderRunCapabilities> GetCapabilitiesAsync(string? modelId, CancellationToken token = default) => Reply<AgentProviderRunCapabilities>(nameof(GetCapabilitiesAsync), [modelId], token);
+    public ValueTask<string?> ResolveUtilityModelAsync(CancellationToken token = default) => Reply<string?>(nameof(ResolveUtilityModelAsync), [], token);
+    public IAsyncEnumerable<AgentChatStreamEvent> StreamChatAsync(AgentChatStreamRequest request, CancellationToken token = default) => Stream<AgentChatStreamEvent>(nameof(StreamChatAsync), [request], token);
+}

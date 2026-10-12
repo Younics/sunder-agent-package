@@ -28,13 +28,15 @@ internal static class McpToolPresentationAdapter
             ? McpToolCardPresentation.HumanizeToolName(toolName)
             : card.Label;
         var argumentPresentation = McpToolTimeoutMetadata.SeparateForPresentation(request.ArgumentsJson);
-        return new AgentToolPresentation(
-            label,
-            BuildDetailMarkdown(
+        return new AgentToolPresentation
+        {
+            HeaderText = label,
+            DetailMarkdown = BuildDetailMarkdown(
                 label,
                 argumentPresentation.ForwardedArgumentsJson,
                 argumentPresentation.ExpectedLimitText),
-            BuildOutputText(request.TextContent, request.StructuredPayloadJson));
+            OutputText = BuildOutputText(request.TextContent, request.StructuredPayloadJson),
+        };
     }
 
     private static string BuildDetailMarkdown(

@@ -31,9 +31,9 @@ public sealed class LMStudioProviderCancellationTests
 
         Func<Task> operation = (embeddings, readiness) switch
         {
-            (false, false) => () => chatProvider.GetAvailableModelsAsync(cancellation.Token).AsTask(),
+            (false, false) => () => chatProvider.ListModelsAsync(cancellation.Token).AsTask(),
             (false, true) => () => chatProvider.GetReadinessAsync(cancellation.Token).AsTask(),
-            (true, false) => () => embeddingProvider.GetAvailableModelsAsync(cancellation.Token).AsTask(),
+            (true, false) => () => embeddingProvider.ListModelsAsync(cancellation.Token).AsTask(),
             (true, true) => () => embeddingProvider.GetReadinessAsync(cancellation.Token).AsTask(),
         };
 

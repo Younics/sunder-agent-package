@@ -14,10 +14,14 @@
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
     <PackageReference Include="Avalonia" />
     <PackageReference Include="CommunityToolkit.Mvvm" />
-    <Compile Include="@(SunderAgentSkillsSource->Distinct())" LinkBase="Domain" />
+    <Compile Include="$(_AgentModels)Tools\AgentToolArgumentObject.cs;$(_AgentModels)Tools\AgentPayloadLimits.cs;$(_AgentShared)Execution\AgentExecutionFacetIds.cs" LinkBase="Domain" />
   </ItemGroup>
 
   <Import Project="..\Sunder.Package.Agent.Shared\Sunder.Package.Agent.Shared.props" />
   <Import Project="..\Sunder.Package.Agent.Shared\Importing\Sunder.Package.Agent.Importing.props" />
+
+  <ItemGroup>
+    <Compile Remove="..\Sunder.Package.Agent.Shared\Presentation\CapabilitySelectionState.cs;..\Sunder.Package.Agent.Shared\Presentation\ModelBindingEditorState.cs;..\Sunder.Package.Agent.Shared\Presentation\ProviderModelLoader.cs;..\Sunder.Package.Agent.Shared\Presentation\AgentToolPresentationMarkdown.cs" />
+  </ItemGroup>
 
 </Project>

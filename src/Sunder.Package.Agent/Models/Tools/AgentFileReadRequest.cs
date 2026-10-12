@@ -11,4 +11,4 @@ namespace Sunder.Package.Agent.Contracts.Models;
 public sealed record AgentFileReadRequest(
     string Path,
     int? Offset = null,
-    int? Limit = null);
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "1", Maximum = "2000")] int? Limit = null);

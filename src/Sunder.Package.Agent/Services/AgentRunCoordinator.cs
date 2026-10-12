@@ -5,10 +5,10 @@ using Sunder.Package.Agent.Runtime;
 
 namespace Sunder.Package.Agent.Services;
 
-public sealed class AgentRunCoordinator(
+public sealed partial class AgentRunCoordinator(
     AgentUserMessageRunCoordinator userMessageRunCoordinator,
     AgentRunStopCoordinator stopCoordinator,
-    AgentChildRunSessionService childRunSessionService,
+    AgentChildRunExecutor childRunExecutor,
     AgentPermissionResumeCoordinator permissionResumeCoordinator)
     : IAgentChildRunExecutor,
       IAgentRunGateway,
@@ -18,23 +18,13 @@ public sealed class AgentRunCoordinator(
 {
     private readonly AgentUserMessageRunCoordinator _userMessageRunCoordinator = userMessageRunCoordinator;
     private readonly AgentRunStopCoordinator _stopCoordinator = stopCoordinator;
-    private readonly AgentChildRunSessionService _childRunSessionService = childRunSessionService;
+    private readonly AgentChildRunExecutor _childRunExecutor = childRunExecutor;
     private readonly AgentPermissionResumeCoordinator _permissionResumeCoordinator = permissionResumeCoordinator;
 
-    public async ValueTask<AgentChildRunResult> RunChildAsync(
+    public ValueTask<AgentChildRunResult> RunChildAsync(
         AgentChildRunRequest request,
         CancellationToken cancellationToken = default)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        var childRunSession = _childRunSessionService.PrepareChildSession(request);
-        var checkpoint = await QueueUserMessageAsync(
-            childRunSession.ChildSession.SessionId,
-            childRunSession.ChildProfile.ProfileId,
-            request.UserMessage,
-            request.WorkspaceId,
-            cancellationToken);
-        return _childRunSessionService.BuildResult(childRunSession.ChildSession, checkpoint);
-    }
+        => _childRunExecutor.RunChildAsync(request, cancellationToken);
 
     public Task<AgentRunCheckpointRecord> QueueUserMessageAsync(Guid sessionId, string profileId, string userMessage, string workspaceId)
         => QueueUserMessageAsync(sessionId, profileId, userMessage, workspaceId, []);

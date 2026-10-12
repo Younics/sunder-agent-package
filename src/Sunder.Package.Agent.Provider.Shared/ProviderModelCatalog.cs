@@ -1,4 +1,4 @@
-using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
 using Sunder.Sdk.Settings;
 
 namespace Sunder.Package.Agent.Provider.Shared;

@@ -9,68 +9,72 @@ namespace Sunder.Package.Agent.Tests;
 public sealed class AgentRpcInvariantReportingTests
 {
     [Fact]
-    public void CurrentReference_SendsItsExactEndpoint()
+    public async Task CurrentReference_SendsItsExactEndpointAndRetiresAfterAcceptedReport()
     {
         var client = new RecordingRpcClient(CreateProvider("rpc1_exact"));
-        using var catalog = AgentRpcCatalog.CreateDormant(client);
-        var service = CreateService(client.Provider.ContractId);
-        var reference = Assert.Single(catalog.GetServiceReferences(service));
+        await using var bindings = new SunderRpcServiceBindingLifetime(client);
+        await bindings.DiscoverAsync(client.Provider.ContractId);
+        var provider = bindings.CreateProvider(client.Provider, static (_, _, _) => new object());
+        var reference = provider.Reference;
         var exception = new InvalidOperationException("invariant failure");
 
-        var accepted = catalog.TryReportInvariantViolation(reference, exception);
+        var accepted = await reference.TryReportInvariantViolationAsync(exception);
 
         Assert.True(accepted);
-        Assert.Equal(reference.Endpoint, client.ReportedEndpoint);
+        Assert.Equal(client.Provider.Endpoint, client.ReportedEndpoint);
         Assert.Same(exception, client.ReportedException);
+        Assert.Equal(1, client.ReportCount);
+        Assert.True(reference.RetirementToken.IsCancellationRequested);
+        var repeated = await Assert.ThrowsAsync<SunderRpcException>(() => reference.TryReportInvariantViolationAsync(exception).AsTask());
+        Assert.Equal(SunderRpcErrorKind.ProviderFaulted, repeated.Error.Kind);
         Assert.Equal(1, client.ReportCount);
     }
 
     [Fact]
-    public void StaleAndForeignReferences_AreRejectedWithoutTransportCalls()
+    public async Task ReferenceReporting_UsesItsReceiverAndRejectsLateIdentityChanges()
     {
         var provider = CreateProvider("rpc1_shared");
         var ownerClient = new RecordingRpcClient(provider);
         var foreignClient = new RecordingRpcClient(provider);
-        using var owner = AgentRpcCatalog.CreateDormant(ownerClient);
-        using var foreign = AgentRpcCatalog.CreateDormant(foreignClient);
-        var service = CreateService(provider.ContractId);
-        var ownerReference = Assert.Single(owner.GetServiceReferences(service));
-        Assert.Single(foreign.GetServiceReferences(service));
+        await using var owner = new SunderRpcServiceBindingLifetime(ownerClient);
+        await using var foreign = new SunderRpcServiceBindingLifetime(foreignClient);
+        await owner.DiscoverAsync(provider.ContractId);
+        await foreign.DiscoverAsync(provider.ContractId);
+        var ownerReference = owner.CreateProvider(provider, static (_, _, _) => new object()).Reference;
+        var foreignReference = foreign.CreateProvider(provider, static (_, _, _) => new object()).Reference;
 
-        Assert.False(foreign.TryReportInvariantViolation(
-            ownerReference,
-            new InvalidOperationException("foreign")));
-        Assert.Equal(0, foreignClient.ReportCount);
+        Assert.True(await foreignReference.TryReportInvariantViolationAsync(new InvalidOperationException("foreign receiver")));
+        Assert.Equal(1, foreignClient.ReportCount);
+        Assert.Equal(0, ownerClient.ReportCount);
 
-        ownerClient.ProviderAvailable = false;
-        Assert.Empty(owner.GetServiceReferences(service));
-        Assert.False(owner.TryReportInvariantViolation(
-            ownerReference,
-            new InvalidOperationException("stale")));
+        ownerClient.Provider = provider with { SessionGeneration = provider.SessionGeneration + 1 };
+        Assert.False(await ownerReference.TryReportInvariantViolationAsync(new InvalidOperationException("stale")));
         Assert.Equal(0, ownerClient.ReportCount);
     }
 
-    [Fact]
-    public void TransportAndPermissionFailures_FailClosed()
+    [Theory]
+    [InlineData(SunderRpcErrorKind.PermissionDenied)]
+    [InlineData(SunderRpcErrorKind.Unavailable)]
+    [InlineData(SunderRpcErrorKind.Protocol)]
+    public async Task TransportAndPermissionFailures_PreserveUnsafeStructuredMetadata(SunderRpcErrorKind kind)
     {
+        var failure = new SunderRpcException(new SunderRpcError(kind, "fixture.report-failure", "Rejected.",
+            SunderRpcDispatchState.PossiblyDispatched, SunderRpcRetrySafety.Unsafe));
         var client = new RecordingRpcClient(CreateProvider("rpc1_failure"))
         {
-            ReportFailure = new SunderRpcException(new SunderRpcError(
-                SunderRpcErrorKind.PermissionDenied,
-                "rpc.permission.denied",
-                "Denied.")),
+            ReportFailure = failure,
         };
-        using var catalog = AgentRpcCatalog.CreateDormant(client);
-        var reference = Assert.Single(catalog.GetServiceReferences(CreateService(client.Provider.ContractId)));
+        await using var bindings = new SunderRpcServiceBindingLifetime(client);
+        await bindings.DiscoverAsync(client.Provider.ContractId);
+        var reference = bindings.CreateProvider(client.Provider, static (_, _, _) => new object()).Reference;
 
-        Assert.False(catalog.TryReportInvariantViolation(
-            reference,
-            new InvalidOperationException("invariant")));
+        var observed = await Assert.ThrowsAsync<SunderRpcException>(() => reference.TryReportInvariantViolationAsync(
+            new InvalidOperationException("invariant")).AsTask());
+        Assert.Same(failure, observed);
+        Assert.Equal(SunderRpcDispatchState.PossiblyDispatched, observed.Error.DispatchState);
+        Assert.Equal(SunderRpcRetrySafety.Unsafe, observed.Error.RetrySafety);
         Assert.Equal(1, client.ReportCount);
     }
-
-    private static AgentRpcService<object> CreateService(string contractId)
-        => new(contractId, static (_, _) => new object());
 
     private static SunderRpcProviderSnapshot CreateProvider(string endpoint)
         => new(
@@ -90,7 +94,7 @@ public sealed class AgentRpcInvariantReportingTests
 
     private sealed class RecordingRpcClient(SunderRpcProviderSnapshot provider) : ISunderRpcClient
     {
-        public SunderRpcProviderSnapshot Provider { get; } = provider;
+        public SunderRpcProviderSnapshot Provider { get; set; } = provider;
 
         public bool ProviderAvailable { get; set; } = true;
 
@@ -128,7 +132,7 @@ public sealed class AgentRpcInvariantReportingTests
             => ValueTask.FromResult(new SunderRpcCatalogSnapshot(
                 1,
                 1,
-                ProviderAvailable && string.Equals(contractId, Provider.ContractId, StringComparison.Ordinal)
+                ProviderAvailable && (string.IsNullOrEmpty(contractId) || string.Equals(contractId, Provider.ContractId, StringComparison.Ordinal))
                     ? [Provider]
                     : []));
 

@@ -1,6 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.ExceptionServices;
-using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Abstractions;
 

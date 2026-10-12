@@ -22,10 +22,17 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.Equal(1, source.Split(entry, StringSplitOptions.None).Length - 1);
         Assert.Equal(1, source.Split(build, StringSplitOptions.None).Length - 1);
         var projected = source.Replace("\r\n", "\n", StringComparison.Ordinal)
-            .Replace("Sunder.Generated.Package", "Sunder.Tests.Generated.Package", StringComparison.Ordinal)
-            .Replace("Sunder.Generated.Services", "Sunder.Tests.Generated.Services", StringComparison.Ordinal)
+            .Replace("namespace Sunder.Generated.Package\n", "namespace Sunder.Tests.Generated.Package\n", StringComparison.Ordinal)
+            .Replace("namespace Sunder.Generated.Package;", "namespace Sunder.Tests.Generated.Package;", StringComparison.Ordinal)
+            .Replace("namespace Sunder.Generated.Package {", "namespace Sunder.Tests.Generated.Package {", StringComparison.Ordinal)
             .Replace(entry + "\n{", entry + "\n{\n    internal static global::System.Action<global::Microsoft.Extensions.DependencyInjection.IServiceCollection>? Configure { get; set; }", StringComparison.Ordinal)
             .Replace(build, "Configure?.Invoke(services);\n        " + build, StringComparison.Ordinal);
+        projected = System.Text.RegularExpressions.Regex.Replace(projected,
+            @"namespace Sunder\.Generated\.Packages\.([A-Za-z0-9_]+_Internal)\b",
+            "namespace Sunder.Tests.Generated.Packages.$1");
+        projected = System.Text.RegularExpressions.Regex.Replace(projected,
+            @"global::Sunder\.Generated\.Packages\.([A-Za-z0-9_]+_Internal)\.([A-Za-z0-9_]+LocalService)\b",
+            "global::Sunder.Tests.Generated.Packages.$1.$2");
         Assert.Contains("Configure { get; set; }", projected, StringComparison.Ordinal);
         File.WriteAllText(Path.Combine(directory, "ControlledWorkerEntry.g.cs"), projected);
         Assert.Equal(source, File.ReadAllText(path));

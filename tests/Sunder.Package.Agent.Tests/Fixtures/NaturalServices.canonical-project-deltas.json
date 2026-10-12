@@ -1,0 +1,171 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Authenticated staged canonical project before-images with exact reviewed live natural-service input guards; data only.",
+  "sources": [
+    {
+      "path": "src/Sunder.Package.Agent/Sunder.Package.Agent.csproj",
+      "currentSha256": "297d42f544027fc41d4d2167870cff04e35f872cd00f21f393b41fc0d0159e19",
+      "beforeSha256": "77a9a8b360ca6d45c56a8587e743d7bde39a92f9b6e8af83743e56aaa43dd0e5",
+      "indexBlob": "8996d4ca3a7a1b56c37000e3ed1394b8de79e96d",
+      "provenance": "git-index-blob",
+      "textChunks": [
+        "H4sIAAAAAAAC/51W0W7aMBR971cgtIcNqY4mTXspQ6KBbmgwocLUF15MfAEXx85sh5K/33UcIEDSpkWCJMfnHh/se6/TnWr1DJFtzdj2R3vCI62MWlnyZzgnCLV7NzetVhdJCWib/dQqTXqIIDZLJQM9pdGWruGBxlxkI9YzOUoSDxP8StsNqrkVOoWbntUpXIQdhspR6PBJ6S3oR1iBBhnBWWTF8EV0f0eFkpzWxl8TLhRmFu2Z2vjLYR8dqiQbq4gK/Nk+cAF9YyBeCg6mEHiNUTgAsQqVtJRLYL0VFcbNewZ64l8D/ST5pYw9sEqIp0xTVDabGZdrAW62A/N64Cxgrnkcn2a/QD11KOlSwGMqLY/B7eVAvUih6DGqnlAWKAzXC1QRvEAhPWKYi3zFQZveC5e3++/f7tyV6hjvBJfpPsf8nUeV8Zi75kg3qFDz0xxSBVc3VHGCi8XuuWS4dOY+G8CKpuKQ",
+        "2I2o5UTruzqabagGNtdUmkjz5LxKqhlXGmGqMRFtUVMzqzRefkN2rVXL9JqFy5GFeLiPRMowMT99rkC/3HU6wZLLoNNxd2r5jHfdoCretZrgotc4zJHKrafwdKyq1kjmCuUGNqCWktk/wS20W2eNxFWSfVQC6S95d2i3gncID/cWpOFKGtIfkf7SWE0j654/rDOABNCgjLKRdD0OwQ9rjdV6jXn0bmNTJURGQqWhCfuQwO/hEteYtBKGuP3EnpgAtc1WH4skTiW32VwpseWWTHa7uEngmO9gQvWWYUcgF6a7QSmvqtKsKM2TGiELn0mkmJHklUIwZXfcwb7+FhPFQJjFAQ431HqIRKadax8/Yy7duftawPFvNvZT2BjuIUpdAixy+Pj4QCOwI/aWm/qgDzsqusjC1+UTFeEGom2iuLQTPLIwiSluX52v5tENN/h0uBuV6rOcdT3CLDqdplLHAz+kCV1yNJid",
+        "1HQSEXAlyoDdMqAMjxggu6+14nGitG0Vbzxvr2r9GEmwm/r1uMlbq3+F+g+398ew9gkAAA=="
+      ]
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Builder/Sunder.Package.Agent.Builder.csproj",
+      "currentSha256": "e9dcd53977e022b6505e3121daaf4b961055e428ca869b61c59b20df29dc80df",
+      "beforeSha256": "fc3d2e8c7bd20459136d72c2ce353d6339296dbfce3884d97802d59684c73872",
+      "indexBlob": "a4fbf2d61d74963801500abdcd7c6234510b958e",
+      "provenance": "git-index-blob",
+      "textChunks": [
+        "H4sIAAAAAAAC/5VRy2rDMBC85yuE6SE5VP4BRzSpk2JoSqgDveSiyptGta01klzqv+/6kdqUEChIB412Zmd2o73FT1CepVm+DHZaWXR48vxlc+AEBWI2Yyyiogqsb54s1pUghLC0NhnYvVS5/ICtLHXRJJlwHcqrHuZ0jefvtS4IjcLrnKke9Vx9yQKNlq9wAgtGgfC2hgv5akHrMfxjssWSskLr2ZBxGdzNd+m6NXM4a7fVBcTa0gfaZsH5kU7fg686229o8zYL6bqAheKa4sgZUvXc4w4zKNyxe2y+PRin0aRYWwVuothJeiingx2EftOxxKiizmAZXIIPZm7Wjqv8be94DBWQWaOaxLT+CRy1HrGsaCSjxMO8j9aFWPc77CPci1g7r43y88UiYM/a5GvpiBJjKfVFMwon0f4xPJ6epYXs1t90hN3mW0Ex+wH/ldoTzgIAAA=="
+      ]
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Execution.Docker/Sunder.Package.Agent.Execution.Docker.csproj",
+      "currentSha256": "46d1bbc3eb9f5941ba5a5ee94426e940629638852bf1c918fb7b460133bd2341",
+      "beforeSha256": "918041cd3837470499c522fff4565aa9ceb018cb0173a8ba83280079e72e2fe4",
+      "indexBlob": "85f85ba7c0fb30042d665e22b266075119825b48",
+      "provenance": "git-index-blob",
+      "textChunks": [
+        "H4sIAAAAAAAC/41TTU+DQBC991cQ4qE9uI33SrQfmkZrjDTx0su6TO0K7JDZXSL/3uGjLTa1MYEQZua9eby3TF4Jv0C5IE7S23ClFaHFrRMvi7XgUhgNBkEw4aECyFWPhL6IuMK12JsE6FWqVH7Cg8x1Vi2TyDZVUbRlwbdxAr5BeafRiARVCjQZnwf3iXn5fSkzNFq+wRYIjILIkYc9+OzACUPseIP9E3/a7qPva+UzT9xxnc7YIfHjCapfRJcna/vGJ/7VtWVeILmgs/82vBqu4qnXWbLeafugM5hr4gZSNRJiw1e7TDTbxDtSWtvMvDYMxtE5xiOmU9ViNytMILOb5mXx7cBYTiZGTwpsj7GhdJD3M++IDo4FS6Myn0D/5BworZhDASzAqGppak1c7MRe5NrH+p/ZGea5N9pVa8Qs1U6syjI/ArldsJfH+bthL7TF/ly2X38dzbV12ig3HI3C4FmbdCot",
+        "g+aYS72XPhn3XDln0uF4zWQhP3TG4o772x/gGkypCU1eZ1ne/Mn8v0RFvJMEyaVeP9fmONaE0eAHba0hN/4DAAA="
+      ]
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Execution.Local/Sunder.Package.Agent.Execution.Local.csproj",
+      "currentSha256": "cb668bad2998929f6701f82d359b8bfd202a3b18f2332d2b88adf738640a7da7",
+      "beforeSha256": "3a2c9757557b6463a8a9b0feaede06b0a23448e5f2c259e551fbdcc0a9e4101b",
+      "indexBlob": "79fb77d54937899b3b963c339f8fbccb3589d32c",
+      "provenance": "git-index-blob",
+      "textChunks": [
+        "H4sIAAAAAAAC/41TwW7aQBC98xVb1AMcvKh3YjUBkqCWKqqReuGyWQ8wZb1rze668d93bAy4KUKRjCxm5r1582Y8fSH3G3QQWX64G65Qk/NuG+SPxVpyaJgOBkJMuagECvUTuVimHOFYFm0O9KL0Qe3gURVo6mWe+jYqy2NY8s8GCW+gY0BnpXFamenkOrbPy73vK2WcRfUTtkBgNaSBIpzAVwv6DPdN61kkzoSuUxYc8esb1P9Q3a5s5p+8M6CJLYvSURCdf3fDz6NV9hDR5Os9+kc0MEfihKN6LOWGn2Mz2XaTvxwdGp+Y1w/FJL3GeMF0qo7YzcrlYPym/bN4C2A9W5u5SBp8j7GlDFD0l9YRnR0TS6tNzKG/+jOll3MogQVYXS9to4mDndibXKfFfKR25ooiWgz12jlzwCBXVVVcgJwu2ctL/ddRb2mL02Edp0/SOfqAVofReDwU39EeHpRn0NwVCk/S",
+        "p5OeK9dM+pQkvATwQBWIsAdBUCH8gVw8Ox+EZkkq4CsaVi22xjkSahuAuK40SqPdiULZqExb6jy2py+S5P2Fz1SpOprzfK/s1I7F2DxpBGCz0+rLxZCbYIo2YAEJewOkQrvDM/j/uT92bzLbK4L8Vq5/de3H0hCmg7+zbgHaXQQAAA=="
+      ]
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Mcp/Sunder.Package.Agent.Mcp.csproj",
+      "currentSha256": "5d4364ca97031b1abaee8653e23a9076c5b37e7d2e6c6affea9da961ee119857",
+      "beforeSha256": "543f628ac416a2737eadc2006e004399ca9450793be6d250db579a26eae24e3e",
+      "indexBlob": "aabc3019551e8884eec2ab9d0aaa5962af1e6ac7",
+      "provenance": "git-index-blob",
+      "textChunks": [
+        "H4sIAAAAAAAC/52US2/iMBSF9/0VEZoFLGo0exoNDTBCM6mqBmk2bIx9Sz04vpHtMM2/n5sHIdBQQSWkEPuc7/pxbibPFv+C8EEidw+DWAmLDl89e5qvGA0Nwru7IJiQKAPri58W8yykERqbOgfpRhdPPIUwyY0Ey5652PEtsOkWjGexyCbjE1ntfEH05avLuPjMeqqrvbW6ES94qnSxlKGrGVnD4BUjLRn9+i6Ldjndc41G8Rd4BQuGinmbw8HcKzgjJJ4quIv+8+muu9pw8sYtyIhrvSHlQuO/E8QlzQdOlFuq4Jv9Jh4tPX5B8ZF2UdlzzuUdejdTloKCtgi/DePkMVdaNuFpZ0brWnp27uf+MlLjs0yVY8s0Q+uDhvowaOus3pRbKA3HQoyt6ddkp87MH7S7MgTEdYNgHPYRj56TvK1jlKDdunqZv3swTqFJMLcCXIdYIT2k3T5oQO3lBksjdC6h200t",
+        "0rEZZEALMKJYmnJNNNgs9nbWdMmmG+ctrzDuKk650QiNh3dPp+JRoGYRWrjGfGiDW7Ts8Gculb/FWOrZipYZc3/V6iJM09woX6wQ9Y7M8X6fHo00nVGEjvofw0470Aenvu77cKacV0b44Wg0CH4rs3vkjuQzTLk63NVk3IlBXyra1o94xjdK07KOlW0mGJTXKEHeS+BSKwNs//0i/LoUs/oL8dncl7rjwK3lymz7Ve10t2GqPi/p4d1/mR8NYWsGAAA="
+      ]
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Memory.Semantic/Sunder.Package.Agent.Memory.Semantic.csproj",
+      "currentSha256": "fb6ff3b3201708c0b2aa39ca8e74ee2a52acbaf398d52f20a5f6a3ab9f6766c0",
+      "beforeSha256": "c410c1b8ef55de68d8f7be42915fef1d9666b6f9bba8d7449f9e0a0b6fcbdc8e",
+      "indexBlob": "b76e1c2e8a05b45df7fe6397f3a2020a55588cec",
+      "provenance": "git-index-blob",
+      "textChunks": [
+        "H4sIAAAAAAAC/5VTTY+bMBC951cg1ENyqPMHEtTssltFKtVqibQXLpaZbabYHmqbtPz7DoZNaJWtUgQHnue9efPhzZOj76BCUtbNNi1QOfL0GsTXh4NgKM0WiyTZcFALLvSfHXVtxghjZWdrcE9SNfIbPEqDut/XmY+oaEdY8GeDMGDI9cKDkTag2qyvc+e6nHt3kposymd4BQdWQRZcB2/kqwGD1/VfZgdsb1pyIZlq3aYflkV516GuD0f0j6ghR8cHbHIlRMXvmEPsov0Xcs1QE+v6NFln1xQvnKmqkVsVVIP2Vfx5+BXAeiRbUucU+JlilAxg5g2ehM7VJXurdFfDfExnSS9yaIENWNXv7eCJwcnsjVq5DFKUPzQGSJM/JrTzHsIzaQ7/GXtxi/DbdG6JvSdjOouhPxDpBoMoTidzIfJxy0O6xH9ajv5iW4u4XWNPP2Y5+oBWheVqlSZf0DZ30jMjJyPR",
+        "/kPynQGK8igd1FXJy8FgNfbnRer7I6imJeT8LMxTkFyRUD6N+udncLBNb2dP67WeLcN/rNvZ7ftn86WLd2UQzBa/AQd6J8UIBAAA"
+      ]
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.Anthropic/Sunder.Package.Agent.Provider.Anthropic.csproj",
+      "currentSha256": "e430120c55e9003c7a3566c944bfce19e288cf4311628f43a526deaabf947766",
+      "beforeSha256": "5a12355ce5ed3adbce1f1571e82379686ff15c9be6198e4dffb230d3604f96c7",
+      "indexBlob": "75caffcea83e9dca4623d59a1323ed38371b420f",
+      "provenance": "git-index-blob",
+      "textChunks": [
+        "H4sIAAAAAAAC/62WzW7bMAzH732KINihPUx5gDXG3KQdsi1DUafoJcCg2YzDRZYMic7qtx/9lQSt02mbgeRgmn/yR1GifH1vzU+IaRQlu+l4ibE1zmxIfLtdCTaNg4uL0eianXKwVH6ypsgDtrAtKnQC9l7GO5nCncxQlYskcLVV5I1Z8F+TyK3ZY2WWmrYcCuPrSb/8NDSnD/dSGY3yATZgQccQkC2gE/c6VLiTF7yVbZHlxtKoLXc6fne5jG4KVMlqi+4OFczR8gtjyysh1vxrcoiwruDJ2F1VFsd149Ek6It41LRVNdr10iSg3Lp+uH0m0A6NjkxhY3AnEeuQBNnpGreBDtWNFjpWRQLTcditZEvzpvOxrYf8TswhB6bVcbnQVQFs/OdY4UKEPxxZWYdxPnG6zvn4zkyWFRqpXBmjdkhiud9nR+H3+3Z/zU0msV3ao/rjZdOWugGd60OhCTNofK8+9PqE",
+        "ed6+P+ZilJw3y2n03vTvgzk6Qh3T5RXLv6Le3UjH/o1Tt4cmJx3v2wCv0p3ZZKJjENFWWkjWYY5foHwkVLxsERCjpC4iSSBi1/BMx38pmvwvVPc820p6AJfzVoEwTS2kkg/eG2AewuHgjN5gWlhZbeWoORjOh+2sbkg0gmd6Qp2YX3cSVWFhpqRzuEGwfox/CjAcLD/we5QqjHnSOb8G94sGg7q11tg5ylQbPp0xj7BqZnmhvSkdDPCzM9oD5uA2WOL6lppJ4qmcegC8ch8WZJH4MrSeg6XvxstjnvDc8zn4fYrBcCKyILMVKMiAbOmB06cYDKe6gLneQpEHyQvnwSDaC6puf8R11qPWg+e87sxl7PeBd7533Q36+luv/kStogYXvwGzwxluggsAAA=="
+      ]
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.Gemini/Sunder.Package.Agent.Provider.Gemini.csproj",
+      "currentSha256": "25493fd6498a0cef28c33f3b435d2bb58f05ed2cef65e6b2248da7f87029eda9",
+      "beforeSha256": "eca974544c922a4cecdd8a04e8177b43af23664cf80a330f3b63a0e8c4724125",
+      "indexBlob": "6e3140a219b269beeffea6bf0c46c4368dea3e31",
+      "provenance": "git-index-blob",
+      "textChunks": [
+        "H4sIAAAAAAAC/62WzW7bMAzH732KINihPUx5gDXB3KQtvC1DUafoJcCg2ozDRZYMic7qtx/91QSt02mbgeRgmn/qR5GmdHlnzU+IaRQlu+l4ibE1zmxIfL9eCTaNZ2dno9ElO+Vgqby1pshnbGFbVOgE7J2MdzKFG5mhKsNk5mqryBuz4L8mkVuzx8qcQoYaLyf92uO4vHawl8polPewAQs6hhnZAjpxr0PFOnkFW9nCLDeWRm2u0/GH82V0VaBKVlt0N6hggZZfGFteCLHmX7OGCGr8R2N3VU4c141Hk1lfxIOmzarRrpcmAeXW9cP1M4F2aHRkChuDO4pYhyTIjje4DfSS3SjUsSoSmI5vjUkViFvQQdgCvet/KOsLghMLyIGBdVyGusqBjf8cKwhF8OTIyjqM84nTFc/Hd26yrNBI5coYtUMSy/0+Owh/3LX9tTCZxHZ3D+rP501l6hp0rveFJsyg8b34",
+        "1OsT5Hn7/rAWo+TcL8fRe5f/OFugI9QxnV+w/Bvq3ZV07N84dW00OSp6Xw+8We5En4mOQURbaSFZBzl+hfKBUPG2RUCMkrqIJIGIXcMzHf+laPK/UN3zfCvpHlzOrQJBmlpIJX9774B5CIeDM3qDaWFl1cpR82E4H7aTuiHRCJ7pEXVift1IVIWFuZLO4QbB+jH+KcBwsPzA71GqIOZh5/wK3C8aDOo6e4Ik4ba+khRvPYB6BMPBWGvsAmWqDY+KmOdpNUC99uld6WCAX5zRHjAvboMtXJ+ac0l8RKQeAG/chwUJE1+G1nOw5btZ95AnPIR9plCfYjCciCzIbAUKMiBbeuD0KQbDqW4DnG+hyIPklfNgEO1pWZc/4jzrue/Bc1p34mbgd+E8XbvuOH9796yvzFXU2dlvbtZOvg8MAAA="
+      ]
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.LMStudio/Sunder.Package.Agent.Provider.LMStudio.csproj",
+      "currentSha256": "85f1b7b9516eb2bfb60629b73d5052b4c10c5c2a0d6a65f5b5442314a5192d81",
+      "beforeSha256": "a0b9608997874321d25bf000bc2db0bc52c3280eab1539e307d8a8b38229af79",
+      "indexBlob": "6902f21bdb2344645a04fae19b9b55e25efb82f4",
+      "provenance": "git-index-blob",
+      "textChunks": [
+        "H4sIAAAAAAAC/62WzW7bMAzH732KINghPUx5gKXG3KQdPCxbUafoJUCh2ozDRZYMic6atx/91QSt0wmDgfhgmn/yR1GhNLuz5jckNIrT3dV4iYk1zmxI/LxZCTaNg4uL0WjGTgVYOnyzpiwCtrAtLnUK9k4mO5nBrcxRHaI0cLVVFI1Z8KNJFNbssTKr3FGZoplN+9WnkTl7uJfKaJT3sAELOoGAbAmduNehop2+wa1sUV4YS6O22qvxp8kyvi5RpastultUsEDLH4w9XAqx5l+TQ4R1AY/G7qqqOK4bj6ZBX8Sjpq2q0a6XJgXl1vXLzQuBdmh0bEqbgDuJWIckyE+XuA30Wt0o0okqUzht1GtIJxZQAAPo5BDpiomNLeyHsX6xKox8PHuzhpEInx1ZWSd0PnG6tvn4zk2elxrpsDJG7ZDEcr/Pj8Knu3ZvLUwusV3Xo/rrpOlJvfqd632pCXNofC+/9PqE",
+        "RdF+P+ZilIJ3ymn03vSfgwU6Qp3Q5JLlP1DvrqVj/8ap20DTk3b3df9dujM7THQMIt5KC+m6e59vJd2DK7grEGaZhUzyBheJa5iuxv8hnA4GZ/QGs9LKatfEzW51PmxndUOiEbzQI+rU/LmVqEoLcyWdww2C9WP8V4DhYPmFv6NUYcITxfk1uF80GNRN/gxpijq7lpRsPYB6BMPBWGvsAmWmDf8rEx5d1azyWqcPpYMBfndGe8C8ug2WuD6a5pJ4GmceAO/chwWJUl+G1nOw9N2seyhSSeAzhfoUg+HEZEHmK1CQA9mDB06fYjCc6uDlektFHiRvnAeDeCBUfAmo2x9znfXc9+A5rztzCPvd6s73DohP/sz1XPDqe2kVNbj4Cwh7kD52CwAA"
+      ]
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.OpenAI/Sunder.Package.Agent.Provider.OpenAI.csproj",
+      "currentSha256": "2a78c3b77e0fc2f1121430724743fac14f6cfd3f04202f769b06d02bdf22f242",
+      "beforeSha256": "2dbf4a91af341e58f897fbf92663fac6f5bbf95e61461bba98949ce145ad71fe",
+      "indexBlob": "5c4bc3382b095511246a6ba7d032b5af40766a9b",
+      "provenance": "git-index-blob",
+      "textChunks": [
+        "H4sIAAAAAAAC/52UbW/aMBDH3/MpomiVYNLCByhES3mYoo22Ikx7E2kyyUE9HDuyHdZ8+10S54EsraCIF/i4/+/Od+ebPUvxByJtBfFpbm9oJIUSB+08rnYOmmx3NLKsGTqlIHX+TYosddGCNk8pSPYsfyQJuEHGY5DOM4lO5AiOdwSuHVSdaWF+SoF7/mx6IakoWyF0cVQpia7FXGoqTqU0wjVJKMv92FUVLzU8UvLSmod34oTOpsPaLhcr4Z0JE5ySLRxAAsfAWmZQiwcdBjIrKqDVkkosuZC5+2m8CR4yymLThuafSVi59rLr64vmTHvdKWx+kgqpLUOd202c3QtVa8qgDeQ4IX5N5auK/xLyVJQNucq2pu4QsdVcdCvciBiYCsvD6lUDV1TwQGQyAtUhlkgNSXeiDKgpoOXziGUxdOeyQSrH881EmBRvJywB9TE65j4vboXGa1jXR61n4hrfhUiSjFOd",
+        "74RgJ6qdzfmctMLf9TNYioRQU9FW/XVcdaOse+26zbimCVS+k/tBHy9Nzf9tLEwlxRnp0gfDf3GXVGnKIz2eoPwH5acHotC/cnoH+Mb0tG89eCES4vCzEym7ZDSf1euNDC+l3yEPQGOmRxVoogGp97fJf2rKsDcfptTnheAHeswkKYYtqGZO3QIyiZTPrJ9Nr1JFP+Z2H3A3Lt4/x/05uRs3j2HygWY1VwOFx/JGofFYEMb2+HPNxF+cQo7ad+44COoc8MFVBXvaK5DnEtYdt65vva+mne1yw/56s3FNrf9fZeUGLqju6B8+lb+jTwcAAA=="
+      ]
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Skills/Sunder.Package.Agent.Skills.csproj",
+      "currentSha256": "f632bce9527ba5d42a9e0cde584b195e675069f9b969d6f1a9a48d55519ff07c",
+      "beforeSha256": "4efbe69c244540be8e71f759fc7b0a08aef73b4569a9a7784574d14bc7ba1ef2",
+      "indexBlob": "ad9759b9c4efb294378abf775158710726f0886c",
+      "provenance": "git-index-blob",
+      "textChunks": [
+        "H4sIAAAAAAAC/51SXW+CMBR991cQ4oM+rPyAIZkOtxB1M9bFFxPTwNXdUVrSFjP+/Qr4QYhbtiX0gXPPOb333PpLJT8gNg5N0pG7wFhJLfeGvEzXxEJu0Os5jm9JOShTPitZ5IFFLEYLkYBasjhlB3hiGfIySgJdoyRvYGKPMESnyLn2vduStp29cnxkXApkK9iDAhFDYFQBZ/FNQseBGnuD/lbfLTfqEPYo4FEKbZgwOugPOsjwnr69hNPVjs6i+ZzuNq+r2XTVAcfLpe91raoEvU6EFRZluVTGOW1g5PYHCzopkCfrd9RPyCFEZQtSlUNCtvZrRiDjOtSNVGmVtPXVruMFtxyvmlPojXa7kAlwva1/pp8GhEYpqCxUDLrlWFsayNprPxld4nMiEfMigfbjuVhqEkIOtgERl5GoerLgqdkfvc47/g33UWZZIdCUayl5ioYsjsfsKrTl3GZ55T8Mmkzq6Wn9",
+        "NJvR74IQtUERm8Fw6DpzFOmEaasIZcbw3LfvtSL5Q+iEvjMFyU+1fy3z7NvQURxusy7l9n7rZ1m5B70vTtk4fQkEAAA="
+      ]
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Subagents/Sunder.Package.Agent.Subagents.csproj",
+      "currentSha256": "8bbd4c5b01692cfcecb88f52a12df5b213657cd0e66a4f9e715c97f28c158dc9",
+      "beforeSha256": "4154ed0c53a7ce92685dfa4052228f60f950a9e336727382ebce9a2d5e2c3095",
+      "indexBlob": "c358fde47dcc1ec05ed709cd0e312fc21f353de6",
+      "provenance": "git-index-blob",
+      "textChunks": [
+        "H4sIAAAAAAAC/5WTTW+jMBCG7/kVCPWQHGrU81K0JNAKbclGgaqXSJWDJ60XYyPbsMu/XwP5YCldpVKQwnjm8QzvO+5Gil+QaSsh+b0d00wKJQ4arcMUmZDtzWaW5ZqkEqRuHqWoSs9ETCypOAG5wVmO3+ABF5Q1EfFUF0VlH0bm4Rqpat/9Ua4zXTUkmlv9GjPBKd7CASTwDDwtKzgVTyaMCIk2N6hP68fHw2q/7TR5xxJIKjFXmaSl/gcwndEzAjhQDivBlcZmYO9mPoosviXP6yDcvibPS/8xXKfJ68vP7Y9w+zHubzauMwa2cjgjPdpYVJRCauso5719M4+TZUUZSd+peqAMAirNgZDNAqGd+fWzoG4Y9CJk3spmuMq2HG+KeKk5ytfX7mJBgKld9xL+0cAVFTwRlcxADYgdUkMx9NARdBbCinjGKgJDJ56RCgVQgmmAZ03E255M8Njs11l+hPy90hJ3",
+        "GHUN5+S6r+Qio5yWginUzm4sVwLWIK9BrERRVJzqJhWC5VSjuK6LawqfaA0xljkRvzn62LThlsYPl/zv86GvT7vaK3jrBVRpyjM9Xyxs64nyfImVKQpEgenp87vOQNkpoc+bt8Il3lNmprrcL8sMQasMAXJLABNmHI/qu0/h1xkT9Sv6v7OhPbutaoHe7C82HLEAFQUAAA=="
+      ]
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Tools.Files/Sunder.Package.Agent.Tools.Files.csproj",
+      "currentSha256": "115508028ba7d4e583ffd24586bbe98b5c9802ce229ff2274fb2574914a2caed",
+      "beforeSha256": "b64571698c922ab5dfb589ba41438f32365586b96b9222ed42c34fa3fe1d4c3f",
+      "indexBlob": "b1b35689bd4af3d03b159b81d177ff260fd8ff9f",
+      "provenance": "git-index-blob",
+      "textChunks": [
+        "H4sIAAAAAAAC/5WSwU+DMBTG7/wVhHjYDpZ434hubIZEzCJLvHCp7RurQEvaovLf+wpkEDNNJHDoR9/vff1eVwet3oFZP+PlOkgF08qokyXPuyNBKYg8z/dXuKkBbbtHrdomQgW1rJUc9IGykhawp7WouoRHpldJM8gEP2mJVaoy5CQqMKvwep3rEv5o47SkbpS2/uhyHdws0mzTioofz8LskRgLjT+U7paE5PgOePLQN35VunRukGsCP4yuEaea0dNQm6eKQ2XyfrH7siCNUDJTrWZgZsQeaaGeRzOCXuAEGiQDP5GsajnMA74gDYmhATQgWZdI5wnF0ewlZhzFljb0TVTCdhOuUkUhZEE+7qaCraobzGXadL8YGP1JXGRmOMVtFAtjhWR2sVwG/pOQ5YYaLIhVTYX8g/hLZCQ7Uw08P2gwuKTuIEN+R7wAczWluuTqUxJmgr7H5XEu1sH/CONgw9kYvP4y",
+        "uTAj7xvTM96b4wIAAA=="
+      ]
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Tools.Shell/Sunder.Package.Agent.Tools.Shell.csproj",
+      "currentSha256": "cf37bd96bedae82106f8acbf1a0bb9e2ecae559c46c41baca0e307ddeb13487d",
+      "beforeSha256": "34b8add95f800cf03f3b8e8eee4417bb1e8ea2c6ee1c417b38f881bbf4a824af",
+      "indexBlob": "4948d649ec55d3c9579c267aef4a215372c949d3",
+      "provenance": "git-index-blob",
+      "textChunks": [
+        "H4sIAAAAAAAC/5WSwU+DMBTG7/wVhHjYDpZ434hubIZEzCJLvHCp5Y1VSh9pi8p/bwtkEDNNJHDoR9/vff1eVweF78CMnxXVOkg5U6jxZMjz7kisFESe5/sru6kBZbpHhW0TWcVqWSsLUAfKKlrCntZcdEkR6V4lzSAT+0lDDKLQRJ9BiFV4vc51CX+0cVpSN6iMP7pcBzeLNNu0XBTHM9d7LiDmyv5A1S0Jye074MlD3/gVVeXcWK4O/DC6RpxqRk9DbZ5iAULn/WL3ZUBqjjLDVjHQM2KPNFDPoxlBL3ACBZKBn0gm2gLmAV+QmsTQgDUgWZdI58mKo9lLzHYUW9rQNy646SacwLLksiQfd1PBFuvG5jJtul8MjP4kmRvCcIrbKObacMnMYrkM/Ccuqw3VtiDGmnL5B/GXyEh2pgqK/KBA2yV1BxnyO9oLMFdTqqoCPyVhOuh7XB7nYh38jzAONpyNwesv",
+        "kwsz8r4BYu+we+MCAAA="
+      ]
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Tools.Web/Sunder.Package.Agent.Tools.Web.csproj",
+      "currentSha256": "4b3814b03e737b907c25177f5bf06bedbbd161423041f0e8d15a632f055d6aed",
+      "beforeSha256": "46d40ef3435fcb86d8cdc7ea62d1acd9641da7c1af923b48f701bb0657eb8753",
+      "indexBlob": "b53570f4482384cf364aa9c6927767edbc8fb97b",
+      "provenance": "git-index-blob",
+      "textChunks": [
+        "H4sIAAAAAAAC/5WSzW6DMBCE73kKhHpIDjXqPUFtQlIhlSoqkXLh4tgb4mK8yDZNefuaHwVUtZWKzMGD99vxLMu9xndg1kt5sfITwTQaPFvyuj0QJ/nhbOZ5S3eoAm2bZ411FTrFaWmtOOg9ZQXNYUdLIZuYh6ZTSdXLxL3KEosoDbnCaRn8XNX2CL41abW4rFBbb/C48u/mSbquheSHizA7ISES2n1A3SwIydzq8eSpa3tEXbReHNf4XhD+RBxrBk99bZYgB2mybrP9tKCMQJVirRmYCbFDWiinwQygNziDBsXAixWTNYdpvDekIRFU4Awo1sSq9eTEwewtZDeIDa3oSUhhmxEnMc+FysnHw1iwwbJyuYyHHuc9o7vJEU79He7DSBgrFLPzxcL3XoQq1tS44xGWVKg/eL8ERtIL1cCzvQbjtrS9Rp/ewQ1/qiZUFxyvijDjdz1uT+ti5f+PMIw1mAxh1v1K",
+        "bZTh7Avtq0Eg3wIAAA=="
+      ]
+    }
+  ]
+}

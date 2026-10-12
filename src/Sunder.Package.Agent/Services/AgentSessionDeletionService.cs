@@ -1,5 +1,6 @@
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Models;
+using Sunder.Package.Agent.Storage;
 
 namespace Sunder.Package.Agent.Services;
 
@@ -23,7 +24,7 @@ internal sealed class AgentSessionDeletionService(
         await DeleteAsync(
             tree,
             workspaceId: null,
-            () => sessions.DeleteSession(sessionId),
+            cleaners => sessions.DeleteSessionRecords(sessionId, cleaners),
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -35,14 +36,14 @@ internal sealed class AgentSessionDeletionService(
         await DeleteAsync(
             workspaceSessions,
             workspaceId,
-            () => workspaces.DeleteWorkspace(workspaceId),
+            cleaners => workspaces.DeleteWorkspaceRecords(workspaceId, cleaners),
             cancellationToken).ConfigureAwait(false);
     }
 
     private async Task DeleteAsync(
         IReadOnlyList<AgentSessionRecord> targetSessions,
         string? workspaceId,
-        Action deletePersistence,
+        Func<IReadOnlyList<AgentSessionDataCleanerIdentity>, IReadOnlyList<Guid>> deletePersistence,
         CancellationToken cancellationToken)
     {
         var sessionIds = targetSessions
@@ -90,6 +91,8 @@ internal sealed class AgentSessionDeletionService(
                 : sessions.ListSessionsForWorkspace(workspaceId)
                     .Select(session => session.SessionId)
                     .ToHashSet();
+            var cleaners = await sessions.SnapshotSessionDataCleanersAsync(cancellationToken).ConfigureAwait(false);
+            IReadOnlyList<Guid> deletedSessionIds;
             var finalGates = await EnterGatesAsync(refreshedIds, cancellationToken).ConfigureAwait(false);
             try
             {
@@ -99,12 +102,14 @@ internal sealed class AgentSessionDeletionService(
                     throw new InvalidOperationException(
                         "A session run became active after deletion was fenced.");
                 }
-                deletePersistence();
+                cancellationToken.ThrowIfCancellationRequested();
+                deletedSessionIds = deletePersistence(cleaners);
             }
             finally
             {
                 DisposeGates(finalGates);
             }
+            await sessions.CompleteSessionDeletionAsync(deletedSessionIds).ConfigureAwait(false);
         }
         finally
         {

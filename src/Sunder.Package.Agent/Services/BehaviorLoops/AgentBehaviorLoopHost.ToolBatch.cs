@@ -53,7 +53,7 @@ internal sealed class AgentToolBatchCoordinator(AgentBehaviorLoopHost host)
                 if (permissionOutcome is not null)
                 {
                     outcomes[batchStartIndex + batchIndex] = permissionOutcome;
-                    PairUnexecutedCalls(toolCalls, outcomes, batchStartIndex + batchIndex, permissionOutcome);
+                    await PairUnexecutedCallsAsync(toolCalls, outcomes, batchStartIndex + batchIndex, permissionOutcome).ConfigureAwait(false);
                     return outcomes.Select(outcome => outcome!).ToArray();
                 }
             }
@@ -89,9 +89,9 @@ internal sealed class AgentToolBatchCoordinator(AgentBehaviorLoopHost host)
                 {
                     if (outcomes[index] is null)
                     {
-                        outcomes[index] = _host.RecordUnexecutedToolCall(
+                        outcomes[index] = await _host.RecordUnexecutedToolCallAsync(
                             toolCalls[index],
-                            "Tool result was not recorded because another call in the provider batch suspended the run.");
+                            "Tool result was not recorded because another call in the provider batch suspended the run.").ConfigureAwait(false);
                     }
                 }
 
@@ -103,7 +103,7 @@ internal sealed class AgentToolBatchCoordinator(AgentBehaviorLoopHost host)
             ?? throw new InvalidOperationException("Tool batch outcome was not populated.")).ToArray();
     }
 
-    private void PairUnexecutedCalls(
+    private async ValueTask PairUnexecutedCallsAsync(
         IReadOnlyList<AgentToolCallRequest> toolCalls,
         AgentToolCallOutcome?[] outcomes,
         int terminalIndex,
@@ -113,11 +113,11 @@ internal sealed class AgentToolBatchCoordinator(AgentBehaviorLoopHost host)
         {
             if (outcomes[index] is null && index != terminalIndex)
             {
-                outcomes[index] = _host.RecordUnexecutedToolCall(
+                outcomes[index] = await _host.RecordUnexecutedToolCallAsync(
                     toolCalls[index],
                     terminalOutcome.Kind == AgentToolCallOutcomeKind.WaitingForApproval
                         ? "Tool call was not executed because another call in the provider batch is waiting for permission."
-                        : "Tool call was not executed because another call in the provider batch terminated the run.");
+                        : "Tool call was not executed because another call in the provider batch terminated the run.").ConfigureAwait(false);
             }
         }
     }

@@ -59,7 +59,7 @@ public sealed class SubsessionTextTranscriptRowViewModel : SubsessionTranscriptR
     private ObservableStringBuilder _markdownBuilder;
 
     public SubsessionTextTranscriptRowViewModel(AgentTurnRecord turn, string content)
-        : base(turn.TurnId, turn.CreatedAtUtc, TranscriptRowAnchorKey.Text(turn.TurnId))
+        : base(turn.TurnId, AgentTranscriptTime.Read(turn.CreatedAtUtc), TranscriptRowAnchorKey.Text(turn.TurnId))
     {
         Role = turn.Role;
         RoleLabel = turn.Role.ToString().ToUpperInvariant();
@@ -236,14 +236,15 @@ public sealed class SubsessionToolInvocationRowViewModel : SubsessionTranscriptR
         TranscriptToolPresentationService presentationService,
         Func<AgentTranscriptToolDetailRequest, CancellationToken, Task<AgentTranscriptToolDetailRecord?>> loadDetail,
         Func<AgentTurnRecord, AgentTurnItemRecord, IReadOnlyList<SubsessionChildSessionLinkViewModel>>? childSessionLinksResolver = null)
-        : base(turn.TurnId, turn.CreatedAtUtc, projection.AnchorKey)
+        : base(turn.TurnId, AgentTranscriptTime.Read(turn.CreatedAtUtc), projection.AnchorKey)
     {
         _turn = turn;
         _currentItem = item;
         _projection = projection;
         _childSessionLinksResolver = childSessionLinksResolver;
         _resultTurnId = item.Kind == AgentTurnItemKind.ToolResult ? turn.TurnId : null;
-        _detailState = new TranscriptToolDetailState(projection, loadDetail, presentationService.Resolve);
+        _detailState = new TranscriptToolDetailState(projection, loadDetail,
+            (item, _) => ValueTask.FromResult(presentationService.Resolve(item)));
         _detailState.Changed += OnDetailStateChanged;
         _detailState.Invalidated += OnDetailVisualInvalidated;
         ApplyHeaderProjection();
@@ -297,14 +298,14 @@ public sealed class SubsessionToolInvocationRowViewModel : SubsessionTranscriptR
     public bool HasChildSessionLinks => ChildSessionLinks.Count > 0;
 
     internal TranscriptToolExpansionRequest? BeginExpansion() => _detailState.BeginExpansion();
-    internal Task<AgentTranscriptToolDetailRecord?> LoadDetailsAsync(
+    internal Task<TranscriptToolDetailData?> LoadDetailsAsync(
         TranscriptToolExpansionRequest request,
         CancellationToken cancellationToken)
         => _detailState.LoadAsync(request, cancellationToken);
     internal bool IsCurrentExpansion(TranscriptToolExpansionRequest request) => _detailState.IsCurrent(request);
     internal bool TryMaterializeDetails(
         TranscriptToolExpansionRequest request,
-        AgentTranscriptToolDetailRecord? detail,
+        TranscriptToolDetailData? detail,
         out TranscriptToolDetailViewModel? details)
         => _detailState.TryMaterialize(request, detail, out details);
     internal bool CommitExpansion(TranscriptToolExpansionRequest request) => _detailState.CommitExpanded(request);

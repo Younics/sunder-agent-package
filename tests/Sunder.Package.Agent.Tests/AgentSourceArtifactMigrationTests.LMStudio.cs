@@ -46,16 +46,21 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.True(!value.TryGetProperty("platformImports", out var platforms) || platforms.GetArrayLength() == 0);
         Assert.Equal("required", Assert.Single(value.GetProperty("dependsOn").EnumerateArray()).GetProperty("presence").GetString());
         await ProjectCanonicalWorker(worker, driver);
+        await ExerciseLMStudioWorkerProcess(root, Path.Combine(worker, "bin/worker-projection"), value);
+    }
+
+    private static async Task ExerciseLMStudioWorkerProcess(string root, string runtimeRoot, JsonElement value)
+    {
         var workspace = Directory.CreateDirectory(Path.Combine(root, "LMStudioProcessWorkspace")).FullName;
-        await using (var candidate = new PackageWorkerPeer(root, Path.Combine(worker, "bin/worker-projection"), workspace, value))
+        await using (var candidate = new PackageWorkerPeer(root, runtimeRoot, workspace, value))
         { await candidate.Prepare(); await candidate.Shutdown(); }
-        await using (var active = new PackageWorkerPeer(root, Path.Combine(worker, "bin/worker-projection"), workspace, value))
+        await using (var active = new PackageWorkerPeer(root, runtimeRoot, workspace, value))
         {
             await active.Prepare(); Assert.Equal(JsonValueKind.Object, active.Contributions.GetProperty("settingsSchema").ValueKind);
             await active.Activate();
             Assert.Equal("lmstudio", (await active.Invoke("lmstudio.chat", "chat-provider", "describe", new { })).GetProperty("providerId").GetString());
             Assert.Equal("lmstudio", (await active.Invoke("lmstudio.embedding", "embedding-provider", "describe", new { })).GetProperty("providerId").GetString());
-            Assert.True((await active.Invoke("lmstudio.chat", "chat-provider", "get-capabilities", new { modelId = "lmstudio/artifact" })).GetProperty("supportsStreamingToolCalls").GetBoolean());
+            Assert.True((await active.Invoke("lmstudio.chat", "chat-provider", "get-capabilities", "lmstudio/artifact")).GetProperty("supportsStreamingToolCalls").GetBoolean());
             await active.Shutdown();
         }
     }

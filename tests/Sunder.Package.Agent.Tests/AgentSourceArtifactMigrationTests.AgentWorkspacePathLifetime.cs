@@ -14,26 +14,21 @@ public sealed partial class AgentSourceArtifactMigrationTests
     {
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
         var peer = new WorkspacePathPeer();
-        Func<string, bool> canMigrate = value => peer.CanMigrate(JsonSerializer.Deserialize<AgentWorkspacePathMigrationContext>(value, MemoryProviderJson)!);
-        Func<string, CancellationToken, Task<string>> paths = async (value, token) => JsonSerializer.Serialize(
-            await peer.GetLegacyWorkspacePathsAsync(JsonSerializer.Deserialize<AgentWorkspacePathMigrationContext>(value, MemoryProviderJson)!, token), MemoryProviderJson);
-        Func<string, CancellationToken, Task> complete = (value, token) => peer.CompleteWorkspacePathMigrationAsync(
-            JsonSerializer.Deserialize<AgentWorkspacePathMigrationContext>(value, MemoryProviderJson)!, token);
-        var rolePeer = Activator.CreateInstance(probes.GetType("RoleLocalWorkspaceMigrator", true)!, peer.ContributorId, canMigrate, paths, complete)!;
-        var service = Activator.CreateInstance(local.GetType("Sunder.Package.Agent.Execution.Local.Rpc.WorkspacePathMigratorProvider", true)!, rolePeer)!;
-        var registration = SurfaceRegistration(service);
-        var handler = AddSurfaceProvider(state, "sunder.package.agent.execution.local", registration);
+        var handler = (SurfaceHandler)AddGeneratedPeer(state, "sunder.package.agent.execution.local", RegressionTestBindings.WorkspacePathMigrators,
+            peer, peer.ContributorId, value => new SurfaceHandler(value));
         var rpc = new FilesRpcObserver(new RegressionTestRpcClient(state, "sunder.package.agent"), "list-legacy-paths");
-        var snapshot = Assert.Single((await rpc.DiscoverAsync(AgentRpcContractIds.WorkspacePathMigrator)).Providers);
-        var clientType = owner.GetType("Sunder.Package.Agent.Runtime.Rpc.GeneratedWorkspacePathMigratorClient", true)!;
-        var client = AgentRoleBoundary.As<IAgentWorkspacePathMigrationContributor>(Activator.CreateInstance(clientType, rpc, snapshot)!);
-        await using var lifetime = (IAsyncDisposable)client;
+        Assert.Null(owner.GetType("Sunder.Package.Agent.Runtime.Rpc.GeneratedWorkspacePathMigratorClient"));
+        await using var lifetime = new GeneratedServiceTestScope(rpc);
+        var selected = Assert.Single(await ProjectedProviders(lifetime, owner, "IWorkspacePathMigratorService"));
+        using var client = selected.Service;
+        Assert.Same(owner, client.Value.GetType().Assembly);
         var now = DateTimeOffset.UtcNow;
         var context = new AgentWorkspacePathMigrationContext(new("workspace", "Workspace", null, now, now),
-            new("binding", "workspace", AgentRpcContractIds.ExecutionTarget, "local", "primary-execution-target", true, 0, now, now));
-        Assert.Equal(peer.ContributorId, client.ContributorId); Assert.True(client.CanMigrate(context));
-        Assert.False(client.CanMigrate(context with { Binding = context.Binding with { ContributionId = "other" } }));
-        Assert.Equal(peer.Items, await client.GetLegacyWorkspacePathsAsync(context));
+            new("binding", "workspace", RegressionTestBindings.ExecutionTargets, "local", "primary-execution-target", true, 0, now, now));
+        Assert.Equal(peer.ContributorId, (await client.InvokeAsync<AgentServiceIdentity>("DescribeAsync", CancellationToken.None)).Id);
+        Assert.True(await client.InvokeAsync<bool>("CanMigrateAsync", context, CancellationToken.None));
+        Assert.False(await client.InvokeAsync<bool>("CanMigrateAsync", context with { Binding = context.Binding with { ContributionId = "other" } }, CancellationToken.None));
+        Assert.Equal(peer.Items, await Paths());
         foreach (var change in new Func<SunderRpcProviderSnapshot, SunderRpcProviderSnapshot>[]
         {
             value => value with { PackageId = "other.package" }, value => value with { PackageVersion = "2.0.1" },
@@ -45,28 +40,35 @@ public sealed partial class AgentSourceArtifactMigrationTests
         })
         {
             rpc.Transform = change;
-            Assert.Equal(SunderRpcErrorKind.StaleEndpoint, Assert.Throws<SunderRpcException>(() => client.CanMigrate(context)).Error.Kind);
-            Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => client.CompleteWorkspacePathMigrationAsync(context))).Error.Kind);
+            Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => client.InvokeAsync<bool>("CanMigrateAsync", context, CancellationToken.None).AsTask())).Error.Kind);
+            Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => Complete())).Error.Kind);
         }
         Assert.Equal(0, peer.Completed); rpc.Transform = null;
         rpc.InvalidateAfterInvoke = true;
-        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => client.GetLegacyWorkspacePathsAsync(context))).Error.Kind);
+        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => Paths())).Error.Kind);
         rpc.InvalidateAfterInvoke = false; rpc.Transform = null;
         using (var cancelled = new CancellationTokenSource())
         {
             cancelled.Cancel(); var calls = handler.Calls.Count;
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.GetLegacyWorkspacePathsAsync(context, cancelled.Token));
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.CompleteWorkspacePathMigrationAsync(context, cancelled.Token));
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Paths(cancelled.Token));
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Complete(cancelled.Token));
             Assert.Equal(calls, handler.Calls.Count);
         }
         handler.BlockMethod = "complete"; handler.Gate = new();
-        var pending = client.CompleteWorkspacePathMigrationAsync(context);
+        var pending = Complete();
         await handler.Gate.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
         var stopped = lifetime.DisposeAsync().AsTask(); Assert.Same(stopped, lifetime.DisposeAsync().AsTask());
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+        var failure = await Assert.ThrowsAsync<SunderRpcException>(() => pending.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(SunderRpcErrorKind.Unavailable, failure.Error.Kind);
+        Assert.Equal("rpc.binding.retired", failure.Error.Code);
         await stopped.WaitAsync(TimeSpan.FromSeconds(5)); Assert.Equal(0, peer.Completed);
-        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, Assert.Throws<SunderRpcException>(() => client.ContributorId).Error.Kind);
-        Assert.Equal(0, rpc.UnscopedLookups); Assert.All(rpc.Scopes, scope => Assert.True(scope.Disposed));
+        var disposed = Assert.Throws<TargetInvocationException>(() => selected.Reference.GetType().GetProperty("Service")!.GetValue(selected.Reference));
+        Assert.Equal(SunderRpcErrorKind.Unavailable, Assert.IsType<SunderRpcException>(disposed.InnerException).Error.Kind);
+        rpc.AssertScopedOperations(); Assert.All(rpc.Scopes, scope => Assert.True(scope.Disposed));
+        Task<AgentWorkspacePathMigrationItem[]> Paths(CancellationToken token = default)
+            => client.InvokeAsync<AgentWorkspacePathMigrationItem[]>("ListLegacyPathsAsync", context, token).AsTask();
+        Task<object?> Complete(CancellationToken token = default)
+            => client.InvokeAsync<object?>("CompleteAsync", context, token).AsTask();
     }
 
     private sealed class WorkspacePathPeer : IAgentWorkspacePathMigrationContributor

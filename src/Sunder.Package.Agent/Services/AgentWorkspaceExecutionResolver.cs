@@ -1,17 +1,23 @@
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
+using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Services;
 
-public sealed class AgentWorkspaceExecutionResolver(
+[SunderService(SunderServiceExposure.Public, Key = "workspace-execution-resolver", ContractId = "sunder.agent.workspace.execution.resolver", ServiceId = "workspace-execution-resolver", IncludeSchemaDialect = true)]
+[SunderServiceProvider(ProviderId = "agent.workspace.execution.resolver")]
+[SunderAppUse(Enabled = false)]
+public sealed partial class AgentWorkspaceExecutionResolver(
     AgentWorkspaceService workspaceService,
-    AgentExecutionTargetService executionTargetService) : IAgentWorkspaceExecutionResolver
+    AgentExecutionTargetService executionTargetService)
 {
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
     public async ValueTask<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesAsync(
         CancellationToken cancellationToken = default)
         => await workspaceService.ListWorkspacesAsync(cancellationToken).ConfigureAwait(false);
 
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
     public async ValueTask<AgentWorkspaceExecutionResolution> ResolveAsync(
         string workspaceId,
         CancellationToken cancellationToken = default)
@@ -24,44 +30,24 @@ public sealed class AgentWorkspaceExecutionResolver(
             .FirstOrDefault(binding => binding.IsEnabled
                                        && string.Equals(binding.Role, AgentWorkspaceBindingRoles.PrimaryExecutionTarget, StringComparison.OrdinalIgnoreCase))
             ?? throw new InvalidOperationException("Selected workspace is not bound to an execution target.");
-        var target = executionTargetService.ResolveTargetReference(binding)
+        var target = await executionTargetService.ResolveTargetAsync(binding, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidOperationException("Selected workspace execution target is not available.");
-        if (!target.TryAcquire(out var lease))
-        {
-            throw new InvalidOperationException("Selected workspace execution target is not available.");
-        }
         var context = new AgentExecutionTargetContext(null, null, workspace, binding);
-        AgentExecutionTargetDescriptor descriptor;
-        AgentExecutionScopeDescriptor scope;
-        IAgentExecutionTarget executionTarget;
-        using (lease)
-        using (var invocation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lease.RetirementToken))
+        var descriptor = await target.Service.DescribeAsync(cancellationToken).ConfigureAwait(false);
+        var readiness = await target.Service.ReadinessAsync(context, cancellationToken).ConfigureAwait(false);
+        if (readiness.Status != AgentExecutionTargetReadinessStatus.Ready)
         {
-            executionTarget = lease.Service;
-            descriptor = executionTarget.Descriptor;
-            var readiness = await executionTarget.GetReadinessAsync(context, invocation.Token).ConfigureAwait(false);
-            if (readiness.Status != AgentExecutionTargetReadinessStatus.Ready)
-            {
-                throw new InvalidOperationException(readiness.Message);
-            }
-            scope = descriptor.SupportsFacet(AgentExecutionFacetIds.ExecutionScope)
-                ? await ((IAgentExecutionScopeProvider)executionTarget).GetExecutionScopeAsync(context, invocation.Token).ConfigureAwait(false)
-                : new AgentExecutionScopeDescriptor(descriptor.DisplayName, []);
+            throw new InvalidOperationException(readiness.Message);
         }
+        var scope = descriptor.SupportsFacet(AgentExecutionFacetIds.ExecutionScope)
+            ? await target.Service.ExecutionScopeAsync(context, cancellationToken).ConfigureAwait(false)
+            : new AgentExecutionScopeDescriptor(descriptor.DisplayName, []);
         if (scope.WorkspacePaths.Count == 0)
         {
             throw new InvalidOperationException("Selected workspace execution target does not expose a workspace path.");
         }
 
-        return new AgentWorkspaceExecutionResolution(
-            workspace,
-            binding,
-            descriptor,
-            scope,
-            executionTarget)
-        {
-            ExecutionTargetReference = target,
-            ExecutionTargetHandle = target.ToHandle(),
-        };
+        await target.EnsureCurrentAsync(cancellationToken).ConfigureAwait(false);
+        return new AgentWorkspaceExecutionResolution(workspace, binding, descriptor, scope, target.Reference);
     }
 }

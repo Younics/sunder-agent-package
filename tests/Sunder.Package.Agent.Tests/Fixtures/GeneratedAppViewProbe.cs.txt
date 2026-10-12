@@ -13,6 +13,7 @@ using Sunder.Sdk.Avalonia;
 using Sunder.Sdk.Logging;
 using Sunder.Sdk.Notifications;
 using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
 
 var assembly = Assembly.Load(new AssemblyName(args[0]));
 var mcp = assembly.GetName().Name == "Sunder.Package.Agent.Mcp.App";
@@ -29,6 +30,7 @@ var agentState = agent ? DispatchProxy.Create<IPackageKeyValueStore, AgentStateP
 if ((skillState ?? builderState ?? agentState) is { } state) ((MetadataHost)context).Storage = new StateOnlyStorageProbe(state);
 var rpc = mcp || memory || skills || subagents || builder || agent ? DispatchProxy.Create<ISunderRpcClient, BlockedOwnerRpc>() : DispatchProxy.Create<ISunderRpcClient, MetadataHost>();
 var blocked = rpc as BlockedOwnerRpc;
+if (blocked is not null) { blocked.RoleAssembly = assembly; BlockedOwnerRpc.Latest = blocked; }
 if (blocked is not null) blocked.ContractId = memory ? "sunder.agent.memory.semantic.inspector"
     : skills ? "sunder.package.agent.skills.owner" : subagents ? "sunder.package.agent.subagents.owner"
     : builder ? "sunder.package.agent.builder.runtime" : agent ? "sunder.agent.owner.runtime" : "sunder.package.agent.mcp.management";
@@ -223,26 +225,39 @@ static void VerifyAgentViews(Assembly assembly, ServiceProvider services, AppVie
     }
     AddPair(registry.Settings.Single(), true);
     var gateway = services.GetRequiredService(assembly.GetType("Sunder.Package.Agent.Runtime.AgentAppRuntimeGateway", true)!);
+    var profiles = services.GetRequiredService(assembly.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Services.IAgentProfileService", true)!);
     var selection = services.GetRequiredService(assembly.GetType("Sunder.Package.Agent.Services.AgentChatSelectionStateService", true)!);
-    var catalog = services.GetRequiredService(assembly.GetType("Sunder.Package.Agent.Services.AgentAppRpcCatalog", true)!);
+    var catalogChecks = 0;
     foreach (var control in controls)
     {
         var model = control.DataContext!;
-        foreach (var port in new[] { "_profileService", "_workspaceService", "_sessionService", "_permissionService", "_runCoordinator", "_attachmentService", "_executionGateway", "_gateway" })
-            if (Field(model, port) is { } value && !ReferenceEquals(value, gateway)) throw new Exception("Agent view lost its shared gateway: " + port);
+        foreach (var port in new[] { "_profileService", "_profileNotifications", "_workspaceService", "_sessionService", "_permissionService", "_runCoordinator", "_attachmentService", "_executionGateway", "_gateway" })
+        {
+            var expected = model.GetType().Name == "AgentProfilesViewModel" && port == "_profileService" ? profiles : gateway;
+            if (Field(model, port) is { } value && !ReferenceEquals(value, expected)) throw new Exception("Agent view lost its owned service: " + port);
+        }
         if (Field(model, "_selectionState") is { } state && !ReferenceEquals(state, selection)) throw new Exception("Agent selection state was duplicated.");
-        if (Field(model, "_rpcCatalog") is { } rpcCatalog && !ReferenceEquals(rpcCatalog, catalog)) throw new Exception("Agent catalog was duplicated.");
+        foreach (var field in model.GetType().GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+            .Where(field => field.FieldType.IsGenericType && field.FieldType.GetGenericTypeDefinition() == typeof(IServiceProviders<>)))
+        {
+            if (!ReferenceEquals(field.GetValue(model), services.GetRequiredService(field.FieldType)))
+                throw new Exception("Agent typed service catalog was duplicated: " + field.Name);
+            catalogChecks++;
+        }
         if (Field(model, "_shellViewService") is { } shellView && !ReferenceEquals(shellView, shell)) throw new Exception("Agent shell navigation lost its Host instance.");
         if (Field(model, "_settingsNavigationService") is { } settings && !ReferenceEquals(settings, navigation)) throw new Exception("Agent settings navigation lost its Host instance.");
     }
+    if (catalogChecks < 2) throw new Exception("Both workspace views must borrow their activation-owned typed editor catalog.");
     if (ReferenceEquals(Field(controls[2], "_context"), Field(controls[3], "_context"))) throw new Exception("Workspace view contexts must be per-view.");
     if (Field(controls[0], "TranscriptItemsControl")?.GetType().FullName != "Avalonia.Controls.ItemsRepeater"
         || Field(controls[6], "HistoryResultsRepeater")?.GetType().FullName != "Avalonia.Controls.ItemsRepeater")
         throw new Exception("Agent transcript/history controls were not compiled.");
-    PumpUntil(() => blocked.ActiveWatches == 1 && blocked.Active >= 3);
+    PumpUntil(() => blocked.ActiveWatches == 1 && blocked.Active == 1);
+    if (blocked.Started != 1) throw new Exception("Agent shared bootstrap was duplicated before view initialization.");
     if (blocked.Watches != 1) throw new Exception("Agent catalog observation was duplicated.");
 
     var loads = controls.Select(control => Initialize(control.DataContext!)).ToArray();
+    PumpUntil(() => blocked.Active >= 3);
     Dispatcher.UIThread.RunJobs();
     if (loads.Any(load => load.IsCompleted)) throw new Exception("Agent view initialization did not wait for its runtime.");
     using (var cancellation = new CancellationTokenSource())
@@ -429,7 +444,7 @@ static void PumpUntil(Func<bool> complete)
 {
     var timeout = Stopwatch.StartNew();
     while (!complete() && timeout.Elapsed < TimeSpan.FromSeconds(5)) { Dispatcher.UIThread.RunJobs(); Thread.Sleep(5); }
-    if (!complete()) throw new Exception("View initialization/observation did not reach its expected lifetime boundary.");
+    if (!complete()) throw new Exception("View initialization/observation did not reach its expected lifetime boundary. " + BlockedOwnerRpc.Latest?.Diagnostic);
 }
 
 public sealed class AppServicesLifetime(ServiceProvider services, Action<Func<bool>> pump) : IDisposable
@@ -555,25 +570,75 @@ public sealed class DormantBackgroundQueue : IBackgroundProcessQueue
 
 public class BlockedOwnerRpc : DispatchProxy
 {
+    public static BlockedOwnerRpc? Latest { get; set; }
+    private readonly System.Collections.Concurrent.ConcurrentQueue<string> _calls = new();
+    public string Diagnostic => $"started={Started}, active={Active}, watches={Watches}, activeWatches={ActiveWatches}; calls={string.Join(';', _calls)}";
     private int _active, _started;
     private int _activeWatches, _watches;
     public string ContractId { get; set; } = "";
+    public Assembly? RoleAssembly { get; set; }
+    private readonly Dictionary<string, SunderRpcProviderSnapshot> _providers = new(StringComparer.Ordinal);
     public int Active => Volatile.Read(ref _active);
     public int Started => Volatile.Read(ref _started);
     public int ActiveWatches => Volatile.Read(ref _activeWatches);
     public int Watches => Volatile.Read(ref _watches);
     protected override object? Invoke(MethodInfo? method, object?[]? arguments)
     {
-        if (ContractId == "sunder.agent.owner.runtime")
+        _calls.Enqueue(method?.Name + ":" + (arguments?.FirstOrDefault() is string value ? value : ""));
+        if (RoleAssembly is not null)
         {
             if (method?.Name == "get_ResourceProfile") return null;
             if (method?.Name == "WatchAsync") return Watch((CancellationToken)arguments![2]!);
+            if (method?.Name == "DiscoverAsync")
+            {
+                var contract = (string)arguments![0]!;
+                if (contract != ContractId && !(ContractId == "sunder.agent.owner.runtime" && contract == "sunder.package.agent.agent.profile"))
+                    return ValueTask.FromResult(new SunderRpcCatalogSnapshot(1, 1, []));
+                lock (_providers)
+                {
+                    if (!_providers.TryGetValue(contract, out var provider))
+                    {
+                        var descriptors = RoleAssembly!.GetTypes().SelectMany(type =>
+                            type.GetFields(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+                                .Where(field => field.FieldType == typeof(SunderRpcContractDescriptor)).Select(field => (SunderRpcContractDescriptor)field.GetValue(null)!)
+                                .Concat(type.GetProperties(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+                                    .Where(property => property.PropertyType == typeof(SunderRpcContractDescriptor) && property.GetIndexParameters().Length == 0)
+                                    .Select(property => (SunderRpcContractDescriptor)property.GetValue(null)!)));
+                        var descriptor = descriptors.First(value => value.ContractId == contract);
+                        var packageId = RoleAssembly.GetName().Name![..^4].ToLowerInvariant();
+                        var providerId = contract switch
+                        {
+                            "sunder.agent.owner.runtime" => "agent.owner.runtime",
+                            "sunder.package.agent.agent.profile" => "agent.profile",
+                            "sunder.package.agent.builder.runtime" => "builder.runtime",
+                            "sunder.package.agent.subagents.owner" => "subagents.management",
+                            "sunder.package.agent.skills.owner" => "skills.management",
+                            "sunder.agent.memory.semantic.inspector" => "semantic.memory.inspector",
+                            "sunder.package.agent.mcp.management" => "mcp.management",
+                            _ => throw new Exception("Unexpected fixture contract: " + contract),
+                        };
+                        provider = new(packageId, "2.0.0", providerId,
+                            descriptor.ContractId, descriptor.Version, descriptor.Sha256, descriptor.AbiSha256!,
+                            Guid.NewGuid(), 1, 1, new("probe." + contract), 1, SunderRpcProviderState.Active);
+                        _providers.Add(contract, provider);
+                    }
+                    return ValueTask.FromResult(new SunderRpcCatalogSnapshot(1, 1, [provider]));
+                }
+            }
+            if (method?.Name == "GetProviderAsync")
+            {
+                lock (_providers) return ValueTask.FromResult<SunderRpcProviderSnapshot?>(
+                    _providers.Values.SingleOrDefault(value => value.Endpoint == (SunderRpcEndpointReference)arguments![0]!));
+            }
+            if (method?.Name == "CreateCallScopeAsync")
+                return new ValueTask<ISunderRpcCallScope>(WaitForRuntime<ISunderRpcCallScope>((CancellationToken)arguments![1]!));
         }
-        if (method?.Name != "DiscoverAsync" || !Equals(arguments![0], ContractId))
+        if (method?.Name != "DiscoverAsync" || !(Equals(arguments![0], ContractId)
+            || ContractId == "sunder.agent.owner.runtime" && Equals(arguments[0], "sunder.package.agent.agent.profile")))
             throw new Exception("Unexpected owner RPC: " + method?.Name);
-        return new ValueTask<SunderRpcCatalogSnapshot>(Discover((CancellationToken)arguments[1]!));
+        return new ValueTask<SunderRpcCatalogSnapshot>(WaitForRuntime<SunderRpcCatalogSnapshot>((CancellationToken)arguments[1]!));
     }
-    private async Task<SunderRpcCatalogSnapshot> Discover(CancellationToken token)
+    private async Task<T> WaitForRuntime<T>(CancellationToken token)
     {
         Interlocked.Increment(ref _started); Interlocked.Increment(ref _active);
         try { await Task.Delay(Timeout.Infinite, token).ConfigureAwait(false); throw new Exception("Blocked discovery completed without cancellation."); }

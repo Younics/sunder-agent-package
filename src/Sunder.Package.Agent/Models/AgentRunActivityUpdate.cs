@@ -4,7 +4,7 @@ namespace Sunder.Package.Agent.Models;
 
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 public sealed record AgentRunActivityUpdate(
-    long RunRevision,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long RunRevision,
     AgentRunActivityKind Kind,
     string Text,
     DateTimeOffset CreatedAtUtc);

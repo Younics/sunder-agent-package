@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Authenticated staged retained-project before-images with exact reviewed live current input guards; data only.",
+  "sources": [
+    {
+      "path": "src/Sunder.Agent.Execution.Common/Sunder.Agent.Execution.Common.csproj",
+      "currentSha256": "67991f01d9cb367e970ca6a6d5406f96c8efbf5a559e2c0e3fe70ba80e6035c6",
+      "beforeSha256": "adb1fe30baa79f16d83bbd56944bf6801b16ecd15542d70caba8fe7e75b4120d",
+      "indexBlob": "3ef7ba31b978ca5d2a15f0bf84ece1f32cc399ac",
+      "provenance": "git-index-blob",
+      "textChunks": [
+        "H4sIAAAAAAAC/6VUwW7bMAy99ys432N/wNIAa5IVAZatsAP0kosmsYkaWfQoOm3+fpLdGEUwYI2rk0TyPVLkk6YPTM+oBSpzuM3WVjMFepL853KTR1M2uwGYxpgGWU73TG2TLNFWtd4gx5ASn5DRa5wJtzgt/uFIHMUFSbJ9mUxgs7cBGEVZjwYC6patnIpfFTj7mxWfgF58ACsBHGnlwFAdY+GoXIshh7L1YmvsioqrUfqgdhhAU91YhyB7hKBqjDmOFl9SDmpZI1gvlLyWwQZySqLrkfiADEwOc5hMusJXgvX7i8/fiFdeu9bgbZbn2/7O+UOfPP+2Qy/bNRl0YdsdEnGItWGJmtjkOmTww/rU8v9EFSPTLl9jK8WSv6C+s95YvxsyfL2OZzhuFO9Q5uQFX+XTPAsMmm0jxNdTfY9tqVCx3vf+6xkqHaVpVj5EBetkXtig6Yh8Ghizs8D6lWZ3pwIO8xsYx09sQ3QWQom9SOdO2foD97mAuiOaM8V16NTLElVE/4mvS8aCQ+tGYB/jy8fRmRfo8BPwdSsqzW9M8Wnb45bMxPMY8BHNdAxvepkW7/6Z7rNMv/Ls5i//q1N1oAUAAA=="
+      ]
+    }
+  ]
+}

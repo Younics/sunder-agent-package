@@ -6,6 +6,7 @@ using AgentApp::Sunder.Package.Agent.Services;
 using AgentApp::Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Notifications;
+using AgentServices = AgentApp::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -31,13 +32,13 @@ internal static class RegressionTestAppViews
                 AgentRoleBoundary.As<IAgentAttachmentGateway>(attachmentService), notificationService, packageContext);
 
     internal static AgentProfilesView ProfilesView(object profileService)
-        => new(AgentRoleBoundary.As<IAgentProfileGateway>(profileService));
+        => new(AgentRoleBoundary.As<AgentServices.IAgentProfileService>(profileService), AgentRoleBoundary.As<IAgentProfileGateway>(profileService));
 
     internal static AgentWorkspacesView WorkspacesView(object workspaceService, object executionGateway,
         RegressionTestExtensionCatalog catalog, IPackageSettingsNavigationService? settingsNavigationService = null,
         AgentWorkspacesViewContext? context = null)
         => new(AgentRoleBoundary.As<IAgentWorkspaceGateway>(workspaceService), AgentRoleBoundary.As<IAgentExecutionGateway>(executionGateway),
-            catalog.AppCatalog, settingsNavigationService, context);
+            catalog.WorkspaceEditors, settingsNavigationService, context);
 
     internal static AgentChatViewModel Chat(object profileService, object workspaceService, object sessionService,
         object permissionService, object runCoordinator, AgentChatSelectionStateService? selectionState = null,
@@ -59,10 +60,10 @@ internal static class RegressionTestAppViews
             AsOptional<IAgentExecutionGateway>(warmupService), shellViewService, AsOptional<IAgentAttachmentGateway>(attachmentService), operationObserver);
 
     internal static AgentProfilesViewModel Profiles(object profileService, IPackageSettingsNavigationService? settingsNavigationService = null)
-        => new(AgentRoleBoundary.As<IAgentProfileGateway>(profileService), settingsNavigationService);
+        => new(AgentRoleBoundary.As<AgentServices.IAgentProfileService>(profileService), AgentRoleBoundary.As<IAgentProfileGateway>(profileService), settingsNavigationService);
     internal static AgentProfilesViewModel Profiles(object profileService, IPackageSettingsNavigationService? settingsNavigationService,
         IPresentationDispatcher uiDispatcher, TimeProvider? runtimeNoticeTimeProvider = null)
-        => new(AgentRoleBoundary.As<IAgentProfileGateway>(profileService), settingsNavigationService, uiDispatcher, runtimeNoticeTimeProvider);
+        => new(AgentRoleBoundary.As<AgentServices.IAgentProfileService>(profileService), AgentRoleBoundary.As<IAgentProfileGateway>(profileService), settingsNavigationService, uiDispatcher, runtimeNoticeTimeProvider);
 
     private static T? AsOptional<T>(object? value) where T : class => value is null ? null : AgentRoleBoundary.As<T>(value);
 }

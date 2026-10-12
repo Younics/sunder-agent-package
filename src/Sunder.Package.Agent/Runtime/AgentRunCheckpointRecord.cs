@@ -17,7 +17,7 @@ namespace Sunder.Package.Agent.Contracts.Models;
 public sealed record AgentRunCheckpointRecord(
     Guid CheckpointId,
     Guid SessionId,
-    long RunRevision,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long RunRevision,
     AgentRunStatus Status,
     string? Summary,
     DateTimeOffset CreatedAtUtc);

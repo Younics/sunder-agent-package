@@ -4,9 +4,10 @@ using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
-using Sunder.Sdk.Abstractions;
+using Sunder.Package.Agent.Rpc.Public;
 using Sunder.Sdk.Rpc;
 using Xunit;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -21,7 +22,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         await using var owned = lifetime;
         var profiles = provider.GetRequiredService(owner.GetType("Sunder.Package.Agent.Services.AgentProfileService", true)!);
         var tools = provider.GetRequiredService(owner.GetType("Sunder.Package.Agent.Services.AgentToolService", true)!);
-        var domain = AgentRoleBoundary.As<IAgentRuntimeCatalog>(provider.GetRequiredService(owner.GetType("Sunder.Package.Agent.Services.AgentRuntimeCatalog", true)!));
+        var catalog = AgentRoleBoundary.As<AgentServices.IRuntimeCatalogService>(provider.GetRequiredService(owner.GetType("Sunder.Package.Agent.Services.AgentRuntimeCatalog", true)!));
         var now = DateTimeOffset.UtcNow;
         var profile = new AgentProfileRecord("profile.catalog", "Catalog 漢字", "Description", "Instructions", "chat", "chat-model", "embedding", "embedding-model", now, now,
             ModelBindings: [new("profile.catalog", AgentModelCapabilityKinds.Chat, "chat", "chat-model", "{opaque model settings", now),
@@ -30,16 +31,19 @@ public sealed partial class AgentSourceArtifactMigrationTests
             BehaviorLoopId: "loop", BehaviorLoopSourceId: "loop.source", BehaviorLoopSettingsJson: "{opaque loop settings");
         SurfaceCall(profiles, "ImportProfile", profile);
         // Persistence normalizes model bindings and stamps their update times.
-        // The transport must preserve that committed snapshot, not the import input.
-        profile = domain.GetProfile(profile.ProfileId)!;
+        profile = (await catalog.GetProfileAsync(profile.ProfileId))!;
         var tool = new ProfileCatalogTool();
-        using var providerCatalog = AgentRpcCatalog.CreateDormant(rpc.ForCaller("example.profile.tools"));
-        var toolHandler = new Sunder.Generated.Rpc.ToolSource.SunderAgentToolSourceRpcHandler(new RegressionTestToolProvider(tool, providerCatalog));
-        state.Add("example.profile.tools", RegressionTestRpcDescriptors.Get(AgentRpcContractIds.ToolSource), toolHandler, toolHandler, Noop.Instance, "fixture.profile.tools", "2.0.0");
-        Assert.Equal("", (await Permission(profile.ProfileId))!.ActionId);
-        var service = AgentRoleBoundary.Create(owner.GetType("Sunder.Package.Agent.Rpc.Public.RuntimeCatalogService", true)!, domain);
-        var registration = SurfaceRegistration(service);
-        var handler = AddSurfaceProvider(state, "sunder.package.agent", registration);
+        await using var toolScope = new GeneratedServiceTestScope(rpc.ForCaller("example.profile.tools"));
+        Assert.True(RegressionTestGeneratedProviders.TryRegister(toolScope, RegressionTestBindings.ToolSources, tool, out var toolRegistration));
+        AddSurfaceProvider(state, "example.profile.tools", toolRegistration);
+        // The owning tool service resolves its profile from the local store;
+        // remote catalog availability must not gate this local business path.
+        Assert.Null(await Permission(profile.ProfileId));
+
+        await using var catalogProviderScope = new GeneratedServiceTestScope(rpc.ForCaller("sunder.package.agent"));
+        Assert.True(RegressionTestGeneratedProviders.TryRegister(catalogProviderScope, RegressionTestBindings.RuntimeCatalog,
+            catalog, out var catalogRegistration));
+        var handler = AddSurfaceProvider(state, "sunder.package.agent", catalogRegistration);
         Assert.Null(await Permission(profile.ProfileId));
         Assert.Equal(profile.ProfileId, tool.LastProfile!.ProfileId);
         Assert.Equal(profile.BehaviorLoopSettingsJson, tool.LastProfile.BehaviorLoopSettingsJson);
@@ -47,29 +51,37 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.Equal(profile.SelectableCapabilityAssignments, tool.LastProfile.SelectableCapabilityAssignments);
         Assert.Equal("", (await Permission("missing"))!.ActionId);
         var calls = handler.Calls.Count;
-        Assert.Null(await Permission(" ")); Assert.Equal(calls, handler.Calls.Count);
+        Assert.Null(await Permission(" "));
+        Assert.Equal(calls, handler.Calls.Count);
 
         var observed = new FilesRpcObserver(rpc, "get-profile");
-        var snapshot = Assert.Single((await rpc.DiscoverAsync(AgentRpcContractIds.RuntimeCatalog)).Providers);
-        var clientType = owner.GetType("Sunder.Package.Agent.Runtime.Rpc.GeneratedToolProfileCatalogClient", true)!;
-        object Create() => Activator.CreateInstance(clientType, observed, snapshot)!;
-        static Func<string, AgentProfileRecord?> Get(object client) => id => AgentRoleBoundary.As<AgentProfileRecord?>(AgentRoleBoundary.Call(client, "GetProfile", id)!);
-        var client = Create(); await using var clientLifetime = (IAsyncDisposable)client;
-        var get = Get(client);
-        Assert.True(JsonElement.DeepEquals(JsonSerializer.SerializeToElement(domain.GetProfile(profile.ProfileId), MemoryProviderJson),
-            JsonSerializer.SerializeToElement(get(profile.ProfileId), MemoryProviderJson)));
-        Assert.Null(get("missing"));
+        await using var catalogClientScope = new GeneratedServiceTestScope(observed);
+        var client = await SelectCatalogAsync();
+        async Task<AgentProfileRecord?> GetProfileAsync(string id)
+            => await client.GetProfileAsync(id);
+
+        var committed = await GetProfileAsync(profile.ProfileId);
+        Assert.True(JsonElement.DeepEquals(
+            JsonSerializer.SerializeToElement(profile, MemoryProviderJson),
+            JsonSerializer.SerializeToElement(committed, MemoryProviderJson)));
+        Assert.Null(await GetProfileAsync("missing"));
+        Assert.Null(owner.GetType("Sunder.Package.Agent.Runtime.IAgentToolProfileCatalog"));
+        Assert.Null(owner.GetType("Sunder.Package.Agent.Runtime.Rpc.AgentToolProfileBindings"));
+        Assert.Null(owner.GetType("Sunder.Package.Agent.Runtime.Rpc.GeneratedToolProfileCatalogClient"));
         profile = profile with { SelectableCapabilityAssignments = [], Description = null, Instructions = null, ChatProviderId = null, ChatModelId = null,
             EmbeddingProviderId = null, EmbeddingModelId = null, ModelBindings = null, BehaviorLoopSettingsJson = null };
         SurfaceCall(profiles, "ImportProfile", profile);
         Assert.Equal("", (await Permission(profile.ProfileId))!.ActionId);
-        var empty = get(profile.ProfileId)!; Assert.Null(empty.Description); Assert.Null(empty.Instructions); Assert.Null(empty.ChatProviderId);
+        var empty = (await GetProfileAsync(profile.ProfileId))!; Assert.Null(empty.Description); Assert.Null(empty.Instructions); Assert.Null(empty.ChatProviderId);
         Assert.Empty(empty.SelectableCapabilityAssignments ?? []);
         profile = profile with { SelectableCapabilityAssignments = [new("TOOL", "PROFILE-TOOL", "different-source")] };
-        SurfaceCall(profiles, "ImportProfile", profile); Assert.Equal("", (await Permission(profile.ProfileId))!.ActionId);
+        SurfaceCall(profiles, "ImportProfile", profile);
+        Assert.Equal("", (await Permission(profile.ProfileId))!.ActionId);
         profile = profile with { SelectableCapabilityAssignments = [new("TOOL", "PROFILE-TOOL", "FIXTURE.PROFILE")] };
-        SurfaceCall(profiles, "ImportProfile", profile); Assert.Null(await Permission(profile.ProfileId));
-        SurfaceCall(profiles, "DeleteProfile", profile.ProfileId); Assert.Null(get(profile.ProfileId));
+        SurfaceCall(profiles, "ImportProfile", profile);
+        Assert.Null(await Permission(profile.ProfileId));
+        SurfaceCall(profiles, "DeleteProfile", profile.ProfileId);
+        Assert.Null(await GetProfileAsync(profile.ProfileId));
         Assert.Equal("", (await Permission(profile.ProfileId))!.ActionId);
         SurfaceCall(profiles, "ImportProfile", profile);
 
@@ -83,40 +95,87 @@ public sealed partial class AgentSourceArtifactMigrationTests
             value => value with { Endpoint = new("other-endpoint") }, value => value with { State = SunderRpcProviderState.Inactive },
         })
         {
+            await using var checkScope = new GeneratedServiceTestScope(observed);
+            var checkClient = await SelectCatalogAsync(checkScope);
+            calls = handler.Calls.Count;
             observed.Transform = change;
-            Assert.Equal(SunderRpcErrorKind.StaleEndpoint, Assert.Throws<SunderRpcException>(() => get(profile.ProfileId)).Error.Kind);
+            Assert.Equal(SunderRpcErrorKind.StaleEndpoint,
+                (await Assert.ThrowsAsync<SunderRpcException>(() => checkClient.GetProfileAsync(profile.ProfileId).AsTask())).Error.Kind);
+            Assert.Equal(calls, handler.Calls.Count);
+            observed.Transform = null;
         }
-        observed.Transform = null; observed.InvalidateAfterInvoke = true;
-        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, Assert.Throws<SunderRpcException>(() => get(profile.ProfileId)).Error.Kind);
-        observed.InvalidateAfterInvoke = false; observed.Transform = null;
-        observed.LookupFailure = SunderRpcErrorKind.PermissionDenied;
-        Assert.Equal(SunderRpcErrorKind.PermissionDenied, Assert.Throws<SunderRpcException>(() => get(profile.ProfileId)).Error.Kind);
-        observed.LookupFailure = null;
+        await using (var checkScope = new GeneratedServiceTestScope(observed))
+        {
+            var checkClient = await SelectCatalogAsync(checkScope);
+            calls = handler.Calls.Count;
+            observed.InvalidateAfterInvoke = true;
+            Assert.Equal(SunderRpcErrorKind.StaleEndpoint,
+                (await Assert.ThrowsAsync<SunderRpcException>(() => checkClient.GetProfileAsync(profile.ProfileId).AsTask())).Error.Kind);
+            Assert.Equal(calls + 1, handler.Calls.Count);
+            observed.InvalidateAfterInvoke = false;
+            observed.Transform = null;
+        }
+        await using (var checkScope = new GeneratedServiceTestScope(observed))
+        {
+            var checkClient = await SelectCatalogAsync(checkScope);
+            calls = handler.Calls.Count;
+            observed.LookupFailure = SunderRpcErrorKind.PermissionDenied;
+            Assert.Equal(SunderRpcErrorKind.PermissionDenied,
+                (await Assert.ThrowsAsync<SunderRpcException>(() => checkClient.GetProfileAsync(profile.ProfileId).AsTask())).Error.Kind);
+            Assert.Equal(calls, handler.Calls.Count);
+            observed.LookupFailure = null;
+        }
         handler.FailMethod = "get-profile";
-        Assert.Equal(SunderRpcErrorKind.ProviderFaulted, Assert.Throws<SunderRpcException>(() => get(profile.ProfileId)).Error.Kind);
-        Assert.Equal(SunderRpcErrorKind.ProviderFaulted, (await Assert.ThrowsAsync<SunderRpcException>(() => Permission(profile.ProfileId))).Error.Kind);
-        handler.FailMethod = null; handler.BlockMethod = "get-profile"; handler.Gate = new();
-        var pending = Task.Run(() => get(profile.ProfileId));
+        Assert.Equal(SunderRpcErrorKind.ProviderFaulted,
+            (await Assert.ThrowsAsync<SunderRpcException>(() => GetProfileAsync(profile.ProfileId))).Error.Kind);
+        calls = handler.Calls.Count;
+        Assert.Null(await Permission(profile.ProfileId));
+        Assert.Equal(calls, handler.Calls.Count);
+        handler.FailMethod = null;
+        handler.BlockMethod = "get-profile";
+        handler.Gate = new();
+        var pending = GetProfileAsync(profile.ProfileId);
         await handler.Gate.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await state.RetireAsync(handler).WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => pending)).Error.Kind);
-        Assert.Equal("", (await Permission(profile.ProfileId))!.ActionId);
-        handler = AddSurfaceProvider(state, "sunder.package.agent", registration);
-        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, Assert.Throws<SunderRpcException>(() => get(profile.ProfileId)).Error.Kind);
+        Assert.Equal(SunderRpcErrorKind.StaleEndpoint,
+            (await Assert.ThrowsAsync<SunderRpcException>(() => pending)).Error.Kind);
+        calls = handler.Calls.Count;
         Assert.Null(await Permission(profile.ProfileId));
-        snapshot = Assert.Single((await rpc.DiscoverAsync(AgentRpcContractIds.RuntimeCatalog)).Providers);
-        var replacement = Create(); await using var nextLifetime = (IAsyncDisposable)replacement;
-        var next = Get(replacement); Assert.Equal(profile.ProfileId, next(profile.ProfileId)!.ProfileId);
-        handler.BlockMethod = "get-profile"; handler.Gate = new();
-        var stopping = Task.Run(() => next(profile.ProfileId)); await handler.Gate.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        var stopped = nextLifetime.DisposeAsync().AsTask(); Assert.Same(stopped, nextLifetime.DisposeAsync().AsTask());
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => stopping); await stopped.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, Assert.Throws<SunderRpcException>(() => next(profile.ProfileId)).Error.Kind);
-        Assert.Equal(0, handler.Streams); Assert.Equal(0, observed.UnscopedLookups); Assert.Equal(0, observed.ActiveWatches);
+        Assert.Equal(calls, handler.Calls.Count);
+        handler = AddSurfaceProvider(state, "sunder.package.agent", catalogRegistration);
+        Assert.Equal(SunderRpcErrorKind.StaleEndpoint,
+            (await Assert.ThrowsAsync<SunderRpcException>(() => GetProfileAsync(profile.ProfileId))).Error.Kind);
+        Assert.Null(await Permission(profile.ProfileId));
+        client = await SelectCatalogAsync();
+        Assert.Equal(profile.ProfileId, (await GetProfileAsync(profile.ProfileId))!.ProfileId);
+        handler.BlockMethod = "get-profile";
+        handler.Gate = new();
+        var stopping = GetProfileAsync(profile.ProfileId);
+        await handler.Gate.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var stopped = catalogClientScope.DisposeAsync().AsTask();
+        Assert.Same(stopped, catalogClientScope.DisposeAsync().AsTask());
+        AssertRetired((await Assert.ThrowsAsync<SunderRpcException>(() => stopping)).Error);
+        await stopped.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => GetProfileAsync(profile.ProfileId));
+        Assert.Equal(0, handler.Streams);
+        observed.AssertScopedOperations();
+        Assert.Equal(0, observed.ActiveWatches);
         Assert.All(observed.Scopes, scope => Assert.True(scope.Disposed));
 
-        Task<AgentPermissionRequest?> Permission(string id) => ((Task<AgentPermissionRequest?>)SurfaceCall(tools, "BuildPermissionRequestAsync",
-            "profile-tool", "{}", null, id, null, null, null, null, null, CancellationToken.None, null)!).WaitAsync(TimeSpan.FromSeconds(10));
+        async Task<AgentServices.IRuntimeCatalogService> SelectCatalogAsync(GeneratedServiceTestScope? scope = null)
+            => Assert.Single((await (scope ?? catalogClientScope).Providers<AgentServices.IRuntimeCatalogService>().ListAsync()).Providers).Service;
+
+        static void AssertRetired(SunderRpcError error)
+        {
+            Assert.Equal(SunderRpcErrorKind.Unavailable, error.Kind);
+            Assert.Equal("rpc.binding.retired", error.Code);
+            Assert.Equal(SunderRpcDispatchState.PossiblyDispatched, error.DispatchState);
+            Assert.Equal(SunderRpcRetrySafety.Unsafe, error.RetrySafety);
+        }
+
+        Task<AgentPermissionRequest?> Permission(string id)
+            => ((Task<AgentPermissionRequest?>)SurfaceCall(tools, "BuildPermissionRequestAsync",
+                "profile-tool", "{}", null, id, null, null, null, null, null, CancellationToken.None, null)!).WaitAsync(TimeSpan.FromSeconds(10));
     }
 
     private sealed class ProfileCatalogTool : IAgentToolSource

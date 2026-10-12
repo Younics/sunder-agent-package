@@ -7,7 +7,7 @@ public sealed record AgentPendingPermissionRequestRecord(
     string RequestId,
     Guid SessionId,
     Guid RunId,
-    long RunRevision,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long RunRevision,
     string? ProfileId,
     Guid UserTurnId,
     string UserMessage,
@@ -43,6 +43,7 @@ public sealed record AgentPendingPermissionRequestRecord(
     public Guid? ToolExecutionId { get; init; }
 
     /// <summary>Gets the schema version of the persisted durable resource-claim set.</summary>
+    [Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")]
     public int ResourceClaimSetVersion { get; init; }
 
     /// <summary>Gets every durable resource claim covered by this permission request.</summary>

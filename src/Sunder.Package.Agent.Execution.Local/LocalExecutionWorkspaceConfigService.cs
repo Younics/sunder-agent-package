@@ -4,14 +4,16 @@ using System.Security.Cryptography;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
-using Sunder.Package.Agent.Contracts.Contracts;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using Sunder.Sdk.Services;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Shared.Storage;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Execution.Local;
 
-public sealed class LocalExecutionWorkspaceConfigService : IAgentWorkspacePathMigrationContributor
+[SunderServiceProvider(typeof(IWorkspacePathMigratorService), ProviderId = "local.workspace.path.migrator")]
+public sealed partial class LocalExecutionWorkspaceConfigService : IWorkspacePathMigratorService
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
     private static readonly HashSet<string> SupportedProperties = new(StringComparer.OrdinalIgnoreCase)
@@ -136,10 +138,13 @@ public sealed class LocalExecutionWorkspaceConfigService : IAgentWorkspacePathMi
             pathEntries);
     }
 
-    public bool CanMigrate(AgentWorkspacePathMigrationContext context)
-        => string.Equals(context.Binding.ContributionId, "local", StringComparison.OrdinalIgnoreCase);
+    public ValueTask<AgentServiceIdentity> DescribeAsync(CancellationToken token = default)
+    { token.ThrowIfCancellationRequested(); return ValueTask.FromResult(new AgentServiceIdentity { Id = ContributorId, DisplayName = ContributorId }); }
 
-    public async Task<IReadOnlyList<AgentWorkspacePathMigrationItem>> GetLegacyWorkspacePathsAsync(
+    public ValueTask<bool> CanMigrateAsync(AgentWorkspacePathMigrationContext context, CancellationToken token = default)
+    { token.ThrowIfCancellationRequested(); return ValueTask.FromResult(string.Equals(context.Binding.ContributionId, "local", StringComparison.OrdinalIgnoreCase)); }
+
+    public async ValueTask<IReadOnlyList<AgentWorkspacePathMigrationItem>> ListLegacyPathsAsync(
         AgentWorkspacePathMigrationContext context,
         CancellationToken cancellationToken = default)
     {
@@ -183,7 +188,7 @@ public sealed class LocalExecutionWorkspaceConfigService : IAgentWorkspacePathMi
 
                 var hostPath = Path.GetFullPath(ExpandPath(value.Trim()));
                 var isDefault = normalizedDefault is not null && IsSameOrChildPath(normalizedDefault, hostPath);
-                items.Add(new AgentWorkspacePathMigrationItem(hostPath, isDefault, SortOrder: index++));
+                items.Add(new AgentWorkspacePathMigrationItem { HostPath = hostPath, IsDefault = isDefault, SortOrder = index++ });
             }
 
             return items;
@@ -205,7 +210,7 @@ public sealed class LocalExecutionWorkspaceConfigService : IAgentWorkspacePathMi
         }
     }
 
-    public async Task CompleteWorkspacePathMigrationAsync(
+    public async ValueTask CompleteAsync(
         AgentWorkspacePathMigrationContext context,
         CancellationToken cancellationToken = default)
         => await SaveConfigAsync(

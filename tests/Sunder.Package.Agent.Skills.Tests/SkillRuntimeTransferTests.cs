@@ -1,6 +1,5 @@
 extern alias SkillsApp;
 
-using AppRuntime = SkillsApp::Sunder.Package.Agent.Skills.Runtime;
 using SkillAppRuntimeGateway = SkillsApp::Sunder.Package.Agent.Skills.Runtime.SkillAppRuntimeGateway;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -11,6 +10,8 @@ using Sunder.Package.Agent.Skills.Runtime;
 using Sunder.Package.Agent.Skills.Services;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Logging;
+using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
 using Sunder.Sdk.Storage;
 using Xunit;
 
@@ -44,10 +45,9 @@ public sealed class SkillRuntimeTransferTests
             var stored = Assert.Single(store.ListSkills());
             Assert.Equal(JsonSerializer.Serialize(stored), JsonSerializer.Serialize(skill));
             Assert.Equal("runtime-readable content", await File.ReadAllTextAsync(Path.Combine(store.GetSkillRootPath(stored), "resource.txt")));
-            Assert.NotNull(client.LastCommand);
-            Assert.Equal(SkillCommandKind.ImportTransfer, client.LastCommand!.Kind);
-            Assert.NotEqual(source, client.LastCommand.Value);
-            Assert.Matches("^[0-9a-f]{32}$", client.LastCommand.Value!);
+            Assert.NotNull(client.LastTransferId);
+            Assert.NotEqual(source, client.LastTransferId);
+            Assert.Matches("^[0-9a-f]{32}$", client.LastTransferId!);
             Assert.Empty(files.Paths);
         }
         finally
@@ -82,10 +82,7 @@ public sealed class SkillRuntimeTransferTests
                     archive.LongLength,
                     Convert.ToHexString(SHA256.HashData(archive)).ToLowerInvariant())));
 
-            await Assert.ThrowsAnyAsync<InvalidOperationException>(() =>
-                handler.HandleAsync(
-                    new SkillCommand(SkillCommandKind.ImportTransfer, transferId))
-                    .AsTask());
+            await AssertOwnerOperationFailedAsync(() => handler.ImportTransferAsync(transferId).AsTask());
 
             Assert.Empty(store.ListSkills());
             Assert.Empty(files.Paths);
@@ -120,8 +117,7 @@ public sealed class SkillRuntimeTransferTests
             await files.WriteAsync($"{transferRoot}/chunks/0000.bin", new byte[] { 1 });
             await files.WriteAsync($"{transferRoot}/manifest.json", System.Text.Encoding.UTF8.GetBytes(manifestJson));
 
-            await Assert.ThrowsAnyAsync<InvalidOperationException>(() =>
-                handler.HandleAsync(new SkillCommand(SkillCommandKind.ImportTransfer, transferId)).AsTask());
+            await AssertOwnerOperationFailedAsync(() => handler.ImportTransferAsync(transferId).AsTask());
 
             Assert.Empty(files.Paths);
         }
@@ -280,30 +276,30 @@ public sealed class SkillRuntimeTransferTests
         return output.ToArray();
     }
 
-    private sealed class HandlerRuntimeClient(SkillRuntimeHandler handler) : AppRuntime.ISkillOwnerClient
+    private static async Task AssertOwnerOperationFailedAsync(Func<Task> action)
     {
-        public SkillCommand? LastCommand { get; private set; }
+        var error = await Assert.ThrowsAsync<SunderRpcException>(action);
+        Assert.Equal("skills.owner.operation-failed", error.Error.Code);
+    }
 
-        public async ValueTask<AppRuntime.SkillProjection> QueryAsync(CancellationToken cancellationToken = default)
-            => ToApp(await handler.HandleAsync(new SkillQuery(), cancellationToken));
-
-        public async ValueTask<AppRuntime.SkillProjection> CommandAsync(
-            AppRuntime.SkillCommand command,
-            CancellationToken cancellationToken = default)
+    private sealed class HandlerRuntimeClient(SkillRuntimeHandler handler) : SkillsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Skills_Services.ISkillsManagementService
+    {
+        public string? LastTransferId { get; private set; }
+        public ValueTask<SunderContent> QueryAsync(CancellationToken cancellationToken = default)
+            => handler.QueryAsync(cancellationToken);
+        public ValueTask<SunderContent> ImportGitHubAsync(string url, CancellationToken cancellationToken = default)
+            => handler.ImportGitHubAsync(url, cancellationToken);
+        public ValueTask<SunderContent> ImportCommonAsync(CancellationToken cancellationToken = default)
+            => handler.ImportCommonAsync(cancellationToken);
+        public ValueTask<SunderContent> ImportTransferAsync(string transferId, CancellationToken cancellationToken = default)
         {
-            LastCommand = new SkillCommand(Enum.Parse<SkillCommandKind>(command.Kind.ToString()), command.Value);
-            return ToApp(await handler.HandleAsync(LastCommand, cancellationToken));
+            LastTransferId = transferId;
+            return handler.ImportTransferAsync(transferId, cancellationToken);
         }
-
-        public async IAsyncEnumerable<AppRuntime.SkillChanged> SubscribeChangesAsync(
-            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
-        {
-            await Task.CompletedTask;
-            yield break;
-        }
-
-        private static AppRuntime.SkillProjection ToApp(SkillProjection projection)
-            => JsonSerializer.Deserialize<AppRuntime.SkillProjection>(JsonSerializer.SerializeToUtf8Bytes(projection))!;
+        public ValueTask DeleteAsync(string skillId, CancellationToken cancellationToken = default)
+            => handler.DeleteAsync(skillId, cancellationToken);
+        public IAsyncEnumerable<long> ChangesAsync(CancellationToken cancellationToken = default)
+            => handler.ChangesAsync(cancellationToken);
     }
 
     internal sealed class TestContext(
@@ -402,7 +398,7 @@ public sealed class SkillRuntimeTransferTests
         public Task DeleteSecretAsync(string key, CancellationToken cancellationToken = default) { ValidateKey(key); return Task.CompletedTask; }
     }
 
-    private sealed class UnusedGitHubClient : IGitHubSkillClient
+    internal sealed class UnusedGitHubClient : IGitHubSkillClient
     {
         public Task<string?> TryGetDefaultBranchAsync(string owner, string repo, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<GitHubSkillFolder?> TryGetFolderAsync(GitHubSkillFolderRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();

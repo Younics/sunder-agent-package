@@ -1,3 +1,6 @@
+using Sunder.Package.Agent.Contracts.Contracts;
+using Sunder.Sdk.Rpc;
+
 namespace Sunder.Package.Agent.Services;
 
 public sealed class AgentActiveRunRegistry
@@ -5,6 +8,64 @@ public sealed class AgentActiveRunRegistry
     private readonly object _syncRoot = new();
     private readonly Dictionary<Guid, AgentActiveRunHandle> _activeRuns = new();
     private readonly Dictionary<Guid, Dictionary<Guid, AgentActiveRunHandle>> _inFlightRuns = new();
+    private readonly Dictionary<Guid, BehaviorInvocation> _behaviorInvocations = new();
+
+    internal AgentBehaviorInvocationGrant OpenBehaviorInvocation(
+        Guid sessionId,
+        Guid runId,
+        long runRevision,
+        IAgentBehaviorLoopRuntime runtime,
+        string callerPackageId)
+    {
+        ArgumentNullException.ThrowIfNull(runtime);
+        ArgumentException.ThrowIfNullOrWhiteSpace(callerPackageId);
+        lock (_syncRoot)
+        {
+            if (!_activeRuns.TryGetValue(sessionId, out var current)
+                || !Matches(current, runId, runRevision))
+            {
+                throw InvalidBehaviorInvocation();
+            }
+
+            Guid invocationId;
+            do invocationId = Guid.NewGuid();
+            while (!_behaviorInvocations.TryAdd(invocationId, new(
+                sessionId, runId, runRevision, callerPackageId, runtime)));
+            return new(invocationId, CloseBehaviorInvocation);
+        }
+    }
+
+    internal IAgentBehaviorLoopRuntime ResolveBehaviorInvocation(Guid invocationId, string callerPackageId)
+    {
+        lock (_syncRoot)
+        {
+            if (!_behaviorInvocations.TryGetValue(invocationId, out var invocation)
+                || !string.Equals(invocation.CallerPackageId, callerPackageId, StringComparison.Ordinal))
+            {
+                throw InvalidBehaviorInvocation();
+            }
+            return invocation.Runtime;
+        }
+    }
+
+    private void CloseBehaviorInvocation(Guid invocationId)
+    {
+        lock (_syncRoot) _behaviorInvocations.Remove(invocationId);
+    }
+
+    private void RevokeBehaviorInvocations(Guid sessionId, Guid runId, long runRevision)
+    {
+        foreach (var invocation in _behaviorInvocations.Where(item => item.Value.SessionId == sessionId
+                     && item.Value.RunId == runId && item.Value.RunRevision == runRevision).ToArray())
+            _behaviorInvocations.Remove(invocation.Key);
+    }
+
+    private static SunderRpcException InvalidBehaviorInvocation()
+        => new(new(SunderRpcErrorKind.PermissionDenied, "agent.run-control.invalid-invocation",
+            "The behavior-loop run-control invocation is unavailable."));
+
+    private sealed record BehaviorInvocation(Guid SessionId, Guid RunId, long RunRevision,
+        string CallerPackageId, IAgentBehaviorLoopRuntime Runtime);
 
     internal AgentRunActivationResult Activate(Guid sessionId, AgentActiveRunHandle candidate)
     {
@@ -29,6 +90,7 @@ public sealed class AgentActiveRunRegistry
             }
 
             _activeRuns[sessionId] = candidate;
+            RevokeBehaviorInvocations(sessionId, current.RunId, current.RunRevision);
             TrackInFlight(sessionId, candidate);
             return new AgentRunActivationResult(
                 AgentRunActivationOutcome.Replaced,
@@ -46,6 +108,7 @@ public sealed class AgentActiveRunRegistry
                 return null;
             }
 
+            RevokeBehaviorInvocations(sessionId, activeRun.RunId, activeRun.RunRevision);
             return activeRun;
         }
     }
@@ -61,6 +124,7 @@ public sealed class AgentActiveRunRegistry
             }
 
             _activeRuns.Remove(sessionId);
+            RevokeBehaviorInvocations(sessionId, activeRun.RunId, activeRun.RunRevision);
             return activeRun;
         }
     }
@@ -99,6 +163,7 @@ public sealed class AgentActiveRunRegistry
         AgentActiveRunHandle? completed = null;
         lock (_syncRoot)
         {
+            RevokeBehaviorInvocations(sessionId, runId, runRevision);
             if (_activeRuns.TryGetValue(sessionId, out var current)
                 && Matches(current, runId, runRevision))
             {
@@ -145,6 +210,7 @@ public sealed class AgentActiveRunRegistry
             {
                 _activeRuns.Remove(sessionId);
                 removedRun = activeRun;
+                RevokeBehaviorInvocations(sessionId, activeRun.RunId, activeRun.RunRevision);
             }
         }
 
@@ -164,6 +230,17 @@ public sealed class AgentActiveRunRegistry
             _inFlightRuns.Add(sessionId, inFlight);
         }
         inFlight[candidate.RunId] = candidate;
+    }
+}
+
+internal sealed class AgentBehaviorInvocationGrant(Guid invocationId, Action<Guid> close) : IDisposable
+{
+    private int _closed;
+    internal Guid InvocationId { get; } = invocationId;
+
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _closed, 1) == 0) close(InvocationId);
     }
 }
 

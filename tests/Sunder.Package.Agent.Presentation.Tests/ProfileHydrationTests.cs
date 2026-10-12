@@ -40,7 +40,10 @@ public sealed class ProfileHydrationTests
         using var viewModel = RegressionTestAppViews.Profiles(profileService);
         var initialization = viewModel.InitializeAsync();
         var concurrentInitialization = viewModel.InitializeAsync();
-        await provider.LoadStarted.Task.WaitAsync(TestContext.Current.CancellationToken);
+        Assert.True(
+            await Task.WhenAny(provider.LoadStarted.Task, initialization).WaitAsync(TestContext.Current.CancellationToken)
+                == provider.LoadStarted.Task,
+            $"Initialization completed before model hydration started: {viewModel.StatusText}");
 
         var adapter = Adapt(viewModel);
         AdaptiveEditorLifecycleContract.SharedInitialization(adapter, provider.LoadCount);
@@ -83,7 +86,10 @@ public sealed class ProfileHydrationTests
             embeddingModelId: null);
         using var viewModel = RegressionTestAppViews.Profiles(profileService);
         var initialization = viewModel.InitializeAsync();
-        await provider.LoadStarted.Task.WaitAsync(TestContext.Current.CancellationToken);
+        Assert.True(
+            await Task.WhenAny(provider.LoadStarted.Task, initialization).WaitAsync(TestContext.Current.CancellationToken)
+                == provider.LoadStarted.Task,
+            $"Initialization completed before model hydration started: {viewModel.StatusText}");
         Assert.True(viewModel.IsHydrating);
 
         viewModel.IsCompactLayout = true;
@@ -150,18 +156,15 @@ public sealed class ProfileHydrationTests
         RegressionTestExtensionCatalog extensionCatalog)
     {
         var store = new AgentLocalStore(scope.Context);
-        var sessionService = new AgentSessionService(store, extensionCatalog);
-        var workspaceService = new AgentWorkspaceService(store, extensionCatalog, sessionService);
+        var sessionService = new AgentSessionService(store, extensionCatalog.SessionCleaners);
+        var workspaceService = new AgentWorkspaceService(store, extensionCatalog.SessionCleaners, sessionService, extensionCatalog.WorkspacePathMigrators);
         var toolService = new AgentToolService(
             sessionService,
             workspaceService,
-            new AgentExecutionTargetService(extensionCatalog),
-            extensionCatalog);
-        return new AgentProfileService(
-            store,
-            toolService,
-            extensionCatalog,
-            extensionCatalog.BehaviorLoops);
+            new AgentExecutionTargetService(extensionCatalog.ExecutionTargets),
+            extensionCatalog.ToolSources,
+            extensionCatalog.ObservedToolExecutions);
+        return extensionCatalog.CreateProfileService(store, toolService);
     }
 
     private static IAdaptiveEditorLifecycleAdapter Adapt(AgentProfilesViewModel viewModel)

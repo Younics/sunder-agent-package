@@ -16,4 +16,4 @@ namespace Sunder.Package.Agent.Contracts.Models;
 public sealed record AgentWorkspaceEditorContext(
     AgentWorkspaceRecord Workspace,
     string TargetId,
-    string ConfigurationId);
+    [property: Sunder.Sdk.Services.SunderValueConstraints(MinLength = 1)] string ConfigurationId);

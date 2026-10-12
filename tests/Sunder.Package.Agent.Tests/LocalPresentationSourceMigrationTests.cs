@@ -1,7 +1,8 @@
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.TestSupport;
 using Sunder.Sdk.Rpc;
-using Sunder.Sdk.Worker;
+using Microsoft.Extensions.DependencyInjection;
+using System.Text.Json;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -13,61 +14,67 @@ public sealed class LocalPresentationSourceMigrationTests
 {
     internal static readonly string[] SourcePaths =
     [
-        "src/Sunder.Package.Agent.Execution.Local/Rpc/ManagementService.cs",
-        "src/Sunder.Package.Agent.Execution.Local/Rpc/ManagementClient.cs",
+        "src/Sunder.Package.Agent.Execution.Local/LocalExecutionPresentationService.cs",
+        "src/Sunder.Package.Agent.Execution.Local/App/LocalExecutionSettingsViewModel.cs",
     ];
 
     [AgentPublicSourceMigrationFact]
     public async Task PresentationSource_PreservesContractSettingsAndRevisionConflictsAcrossIsolatedApp()
     {
-        using var source = PrivateManagementSourceFixture.Load("Execution.Local", RegressionTestRpcDescriptors.Get("sunder.package.agent.execution.local.presentation"));
+        using var source = PrivateManagementSourceFixture.Load("Execution.Local", CurrentPrivateRpcDescriptors.Get("sunder.package.agent.execution.local.presentation"));
         using var package = RegressionTestPackageScope.Create();
         var context = new TestPackageContext("sunder.package.agent.execution.local", package.RootPath, storage: package.Context.Storage);
         var catalog = new LocalShellCatalogService(context);
-        var handler = new LocalExecutionPresentationRpcHandler(context, catalog);
-        var type = source.Worker.GetType("Sunder.Package.Agent.Execution.Local.Rpc.ManagementService", true)!;
-        var service = AgentRoleBoundary.Create(type, handler);
-        var registration = Assert.IsType<SunderWorkerProviderRegistration>(type.GetMethod("CreateSunderRpcProviderRegistration")!.Invoke(service, null));
-        Assert.Equal("local.presentation", registration.ProviderId);
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        state.Add("sunder.package.agent.execution.local", source.Descriptor, service, registration.Handler, Noop.Instance, registration.ProviderId, "2.0.0");
-        var client = AgentRoleBoundary.As<ILocalExecutionPresentationClient>(AgentRoleBoundary.Create(source.App.GetType("Sunder.Package.Agent.Execution.Local.App.LocalExecutionSourceClient", true)!,
-            new RegressionTestRpcClient(state, "sunder.package.agent.execution.local")));
+        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent.execution.local");
+        var (options, lifetime, _) = AgentSourceArtifactMigrationTests.CreateGeneratedWorker(source.Worker, context, rpc);
+        await using var owned = lifetime;
+        var registration = Assert.Single(options.Providers, provider => provider.ProviderId == "local.presentation");
+        Assert.Equal("local.presentation", registration.ProviderId);
+        state.Add("sunder.package.agent.execution.local", source.Descriptor, registration.Handler, registration.Handler, Noop.Instance, registration.ProviderId, "2.0.0");
+        await using var app = AgentSourceArtifactMigrationTests.CreateGeneratedApp(source.App, context, rpc);
+        var client = app.GetRequiredService(source.App.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Execution_Local_Services.IPresentationService", true)!);
+        Assert.Same(source.App, client.GetType().Assembly);
 
-        var initial = await client.ExecuteAsync(new(LocalExecutionOperationKind.GetSettings));
-        Assert.True(initial.Success);
-        Assert.Equal("300", initial.TimeoutSeconds);
-        Assert.Empty(initial.CustomShells!);
-        var saved = await client.ExecuteAsync(new(LocalExecutionOperationKind.SaveSettings, TimeoutSeconds: "41"));
-        Assert.Equal("41", saved.TimeoutSeconds);
-        Assert.Equal("41", (await client.ExecuteAsync(new(LocalExecutionOperationKind.GetSettings))).TimeoutSeconds);
-        var invalid = await client.ExecuteAsync(new(LocalExecutionOperationKind.SaveSettings, TimeoutSeconds: "86401"));
-        Assert.False(invalid.Success);
-        Assert.Equal("local.timeout.invalid", invalid.Error!.Code);
-        Assert.Null(invalid.Error.CorrelationId);
+        var initial = await InvokeAsync("GetSettingsAsync", CancellationToken.None);
+        Assert.True(initial.GetProperty("success").GetBoolean());
+        Assert.Equal("300", initial.GetProperty("timeoutSeconds").GetString());
+        Assert.Empty(initial.GetProperty("customShells").EnumerateArray());
+        var saved = await InvokeAsync("SaveSettingsAsync", "41", CancellationToken.None);
+        Assert.Equal("41", saved.GetProperty("timeoutSeconds").GetString());
+        Assert.Equal("41", (await InvokeAsync("GetSettingsAsync", CancellationToken.None)).GetProperty("timeoutSeconds").GetString());
+        var invalid = await InvokeAsync("SaveSettingsAsync", "86401", CancellationToken.None);
+        Assert.False(invalid.GetProperty("success").GetBoolean());
+        Assert.Equal("local.timeout.invalid", invalid.GetProperty("error").GetProperty("code").GetString());
+        Assert.Equal(JsonValueKind.Null, invalid.GetProperty("error").GetProperty("correlationId").ValueKind);
         var executable = Path.Combine(package.RootPath, "source-shell");
         File.WriteAllText(executable, string.Empty);
-        var shell = new LocalShellDefinition("source-shell", "Source λ", executable, AgentShellSyntaxKinds.PosixSh, false);
-        var shellSaved = await client.ExecuteAsync(new(LocalExecutionOperationKind.SaveShells,
-            Shells: [shell], ExpectedShellCatalogRevision: initial.ShellCatalogRevision));
-        Assert.True(shellSaved.Success);
-        Assert.Equal(shell, Assert.Single(shellSaved.CustomShells!));
-        Assert.Equal(initial.ShellCatalogRevision + 1, shellSaved.ShellCatalogRevision);
-        var conflict = await client.ExecuteAsync(new(LocalExecutionOperationKind.SaveShells,
-            Shells: [], ExpectedShellCatalogRevision: initial.ShellCatalogRevision));
-        Assert.False(conflict.Success);
-        Assert.Equal("local.shell-catalog.conflict", conflict.Error!.Code);
-        Assert.True(conflict.Error.IsTransient);
-        Assert.Equal(shell, Assert.Single(await catalog.ListCustomShellsAsync()));
+        var initialRevision = initial.GetProperty("shellCatalogRevision").GetInt64();
+        var shellSaved = await InvokeAsync("SaveShellsAsync", new[] { new LocalShellDefinition("source-shell", "Source", executable, "posix-sh", false) }, initialRevision, CancellationToken.None);
+        Assert.True(shellSaved.GetProperty("success").GetBoolean());
+        Assert.Equal("source-shell", Assert.Single(shellSaved.GetProperty("customShells").EnumerateArray()).GetProperty("shellId").GetString());
+        Assert.Equal(initialRevision + 1, shellSaved.GetProperty("shellCatalogRevision").GetInt64());
+        var conflict = await InvokeAsync("SaveShellsAsync", Array.Empty<LocalShellDefinition>(), initialRevision, CancellationToken.None);
+        Assert.False(conflict.GetProperty("success").GetBoolean());
+        Assert.Equal("local.shell-catalog.conflict", conflict.GetProperty("error").GetProperty("code").GetString());
+        Assert.True(conflict.GetProperty("error").GetProperty("isTransient").GetBoolean());
+        Assert.Equal("source-shell", Assert.Single(await catalog.ListCustomShellsAsync()).ShellId);
         using (var cancelled = new CancellationTokenSource())
         {
             cancelled.Cancel();
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.ExecuteAsync(new(LocalExecutionOperationKind.SaveSettings, TimeoutSeconds: "52"), cancelled.Token).AsTask());
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => InvokeAsync("SaveSettingsAsync", "52", cancelled.Token).AsTask());
         }
-        Assert.Equal("41", (await client.ExecuteAsync(new(LocalExecutionOperationKind.GetSettings))).TimeoutSeconds);
-        await state.RetireAsync(service);
-        var unavailable = await Assert.ThrowsAsync<SunderRpcException>(() => client.ExecuteAsync(new(LocalExecutionOperationKind.GetSettings)).AsTask());
-        Assert.Equal("local.presentation.unavailable", unavailable.Error.Code);
+        Assert.Equal("41", (await InvokeAsync("GetSettingsAsync", CancellationToken.None)).GetProperty("timeoutSeconds").GetString());
+        await state.RetireAsync(registration.Handler);
+        var unavailable = await Assert.ThrowsAsync<SunderRpcException>(() => InvokeAsync("GetSettingsAsync", CancellationToken.None).AsTask());
+        Assert.Equal("rpc.provider-not-found", unavailable.Error.Code);
+
+        async ValueTask<JsonElement> InvokeAsync(string method, params object?[] arguments)
+        {
+            var result = await AgentRoleBoundary.Await(AgentRoleBoundary.Call(client, method, arguments)!);
+            Assert.Same(source.App, result!.GetType().Assembly);
+            return JsonSerializer.SerializeToElement(result, result.GetType(), new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        }
     }
 
     private sealed class Noop : IDisposable { internal static Noop Instance { get; } = new(); public void Dispose() { } }

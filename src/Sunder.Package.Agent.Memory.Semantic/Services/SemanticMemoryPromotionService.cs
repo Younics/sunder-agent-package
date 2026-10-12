@@ -16,60 +16,6 @@ public sealed partial class SemanticMemoryPromotionService(
     private readonly SemanticMemoryIndexingBackgroundService _indexingBackgroundService = indexingBackgroundService;
     private readonly SemanticMemoryMetricsService _metricsService = metricsService;
 
-    public async Task PromoteDurableMemoriesAsync(AgentLifecycleEvent lifecycleEvent, CancellationToken cancellationToken)
-    {
-        var candidates = ExtractPromotionCandidates(lifecycleEvent)
-            .Take(MaxPromotionCandidatesPerEvent)
-            .ToArray();
-        if (candidates.Length == 0)
-        {
-            return;
-        }
-
-        var activeMemories = _store.ListActiveMemories(lifecycleEvent.Session.SessionId).ToList();
-        var committedCount = 0;
-        foreach (var candidate in candidates)
-        {
-            var mergeTarget = FindMergeCandidate(candidate, activeMemories);
-            var mergedCandidate = mergeTarget is null
-                ? candidate
-                : MergeCandidate(candidate, mergeTarget);
-
-            var upserted = _store.TryUpsertMemoryWithinLimit(
-                new MemoryUpsertRequest(
-                    lifecycleEvent.Session.SessionId,
-                    mergedCandidate.Category,
-                    mergedCandidate.Content,
-                    SemanticMemoryTextHelpers.Normalize(mergedCandidate.Content),
-                    mergedCandidate.EvidenceText,
-                    mergedCandidate.SourceTurnId,
-                    mergedCandidate.IsPinned,
-                    mergedCandidate.Importance,
-                    mergedCandidate.Confidence,
-                    AgentMemoryProvenance.User),
-                mergeTarget?.MemoryId);
-            if (upserted is null)
-            {
-                continue;
-            }
-
-            var existingIndex = activeMemories.FindIndex(memory => memory.MemoryId == upserted.MemoryId);
-            if (existingIndex >= 0)
-            {
-                activeMemories[existingIndex] = upserted;
-            }
-            else
-            {
-                activeMemories.Add(upserted);
-            }
-
-            _indexingBackgroundService.QueueMemoryIndex(upserted.MemoryId, lifecycleEvent.Session.ProfileId);
-            committedCount++;
-        }
-
-        _metricsService.RecordPromotion(candidates.Length, committedCount);
-    }
-
     public Task ProcessDurableLifecycleEventAsync(
         AgentDurableLifecycleEventEnvelope lifecycleEvent,
         CancellationToken cancellationToken)
@@ -89,24 +35,6 @@ public sealed partial class SemanticMemoryPromotionService(
             _indexingBackgroundService.QueueMemoryIndex(request.MemoryId, request.ProfileId);
         }
         return Task.CompletedTask;
-    }
-
-    private static IReadOnlyList<MemoryCandidate> ExtractPromotionCandidates(AgentLifecycleEvent lifecycleEvent)
-    {
-        var candidates = new List<MemoryCandidate>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        switch (lifecycleEvent.Kind)
-        {
-            case AgentLifecycleEventKind.UserTurnAdded when lifecycleEvent.TriggerTurn is not null:
-                AddCandidates(candidates, seen, ExtractUserCandidates(lifecycleEvent.TriggerTurn));
-                break;
-
-                // Assistant claims and tool output remain transcript evidence. They are never
-                // promoted into durable memory without a later, direct user confirmation.
-        }
-
-        return candidates;
     }
 
     private static IReadOnlyList<MemoryCandidate> ExtractUserCandidates(AgentTurnRecord turn)

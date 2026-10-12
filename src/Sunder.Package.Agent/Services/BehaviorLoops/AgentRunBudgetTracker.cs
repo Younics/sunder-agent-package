@@ -36,7 +36,7 @@ internal sealed class AgentRunBudgetExceededException(AgentRunBudgetViolation vi
 internal sealed class AgentRunBudgetTracker
 {
     private readonly AgentRunBudgetLimits _limits;
-    private readonly Func<AgentRunBudgetCharge, AgentRunBudgetState>? _durableCharge;
+    private readonly Func<AgentRunBudgetCharge, CancellationToken, ValueTask<AgentRunBudgetState>>? _durableCharge;
     private readonly object _sync = new();
     private long _providerCycles;
     private long _toolCalls;
@@ -45,7 +45,7 @@ internal sealed class AgentRunBudgetTracker
     public AgentRunBudgetTracker(
         AgentRunBudgetLimits limits,
         AgentRunBudgetState initialState = default,
-        Func<AgentRunBudgetCharge, AgentRunBudgetState>? durableCharge = null)
+        Func<AgentRunBudgetCharge, CancellationToken, ValueTask<AgentRunBudgetState>>? durableCharge = null)
     {
         if (limits.MaxWallClock <= TimeSpan.Zero
             || limits.MaxProviderCycles <= 0
@@ -72,16 +72,16 @@ internal sealed class AgentRunBudgetTracker
             (long)_limits.MaxWallClock.TotalMilliseconds,
             (long)_limits.MaxWallClock.TotalMilliseconds);
 
-    public void ChargeProviderAttempt(long estimatedSubmittedContextTokens)
+    public async ValueTask ChargeProviderAttemptAsync(long estimatedSubmittedContextTokens, CancellationToken cancellationToken = default)
     {
         if (estimatedSubmittedContextTokens <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(estimatedSubmittedContextTokens));
         }
 
-        var state = ApplyCharge(new AgentRunBudgetCharge(
+        var state = await ApplyChargeAsync(new AgentRunBudgetCharge(
             ProviderCycles: 1,
-            SubmittedContextTokens: estimatedSubmittedContextTokens));
+            SubmittedContextTokens: estimatedSubmittedContextTokens), cancellationToken).ConfigureAwait(false);
         var cycleCount = state.ProviderCycles;
         if (cycleCount > _limits.MaxProviderCycles)
         {
@@ -95,14 +95,15 @@ internal sealed class AgentRunBudgetTracker
 
     }
 
-    public void ChargeToolCalls(int count)
+    public async ValueTask ChargeToolCallsAsync(int count, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (count <= 0)
         {
             return;
         }
 
-        var total = ApplyCharge(new AgentRunBudgetCharge(ToolCalls: count)).ToolCalls;
+        var total = (await ApplyChargeAsync(new AgentRunBudgetCharge(ToolCalls: count), cancellationToken).ConfigureAwait(false)).ToolCalls;
         if (total > _limits.MaxToolCalls)
         {
             throw new AgentRunBudgetExceededException(new AgentRunBudgetViolation(
@@ -117,19 +118,22 @@ internal sealed class AgentRunBudgetTracker
     private static long SaturatingAdd(long left, long right)
         => right > long.MaxValue - left ? long.MaxValue : left + right;
 
-    private AgentRunBudgetState ApplyCharge(AgentRunBudgetCharge charge)
+    private ValueTask<AgentRunBudgetState> ApplyChargeAsync(AgentRunBudgetCharge charge, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        // Durable admission owns its atomic counters. Never hold the local
+        // fallback lock while an asynchronous run-control operation is pending.
+        if (_durableCharge is { } durableCharge) return durableCharge(charge, cancellationToken);
         lock (_sync)
         {
-            var state = _durableCharge?.Invoke(charge)
-                        ?? new AgentRunBudgetState(
+            var state = new AgentRunBudgetState(
                             SaturatingAdd(_providerCycles, charge.ProviderCycles),
                             SaturatingAdd(_toolCalls, charge.ToolCalls),
                             SaturatingAdd(_submittedContextTokens, charge.SubmittedContextTokens));
             _providerCycles = state.ProviderCycles;
             _toolCalls = state.ToolCalls;
             _submittedContextTokens = state.SubmittedContextTokens;
-            return state;
+            return ValueTask.FromResult(state);
         }
     }
 }

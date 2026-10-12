@@ -65,7 +65,7 @@ public sealed class AgentProfilesRuntimeAvailabilityTests
         await gateway.InitializeAsync();
         await WaitUntilAsync(() => gateway.ConnectionState == AgentRuntimeConnectionState.Connected);
         var timeProvider = new ManualTimerTimeProvider();
-        using var viewModel = CreateViewModel(gateway, timeProvider);
+        using var viewModel = CreateViewModel(gateway, timeProvider, profileService: runtime.Client);
         await viewModel.InitializeAsync().WaitAsync(TimeSpan.FromSeconds(10));
         await WaitUntilAsync(() => viewModel.SelectedProfile?.ProfileId == profile.ProfileId && !viewModel.IsBusy);
         runtime.Store.DeleteProfile(profile.ProfileId);
@@ -90,7 +90,7 @@ public sealed class AgentProfilesRuntimeAvailabilityTests
         await gateway.InitializeAsync();
         await WaitUntilAsync(() => gateway.ConnectionState == AgentRuntimeConnectionState.Connected);
         var timeProvider = new ManualTimerTimeProvider();
-        using var viewModel = CreateViewModel(gateway, timeProvider);
+        using var viewModel = CreateViewModel(gateway, timeProvider, profileService: runtime.Client);
 
         var exception = await Assert.ThrowsAsync<HttpRequestException>(() => gateway.SaveProfileAsync(
             "profile",
@@ -304,8 +304,10 @@ public sealed class AgentProfilesRuntimeAvailabilityTests
     private static AgentProfilesViewModel CreateViewModel(
         IAgentProfileGateway gateway,
         TimeProvider timeProvider,
-        AgentPresentationDispatcher? dispatcher = null)
+        AgentPresentationDispatcher? dispatcher = null,
+        AgentCore::Sunder.Generated.Packages.Sunder_Package_Agent_Services.IAgentProfileService? profileService = null)
         => new(
+            profileService ?? (AgentCore::Sunder.Generated.Packages.Sunder_Package_Agent_Services.IAgentProfileService)gateway,
             gateway,
             settingsNavigationService: null,
             dispatcher ?? InlinePresentationDispatcher.Instance,
@@ -320,7 +322,7 @@ public sealed class AgentProfilesRuntimeAvailabilityTests
         }
     }
 
-    private sealed class RuntimeAwareProfileGateway : IAgentProfileGateway, IAgentRuntimeAvailability
+    private sealed class RuntimeAwareProfileGateway : IProfileServiceFixture, IAgentRuntimeAvailability
     {
         private AgentProfileRecord _profile = CreateProfile();
         private int _connectionState = (int)AgentRuntimeConnectionState.Connected;
@@ -439,13 +441,16 @@ public sealed class AgentProfilesRuntimeAvailabilityTests
 
         public void DeleteProfile(string profileId) => throw new NotSupportedException();
 
-        public IReadOnlyList<AgentBehaviorLoopDescriptor> ListBehaviorLoopDescriptors() => [];
+        public Task<IReadOnlyList<AgentBehaviorLoopDescriptor>> ListBehaviorLoopDescriptorsAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<AgentBehaviorLoopDescriptor>>([]);
 
-        public IReadOnlyList<AgentProviderDescriptor> ListChatProviderDescriptors() => [];
+        public Task<IReadOnlyList<AgentProviderDescriptor>> ListChatProviderDescriptorsAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<AgentProviderDescriptor>>([]);
 
-        public IReadOnlyList<AgentEmbeddingProviderDescriptor> ListEmbeddingProviderDescriptors() => [];
+        public Task<IReadOnlyList<AgentEmbeddingProviderDescriptor>> ListEmbeddingProviderDescriptorsAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<AgentEmbeddingProviderDescriptor>>([]);
 
-        public bool HasProfileCapabilityConsumers(string capabilityKind) => false;
+        public Task<bool> HasProfileCapabilityConsumersAsync(string capabilityKind, CancellationToken cancellationToken = default) => Task.FromResult(false);
 
         public Task<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>>
             ListSelectableProfileCapabilitiesAsync(
@@ -531,15 +536,16 @@ public sealed class AgentProfilesRuntimeAvailabilityTests
             var scope = RegressionTestPackageScope.Create();
             var extensions = new RegressionTestExtensionCatalog();
             var store = new AgentLocalStore(scope.Context);
-            var sessions = new AgentSessionService(store, extensions);
-            var workspaces = new AgentWorkspaceService(store, extensions, sessions);
-            var targets = new AgentExecutionTargetService(extensions);
+            var sessions = new AgentSessionService(store, extensions.SessionCleaners);
+            var workspaces = new AgentWorkspaceService(store, extensions.SessionCleaners, sessions, extensions.WorkspacePathMigrators);
+            var targets = new AgentExecutionTargetService(extensions.ExecutionTargets);
             var tools = new AgentToolService(
                 sessions,
                 workspaces,
                 targets,
-                extensions);
-            var profiles = new AgentProfileService(store, tools, extensions, extensions.BehaviorLoops);
+                extensions.ToolSources,
+                extensions.ObservedToolExecutions);
+            var profiles = extensions.CreateProfileService(store, tools);
             var changes = new AgentRuntimeChangeHub(profiles, workspaces, sessions);
             var client = new ProfileHandlerOwnerClient(
                 new AgentDashboardHandler(profiles, workspaces, changes),
@@ -563,23 +569,22 @@ public sealed class AgentProfilesRuntimeAvailabilityTests
         AgentCatalogHandler catalog,
         AgentProfileCommandHandler profiles,
         AgentRuntimeChangeHub changes,
-        Exception? profileFailure) : IAgentOwnerClient
+        Exception? profileFailure) : OwnerServiceStub
     {
-        public async ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-            AgentOwnerRpcOperation<TRequest, TResponse> operation,
+        public override async ValueTask<TResponse> RespondAsync<TRequest, TResponse>(
             TRequest request,
             CancellationToken cancellationToken = default)
             where TRequest : class
             where TResponse : class
         {
-            if (operation.Is(AgentRuntimeOperations.Dashboard))
+            if (request is AgentDashboardRequest)
             {
                 var response = await dashboard.HandleAsync(
                     AgentRoleBoundary.As<WorkerRuntime.AgentDashboardRequest>(request),
                     cancellationToken);
                 return AgentRoleBoundary.As<TResponse>(response);
             }
-            if (operation.Is(AgentRuntimeOperations.Profiles))
+            if (request is AgentProfileCommand)
             {
                 if (profileFailure is not null)
                 {
@@ -590,7 +595,7 @@ public sealed class AgentProfilesRuntimeAvailabilityTests
                     cancellationToken);
                 return AgentRoleBoundary.As<TResponse>(response);
             }
-            if (operation.Is(AgentRuntimeOperations.Catalog))
+            if (request is AgentCatalogRequest)
             {
                 var response = await catalog.HandleAsync(
                     AgentRoleBoundary.As<WorkerRuntime.AgentCatalogRequest>(request),
@@ -598,19 +603,18 @@ public sealed class AgentProfilesRuntimeAvailabilityTests
                 return AgentRoleBoundary.As<TResponse>(response);
             }
 
-            throw new NotSupportedException(operation.Describe());
+            throw new NotSupportedException(typeof(TRequest).Name);
         }
 
-        public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-            AgentOwnerRpcStream<TRequest, TEvent> stream,
+        public override async IAsyncEnumerable<TEvent> ObserveAsync<TRequest, TEvent>(
             TRequest request,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
             where TRequest : class
             where TEvent : class
         {
-            if (!stream.Is(AgentRuntimeOperations.Changes))
+            if (request is not AgentChangeSubscription)
             {
-                throw new NotSupportedException(stream.Describe());
+                throw new NotSupportedException(typeof(TRequest).Name);
             }
 
             await foreach (var change in changes.SubscribeAsync(

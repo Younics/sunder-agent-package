@@ -75,11 +75,11 @@ jobs:
           mkdir -p artifacts/reports
           node --test scripts/compatibility/check-protocol-retirement.test.mjs
           node scripts/compatibility/check-protocol-retirement.mjs
-          bash scripts/generate-test-inventory.sh > artifacts/reports/test-inventory.json
+          bash scripts/test/generate-test-inventory.sh > artifacts/reports/test-inventory.json
           test "$(jq '.projects | length' artifacts/reports/test-inventory.json)" -eq 11
-          bash scripts/test-silent-return-analyzer.fixture.sh
-          bash scripts/release/verify-agent-release-version.fixture.sh
-          bash scripts/generate-test-duration-report.fixture.sh
+          bash scripts/test/test-silent-return-analyzer.fixture.sh
+          bash scripts/test/release/verify-agent-release-version.fixture.sh
+          bash scripts/test/generate-test-duration-report.fixture.sh
           dotnet restore Sunder.AgentPackage.slnx --force-evaluate -p:SunderUseSourceSdk=true
           dotnet build Sunder.AgentPackage.slnx -c Release --no-restore -m:1 -p:SunderUseSourceSdk=true -p:SunderAgentVersion="$version" -p:ContinuousIntegrationBuild=true
 
@@ -144,13 +144,13 @@ jobs:
         run: |
           set -uo pipefail
           status=0
-          python3 scripts/generate-test-duration-report.py artifacts/test-results \
+          python3 scripts/test/generate-test-duration-report.py artifacts/test-results \
             --inventory artifacts/reports/test-inventory.json \
             --mode source \
             --platform linux \
             --expectations tests/test-evidence-expectations.json \
             > artifacts/reports/test-duration-report.json || status=1
-          python3 scripts/generate-test-duration-report.py artifacts/test-results/required \
+          python3 scripts/test/generate-test-duration-report.py artifacts/test-results/required \
             --expected-skips 0 \
             > artifacts/reports/required-test-duration-report.json || status=1
           exit "$status"

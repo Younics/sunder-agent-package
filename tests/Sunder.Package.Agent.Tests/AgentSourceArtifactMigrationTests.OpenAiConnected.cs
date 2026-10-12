@@ -47,7 +47,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var retained = new ChatOptions { ConversationId = retainedSession.ToString("N") + ":main", ModelId = "openai/gpt-5.4", Instructions = "Connected instruction" };
         await read(first, retained, default); var retainedId = backend.LastCodexResponseId;
         Assert.Equal("sunder.package.agent.provider.openai:codex-response-continuation", (await rpc("session-cleaner", "describe", new { }, default)).GetProperty("id").GetString());
-        await rpc("session-cleaner", "delete-session", new { sessionId = session }, default);
+        await rpc("session-cleaner", "delete-session", session, default);
         await read(second, chatOptions, default); Assert.False(backend.Requests.Last().Body.TryGetProperty("previous_response_id", out _));
         await read(second, retained, default); Assert.Equal(retainedId, backend.Requests.Last().Body.GetProperty("previous_response_id").GetString());
         var lite = new ChatOptions { ConversationId = conversation, ModelId = "openai/gpt-5.6-sol" };
@@ -55,7 +55,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.Equal("true", backend.Requests.Last().Headers["x-openai-internal-codex-responses-lite"]);
         Assert.Equal(7, Guid.Parse(liteSession).Version);
         await read(first, lite, default); Assert.Equal(liteSession, backend.Requests.Last().Headers["session-id"]);
-        await rpc("session-cleaner", "delete-session", new { sessionId = session }, default);
+        await rpc("session-cleaner", "delete-session", session, default);
         await read(first, lite, default); Assert.NotEqual(liteSession, backend.Requests.Last().Headers["session-id"]);
         Assert.False(backend.Requests.Last().Body.TryGetProperty("previous_response_id", out _));
 

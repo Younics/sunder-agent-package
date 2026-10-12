@@ -34,14 +34,13 @@ public sealed class SolutionPackageInventoryTests
             "src",
             "Sunder.Package.Agent.Builder");
         var execution = File.ReadAllText(Path.Combine(builderRoot, "BuilderWorkspaceExecutionService.cs"));
-        var bridge = File.ReadAllText(Path.Combine(builderRoot, "Rpc/BuilderExecutionBindings.cs"));
 
         Assert.Contains("AgentExecutionFacetIds.ProcessExecution", execution, StringComparison.Ordinal);
-        Assert.Contains("AgentExecutionFacetIds.ProcessExecution", bridge, StringComparison.Ordinal);
+        Assert.Contains("Runtime.ExecuteProcessAsync", execution, StringComparison.Ordinal);
+        Assert.False(File.Exists(Path.Combine(builderRoot, "Rpc/BuilderExecutionBindings.cs")));
         Assert.DoesNotContain("BuildCommand", execution, StringComparison.Ordinal);
         Assert.DoesNotContain("QuoteWindows", execution, StringComparison.Ordinal);
-        Assert.DoesNotContain("BuildShellCommand", bridge, StringComparison.Ordinal);
-        Assert.DoesNotContain("QuoteWindows", bridge, StringComparison.Ordinal);
+        Assert.DoesNotContain("BuildShellCommand", execution, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -163,10 +162,10 @@ public sealed class SolutionPackageInventoryTests
             projectsWithTaxonomy.SetEquals(executableTests),
             "Test taxonomy must have no missing or orphan project entries.");
 
-        var generator = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "generate-test-inventory.sh"));
+        var generator = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "test", "generate-test-inventory.sh"));
         var workflow = File.ReadAllText(Path.Combine(repositoryRoot, ".github", "workflows", "sunder-package-smoke.yml"));
         Assert.Contains("dotnet sln Sunder.AgentPackage.slnx list", generator, StringComparison.Ordinal);
-        Assert.Contains("bash scripts/generate-test-inventory.sh", workflow, StringComparison.Ordinal);
+        Assert.Contains("bash scripts/test/generate-test-inventory.sh", workflow, StringComparison.Ordinal);
         Assert.Contains("artifacts/reports/test-inventory.json", workflow, StringComparison.Ordinal);
     }
 
@@ -356,8 +355,8 @@ public sealed class SolutionPackageInventoryTests
             "sunder-agent-production-acceptance.yml"));
         var smokeWorkflow = File.ReadAllText(Path.Combine(repositoryRoot, ".github", "workflows", "sunder-package-smoke.yml"));
         var windowsWorkflow = File.ReadAllText(Path.Combine(repositoryRoot, ".circleci", "config.yml"));
-        var testEvidenceGenerator = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "generate-test-duration-report.py"));
-        var testEvidenceFixture = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "generate-test-duration-report.fixture.sh"));
+        var testEvidenceGenerator = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "test", "generate-test-duration-report.py"));
+        var testEvidenceFixture = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "test", "generate-test-duration-report.fixture.sh"));
         var testFileSystemCapabilities = File.ReadAllText(Path.Combine(
             repositoryRoot,
             "tests",
@@ -366,28 +365,38 @@ public sealed class SolutionPackageInventoryTests
         var nugetVerifier = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "verify-nuget-package.sh"));
         var coreSdkVerifier = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "verify-core-sdk-release.sh"));
         var releaseVersionVerifier = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "ReleaseVersionVerifier.cs"));
-        var releaseVersionFixture = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "verify-agent-release-version.fixture.sh"));
+        var releaseVersionFixture = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "test", "release", "verify-agent-release-version.fixture.sh"));
         var releaseLockVerifier = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "verify-release-locks.sh"));
         var nativeBuilder = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "build-native-family.ps1"));
         var nativeAssembler = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "assemble-native-family.sh"));
         var nativeRecorder = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "record-native-leaf-evidence.sh"));
         var nativeEvidenceVerifier = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "verify-native-family-evidence.sh"));
+        var nativeImplementation = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "native-family.py"));
+        Assert.Contains("native-family.py\" record", nativeRecorder, StringComparison.Ordinal);
+        Assert.Contains("native-family.py\" assemble", nativeAssembler, StringComparison.Ordinal);
+        Assert.Contains("native-family.py\" verify", nativeEvidenceVerifier, StringComparison.Ordinal);
+        nativeRecorder += nativeImplementation;
+        nativeAssembler += nativeImplementation;
+        nativeEvidenceVerifier += nativeImplementation;
         var outputAuditor = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "generate-package-output-audit.sh"));
         var nativeSmokeRunner = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "run-native-runtime-smoke.sh"));
         var releasePublisher = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "publish-agent-family.sh"));
-        var runtimeAvailabilityVerifier = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "verify-execution-runtime-availability.sh"));
-        var nativeReleaseFixture = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "native-release.fixture.sh"));
+        Assert.False(File.Exists(Path.Combine(repositoryRoot, "scripts", "release", "verify-execution-runtime-availability.sh")));
+        Assert.False(File.Exists(Path.Combine(repositoryRoot, "scripts", "test", "release", "verify-execution-runtime-availability.fixture.sh")));
+        var nativeReleaseFixture = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "test", "release", "native-release.fixture.sh"));
         var nativeSmoke = File.ReadAllText(Path.Combine(repositoryRoot, "tests", "fixtures", "AgentNativeReleaseSmokeTests.cs"));
         var registryPublisher = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "publish-registry-package.sh"));
-        var familyPromoter = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "promote-family-dist-tag.sh"));
+        var familyPromoter = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "agent_cohort.py"));
+        var cohortFixture = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "test", "release", "agent-release.fixture.py"));
+        Assert.False(File.Exists(Path.Combine(repositoryRoot, "scripts", "release", "promote-family-dist-tag.sh")));
         var releasePromoter = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "promote-agent-family.sh"));
-        var releasePromotionFixture = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "promote-agent-family.fixture.sh"));
+        var releasePromotionFixture = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "test", "release", "promote-agent-family.fixture.sh"));
         var acceptanceArtifactVerifier = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "verify-acceptance-artifact.sh"));
         var publicationVerifier = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "verify-agent-publication.sh"));
-        var publicationVerifierFixture = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "verify-agent-publication.fixture.sh"));
+        var publicationVerifierFixture = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "test", "release", "verify-agent-publication.fixture.sh"));
         var acceptanceUploader = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "upload-agent-acceptance.sh"));
         var acceptanceDownloader = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "download-agent-acceptance.sh"));
-        var acceptanceUploadFixture = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "upload-agent-acceptance.fixture.sh"));
+        var acceptanceUploadFixture = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "test", "release", "upload-agent-acceptance.fixture.sh"));
         var expected = AgentPackageRepositoryInventory.GetRuntimePackageProjects().ToDictionary(
             static package => GetReleaseKey(package.Name),
             StringComparer.Ordinal);
@@ -408,13 +417,14 @@ public sealed class SolutionPackageInventoryTests
         Assert.Contains("- \"agent/v*\"", workflow, StringComparison.Ordinal);
         Assert.Contains("SUNDER_REQUIRE_AGENT_PACKAGE_RELEASE: \"1\"", workflow, StringComparison.Ordinal);
         Assert.Contains("SUNDER_REQUIRE_AGENT_UI_SNAPSHOT: \"1\"", workflow, StringComparison.Ordinal);
-        Assert.Contains("map(select(.artifactType == \"sunderpkg\")) | sort_by(.key)[]", nativeAssembler, StringComparison.Ordinal);
+        Assert.Contains("Expected exactly 15 unique runtime packages", nativeAssembler, StringComparison.Ordinal);
+        Assert.Contains("sorted(rows, key=lambda row: row[\"key\"])", nativeAssembler, StringComparison.Ordinal);
         Assert.DoesNotContain("dotnet nuget push", releasePublisher, StringComparison.Ordinal);
         Assert.Contains("packages.json must contain exactly 15 unique canonical package archives.", releasePublisher, StringComparison.Ordinal);
         Assert.Contains("workflow_dispatch:", promotionWorkflow, StringComparison.Ordinal);
         Assert.Contains("group: sunder-agent-family-promotion", promotionWorkflow, StringComparison.Ordinal);
         Assert.Contains("environment: sunder-agent-release-promotion", promotionWorkflow, StringComparison.Ordinal);
-        Assert.Contains("apply compensating promotion", promotionWorkflow, StringComparison.Ordinal);
+        Assert.Contains("Apply the accepted visibility stage for the immutable Agent family", promotionWorkflow, StringComparison.Ordinal);
         Assert.DoesNotContain("promote transactionally", promotionWorkflow, StringComparison.Ordinal);
         Assert.Contains("actions: read", promotionWorkflow, StringComparison.Ordinal);
         Assert.Contains("contents: write", promotionWorkflow, StringComparison.Ordinal);
@@ -462,7 +472,8 @@ public sealed class SolutionPackageInventoryTests
         Assert.Contains("publication_run_attempt:", acceptanceWorkflow, StringComparison.Ordinal);
         Assert.Contains("sunder-agent-publication-evidence-${{ inputs.release_id }}-${{ inputs.publication_run_attempt }}", acceptanceWorkflow, StringComparison.Ordinal);
         Assert.Contains("bash scripts/release/verify-agent-publication.sh", acceptanceWorkflow, StringComparison.Ordinal);
-        Assert.Contains("eng/execution-runtimes/production.lock.json", acceptanceWorkflow, StringComparison.Ordinal);
+        Assert.DoesNotContain("eng/execution-runtimes/production.lock.json", acceptanceWorkflow, StringComparison.Ordinal);
+        Assert.DoesNotContain(".sunderruntime", acceptanceWorkflow, StringComparison.Ordinal);
         Assert.Contains("SUNDER_AGENT_ACCEPTANCE_CANDIDATE_ONLY: \"true\"", acceptanceWorkflow, StringComparison.Ordinal);
         Assert.Contains("bash scripts/release/promote-agent-family.sh", acceptanceWorkflow, StringComparison.Ordinal);
         Assert.Contains("bash scripts/release/upload-agent-acceptance.sh", acceptanceWorkflow, StringComparison.Ordinal);
@@ -475,16 +486,29 @@ public sealed class SolutionPackageInventoryTests
         Assert.True(nativeAcceptanceStart >= 0 && archiveDecisionStart > nativeAcceptanceStart);
         var nativeAcceptanceJob = acceptanceWorkflow[nativeAcceptanceStart..archiveDecisionStart];
         Assert.DoesNotContain("contents: write", nativeAcceptanceJob, StringComparison.Ordinal);
-        Assert.DoesNotContain("GH_TOKEN", nativeAcceptanceJob, StringComparison.Ordinal);
+        var receiptDownloadStart = nativeAcceptanceJob.IndexOf("      - name: Download the exact cohort receipt for post-visibility scenarios", StringComparison.Ordinal);
+        var nativeExecutionStart = nativeAcceptanceJob.IndexOf("      - name: Run approved phase-specific full-family scenarios", StringComparison.Ordinal);
+        Assert.True(receiptDownloadStart >= 0 && nativeExecutionStart > receiptDownloadStart);
+        var receiptDownload = nativeAcceptanceJob[receiptDownloadStart..nativeExecutionStart];
+        Assert.Contains("if: inputs.phase == 'post-visibility'", receiptDownload, StringComparison.Ordinal);
+        Assert.Contains("agent_cohort_receipt.py download", receiptDownload, StringComparison.Ordinal);
+        Assert.Contains("GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}", receiptDownload, StringComparison.Ordinal);
+        Assert.DoesNotContain("GH_TOKEN", nativeAcceptanceJob.Remove(receiptDownloadStart, nativeExecutionStart - receiptDownloadStart), StringComparison.Ordinal);
         Assert.DoesNotContain("NUGET_API_KEY", nativeAcceptanceJob, StringComparison.Ordinal);
         Assert.DoesNotContain("SUNDER_REGISTRY_CLI_TOKEN", nativeAcceptanceJob, StringComparison.Ordinal);
         Assert.DoesNotContain("SUNDER_REGISTRY_PUBLISH_TOKEN", nativeAcceptanceJob, StringComparison.Ordinal);
         Assert.DoesNotContain("id-token: write", nativeAcceptanceJob, StringComparison.Ordinal);
-        Assert.Contains("SUNDER_EXECUTION_RUNTIME_RELEASE_PUBLIC_KEYS", nativeAcceptanceJob, StringComparison.Ordinal);
-        Assert.Contains("SUNDER_EXECUTION_RUNTIME_ATTESTATION_PUBLIC_KEYS", nativeAcceptanceJob, StringComparison.Ordinal);
-        Assert.Contains("SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_SHA256", nativeAcceptanceJob, StringComparison.Ordinal);
+        Assert.DoesNotContain("SUNDER_EXECUTION_RUNTIME_RELEASE_PUBLIC_KEYS", acceptanceWorkflow, StringComparison.Ordinal);
+        Assert.DoesNotContain("SUNDER_EXECUTION_RUNTIME_ATTESTATION_PUBLIC_KEYS", acceptanceWorkflow, StringComparison.Ordinal);
+        Assert.DoesNotContain("SUNDER_EXECUTION_RUNTIME_RELEASE_DRIVER_SHA256", acceptanceWorkflow, StringComparison.Ordinal);
+        Assert.Contains("SUNDER_AGENT_PRODUCTION_ACCEPTANCE_DRIVER_SHA256", nativeAcceptanceJob, StringComparison.Ordinal);
         Assert.Contains("--driver-sha256", nativeAcceptanceJob, StringComparison.Ordinal);
         Assert.Contains("chmod 0555 \"$driver_snapshot_root\"", nativeAcceptanceJob, StringComparison.Ordinal);
+        Assert.Contains("\"official-runtime-install-launch\"", nativeAcceptanceJob, StringComparison.Ordinal);
+        Assert.Contains("\"official-runtime-source-checksum\"", nativeAcceptanceJob, StringComparison.Ordinal);
+        Assert.Contains("\"ambient-runtime-isolation\"", nativeAcceptanceJob, StringComparison.Ordinal);
+        Assert.Contains("python3 -B sunder-core/scripts/release/official_runtime_evidence.py \"$receipt\"", nativeAcceptanceJob, StringComparison.Ordinal);
+        Assert.Contains("--rid \"$RID\" --field runtimeInstallation --sources dotnet", nativeAcceptanceJob, StringComparison.Ordinal);
         Assert.Contains("contents: write", acceptanceWorkflow[archiveDecisionStart..], StringComparison.Ordinal);
         Assert.Contains("--coordinator-sha256", acceptanceWorkflow[archiveDecisionStart..], StringComparison.Ordinal);
         Assert.Contains("--actions-artifact-name", acceptanceWorkflow[archiveDecisionStart..], StringComparison.Ordinal);
@@ -492,22 +516,23 @@ public sealed class SolutionPackageInventoryTests
         {
             Assert.Contains($"- rid: {rid}", acceptanceWorkflow, StringComparison.Ordinal);
         }
-        Assert.Contains("for script in scripts/*.sh scripts/release/*.sh; do", workflow, StringComparison.Ordinal);
+        Assert.Contains("for script in scripts/dev/*.sh scripts/release/*.sh scripts/test/*.sh scripts/test/release/*.sh; do", workflow, StringComparison.Ordinal);
         Assert.Contains("bash -n \"$script\"", workflow, StringComparison.Ordinal);
-        Assert.Contains("bash scripts/generate-test-duration-report.fixture.sh", workflow, StringComparison.Ordinal);
-        Assert.Contains("bash scripts/generate-test-duration-report.fixture.sh", smokeWorkflow, StringComparison.Ordinal);
-        Assert.Contains("bash ./scripts/generate-test-duration-report.fixture.sh", windowsWorkflow, StringComparison.Ordinal);
+        Assert.Contains("bash scripts/test/generate-test-duration-report.fixture.sh", workflow, StringComparison.Ordinal);
+        Assert.Contains("bash scripts/test/generate-test-duration-report.fixture.sh", smokeWorkflow, StringComparison.Ordinal);
+        Assert.Contains("bash ./scripts/test/generate-test-duration-report.fixture.sh", windowsWorkflow, StringComparison.Ordinal);
         Assert.Contains("bash scripts/release/verify-agent-release-version.sh \"$version\" \"$CORE_SDK_VERSION\"", workflow, StringComparison.Ordinal);
-        Assert.Contains("bash scripts/release/verify-agent-release-version.fixture.sh", workflow, StringComparison.Ordinal);
-        Assert.Contains("bash scripts/release/verify-execution-runtime-availability.fixture.sh", workflow, StringComparison.Ordinal);
-        Assert.Contains("bash scripts/release/upload-agent-acceptance.fixture.sh", workflow, StringComparison.Ordinal);
-        Assert.Contains("bash scripts/release/verify-agent-publication.fixture.sh", workflow, StringComparison.Ordinal);
-        Assert.Contains("bash scripts/release/verify-agent-release-version.fixture.sh", smokeWorkflow, StringComparison.Ordinal);
+        Assert.Contains("bash scripts/test/release/verify-agent-release-version.fixture.sh", workflow, StringComparison.Ordinal);
+        Assert.DoesNotContain("verify-execution-runtime-availability", workflow, StringComparison.Ordinal);
+        Assert.Contains("bash scripts/test/release/upload-agent-acceptance.fixture.sh", workflow, StringComparison.Ordinal);
+        Assert.Contains("bash scripts/test/release/verify-agent-publication.fixture.sh", workflow, StringComparison.Ordinal);
+        Assert.Contains("bash scripts/test/release/verify-agent-release-version.fixture.sh", smokeWorkflow, StringComparison.Ordinal);
         Assert.Contains("PackageVersionRange.Parse(familyDependencyRange)", releaseVersionVerifier, StringComparison.Ordinal);
         Assert.Contains("familyRange.IsSatisfiedBy(releaseVersion)", releaseVersionVerifier, StringComparison.Ordinal);
         Assert.Contains("2.0.0-preview.1", releaseVersionFixture, StringComparison.Ordinal);
         Assert.Contains("2.0.1-preview.1", releaseVersionFixture, StringComparison.Ordinal);
-        Assert.Contains("bash -n scripts/*.sh scripts/release/*.sh scripts/compatibility/*.sh", promotionWorkflow, StringComparison.Ordinal);
+        Assert.Contains("for script in scripts/dev/*.sh scripts/release/*.sh scripts/test/*.sh scripts/test/release/*.sh scripts/compatibility/*.sh; do", promotionWorkflow, StringComparison.Ordinal);
+        Assert.Contains("bash -n \"$script\"", promotionWorkflow, StringComparison.Ordinal);
         Assert.Contains("bash scripts/release/promote-agent-family.sh", promotionWorkflow, StringComparison.Ordinal);
         Assert.Contains("Sunder Agent Family Release", publicationVerifier, StringComparison.Ordinal);
         Assert.Contains("actions/runs/$publication_run_id/attempts/$publication_run_attempt", publicationVerifier, StringComparison.Ordinal);
@@ -518,9 +543,11 @@ public sealed class SolutionPackageInventoryTests
         Assert.Contains("bash scripts/release/publish-registry-package.sh", releasePublisher, StringComparison.Ordinal);
         Assert.Contains("bash scripts/release/verify-core-sdk-release.sh \"$CORE_SDK_VERSION\" \"$EXPECTED_CORE_COMMIT\"", workflow, StringComparison.Ordinal);
         Assert.Contains("verify-core-sdk-release.sh \"$CORE_SDK_VERSION\" resolve", workflow, StringComparison.Ordinal);
-        Assert.Contains("dotnet restore Sunder.AgentPackage.slnx", workflow, StringComparison.Ordinal);
+        Assert.Contains("release_inputs.py prepare", workflow, StringComparison.Ordinal);
+        Assert.Contains("release_inputs.py exec", workflow, StringComparison.Ordinal);
+        Assert.Contains("dotnet build Sunder.AgentPackage.slnx -c Release --no-restore", workflow, StringComparison.Ordinal);
         Assert.Contains("-p:SunderUseSourceSdk=false -p:RestoreLockedMode=true", workflow, StringComparison.Ordinal);
-        Assert.Contains("Restore and build complete source mode against exact Core", workflow, StringComparison.Ordinal);
+        Assert.Contains("Cold hydrate and build complete source mode offline against exact Core", workflow, StringComparison.Ordinal);
         Assert.Contains("-p:SunderUseSourceSdk=true --logger trx", workflow, StringComparison.Ordinal);
         Assert.Contains("--filter \"Lane=PackageCompatibility&Category!=Artifact\"", workflow, StringComparison.Ordinal);
         Assert.Contains("--mode source", workflow, StringComparison.Ordinal);
@@ -582,9 +609,9 @@ public sealed class SolutionPackageInventoryTests
         Assert.Contains(".leaf.dependencyManifestPath, .leaf.dependencyManifestSha256", workflow, StringComparison.Ordinal);
         Assert.Contains("payload/runtime/shared/$logical_path", workflow, StringComparison.Ordinal);
         Assert.Contains("payload/shared/$logical_path", workflow, StringComparison.Ordinal);
-        Assert.Contains("schemaVersion: 2", nativeRecorder, StringComparison.Ordinal);
-        Assert.Contains("schemaVersion: 2", nativeAssembler, StringComparison.Ordinal);
-        Assert.Contains("schema-version-2 native evidence and 15 exact final archives", nativeEvidenceVerifier, StringComparison.Ordinal);
+        Assert.Contains("SCHEMA = 3", nativeRecorder, StringComparison.Ordinal);
+        Assert.Contains("SCHEMA = 3", nativeAssembler, StringComparison.Ordinal);
+        Assert.Contains("schema-version-3 native evidence, Core qualification digests and 15 exact final archives", nativeEvidenceVerifier, StringComparison.Ordinal);
         Assert.Contains("package-output-audit.json", workflow, StringComparison.Ordinal);
         Assert.Contains("package-output-audit.json", releasePublisher, StringComparison.Ordinal);
         Assert.Contains("package-output-audit.json", releasePromoter, StringComparison.Ordinal);
@@ -598,7 +625,8 @@ public sealed class SolutionPackageInventoryTests
         Assert.Contains("-p:SunderPackageComposeRuntimeIdentifiers=$Rid", nativeBuilder, StringComparison.Ordinal);
         Assert.Contains("-p:BuildProjectReferences=false", nativeAssembler, StringComparison.Ordinal);
         Assert.Contains("-p:SunderPackageUsePrebuiltLeaves=true", nativeAssembler, StringComparison.Ordinal);
-        Assert.DoesNotContain("SunderPackageComposeRuntimeIdentifiers", nativeAssembler, StringComparison.Ordinal);
+        Assert.Contains("SunderPackagePrebuiltRoleInputsFile=", nativeAssembler, StringComparison.Ordinal);
+        Assert.Contains("\"%3B\".join(RIDS)", nativeAssembler, StringComparison.Ordinal);
         Assert.DoesNotContain("SunderAgentUniversalWorkerPackage", nativeBuilder, StringComparison.Ordinal);
         Assert.DoesNotContain("SunderAgentUniversalWorkerPackage", nativeAssembler, StringComparison.Ordinal);
         Assert.Contains("native-test-evidence.json", nativeAssembler, StringComparison.Ordinal);
@@ -627,14 +655,28 @@ public sealed class SolutionPackageInventoryTests
         Assert.Contains("SUNDER_AGENT_BUILDER_SDK_VERSION: ${{ env.DOTNET_VERSION }}", workflow, StringComparison.Ordinal);
         Assert.Contains("VerifyCallbackAndAuthAsync", nativeSmoke, StringComparison.Ordinal);
         Assert.Contains("VerifyCrashIsolationAsync", nativeSmoke, StringComparison.Ordinal);
-        Assert.Contains("EnsureDotNetAsync", nativeSmoke, StringComparison.Ordinal);
-        Assert.Contains("ObserveSupportedAsync", nativeSmoke, StringComparison.Ordinal);
+        Assert.Contains("OfficialRuntimeFixture executionRuntimes", nativeSmoke, StringComparison.Ordinal);
+        Assert.Contains("EnsureDotNetAsync(\"10.0.12\")", nativeSmoke, StringComparison.Ordinal);
+        Assert.Contains("AssertBindingMatches", nativeSmoke, StringComparison.Ordinal);
+        foreach (var retiredRuntimeInput in new[]
+                 {
+                     "SignedCurrentRidExecutionRuntimeFixture",
+                     "ObserveSupportedAsync",
+                     "packagingRevision",
+                     "LifecyclePolicies",
+                     ".sunderruntime",
+                     "Sunder.ExecutionRuntime.Build",
+                 })
+        {
+            Assert.DoesNotContain(retiredRuntimeInput, nativeSmoke, StringComparison.Ordinal);
+        }
         Assert.Contains("AssertRuntimeLaunch", nativeSmoke, StringComparison.Ordinal);
         Assert.Contains("reinstall: true", nativeSmoke, StringComparison.Ordinal);
         Assert.Contains("SchemaMigrations", nativeSmoke, StringComparison.Ordinal);
         Assert.Contains("MemorySchemaMigrations", nativeSmoke, StringComparison.Ordinal);
         Assert.Contains("AssertProcessIdsStoppedAsync", nativeSmoke, StringComparison.Ordinal);
-        Assert.Contains("expectedWorkerProcessCount == 1", nativeRecorder, StringComparison.Ordinal);
+        Assert.Contains("(threshold, \"expectedWorkerProcessCount\")", nativeRecorder, StringComparison.Ordinal);
+        Assert.Contains("source[name] == 1", nativeRecorder, StringComparison.Ordinal);
         Assert.Contains("exactly 15", releaseLockVerifier, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("max_runtime_archive_bytes=$((256 * 1024 * 1024))", workflow, StringComparison.Ordinal);
         Assert.Contains("max_runtime_payload_bytes=$((640 * 1024 * 1024))", workflow, StringComparison.Ordinal);
@@ -646,37 +688,8 @@ public sealed class SolutionPackageInventoryTests
         Assert.Contains("commit=\\\"$expected_core_commit\\\"", coreSdkVerifier, StringComparison.Ordinal);
         Assert.Contains("bash \"$nuget_verifier\" \"$expected_package\" \"$published_package\"", coreSdkVerifier, StringComparison.Ordinal);
         Assert.Contains("bash scripts/release/publish-registry-package.sh", releasePublisher, StringComparison.Ordinal);
-        Assert.Contains("bash scripts/release/verify-execution-runtime-availability.sh \"$registry_api\"", releasePublisher, StringComparison.Ordinal);
-        Assert.Contains("/api/v1/execution-runtimes/resolve", runtimeAvailabilityVerifier, StringComparison.Ordinal);
-        Assert.Contains("sunder.runtime.dotnet", runtimeAvailabilityVerifier, StringComparison.Ordinal);
-        Assert.Contains(">=10.0.0 <11.0.0", runtimeAvailabilityVerifier, StringComparison.Ordinal);
-        Assert.Contains("sunder.dotnet-worker-module.v1", runtimeAvailabilityVerifier, StringComparison.Ordinal);
-        Assert.Contains("sunder.runtime-trust.v1", runtimeAvailabilityVerifier, StringComparison.Ordinal);
-        Assert.Contains(".runtimeArtifact.lifecycle.state == \"supported\"", runtimeAvailabilityVerifier, StringComparison.Ordinal);
-        Assert.Contains("/releases/$resolved_version/revisions/$resolved_revision", runtimeAvailabilityVerifier, StringComparison.Ordinal);
-        foreach (var lockField in new[]
-                 {
-                     "runtimeId",
-                     "version",
-                     "packagingRevision",
-                     "rid",
-                     "moduleAbi",
-                     "workerProtocol",
-                     "minimumHostTrustGeneration",
-                     "releaseSigningKeyId",
-                     "nativeAttestationKeyId",
-                 })
-        {
-            Assert.Contains(lockField, runtimeAvailabilityVerifier, StringComparison.Ordinal);
-        }
-        Assert.DoesNotContain("Authorization:", runtimeAvailabilityVerifier, StringComparison.Ordinal);
-        Assert.DoesNotContain("SUNDER_REGISTRY_PUBLISH_TOKEN", runtimeAvailabilityVerifier, StringComparison.Ordinal);
-        var runtimePreflight = releasePublisher.IndexOf(
-            "bash scripts/release/verify-execution-runtime-availability.sh",
-            StringComparison.Ordinal);
-        var draftCreation = releasePublisher.IndexOf("create_args=(release create", StringComparison.Ordinal);
-        var immutablePublication = releasePublisher.IndexOf("external_publication_started=true", StringComparison.Ordinal);
-        Assert.True(runtimePreflight >= 0 && runtimePreflight < draftCreation && runtimePreflight < immutablePublication);
+        Assert.DoesNotContain("verify-execution-runtime-availability.sh", releasePublisher, StringComparison.Ordinal);
+        Assert.DoesNotContain("/api/v1/execution-runtimes/", releasePublisher, StringComparison.Ordinal);
         Assert.DoesNotContain("promote-family-dist-tag.sh", releasePublisher, StringComparison.Ordinal);
         Assert.DoesNotContain("gh release edit", releasePublisher, StringComparison.Ordinal);
         Assert.DoesNotContain("--draft=false", releasePublisher, StringComparison.Ordinal);
@@ -712,16 +725,19 @@ public sealed class SolutionPackageInventoryTests
         Assert.Contains(".sourceArchiveSha256", registryPublisher, StringComparison.Ordinal);
         Assert.Contains("[--verify-only]", registryPublisher, StringComparison.Ordinal);
         Assert.Contains("Immutable Registry package '%s' %s does not exist", registryPublisher, StringComparison.Ordinal);
-        Assert.Contains("rollback_changed_tags", familyPromoter, StringComparison.Ordinal);
-        Assert.Contains("Refusing to compensate", familyPromoter, StringComparison.Ordinal);
-        Assert.Contains("compensation was incomplete", familyPromoter, StringComparison.Ordinal);
-        Assert.Contains("Refusing to regress", familyPromoter, StringComparison.Ordinal);
-        Assert.Contains("Authorization: Bearer $SUNDER_REGISTRY_CLI_TOKEN", familyPromoter, StringComparison.Ordinal);
-        Assert.Contains("[--verify-only]", familyPromoter, StringComparison.Ordinal);
-        Assert.Contains("capture_family_snapshot", familyPromoter, StringComparison.Ordinal);
-        Assert.Contains("Discard the stale state after the guard and rebuild the complete compensation snapshot", familyPromoter, StringComparison.Ordinal);
-        Assert.Contains("publish-registry-package.sh\" --verify-only", releasePromoter, StringComparison.Ordinal);
-        Assert.Contains("bash \"$script_dir/promote-family-dist-tag.sh\"", releasePromoter, StringComparison.Ordinal);
+        Assert.Contains("/api/v1/me/package-cohorts/availability", familyPromoter, StringComparison.Ordinal);
+        Assert.Contains("Forward promotion cannot regress/delete a public tag", familyPromoter, StringComparison.Ordinal);
+        Assert.Contains("no compensation or new request", familyPromoter, StringComparison.Ordinal);
+        Assert.Contains("expectedPackagePolicyRevision", familyPromoter, StringComparison.Ordinal);
+        Assert.Contains("def verify_current(", familyPromoter, StringComparison.Ordinal);
+        Assert.Contains("test_post_commit_verification_failure_retains_result_without_compensation", cohortFixture, StringComparison.Ordinal);
+        Assert.Contains("verification_args=(--verify-only --initial-yanked", releasePromoter, StringComparison.Ordinal);
+        Assert.Contains("publish-registry-package.sh\" \"${verification_args[@]}\"", releasePromoter, StringComparison.Ordinal);
+        Assert.Contains("agent_cohort.py\" apply", releasePromoter, StringComparison.Ordinal);
+        Assert.Contains("agent_cohort.py\" confirm", releasePromoter, StringComparison.Ordinal);
+        Assert.Contains("agent_cohort.py\" verify", releasePromoter, StringComparison.Ordinal);
+        Assert.Contains("A cohort mutation requires pre-visibility acceptance.", releasePromoter, StringComparison.Ordinal);
+        Assert.Contains("Announcement requires post-visibility acceptance.", releasePromoter, StringComparison.Ordinal);
         Assert.Contains("unset SUNDER_REGISTRY_CLI_TOKEN", releasePromoter, StringComparison.Ordinal);
         Assert.Contains("SUNDER_REGISTRY_CLI_TOKEN=\"$registry_cli_token\"", releasePromoter, StringComparison.Ordinal);
         Assert.Contains("git/ref/tags/$encoded_tag", releasePromoter, StringComparison.Ordinal);
@@ -732,8 +748,7 @@ public sealed class SolutionPackageInventoryTests
         Assert.Contains("post-promotion-assets", releasePromoter, StringComparison.Ordinal);
         Assert.Contains("SUNDER_REGISTRY_PRE_MUTATION_GUARD_JSON", releasePromoter, StringComparison.Ordinal);
         Assert.Contains("SUNDER_AGENT_PROMOTION_GUARD_ONLY=true", releasePromoter, StringComparison.Ordinal);
-        Assert.Contains("release guard runs after the initial complete family snapshot", familyPromoter, StringComparison.Ordinal);
-        Assert.Contains("env -u SUNDER_REGISTRY_CLI_TOKEN", familyPromoter, StringComparison.Ordinal);
+        Assert.Contains("test_guard_failure_stops_before_post_and_guard_receives_no_registry_credentials", cohortFixture, StringComparison.Ordinal);
         Assert.Contains("make the promoted family the last remote check before PATCH", releasePromoter, StringComparison.Ordinal);
         Assert.Contains("Archived acceptance evidence has the wrong trusted workflow", releasePromoter, StringComparison.Ordinal);
         Assert.Contains("bash \"$script_dir/verify-acceptance-artifact.sh\"", releasePromoter, StringComparison.Ordinal);
@@ -775,12 +790,14 @@ public sealed class SolutionPackageInventoryTests
         Assert.Contains("mismatched digest metadata", acceptanceUploadFixture, StringComparison.Ordinal);
         Assert.Contains("finalized release", acceptanceUploadFixture, StringComparison.Ordinal);
         Assert.Contains("New Agent acceptance attempt", acceptanceUploadFixture, StringComparison.Ordinal);
-        Assert.Contains("guard-concurrent-newer", File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "release", "promote-family-dist-tag.fixture.sh")), StringComparison.Ordinal);
+        Assert.Contains("test_concurrent_policy_change_during_guard_keeps_original_fence_and_never_compensates", cohortFixture, StringComparison.Ordinal);
+        Assert.Contains("test_forward_downgrade_stable_and_numeric_preview_stops_before_mutation", cohortFixture, StringComparison.Ordinal);
         Assert.Contains("asset-tamper", releasePromotionFixture, StringComparison.Ordinal);
         Assert.Contains("registry-mismatch", releasePromotionFixture, StringComparison.Ordinal);
         Assert.Contains("finalized-retry-without-receipt", releasePromotionFixture, StringComparison.Ordinal);
         Assert.Contains("IMMUTABLE_WRITE", releasePromotionFixture, StringComparison.Ordinal);
-        Assert.Contains("bash scripts/release/promote-agent-family.fixture.sh", workflow, StringComparison.Ordinal);
+        Assert.Contains("bash scripts/test/release/promote-agent-family.fixture.sh", workflow, StringComparison.Ordinal);
+        Assert.Contains("python3 -B scripts/test/release/agent-release.fixture.py", workflow, StringComparison.Ordinal);
         var preMutationLongCheck = releasePromoter.IndexOf(
             "verify_registry_packages \"$verification_directory/pre-promotion-assets\"",
             StringComparison.Ordinal);
@@ -788,26 +805,17 @@ public sealed class SolutionPackageInventoryTests
             "pre_mutation_guard_json=",
             StringComparison.Ordinal);
         var familyMutation = releasePromoter.IndexOf(
-            "bash \"$script_dir/promote-family-dist-tag.sh\"",
+            "python3 -B \"$script_dir/agent_cohort.py\" apply",
             preMutationGuard,
             StringComparison.Ordinal);
         Assert.True(preMutationLongCheck >= 0 && preMutationLongCheck < preMutationGuard && preMutationGuard < familyMutation);
-        var familySnapshot = familyPromoter.IndexOf(
-            "# Snapshot and validate the entire family before invoking any potentially long guard",
-            StringComparison.Ordinal);
-        var familyGuard = familyPromoter.IndexOf(
-            "# The release guard runs after the initial complete family snapshot",
-            StringComparison.Ordinal);
-        var refreshedFamilySnapshot = familyPromoter.IndexOf(
-            "# Discard the stale state after the guard and rebuild the complete compensation snapshot",
-            familyGuard,
-            StringComparison.Ordinal);
-        var familyMutationLoop = familyPromoter.IndexOf("changed_count=0", familyGuard, StringComparison.Ordinal);
-        Assert.True(
-            familySnapshot >= 0
-            && familySnapshot < familyGuard
-            && familyGuard < refreshedFamilySnapshot
-            && refreshedFamilySnapshot < familyMutationLoop);
+        var cohortApply = familyPromoter.IndexOf("def apply(", StringComparison.Ordinal);
+        var familySnapshot = familyPromoter.IndexOf("observed = current_tags(", cohortApply, StringComparison.Ordinal);
+        var familyGuard = familyPromoter.IndexOf("        guard()", familySnapshot, StringComparison.Ordinal);
+        var unchangedRequest = familyPromoter.IndexOf("Retained request changed during guard", familyGuard, StringComparison.Ordinal);
+        var cohortPost = familyPromoter.IndexOf("status, response, transport = http(", unchangedRequest, StringComparison.Ordinal);
+        Assert.True(cohortApply >= 0 && familySnapshot > cohortApply && familyGuard > familySnapshot
+                    && unchangedRequest > familyGuard && cohortPost > unchangedRequest);
         var finalGuard = releasePromoter.IndexOf(
             "# Re-fetch handoff, tag, and numeric draft metadata",
             StringComparison.Ordinal);

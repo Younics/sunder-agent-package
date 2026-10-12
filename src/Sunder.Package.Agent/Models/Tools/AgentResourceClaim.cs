@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Contracts.Models;
 
@@ -11,11 +12,11 @@ namespace Sunder.Package.Agent.Contracts.Models;
 /// </remarks>
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 public sealed record AgentResourceClaim(
-    int Version,
+    [property: SunderValueConstraints(Minimum = "0")] int Version,
     string NamespaceId,
     string LogicalPath,
     string? ConfiguredRoot,
-    string RootIdentityChainFingerprint,
+    [property: SunderValueConstraints(MinLength = 64, MaxLength = 64)] string RootIdentityChainFingerprint,
     bool TargetExists,
     string? TargetKind,
     string? TargetIdentity,
@@ -27,7 +28,7 @@ public sealed record AgentResourceClaim(
     string BindingId,
     string BindingGeneration,
     string ToolCallId,
-    int ResourceIndex,
+    [property: SunderValueConstraints(Minimum = "-1")] int ResourceIndex,
     string ToolOwnerPackageId,
     string ExecutionTargetOwnerPackageId);
 
@@ -41,14 +42,15 @@ public sealed record AgentResourceClaim(
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 public sealed record AgentResourceOperationContext(
     Guid RunId,
-    long RunRevision,
+    [property: SunderValueConstraints(Minimum = "0")] long RunRevision,
     string ToolCallId,
     string ActionId,
-    int ResourceIndex,
+    [property: SunderValueConstraints(Minimum = "-1")] int ResourceIndex,
     string WorkspaceGeneration,
     string BindingGeneration,
     string ToolOwnerPackageId,
     string ExecutionTargetOwnerPackageId,
-    [property: JsonIgnore] string AuthorityActivationId,
-    int AuthorityUseCount = 1,
+    [property: JsonIgnore]
+    [property: SunderServiceMember] string AuthorityActivationId,
+    [property: SunderValueConstraints(Minimum = "0")] int AuthorityUseCount = 1,
     bool CanIssueOutsideAuthority = false);

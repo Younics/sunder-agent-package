@@ -7,8 +7,8 @@ namespace Sunder.Package.Agent.Contracts.Models;
 public enum AgentToolSelectionScope
 {
     /// <summary>The tool is selected individually by its tool and source identity.</summary>
-    Tool = 0,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("tool")] Tool = 0,
 
     /// <summary>The tool is enabled as part of its declared selection group.</summary>
-    Group = 1,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("group")] Group = 1,
 }

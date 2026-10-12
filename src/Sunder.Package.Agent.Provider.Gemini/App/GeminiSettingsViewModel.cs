@@ -1,8 +1,8 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Sunder.Package.Agent.Provider.Shared;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Provider_Gemini_Services;
 using Sunder.Sdk.Abstractions;
-using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Provider.Gemini;
 
@@ -19,23 +19,16 @@ public sealed partial class GeminiSettingsViewModel : ObservableObject,
     internal static IReadOnlyCollection<string> OwnedConfigurationKeys { get; } =
         [GeminiProviderConfiguration.ApiKeySecretKey, GeminiProviderConfiguration.UtilityModelKey];
 
-    public GeminiSettingsViewModel(
-        IPackageContext packageContext,
-        ISunderRpcClient rpcClient)
-        : this(
-            packageContext,
-            new ProviderCredentialOwnerRpcClient(rpcClient))
-    {
-    }
-
     [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
     internal GeminiSettingsViewModel(
         IPackageContext packageContext,
-        IProviderCredentialOwnerClient credentials)
+        ICredentialSettingsService credentials)
     {
         _settings = new ApiKeyUtilitySettingsState(
             packageContext,
-            credentials,
+            credentials.GetStatusAsync,
+            credentials.SetAsync,
+            credentials.ClearAsync,
             "A stored API key enables Gemini chat and embeddings. Blank input retains the current key.",
             "AIza...",
             static hasCredential => hasCredential

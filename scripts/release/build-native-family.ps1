@@ -75,8 +75,9 @@ if ($env:SUNDER_NATIVE_TASK_ASSEMBLY) {
     )
 }
 
-# All baselines must already be frozen before the first Build. Changing them
-# between families would invalidate earlier qualifications of the reviewed tree.
+# Public baselines must already be frozen before the first Build. Private-only
+# baseline absence and immutable retired private records are also qualified inputs;
+# changing them between families invalidates earlier qualifications of the tree.
 $nativeHelper = Join-Path $PSScriptRoot "native-family.py"
 $releaseInputHelper = Join-Path $PSScriptRoot "release_inputs.py"
 & python3 -B $releaseInputHelper check-python

@@ -39,7 +39,7 @@ internal static partial class AgentSourceMigrationProjectChanges
 
         static string Body(string file, string marker)
         {
-            var source = File.ReadAllText(Path.Combine(AgentPackageRepositoryInventory.RepositoryRoot.FullName,
+            var source = ReadMigrationSourceText(Path.Combine(AgentPackageRepositoryInventory.RepositoryRoot.FullName,
                 "src/Sunder.Package.Agent/Rpc/Consumers", file)).Replace("\r\n", "\n", StringComparison.Ordinal);
             Assert.Equal(2, source.Split(marker, StringSplitOptions.None).Length);
             return source[source.IndexOf(marker, StringComparison.Ordinal)..];

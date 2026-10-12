@@ -552,8 +552,8 @@ public sealed class AgentFailurePresentationTests
             var eventLogger = new RecordingEventLogger();
             var packageContext = new RecordingPackageContext(scope.Context, eventLogger);
             var store = new AgentLocalStore(packageContext);
-            var sessionService = new AgentSessionService(store, catalog);
-            var workspaceService = new AgentWorkspaceService(store, catalog, sessionService);
+            var sessionService = new AgentSessionService(store, catalog.SessionCleaners);
+            var workspaceService = new AgentWorkspaceService(store, catalog.SessionCleaners, sessionService, catalog.WorkspacePathMigrators);
             var workspace = workspaceService.CreateWorkspace("Failure presentation workspace");
             var now = DateTimeOffset.UtcNow;
             var binding = new AgentProfileModelBindingRecord(
@@ -590,7 +590,8 @@ public sealed class AgentFailurePresentationTests
                 AgentRunAdmissionKind.Normal,
                 RollbackAnchorTurnId: null,
                 new string('a', 64),
-                []));
+                []),
+                []);
             var lease = new AgentDurableRunLease(admission.Run);
             var cancellation = new CancellationTokenSource();
             var runHandle = new AgentActiveRunHandle(
@@ -631,7 +632,8 @@ public sealed class AgentFailurePresentationTests
                 cancellation.Token,
                 InterruptedCheckpoint: null);
             var runEventLogger = new AgentRunEventLogger(packageContext);
-            var memoryCoordinator = new AgentMemoryCoordinator(sessionService, catalog);
+            var memoryCoordinator = new AgentMemoryCoordinator(sessionService, catalog.PromptContextContributors,
+                new AgentLifecycleDispatcher(store, catalog.DurableLifecycleObservers));
             var service = new AgentRunExecutionService(
                 sessionService,
                 workspaceService,
@@ -659,7 +661,6 @@ public sealed class AgentFailurePresentationTests
         public void Dispose()
         {
             Started.Plan.RunHandle.CancellationTokenSource.Dispose();
-            Started.Plan.Dispose();
             _catalog.Dispose();
             _scope.Dispose();
         }

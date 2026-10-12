@@ -1,4 +1,4 @@
-using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Sdk.Settings;
 
@@ -9,22 +9,22 @@ internal static class AnthropicModelCatalog
 {
     private static readonly IReadOnlyList<AgentModelVariantDescriptor> StandardReasoningVariants =
     [
-        new("low", "Low", "Use low effort for faster, more token-efficient responses.", AgentReasoningEffort.Low),
-        new("medium", "Medium", "Use balanced effort for most agentic tasks.", AgentReasoningEffort.Medium),
-        new("high", "High", "Use high effort for complex reasoning and difficult coding tasks.", AgentReasoningEffort.High),
+        new() { VariantId = "low", DisplayName = "Low", Description = "Use low effort for faster, more token-efficient responses.", ReasoningEffort = AgentReasoningEffort.Low },
+        new() { VariantId = "medium", DisplayName = "Medium", Description = "Use balanced effort for most agentic tasks.", ReasoningEffort = AgentReasoningEffort.Medium },
+        new() { VariantId = "high", DisplayName = "High", Description = "Use high effort for complex reasoning and difficult coding tasks.", ReasoningEffort = AgentReasoningEffort.High },
     ];
 
     private static readonly IReadOnlyList<AgentModelVariantDescriptor> OpusReasoningVariants =
     [
-        new("low", "Low", "Use low effort for faster, more token-efficient responses.", AgentReasoningEffort.Low),
-        new("medium", "Medium", "Use balanced effort for most agentic tasks.", AgentReasoningEffort.Medium),
-        new("high", "High", "Use high effort for complex reasoning and difficult coding tasks.", AgentReasoningEffort.High),
-        new("xhigh", "Xhigh", "Use extra-high effort for advanced coding and long-horizon agentic work.", AgentReasoningEffort.ExtraHigh),
+        new() { VariantId = "low", DisplayName = "Low", Description = "Use low effort for faster, more token-efficient responses.", ReasoningEffort = AgentReasoningEffort.Low },
+        new() { VariantId = "medium", DisplayName = "Medium", Description = "Use balanced effort for most agentic tasks.", ReasoningEffort = AgentReasoningEffort.Medium },
+        new() { VariantId = "high", DisplayName = "High", Description = "Use high effort for complex reasoning and difficult coding tasks.", ReasoningEffort = AgentReasoningEffort.High },
+        new() { VariantId = "xhigh", DisplayName = "Xhigh", Description = "Use extra-high effort for advanced coding and long-horizon agentic work.", ReasoningEffort = AgentReasoningEffort.ExtraHigh },
     ];
 
     private static readonly IReadOnlyList<AgentModelSpeedOptionDescriptor> FastSpeedOptions =
     [
-        new("fast", "Fast", "Use Anthropic fast mode for lower latency."),
+        new() { SpeedOptionId = "fast", DisplayName = "Fast", Description = "Use Anthropic fast mode for lower latency." },
     ];
 
     private static readonly IReadOnlyDictionary<string, DateOnly> ReleaseDates =
@@ -46,18 +46,30 @@ internal static class AnthropicModelCatalog
 
     private static readonly IReadOnlyList<AgentModelDescriptor> VendorModels =
         ProviderModelCatalog.ApplyReleaseDates([
-        new("anthropic/claude-fable-5", "Claude Fable 5", 1000000, 128000, IsRecommended: true, Variants: OpusReasoningVariants),
-        new("anthropic/claude-opus-4-8", "Claude Opus 4.8", 1000000, 128000, IsRecommended: true, Variants: OpusReasoningVariants, SpeedOptions: FastSpeedOptions),
-        new("anthropic/claude-opus-4-7", "Claude Opus 4.7", 1000000, 128000, Variants: OpusReasoningVariants, SpeedOptions: FastSpeedOptions),
-        new("anthropic/claude-opus-4-6", "Claude Opus 4.6", 1000000, 128000, Variants: OpusReasoningVariants, SpeedOptions: FastSpeedOptions),
-        new("anthropic/claude-sonnet-5", "Claude Sonnet 5", 1000000, 128000, IsRecommended: true, Variants: StandardReasoningVariants),
-        new("anthropic/claude-sonnet-4-6", "Claude Sonnet 4.6", 1000000, 128000, Variants: StandardReasoningVariants),
-        new("anthropic/claude-sonnet-4-5", "Claude Sonnet 4.5", 1000000, 64000, Variants: StandardReasoningVariants),
-        new("anthropic/claude-sonnet-4-5-20250929", "Claude Sonnet 4.5 (2025-09-29)", 1000000, 64000, Variants: StandardReasoningVariants),
-        new("anthropic/claude-opus-4-5", "Claude Opus 4.5", 200000, 64000, Variants: StandardReasoningVariants),
-        new("anthropic/claude-opus-4-5-20251101", "Claude Opus 4.5 (2025-11-01)", 200000, 64000, Variants: StandardReasoningVariants),
-        new("anthropic/claude-haiku-4-5", "Claude Haiku 4.5", 200000, 64000),
-        new("anthropic/claude-haiku-4-5-20251001", "Claude Haiku 4.5 (2025-10-01)", 200000, 64000),
+        new() { ModelId = "anthropic/claude-fable-5", DisplayName = "Claude Fable 5", ContextWindow = 1000000, MaxOutputTokens = 128000,
+            IsRecommended = true, Variants = OpusReasoningVariants, SpeedOptions = null, ModeOptions = null, ReleaseDate = null },
+        new() { ModelId = "anthropic/claude-opus-4-8", DisplayName = "Claude Opus 4.8", ContextWindow = 1000000, MaxOutputTokens = 128000,
+            IsRecommended = true, Variants = OpusReasoningVariants, SpeedOptions = FastSpeedOptions, ModeOptions = null, ReleaseDate = null },
+        new() { ModelId = "anthropic/claude-opus-4-7", DisplayName = "Claude Opus 4.7", ContextWindow = 1000000, MaxOutputTokens = 128000,
+            IsRecommended = false, Variants = OpusReasoningVariants, SpeedOptions = FastSpeedOptions, ModeOptions = null, ReleaseDate = null },
+        new() { ModelId = "anthropic/claude-opus-4-6", DisplayName = "Claude Opus 4.6", ContextWindow = 1000000, MaxOutputTokens = 128000,
+            IsRecommended = false, Variants = OpusReasoningVariants, SpeedOptions = FastSpeedOptions, ModeOptions = null, ReleaseDate = null },
+        new() { ModelId = "anthropic/claude-sonnet-5", DisplayName = "Claude Sonnet 5", ContextWindow = 1000000, MaxOutputTokens = 128000,
+            IsRecommended = true, Variants = StandardReasoningVariants, SpeedOptions = null, ModeOptions = null, ReleaseDate = null },
+        new() { ModelId = "anthropic/claude-sonnet-4-6", DisplayName = "Claude Sonnet 4.6", ContextWindow = 1000000, MaxOutputTokens = 128000,
+            IsRecommended = false, Variants = StandardReasoningVariants, SpeedOptions = null, ModeOptions = null, ReleaseDate = null },
+        new() { ModelId = "anthropic/claude-sonnet-4-5", DisplayName = "Claude Sonnet 4.5", ContextWindow = 1000000, MaxOutputTokens = 64000,
+            IsRecommended = false, Variants = StandardReasoningVariants, SpeedOptions = null, ModeOptions = null, ReleaseDate = null },
+        new() { ModelId = "anthropic/claude-sonnet-4-5-20250929", DisplayName = "Claude Sonnet 4.5 (2025-09-29)", ContextWindow = 1000000, MaxOutputTokens = 64000,
+            IsRecommended = false, Variants = StandardReasoningVariants, SpeedOptions = null, ModeOptions = null, ReleaseDate = null },
+        new() { ModelId = "anthropic/claude-opus-4-5", DisplayName = "Claude Opus 4.5", ContextWindow = 200000, MaxOutputTokens = 64000,
+            IsRecommended = false, Variants = StandardReasoningVariants, SpeedOptions = null, ModeOptions = null, ReleaseDate = null },
+        new() { ModelId = "anthropic/claude-opus-4-5-20251101", DisplayName = "Claude Opus 4.5 (2025-11-01)", ContextWindow = 200000, MaxOutputTokens = 64000,
+            IsRecommended = false, Variants = StandardReasoningVariants, SpeedOptions = null, ModeOptions = null, ReleaseDate = null },
+        new() { ModelId = "anthropic/claude-haiku-4-5", DisplayName = "Claude Haiku 4.5", ContextWindow = 200000, MaxOutputTokens = 64000,
+            IsRecommended = false, Variants = null, SpeedOptions = null, ModeOptions = null, ReleaseDate = null },
+        new() { ModelId = "anthropic/claude-haiku-4-5-20251001", DisplayName = "Claude Haiku 4.5 (2025-10-01)", ContextWindow = 200000, MaxOutputTokens = 64000,
+            IsRecommended = false, Variants = null, SpeedOptions = null, ModeOptions = null, ReleaseDate = null },
     ], ReleaseDates, requireEveryModel: true);
 
     private static readonly ProviderModelCatalogSnapshot Catalog = ProviderModelCatalog.ValidateAndOrder(
@@ -72,10 +84,10 @@ internal static class AnthropicModelCatalog
 
     internal static int? GetMaxOutputTokens(string modelId)
     {
-        return ProviderModelCatalog.FindByNormalizedId(
+        return checked((int?)ProviderModelCatalog.FindByNormalizedId(
                 Models,
                 modelId,
                 static id => ProviderModelId.RemovePrefix(id, "anthropic"))
-            ?.MaxOutputTokens;
+            ?.MaxOutputTokens);
     }
 }

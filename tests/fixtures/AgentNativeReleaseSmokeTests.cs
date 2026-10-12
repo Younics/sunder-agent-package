@@ -20,9 +20,10 @@ using Xunit;
 
 namespace Sunder.Runtime.Host.Tests;
 
+[Collection(RuntimeProcessIntegrationCollection.Name)]
 public sealed class AgentNativeReleaseSmokeTests(
-    SignedCurrentRidExecutionRuntimeFixture executionRuntimes)
-    : IClassFixture<SignedCurrentRidExecutionRuntimeFixture>
+    OfficialRuntimeFixture executionRuntimes)
+    : IClassFixture<OfficialRuntimeFixture>
 {
     private const string AgentPackageId = "sunder.package.agent";
     private const string BuilderPackageId = "sunder.package.agent.builder";
@@ -58,16 +59,12 @@ public sealed class AgentNativeReleaseSmokeTests(
             Guid.NewGuid().ToString("N"));
         var paths = new RuntimePackagePaths(Path.Combine(root, "runtime"));
         RuntimeLocalState.EnsureInitialized(paths.RootPath);
-        var runtimeReceipt = await executionRuntimes.EnsureDotNetAsync(
-            CurrentRidRuntimeHostTestSupport.GetCurrentDotNetVersion(),
-            packagingRevision: 1);
-        var runtimePolicy = await executionRuntimes.ObserveSupportedAsync(runtimeReceipt);
+        var runtimeReceipt = await executionRuntimes.EnsureDotNetAsync("10.0.12");
         var launchResolver = new CapturingExecutionRuntimeLaunchResolver(executionRuntimes.LaunchResolver);
         var services = new ServiceCollection();
         services.AddRuntimeHostServices(paths, new RuntimeBearerTokenValidator("native-release-smoke-token"));
         services.AddSingleton(executionRuntimes.Layout);
         services.AddSingleton(executionRuntimes.Store);
-        services.AddSingleton(executionRuntimes.LifecyclePolicies);
         services.AddSingleton(executionRuntimes.LocalBindingResolver);
         services.AddSingleton<IEphemeralExecutionRuntimeBindingResolver>(executionRuntimes.LocalBindingResolver);
         services.AddSingleton<IExecutionRuntimeLaunchResolver>(launchResolver);
@@ -149,8 +146,7 @@ public sealed class AgentNativeReleaseSmokeTests(
             Assert.Equal(15, installedRecords.Count);
             Assert.All(installedRecords, package => CurrentRidRuntimeHostTestSupport.AssertBindingMatches(
                 Assert.Single(package.ExecutionRuntimeBindings),
-                runtimeReceipt,
-                runtimePolicy));
+                runtimeReceipt));
             var initialWorkers = GetWorkers(sessionOwner);
             Assert.Equal(15, initialWorkers.Count);
             Assert.All(
@@ -729,7 +725,7 @@ public sealed class AgentNativeReleaseSmokeTests(
                 {
                     kind = 0,
                     displayName = "Native release smoke",
-                    description = "Exercises the owner stream over a signed native worker.",
+                    description = "Exercises the owner stream over an official-runtime Worker.",
                 }),
                 options: null,
                 streamTimeout.Token);

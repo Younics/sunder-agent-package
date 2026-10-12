@@ -18,7 +18,7 @@ internal static class HostSecureFileSearch
         using var approvedAuthority = pathContext.ApprovedAuthority;
         if (!TryValidateRequest(request, out var validationError))
         {
-            return AgentFileSearchResult.Failure(
+            return FileOperation.SearchFailure(
                 AgentFileSearchErrorCodes.InvalidRequest,
                 validationError!);
         }
@@ -32,7 +32,7 @@ internal static class HostSecureFileSearch
             }
             catch (Exception ex) when (ex is ArgumentException or NotSupportedException)
             {
-                return AgentFileSearchResult.Failure(AgentFileSearchErrorCodes.InvalidRequest, ex.Message);
+                return FileOperation.SearchFailure(AgentFileSearchErrorCodes.InvalidRequest, ex.Message);
             }
         }
 
@@ -71,25 +71,25 @@ internal static class HostSecureFileSearch
                     depth: 0,
                     cancellationToken).ConfigureAwait(false);
             }
-            return new AgentFileSearchResult(state.Matches, state.WasTruncated);
+            return FileOperation.SearchResult(state.Matches, state.WasTruncated);
         }
         catch (LocalSecurePathNotFoundException ex)
         {
-            return AgentFileSearchResult.Failure(AgentFileSearchErrorCodes.PathNotFound, ex.Message);
+            return FileOperation.SearchFailure(AgentFileSearchErrorCodes.PathNotFound, ex.Message);
         }
         catch (InvalidOperationException ex)
         {
-            return AgentFileSearchResult.Failure(AgentFileSearchErrorCodes.OutsideConfiguredScope, ex.Message);
+            return FileOperation.SearchFailure(AgentFileSearchErrorCodes.OutsideConfiguredScope, ex.Message);
         }
         catch (RegexMatchTimeoutException ex)
         {
-            return AgentFileSearchResult.Failure(
+            return FileOperation.SearchFailure(
                 AgentFileSearchErrorCodes.InvalidRequest,
                 $"The grep regular expression exceeded its match-time bound: {ex.Message}");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
         {
-            return AgentFileSearchResult.Failure(AgentFileSearchErrorCodes.PathUnresolvable, ex.Message);
+            return FileOperation.SearchFailure(AgentFileSearchErrorCodes.PathUnresolvable, ex.Message);
         }
     }
 
@@ -157,7 +157,11 @@ internal static class HostSecureFileSearch
                     state.GlobBudget,
                     state.UsesPosixPaths))
             {
+#if SUNDER_AGENT_PACKAGE_MODELS
+                state.Add(new AgentFileSearchMatch { Path = reportedPath, LineNumber = null, Text = null });
+#else
                 state.Add(new AgentFileSearchMatch(reportedPath));
+#endif
             }
             return;
         }
@@ -195,7 +199,11 @@ internal static class HostSecureFileSearch
                 {
                     return;
                 }
+#if SUNDER_AGENT_PACKAGE_MODELS
+                var match = new AgentFileSearchMatch { Path = reportedPath, LineNumber = lineNumber, Text = line };
+#else
                 var match = new AgentFileSearchMatch(reportedPath, lineNumber, line);
+#endif
                 var characters = SearchState.CountCharacters(match);
                 if (fileMatches.Count >= MaxResults
                     || fileOutputCharacters + characters > MaxOutputCharacters)

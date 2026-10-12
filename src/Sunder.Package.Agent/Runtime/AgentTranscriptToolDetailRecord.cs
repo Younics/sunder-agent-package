@@ -8,7 +8,7 @@ public sealed record AgentTranscriptToolDetailRequest(
     string? CallId = null,
     Guid? ItemId = null,
     Guid? RunId = null,
-    long? RunRevision = null);
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long? RunRevision = null);
 
 /// <summary>Contains the authoritative persisted fields used to present one tool invocation.</summary>
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
@@ -33,7 +33,7 @@ public sealed record AgentTranscriptToolDetailRecord(
     string? ToolOwnerPackageId,
     string? ToolSchemaId,
     string? ToolSchemaVersion,
-    long Revision)
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long Revision)
 {
     /// <summary>Gets whether transport limits required one or more detail fields to be omitted or shortened.</summary>
     public bool WasTransportTruncated { get; init; }
@@ -42,5 +42,6 @@ public sealed record AgentTranscriptToolDetailRecord(
     public Guid? RunId { get; init; }
 
     /// <summary>Gets the owning run revision used to scope the provider call identifier.</summary>
+    [Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")]
     public long? RunRevision { get; init; }
 }

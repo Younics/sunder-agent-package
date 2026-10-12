@@ -7,8 +7,10 @@ using McpApp::Sunder.Package.Agent.Mcp;
 using McpApp::Sunder.Package.Agent.Mcp.Runtime;
 using McpApp::Sunder.Package.Agent.Mcp.Services;
 using McpOAuthCallbackHandler = McpWorker::Sunder.Package.Agent.Mcp.Services.McpOAuthCallbackHandler;
+using McpAppManagementService = McpApp::Sunder.Generated.Packages.Sunder_Package_Agent_Mcp_Services.IManagementService;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Callbacks;
+using Sunder.Sdk.Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -21,13 +23,27 @@ public sealed class McpCallbackFlowTests
         using var scope = RegressionTestPackageScope.Create();
         var callbacks = new FakeCallbackClient();
         var context = new CallbackPackageContext(scope.Context, callbacks);
-        using var catalog = new RegressionTestExtensionCatalog();
-        var service = new McpWorker::Sunder.Package.Agent.Mcp.Rpc.ManagementService(
-            AgentRoleBoundary.As<McpWorker::Sunder.Package.Agent.Mcp.Runtime.IMcpOwnerManagementClient>(new IdleManagementClient()));
-        catalog.AddGeneratedProvider("sunder.package.agent.mcp", service, service.CreateSunderRpcProviderRegistration());
+        using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
+        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent.mcp");
+        var generated = AgentSourceArtifactMigrationTests.CreateGeneratedWorker(
+            typeof(McpWorker::Sunder.Package.Agent.Mcp.McpToolSource).Assembly,
+            context,
+            rpc);
+        await using var worker = generated.Lifetime;
+        var registration = Assert.Single(generated.Options.Providers,
+            provider => provider.ProviderId == "mcp.management");
+        var descriptor = CurrentPrivateRpcDescriptors.Get("sunder.package.agent.mcp.management");
+        state.Add(
+            context.PackageId,
+            descriptor,
+            registration.Handler,
+            registration.Handler,
+            Noop.Instance,
+            registration.ProviderId,
+            context.Version);
         var services = new ServiceCollection();
         services.AddSingleton<IPackageContext>(context);
-        services.AddSingleton(catalog.RpcForCaller("sunder.package.agent.mcp"));
+        services.AddSingleton<Sunder.Sdk.Rpc.ISunderRpcClient>(rpc);
 
         new McpApp::Sunder.Generated.Package.AppModule().ConfigureAppServices(services, context);
 
@@ -196,27 +212,75 @@ public sealed class McpCallbackFlowTests
                 DateTimeOffset.UtcNow.AddMinutes(5));
     }
 
-    private sealed class IdleManagementClient : IMcpOwnerManagementClient
+    private class ManagementClientStub : McpAppManagementService
     {
-        public ValueTask<McpProjection> QueryAsync(
-            McpQuery query,
+        public virtual ValueTask<SunderContent> CatalogAsync(
             CancellationToken cancellationToken = default)
-            => ValueTask.FromException<McpProjection>(new NotSupportedException());
+            => Unavailable();
 
-        public ValueTask<McpProjection> CommandAsync(
-            McpCommand command,
+        public virtual ValueTask<SunderContent> DocumentAsync(
+            string serverId,
             CancellationToken cancellationToken = default)
-            => ValueTask.FromException<McpProjection>(new NotSupportedException());
+            => Unavailable();
 
-        public async IAsyncEnumerable<McpChanged> WatchChangesAsync(
+        public virtual ValueTask<SunderContent> PresentationAsync(
+            string serverId,
+            CancellationToken cancellationToken = default)
+            => Unavailable();
+
+        public virtual ValueTask<SunderContent> InitializeAsync(
+            CancellationToken cancellationToken = default)
+            => Unavailable();
+
+        public virtual ValueTask<SunderContent> SaveAsync(
+            SunderContent configurationDocument,
+            CancellationToken cancellationToken = default)
+            => Unavailable();
+
+        public virtual ValueTask<SunderContent> DeleteAsync(
+            string serverId,
+            CancellationToken cancellationToken = default)
+            => Unavailable();
+
+        public virtual ValueTask<SunderContent> ImportCommonAsync(
+            CancellationToken cancellationToken = default)
+            => Unavailable();
+
+        public virtual ValueTask<SunderContent> ImportDocumentAsync(
+            SunderContent document,
+            CancellationToken cancellationToken = default)
+            => Unavailable();
+
+        public virtual ValueTask<SunderContent> DiscoverAsync(
+            string serverId,
+            bool reconnect,
+            CancellationToken cancellationToken = default)
+            => Unavailable();
+
+        public virtual ValueTask<SunderContent> DisconnectAsync(
+            string serverId,
+            CancellationToken cancellationToken = default)
+            => Unavailable();
+
+        public virtual ValueTask<SunderContent> ClearAuthorizationAsync(
+            string serverId,
+            CancellationToken cancellationToken = default)
+            => Unavailable();
+
+        public virtual async IAsyncEnumerable<McpChanged> ChangesAsync(
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             yield break;
         }
+
+        private static ValueTask<SunderContent> Unavailable()
+            => ValueTask.FromException<SunderContent>(new NotSupportedException());
     }
 
-    private sealed class ReconnectingManagementClient : IMcpOwnerManagementClient
+    private sealed class IdleManagementClient : ManagementClientStub;
+
+    private sealed class ReconnectingManagementClient : ManagementClientStub
     {
         private int _subscriptionCount;
 
@@ -224,17 +288,7 @@ public sealed class McpCallbackFlowTests
         internal TaskCompletionSource SecondSubscriptionStarted { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public ValueTask<McpProjection> QueryAsync(
-            McpQuery query,
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromException<McpProjection>(new NotSupportedException());
-
-        public ValueTask<McpProjection> CommandAsync(
-            McpCommand command,
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromException<McpProjection>(new NotSupportedException());
-
-        public async IAsyncEnumerable<McpChanged> WatchChangesAsync(
+        public override async IAsyncEnumerable<McpChanged> ChangesAsync(
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             var subscription = Interlocked.Increment(ref _subscriptionCount);
@@ -248,5 +302,11 @@ public sealed class McpCallbackFlowTests
             SecondSubscriptionStarted.TrySetResult();
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
         }
+    }
+
+    private sealed class Noop : IDisposable
+    {
+        internal static Noop Instance { get; } = new();
+        public void Dispose() { }
     }
 }

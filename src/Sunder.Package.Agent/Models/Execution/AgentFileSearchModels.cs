@@ -4,10 +4,10 @@ namespace Sunder.Package.Agent.Contracts.Models;
 public enum AgentFileSearchKind
 {
     /// <summary>Search regular text-file lines with a regular expression.</summary>
-    Grep = 0,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("grep")] Grep = 0,
 
     /// <summary>Search regular file paths with a glob pattern.</summary>
-    Glob = 1,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("glob")] Glob = 1,
 }
 
 /// <summary>Requests a bounded, target-owned structured file search.</summary>
@@ -54,23 +54,4 @@ public sealed record AgentFileSearchResult(
             ErrorCode = errorCode,
             ErrorMessage = errorMessage,
         };
-}
-
-/// <summary>Defines stable execution-target search failure codes.</summary>
-public static class AgentFileSearchErrorCodes
-{
-    /// <summary>The request was malformed or its expression was invalid.</summary>
-    public const string InvalidRequest = "file-search-invalid";
-
-    /// <summary>The search root was missing.</summary>
-    public const string PathNotFound = "file-search-path-not-found";
-
-    /// <summary>The search root was outside authorized scope.</summary>
-    public const string OutsideConfiguredScope = "file-search-outside-scope";
-
-    /// <summary>A no-follow path or filesystem-identity check failed.</summary>
-    public const string PathUnresolvable = "file-search-path-unresolvable";
-
-    /// <summary>The search backend failed after authorization.</summary>
-    public const string SearchFailed = "file-search-failed";
 }

@@ -13,15 +13,15 @@ public enum AgentExecutionTargetReadinessStatus
     /// <summary>
     /// The target's required configuration and backend dependencies are available for the supplied context.
     /// </summary>
-    Ready = 0,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("ready")] Ready = 0,
 
     /// <summary>
     /// User-supplied target or workspace configuration is missing or incomplete and can normally be corrected through settings.
     /// </summary>
-    NeedsConfiguration = 1,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("needs-configuration")] NeedsConfiguration = 1,
 
     /// <summary>
     /// The target is configured but validation or an external backend dependency failed; the accompanying message provides diagnostics.
     /// </summary>
-    Failed = 3,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("failed")] Failed = 3,
 }

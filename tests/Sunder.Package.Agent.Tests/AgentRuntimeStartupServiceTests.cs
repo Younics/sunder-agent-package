@@ -23,21 +23,13 @@ namespace Sunder.Package.Agent.Tests;
 public sealed class AgentRuntimeStartupServiceTests
 {
     private static readonly TimeSpan TestTimeout = TimeSpan.FromSeconds(15);
-    private static readonly SunderRpcContractDescriptor DeferredTestDescriptor =
-        RegressionTestRpcDescriptors.Get(AgentRpcContractIds.SessionCleaner);
-
     [Fact]
     public async Task WorkerActivation_DoesNotWaitForPreActivationCatalogDiscovery()
     {
         using var scope = RegressionTestPackageScope.Create();
         var client = new BlockingActivationRpcClient();
-        var catalog = AgentRpcCatalog.CreateDormant(client);
-        await using var provider = RegressionTestRuntime.Create(scope.Context, catalog);
-        var deferred = new DeferredAgentRpcServiceHandler(
-            "test.deferred",
-            DeferredTestDescriptor,
-            _ => NoOpRpcHandler.Instance);
-        var lifecycle = new AgentWorkerLifecycle(provider, [deferred]);
+        await using var provider = RegressionTestRuntime.Create(scope.Context, client);
+        var lifecycle = new AgentWorkerLifecycle(provider);
         lifecycle.CommitGeneration(new PackageRuntimeGeneration(Guid.NewGuid(), 1));
 
         await lifecycle.ActivateAsync(
@@ -46,24 +38,16 @@ public sealed class AgentRuntimeStartupServiceTests
             .AsTask()
             .WaitAsync(TimeSpan.FromSeconds(2));
 
-        Assert.True(deferred.IsActive);
+        Assert.True(provider.GetRequiredService<AgentBackgroundWorkService>().IsRunning);
         await lifecycle.StopAsync(CancellationToken.None);
     }
 
     [Fact]
-    public async Task WorkerActivation_NewerHostGenerationSupersedesPriorLeaseBeforeDeferredProvidersActivate()
+    public async Task WorkerActivation_NewerHostGenerationSupersedesPriorLeaseBeforeOwnedWorkersRun()
     {
         using var scope = RegressionTestPackageScope.Create();
-        var catalog = AgentRpcCatalog.CreateDormant(
-            new RegressionTestRpcClient(new RegressionTestRpcState(), "sunder.package.agent"));
-        await using var provider = RegressionTestRuntime.Create(scope.Context, catalog);
-        var handlerActivated = false;
-        var deferred = new DeferredAgentRpcServiceHandler("test.deferred", DeferredTestDescriptor, _ =>
-        {
-            handlerActivated = true;
-            return NoOpRpcHandler.Instance;
-        });
-        var lifecycle = new AgentWorkerLifecycle(provider, [deferred]);
+        await using var provider = RegressionTestRuntime.Create(scope.Context);
+        var lifecycle = new AgentWorkerLifecycle(provider);
         var store = provider.GetRequiredService<AgentLocalStore>();
         var oldEpoch = Guid.NewGuid();
         var now = DateTimeOffset.UtcNow;
@@ -81,8 +65,6 @@ public sealed class AgentRuntimeStartupServiceTests
             CancellationToken.None).AsTask();
         await activation.WaitAsync(TestTimeout);
 
-        Assert.True(handlerActivated);
-        Assert.True(deferred.IsActive);
         Assert.Equal(candidate.ActivationId, store.OwnedRuntimeGeneration);
         Assert.True(provider.GetRequiredService<AgentBackgroundWorkService>().IsRunning);
         Assert.Equal("Expired", ExecuteString(
@@ -92,23 +74,29 @@ public sealed class AgentRuntimeStartupServiceTests
     }
 
     [Fact]
-    public async Task WorkerActivation_ProviderFailureRejectsCandidateAndUnwindsStartup()
+    public async Task WorkerActivation_GenerationCommitFailureRejectsCandidateAndUnwindsStartup()
     {
         using var scope = RegressionTestPackageScope.Create();
-        var catalog = AgentRpcCatalog.CreateDormant(
-            new RegressionTestRpcClient(new RegressionTestRpcState(), "sunder.package.agent"));
-        await using var provider = RegressionTestRuntime.Create(scope.Context, catalog);
-        var first = new DeferredAgentRpcServiceHandler(
-            "test.first",
-            DeferredTestDescriptor,
-            _ => NoOpRpcHandler.Instance);
-        var failing = new DeferredAgentRpcServiceHandler("test.failure", DeferredTestDescriptor, _ =>
-            throw new InvalidOperationException("Injected deferred provider startup failure."));
-        var lifecycle = new AgentWorkerLifecycle(provider, [first, failing]);
+        await using var provider = RegressionTestRuntime.Create(scope.Context);
+        var history = provider.GetRequiredService<HistorySearchStore>();
+        history.ChangeConfiguration(true, "test.embedding", "test.provider", "test.model", new string('a', 64));
+        using (var connection = Open(history.DatabasePath))
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                CREATE TRIGGER RejectWorkerGenerationHistoryConfiguration
+                BEFORE UPDATE ON HistoryConfiguration
+                BEGIN
+                    SELECT RAISE(ABORT, 'worker generation commit rejected');
+                END;
+                """;
+            command.ExecuteNonQuery();
+        }
+        var lifecycle = new AgentWorkerLifecycle(provider);
         lifecycle.CommitGeneration(new PackageRuntimeGeneration(Guid.NewGuid(), 1));
         var faultReported = false;
 
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => lifecycle.ActivateAsync(
+        var exception = await Assert.ThrowsAsync<SqliteException>(() => lifecycle.ActivateAsync(
             (_, _, _) =>
             {
                 faultReported = true;
@@ -116,9 +104,7 @@ public sealed class AgentRuntimeStartupServiceTests
             },
             CancellationToken.None).AsTask());
 
-        Assert.Contains("deferred provider startup failure", exception.Message, StringComparison.Ordinal);
-        Assert.False(first.IsActive);
-        Assert.False(failing.IsActive);
+        Assert.Contains("worker generation commit rejected", exception.Message, StringComparison.Ordinal);
         Assert.False(faultReported);
         Assert.Null(provider.GetRequiredService<AgentLocalStore>().OwnedRuntimeGeneration);
         Assert.False(provider.GetRequiredService<AgentBackgroundWorkService>().IsRunning);
@@ -128,23 +114,15 @@ public sealed class AgentRuntimeStartupServiceTests
     public async Task WorkerGenerationFault_ReportsBeforeBoundedCleanupAndPreservesOriginalWhenCleanupHangs()
     {
         using var scope = RegressionTestPackageScope.Create();
-        var catalog = AgentRpcCatalog.CreateDormant(
-            new RegressionTestRpcClient(new RegressionTestRpcState(), "sunder.package.agent"));
-        await using var provider = RegressionTestRuntime.Create(scope.Context, catalog);
-        var deferred = new DeferredAgentRpcServiceHandler(
-            "test.deferred",
-            DeferredTestDescriptor,
-            _ => NoOpRpcHandler.Instance);
-        var lifecycle = new AgentWorkerLifecycle(provider, [deferred], TimeSpan.FromMilliseconds(50));
+        await using var provider = RegressionTestRuntime.Create(scope.Context);
+        var lifecycle = new AgentWorkerLifecycle(provider, TimeSpan.FromMilliseconds(50));
         Assert.IsAssignableFrom<ISunderWorkerLifecycleService>(lifecycle);
         lifecycle.CommitGeneration(new PackageRuntimeGeneration(Guid.NewGuid(), 1));
         var reportCalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var providerWasActiveAtReport = false;
         var workersWereActiveAtReport = false;
         await lifecycle.ActivateAsync(
             (_, _, _) =>
             {
-                providerWasActiveAtReport = deferred.IsActive;
                 workersWereActiveAtReport = provider
                     .GetRequiredService<AgentBackgroundWorkService>()
                     .IsRunning;
@@ -166,9 +144,7 @@ public sealed class AgentRuntimeStartupServiceTests
         var observed = await Assert.ThrowsAsync<InvalidOperationException>(
             () => lifecycle.Completion.WaitAsync(TestTimeout));
         Assert.Same(original, observed);
-        Assert.True(providerWasActiveAtReport);
         Assert.True(workersWereActiveAtReport);
-        Assert.False(deferred.IsActive);
 
         releaseCleanup.TrySetResult();
         await startup.StopAsync().WaitAsync(TestTimeout);
@@ -179,14 +155,8 @@ public sealed class AgentRuntimeStartupServiceTests
     public async Task WorkerGenerationFault_PreservesOriginalWhenCleanupFails()
     {
         using var scope = RegressionTestPackageScope.Create();
-        var catalog = AgentRpcCatalog.CreateDormant(
-            new RegressionTestRpcClient(new RegressionTestRpcState(), "sunder.package.agent"));
-        var provider = RegressionTestRuntime.Create(scope.Context, catalog);
-        var deferred = new DeferredAgentRpcServiceHandler(
-            "test.deferred",
-            DeferredTestDescriptor,
-            _ => NoOpRpcHandler.Instance);
-        var lifecycle = new AgentWorkerLifecycle(provider, [deferred], TimeSpan.FromSeconds(1));
+        var provider = RegressionTestRuntime.Create(scope.Context);
+        var lifecycle = new AgentWorkerLifecycle(provider, TimeSpan.FromSeconds(1));
         lifecycle.CommitGeneration(new PackageRuntimeGeneration(Guid.NewGuid(), 1));
         var reportCalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         try
@@ -212,7 +182,6 @@ public sealed class AgentRuntimeStartupServiceTests
             var observed = await Assert.ThrowsAsync<InvalidOperationException>(
                 () => lifecycle.Completion.WaitAsync(TestTimeout));
             Assert.Same(original, observed);
-            Assert.False(deferred.IsActive);
             var failedWorker = GetPrivateField<Task>(
                 provider.GetRequiredService<HistorySearchIndexingService>(),
                 "_worker");
@@ -1079,34 +1048,6 @@ public sealed class AgentRuntimeStartupServiceTests
             AgentDurableLifecycleEventEnvelope lifecycleEvent,
             CancellationToken cancellationToken = default)
             => ValueTask.CompletedTask;
-    }
-
-    private sealed class NoOpRpcHandler : ISunderRpcServiceHandler, ISunderRpcDeclaredErrorMetadata
-    {
-        internal static NoOpRpcHandler Instance { get; } = new();
-
-        public IReadOnlyDictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>> DeclaredErrors
-            => RegressionTestRpcDescriptors.ErrorMap(DeferredTestDescriptor);
-
-        public ValueTask<JsonElement> InvokeUnaryAsync(
-            SunderRpcInvocationContext context,
-            string serviceId,
-            string methodId,
-            JsonElement request,
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromResult(default(JsonElement));
-
-        public async IAsyncEnumerable<JsonElement> InvokeServerStreamAsync(
-            SunderRpcInvocationContext context,
-            string serviceId,
-            string methodId,
-            JsonElement request,
-            [System.Runtime.CompilerServices.EnumeratorCancellation]
-            CancellationToken cancellationToken = default)
-        {
-            await Task.CompletedTask;
-            yield break;
-        }
     }
 
     private sealed class BlockingActivationRpcClient : ISunderRpcClient

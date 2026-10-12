@@ -1,5 +1,4 @@
 using Sunder.Agent.Execution.Common;
-using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Rpc;
@@ -14,20 +13,20 @@ internal static class FilePermissionPlanner
 
     private static IReadOnlyList<AgentPermissionBoundaryDescriptor> Boundaries { get; } =
     [
-        new(AgentPermissionBoundaryIds.ConfiguredScope, "Files inside configured workspace paths", "Paths resolved by the selected execution target inside configured workspace paths.", AgentPermissionDecision.Allow),
-        new(AgentPermissionBoundaryIds.OutsideConfiguredScope, "Files outside configured workspace paths", "Paths resolved by the selected execution target outside configured workspace paths.", AgentPermissionDecision.Ask),
-        new(AgentPermissionBoundaryIds.Unknown, "Files whose workspace scope is unknown", "Requests that could not be classified by the selected execution target.", AgentPermissionDecision.Ask),
+        new() { BoundaryId = "configured-scope", DisplayName = "Files inside configured workspace paths", Description = "Paths resolved by the selected execution target inside configured workspace paths.", DefaultDecision = AgentPermissionDecision.Allow },
+        new() { BoundaryId = "outside-configured-scope", DisplayName = "Files outside configured workspace paths", Description = "Paths resolved by the selected execution target outside configured workspace paths.", DefaultDecision = AgentPermissionDecision.Ask },
+        new() { BoundaryId = "unknown", DisplayName = "Files whose workspace scope is unknown", Description = "Requests that could not be classified by the selected execution target.", DefaultDecision = AgentPermissionDecision.Ask },
     ];
 
     public static IReadOnlyList<AgentPermissionActionDescriptor> Actions { get; } =
     [
-        new("files.read", "Read files", "Read files and directories.", Boundaries),
-        new("files.search", "Search files", "Search file names and contents.", Boundaries),
-        new("files.mutate", "Modify files", "Create, overwrite, or edit files.", Boundaries),
+        new() { ActionId = "files.read", DisplayName = "Read files", Description = "Read files and directories.", Boundaries = Boundaries },
+        new() { ActionId = "files.search", DisplayName = "Search files", Description = "Search file names and contents.", Boundaries = Boundaries },
+        new() { ActionId = "files.mutate", DisplayName = "Modify files", Description = "Create, overwrite, or edit files.", Boundaries = Boundaries },
     ];
 
     public static async ValueTask<AgentPermissionRequest?> BuildAsync(
-        IAgentExecutionTarget? target,
+        FileExecutionTarget? target,
         AgentToolExecutionContext context,
         AgentToolRequest request,
         CancellationToken cancellationToken)
@@ -65,18 +64,12 @@ internal static class FilePermissionPlanner
                 cancellationToken);
         }
 
-        return new AgentPermissionRequest(
-            actionId,
-            scope.BoundaryId,
-            $"{request.ToolId} {scope.SummaryTarget}",
-            ToolId: request.ToolId,
-            Path: scope.Path,
-            WorkspaceId: context.Workspace?.WorkspaceId,
-            BindingId: context.ExecutionBinding?.BindingId,
-            ResourceDisplayName: scope.ResourceDisplayName,
-            ResourceReference: scope.ResourceReference,
-            IsMutation: actionId == "files.mutate")
+        return new AgentPermissionRequest
         {
+            ActionId = actionId, BoundaryId = scope.BoundaryId, Summary = $"{request.ToolId} {scope.SummaryTarget}",
+            ToolId = request.ToolId, Path = scope.Path, Command = null, WorkspaceId = context.Workspace?.WorkspaceId,
+            BindingId = context.ExecutionBinding?.BindingId, ResourceDisplayName = scope.ResourceDisplayName,
+            ResourceReference = scope.ResourceReference, IsMutation = actionId == "files.mutate",
             ResourceClaims = scope.ResourceClaims,
             ResourceCapabilities = scope.ResourceCapabilities,
             ResourceReferences = scope.ResourceReferences,
@@ -85,7 +78,7 @@ internal static class FilePermissionPlanner
     }
 
     private static async ValueTask<FilePermissionScope> ResolvePathScopeAsync(
-        IAgentExecutionTarget? target,
+        FileExecutionTarget? target,
         AgentToolExecutionContext context,
         string actionId,
         string path,
@@ -97,15 +90,13 @@ internal static class FilePermissionPlanner
             return FilePermissionScope.Unknown(path);
         }
 
-        var resource = await target!.ResolveFileResourceAsync(
-            CreateTargetContext(context, actionId, resourceIndex: 0, authorityUseCount),
-            path,
-            cancellationToken);
+        var resource = await target!.Service.ResolveFileAsync(new()
+        { Context = CreateTargetContext(context, actionId, resourceIndex: 0, authorityUseCount), Path = path }, cancellationToken);
         return FilePermissionScope.FromResource(path, resource);
     }
 
     private static async ValueTask<FilePermissionScope> ResolvePatchScopeAsync(
-        IAgentExecutionTarget? target,
+        FileExecutionTarget? target,
         AgentToolExecutionContext context,
         string actionId,
         string argumentsJson,
@@ -146,20 +137,21 @@ internal static class FilePermissionPlanner
         var resourceReferences = new List<string>();
         var resourceClaims = new List<AgentResourceClaim>();
         var classificationBases = new HashSet<AgentPermissionScopeClassificationBasis>();
-        using var plannedAuthority = new PlannedResourceAuthority(target, MaximumResourceCapabilities);
+        await using var plannedAuthority = new PlannedResourceAuthority(target, MaximumResourceCapabilities);
         for (var resourceIndex = 0; resourceIndex < paths.Length; resourceIndex++)
         {
             var path = paths[resourceIndex];
             try
             {
-                var resource = await target.ResolveFileResourceAsync(
-                    CreateTargetContext(
+                var resource = await target.Service.ResolveFileAsync(new()
+                {
+                    Context = CreateTargetContext(
                         context,
                         actionId,
                         resourceIndex,
                         PatchAuthorityUsesPerPath),
-                    path,
-                    cancellationToken);
+                    Path = path,
+                }, cancellationToken);
                 plannedAuthority.Add(
                     resource.DeleteAuthorityReferences.Concat(resource.AuthorityReferences));
                 classificationBases.Add(resource.ScopeClassificationBasis);
@@ -187,14 +179,14 @@ internal static class FilePermissionPlanner
                     : [resource.PermissionBoundaryId];
                 if (operationBoundaries.Any(boundary => string.Equals(
                         boundary,
-                        AgentPermissionBoundaryIds.OutsideConfiguredScope,
+                        "outside-configured-scope",
                         StringComparison.OrdinalIgnoreCase)))
                 {
                     hasOutside = true;
                 }
                 else if (operationBoundaries.Any(boundary => !string.Equals(
                              boundary,
-                             AgentPermissionBoundaryIds.ConfiguredScope,
+                             "configured-scope",
                              StringComparison.OrdinalIgnoreCase)))
                 {
                     hasUnknown = true;
@@ -211,8 +203,8 @@ internal static class FilePermissionPlanner
         }
 
         var boundaryId = hasOutside
-            ? AgentPermissionBoundaryIds.OutsideConfiguredScope
-            : hasUnknown ? AgentPermissionBoundaryIds.Unknown : AgentPermissionBoundaryIds.ConfiguredScope;
+            ? "outside-configured-scope"
+            : hasUnknown ? "unknown" : "configured-scope";
         return new FilePermissionScope(
             boundaryId,
             paths.Length == 1 ? paths[0] : $"{paths.Length} workspace files",
@@ -230,7 +222,7 @@ internal static class FilePermissionPlanner
                 : AgentPermissionScopeClassificationBasis.Mixed);
     }
 
-    private static bool CanResolve(IAgentExecutionTarget? target, AgentToolExecutionContext context, string? path)
+    private static bool CanResolve(FileExecutionTarget? target, AgentToolExecutionContext context, string? path)
         => target is not null
            && context.Workspace is not null
            && context.ExecutionBinding is not null
@@ -251,13 +243,9 @@ internal static class FilePermissionPlanner
                 CanIssueOutsideAuthority = current.CanIssueOutsideAuthority,
             }
             : null;
-        return new(
-            context.SessionId,
-            context.ProfileId,
-            context.Workspace!,
-            context.ExecutionBinding!,
-            AllowOutsideConfiguredScope: true)
+        return FileExecutionTarget.Context(context.SessionId, context.ProfileId, context.Workspace!, context.ExecutionBinding!) with
         {
+            AllowOutsideConfiguredScope = true,
             ResourceOperation = operation,
             ExpectedConfigurationGeneration = context.ExecutionTargetConfigurationGeneration,
         };
@@ -267,8 +255,8 @@ internal static class FilePermissionPlanner
         => toolId.Equals("edit", StringComparison.OrdinalIgnoreCase) ? 2 : 1;
 
     private sealed class PlannedResourceAuthority(
-        IAgentExecutionTarget target,
-        int maximumCapabilities) : IDisposable
+        FileExecutionTarget target,
+        int maximumCapabilities) : IAsyncDisposable
     {
         private readonly HashSet<string> _capabilities = new(StringComparer.Ordinal);
         private bool _detached;
@@ -292,16 +280,15 @@ internal static class FilePermissionPlanner
             return _capabilities.ToArray();
         }
 
-        public void Dispose()
+        public async ValueTask DisposeAsync()
         {
             if (_detached || _capabilities.Count == 0)
             {
                 return;
             }
-            if (FilesExecutionFacets.SupportsFacet(target, AgentExecutionFacetIds.ResourceAuthority)
-                && target is IAgentResourceAuthorityExecutionTarget authorityTarget)
+            if (FilesExecutionFacets.SupportsFacet(target, AgentExecutionFacetIds.ResourceAuthority))
             {
-                authorityTarget.ReleaseResourceAuthority(_capabilities.ToArray());
+                await target.Service.ReleaseResourceAuthorityAsync(_capabilities.ToArray(), CancellationToken.None).ConfigureAwait(false);
             }
         }
     }
@@ -341,7 +328,7 @@ internal static class FilePermissionPlanner
                 }
                 path = string.IsNullOrWhiteSpace(grep.Path) ? "." : grep.Path;
                 return FileSearchRequestValidation.TryValidateRequest(
-                    new AgentFileSearchRequest(path, AgentFileSearchKind.Grep, grep.Pattern, grep.Include),
+                    new AgentFileSearchRequest { Path = path, Kind = AgentFileSearchKind.Grep, Pattern = grep.Pattern, Include = grep.Include },
                     out _);
             case "glob":
                 if (!FileToolArguments.TryParseGlob(request.ArgumentsJson, out var glob, out _))
@@ -350,7 +337,7 @@ internal static class FilePermissionPlanner
                 }
                 path = string.IsNullOrWhiteSpace(glob.Path) ? "." : glob.Path;
                 return FileSearchRequestValidation.TryValidateRequest(
-                    new AgentFileSearchRequest(path, AgentFileSearchKind.Glob, glob.Pattern),
+                    new AgentFileSearchRequest { Path = path, Kind = AgentFileSearchKind.Glob, Pattern = glob.Pattern, Include = null },
                     out _);
             default:
                 return false;
@@ -371,7 +358,7 @@ internal sealed record FilePermissionScope(
 {
     public static FilePermissionScope Unknown(string? path = null)
         => new(
-            AgentPermissionBoundaryIds.Unknown,
+            "unknown",
             string.IsNullOrWhiteSpace(path) ? "workspace files" : path,
             path,
             ResourceDisplayName: null,

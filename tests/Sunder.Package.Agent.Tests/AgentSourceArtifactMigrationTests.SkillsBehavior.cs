@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Contracts.Contracts;
+using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.TestSupport;
@@ -19,6 +20,7 @@ namespace Sunder.Package.Agent.Tests;
 
 extern alias SkillsWorker;
 using SkillsWorker::Sunder.Package.Agent.Skills.Runtime;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 public sealed partial class AgentSourceArtifactMigrationTests
 {
@@ -29,11 +31,10 @@ public sealed partial class AgentSourceArtifactMigrationTests
         {
             using var workerStream = File.OpenRead(Path.Combine(SingleProjectRoleOutput(worker, "worker"), "Sunder.Package.Agent.Skills.dll"));
             var runtime = load.LoadFromStream(workerStream);
-            var probes = await BuildRoleProbes(worker, runtime, "SkillsRoleLocalProbes.cs.txt", output: SingleProjectRoleOutput(worker, "worker"));
             using var agentStream = File.OpenRead(Path.Combine(SingleProjectRoleOutput(Path.Combine(Path.GetDirectoryName(worker)!, "Worker"), "worker"), "Sunder.Package.Agent.dll"));
             var agentOwner = load.LoadFromStream(agentStream);
-            await VerifyAgentSelectableConsumers(agentOwner, runtime, probes);
-            await VerifySkillsConsumers(runtime.GetType("Sunder.Package.Agent.Skills.Rpc.SkillsRuntimeBindings", true)!);
+            await VerifyAgentSelectableConsumers(agentOwner);
+            await VerifySkillsConsumers(runtime.GetType("Sunder.Package.Agent.Skills.Services.SkillsFeature", true)!, agentOwner);
             using var appStream = File.OpenRead(Path.Combine(SingleProjectRoleOutput(worker, "app"), "Sunder.Package.Agent.Skills.App.dll"));
             var presentation = load.LoadFromStream(appStream);
             AssertSkillsSemanticOwnership(runtime, app: false);
@@ -59,28 +60,30 @@ public sealed partial class AgentSourceArtifactMigrationTests
             var storeType = runtime.GetType("Sunder.Package.Agent.Skills.Services.SkillStore", true)!;
             var store = runtimeServices.GetRequiredService(storeType);
             await options.OnActivated!(null!, CancellationToken.None);
-            Assert.Null(runtimeServices.GetService<AgentRpcCatalog>());
+            Assert.Null(runtime.GetType("Sunder.Package.Agent.Protocol.AgentRpcCatalog"));
             Assert.Null(runtime.GetType("Sunder.Package.Agent.Skills.Runtime.LegacySkillsRuntimeBindings"));
             var registrations = options.Providers.ToDictionary(value => value.ProviderId);
             Assert.Equal(new[] { "skills.management", "skills.prompt.context", "skills.selectable.capabilities", "skills.stack", "skills.tools" }, registrations.Keys.Order(StringComparer.Ordinal));
             SelectableHandlerProbe? selectableProbe = null;
             foreach (var provider in options.Providers)
             {
-                var descriptor = provider.ProviderId == "skills.management" ? RegressionTestRpcDescriptors.Get("sunder.package.agent.skills.owner")
+                var descriptor = provider.ProviderId == "skills.management" ? CurrentPrivateRpcDescriptors.Get("sunder.package.agent.skills.owner")
                     : provider.ProviderId == "skills.stack" ? SunderRpcContractDescriptor.Parse(File.ReadAllBytes(Path.Combine(
                         BuilderSourceMigrationTests.FindRepository(), "../sunder-core/languages/csharp/dotnet/packages/Sunder.Sdk.Stacks/Contracts/sunder.stack.contributor.rpc.json")))
-                    : RegressionTestRpcDescriptors.Get(provider.ContractId);
+                    : CurrentPublicRpcDescriptors.Get(provider.ContractId);
                 ISunderRpcServiceHandler handler = provider.ProviderId == "skills.selectable.capabilities"
                     ? selectableProbe = new(provider.Handler) : provider.Handler;
                 state.Add("sunder.package.agent.skills", descriptor, handler, handler, Noop.Instance, provider.ProviderId, "2.0.0");
             }
-            var agentClient = CreateAgentSelectableClient(agentOwner, new RegressionTestRpcClient(state, "sunder.package.agent"),
-                Assert.Single((await rpc.DiscoverAsync(AgentRpcContractIds.SelectableCapabilityProvider)).Providers));
-            await using var agentClientLifetime = (IAsyncDisposable)agentClient;
-            var agentChanged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            ((IAgentProfileSelectableCapabilityChangeNotifier)agentClient).SelectableCapabilitiesChanged += () => agentChanged.TrySetResult();
+            var agentRpc = new RegressionTestRpcClient(state, "sunder.package.agent");
+            await using var agentReceiver = new GeneratedServiceTestScope(agentRpc);
+            using var agentClient = Assert.Single(await ProjectedProviders(agentReceiver, agentOwner, "ISelectableCapabilityProviderService")).Service;
+            await using var agentWatch = new ProjectedArtifactWatch(agentClient.Value);
+            var agentChanged = agentWatch.Next();
+            ValueTask<AgentProfileSelectableCapabilityDescriptor[]> ListAgentCapabilities()
+                => agentClient.InvokeAsync<AgentProfileSelectableCapabilityDescriptor[]>("ListAsync", null, CancellationToken.None);
             await selectableProbe!.Subscribed.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            Assert.Empty(await agentClient.ListCapabilitiesAsync(new(null)));
+            Assert.Empty(await ListAgentCapabilities());
             var appRoot = Directory.CreateDirectory(Path.Combine(package.RootPath, "app-workspace")).FullName;
             var context = new TestPackageContext("sunder.package.agent.skills", appRoot, storage: new TestPackageStorageContext(package.Context.Storage.Files,
                 package.Context.Storage.State, new TestPackageRoleLocalWorkspace(appRoot)));
@@ -92,49 +95,46 @@ public sealed partial class AgentSourceArtifactMigrationTests
             var imported = Assert.Single(((IEnumerable)(await Call("ImportLocalAsync", source, CancellationToken.None))!).Cast<object>());
             Assert.Same(presentation, imported.GetType().Assembly);
             var skillId = (string)imported.GetType().GetProperty("SkillId")!.GetValue(imported)!;
-            await agentChanged.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            Assert.Equal(skillId, Assert.Single(await agentClient.ListCapabilitiesAsync(new(null))).CapabilityId);
+            Assert.True(await agentChanged);
+            Assert.Equal(skillId, Assert.Single(await ListAgentCapabilities()).CapabilityId);
             Assert.Null(imported.GetType().GetProperty("SourceUri")!.GetValue(imported));
             Assert.Single(((IEnumerable)(await Call("ListAsync", CancellationToken.None))!).Cast<object>());
             var profile = new AgentProfileRecord("profile.skills", "Skills", null, null, null, null, null, null, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow,
                 SelectableCapabilityAssignments: [new("skill", skillId, "sunder.package.agent.skills")]);
             var runtimeCatalog = new MemoryConsumerRuntime(profile);
-            state.Add("sunder.package.agent", RegressionTestRpcDescriptors.Get(AgentRpcContractIds.RuntimeCatalog), runtimeCatalog,
-                new Rpc.Public.RuntimeCatalogService(runtimeCatalog).CreateSunderRpcProviderRegistration().Handler, Noop.Instance, "agent.runtime.catalog", "2.0.0");
+            AddSubagentSourceProvider(state, agentOwner, "RuntimeCatalogService", runtimeCatalog, RegressionTestBindings.RuntimeCatalog);
             var target = new SkillsConsumerHandler();
-            state.Add("example.skills.executor", RegressionTestRpcDescriptors.Get(AgentRpcContractIds.ExecutionTarget), target, target, Noop.Instance, "skills.execution.target", "2.0.0");
-            var targetHandle = ToProviderHandle(Assert.Single(state.Discover(AgentRpcContractIds.ExecutionTarget).Providers));
+            state.Add("example.skills.executor", CurrentPublicRpcDescriptors.Get(RegressionTestBindings.ExecutionTargets), target, target, Noop.Instance, "skills.execution.target", "2.0.0");
+            var targetReference = Assert.Single((await agentReceiver.Providers<AgentServices.IExecutionTargetService>().ListAsync()).Providers).Reference;
             var now = DateTimeOffset.UtcNow;
             var workspace = new AgentWorkspaceRecord("workspace.skills", "Skills", null, now, now);
-            var binding = new AgentWorkspaceBindingRecord("binding.skills", workspace.WorkspaceId, AgentRpcContractIds.ExecutionTarget, "test-target", "execution", true, 0, now, now);
+            var binding = new AgentWorkspaceBindingRecord("binding.skills", workspace.WorkspaceId, RegressionTestBindings.ExecutionTargets, "test-target", "execution", true, 0, now, now);
 
-            var listed = await Rpc("skills.tools", "tool-source", "list-tools", new { context = new { profile } });
-            Assert.Equal(new[] { "skill", "skill_resource" }, listed.EnumerateArray().Select(value => value.GetProperty("toolId").GetString()));
-            var ready = await Rpc("skills.tools", "tool-source", "get-readiness", new { toolId = "skill", context = new { context = new { profile } } });
-            Assert.Equal("ready", ready.GetProperty("status").GetString());
-            var execution = new { executionTarget = targetHandle, approvedResourceCapabilities = Array.Empty<string>(), context = new { allowOutsideConfiguredScope = false,
-                approvedResourceClaims = Array.Empty<object>(), approvedResourceReferences = Array.Empty<string>(), profileId = profile.ProfileId,
-                workspace, executionBinding = binding, transcriptEpoch = 0 } };
-            var request = new { context = execution, request = new { toolId = "skill", argumentsJson = JsonSerializer.Serialize(new { name = skillId }) } };
-            Assert.Equal(JsonValueKind.Null, (await Rpc("skills.tools", "tool-source", "preflight", request)).ValueKind);
-            Assert.Equal(JsonValueKind.Null, (await Rpc("skills.tools", "tool-source", "permission", request)).ValueKind);
-            var executed = await Rpc("skills.tools", "tool-source", "execute", request);
-            Assert.False(executed.GetProperty("isError").GetBoolean());
-            Assert.Contains("Read the local instructions.", executed.GetProperty("content").GetString()!, StringComparison.Ordinal);
-            Assert.Contains("/executor/" + skillId, executed.GetProperty("content").GetString()!, StringComparison.Ordinal);
-            var resource = await Rpc("skills.tools", "tool-source", "execute", new { context = execution,
-                request = new { toolId = "skill_resource", argumentsJson = JsonSerializer.Serialize(new { skill = skillId, path = "reference.txt" }) } });
-            Assert.Contains("A local reference.", resource.GetProperty("content").GetString()!, StringComparison.Ordinal);
-            var prompt = await Rpc("skills.prompt.context", "prompt-context-contributor", "contribute", new
+            var toolClient = Assert.Single((await agentReceiver.Providers<AgentServices.IToolSourceService>().ListAsync()).Providers).Service;
+            var promptClient = Assert.Single((await agentReceiver.Providers<AgentServices.IPromptContextContributorService>().ListAsync()).Providers).Service;
+            var sourceContext = new AgentToolSourceContext(null, profile);
+            Assert.Equal(new[] { "skill", "skill_resource" }, (await toolClient.ListToolsAsync(sourceContext)).Select(value => value.ToolId));
+            Assert.Equal(AgentToolReadinessStatus.Ready, (await toolClient.GetReadinessAsync("skill", sourceContext))!.Status);
+            var execution = new AgentToolExecutionContext(null, profile.ProfileId, workspace, binding) { ExecutionTarget = targetReference };
+            var request = new AgentToolRequest("skill", JsonSerializer.Serialize(new { name = skillId }));
+            Assert.Null(await toolClient.PreflightAsync(execution, request));
+            Assert.Null(await toolClient.PermissionAsync(execution, request));
+            var executed = await toolClient.ExecuteAsync(execution, request);
+            Assert.False(executed.IsError);
+            Assert.Contains("Read the local instructions.", executed.Content!, StringComparison.Ordinal);
+            Assert.Contains("/executor/" + skillId, executed.Content!, StringComparison.Ordinal);
+            var resource = await toolClient.ExecuteAsync(execution, new("skill_resource", JsonSerializer.Serialize(new { skill = skillId, path = "reference.txt" })));
+            Assert.Contains("A local reference.", resource.Content!, StringComparison.Ordinal);
+            var session = new AgentSessionContextRecord(runtimeCatalog.Session.SessionId, profile.ProfileId, profile.DisplayName, "Skills", AgentSessionState.Active, null);
+            var run = new AgentRunContextRecord(Guid.NewGuid(), 1, AgentRunStatus.Running, false, now);
+            var prompt = await promptClient.ContributeAsync(new AgentPromptContextRequest(session, run, new(session, run, "Use skills", null), [], [],
+                new("GeneralFact", "skills", MaxEntryCount: 2, MaxChars: 1000))
             {
-                session = new { sessionId = runtimeCatalog.Session.SessionId, profileId = profile.ProfileId, profileDisplayName = profile.DisplayName, sessionTitle = "Skills", sessionState = "active" },
-                run = new { runId = Guid.NewGuid(), revision = 1, status = "running", isInterrupted = false, startedAtUtc = now },
-                turn = new { userMessage = "Use skills" }, turns = Array.Empty<object>(), recentLiveBufferTurns = Array.Empty<object>(),
-                workspace, executionBinding = binding, executionTarget = targetHandle,
-                contextPlan = new { intent = "GeneralFact", queryText = "skills", maxEntryCount = 2, maxChars = 1000, shouldContribute = true }, availableTools = Array.Empty<object>(), transcriptEpoch = 0,
+                Workspace = workspace, ExecutionBinding = binding, ExecutionTarget = targetReference,
             });
-            Assert.Contains("Artifact Skill", prompt.GetProperty("blocks")[0].GetProperty("content").GetString()!, StringComparison.Ordinal);
-            Assert.Contains("/executor/" + skillId, prompt.GetProperty("blocks")[0].GetProperty("content").GetString()!, StringComparison.Ordinal);
+            Assert.NotNull(prompt);
+            Assert.Contains("Artifact Skill", prompt.Blocks[0].Content, StringComparison.Ordinal);
+            Assert.Contains("/executor/" + skillId, prompt.Blocks[0].Content, StringComparison.Ordinal);
             var saved = JsonSerializer.SerializeToNode(imported, imported.GetType(), new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
             saved["sourceKind"] = "github";
             saved["sourceUri"] = "https://github.com/example/skills/tree/main/artifact";
@@ -148,20 +148,21 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Call("DeleteAsync", skillId, cancellation.Token));
                 Assert.Single(((IEnumerable)(await Call("ListAsync", CancellationToken.None))!).Cast<object>());
             }
-            var endpoint = Assert.Single((await rpc.DiscoverAsync(AgentRpcContractIds.SelectableCapabilityProvider)).Providers).Endpoint;
+            var endpoint = Assert.Single((await rpc.DiscoverAsync(RegressionTestBindings.SelectableCapabilityProviders)).Providers).Endpoint;
             using var lifetime = new CancellationTokenSource();
             await using var subscription = rpc.SubscribeAsync(endpoint, "selectable-capability-provider", "watch", JsonSerializer.SerializeToElement(new { }), cancellationToken: lifetime.Token).GetAsyncEnumerator();
             var next = subscription.MoveNextAsync().AsTask();
-            agentChanged = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            agentChanged = agentWatch.Next();
             await Call("DeleteAsync", skillId, CancellationToken.None);
-            await agentChanged.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            Assert.Empty(await agentClient.ListCapabilitiesAsync(new(null)));
+            Assert.True(await agentChanged);
+            Assert.Empty(await ListAgentCapabilities());
             Assert.True(await next.WaitAsync(TimeSpan.FromSeconds(5)));
             Assert.True(subscription.Current.GetProperty("revision").GetInt64() > 0);
             lifetime.Cancel();
             Assert.Empty(((IEnumerable)(await Call("ListAsync", CancellationToken.None))!).Cast<object>());
             await ((IAsyncDisposable)gateway).DisposeAsync();
-            await agentClientLifetime.DisposeAsync();
+            await agentWatch.DisposeAsync();
+            await agentReceiver.DisposeAsync();
 
             async Task<object?> Call(string method, params object?[] args)
             {

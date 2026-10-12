@@ -20,8 +20,9 @@ internal static partial class AgentSourceMigrationProjectChanges
         ["tests/Sunder.Package.Agent.Execution.Local.Tests/Sunder.Package.Agent.Execution.Local.Tests.csproj"] = "08c0db9cc902b9a7b0767e162f28660b644c66057062aba976cace24adf78350",
         ["tests/Sunder.Package.Agent.Memory.Semantic.Tests/Sunder.Package.Agent.Memory.Semantic.Tests.csproj"] = "eadca25f75fe1198621a424fa849f09d7be94dd19196150e2a63409ae3365276",
         ["tests/Sunder.Package.Agent.Presentation.State.Tests/Sunder.Package.Agent.Presentation.State.Tests.csproj"] = "aa5d322a2f12db088f356a5471a9995eb7af6e2e548baa956f62f914cf0e0ad7",
-        // Presentation links the owning AppViews/AppInfrastructure and Memory consumer split.
-        ["tests/Sunder.Package.Agent.Presentation.Tests/Sunder.Package.Agent.Presentation.Tests.csproj"] = "5bcacf8549afb3d3cdb34dea1c1160b91c7ea94d8e15504b3c436fe9d59147bc",
+        // Current presentation fixtures implement generated interfaces instead of
+        // the retired token extensions; captured pre-canonical evidence stays frozen.
+        ["tests/Sunder.Package.Agent.Presentation.Tests/Sunder.Package.Agent.Presentation.Tests.csproj"] = "b93d9366328e72b26e1c2b87a5c18c76243d30e30ab10b92c57426fe1af4ee7b",
         ["tests/Sunder.Package.Agent.Provider.Anthropic.Tests/Sunder.Package.Agent.Provider.Anthropic.Tests.csproj"] = "c9c2d1c6e1c4eb0d281734109e9802ba809631f354f5576d93196b598a1f0e51",
         ["tests/Sunder.Package.Agent.Provider.Gemini.Tests/Sunder.Package.Agent.Provider.Gemini.Tests.csproj"] = "6a97e17c52ce8818da16237bf133c2b0702de18735cea38d3822f3574837631e",
         ["tests/Sunder.Package.Agent.Provider.LMStudio.Tests/Sunder.Package.Agent.Provider.LMStudio.Tests.csproj"] = "65ef75f389b48011171c5bd6e10ac142631dc7f2e6409e5313e439ce287eba5d",
@@ -30,7 +31,10 @@ internal static partial class AgentSourceMigrationProjectChanges
         ["tests/Sunder.Package.Agent.Skills.Tests/Sunder.Package.Agent.Skills.Tests.csproj"] = "e3ccf028e8239c58b857085baa5bbf45569357f2c948c28162df1416f4cd8e45",
         ["tests/Sunder.Package.Agent.Subagents.Tests/Sunder.Package.Agent.Subagents.Tests.csproj"] = "7ec2e4ce6077ccd7f83a1bd50ca6b537fae68ee7745e9db7ce5d4b5009530054",
         ["tests/Sunder.Package.Agent.Tests/Sunder.Package.Agent.Tests.csproj"] = "267093164973408367ab0f61df0a43539df57c93994805bbbc434eae77b3cbae",
-        ["tests/RegressionTestHarness.props"] = "0845502b98b82a860906378ff82480d3219c72e32a7f39aa51f2caf4d5c558de",
+        // Reviewed natural-service test graph: local domain fakes, extracted broker,
+        // generated receiver scope, SDK-backed fake catalog, and current descriptors.
+        // This signs the entire current input; the original migration oracle is unchanged.
+        ["tests/RegressionTestHarness.props"] = "bbd45fd76732eada07066f5efd2bbf8aff6c941d214e8f273edb6044996eb216",
     };
 
     internal static string ProjectSurfaceSignature(string text)
@@ -54,7 +58,11 @@ internal static partial class AgentSourceMigrationProjectChanges
     private static void AssertRetainedProjectSurface(string root, string relative, string current)
     {
         Assert.True(File.Exists(Path.Combine(root, relative)), $"Retained project/input is missing: {relative}");
-        AssertProjectHash(RetainedProjectSurfaces[relative], ProjectSurfaceSignature(current), relative + " (MSBuild surface)");
+        var reviewed = BeforeRemainingSuiteProjectClosure(relative, current);
+        var historicalSurface = TryReadNaturalServiceDelta(root, Path.Combine(root, relative), reviewed, out var preNatural)
+            ? preNatural
+            : reviewed;
+        AssertProjectHash(RetainedProjectSurfaces[relative], ProjectSurfaceSignature(historicalSurface), relative + " (MSBuild surface)");
         var document = XDocument.Parse(current);
         foreach (var reference in document.Descendants("ProjectReference"))
         {
@@ -115,8 +123,11 @@ internal static partial class AgentSourceMigrationProjectChanges
     internal static string ReadMigrationSourceText(string root, string path)
     {
         var relative = Path.GetRelativePath(root, path).Replace('\\', '/');
+        if (OwnedPublicServiceHistory.Declarations.ContainsKey(relative))
+            return BeforeOrdinaryServices(root, path, string.Empty);
+        if (TryReadNaturalServiceHistory(root, path, out var naturalServiceHistory)) return naturalServiceHistory;
         if (!RetirementCaptures.TryGetValue(relative, out var capture) || capture.Kind == "retained-project")
-            return ReadNormalizedProjectText(path);
+            return BeforeOrdinaryServices(root, path, ReadNormalizedProjectText(path));
         AssertRetirementReplacement(root, capture);
         return capture.Text;
     }
@@ -126,12 +137,15 @@ internal static partial class AgentSourceMigrationProjectChanges
         var prefix = Path.GetRelativePath(root, directory).Replace('\\', '/').TrimEnd('/') + "/";
         var current = Directory.Exists(directory)
             ? Directory.EnumerateFiles(directory, pattern, SearchOption.AllDirectories).Where(AgentPackageRepositoryInventory.IsSourceFile)
+                .Where(path => !IsOwnedPublicServiceAddition(root, path) && !IsApprovedSourceSplitAddition(root, path) && !IsNaturalServiceSourceAddition(root, path))
             : [];
         var historical = RetirementCaptures.Values.Where(capture => capture.Kind.StartsWith("retired-", StringComparison.Ordinal)
                 && capture.Path.StartsWith(prefix, StringComparison.Ordinal)
                 && System.IO.Enumeration.FileSystemName.MatchesSimpleExpression(pattern, Path.GetFileName(capture.Path)))
             .Select(capture => Path.Combine(root, capture.Path));
-        return current.Concat(historical).Distinct(StringComparer.Ordinal);
+        return current.Concat(historical).Concat(EnumerateNaturalServiceHistoryFiles(root, directory, pattern))
+            .Concat(EnumerateOwnedPublicDeclarationHistory(root, directory, pattern))
+            .Distinct(StringComparer.Ordinal);
     }
 
     internal static bool HistoricalSolutionMembership(string relative, bool current)
@@ -141,7 +155,8 @@ internal static partial class AgentSourceMigrationProjectChanges
         => CanonicalSupportHashes.Keys.Concat(RetainedProjectSurfaces.Keys)
             .Concat(CanonicalProjectHistories.Select(project => project.Project))
             .Concat(CanonicalProjectHistories.Select(project => PreCanonicalProjectsDirectory + "/" + project.Fixture))
-            .Concat(RetirementDispositions.Values.SelectMany(disposition => disposition.Replacements))
+            .Concat(RetirementDispositions.Values.SelectMany(disposition => disposition.Replacements)
+                .SelectMany(CurrentRetirementReplacements))
             .Concat(PackedProtocolHistory.Bundle.Replacements)
             .Concat(new[] { "packages.json", "Sunder.AgentPackage.slnx" })
             .Concat(new[] { "src", "tests", "scripts" }.SelectMany(directory => Directory.EnumerateFiles(Path.Combine(root, directory), "*.csproj", SearchOption.AllDirectories))
@@ -201,13 +216,21 @@ internal static partial class AgentSourceMigrationProjectChanges
         foreach (var replacement in disposition.Replacements)
         {
             Assert.False(RetirementCaptures.ContainsKey(replacement), $"Retirement replacement is itself historical: {replacement}");
-            Assert.True(File.Exists(Path.Combine(root, replacement)), $"Missing canonical replacement for {capture.Path}: {replacement}");
-            if (replacement.EndsWith(".cs", StringComparison.Ordinal) && replacement.StartsWith("src/" + owner + "/", StringComparison.Ordinal))
+            if (OrdinaryServiceSuccessors.ContainsKey(replacement))
             {
-                var source = replacement[("src/" + owner + "/").Length..];
-                foreach (var removal in XDocument.Load(Path.Combine(root, canonical.Project)).Descendants("Compile")
-                             .SelectMany(item => ((string?)item.Attribute("Remove"))?.Replace('\\', '/').Split(';') ?? []))
-                    Assert.False(MatchesSourcePattern(removal, source), $"Replacement source is excluded from the canonical input: {replacement}");
+                Assert.False(File.Exists(Path.Combine(root, replacement)), $"Superseded owner plumbing was reintroduced: {replacement}");
+            }
+            foreach (var current in CurrentRetirementReplacements(replacement))
+            {
+                Assert.False(RetirementCaptures.ContainsKey(current), $"Current replacement is itself historical: {current}");
+                Assert.True(File.Exists(Path.Combine(root, current)), $"Missing canonical replacement for {capture.Path}: {current}");
+                if (current.EndsWith(".cs", StringComparison.Ordinal) && current.StartsWith("src/" + owner + "/", StringComparison.Ordinal))
+                {
+                    var source = current[("src/" + owner + "/").Length..];
+                    foreach (var removal in XDocument.Load(Path.Combine(root, canonical.Project)).Descendants("Compile")
+                                 .SelectMany(item => ((string?)item.Attribute("Remove"))?.Replace('\\', '/').Split(';') ?? []))
+                        Assert.False(MatchesSourcePattern(removal, source), $"Replacement source is excluded from the canonical input: {current}");
+                }
             }
         }
         Assert.Contains("AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload", disposition.RequiredTests);

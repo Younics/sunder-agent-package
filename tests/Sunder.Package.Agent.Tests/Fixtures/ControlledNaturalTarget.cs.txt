@@ -1,0 +1,60 @@
+using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using Sunder.Sdk.Services;
+
+namespace ControlledNaturalProviders;
+
+[SunderServiceProvider(typeof(IExecutionTargetService), ProviderId = "fixture.execution.target")]
+public sealed partial class ControlledTarget : IExecutionTargetService
+{
+    private int _describes;
+    public int Describes => Volatile.Read(ref _describes);
+
+    public ValueTask<AgentExecutionTargetDescriptor> DescribeAsync(CancellationToken token = default)
+    {
+        token.ThrowIfCancellationRequested();
+        Interlocked.Increment(ref _describes);
+        return ValueTask.FromResult(new AgentExecutionTargetDescriptor
+        {
+            TargetKind = "fixture", TargetId = "fixture.target", DisplayName = "Controlled target",
+            Description = null, SupportsShell = false, SupportsFiles = false, Facets = [],
+        });
+    }
+
+    public ValueTask<string?> ConfigurationGenerationAsync(AgentExecutionTargetContext context, CancellationToken token = default)
+    { token.ThrowIfCancellationRequested(); return ValueTask.FromResult<string?>("fixture.configuration.1"); }
+    public ValueTask<AgentExecutionTargetReadiness> ReadinessAsync(AgentExecutionTargetContext context, CancellationToken token = default)
+        => throw new NotSupportedException();
+    public ValueTask<AgentExecutionShellDescriptor> ShellAsync(AgentExecutionTargetContext context, CancellationToken token = default)
+        => throw new NotSupportedException();
+    public ValueTask<AgentResolvedResource> ResolveFileAsync(CSunder_Agent_Execution_Target_ExecutionTargetResolveFileRequest request, CancellationToken token = default)
+        => throw new NotSupportedException();
+    public ValueTask<AgentShellCommandResult> ExecuteShellAsync(CSunder_Agent_Execution_Target_ExecutionTargetExecuteShellRequest request, CancellationToken token = default)
+        => throw new NotSupportedException();
+    public ValueTask<AgentFileReadResult> ReadFileAsync(CSunder_Agent_Execution_Target_ExecutionTargetReadFileRequest request, CancellationToken token = default)
+        => throw new NotSupportedException();
+    public ValueTask<AgentFileMutationResult> WriteFileAsync(CSunder_Agent_Execution_Target_ExecutionTargetWriteFileRequest request, CancellationToken token = default)
+        => throw new NotSupportedException();
+    public ValueTask<AgentFileMutationResult> DeleteFileAsync(CSunder_Agent_Execution_Target_ExecutionTargetDeleteFileRequest request, CancellationToken token = default)
+        => throw new NotSupportedException();
+    public ValueTask<AgentShellCommandResult> ExecuteProcessAsync(CSunder_Agent_Execution_Target_ExecutionTargetExecuteProcessRequest request, CancellationToken token = default)
+        => throw new NotSupportedException();
+    public ValueTask<IReadOnlyList<AgentResolvedExecutionResource>> ResolveResourcesAsync(CSunder_Agent_Execution_Target_ExecutionTargetResolveResourcesRequest request, CancellationToken token = default)
+        => throw new NotSupportedException();
+    public ValueTask<AgentResourceAuthorityValidation> ValidateResourceAuthorityAsync(AgentExecutionTargetContext context, CancellationToken token = default)
+        => throw new NotSupportedException();
+    public ValueTask ReleaseResourceAuthorityAsync(IReadOnlyList<string> capabilities, CancellationToken token = default)
+        => throw new NotSupportedException();
+    public ValueTask<AgentExecutionScopeDescriptor> ExecutionScopeAsync(AgentExecutionTargetContext context, CancellationToken token = default)
+        => throw new NotSupportedException();
+    public ValueTask<AgentExecutionPathMapping> MapPathAsync(CSunder_Agent_Execution_Target_ExecutionTargetMapPathRequest request, CancellationToken token = default)
+        => throw new NotSupportedException();
+    public ValueTask<IReadOnlyList<string>> ListPathAsync(AgentExecutionTargetContext context, CancellationToken token = default)
+        => throw new NotSupportedException();
+    public ValueTask AddPathAsync(CSunder_Agent_Execution_Target_ExecutionTargetAddPathRequest request, CancellationToken token = default)
+        => throw new NotSupportedException();
+    public ValueTask<AgentFileSearchResult> StructuredFileSearchAsync(CSunder_Agent_Execution_Target_ExecutionTargetStructuredFileSearchRequest request, CancellationToken token = default)
+        => throw new NotSupportedException();
+    public ValueTask<AgentScopedInstructionDiscoveryResult> DiscoverInstructionsAsync(CSunder_Agent_Execution_Target_ExecutionTargetDiscoverInstructionsRequest request, CancellationToken token = default)
+        => throw new NotSupportedException();
+}

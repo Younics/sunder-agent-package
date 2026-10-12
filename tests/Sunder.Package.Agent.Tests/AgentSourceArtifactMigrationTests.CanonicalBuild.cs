@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Xml.Linq;
 using Xunit;
@@ -84,7 +85,12 @@ public sealed partial class AgentSourceArtifactMigrationTests
             // A fresh source artifact may have a different content identity from
             // the production selection. Update a test-local copy through the
             // real authoring command; never manufacture or rewrite product pins.
-            var selection = System.IO.Directory.CreateDirectory(Path.Combine(fixture, "selection")).FullName;
+            using var candidate = File.OpenRead(archive);
+            var candidateSha = Convert.ToHexStringLower(SHA256.HashData(candidate));
+            // A selected lock is an authored input to qualification. Keep this
+            // tool-generated copy inside the reviewed source root, under obj,
+            // instead of weakening the source-root fence to include all of /tmp.
+            var selection = System.IO.Directory.CreateDirectory(Path.Combine(source, "obj", "source-artifact-selections", candidateSha)).FullName;
             _fixtureLockPath = Path.Combine(selection, "sunder-contracts.lock.json");
             File.WriteAllBytes(_fixtureLockPath, evidence["sunder-contracts.lock.json"]);
             await Run("msbuild", denyNetwork: true, arguments:
@@ -112,8 +118,17 @@ public sealed partial class AgentSourceArtifactMigrationTests
             };
             foreach (var argument in new[] { command, project }.Concat(arguments).Concat([
                 "-p:Configuration=Debug", "-p:RuntimeIdentifier=" + RuntimeInformation.RuntimeIdentifier,
+                "-p:SunderUseSourceSdk=true", "-p:BuildProjectReferences=false",
                 "-p:SunderContractCacheRoot=" + cache, "-nodeReuse:false", "-nologo"]))
                 start.ArgumentList.Add(argument);
+            var task = Path.GetFullPath(Path.Combine(BuilderSourceMigrationTests.FindRepository(),
+                "../sunder-core/languages/csharp/dotnet/packages/Sunder.Package.Build/bin/Debug/net10.0/Sunder.Package.Build.dll"));
+            var stamp = Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(task)));
+            start.ArgumentList.Add("-p:SunderPackageBuildTaskSourceIsImmutable=true");
+            start.ArgumentList.Add("-p:SunderPackageBuildTaskAssembly=" + task);
+            start.ArgumentList.Add("-p:SunderPackageBuildTaskShadowRoot=" + Path.Combine(Path.GetTempPath(), "sunder-agent-artifact-task-shadows"));
+            start.ArgumentList.Add("-p:SunderPackageBuildTaskShadowStamp=" + stamp);
+            start.ArgumentList.Add("-p:SunderPackageRoleInputSourceRoot=" + Path.Combine(BuilderSourceMigrationTests.FindRepository(), "src"));
             if (_fixtureLockPath is not null) start.ArgumentList.Add("-p:SunderContractLockPath=" + _fixtureLockPath);
             if (denyNetwork)
             {
@@ -123,6 +138,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
                     start.Environment[key] = "http://127.0.0.1:1";
                 start.Environment["NO_PROXY"] = start.Environment["no_proxy"] = "";
             }
+            var commandEvidence = BeginCanonicalCommandEvidence(source, command, start.ArgumentList, _fixtureLockPath);
+            if (commandEvidence is not null) start.ArgumentList.Add("-bl:" + commandEvidence + ".binlog");
             using var process = Process.Start(start)!;
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(900));
             var output = process.StandardOutput.ReadToEndAsync();
@@ -132,10 +149,13 @@ public sealed partial class AgentSourceArtifactMigrationTests
             {
                 if (!process.HasExited) process.Kill(entireProcessTree: true);
                 await process.WaitForExitAsync();
+                EndCanonicalCommandEvidence(commandEvidence, source, _fixtureLockPath, process.ExitCode, await output, await error);
                 throw;
             }
             var stdout = await output;
-            Assert.True(process.ExitCode == 0, $"Canonical command failed: {string.Join(' ', start.ArgumentList)}\n{stdout}\n{await error}");
+            var stderr = await error;
+            EndCanonicalCommandEvidence(commandEvidence, source, _fixtureLockPath, process.ExitCode, stdout, stderr);
+            Assert.True(process.ExitCode == 0, $"Canonical command failed: {string.Join(' ', start.ArgumentList)}\n{stdout}\n{stderr}");
             AssertEvidenceUnchanged();
             return stdout;
         }

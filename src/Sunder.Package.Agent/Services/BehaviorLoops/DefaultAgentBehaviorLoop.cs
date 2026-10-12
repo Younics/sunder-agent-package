@@ -5,10 +5,13 @@ using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.Services;
 using Sunder.Sdk.Logging;
+using Sunder.Sdk.Services;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.Services.BehaviorLoops;
 
-public sealed class DefaultAgentBehaviorLoop : IAgentBehaviorLoop
+[SunderServiceProvider(typeof(Rpc.Public.BehaviorLoopService), ProviderId = "agent.behavior.loop")]
+public sealed partial class DefaultAgentBehaviorLoop : IAgentBehaviorLoop, Rpc.Public.BehaviorLoopService
 {
     public const string LoopId = AgentBehaviorLoopIds.Default;
     internal const string BuiltInSourceId = "sunder.package.agent";
@@ -60,6 +63,19 @@ public sealed class DefaultAgentBehaviorLoop : IAgentBehaviorLoop
         "Framework-backed provider/tool loop used by the base Agent runtime.",
         SourceId: BuiltInSourceId);
 
+    public ValueTask<AgentBehaviorLoopDescriptor> DescribeAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(Descriptor);
+    }
+
+    // A remote request for the built-in behavior delegates to the owning run's
+    // default-loop operation. That owner executes the concrete local algorithm
+    // below; no remote implementation of the local runtime interface is needed.
+    public ValueTask<AgentBehaviorLoopResult> RunAsync(AgentBehaviorLoopContext context, Guid invocationId,
+        ServiceReference<AgentServices.IRunControlService> runControl, CancellationToken cancellationToken = default)
+        => runControl.Service.RunDefaultAsync(invocationId, context, cancellationToken);
+
     public async ValueTask<AgentBehaviorLoopResult> RunAsync(
         AgentBehaviorLoopContext context,
         IAgentBehaviorLoopRuntime host,
@@ -76,9 +92,13 @@ public sealed class DefaultAgentBehaviorLoop : IAgentBehaviorLoop
             });
         var assistantTurnState = new AgentAssistantTurnState();
         var budgetRuntime = host as IAgentRunBudgetRuntime;
-        Func<AgentRunBudgetCharge, AgentRunBudgetState>? durableCharge = budgetRuntime is null
+        Func<AgentRunBudgetCharge, CancellationToken, ValueTask<AgentRunBudgetState>>? durableCharge = budgetRuntime is null
             ? null
-            : budgetRuntime.ChargeRunBudget;
+            : (charge, token) =>
+            {
+                token.ThrowIfCancellationRequested();
+                return ValueTask.FromResult(budgetRuntime.ChargeRunBudget(charge));
+            };
         var budgetTracker = new AgentRunBudgetTracker(
             _budgetLimits,
             budgetRuntime?.GetRunBudgetState() ?? default,

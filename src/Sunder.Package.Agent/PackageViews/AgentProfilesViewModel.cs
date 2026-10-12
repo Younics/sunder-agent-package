@@ -7,6 +7,7 @@ using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Abstractions;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.PackageViews;
 
@@ -18,10 +19,9 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
     private const string ListRefreshChannel = "profiles-list";
     private const string MutationChannel = "profiles-mutation";
     private const string CapabilitiesChannel = "profile-capabilities";
-    private readonly IAgentProfileGateway _profileService;
+    private readonly AgentServices.IAgentProfileService _profileService;
+    private readonly IAgentProfileGateway _profileNotifications;
     private readonly IAgentDashboardLoader? _dashboardLoader;
-    private readonly IAgentCatalogLoader? _catalogLoader;
-    private readonly IAgentProfileCommandGateway? _profileCommands;
     private readonly IAgentRuntimeAvailability? _runtimeAvailability;
     private readonly IPackageSettingsNavigationService? _settingsNavigationService;
     private readonly IPresentationDispatcher _uiDispatcher;
@@ -47,23 +47,24 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
     private Task _currentDetailLoad = Task.CompletedTask;
 
     public AgentProfilesViewModel(
-        IAgentProfileGateway profileService,
+        AgentServices.IAgentProfileService profileService,
+        IAgentProfileGateway notifications,
         IPackageSettingsNavigationService? settingsNavigationService = null)
-        : this(profileService, settingsNavigationService, PresentationDispatcher.Capture())
+        : this(profileService, notifications, settingsNavigationService, PresentationDispatcher.Capture())
     {
     }
 
     internal AgentProfilesViewModel(
-        IAgentProfileGateway profileService,
+        AgentServices.IAgentProfileService profileService,
+        IAgentProfileGateway notifications,
         IPackageSettingsNavigationService? settingsNavigationService,
         IPresentationDispatcher uiDispatcher,
         TimeProvider? runtimeNoticeTimeProvider = null)
     {
         _profileService = profileService;
-        _dashboardLoader = profileService as IAgentDashboardLoader;
-        _catalogLoader = profileService as IAgentCatalogLoader;
-        _profileCommands = profileService as IAgentProfileCommandGateway;
-        _runtimeAvailability = profileService as IAgentRuntimeAvailability;
+        _profileNotifications = notifications;
+        _dashboardLoader = notifications as IAgentDashboardLoader;
+        _runtimeAvailability = notifications as IAgentRuntimeAvailability;
         _settingsNavigationService = settingsNavigationService;
         _uiDispatcher = uiDispatcher;
         _statusClear = new TimedStatusController(dispatcher: uiDispatcher);
@@ -109,8 +110,8 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         EmbeddingBinding.Changed += OnEditorSelectionChanged;
         Capabilities.Changed += OnCapabilitiesChanged;
         _operation.PropertyChanged += OnOperationPropertyChanged;
-        _profileService.ProfileChanged += OnProfileChanged;
-        _profileService.SelectableCapabilitiesChanged += OnSelectableCapabilitiesChanged;
+        _profileNotifications.ProfileChanged += OnProfileChanged;
+        _profileNotifications.SelectableCapabilitiesChanged += OnSelectableCapabilitiesChanged;
         if (_dashboardLoader is not null)
         {
             _dashboardLoader.DashboardInvalidated += OnDashboardInvalidated;
@@ -627,10 +628,7 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         var applied = false;
         try
         {
-            var profiles = _dashboardLoader is null
-                ? _profileService.ListProfiles()
-                : (await _dashboardLoader.LoadDashboardAsync(request.CancellationToken)
-                    .ConfigureAwait(false)).Profiles;
+            var profiles = await _profileService.ListProfilesAsync(request.CancellationToken).ConfigureAwait(false);
             await _uiDispatcher.InvokeAsync(() =>
             {
                 if (_requests.IsCurrent(request))

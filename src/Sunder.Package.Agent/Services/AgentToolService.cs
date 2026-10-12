@@ -5,6 +5,9 @@ using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.Services;
 
@@ -12,179 +15,16 @@ public sealed partial class AgentToolService(
     AgentSessionService sessionService,
     AgentWorkspaceService workspaceService,
     AgentExecutionTargetService executionTargetService,
-    AgentRpcCatalog rpcCatalog)
+    IServiceProviders<AgentServices.IToolSourceService> sources,
+    IServiceProviders<AgentServices.IToolExecutionObservedService> observedExecutions)
 {
     private readonly AgentSessionService _sessionService = sessionService;
     private readonly AgentWorkspaceService _workspaceService = workspaceService;
     private readonly AgentExecutionTargetService _executionTargetService = executionTargetService;
-    private readonly AgentRpcCatalog _rpcCatalog = rpcCatalog;
+    private readonly IServiceProviders<AgentServices.IToolSourceService> _sources = sources;
+    private readonly IServiceProviders<AgentServices.IToolExecutionObservedService> _observedExecutions = observedExecutions;
     private readonly ConcurrentDictionary<Guid, AgentToolInvocationReference> _preparedInvocations = new();
     private readonly ConcurrentDictionary<Guid, PreparedResourceAuthority> _preparedResourceCapabilities = new();
-
-    public async Task<IReadOnlyList<AgentToolCatalogEntry>> ListToolCatalogAsync(
-        AgentProfileRecord? profile = null,
-        Guid? sessionId = null,
-        AgentWorkspaceRecord? workspace = null,
-        bool includeUnavailable = true,
-        CancellationToken cancellationToken = default)
-    {
-        var effectiveProfile = profile;
-        var context = await CreateSourceContextAsync(
-                sessionId,
-                effectiveProfile,
-                workspace,
-                cancellationToken)
-            .ConfigureAwait(false);
-        var catalog = new List<AgentToolCatalogEntry>();
-        foreach (var candidate in await ListOwnedRuntimeToolCandidatesAsync(
-                         context,
-                         cancellationToken,
-                         omitUnavailableSources: true)
-                     .ConfigureAwait(false))
-        {
-            var descriptor = candidate.RuntimeTool.Descriptor;
-            AgentToolReadiness? readiness;
-            try
-            {
-                readiness = await GetReadinessAsync(candidate, context, cancellationToken)
-                    .ConfigureAwait(false);
-            }
-            catch (AgentPackageUnavailableException)
-            {
-                continue;
-            }
-            readiness ??= new AgentToolReadiness(
-                descriptor.ToolId,
-                AgentToolReadinessStatus.Ready,
-                "Ready.");
-
-            if (!includeUnavailable && readiness.Status != AgentToolReadinessStatus.Ready)
-            {
-                continue;
-            }
-
-            catalog.Add(new AgentToolCatalogEntry(descriptor, readiness));
-        }
-
-        return catalog
-            .OrderByDescending(item => item.Descriptor.Priority)
-            .ThenBy(item => item.Descriptor.DisplayName, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(item => item.Descriptor.ToolId, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-    }
-
-    public async Task<IReadOnlyList<AgentToolCatalogEntry>> ListInstalledLocalToolsAsync(CancellationToken cancellationToken = default)
-    {
-        var context = await CreateSourceContextAsync(
-                sessionId: null,
-                profile: null,
-                workspace: null,
-                cancellationToken)
-            .ConfigureAwait(false);
-        var catalog = new List<AgentToolCatalogEntry>();
-        foreach (var candidate in await ListOwnedRuntimeToolCandidatesAsync(
-                         context,
-                         cancellationToken,
-                         omitUnavailableSources: true)
-                     .ConfigureAwait(false))
-        {
-            catalog.AddRange(new[] { candidate.RuntimeTool.Descriptor }
-                .Where(descriptor => descriptor.SelectionScope == AgentToolSelectionScope.Tool)
-                .Select(descriptor => new AgentToolCatalogEntry(
-                descriptor,
-                new AgentToolReadiness(
-                    descriptor.ToolId,
-                    AgentToolReadinessStatus.Ready,
-                    "Installed capability. Runtime readiness depends on the selected session workspace."))));
-        }
-
-        return catalog
-            .GroupBy(item => item.Descriptor.ToolId, StringComparer.OrdinalIgnoreCase)
-            .Select(group => group.First())
-            .OrderByDescending(item => item.Descriptor.Priority)
-            .ThenBy(item => item.Descriptor.DisplayName, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(item => item.Descriptor.ToolId, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-    }
-
-    public async Task<IReadOnlyList<AgentToolReadiness>> ListToolReadinessAsync(CancellationToken cancellationToken = default)
-        => (await ListToolCatalogAsync(includeUnavailable: true, cancellationToken: cancellationToken))
-            .Select(item => item.Readiness)
-            .ToArray();
-
-    public async Task<IReadOnlyList<AgentToolDescriptor>> ListReadyToolDescriptorsAsync(
-        AgentProfileRecord? profile = null,
-        Guid? sessionId = null,
-        AgentWorkspaceRecord? workspace = null,
-        CancellationToken cancellationToken = default)
-    {
-        var effectiveProfile = profile;
-        return (await ListToolCatalogAsync(profile, sessionId, workspace, includeUnavailable: false, cancellationToken))
-            .Where(item => IsAllowedForProfile(effectiveProfile, item.Descriptor))
-            .Select(item => item.Descriptor)
-            .ToArray();
-    }
-
-    public async Task<IReadOnlyList<AgentRuntimeTool>> ListReadyRuntimeToolsAsync(
-        AgentProfileRecord? profile = null,
-        Guid? sessionId = null,
-        AgentWorkspaceRecord? workspace = null,
-        CancellationToken cancellationToken = default)
-        => (await ListReadyOwnedRuntimeToolsAsync(
-                profile,
-                sessionId,
-                workspace,
-                cancellationToken)
-            .ConfigureAwait(false))
-            .Select(static tool => tool.RuntimeTool)
-            .ToArray();
-
-    internal async Task<IReadOnlyList<AgentOwnedRuntimeTool>> ListReadyOwnedRuntimeToolsAsync(
-        AgentProfileRecord? profile = null,
-        Guid? sessionId = null,
-        AgentWorkspaceRecord? workspace = null,
-        CancellationToken cancellationToken = default)
-    {
-        var effectiveProfile = profile;
-        var context = await CreateSourceContextAsync(
-                sessionId,
-                effectiveProfile,
-                workspace,
-                cancellationToken)
-            .ConfigureAwait(false);
-        var candidates = await ListOwnedRuntimeToolCandidatesAsync(context, cancellationToken)
-            .ConfigureAwait(false);
-        var tools = new List<AgentOwnedRuntimeTool>();
-        foreach (var candidate in candidates
-                     .GroupBy(static item => item.RuntimeTool.Descriptor.ToolId, StringComparer.OrdinalIgnoreCase)
-                     .Where(static group => group.Count() == 1)
-                     .Select(static group => group.Single()))
-        {
-            var descriptor = candidate.RuntimeTool.Descriptor;
-            var readiness = await GetReadinessAsync(candidate, context, cancellationToken)
-                .ConfigureAwait(false);
-            readiness ??= new AgentToolReadiness(
-                descriptor.ToolId,
-                AgentToolReadinessStatus.Ready,
-                "Ready.");
-            if (readiness.Status != AgentToolReadinessStatus.Ready
-                || !IsAllowedForProfile(effectiveProfile, descriptor))
-            {
-                continue;
-            }
-
-            tools.Add(new AgentOwnedRuntimeTool(
-                candidate.RuntimeTool,
-                candidate.Invocation.OwnerPackageId,
-                candidate.Invocation));
-        }
-
-        return tools
-            .OrderByDescending(item => item.RuntimeTool.Descriptor.Priority)
-            .ThenBy(item => item.RuntimeTool.Descriptor.DisplayName, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(item => item.RuntimeTool.Descriptor.ToolId, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-    }
 
     internal async Task<AgentToolInvocationReference?> ResolvePreparedInvocationAsync(
         AgentToolDescriptor advertisedDescriptor,
@@ -196,16 +36,17 @@ public sealed partial class AgentToolService(
         string? executionTargetConfigurationGeneration,
         CancellationToken cancellationToken)
     {
-        var context = (await CreateSourceContextAsync(
+        var (sourceContext, executionTarget) = await CreateSourceContextAsync(
                 sessionId,
                 profile,
                 workspace,
                 cancellationToken)
-            .ConfigureAwait(false)) with
+            .ConfigureAwait(false);
+        var context = sourceContext with
         {
             ExecutionTargetConfigurationGeneration = executionTargetConfigurationGeneration,
         };
-        var matches = (await ListOwnedRuntimeToolCandidatesAsync(context, cancellationToken)
+        var matches = (await ListOwnedRuntimeToolCandidatesAsync(context, executionTarget, cancellationToken)
                 .ConfigureAwait(false))
             .Where(candidate => IsSameAdvertisedTool(advertisedDescriptor, candidate.RuntimeTool.Descriptor)
                                 && string.Equals(
@@ -248,6 +89,7 @@ public sealed partial class AgentToolService(
     {
         var effectiveProfileId = string.IsNullOrWhiteSpace(profileId) ? null : profileId;
         var executionBinding = ResolveExecutionBinding(workspace);
+        var executionTarget = await ResolveExecutionTargetAsync(executionBinding, advertisedInvocation, cancellationToken).ConfigureAwait(false);
         var dispatchObserved = 0;
         Action? observeDispatch = dispatchStarted is null
             ? null
@@ -268,7 +110,7 @@ public sealed partial class AgentToolService(
             ApprovedResourceReferences = approvedResourceReferences ?? [],
             ApprovedResourceClaims = approvedResourceClaims ?? [],
             ApprovedResourceCapabilities = approvedResourceCapabilities ?? [],
-            ExecutionTargetReference = ResolveExecutionTargetReference(executionBinding, advertisedInvocation),
+            ExecutionTarget = executionTarget?.Reference,
             ExecutionTargetConfigurationGeneration = expectedExecutionTargetConfigurationGeneration,
             DispatchStarted = observeDispatch,
         };
@@ -280,6 +122,7 @@ public sealed partial class AgentToolService(
                 advertisedDescriptor,
                 advertisedOwnerPackageId,
                 advertisedInvocation,
+                executionTarget,
                 cancellationToken);
             if (resolvedTool is null)
             {
@@ -306,6 +149,11 @@ public sealed partial class AgentToolService(
                     canIssueOutsideAuthority: false),
             };
             var request = new AgentToolRequest(toolId, argumentsJson);
+            await resolvedTool.Invocation.SourceProvider.EnsureCurrentAsync(cancellationToken).ConfigureAwait(false);
+            if (resolvedTool.Invocation.ExecutionTargetProvider is { } target)
+                await target.EnsureCurrentAsync(cancellationToken).ConfigureAwait(false);
+            if (resolvedTool.Invocation.ObservedExecutionProvider is { } observed)
+                await observed.EnsureCurrentAsync(cancellationToken).ConfigureAwait(false);
             return await StartWorkspaceBoundInvocation(
                 workspace,
                 enforceExpectedExecutionContext ? expectedExecutionBinding : executionBinding,
@@ -316,11 +164,16 @@ public sealed partial class AgentToolService(
                     request,
                     cancellationToken)).ConfigureAwait(false);
         }
-        catch (AgentPackageUnavailableException ex) when (Volatile.Read(ref dispatchObserved) != 0)
+        catch (SunderRpcException ex) when (!cancellationToken.IsCancellationRequested
+            && (ex.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable)
+            && (Volatile.Read(ref dispatchObserved) != 0
+                || ex.Error.DispatchState == SunderRpcDispatchState.PossiblyDispatched
+                || ex.Error.RetrySafety == SunderRpcRetrySafety.Unsafe))
         {
             return ToolTransportOutcomeAmbiguousResult(toolId, ex.Message);
         }
-        catch (AgentPackageUnavailableException ex)
+        catch (SunderRpcException ex) when (!cancellationToken.IsCancellationRequested
+            && ex.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable)
         {
             return PackageUnavailableResult(toolId, ex.Message);
         }
@@ -390,6 +243,7 @@ public sealed partial class AgentToolService(
     {
         var effectiveProfileId = string.IsNullOrWhiteSpace(profileId) ? null : profileId;
         var executionBinding = ResolveExecutionBinding(workspace);
+        var executionTarget = await ResolveExecutionTargetAsync(executionBinding, advertisedInvocation, cancellationToken).ConfigureAwait(false);
         if (!IsCurrentWorkspaceExecutionContext(
                 workspace,
                 enforceExpectedExecutionContext ? expectedExecutionBinding : executionBinding))
@@ -411,7 +265,7 @@ public sealed partial class AgentToolService(
             ApprovedResourceReferences = approvedResourceReferences ?? [],
             ApprovedResourceClaims = approvedResourceClaims ?? [],
             ApprovedResourceCapabilities = approvedResourceCapabilities ?? [],
-            ExecutionTargetReference = ResolveExecutionTargetReference(executionBinding, advertisedInvocation),
+            ExecutionTarget = executionTarget?.Reference,
             ExecutionTargetConfigurationGeneration = expectedExecutionTargetConfigurationGeneration,
         };
         ResolvedTool? resolvedTool;
@@ -423,9 +277,11 @@ public sealed partial class AgentToolService(
                 advertisedDescriptor,
                 advertisedOwnerPackageId,
                 advertisedInvocation,
+                executionTarget,
                 cancellationToken);
         }
-        catch (AgentPackageUnavailableException ex)
+        catch (SunderRpcException ex) when (!cancellationToken.IsCancellationRequested
+            && ex.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable)
         {
             return PackageUnavailableResult(toolId, ex.Message);
         }
@@ -443,17 +299,14 @@ public sealed partial class AgentToolService(
                 return PermissionContextChangedResult(toolId);
             }
         }
-        catch (AgentPackageUnavailableException ex)
+        catch (SunderRpcException ex) when (!cancellationToken.IsCancellationRequested
+            && ex.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable)
         {
             return PackageUnavailableResult(toolId, ex.Message);
         }
         catch (Exception) when (!cancellationToken.IsCancellationRequested)
         {
             return PermissionContextChangedResult(toolId);
-        }
-        if (!resolvedTool.Invocation.SupportsPreflight)
-        {
-            return null;
         }
         AgentToolResult? result;
         try
@@ -470,16 +323,13 @@ public sealed partial class AgentToolService(
                 workspace,
                 enforceExpectedExecutionContext ? expectedExecutionBinding : executionBinding,
                 PermissionContextChangedResult(toolId),
-                () => InvokeSourceAsync(
-                    resolvedTool.Invocation,
-                    cancellationToken,
-                    (source, token) => ((IAgentToolExecutionPreflightSource)source)
-                        .PreflightExecutionAsync(
-                            executionContext,
-                            new AgentToolRequest(toolId, argumentsJson),
-                            token))).ConfigureAwait(false);
+                () => resolvedTool.Invocation.SourceProvider.Service.PreflightAsync(
+                    executionContext,
+                    new AgentToolRequest(toolId, argumentsJson),
+                    cancellationToken)).ConfigureAwait(false);
         }
-        catch (AgentPackageUnavailableException ex)
+        catch (SunderRpcException ex) when (!cancellationToken.IsCancellationRequested
+            && ex.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable)
         {
             return PackageUnavailableResult(toolId, ex.Message);
         }
@@ -555,6 +405,7 @@ public sealed partial class AgentToolService(
     {
         var effectiveProfileId = string.IsNullOrWhiteSpace(profileId) ? null : profileId;
         var executionBinding = ResolveExecutionBinding(workspace);
+        var executionTarget = await ResolveExecutionTargetAsync(executionBinding, advertisedInvocation, cancellationToken).ConfigureAwait(false);
         var context = new AgentToolExecutionContext(
             sessionId,
             effectiveProfileId,
@@ -566,7 +417,7 @@ public sealed partial class AgentToolService(
             ToolCallId: toolCallId)
         {
             TranscriptEpoch = ResolveTranscriptEpoch(sessionId),
-            ExecutionTargetReference = ResolveExecutionTargetReference(executionBinding, advertisedInvocation),
+            ExecutionTarget = executionTarget?.Reference,
         };
         ResolvedTool? resolvedTool;
         try
@@ -577,10 +428,12 @@ public sealed partial class AgentToolService(
                 advertisedDescriptor,
                 advertisedOwnerPackageId,
                 advertisedInvocation,
+                executionTarget,
                 cancellationToken,
                 requireReadiness);
         }
-        catch (AgentPackageUnavailableException ex)
+        catch (SunderRpcException ex) when (!cancellationToken.IsCancellationRequested
+            && ex.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable)
         {
             if (advertisedDescriptor is null || advertisedInvocation is null)
             {
@@ -620,7 +473,8 @@ public sealed partial class AgentToolService(
                 resolvedTool.Invocation,
                 cancellationToken).ConfigureAwait(false);
         }
-        catch (AgentPackageUnavailableException ex)
+        catch (SunderRpcException ex) when (!cancellationToken.IsCancellationRequested
+            && ex.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable)
         {
             return new AgentToolPermissionResolution(
                 resolvedTool.Descriptor,
@@ -654,22 +508,13 @@ public sealed partial class AgentToolService(
         AgentPermissionRequest? permissionRequest;
         try
         {
-            if (resolvedTool.Invocation.SupportsSourcePermission)
-            {
-                permissionRequest = await InvokeSourceAsync(
-                    resolvedTool.Invocation,
-                    cancellationToken,
-                    (source, token) => ((IAgentPermissionAwareToolSource)source).BuildPermissionRequestAsync(
-                        context,
-                        new AgentToolRequest(toolId, argumentsJson),
-                        token)).ConfigureAwait(false);
-            }
-            else
-            {
-                permissionRequest = null;
-            }
+            permissionRequest = await resolvedTool.Invocation.SourceProvider.Service.PermissionAsync(
+                context,
+                new AgentToolRequest(toolId, argumentsJson),
+                cancellationToken).ConfigureAwait(false);
         }
-        catch (AgentPackageUnavailableException ex)
+        catch (SunderRpcException ex) when (!cancellationToken.IsCancellationRequested
+            && ex.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable)
         {
             return new AgentToolPermissionResolution(
                 resolvedTool.Descriptor,
@@ -732,9 +577,10 @@ public sealed partial class AgentToolService(
                 resolvedTool.Invocation,
                 cancellationToken).ConfigureAwait(false);
         }
-        catch (AgentPackageUnavailableException ex)
+        catch (SunderRpcException ex) when (!cancellationToken.IsCancellationRequested
+            && ex.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable)
         {
-            ReleasePermissionRequestAuthority(permissionRequest, resolvedTool.Invocation);
+            await ReleasePermissionRequestAuthorityAsync(permissionRequest, resolvedTool.Invocation).ConfigureAwait(false);
             return new AgentToolPermissionResolution(
                 resolvedTool.Descriptor,
                 PermissionRequest: null,
@@ -745,7 +591,7 @@ public sealed partial class AgentToolService(
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            ReleasePermissionRequestAuthority(permissionRequest, resolvedTool.Invocation);
+            await ReleasePermissionRequestAuthorityAsync(permissionRequest, resolvedTool.Invocation).ConfigureAwait(false);
             return new AgentToolPermissionResolution(
                 resolvedTool.Descriptor,
                 PermissionRequest: null,
@@ -759,7 +605,7 @@ public sealed partial class AgentToolService(
                 currentExecutionTargetConfigurationGeneration,
                 StringComparison.Ordinal))
         {
-            ReleasePermissionRequestAuthority(permissionRequest, resolvedTool.Invocation);
+            await ReleasePermissionRequestAuthorityAsync(permissionRequest, resolvedTool.Invocation).ConfigureAwait(false);
             return new AgentToolPermissionResolution(
                 resolvedTool.Descriptor,
                 PermissionRequest: null,
@@ -773,7 +619,7 @@ public sealed partial class AgentToolService(
                 workspace,
                 enforceExpectedExecutionContext ? expectedExecutionBinding : executionBinding))
         {
-            ReleasePermissionRequestAuthority(permissionRequest, resolvedTool.Invocation);
+            await ReleasePermissionRequestAuthorityAsync(permissionRequest, resolvedTool.Invocation).ConfigureAwait(false);
             return new AgentToolPermissionResolution(
                 resolvedTool.Descriptor,
                 PermissionRequest: null,

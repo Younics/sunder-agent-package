@@ -1,233 +1,146 @@
-using Sunder.Package.Agent.Contracts.Contracts;
-using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Subagents.Runtime;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Subagents.Services;
 
-internal sealed partial class SubagentEditorCapabilityCatalog : IDisposable
+internal sealed class SubagentEditorCapabilityCatalog(
+    IServiceProviders<IToolSourceService> tools,
+    IServiceProviders<ISelectableCapabilityProviderService> capabilities,
+    IServiceProviders<IChatProviderService> chats,
+    IServiceProviders<IRuntimeCatalogService> runtimes) : IDisposable, IAsyncDisposable
 {
-    private readonly ISubagentRuntimeBindings _bindings;
-    private readonly object _subscriptionGate = new();
-    private readonly List<ProviderSubscription> _providerSubscriptions = [];
+    private readonly CancellationTokenSource _lifetime = new();
+    private readonly object _gate = new();
+    private Task _completion = Task.CompletedTask;
+    private Task? _stop;
+    private bool _started;
     private bool _disposed;
-
-    public SubagentEditorCapabilityCatalog(ISubagentRuntimeBindings bindings)
-    {
-        _bindings = bindings;
-        _bindings.CatalogChanged += OnCatalogChanged;
-        RefreshProviderSubscriptions();
-    }
-
     public event Action? Changed;
 
-    internal void RefreshSubscriptions() => RefreshProviderSubscriptions();
-
-    public async Task<IReadOnlyList<AgentToolDescriptor>> ListLocalToolsAsync(
-        CancellationToken cancellationToken = default)
+    internal ValueTask StartAsync(CancellationToken token)
     {
-        var context = new AgentToolSourceContext(
-            SessionId: null,
-            Profile: null,
-            Workspace: null,
-            ExecutionBinding: null);
+        token.ThrowIfCancellationRequested();
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (!_started)
+            {
+                _started = true;
+                _completion = Task.WhenAll(Task.Run(() => WatchMetadataAsync(tools)), Task.Run(() => WatchMetadataAsync(chats)),
+                    Task.Run(() => WatchMetadataAsync(runtimes)), Task.Run(WatchCapabilitiesAsync));
+            }
+        }
+        return ValueTask.CompletedTask;
+    }
+
+    public async Task<IReadOnlyList<AgentToolDescriptor>> ListLocalToolsAsync(CancellationToken cancellationToken = default)
+    {
+        var context = new AgentToolSourceContext { SessionId = null, Profile = null, Workspace = null, ExecutionBinding = null,
+            ExecutionTarget = null, ExecutionTargetConfigurationGeneration = null };
         var descriptors = new List<AgentToolDescriptor>();
-        var sources = SubagentCatalogRpcInvocation.Snapshot(
-            _bindings.GetToolSources,
-            cancellationToken,
-            static source => source.DisplayName);
-        foreach (var source in sources.OrderBy(
-                     static item => item.Metadata,
-                     StringComparer.OrdinalIgnoreCase))
+        var sources = await SubagentCatalogSelection.SnapshotAsync(tools, cancellationToken,
+            static (source, token) => source.DescribeAsync(token)).ConfigureAwait(false);
+        foreach (var source in sources.OrderBy(item => item.Metadata.DisplayName, StringComparer.OrdinalIgnoreCase))
         {
-            var contributed = await SubagentCatalogRpcInvocation.InvokeOptionalAsync(
-                source,
-                cancellationToken,
-                (source, token) => source.ListToolsAsync(context, token)).ConfigureAwait(false);
-            if (contributed.IsAvailable)
-            {
-                descriptors.AddRange(contributed.Value);
-            }
+            var contributed = await SubagentCatalogSelection.InvokeOptionalAsync(source, cancellationToken,
+                (service, token) => service.ListToolsAsync(context, token)).ConfigureAwait(false);
+            if (contributed.IsAvailable) descriptors.AddRange(contributed.Value);
         }
-
-        return descriptors
-            .Where(descriptor => descriptor.SelectionScope == AgentToolSelectionScope.Tool)
-            .GroupBy(
-                descriptor => string.Concat(
-                    descriptor.SourceId ?? string.Empty,
-                    "\n",
-                    descriptor.ToolId),
-                StringComparer.OrdinalIgnoreCase)
-            .Select(group => group.First())
-            .OrderBy(descriptor => descriptor.DisplayName, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+        return descriptors.Where(value => value.SelectionScope == AgentToolSelectionScope.Tool)
+            .GroupBy(value => string.Concat(value.SourceId ?? string.Empty, "\n", value.ToolId), StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First()).OrderBy(value => value.DisplayName, StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
-    public async Task<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>> ListPackageCapabilitiesAsync(
-        CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>> ListPackageCapabilitiesAsync(CancellationToken cancellationToken = default)
     {
-        try
+        var values = new List<AgentProfileSelectableCapabilityDescriptor>();
+        var providers = await SubagentCatalogSelection.SnapshotAsync(capabilities, cancellationToken,
+            static (service, token) => service.DescribeAsync(token)).ConfigureAwait(false);
+        foreach (var provider in providers.OrderBy(item => item.Metadata.DisplayName, StringComparer.OrdinalIgnoreCase))
         {
-            RefreshProviderSubscriptions();
+            var contributed = await SubagentCatalogSelection.InvokeOptionalAsync(provider, cancellationToken,
+                static (service, token) => service.ListAsync(null, token)).ConfigureAwait(false);
+            if (contributed.IsAvailable) values.AddRange(contributed.Value);
         }
-        catch (SunderRpcException exception) when (exception.Error.Kind == SunderRpcErrorKind.Cancelled)
-        {
-            throw SubagentCatalogRpcInvocation.Cancelled(exception, cancellationToken);
-        }
-        var request = new AgentProfileSelectableCapabilityRequest(Profile: null);
-        var capabilities = new List<AgentProfileSelectableCapabilityDescriptor>();
-        var providers = SubagentCatalogRpcInvocation.Snapshot(
-            _bindings.GetSelectableCapabilityProviders,
-            cancellationToken,
-            static provider => provider.DisplayName);
-        foreach (var provider in providers
-                     .OrderBy(provider => provider.Metadata, StringComparer.OrdinalIgnoreCase))
-        {
-            var contributed = await SubagentCatalogRpcInvocation.InvokeOptionalAsync(
-                provider,
-                cancellationToken,
-                (contribution, token) => contribution.ListCapabilitiesAsync(request, token)).ConfigureAwait(false);
-            if (contributed.IsAvailable)
-            {
-                capabilities.AddRange(contributed.Value);
-            }
-        }
-
-        return capabilities
-            .Where(capability => !string.IsNullOrWhiteSpace(capability.Kind)
-                && !string.IsNullOrWhiteSpace(capability.CapabilityId)
-                && !string.IsNullOrWhiteSpace(capability.DisplayName))
-            .GroupBy(
-                capability => string.Concat(
-                    capability.Kind,
-                    "\n",
-                    capability.SourceId ?? string.Empty,
-                    "\n",
-                    capability.CapabilityId),
-                StringComparer.OrdinalIgnoreCase)
-            .Select(group => group.First())
-            .OrderBy(capability => capability.DisplayName, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+        return values.Where(value => !string.IsNullOrWhiteSpace(value.Kind) && !string.IsNullOrWhiteSpace(value.CapabilityId) && !string.IsNullOrWhiteSpace(value.DisplayName))
+            .GroupBy(value => string.Concat(value.Kind, "\n", value.SourceId ?? string.Empty, "\n", value.CapabilityId), StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First()).OrderBy(value => value.DisplayName, StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
-    private void OnCatalogChanged(SubagentCatalogChange change)
+    private async Task WatchMetadataAsync<T>(IServiceProviders<T> providers) where T : class
     {
-        if ((change & (SubagentCatalogChange.ChatProviders | SubagentCatalogChange.Tools
-            | SubagentCatalogChange.SelectableCapabilities | SubagentCatalogChange.RuntimeCatalog)) == 0)
+        long revision = 0, sequence = 0;
+        while (!_lifetime.IsCancellationRequested)
         {
-            return;
-        }
-
-        if ((change & SubagentCatalogChange.SelectableCapabilities) != 0)
-        {
-            RefreshProviderSubscriptions();
-        }
-        Changed?.Invoke();
-    }
-
-    private void RefreshProviderSubscriptions()
-    {
-        lock (_subscriptionGate)
-        {
-            if (_disposed)
+            try
             {
-                return;
-            }
-
-            var currentSubscriptions = new HashSet<ProviderSubscription>();
-            foreach (var reference in _bindings.GetSelectableCapabilityProviders())
-            {
-                if (!reference.TryAcquire(out var lease))
+                await foreach (var change in providers.WatchAsync(revision, sequence, _lifetime.Token).ConfigureAwait(false))
                 {
-                    continue;
+                    revision = change.Revision; sequence = change.Sequence;
+                    if (change.Kind == ServiceProviderChangeKind.ResetRequired)
+                    {
+                        var snapshot = await providers.ListAsync(_lifetime.Token).ConfigureAwait(false);
+                        revision = snapshot.Revision; sequence = snapshot.Sequence;
+                    }
+                    NotifyChanged();
                 }
+            }
+            catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { return; }
+            catch (Exception error) when (error is SunderRpcException or OperationCanceledException) { NotifyChanged(); }
+            if (!await RetryAsync(_lifetime.Token).ConfigureAwait(false)) return;
+        }
+    }
 
-                if (lease.Service is not IAgentProfileSelectableCapabilityChangeNotifier notifier
-                    || lease.RetirementToken.IsCancellationRequested)
+    private async Task WatchCapabilitiesAsync()
+    {
+        while (!_lifetime.IsCancellationRequested)
+        {
+            try
+            {
+                var snapshot = await capabilities.ListAsync(_lifetime.Token).ConfigureAwait(false);
+                using var subscriptions = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+                var watches = snapshot.Providers.Where(value => value.State == ServiceProviderState.Active)
+                    .Select(provider => WatchContributionAsync(provider, subscriptions.Token)).ToArray();
+                try
                 {
-                    lease.Dispose();
-                    continue;
+                    NotifyChanged();
+                    await foreach (var _ in capabilities.WatchAsync(snapshot.Revision, snapshot.Sequence, _lifetime.Token).ConfigureAwait(false)) break;
                 }
-
-                var existing = _providerSubscriptions.FirstOrDefault(subscription =>
-                    ReferenceEquals(subscription.Notifier, notifier));
-                if (existing is not null)
-                {
-                    currentSubscriptions.Add(existing);
-                    lease.Dispose();
-                    continue;
-                }
-
-                var added = new ProviderSubscription(lease, notifier);
-                notifier.SelectableCapabilitiesChanged += OnSelectableCapabilitiesChanged;
-                _providerSubscriptions.Add(added);
-                currentSubscriptions.Add(added);
-                added.ObserveRetirement(() => OnProviderRetired(added));
+                finally { await subscriptions.CancelAsync().ConfigureAwait(false); await Task.WhenAll(watches).ConfigureAwait(false); }
             }
-
-            foreach (var subscription in _providerSubscriptions
-                         .Where(subscription => !currentSubscriptions.Contains(subscription))
-                         .ToArray())
-            {
-                subscription.Notifier.SelectableCapabilitiesChanged -= OnSelectableCapabilitiesChanged;
-                _providerSubscriptions.Remove(subscription);
-                subscription.Dispose();
-            }
+            catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { return; }
+            catch (Exception error) when (error is SunderRpcException or OperationCanceledException) { NotifyChanged(); }
+            if (!await RetryAsync(_lifetime.Token).ConfigureAwait(false)) return;
         }
     }
 
-    private void OnSelectableCapabilitiesChanged()
-        => Changed?.Invoke();
-
-    private void OnProviderRetired(ProviderSubscription subscription)
+    private async Task WatchContributionAsync(ServiceProvider<ISelectableCapabilityProviderService> provider, CancellationToken token)
     {
-        lock (_subscriptionGate)
+        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(token, provider.RetirementToken);
+        while (!lifetime.IsCancellationRequested)
         {
-            if (!_providerSubscriptions.Remove(subscription)) return;
-            subscription.Notifier.SelectableCapabilitiesChanged -= OnSelectableCapabilitiesChanged;
-            subscription.Dispose();
-        }
-    }
-
-    public void Dispose()
-    {
-        lock (_subscriptionGate)
-        {
-            if (_disposed)
+            try
             {
-                return;
+                await provider.EnsureCurrentAsync(lifetime.Token).ConfigureAwait(false);
+                await foreach (var _ in provider.Service.WatchAsync(lifetime.Token).ConfigureAwait(false)) NotifyChanged();
+                NotifyChanged();
             }
-
-            _disposed = true;
-            _bindings.CatalogChanged -= OnCatalogChanged;
-            foreach (var subscription in _providerSubscriptions)
-            {
-                subscription.Notifier.SelectableCapabilitiesChanged -= OnSelectableCapabilitiesChanged;
-                subscription.Dispose();
-            }
-            _providerSubscriptions.Clear();
+            catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { return; }
+            catch (SunderRpcException) { NotifyChanged(); }
+            if (!await RetryAsync(lifetime.Token).ConfigureAwait(false)) return;
         }
     }
 
-    private sealed class ProviderSubscription(
-        SubagentProviderLease<IAgentProfileSelectableCapabilityProvider> lease,
-        IAgentProfileSelectableCapabilityChangeNotifier notifier) : IDisposable
+    private void NotifyChanged()
     {
-        private SubagentProviderLease<IAgentProfileSelectableCapabilityProvider>? _lease = lease;
-        private readonly CancellationToken _retirementToken = lease.RetirementToken;
-        private CancellationTokenRegistration _retirement;
-
-        internal IAgentProfileSelectableCapabilityChangeNotifier Notifier { get; } = notifier;
-
-        internal void ObserveRetirement(Action retired)
-        {
-            _retirement = _retirementToken.Register(retired);
-            if (_lease is null) _retirement.Unregister();
-        }
-        public void Dispose()
-        {
-            _retirement.Unregister();
-            Interlocked.Exchange(ref _lease, null)?.Dispose();
-        }
+        if (Changed is not { } handlers) return;
+        foreach (Action handler in handlers.GetInvocationList())
+        { try { handler(); } catch { /* Independent editor observers own their failures. */ } }
     }
+    private static async Task<bool> RetryAsync(CancellationToken token)
+    { try { await Task.Delay(250, token).ConfigureAwait(false); return true; } catch (OperationCanceledException) when (token.IsCancellationRequested) { return false; } }
+    public void Dispose() { lock (_gate) { if (_disposed) return; _disposed = true; } _lifetime.Cancel(); }
+    public ValueTask DisposeAsync() { Dispose(); lock (_gate) return new(_stop ??= StopAsync()); }
+    private async Task StopAsync() { try { await _completion.ConfigureAwait(false); } finally { _lifetime.Dispose(); } }
 }

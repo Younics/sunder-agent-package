@@ -4,23 +4,23 @@ using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
-using Sunder.Package.Agent.Runtime.Rpc;
+using Sunder.Package.Agent.Services;
 using Sunder.Sdk.Rpc;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
 
 public sealed class AgentRpcContentScopeTests
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
-
     [Fact]
     public async Task ChatClient_UsesCallerScopeForBinaryContentAndDisposesIt()
     {
         var client = new ScopeCreatingRpcClient();
         var endpoint = client.Scope.Provider.Endpoint;
-        await using var provider = new GeneratedChatProviderClient(client, client.Scope.Provider);
-        using var chat = await provider.CreateChatClientAsync(new AgentChatClientContext("provider", "model"));
+        await using var receiver = new GeneratedServiceTestScope(client);
+        var provider = Assert.Single((await receiver.Providers<AgentServices.IChatProviderService>().ListAsync()).Providers);
+        using var chat = new AgentModelChatClient(new AgentChatClientContext("provider", "model"), provider.Service.StreamChatAsync);
         var updates = new List<ChatResponseUpdate>();
 
         await foreach (var update in chat.GetStreamingResponseAsync(
@@ -41,8 +41,9 @@ public sealed class AgentRpcContentScopeTests
     public async Task ChatClient_TextOnlyStreamDisposesScopeWithoutRegisteringBinaryContent()
     {
         var client = new ScopeCreatingRpcClient();
-        await using var provider = new GeneratedChatProviderClient(client, client.Scope.Provider);
-        using var chat = await provider.CreateChatClientAsync(new AgentChatClientContext("provider", "model"));
+        await using var receiver = new GeneratedServiceTestScope(client);
+        var provider = Assert.Single((await receiver.Providers<AgentServices.IChatProviderService>().ListAsync()).Providers);
+        using var chat = new AgentModelChatClient(new AgentChatClientContext("provider", "model"), provider.Service.StreamChatAsync);
 
         await foreach (var _ in chat.GetStreamingResponseAsync(
                            [new ChatMessage(ChatRole.User, "hello")]))
@@ -73,7 +74,10 @@ public sealed class AgentRpcContentScopeTests
         public ValueTask<SunderRpcProviderSnapshot?> GetProviderAsync(
             SunderRpcEndpointReference endpoint,
             CancellationToken cancellationToken = default)
-            => throw new NotSupportedException();
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult<SunderRpcProviderSnapshot?>(endpoint == Scope.Provider.Endpoint ? Scope.Provider : null);
+        }
 
         public ValueTask<bool> TryReportInvariantViolationAsync(
             SunderRpcEndpointReference endpoint,
@@ -84,13 +88,22 @@ public sealed class AgentRpcContentScopeTests
         public ValueTask<SunderRpcCatalogSnapshot> DiscoverAsync(
             string contractId,
             CancellationToken cancellationToken = default)
-            => throw new NotSupportedException();
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult(new SunderRpcCatalogSnapshot(1, 7,
+                string.IsNullOrEmpty(contractId) || contractId == Scope.Provider.ContractId ? [Scope.Provider] : []));
+        }
 
-        public IAsyncEnumerable<SunderRpcCatalogEvent> WatchAsync(
+        public async IAsyncEnumerable<SunderRpcCatalogEvent> WatchAsync(
             long afterRevision,
             long afterSequence,
-            CancellationToken cancellationToken = default)
-            => throw new NotSupportedException();
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            Assert.Equal(1, afterRevision);
+            Assert.Equal(7, afterSequence);
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            yield break;
+        }
 
         public ValueTask<JsonElement> InvokeAsync(
             SunderRpcEndpointReference endpoint,
@@ -112,7 +125,7 @@ public sealed class AgentRpcContentScopeTests
             DirectSubscriptionUsed = true;
             await Task.Yield();
             cancellationToken.ThrowIfCancellationRequested();
-            yield return ResponseEvent();
+            yield return await ResponseEventAsync(Scope.Provider, cancellationToken);
         }
     }
 
@@ -126,7 +139,7 @@ public sealed class AgentRpcContentScopeTests
 
         private static SunderRpcProviderSnapshot CreateProvider()
         {
-            var descriptor = RegressionTestRpcDescriptors.Get(AgentRpcContractIds.ChatProvider);
+            var descriptor = CurrentPublicRpcDescriptors.Get(RegressionTestBindings.ChatProviders);
             return new("test.package", "2.0.0", "test.provider", descriptor.ContractId, descriptor.Version,
                 descriptor.Sha256, descriptor.AbiSha256!, Guid.NewGuid(), 1, 1, new("rpc1_chat_provider"), 1, SunderRpcProviderState.Active);
         }
@@ -212,16 +225,16 @@ public sealed class AgentRpcContentScopeTests
             var content = request.GetProperty("messages")[0].GetProperty("contents")[0];
             if (RegisteredContent is not null)
             {
-                Assert.Equal("rpc-content-test", content.GetProperty("contentReference").GetProperty("id").GetString());
+                Assert.Equal("rpc-content-test", content.GetProperty("content").GetProperty("id").GetString());
             }
             else
             {
                 Assert.Equal("hello", content.GetProperty("text").GetString());
-                Assert.False(content.TryGetProperty("contentReference", out _));
+                Assert.True(!content.TryGetProperty("content", out var binary) || binary.ValueKind == JsonValueKind.Null);
             }
             await Task.Yield();
             cancellationToken.ThrowIfCancellationRequested();
-            yield return ResponseEvent();
+            yield return await ResponseEventAsync(Provider, cancellationToken);
         }
 
         public ValueTask DisposeAsync()
@@ -231,9 +244,19 @@ public sealed class AgentRpcContentScopeTests
         }
     }
 
-    private static JsonElement ResponseEvent()
-        => JsonSerializer.SerializeToElement<AgentChatStreamEvent>(
-            new AgentChatUpdateEvent(
-                ContentItems: [new AgentChatContent("text", Text: "received")]),
-            JsonOptions);
+    private static async ValueTask<JsonElement> ResponseEventAsync(SunderRpcProviderSnapshot provider, CancellationToken cancellationToken)
+    {
+        var invocation = new SunderRpcInvocationContext("sunder.package.agent", "2.0.0", provider,
+            DateTimeOffset.UtcNow.AddMinutes(1), 1, cancellationToken);
+        await using var response = SunderRpcMarshallingContext.ForInvocation(invocation);
+        try
+        {
+            // Even a text-only event contains resource-bearing model types. Use
+            // an explicit SDK resource context instead of unbound JSON options.
+            return await response.SerializeAsync<AgentChatStreamEvent>(
+                new AgentChatUpdateEvent(ContentItems: [new AgentChatContent("text", Text: "received")]),
+                cancellationToken: cancellationToken);
+        }
+        finally { invocation.Revoke(); }
+    }
 }

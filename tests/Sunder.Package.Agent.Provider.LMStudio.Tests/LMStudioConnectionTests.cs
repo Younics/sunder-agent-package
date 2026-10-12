@@ -7,9 +7,9 @@ using Sunder.Package.Agent.Provider.TestSupport;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Rpc;
 using Xunit;
+using AgentProviderReadinessStatus = Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentProviderReadinessStatus;
 using LMStudioSettingsViewModel = LMStudioApp::Sunder.Package.Agent.Provider.LMStudio.LMStudioSettingsViewModel;
-using IProviderCredentialOwnerClient = LMStudioApp::Sunder.Package.Agent.Provider.Shared.IProviderCredentialOwnerClient;
-using ProviderCredentialSnapshot = LMStudioApp::Sunder.Package.Agent.Provider.Shared.ProviderCredentialSnapshot;
+using ICredentialSettingsService = LMStudioApp::Sunder.Generated.Packages.Sunder_Package_Agent_Provider_Lmstudio_Services.ICredentialSettingsService;
 
 namespace Sunder.Package.Agent.Provider.LMStudio.Tests;
 
@@ -326,31 +326,22 @@ public sealed class LMStudioConnectionTests
                 LMStudioProviderConfiguration.ApiKeyKey)));
 
     private sealed class CredentialOwnerClientFake(ProviderCredentialAccessor credentials)
-        : IProviderCredentialOwnerClient
+        : ICredentialSettingsService
     {
         private readonly CredentialSettingsService _provider = new(credentials);
 
-        public async ValueTask<ProviderCredentialSnapshot> GetStatusAsync(
+        public ValueTask<bool> GetStatusAsync(
             CancellationToken cancellationToken = default)
-            => ToSnapshot(await _provider.QueryAsync(
-                new CredentialQuery(),
-                cancellationToken));
+            => _provider.GetStatusAsync(cancellationToken);
 
-        public async ValueTask<ProviderCredentialSnapshot> SetAsync(
+        public ValueTask<bool> SetAsync(
             string credential,
             CancellationToken cancellationToken = default)
-            => ToSnapshot(await _provider.CommandAsync(
-                new CredentialCommand { Kind = CredentialOperation.Set, Credential = new(new() { Value = credential }) },
-                cancellationToken));
+            => _provider.SetAsync(credential, cancellationToken);
 
-        public async ValueTask<ProviderCredentialSnapshot> ClearAsync(
+        public ValueTask<bool> ClearAsync(
             CancellationToken cancellationToken = default)
-            => ToSnapshot(await _provider.CommandAsync(
-                new CredentialCommand { Kind = CredentialOperation.Clear },
-                cancellationToken));
-
-        private static ProviderCredentialSnapshot ToSnapshot(CredentialSnapshot snapshot)
-            => new(snapshot.HasStoredCredential);
+            => _provider.ClearAsync(cancellationToken);
     }
 
     private static PackageViewNavigationContext CreateNavigationContext()

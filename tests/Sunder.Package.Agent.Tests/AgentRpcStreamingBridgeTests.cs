@@ -1,5 +1,6 @@
+extern alias GeminiWorker;
+
 using System.Runtime.CompilerServices;
-using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
@@ -8,6 +9,8 @@ using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Services.BehaviorLoops;
 using Sunder.Sdk.Logging;
 using Sunder.Sdk.Rpc;
+using ProviderModels = GeminiWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using ProviderStream = GeminiWorker::Sunder.Package.Agent.Provider.Shared.ProviderChatStream;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -19,26 +22,37 @@ public sealed class AgentRpcStreamingBridgeTests
     [Fact]
     public async Task ProviderStream_CoalescesTinyReadyDeltasWithoutChangingAggregateContent()
     {
-        var updates = Enumerable.Range(0, 256)
-            .Select(static _ => Update(new TextContent("x")))
-            .ToArray();
-        var events = await ReadProviderEventsAsync(new SequenceChatClient(updates));
+        var updates = Enumerable.Range(0, 256).Select(static _ => Update(new TextContent("x"))).ToArray();
+        var chat = new SequenceChatClient(updates);
+        var events = new List<ProviderModels.AgentChatStreamEvent>();
+        var consumed = 0;
+        await using var stream = ProviderEvents(chat).GetAsyncEnumerator();
+        while (await stream.MoveNextAsync())
+        {
+            events.Add(stream.Current);
+            consumed += Assert.IsType<ProviderModels.AgentChatUpdateEvent>(stream.Current).ContentItems!.Count;
+            if (consumed < updates.Length)
+            {
+                // Coalescing drains ready values, not future producer work. Keep
+                // a full16-value batch ready (one produced item may still be in
+                // mapping/write), and wait for completion before the final tail.
+                await chat.WaitForProducedAsync(Math.Min(updates.Length, consumed + 17),
+                    requireCompletion: consumed + 17 >= updates.Length);
+            }
+        }
 
-        var contents = events
-            .SelectMany(static item => item.GetProperty("contentItems").EnumerateArray())
-            .ToArray();
+        var contents = events.SelectMany(item => Assert.IsType<ProviderModels.AgentChatUpdateEvent>(item).ContentItems!).ToArray();
         Assert.Equal(256, contents.Length);
-        Assert.Equal(new string('x', 256), string.Concat(contents.Select(static item => item.GetProperty("text").GetString())));
-        Assert.True(events.Count <= 32, $"Expected substantially fewer than 256 wire events, but observed {events.Count}.");
+        Assert.Equal(new string('x', 256), string.Concat(contents.Select(item => item.Text)));
+        Assert.True(events.Count <= 32, $"Expected substantially fewer than 256 events, but observed {events.Count}.");
     }
 
     [Fact]
     public async Task ProviderStream_CoalescesOnlyMatchingTextAndReasoningEnvelopes()
     {
         var reasoning = new TextReasoningContent("reasoning") { ProtectedData = "protected" };
-        var continuation = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 });
         var continuationUpdate = Update(new TextContent("f"), responseId: "response-2");
-        continuationUpdate.ContinuationToken = continuation;
+        continuationUpdate.ContinuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 });
         var updates = new ChatResponseUpdate[]
         {
             Update(new TextContent("a"), responseId: "response-1"),
@@ -52,55 +66,30 @@ public sealed class AgentRpcStreamingBridgeTests
             new ChatResponseUpdate { ResponseId = "response-2", FinishReason = new ChatFinishReason("stop") },
             continuationUpdate,
         };
-        var providerFailure = new AgentChatProviderException(
-            "provider failed",
-            "safe provider failure",
-            "provider-error")
-        {
-            FailureKind = AgentChatProviderFailureKind.ContextWindowExceeded,
-        };
+        var failure = new AgentChatProviderException("provider failed", "safe provider failure", "provider-error")
+        { FailureKind = AgentChatProviderFailureKind.ContextWindowExceeded };
 
-        var events = await ReadProviderEventsAsync(new SequenceChatClient(updates, providerFailure));
+        var events = await ReadProviderEventsAsync(new SequenceChatClient(updates, failure));
 
         Assert.Equal(10, events.Count);
-        Assert.Equal(2, events[0].GetProperty("contentItems").GetArrayLength());
-        Assert.Equal("protected", events[0].GetProperty("contentItems")[1].GetProperty("protectedData").GetString());
-        Assert.Equal("response-2", events[1].GetProperty("responseId").GetString());
-        string[] expectedContentKinds =
-            ["text", "reasoning", "text", "tool-call", "text", "usage", "error", "text", "text"];
-        var contentKinds = events
-            .Where(static item => item.GetProperty("kind").GetString() == AgentChatStreamEvent.UpdateKind)
-            .SelectMany(static item => item.TryGetProperty("contentItems", out var contentItems)
-                ? contentItems.EnumerateArray().Select(static content => content.GetProperty("kind").GetString()!)
-                : [])
-            .ToArray();
-        Assert.Equal(expectedContentKinds, contentKinds);
-        Assert.Equal("stop", events[7].GetProperty("finishReason").GetString());
-        Assert.Equal("AQID", events[8].GetProperty("continuationHandle").GetString());
-        Assert.Equal(AgentChatStreamEvent.ErrorKind, events[9].GetProperty("kind").GetString());
-        Assert.Equal("provider-error", events[9].GetProperty("errorCode").GetString());
+        var first = Assert.IsType<ProviderModels.AgentChatUpdateEvent>(events[0]);
+        Assert.Equal(2, first.ContentItems!.Count);
+        Assert.Equal("protected", first.ContentItems[1].ProtectedData);
+        Assert.Equal("response-2", Assert.IsType<ProviderModels.AgentChatUpdateEvent>(events[1]).ResponseId);
+        Assert.Equal(["text", "reasoning", "text", "tool-call", "text", "usage", "error", "text", "text"],
+            events.OfType<ProviderModels.AgentChatUpdateEvent>().SelectMany(item => item.ContentItems ?? []).Select(item => item.Kind));
+        Assert.Equal("stop", Assert.IsType<ProviderModels.AgentChatUpdateEvent>(events[7]).FinishReason);
+        Assert.Equal(new byte[] { 1, 2, 3 }, Assert.IsType<ProviderModels.AgentChatUpdateEvent>(events[8]).ContinuationHandle);
+        var error = Assert.IsType<ProviderModels.AgentChatErrorEvent>(events[9]);
+        Assert.Equal("provider-error", error.ErrorCode);
+        Assert.Equal(ProviderModels.AgentChatProviderFailureKind.ContextWindowExceeded, error.ErrorFailureKind);
     }
 
     [Fact]
     public async Task ProviderStream_EarlyDisposalCancelsAndDrainsProducer()
     {
-        var chat = new SequenceChatClient(Enumerable.Range(0, 256)
-            .Select(static index => Update(new TextContent(index.ToString())))
-            .ToArray());
-        using var requestDocument = JsonDocument.Parse(RegressionTestRpcValues.Serialize(new AgentChatStreamRequest(
-            "provider",
-            "model",
-            [],
-            EmptyOptions())));
-        using var catalog = new RegressionTestExtensionCatalog();
-        var provider = catalog.AddProvider(AgentRpcContractIds.ChatProvider, new ChatProvider(chat), "test.chat");
-        await using var scope = await catalog.RpcForCaller("sunder.package.agent").CreateCallScopeAsync();
-        var enumerator = scope.SubscribeAsync(
-                provider.Endpoint,
-                "chat-provider",
-                "stream-chat",
-                requestDocument.RootElement.Clone())
-            .GetAsyncEnumerator();
+        var chat = new SequenceChatClient(Enumerable.Range(0, 256).Select(index => Update(new TextContent(index.ToString()))).ToArray());
+        var enumerator = ProviderEvents(chat).GetAsyncEnumerator();
 
         Assert.True(await enumerator.MoveNextAsync());
         await enumerator.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
@@ -110,30 +99,18 @@ public sealed class AgentRpcStreamingBridgeTests
     }
 
     [Fact]
-    public async Task ProviderStream_ProjectsNestedQueueFailureAcrossRpcErrorEvent()
+    public async Task ProviderStream_ProjectsNestedQueueFailureIntoTheNaturalErrorEvent()
     {
-        var queueFailure = new SunderRpcException(new SunderRpcError(
-            SunderRpcErrorKind.ResourceExhausted,
-            AgentChatFailureProjection.StreamQueueLimitErrorCode,
-            "queue diagnostic",
-            SunderRpcDispatchState.PossiblyDispatched,
-            SunderRpcRetrySafety.Unsafe));
-        var providerFailure = new AgentChatProviderException(
-            "outer provider diagnostic",
-            "outer provider content",
-            "outer-provider-code",
-            queueFailure);
+        var queueFailure = new SunderRpcException(new(SunderRpcErrorKind.ResourceExhausted,
+            AgentChatFailureProjection.StreamQueueLimitErrorCode, "queue diagnostic",
+            SunderRpcDispatchState.PossiblyDispatched, SunderRpcRetrySafety.Unsafe));
+        var failure = new AgentChatProviderException("outer provider diagnostic", "outer provider content", "outer-provider-code", queueFailure);
 
-        var item = Assert.Single(await ReadProviderEventsAsync(
-            new SequenceChatClient([], providerFailure)));
-        var errorCode = item.GetProperty("errorCode").GetString();
-        Assert.Equal(AgentChatFailureProjection.StreamQueueLimitErrorCode, errorCode);
+        var item = Assert.IsType<ProviderModels.AgentChatErrorEvent>(Assert.Single(await ReadProviderEventsAsync(new SequenceChatClient([], failure))));
 
+        Assert.Equal(AgentChatFailureProjection.StreamQueueLimitErrorCode, item.ErrorCode);
         var reconstructed = AgentChatFailureProjection.CreateProviderException(new AgentChatErrorEvent(
-            errorCode!,
-            item.GetProperty("errorMessage").GetString()!,
-            item.GetProperty("errorContent").GetString()!,
-            AgentChatProviderFailureKind.Unknown));
+            item.ErrorCode, item.ErrorMessage, item.ErrorContent, AgentChatProviderFailureKind.Unknown));
         var projected = Assert.IsType<SunderRpcException>(reconstructed.InnerException);
         Assert.Equal(SunderRpcRetrySafety.Unsafe, projected.Error.RetrySafety);
         Assert.True(AgentFailurePresentationPolicy.IsStreamQueueLimit(reconstructed));
@@ -141,32 +118,18 @@ public sealed class AgentRpcStreamingBridgeTests
     }
 
     [Fact]
-    public async Task ProviderStream_ProjectsNestedUnsafeRpcMetadataAcrossErrorEvent()
+    public async Task ProviderStream_ProjectsNestedUnsafeRpcMetadataIntoTheNaturalErrorEvent()
     {
-        var unsafeFailure = new SunderRpcException(new SunderRpcError(
-            SunderRpcErrorKind.Unavailable,
-            "rpc.worker.other-unsafe-failure",
-            "connection failed",
-            SunderRpcDispatchState.PossiblyDispatched,
-            SunderRpcRetrySafety.Unsafe));
-        var providerFailure = new AgentChatProviderException(
-            "outer provider diagnostic",
-            "outer provider content",
-            "outer-provider-code",
-            unsafeFailure);
+        var unsafeFailure = new SunderRpcException(new(SunderRpcErrorKind.Unavailable, "rpc.worker.other-unsafe-failure",
+            "connection failed", SunderRpcDispatchState.PossiblyDispatched, SunderRpcRetrySafety.Unsafe));
+        var failure = new AgentChatProviderException("outer provider diagnostic", "outer provider content", "outer-provider-code", unsafeFailure);
 
-        var item = Assert.Single(await ReadProviderEventsAsync(
-            new SequenceChatClient([], providerFailure)));
-        Assert.Equal(
-            AgentChatFailureProjection.UnsafeRpcFailureErrorCode,
-            item.GetProperty("errorCode").GetString());
+        var item = Assert.IsType<ProviderModels.AgentChatErrorEvent>(Assert.Single(await ReadProviderEventsAsync(new SequenceChatClient([], failure))));
+
+        Assert.Equal(AgentChatFailureProjection.UnsafeRpcFailureErrorCode, item.ErrorCode);
         var reconstructed = AgentChatFailureProjection.CreateProviderException(new AgentChatErrorEvent(
-            AgentChatFailureProjection.UnsafeRpcFailureErrorCode,
-            "outer provider diagnostic",
-            "outer provider content",
-            AgentChatProviderFailureKind.Unknown));
+            item.ErrorCode, item.ErrorMessage, item.ErrorContent, AgentChatProviderFailureKind.Unknown));
         var projected = Assert.IsType<SunderRpcException>(reconstructed.InnerException);
-
         Assert.Equal(SunderRpcRetrySafety.Unsafe, projected.Error.RetrySafety);
         Assert.False(AgentProviderResilience.IsTransient(reconstructed));
     }
@@ -174,9 +137,7 @@ public sealed class AgentRpcStreamingBridgeTests
     [Fact]
     public async Task ProviderStream_CompletesReaderWhenClientDisposeThrows()
     {
-        var chat = new SequenceChatClient(
-            [],
-            disposeException: new InvalidOperationException("dispose failed"));
+        var chat = new SequenceChatClient([], disposeException: new InvalidOperationException("dispose failed"));
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await ReadProviderEventsAsync(chat).WaitAsync(TimeSpan.FromSeconds(2)));
@@ -188,33 +149,18 @@ public sealed class AgentRpcStreamingBridgeTests
     [Fact]
     public async Task RunControlStream_SlowConsumerAdvancesProviderOneEventAtATimeAndDisposes()
     {
-        var chat = new SequenceChatClient(Enumerable.Range(0, 256)
-            .Select(static index => Update(new TextContent(index.ToString())))
-            .ToArray());
-        using var catalog = new RegressionTestExtensionCatalog();
-        using var registration = catalog.RunControls.Open(
-            new ChatRuntime(chat),
-            "sunder.package.agent",
-            out var invocationId);
-        await using var scope = await catalog.RpcForCaller("sunder.package.agent").CreateCallScopeAsync();
-        var provider = Assert.Single((await scope.DiscoverAsync(AgentRpcContractIds.RunControl)).Providers);
+        var chat = new SequenceChatClient(Enumerable.Range(0, 256).Select(index => Update(new TextContent(index.ToString()))).ToArray());
+        await using var catalog = new RegressionTestExtensionCatalog();
+        using var grant = OpenRunControl(catalog, chat, out var invocationId);
+        var control = Assert.Single((await catalog.RunControls.ListAsync()).Providers).Service;
+        var enumerator = control.StreamChatAsync(invocationId, ChatRequest(), null).GetAsyncEnumerator();
+        try
         {
-            var enumerator = scope.SubscribeAsync(
-                    provider.Endpoint, "run-control", "stream-chat",
-                    Request(invocationId),
-                    cancellationToken: CancellationToken.None)
-                .GetAsyncEnumerator();
-            try
-            {
-                Assert.True(await enumerator.MoveNextAsync());
-                Assert.Equal("update", enumerator.Current.GetProperty("kind").GetString());
-                Assert.Equal(1, chat.ProducedCount);
-            }
-            finally
-            {
-                await enumerator.DisposeAsync();
-            }
+            Assert.True(await enumerator.MoveNextAsync());
+            Assert.IsType<AgentChatUpdateEvent>(enumerator.Current);
+            Assert.Equal(1, chat.ProducedCount);
         }
+        finally { await enumerator.DisposeAsync(); }
 
         Assert.True(chat.EnumerationDisposed);
         Assert.True(chat.IsDisposed);
@@ -223,110 +169,60 @@ public sealed class AgentRpcStreamingBridgeTests
     [Fact]
     public async Task RunControlStream_PreservesUpdatesThenMapsOneProviderError()
     {
-        var failure = new AgentChatProviderException(
-            "provider failed",
-            "safe failure",
-            "expected-provider-error")
-        {
-            FailureKind = AgentChatProviderFailureKind.ContextWindowExceeded,
-        };
-        var chat = new SequenceChatClient(
-            [Update(new TextContent("before failure"))],
-            failure,
+        var failure = new AgentChatProviderException("provider failed", "safe failure", "expected-provider-error")
+        { FailureKind = AgentChatProviderFailureKind.ContextWindowExceeded };
+        var chat = new SequenceChatClient([Update(new TextContent("before failure"))], failure,
             new InvalidOperationException("cleanup must not replace provider failure"));
-        using var catalog = new RegressionTestExtensionCatalog();
-        using var registration = catalog.RunControls.Open(
-            new ChatRuntime(chat),
-            "sunder.package.agent",
-            out var invocationId);
-        await using var scope = await catalog.RpcForCaller("sunder.package.agent").CreateCallScopeAsync();
-        var provider = Assert.Single((await scope.DiscoverAsync(AgentRpcContractIds.RunControl)).Providers);
-        {
-            var events = new List<JsonElement>();
-            await foreach (var item in scope.SubscribeAsync(
-                               provider.Endpoint, "run-control", "stream-chat",
-                               Request(invocationId),
-                               cancellationToken: CancellationToken.None))
-            {
-                events.Add(item);
-            }
+        await using var catalog = new RegressionTestExtensionCatalog();
+        using var grant = OpenRunControl(catalog, chat, out var invocationId);
+        var control = Assert.Single((await catalog.RunControls.ListAsync()).Providers).Service;
+        var events = new List<AgentChatStreamEvent>();
 
-            Assert.Equal("update", events[0].GetProperty("kind").GetString());
-            var error = events[1];
-            Assert.Equal("error", error.GetProperty("kind").GetString());
-            Assert.Equal("expected-provider-error", error.GetProperty("errorCode").GetString());
-            Assert.Equal("context-window-exceeded", error.GetProperty("errorFailureKind").GetString());
-            Assert.Equal(2, events.Count);
-        }
+        await foreach (var item in control.StreamChatAsync(invocationId, ChatRequest(), null)) events.Add(item);
+
+        Assert.Equal(2, events.Count);
+        Assert.IsType<AgentChatUpdateEvent>(events[0]);
+        var error = Assert.IsType<AgentChatErrorEvent>(events[1]);
+        Assert.Equal("expected-provider-error", error.ErrorCode);
+        Assert.Equal(AgentChatProviderFailureKind.ContextWindowExceeded, error.ErrorFailureKind);
     }
 
     [Fact]
     public async Task RunControlStream_PropagatesNonProviderFailure()
     {
-        var chat = new SequenceChatClient(
-            [Update(new TextContent("before failure"))],
+        var chat = new SequenceChatClient([Update(new TextContent("before failure"))],
             new InvalidOperationException("expected non-provider failure"),
             new InvalidOperationException("cleanup must not replace stream failure"));
-        using var catalog = new RegressionTestExtensionCatalog();
-        using var registration = catalog.RunControls.Open(
-            new ChatRuntime(chat),
-            "sunder.package.agent",
-            out var invocationId);
-        await using var scope = await catalog.RpcForCaller("sunder.package.agent").CreateCallScopeAsync();
-        var provider = Assert.Single((await scope.DiscoverAsync(AgentRpcContractIds.RunControl)).Providers);
-        {
-            var enumerator = scope.SubscribeAsync(
-                    provider.Endpoint, "run-control", "stream-chat",
-                    Request(invocationId),
-                    cancellationToken: CancellationToken.None)
-                .GetAsyncEnumerator();
-            try
-            {
-                Assert.True(await enumerator.MoveNextAsync());
-                var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-                    _ = await enumerator.MoveNextAsync());
-                Assert.Equal("expected non-provider failure", exception.Message);
-            }
-            finally
-            {
-                await enumerator.DisposeAsync();
-            }
-        }
+        await using var catalog = new RegressionTestExtensionCatalog();
+        using var grant = OpenRunControl(catalog, chat, out var invocationId);
+        var control = Assert.Single((await catalog.RunControls.ListAsync()).Providers).Service;
+        await using var enumerator = control.StreamChatAsync(invocationId, ChatRequest(), null).GetAsyncEnumerator();
+
+        Assert.True(await enumerator.MoveNextAsync());
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => _ = await enumerator.MoveNextAsync());
+
+        Assert.Equal("expected non-provider failure", exception.Message);
+        Assert.True(chat.EnumerationDisposed);
+        Assert.True(chat.IsDisposed);
     }
 
     [Fact]
     public async Task RunControlStream_CancellationPropagatesAndDisposesProviderEnumerator()
     {
         using var cancellation = new CancellationTokenSource();
-        var chat = new SequenceChatClient([
-            Update(new TextContent("first")),
-            Update(new TextContent("second")),
-        ], disposeException: new InvalidOperationException("cleanup must not replace cancellation"));
-        using var catalog = new RegressionTestExtensionCatalog();
-        using var registration = catalog.RunControls.Open(
-            new ChatRuntime(chat),
-            "sunder.package.agent",
-            out var invocationId);
-        await using var scope = await catalog.RpcForCaller("sunder.package.agent").CreateCallScopeAsync();
-        var provider = Assert.Single((await scope.DiscoverAsync(AgentRpcContractIds.RunControl)).Providers);
+        var chat = new SequenceChatClient([Update(new TextContent("first")), Update(new TextContent("second"))],
+            disposeException: new InvalidOperationException("cleanup must not replace cancellation"));
+        await using var catalog = new RegressionTestExtensionCatalog();
+        using var grant = OpenRunControl(catalog, chat, out var invocationId);
+        var control = Assert.Single((await catalog.RunControls.ListAsync()).Providers).Service;
+        var enumerator = control.StreamChatAsync(invocationId, ChatRequest(), null, cancellation.Token).GetAsyncEnumerator(cancellation.Token);
+        try
         {
-            var enumerator = scope.SubscribeAsync(
-                    provider.Endpoint, "run-control", "stream-chat",
-                    Request(invocationId),
-                    cancellationToken: cancellation.Token)
-                .GetAsyncEnumerator(cancellation.Token);
-            try
-            {
-                Assert.True(await enumerator.MoveNextAsync());
-                cancellation.Cancel();
-                await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
-                    _ = await enumerator.MoveNextAsync());
-            }
-            finally
-            {
-                await enumerator.DisposeAsync();
-            }
+            Assert.True(await enumerator.MoveNextAsync());
+            await cancellation.CancelAsync();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => _ = await enumerator.MoveNextAsync());
         }
+        finally { await enumerator.DisposeAsync(); }
 
         Assert.True(chat.EnumerationDisposed);
         Assert.True(chat.IsDisposed);
@@ -336,142 +232,80 @@ public sealed class AgentRpcStreamingBridgeTests
     public async Task RunControlStream_CancellationWinsOverConcurrentProviderFailure()
     {
         using var cancellation = new CancellationTokenSource();
-        var chat = new SequenceChatClient(
-            [Update(new TextContent("first"))],
+        var chat = new SequenceChatClient([Update(new TextContent("first"))],
             new AgentChatProviderException("provider failed", "safe failure", "provider-error"));
-        using var catalog = new RegressionTestExtensionCatalog();
-        using var registration = catalog.RunControls.Open(
-            new ChatRuntime(chat),
-            "sunder.package.agent",
-            out var invocationId);
-        await using var scope = await catalog.RpcForCaller("sunder.package.agent").CreateCallScopeAsync();
-        var provider = Assert.Single((await scope.DiscoverAsync(AgentRpcContractIds.RunControl)).Providers);
+        await using var catalog = new RegressionTestExtensionCatalog();
+        using var grant = OpenRunControl(catalog, chat, out var invocationId);
+        var control = Assert.Single((await catalog.RunControls.ListAsync()).Providers).Service;
+        var enumerator = control.StreamChatAsync(invocationId, ChatRequest(), null, cancellation.Token).GetAsyncEnumerator(cancellation.Token);
+        try
         {
-            var enumerator = scope.SubscribeAsync(
-                    provider.Endpoint, "run-control", "stream-chat",
-                    Request(invocationId),
-                    cancellationToken: cancellation.Token)
-                .GetAsyncEnumerator(cancellation.Token);
-            try
-            {
-                Assert.True(await enumerator.MoveNextAsync());
-                cancellation.Cancel();
-                await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
-                    _ = await enumerator.MoveNextAsync());
-            }
-            finally
-            {
-                await enumerator.DisposeAsync();
-            }
+            Assert.True(await enumerator.MoveNextAsync());
+            await cancellation.CancelAsync();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => _ = await enumerator.MoveNextAsync());
         }
+        finally { await enumerator.DisposeAsync(); }
 
         Assert.True(chat.EnumerationDisposed);
         Assert.True(chat.IsDisposed);
     }
 
+    private static IDisposable OpenRunControl(RegressionTestExtensionCatalog catalog, IChatClient chat, out Guid invocationId)
+        => new AgentRoleRunControls(typeof(AgentActiveRunRegistry).Assembly, catalog.ActiveRuns)
+            .Open(new ChatRuntime(chat), "sunder.package.agent", out invocationId);
+
     private static ChatResponseUpdate Update(AIContent content, string responseId = "response")
         => new(ChatRole.Assistant, [content]) { ResponseId = responseId };
 
-    private static async Task<IReadOnlyList<JsonElement>> ReadProviderEventsAsync(IChatClient chatClient)
+    // Coalescing is the current provider-owned algorithm. Its generated natural
+    // event values are asserted directly; run-control scenarios above cross RPC.
+    private static IAsyncEnumerable<ProviderModels.AgentChatStreamEvent> ProviderEvents(IChatClient chat)
+        => ProviderStream.ReadAsync((_, token) =>
+        {
+            token.ThrowIfCancellationRequested();
+            return (ValueTask<IChatClient>)AgentRoleExceptionBoundary.Return(ValueTask.FromResult(chat),
+                typeof(ValueTask<IChatClient>), typeof(ProviderStream).Assembly)!;
+        }, new ProviderModels.AgentChatStreamRequest
+        {
+            ProviderId = "provider", ModelId = "model", Messages = [],
+            Options = new()
+            {
+                Instructions = null, ConversationId = null, ModelId = null, Temperature = null,
+                MaxOutputTokens = null, TopP = null, TopK = null, FrequencyPenalty = null,
+                PresencePenalty = null, Seed = null, AllowMultipleToolCalls = null, ReasoningEffort = null,
+                Tools = [], AdditionalProperties = null, ContinuationHandle = null,
+            },
+        }, CancellationToken.None);
+
+    private static async Task<IReadOnlyList<ProviderModels.AgentChatStreamEvent>> ReadProviderEventsAsync(IChatClient chat)
     {
-        using var requestDocument = JsonDocument.Parse(RegressionTestRpcValues.Serialize(new
-        {
-            providerId = "provider", modelId = "model", messages = Array.Empty<object>(), options = EmptyOptions(),
-        }));
-        var request = requestDocument.RootElement.Clone();
-        var events = new List<JsonElement>();
-        using var catalog = new RegressionTestExtensionCatalog();
-        var provider = catalog.AddProvider(AgentRpcContractIds.ChatProvider, new ChatProvider(chatClient), "test.chat");
-        await using var scope = await catalog.RpcForCaller("sunder.package.agent").CreateCallScopeAsync();
-        await foreach (var item in scope.SubscribeAsync(
-                               provider.Endpoint,
-                               "chat-provider",
-                               "stream-chat",
-                               request))
-        {
-            events.Add(item.Clone());
-        }
+        var events = new List<ProviderModels.AgentChatStreamEvent>();
+        await foreach (var item in ProviderEvents(chat)) events.Add(item);
         return events;
     }
 
-    private static JsonElement Request(Guid invocationId)
+    private static AgentChatStreamRequest ChatRequest()
+        => new("provider", "model", [], new(null, null, null, null, null, null, null, null, null, null, null, null, [], null, null));
+
+    private sealed class SequenceChatClient(IReadOnlyList<ChatResponseUpdate> updates,
+        Exception? terminalException = null, Exception? disposeException = null) : IChatClient
     {
-        using var document = JsonDocument.Parse(RegressionTestRpcValues.Serialize(new
-        {
-            invocation = new { invocationId }, context = new { providerId = "provider", modelId = "model" },
-            messages = Array.Empty<object>(), options = EmptyOptions(),
-        }));
-        return document.RootElement.Clone();
-    }
-
-    private static AgentChatOptions EmptyOptions()
-        => new(
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            [],
-            null,
-            null);
-
-    private sealed class ChatProvider(IChatClient client) : IAgentChatProvider
-    {
-        public AgentProviderDescriptor Descriptor { get; } = new(
-            "provider",
-            "Provider",
-            [],
-            SupportsStreaming: true,
-            SupportsInterruptibleRuns: true);
-
-        public ValueTask<IReadOnlyList<AgentModelDescriptor>> GetAvailableModelsAsync(
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromResult<IReadOnlyList<AgentModelDescriptor>>([]);
-
-        public ValueTask<AgentProviderReadiness> GetReadinessAsync(
-            CancellationToken cancellationToken = default)
-            => throw new NotSupportedException();
-
-        public ValueTask<AgentProviderRunCapabilities> GetRunCapabilitiesAsync(
-            string? modelId,
-            CancellationToken cancellationToken = default)
-            => throw new NotSupportedException();
-
-        public ValueTask<IChatClient> CreateChatClientAsync(
-            AgentChatClientContext context,
-            CancellationToken cancellationToken = default)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            return ValueTask.FromResult(client);
-        }
-    }
-
-    private sealed class SequenceChatClient(
-        IReadOnlyList<ChatResponseUpdate> updates,
-        Exception? terminalException = null,
-        Exception? disposeException = null) : IChatClient
-    {
-        public int ProducedCount { get; private set; }
-        public bool EnumerationDisposed { get; private set; }
+        private int _producedCount;
+        private bool _enumerationDisposed;
+        public int ProducedCount => Volatile.Read(ref _producedCount);
+        public bool EnumerationDisposed => Volatile.Read(ref _enumerationDisposed);
         public bool IsDisposed { get; private set; }
+        public async Task WaitForProducedAsync(int count, bool requireCompletion)
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            while (ProducedCount < count || requireCompletion && !EnumerationDisposed)
+                await Task.Delay(1, timeout.Token);
+        }
+        public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
-        public Task<ChatResponse> GetResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            CancellationToken cancellationToken = default)
-            => throw new NotSupportedException();
-
-        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             await Task.CompletedTask;
             try
@@ -479,30 +313,19 @@ public sealed class AgentRpcStreamingBridgeTests
                 foreach (var update in updates)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    ProducedCount++;
+                    Interlocked.Increment(ref _producedCount);
                     yield return update;
                 }
-
-                if (terminalException is not null)
-                {
-                    throw terminalException;
-                }
+                if (terminalException is not null) throw terminalException;
             }
-            finally
-            {
-                EnumerationDisposed = true;
-            }
+            finally { Volatile.Write(ref _enumerationDisposed, true); }
         }
 
         public object? GetService(Type serviceType, object? serviceKey = null) => null;
-
         public void Dispose()
         {
             IsDisposed = true;
-            if (disposeException is not null)
-            {
-                throw disposeException;
-            }
+            if (disposeException is not null) throw disposeException;
         }
     }
 
@@ -513,15 +336,11 @@ public sealed class AgentRpcStreamingBridgeTests
         public IReadOnlyList<AgentTurnRecord> ListRecentTurns(int limit) => [];
         public ValueTask<AgentBehaviorInstructionContext> BuildInstructionContextAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public ValueTask<IReadOnlyList<AgentRuntimeTool>> ListReadyToolsAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
-
-        public ValueTask<IChatClient> CreateChatClientAsync(
-            AgentChatClientContext context,
-            CancellationToken cancellationToken = default)
+        public ValueTask<IChatClient> CreateChatClientAsync(AgentChatClientContext context, CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
             return ValueTask.FromResult(chatClient);
         }
-
         public AgentRunCheckpointRecord SaveCheckpoint(AgentRunStatus status, string? summary) => throw new NotSupportedException();
         public void LogEvent(PackageLogLevel level, string eventName, string message, long? elapsedMilliseconds = null, IReadOnlyDictionary<string, object?>? attributes = null, Exception? exception = null) { }
         public AgentTurnRecord UpsertAssistantTurn(AgentTurnRecord? assistantTurn, string content) => throw new NotSupportedException();

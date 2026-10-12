@@ -25,5 +25,6 @@ public sealed record AgentFileWriteRequest(
     /// fails without writing if the current regular file does not match. The execution target defines
     /// whether its content representation is decoded text or raw bytes.
     /// </remarks>
+    [Sunder.Sdk.Services.SunderValueConstraints(MinLength = 64, MaxLength = 64)]
     public string? ExpectedContentHash { get; init; }
 }

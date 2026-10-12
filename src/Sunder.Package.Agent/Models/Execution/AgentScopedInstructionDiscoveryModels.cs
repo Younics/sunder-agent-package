@@ -25,13 +25,14 @@ public sealed record AgentScopedInstructionProbe(
 /// <param name="Scopes">Canonical in-scope probe results. Out-of-scope probes are omitted.</param>
 /// <param name="WasTruncated">Whether any requested probe, ancestor, document, or result was omitted by a bound.</param>
 public sealed record AgentScopedInstructionDiscoveryResult(
-    string TargetFingerprint,
-    string ScopeFingerprint,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(MinLength = 64, MaxLength = 64)] string TargetFingerprint,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(MinLength = 64, MaxLength = 64)] string ScopeFingerprint,
     IReadOnlyList<AgentScopedInstructionScope> Scopes,
     bool WasTruncated = false)
 {
     /// <summary>Gets the number of requested probes the target conclusively processed, including out-of-scope probes.</summary>
     /// <remarks>Callers fail closed unless this exactly matches the request count.</remarks>
+    [Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")]
     public int ProcessedProbeCount { get; init; }
 }
 
@@ -48,7 +49,7 @@ public sealed record AgentScopedInstructionScope(
     string ScopeRoot,
     IReadOnlyList<AgentScopedInstructionDocument> Documents,
     bool WasTruncated = false,
-    int OmittedAncestorCount = 0);
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] int OmittedAncestorCount = 0);
 
 /// <summary>Contains one bounded exact <c>AGENTS.md</c> document in the target's path namespace.</summary>
 /// <param name="Path">The canonical target-visible document path.</param>
@@ -62,5 +63,5 @@ public sealed record AgentScopedInstructionDocument(
     string ScopeRoot,
     string AppliesToDirectory,
     string Content,
-    string ContentHash,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(MinLength = 64, MaxLength = 64)] string ContentHash,
     bool WasTruncated = false);

@@ -7,6 +7,7 @@ using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Runtime;
 using Sunder.Sdk.Abstractions;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.PackageViews;
 
@@ -39,11 +40,12 @@ public partial class AgentProfilesView : UserControl, IDisposable, IPackageViewW
     }
 
     public AgentProfilesView(
-        IAgentProfileGateway profileService,
+        AgentServices.IAgentProfileService profileService,
+        IAgentProfileGateway notifications,
         IPackageSettingsNavigationService? settingsNavigationService = null)
         : this()
     {
-        _viewModel = new AgentProfilesViewModel(profileService, settingsNavigationService);
+        _viewModel = new AgentProfilesViewModel(profileService, notifications, settingsNavigationService);
         DataContext = _viewModel;
     }
 

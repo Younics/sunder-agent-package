@@ -57,7 +57,7 @@ public partial class AgentWorkspacesView : UserControl, IDisposable, IPackageVie
     public AgentWorkspacesView(
         IAgentWorkspaceGateway workspaceService,
         IAgentExecutionGateway executionGateway,
-        AgentRpcCatalog rpcCatalog,
+        Sunder.Sdk.Services.IServiceProviders<Sunder.Generated.Packages.Sunder_Package_Agent_Services.IWorkspaceEditorService> editors,
         IPackageSettingsNavigationService? settingsNavigationService = null,
         AgentWorkspacesViewContext? context = null)
         : this(context ?? new AgentWorkspacesViewContext())
@@ -65,7 +65,7 @@ public partial class AgentWorkspacesView : UserControl, IDisposable, IPackageVie
         _viewModel = new AgentWorkspacesViewModel(
             workspaceService,
             executionGateway,
-            rpcCatalog,
+            editors,
             settingsNavigationService);
         DataContext = _viewModel;
     }

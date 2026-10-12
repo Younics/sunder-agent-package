@@ -1,4 +1,3 @@
-using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 
 namespace Sunder.Package.Agent.Tools.Files;
@@ -6,13 +5,11 @@ namespace Sunder.Package.Agent.Tools.Files;
 internal static class FileDeleteHandler
 {
     public static ValueTask<AgentFileMutationResult> DeleteAsync(
-        IAgentExecutionTarget target,
+        FileExecutionTarget target,
         AgentExecutionTargetContext context,
         string path,
         CancellationToken cancellationToken,
         string? expectedContentHash = null)
-        => target.DeleteFileAsync(
-            context,
-            new AgentFileDeleteRequest(path) { ExpectedContentHash = expectedContentHash },
-            cancellationToken);
+        => target.Service.DeleteFileAsync(new()
+        { Context = context, Request = new() { Path = path, Recursive = false, ExpectedContentHash = expectedContentHash } }, cancellationToken);
 }

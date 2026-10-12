@@ -386,15 +386,15 @@ internal sealed partial class TranscriptTimelineState<TRow>
             : null;
 
     private static bool IsBefore(TranscriptPageCursor candidate, TranscriptPageCursor boundary)
-        => candidate.CreatedAtUtc < boundary.CreatedAtUtc
-           || candidate.CreatedAtUtc == boundary.CreatedAtUtc
+        => AgentTranscriptTime.Read(candidate.CreatedAtUtc) < AgentTranscriptTime.Read(boundary.CreatedAtUtc)
+           || AgentTranscriptTime.Read(candidate.CreatedAtUtc) == AgentTranscriptTime.Read(boundary.CreatedAtUtc)
            && string.CompareOrdinal(
                candidate.TurnId.ToString("D"),
                boundary.TurnId.ToString("D")) < 0;
 
     private static bool IsAfter(TranscriptPageCursor candidate, TranscriptPageCursor boundary)
-        => candidate.CreatedAtUtc > boundary.CreatedAtUtc
-           || candidate.CreatedAtUtc == boundary.CreatedAtUtc
+        => AgentTranscriptTime.Read(candidate.CreatedAtUtc) > AgentTranscriptTime.Read(boundary.CreatedAtUtc)
+           || AgentTranscriptTime.Read(candidate.CreatedAtUtc) == AgentTranscriptTime.Read(boundary.CreatedAtUtc)
            && string.CompareOrdinal(
                candidate.TurnId.ToString("D"),
                boundary.TurnId.ToString("D")) > 0;

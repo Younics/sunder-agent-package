@@ -29,6 +29,7 @@ public sealed class WebArtifactBackend : IAsyncDisposable
             services.AddSingleton(provider => new WebFetchService(provider.GetRequiredService<WebUrlNetworkPolicy>(), new FetchFactory(this)));
             services.AddSingleton(_ => new HttpClient(new SearchHandler(this)) { Timeout = Timeout.InfiniteTimeSpan });
             services.AddSingleton(provider => new ExaWebSearchBackend(provider.GetRequiredService<WebToolsSettingsService>(), provider.GetRequiredService<HttpClient>(), SearchTimeout));
+            services.AddSingleton(provider => new ParallelWebSearchBackend(provider.GetRequiredService<WebToolsSettingsService>(), provider.GetRequiredService<HttpClient>()));
         };
         try { return _options = Sunder.Tests.Generated.Package.WorkerEntryPoint.Create(context, rpc); }
         finally { Sunder.Tests.Generated.Package.WorkerEntryPoint.Configure = null; }

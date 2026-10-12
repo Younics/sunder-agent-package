@@ -88,7 +88,7 @@ public sealed class AgentTranscriptTurnWindow(int turnLimit)
     /// <returns>A caller-owned array ordered by creation time and then turn identifier.</returns>
     public AgentTurnRecord[] OrderedTurns()
         => _turnsById.Values
-            .OrderBy(turn => turn.CreatedAtUtc)
+            .OrderBy(turn => AgentTranscriptTime.Read(turn.CreatedAtUtc))
             .ThenBy(turn => turn.TurnId)
             .ToArray();
 
@@ -105,11 +105,11 @@ public sealed class AgentTranscriptTurnWindow(int turnLimit)
         }
 
         var oldestTurn = orderedTurns[0];
-        OldestCreatedAtUtc = oldestTurn.CreatedAtUtc;
+        OldestCreatedAtUtc = AgentTranscriptTime.Read(oldestTurn.CreatedAtUtc);
         OldestTurnId = oldestTurn.TurnId;
 
         var newestTurn = orderedTurns[^1];
-        NewestCreatedAtUtc = newestTurn.CreatedAtUtc;
+        NewestCreatedAtUtc = AgentTranscriptTime.Read(newestTurn.CreatedAtUtc);
         NewestTurnId = newestTurn.TurnId;
     }
 }
@@ -135,4 +135,17 @@ public enum AgentTranscriptTrimDirection
 
     /// <summary>Removes the latest turns and retains the earliest head.</summary>
     Newest,
+}
+
+// Transcript navigation needs exact .NET instants for both authored and imported
+// snapshots. Reject extra precision rather than silently moving a paging boundary.
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
+internal static class AgentTranscriptTime
+{
+    internal static DateTimeOffset Read(DateTimeOffset value) => value;
+    internal static DateTimeOffset Read(Sunder.Sdk.Rpc.SunderRpcOffsetDateTime value)
+        => value.TryGetDateTimeOffset(out var timestamp) ? timestamp
+            : throw new InvalidDataException("The transcript timestamp is not exactly representable.");
+    internal static Sunder.Sdk.Rpc.SunderRpcOffsetDateTime Write(DateTimeOffset value)
+        => new(value.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss.FFFFFFF'Z'", System.Globalization.CultureInfo.InvariantCulture));
 }

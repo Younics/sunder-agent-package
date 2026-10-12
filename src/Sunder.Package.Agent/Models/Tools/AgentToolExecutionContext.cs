@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
-using Sunder.Package.Agent.Contracts.Contracts;
-using Sunder.Package.Agent.Protocol;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Contracts.Models;
 
@@ -29,11 +29,12 @@ public sealed record AgentToolExecutionContext(
     AgentWorkspaceBindingRecord? ExecutionBinding = null,
     bool AllowOutsideConfiguredScope = false,
     Guid? RunId = null,
-    long? RunRevision = null,
+    [property: SunderValueConstraints(Minimum = "0")] long? RunRevision = null,
     Guid? UserTurnId = null,
     string? ToolCallId = null)
 {
     /// <summary>Gets the current durable transcript epoch for session-owned tool context.</summary>
+    [SunderValueConstraints(Minimum = "0")]
     public long TranscriptEpoch { get; init; }
 
     /// <summary>Gets opaque canonical resource references approved for this exact invocation.</summary>
@@ -44,19 +45,24 @@ public sealed record AgentToolExecutionContext(
 
     /// <summary>Gets transient process-local capabilities for this exact invocation.</summary>
     [JsonIgnore]
+    [SunderServiceMember]
     public IReadOnlyList<string> ApprovedResourceCapabilities { get; init; } = [];
 
     /// <summary>Gets the transient invocation binding used to issue or redeem resource authority.</summary>
     [JsonIgnore]
+    [SunderServiceMember]
     public AgentResourceOperationContext? ResourceOperation { get; init; }
 
     /// <summary>Gets an opaque reference to the exact execution-target activation selected when this tool was advertised.</summary>
     [JsonIgnore]
-    public AgentRpcReference<IAgentExecutionTarget>? ExecutionTargetReference { get; init; }
+    [SunderServiceMember]
+    [SunderOptionalServiceReference]
+    public ServiceReference<IExecutionTargetService>? ExecutionTarget { get; init; }
 
     /// <summary>Gets the target-owned configuration generation captured for permission planning and execution.</summary>
     /// <remarks>Target-backed tools must propagate this value to <see cref="AgentExecutionTargetContext.ExpectedConfigurationGeneration"/>.</remarks>
     [JsonIgnore]
+    [SunderServiceMember]
     public string? ExecutionTargetConfigurationGeneration { get; init; }
 
     [JsonIgnore]

@@ -7,11 +7,27 @@ using Xunit;
 namespace Sunder.Package.Agent.Tests;
 
 extern alias MemoryWorker;
-using MemoryWorker::Sunder.Package.Agent.Contracts;
-using MemoryWorker::Sunder.Package.Agent.Contracts.Contracts;
-using MemoryWorker::Sunder.Package.Agent.Contracts.Models;
 using MemoryWorker::Sunder.Package.Agent.Memory.Semantic;
 using MemoryWorker::Sunder.Package.Agent.Memory.Semantic.Services;
+using MemoryWorker::Sunder.Package.Agent.Contracts.Models;
+using AgentDurableLifecycleIntegrityException = MemoryWorker::Sunder.Package.Agent.Contracts.Contracts.AgentDurableLifecycleIntegrityException;
+using AgentDurableLifecycleEventEnvelope = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentDurableLifecycleEventEnvelope;
+using AgentDurableLifecycleEventPayload = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentDurableLifecycleEventPayload;
+using AgentLifecycleEventKind = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentLifecycleEventKind;
+using AgentMemoryConsistencyBarrier = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentMemoryConsistencyBarrier;
+using AgentMessageRole = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentMessageRole;
+using AgentPromptContextPlan = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentPromptContextPlan;
+using AgentPromptContextRequest = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentPromptContextRequest;
+using AgentRunContextRecord = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentRunContextRecord;
+using AgentRunStatus = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentRunStatus;
+using AgentSessionContextRecord = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionContextRecord;
+using AgentSessionState = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionState;
+using AgentTurnContextRecord = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnContextRecord;
+using AgentTurnItemKind = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnItemKind;
+using AgentTurnItemRecord = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnItemRecord;
+using AgentTurnKind = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnKind;
+using AgentTurnRecord = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnRecord;
+using MemoryServices = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 public sealed class SemanticMemoryDurableLifecycleTests
 {
@@ -37,8 +53,9 @@ public sealed class SemanticMemoryDurableLifecycleTests
         {
             EventId = lifecycleEvent.EventId,
         };
-        Assert.Throws<AgentDurableLifecycleIntegrityException>(() =>
+        var integrity = Assert.Throws<AgentDurableLifecycleIntegrityException>(() =>
             store.ProcessDurableLifecycleEvent(mismatched, [Candidate(turnId, "project-fact", "The project uses amber.")]));
+        Assert.Contains(lifecycleEvent.EventId, integrity.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -59,7 +76,7 @@ public sealed class SemanticMemoryDurableLifecycleTests
         var erased = Envelope(
             original.EventId,
             original.Kind,
-            new AgentDurableLifecycleEventPayload { ContentErased = true }) with
+            Payload() with { ContentErased = true }) with
         {
             SourceKey = original.SourceKey,
             Sequence = original.Sequence,
@@ -432,49 +449,59 @@ public sealed class SemanticMemoryDurableLifecycleTests
             AgentMemoryProvenance.User));
         var settings = new MemorySemanticSettingsService(scope.Context);
         using var catalog = new RegressionTestExtensionCatalog();
-        using var resolver = new SemanticModelRuntimeResolver(catalog.Memory(), settings);
+        using var resolver = new SemanticModelRuntimeResolver(
+            catalog.Memory().Providers<MemoryServices.IRuntimeCatalogService>(),
+            catalog.Memory().Providers<MemoryServices.IEmbeddingProviderService>(),
+            settings);
         var backend = new SemanticMemoryRetrievalBackend(store, resolver, settings);
         var recall = new SemanticMemoryRecallService(store, backend, new SemanticMemoryMetricsService());
         var barrierEvent = RollbackEvent("recall-barrier", sessionId, []);
         var request = RecallRequest(sessionId) with
         {
-            MemoryConsistencyBarrier = new AgentMemoryConsistencyBarrier(
-                barrierEvent.EventId,
-                barrierEvent.PayloadHash),
+            MemoryConsistencyBarrier = new AgentMemoryConsistencyBarrier
+            {
+                EventId = barrierEvent.EventId,
+                PayloadHash = barrierEvent.PayloadHash,
+            },
         };
 
-        var beforeReceipt = await recall.RecallAsync(request);
+        var beforeReceipt = await recall.RecallAsync(request, RecallPlan());
         store.ProcessDurableLifecycleEvent(barrierEvent, []);
-        var afterReceipt = await recall.RecallAsync(request);
+        var afterReceipt = await recall.RecallAsync(request, RecallPlan());
 
         Assert.Null(beforeReceipt);
         Assert.NotNull(afterReceipt);
         Assert.NotEmpty(afterReceipt.Entries);
     }
 
-    private static AgentMemoryRecallRequest RecallRequest(Guid sessionId)
+    private static AgentPromptContextRequest RecallRequest(Guid sessionId)
     {
-        var session = new AgentSessionContextRecord(
-            sessionId,
-            "profile.semantic",
-            "Semantic profile",
-            "Semantic session",
-            AgentSessionState.Active,
-            WorkingSummary: null);
-        var run = new AgentRunContextRecord(Guid.NewGuid(), 1, AgentRunStatus.Running, false, DateTimeOffset.UtcNow);
-        var turn = new AgentTurnContextRecord(session, run, "What release checklist should I use?", WorkingSummary: null);
-        return new AgentMemoryRecallRequest(
-            session,
-            run,
-            turn,
-            [],
-            [],
-            new AgentMemoryRecallPlan(
-                AgentMemoryRecallIntent.StandingInstruction,
-                "cobalt release checklist",
-                PreferredCategories: ["standing-instruction"],
-                MaxEntryCount: 4,
-                MaxChars: 1200));
+        var session = SessionContext(sessionId);
+        var run = RunContext();
+        var turn = new AgentTurnContextRecord
+        {
+            Session = session,
+            Run = run,
+            UserMessage = "What release checklist should I use?",
+        };
+        return new AgentPromptContextRequest
+        {
+            AvailableTools = [],
+            ContextPlan = new AgentPromptContextPlan
+            {
+                Intent = "standing-instruction",
+                MaxChars = 1200,
+                MaxEntryCount = 4,
+                PreferredCategories = ["standing-instruction"],
+                QueryText = "cobalt release checklist",
+            },
+            RecentLiveBufferTurns = [],
+            Run = run,
+            Session = session,
+            TranscriptEpoch = 1,
+            Turn = turn,
+            Turns = [],
+        };
     }
 
     private static AgentDurableLifecycleEventEnvelope UserEvent(
@@ -486,19 +513,13 @@ public sealed class SemanticMemoryDurableLifecycleTests
         string workspaceId = "workspace.semantic",
         string? workspaceIncarnationId = null)
     {
-        var session = new AgentSessionContextRecord(
-            sessionId,
-            profileId,
-            "Semantic profile",
-            "Semantic session",
-            AgentSessionState.Active,
-            WorkingSummary: null);
-        var run = new AgentRunContextRecord(Guid.NewGuid(), 1, AgentRunStatus.Running, false, DateTimeOffset.UtcNow);
+        var session = SessionContext(sessionId, profileId);
+        var run = RunContext();
         var turn = TextTurn(sessionId, turnId, text);
         return Envelope(
             id,
             AgentLifecycleEventKind.UserTurnAdded,
-            new AgentDurableLifecycleEventPayload
+            Payload() with
             {
                 Session = session,
                 Run = run,
@@ -520,11 +541,12 @@ public sealed class SemanticMemoryDurableLifecycleTests
         => Envelope(
             id,
             AgentLifecycleEventKind.TranscriptRolledBack,
-            new AgentDurableLifecycleEventPayload
+            Payload() with
             {
                 SessionId = sessionId,
                 RootSessionId = sessionId,
                 WorkspaceId = "workspace.semantic",
+                DeletedTurnCount = deletedTurnIds.Count,
                 DeletedTurnIds = deletedTurnIds,
             });
 
@@ -532,11 +554,12 @@ public sealed class SemanticMemoryDurableLifecycleTests
         => Envelope(
             id,
             AgentLifecycleEventKind.SessionDeleted,
-            new AgentDurableLifecycleEventPayload
+            Payload() with
             {
                 SessionId = sessionId,
                 RootSessionId = sessionId,
                 WorkspaceId = "workspace.semantic",
+                DeletedSessionCount = 1,
                 DeletedSessionIds = [sessionId],
             });
 
@@ -548,10 +571,11 @@ public sealed class SemanticMemoryDurableLifecycleTests
         => Envelope(
             id,
             AgentLifecycleEventKind.WorkspaceDeleted,
-            new AgentDurableLifecycleEventPayload
+            Payload() with
             {
                 WorkspaceId = workspaceId,
                 WorkspaceIncarnationId = workspaceIncarnationId,
+                DeletedSessionCount = sessionIds.Count,
                 DeletedSessionIds = sessionIds,
             });
 
@@ -571,7 +595,7 @@ public sealed class SemanticMemoryDurableLifecycleTests
             OrderingKey = "workspace:workspace.semantic:root",
             PayloadHash = hash,
             PayloadJson = payloadJson,
-            OccurredAtUtc = DateTimeOffset.UtcNow,
+            OccurredAtUtc = RpcTimestamp(DateTimeOffset.UtcNow),
             Payload = payload,
         };
     }
@@ -582,7 +606,7 @@ public sealed class SemanticMemoryDurableLifecycleTests
         var erased = Envelope(
             original.EventId,
             original.Kind,
-            new AgentDurableLifecycleEventPayload { ContentErased = true });
+            Payload() with { ContentErased = true });
         return erased with
         {
             SourceKey = original.SourceKey,
@@ -614,32 +638,76 @@ public sealed class SemanticMemoryDurableLifecycleTests
     private static AgentTurnRecord TextTurn(Guid sessionId, Guid turnId, string text)
     {
         var now = DateTimeOffset.UtcNow;
-        return new AgentTurnRecord(
-            turnId,
-            sessionId,
-            AgentMessageRole.User,
-            AgentTurnKind.Message,
-            [
-                new AgentTurnItemRecord(
-                    Guid.NewGuid(),
-                    turnId,
-                    0,
-                    AgentTurnItemKind.Text,
-                    text,
-                    null,
-                    null,
-                    null,
-                    null,
-                    null,
-                    null,
-                    false,
-                    false,
-                    null,
-                    null),
-            ],
-            now,
-            now);
+        return new AgentTurnRecord
+        {
+            ContentRevision = 1,
+            CreatedAtUtc = RpcTimestamp(now),
+            IsStreaming = false,
+            Items = [new AgentTurnItemRecord
+            {
+                IsError = false,
+                IsToolHeaderProjection = false,
+                ItemId = Guid.NewGuid(),
+                Kind = AgentTurnItemKind.Text,
+                SequenceNumber = 0,
+                ToolDetailRevision = 0,
+                TurnId = turnId,
+                WasTruncated = false,
+                TextContent = text,
+            }],
+            Kind = AgentTurnKind.Message,
+            Role = AgentMessageRole.User,
+            SessionId = sessionId,
+            TurnId = turnId,
+            UpdatedAtUtc = RpcTimestamp(now),
+        };
     }
+
+    private static AgentSessionContextRecord SessionContext(Guid sessionId, string profileId = "profile.semantic")
+        => new()
+        {
+            SessionId = sessionId,
+            ProfileId = profileId,
+            ProfileDisplayName = "Semantic profile",
+            SessionTitle = "Semantic session",
+            SessionState = AgentSessionState.Active,
+        };
+
+    private static AgentRunContextRecord RunContext()
+        => new()
+        {
+            RunId = Guid.NewGuid(),
+            Revision = 1,
+            Status = AgentRunStatus.Running,
+            IsInterrupted = false,
+            StartedAtUtc = RpcTimestamp(DateTimeOffset.UtcNow),
+        };
+
+    private static AgentDurableLifecycleEventPayload Payload()
+        => new()
+        {
+            ContentErased = false,
+            DeletedChildSessionCount = 0,
+            DeletedChildSessionIds = [],
+            DeletedSessionCount = 0,
+            DeletedSessionIds = [],
+            DeletedTurnCount = 0,
+            DeletedTurnIds = [],
+            DeletionChunkReceipts = [],
+            RecentLiveBufferTurns = [],
+            Turns = [],
+        };
+
+    private static AgentMemoryRecallPlan RecallPlan()
+        => new(
+            AgentMemoryRecallIntent.StandingInstruction,
+            "cobalt release checklist",
+            PreferredCategories: ["standing-instruction"],
+            MaxEntryCount: 4,
+            MaxChars: 1200);
+
+    private static Sunder.Sdk.Rpc.SunderRpcOffsetDateTime RpcTimestamp(DateTimeOffset value)
+        => new(value.ToString("O", System.Globalization.CultureInfo.InvariantCulture));
 
     private static MemoryCandidate Candidate(Guid turnId, string category, string content)
         => new(category, content, content, turnId, false, 0.85f, 0.9f);

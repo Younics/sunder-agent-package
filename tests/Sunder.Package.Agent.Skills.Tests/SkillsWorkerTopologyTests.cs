@@ -6,15 +6,13 @@ using Sunder.Package.Agent.Skills.Runtime;
 using Sunder.Package.Agent.Skills.Services;
 using Sunder.Package.Agent.Tests;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Skills.Tests;
 
 using SkillAppRuntimeGateway = SkillsApp::Sunder.Package.Agent.Skills.Runtime.SkillAppRuntimeGateway;
-using ISkillOwnerClient = SkillsApp::Sunder.Package.Agent.Skills.Runtime.ISkillOwnerClient;
-using SkillProjection = SkillsApp::Sunder.Package.Agent.Skills.Runtime.SkillProjection;
-using SkillCommand = SkillsApp::Sunder.Package.Agent.Skills.Runtime.SkillCommand;
-using SkillChanged = SkillsApp::Sunder.Package.Agent.Skills.Runtime.SkillChanged;
+using ISkillsManagementService = SkillsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Skills_Services.ISkillsManagementService;
 
 public sealed class SkillsWorkerTopologyTests
 {
@@ -94,16 +92,18 @@ public sealed class SkillsWorkerTopologyTests
         var root = CreateTemporaryRoot();
         try
         {
-            var store = new SkillStore(
-                new SkillRuntimeTransferTests.TestContext(root, NullFileStore.Instance));
-            var stream = new SkillRuntimeChangeStream(store, store.NotifySkillsImported);
+            var context = new SkillRuntimeTransferTests.TestContext(root, NullFileStore.Instance);
+            var store = new SkillStore(context);
+            var handler = new SkillRuntimeHandler(
+                store,
+                new SkillImportService(store, new SkillRuntimeTransferTests.UnusedGitHubClient(), context),
+                context);
             using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-            await using var enumerator = stream.SubscribeAsync(
-                    new SkillChangeSubscription(),
-                    cancellation.Token)
+            await using var enumerator = handler.ChangesAsync(cancellation.Token)
                 .GetAsyncEnumerator(cancellation.Token);
 
             Assert.True(await enumerator.MoveNextAsync());
+            store.NotifySkillsImported();
             Assert.True(await enumerator.MoveNextAsync());
         }
         finally
@@ -184,17 +184,19 @@ public sealed class SkillsWorkerTopologyTests
         return root;
     }
 
-    private sealed class NullOwnerClient : ISkillOwnerClient
+    private sealed class NullOwnerClient : ISkillsManagementService
     {
-        public ValueTask<SkillProjection> QueryAsync(CancellationToken cancellationToken = default)
-            => ValueTask.FromException<SkillProjection>(new InvalidOperationException("Runtime is unavailable."));
-
-        public ValueTask<SkillProjection> CommandAsync(
-            SkillCommand command,
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromException<SkillProjection>(new InvalidOperationException("Runtime is unavailable."));
-
-        public async IAsyncEnumerable<SkillChanged> SubscribeChangesAsync(
+        public ValueTask<SunderContent> QueryAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromException<SunderContent>(new InvalidOperationException("Runtime is unavailable."));
+        public ValueTask<SunderContent> ImportGitHubAsync(string url, CancellationToken cancellationToken = default)
+            => ValueTask.FromException<SunderContent>(new InvalidOperationException("Runtime is unavailable."));
+        public ValueTask<SunderContent> ImportCommonAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromException<SunderContent>(new InvalidOperationException("Runtime is unavailable."));
+        public ValueTask<SunderContent> ImportTransferAsync(string transferId, CancellationToken cancellationToken = default)
+            => ValueTask.FromException<SunderContent>(new InvalidOperationException("Runtime is unavailable."));
+        public ValueTask DeleteAsync(string skillId, CancellationToken cancellationToken = default)
+            => ValueTask.FromException(new InvalidOperationException("Runtime is unavailable."));
+        public async IAsyncEnumerable<long> ChangesAsync(
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
@@ -202,7 +204,7 @@ public sealed class SkillsWorkerTopologyTests
         }
     }
 
-    private sealed class ReconnectingOwnerClient : ISkillOwnerClient
+    private sealed class ReconnectingOwnerClient : ISkillsManagementService
     {
         private int _subscriptionCount;
 
@@ -210,19 +212,21 @@ public sealed class SkillsWorkerTopologyTests
         internal TaskCompletionSource SecondSubscriptionStarted { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public ValueTask<SkillProjection> QueryAsync(CancellationToken cancellationToken = default)
-            => ValueTask.FromException<SkillProjection>(new NotSupportedException());
-
-        public ValueTask<SkillProjection> CommandAsync(
-            SkillCommand command,
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromException<SkillProjection>(new NotSupportedException());
-
-        public async IAsyncEnumerable<SkillChanged> SubscribeChangesAsync(
+        public ValueTask<SunderContent> QueryAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromException<SunderContent>(new NotSupportedException());
+        public ValueTask<SunderContent> ImportGitHubAsync(string url, CancellationToken cancellationToken = default)
+            => ValueTask.FromException<SunderContent>(new NotSupportedException());
+        public ValueTask<SunderContent> ImportCommonAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromException<SunderContent>(new NotSupportedException());
+        public ValueTask<SunderContent> ImportTransferAsync(string transferId, CancellationToken cancellationToken = default)
+            => ValueTask.FromException<SunderContent>(new NotSupportedException());
+        public ValueTask DeleteAsync(string skillId, CancellationToken cancellationToken = default)
+            => ValueTask.FromException(new NotSupportedException());
+        public async IAsyncEnumerable<long> ChangesAsync(
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             var subscription = Interlocked.Increment(ref _subscriptionCount);
-            yield return new SkillChanged();
+            yield return subscription;
             if (subscription == 1)
             {
                 throw new IOException("Injected owner retirement.");

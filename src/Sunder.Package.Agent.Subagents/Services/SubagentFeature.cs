@@ -1,90 +1,77 @@
-using Sunder.Package.Agent.Contracts.Contracts;
-using Sunder.Package.Agent.Contracts.Models;
+using System.Runtime.CompilerServices;
+using System.Threading.Channels;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 using Sunder.Package.Agent.Subagents.Models;
-using Sunder.Package.Agent.Subagents.Runtime;
+using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Subagents.Services;
 
-public sealed partial class SubagentFeature :
-    IAgentProfileSelectableCapabilityProvider,
-    IAgentProfileSelectableCapabilityChangeNotifier,
-    IAgentToolSource,
-    IAgentPromptContextContributor,
-    IAgentToolPresentationResolver
+[SunderServiceProvider(typeof(IToolSourceService), ProviderId = "subagents.tools")]
+[SunderServiceProvider(typeof(IPromptContextContributorService), ProviderId = "subagents.prompt.context")]
+[SunderServiceProvider(typeof(ISelectableCapabilityProviderService), ProviderId = "subagents.selectable.capabilities")]
+public sealed partial class SubagentFeature : IToolSourceService, IPromptContextContributorService, ISelectableCapabilityProviderService
 {
-    private readonly SubagentService _subagentService;
+    private readonly SubagentService _service;
     private readonly SubagentDescriptorSchema _descriptors;
-    private readonly SubagentRequestParser _requestParser;
     private readonly SubagentDelegationOrchestrator _orchestrator;
-    private readonly SubagentBatchResultRenderer _resultRenderer;
+    private readonly SubagentBatchResultRenderer _renderer;
 
-    public SubagentFeature(
-        SubagentService subagentService,
-        ISubagentRuntimeBindings runtimeBindings)
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
+    internal SubagentFeature(SubagentService service, SubagentDescriptorSchema descriptors,
+        SubagentDelegationOrchestrator orchestrator, SubagentBatchResultRenderer renderer)
+    { _service = service; _descriptors = descriptors; _orchestrator = orchestrator; _renderer = renderer; }
+
+    public ValueTask<AgentToolSourceDescriptor> DescribeAsync(CancellationToken token = default)
     {
-        _subagentService = subagentService;
-        var permissionStatusAdapter = new SubagentPermissionStatusAdapter(runtimeBindings);
-        _descriptors = new SubagentDescriptorSchema(subagentService, permissionStatusAdapter, runtimeBindings);
-        _requestParser = new SubagentRequestParser();
-        _resultRenderer = new SubagentBatchResultRenderer(subagentService, _requestParser, permissionStatusAdapter);
-        var childRunCoordinator = new SubagentChildRunCoordinator(
-            runtimeBindings,
-            _descriptors,
-            permissionStatusAdapter,
-            _resultRenderer);
-        _orchestrator = new SubagentDelegationOrchestrator(
-            _requestParser,
-            _descriptors,
-            childRunCoordinator,
-            permissionStatusAdapter,
-            _resultRenderer);
+        token.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(new AgentToolSourceDescriptor
+        { SourceId = SubagentConstants.PackageId, DisplayName = SubagentDescriptorSchema.SourceDisplayName, SourceKind = "subagent" });
+    }
+    ValueTask<AgentPromptContextContributorDescriptor> IPromptContextContributorService.DescribeAsync(CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(new AgentPromptContextContributorDescriptor
+        { ContributorId = SubagentConstants.PackageId, DisplayName = SubagentDescriptorSchema.SourceDisplayName, AcknowledgmentSinkId = null });
+    }
+    ValueTask<AgentServiceIdentity> ISelectableCapabilityProviderService.DescribeAsync(CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(new AgentServiceIdentity { Id = SubagentConstants.PackageId, DisplayName = SubagentDescriptorSchema.SourceDisplayName });
     }
 
-    public string ProviderId => SubagentConstants.PackageId;
+    public ValueTask<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>> ListAsync(AgentProfileRecord? profile, CancellationToken token = default)
+        => _descriptors.ListCapabilitiesAsync(profile, token);
+    public ValueTask<IReadOnlyList<AgentToolDescriptor>> ListToolsAsync(AgentToolSourceContext context, CancellationToken token = default)
+        => _descriptors.ListToolsAsync(context, token);
+    public ValueTask<AgentToolReadiness?> GetReadinessAsync(CSunder_Agent_Tool_Source_ToolSourceGetReadinessRequest request, CancellationToken token = default)
+        => _descriptors.GetReadinessAsync(request.ToolId, request.Context, token);
+    public ValueTask<AgentToolResult> ExecuteAsync(CSunder_Agent_Tool_Source_ToolSourceExecuteRequest request, CancellationToken token = default)
+        => _orchestrator.ExecuteAsync(request.Context, request.Request, token);
+    public ValueTask<AgentPromptContextContribution?> ContributeAsync(AgentPromptContextRequest request, CancellationToken token = default)
+        => _descriptors.ContributeContextAsync(request, token);
+    public ValueTask<AgentToolPresentation?> PresentationAsync(AgentToolPresentationRequest request, CancellationToken token = default)
+    { token.ThrowIfCancellationRequested(); return ValueTask.FromResult(_renderer.ResolveToolPresentation(request)); }
+    public ValueTask<AgentToolResult?> PreflightAsync(CSunder_Agent_Tool_Source_ToolSourcePreflightRequest request, CancellationToken token = default)
+    { token.ThrowIfCancellationRequested(); return ValueTask.FromResult<AgentToolResult?>(null); }
+    public ValueTask<AgentPermissionRequest?> PermissionAsync(CSunder_Agent_Tool_Source_ToolSourcePermissionRequest request, CancellationToken token = default)
+    { token.ThrowIfCancellationRequested(); return ValueTask.FromResult<AgentPermissionRequest?>(null); }
+    public ValueTask AcknowledgeAsync(AgentPromptContextReceipt request, CancellationToken token = default)
+    { token.ThrowIfCancellationRequested(); return ValueTask.CompletedTask; }
 
-    public string SourceId => SubagentConstants.PackageId;
-
-    public string SourceKind => "subagent";
-
-    public string DisplayName => SubagentDescriptorSchema.SourceDisplayName;
-
-    public string ContributorId => SubagentConstants.PackageId;
-
-    public event Action? SelectableCapabilitiesChanged
+    public async IAsyncEnumerable<AgentCapabilityCatalogChange> WatchAsync([EnumeratorCancellation] CancellationToken token = default)
     {
-        add => _subagentService.SubagentsChanged += value;
-        remove => _subagentService.SubagentsChanged -= value;
+        var channel = Channel.CreateBounded<AgentCapabilityCatalogChange>(new BoundedChannelOptions(1)
+        { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true, SingleWriter = false });
+        long revision = 0;
+        void Changed() => channel.Writer.TryWrite(new() { Revision = Interlocked.Increment(ref revision) });
+        _service.SubagentsChanged += Changed;
+        try
+        {
+            await foreach (var change in channel.Reader.ReadAllAsync(token).ConfigureAwait(false))
+            { token.ThrowIfCancellationRequested(); yield return change; }
+        }
+        finally { _service.SubagentsChanged -= Changed; channel.Writer.TryComplete(); }
     }
-
-    public ValueTask<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>> ListCapabilitiesAsync(
-        AgentProfileSelectableCapabilityRequest request,
-        CancellationToken cancellationToken = default)
-        => _descriptors.ListCapabilitiesAsync(request, cancellationToken);
-
-    public ValueTask<IReadOnlyList<AgentToolDescriptor>> ListToolsAsync(
-        AgentToolSourceContext context,
-        CancellationToken cancellationToken = default)
-        => _descriptors.ListToolsAsync(context, cancellationToken);
-
-    public ValueTask<AgentToolReadiness?> GetReadinessAsync(
-        string requestedToolId,
-        AgentToolSourceContext context,
-        CancellationToken cancellationToken = default)
-        => _descriptors.GetReadinessAsync(requestedToolId, context, cancellationToken);
-
-    public AgentToolPresentation? ResolveToolPresentation(AgentToolPresentationRequest request)
-        => _resultRenderer.ResolveToolPresentation(request);
-
-    public ValueTask<AgentToolResult> ExecuteAsync(
-        AgentToolExecutionContext context,
-        AgentToolRequest request,
-        CancellationToken cancellationToken = default)
-        => _orchestrator.ExecuteAsync(context, request, cancellationToken);
-
-    public ValueTask<AgentPromptContextContribution?> ContributeContextAsync(
-        AgentPromptContextRequest request,
-        CancellationToken cancellationToken = default)
-        => _descriptors.ContributeContextAsync(request, cancellationToken);
 
     internal static string BuildDelegateTasksResultContent(IReadOnlyList<SubagentTaskResult> results)
         => SubagentBatchResultRenderer.BuildDelegateTasksResultContent(results);

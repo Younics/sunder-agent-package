@@ -1,8 +1,12 @@
 extern alias LocalWorker;
 
-using LocalWorker::Sunder.Package.Agent.Contracts.Models;
 using LocalWorker::Sunder.Package.Agent.Execution.Local;
 using Xunit;
+using AgentFileReadRequest = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileReadRequest;
+using AgentFileSearchKind = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileSearchKind;
+using AgentFileSearchRequest = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileSearchRequest;
+using AgentFileWriteRequest = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileWriteRequest;
+using AgentFileReadErrorCodes = Sunder.Package.Agent.Contracts.Models.AgentFileReadErrorCodes;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
 
@@ -23,7 +27,7 @@ public sealed class LocalFileRangeReadTests : IDisposable
 
         var result = await LocalFileSystemExecutor.ReadFileAsync(
             config,
-            new AgentFileReadRequest("large.txt", Offset: 2500, Limit: 2),
+            new AgentFileReadRequest { Path = "large.txt", Offset = 2500, Limit = 2 },
             allowOutsideConfiguredScope: false,
             CancellationToken.None);
 
@@ -46,8 +50,8 @@ public sealed class LocalFileRangeReadTests : IDisposable
         }
 
         var config = new LocalExecutionRuntimeConfig([_root], _root);
-        var file = await LocalFileSystemExecutor.ReadFileAsync(config, new AgentFileReadRequest("oversized.txt"), false, CancellationToken.None);
-        var listing = await LocalFileSystemExecutor.ReadFileAsync(config, new AgentFileReadRequest("many"), false, CancellationToken.None);
+        var file = await LocalFileSystemExecutor.ReadFileAsync(config, new AgentFileReadRequest { Path = "oversized.txt" }, false, CancellationToken.None);
+        var listing = await LocalFileSystemExecutor.ReadFileAsync(config, new AgentFileReadRequest { Path = "many" }, false, CancellationToken.None);
 
         Assert.True(file.IsError);
         Assert.Equal(AgentFileReadErrorCodes.TooLarge, file.ErrorCode);
@@ -65,7 +69,7 @@ public sealed class LocalFileRangeReadTests : IDisposable
         {
             var result = await LocalFileSystemExecutor.WriteFileAsync(
                 config,
-                new AgentFileWriteRequest($"file-{index}.txt", "content"),
+                new AgentFileWriteRequest { Path = $"file-{index}.txt", Content = "content", Overwrite = false },
                 false,
                 CancellationToken.None);
             Assert.False(result.IsError, result.Summary);
@@ -93,17 +97,17 @@ public sealed class LocalFileRangeReadTests : IDisposable
 
         var longLine = await LocalFileSystemExecutor.ReadFileAsync(
             config,
-            new AgentFileReadRequest("long-line.txt", Offset: 1, Limit: 1),
+            new AgentFileReadRequest { Path = "long-line.txt", Offset = 1, Limit = 1 },
             false,
             CancellationToken.None);
         var oversizedRange = await LocalFileSystemExecutor.ReadFileAsync(
             config,
-            new AgentFileReadRequest("oversized-range.txt", Offset: 1, Limit: 1),
+            new AgentFileReadRequest { Path = "oversized-range.txt", Offset = 1, Limit = 1 },
             false,
             CancellationToken.None);
         var search = await LocalSecureFileSearch.ExecuteAsync(
             config,
-            new AgentFileSearchRequest("long-line.txt", AgentFileSearchKind.Grep, "needle"),
+            new AgentFileSearchRequest { Path = "long-line.txt", Kind = AgentFileSearchKind.Grep, Pattern = "needle" },
             false,
             approvedResourceReferences: null,
             CancellationToken.None);

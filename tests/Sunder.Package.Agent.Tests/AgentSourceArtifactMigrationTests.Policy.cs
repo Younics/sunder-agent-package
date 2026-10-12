@@ -20,6 +20,19 @@ public sealed partial class AgentSourceArtifactMigrationTests
             .Concat(baseline.GetProperty("externalContractProviders").EnumerateArray()).ToArray();
         var useDeclarations = descriptors.Values.SelectMany(value => value.GetProperty("uses").EnumerateArray())
             .Concat(baseline.GetProperty("externalContractUses").EnumerateArray()).ToArray();
+        foreach (var id in publicIds)
+            descriptors[id] = AgentSourceMigrationProjectChanges.CurrentDescriptorSnapshot(CurrentPublicRpcDescriptors.Get(id), "public");
+        using var successors = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(repository, "compatibility/agent-ordinary-private-successors.json")));
+        foreach (var successor in successors.RootElement.GetProperty("contracts").EnumerateArray())
+        {
+            var current = CurrentPrivateRpcDescriptors.Get(Text(successor, "contractId"));
+            descriptors[current.ContractId] = AgentSourceMigrationProjectChanges.CurrentDescriptorSnapshot(current, "package");
+        }
+        declarations = declarations.Append(JsonSerializer.SerializeToElement(new
+        {
+            ownerPackageId = "sunder.package.agent", include = "sunder.package.agent.agent.profile.provider",
+            metadata = new { ContractId = "sunder.package.agent.agent.profile", ContractVersion = "2.0.0", Role = "runtime", Audience = "owner" },
+        })).ToArray();
         descriptors.Add(Text(stack.RootElement, "contractId"), stack.RootElement);
         var expectedPackages = baseline.GetProperty("buildTopology").GetProperty("projects").EnumerateArray()
             .Where(project => Text(project, "role") == "worker").Select(project => Text(project, "packageId")).Order(StringComparer.Ordinal).ToArray();
@@ -37,7 +50,14 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.Equal(Text(inventory.RootElement, "releaseVersion"), Text(value, "version"));
             var providers = declarations.Where(item => Text(item, "ownerPackageId") == packageId).ToArray();
             var uses = useDeclarations.Where(item => Text(item, "ownerPackageId") == packageId).ToArray();
-            var packageApi = packageId != "sunder.package.agent" && uses.Any(item => Text(item.GetProperty("metadata"), "Role") == "runtime");
+            var packageApi = packageId is not ("sunder.package.agent" or "sunder.package.agent.tools.web")
+                && uses.Any(item => Text(item.GetProperty("metadata"), "Role") == "runtime");
+            if (packageId == "sunder.package.agent.tools.web")
+                uses = [JsonSerializer.SerializeToElement(new
+                {
+                    include = "sunder.agent.execution.target",
+                    metadata = new { Role = "runtime", Required = "false", Actions = "discover" },
+                })];
             VerifyArtifactUses(value, uses, descriptors, packageApi ? publicIds : []);
             VerifyArtifactProviders(value, providers);
             VerifyArtifactImports(value, providers, publicIds, packageApi);
@@ -82,8 +102,24 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var expected = declarations.ToDictionary(item => (Text(item.GetProperty("metadata"), "Role"), Text(item, "include")), item =>
         {
             var metadata = item.GetProperty("metadata");
-            return new ArtifactUsePolicy(Text(metadata, "ContractVersion"), bool.Parse(Text(metadata, "Required")), Text(metadata, "Actions").Split(';'));
+            return new ArtifactUsePolicy(Text(descriptors[Text(item, "include")], "version"), bool.Parse(Text(metadata, "Required")), Text(metadata, "Actions").Split(';'));
         });
+        if (Text(manifest, "id") == "sunder.package.agent")
+        {
+            // Tool discovery moved behind the owner/profile services. ToolSource
+            // now authors Runtime use only; retain the historical baseline itself.
+            Assert.True(expected.Remove(("app", "sunder.agent.tool.source")));
+            expected.Add(("app", "sunder.package.agent.agent.profile"), new("2.0.0", true, ["discover", "invoke"]));
+            // These are the additional authored App consumers; source/model
+            // reachability alone does not grant the removed wrapper's other APIs.
+            foreach (var id in new[] { "sunder.agent.child.run.executor", "sunder.agent.runtime.catalog" })
+            {
+                var actions = new List<string> { "discover", "invoke" };
+                if (CurrentPublicRpcDescriptors.Get(id).Services.SelectMany(service => service.Methods)
+                    .Any(method => method.Kind == SunderRpcMethodKind.ServerStream)) actions.Add("subscribe");
+                expected.Add(("app", id), new(CurrentPublicRpcDescriptors.Get(id).Version, false, actions.ToArray()));
+            }
+        }
         // Package-wide API selection intentionally adds optional Runtime uses for
         // the rest of the public inventory. It must not weaken reviewed uses or
         // create App/platform grants or required-provider predicates by inference.
@@ -116,9 +152,10 @@ public sealed partial class AgentSourceArtifactMigrationTests
         foreach (var provider in actual)
         {
             var metadata = Assert.Single(declarations, item => Text(item, "include") == Text(provider, "providerId")).GetProperty("metadata");
-            foreach (var (authored, generated) in new[] { ("ContractId", "contractId"), ("ContractVersion", "contractVersion"), ("Role", "role"), ("Audience", "audience") })
+            foreach (var (authored, generated) in new[] { ("ContractId", "contractId"), ("Role", "role"), ("Audience", "audience") })
                 Assert.Equal(Text(metadata, authored), Text(provider, generated));
             var bundle = Assert.Single(manifest.GetProperty("contractBundles").EnumerateArray(), item => Text(item, "contractId") == Text(provider, "contractId"));
+            Assert.Equal(Text(bundle, "version"), Text(provider, "contractVersion"));
             foreach (var name in new[] { "descriptorSha256", "abiSha256" }) Assert.Equal(Text(bundle, name), Text(provider, name));
         }
     }

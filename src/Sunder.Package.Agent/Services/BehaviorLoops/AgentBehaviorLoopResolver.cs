@@ -1,169 +1,111 @@
-using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Protocol;
+using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.Services.BehaviorLoops;
 
 public sealed class AgentBehaviorLoopResolver(
-    AgentRpcCatalog rpcCatalog,
-    AgentRpcProviderService<IAgentBehaviorLoop> behaviorLoops,
+    IServiceProviders<AgentServices.IBehaviorLoopService> behaviorLoops,
+    IServiceProviders<AgentServices.IRunControlService> runControls,
+    AgentActiveRunRegistry activeRuns,
     DefaultAgentBehaviorLoop defaultBehaviorLoop)
 {
-    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
-    internal AgentBehaviorLoopResolver(AgentRpcCatalog catalog, Runtime.Rpc.AgentBehaviorServices behaviors, DefaultAgentBehaviorLoop defaultLoop)
-        : this(catalog, behaviors.Service, defaultLoop) { }
-
-    public AgentBehaviorLoopSelection Resolve(AgentProfileRecord profile)
+    public async ValueTask<AgentBehaviorLoopSelection> ResolveAsync(
+        AgentProfileRecord profile, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var requestedLoopId = string.IsNullOrWhiteSpace(profile.BehaviorLoopId)
-            ? DefaultAgentBehaviorLoop.LoopId
-            : profile.BehaviorLoopId.Trim();
+            ? DefaultAgentBehaviorLoop.LoopId : profile.BehaviorLoopId.Trim();
         var requestedSourceId = string.IsNullOrWhiteSpace(profile.BehaviorLoopSourceId)
-            ? null
-            : profile.BehaviorLoopSourceId.Trim();
+            ? null : profile.BehaviorLoopSourceId.Trim();
+        if (string.Equals(requestedLoopId, DefaultAgentBehaviorLoop.LoopId, StringComparison.OrdinalIgnoreCase)
+                && requestedSourceId is null
+            || string.Equals(requestedSourceId, DefaultAgentBehaviorLoop.BuiltInSourceId, StringComparison.OrdinalIgnoreCase))
+            return new(defaultBehaviorLoop);
 
-        if ((string.Equals(
-                 requestedLoopId,
-                 DefaultAgentBehaviorLoop.LoopId,
-                 StringComparison.OrdinalIgnoreCase)
-             && requestedSourceId is null)
-            || string.Equals(
-                requestedSourceId,
-                DefaultAgentBehaviorLoop.BuiltInSourceId,
-                StringComparison.OrdinalIgnoreCase))
-        {
-            return new AgentBehaviorLoopSelection(defaultBehaviorLoop);
-        }
-
-        IReadOnlyList<AgentRpcOwnedProviderReference<IAgentBehaviorLoop, AgentBehaviorLoopDescriptor>> loops;
+        ServiceProviderCatalog<AgentServices.IBehaviorLoopService> catalog;
         try
         {
-            loops = AgentRpcInvocation.Snapshot(
-                rpcCatalog,
-                behaviorLoops,
-                static loop => loop.Descriptor with
-                {
-                    FeatureKinds = loop.Descriptor.FeatureKinds?.ToArray(),
-                },
-                omitUnavailable: true);
+            catalog = await behaviorLoops.ListAsync(cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception exception) when (AgentRpcInvocation.IsUnavailableFailure(
-                                               exception,
-                                               CancellationToken.None))
+        catch (SunderRpcException exception) when (!cancellationToken.IsCancellationRequested
+            && exception.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable)
         {
-            return new AgentBehaviorLoopSelection(defaultBehaviorLoop);
+            return new(defaultBehaviorLoop);
         }
 
-        var selected = loops.FirstOrDefault(loop =>
-            string.Equals(
-                loop.Metadata.LoopId,
-                requestedLoopId,
-                StringComparison.OrdinalIgnoreCase)
-            && (requestedSourceId is null
-                || string.Equals(
-                    loop.Metadata.SourceId,
-                    requestedSourceId,
-                    StringComparison.OrdinalIgnoreCase)));
-        if (selected is not null && selected.Reference.TryAcquire(out var lease))
+        foreach (var provider in catalog.Providers)
         {
-            return new AgentBehaviorLoopSelection(selected.Metadata, selected.PackageId, lease);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (provider.State != ServiceProviderState.Active) continue;
+            try
+            {
+                var descriptor = await provider.Service.DescribeAsync(cancellationToken).ConfigureAwait(false);
+                if (string.Equals(descriptor.LoopId, requestedLoopId, StringComparison.OrdinalIgnoreCase)
+                    && (requestedSourceId is null || string.Equals(descriptor.SourceId, requestedSourceId, StringComparison.OrdinalIgnoreCase)))
+                    return new(descriptor, provider, runControls, activeRuns);
+            }
+            catch (SunderRpcException exception) when (!cancellationToken.IsCancellationRequested
+                && exception.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable)
+            {
+                // A missing selected extension falls back to the built-in loop.
+            }
         }
-
-        return new AgentBehaviorLoopSelection(defaultBehaviorLoop);
+        return new(defaultBehaviorLoop);
     }
 }
 
-public sealed class AgentBehaviorLoopSelection : IDisposable
+public sealed class AgentBehaviorLoopSelection
 {
-    private readonly IAgentBehaviorLoop? _localService;
-    private AgentRpcLease<IAgentBehaviorLoop>? _lease;
-    private int _disposed;
+    private readonly DefaultAgentBehaviorLoop? _local;
+    private readonly ServiceProvider<AgentServices.IBehaviorLoopService>? _provider;
+    private readonly IServiceProviders<AgentServices.IRunControlService>? _runControls;
+    private readonly AgentActiveRunRegistry? _activeRuns;
 
-    internal AgentBehaviorLoopSelection(DefaultAgentBehaviorLoop defaultBehaviorLoop)
+    internal AgentBehaviorLoopSelection(DefaultAgentBehaviorLoop local)
     {
-        Descriptor = defaultBehaviorLoop.Descriptor;
+        _local = local;
+        Descriptor = local.Descriptor;
         OwnerPackageId = DefaultAgentBehaviorLoop.BuiltInSourceId;
-        RetirementToken = CancellationToken.None;
-        _localService = defaultBehaviorLoop;
     }
 
-    internal AgentBehaviorLoopSelection(
-        AgentBehaviorLoopDescriptor descriptor,
-        string ownerPackageId,
-        AgentRpcLease<IAgentBehaviorLoop> lease)
+    internal AgentBehaviorLoopSelection(AgentBehaviorLoopDescriptor descriptor,
+        ServiceProvider<AgentServices.IBehaviorLoopService> provider,
+        IServiceProviders<AgentServices.IRunControlService> runControls,
+        AgentActiveRunRegistry activeRuns)
     {
         Descriptor = descriptor;
-        OwnerPackageId = ownerPackageId;
-        _lease = lease;
-        RetirementToken = lease.RetirementToken;
+        OwnerPackageId = provider.PackageId;
+        _provider = provider;
+        _runControls = runControls;
+        _activeRuns = activeRuns;
     }
 
     public AgentBehaviorLoopDescriptor Descriptor { get; }
+    internal string OwnerPackageId { get; }
 
-    internal string? OwnerPackageId { get; }
-
-    internal CancellationToken RetirementToken { get; }
-
-    internal bool IsRetiring => RetirementToken.IsCancellationRequested;
-
-    internal async ValueTask<AgentBehaviorLoopResult> RunAsync(
-        AgentBehaviorLoopContext context,
-        IAgentBehaviorLoopRuntime runtime,
-        CancellationToken cancellationToken)
+    internal async ValueTask<AgentBehaviorLoopResult> RunAsync(AgentBehaviorLoopContext context,
+        IAgentBehaviorLoopRuntime runtime, CancellationToken cancellationToken)
     {
-        ObjectDisposedException.ThrowIf(
-            Volatile.Read(ref _disposed) != 0,
-            this);
-        if (_localService is not null)
-        {
-            return await _localService
-                .RunAsync(context, runtime, cancellationToken).ConfigureAwait(false);
-        }
+        if (_local is not null)
+            return await _local.RunAsync(context, runtime, cancellationToken).ConfigureAwait(false);
 
-        var lease = Volatile.Read(ref _lease);
-        if (lease is null)
-        {
-            throw new ObjectDisposedException(nameof(AgentBehaviorLoopSelection));
-        }
-
-        using var invocation = CancellationTokenSource.CreateLinkedTokenSource(
-            cancellationToken,
-            RetirementToken);
+        var control = (await _runControls!.ListAsync(cancellationToken).ConfigureAwait(false)).Providers
+            .SingleOrDefault(provider => provider.State == ServiceProviderState.Active
+                && provider.PackageId == "sunder.package.agent" && provider.ProviderId == "agent.run.control")
+            ?? throw new AgentPackageUnavailableException("sunder.package.agent");
+        using var grant = _activeRuns!.OpenBehaviorInvocation(context.Session.SessionId, context.RunId,
+            context.RunRevision, runtime, OwnerPackageId);
         try
         {
-            var result = await lease.Service
-                .RunAsync(context, runtime, invocation.Token).ConfigureAwait(false);
-            if (IsRetiring && !cancellationToken.IsCancellationRequested)
-            {
-                throw AgentRpcInvocation.Unavailable(OwnerPackageId!);
-            }
-
-            return result;
+            return await _provider!.Service.RunAsync(context, grant.InvocationId, control.Reference, cancellationToken).ConfigureAwait(false);
         }
-        catch (AgentPackageUnavailableException)
+        catch (SunderRpcException exception) when (!cancellationToken.IsCancellationRequested
+            && exception.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable)
         {
-            throw;
-        }
-        catch (OperationCanceledException exception) when (
-            IsRetiring
-            && !cancellationToken.IsCancellationRequested)
-        {
-            throw AgentRpcInvocation.Unavailable(OwnerPackageId!, exception);
-        }
-        catch (Exception exception) when (
-            IsRetiring
-            && !cancellationToken.IsCancellationRequested)
-        {
-            throw AgentRpcInvocation.Unavailable(OwnerPackageId!, exception);
-        }
-    }
-
-    public void Dispose()
-    {
-        if (Interlocked.Exchange(ref _disposed, 1) == 0)
-        {
-            Interlocked.Exchange(ref _lease, null)?.Dispose();
+            throw new AgentPackageUnavailableException(OwnerPackageId, exception);
         }
     }
 }

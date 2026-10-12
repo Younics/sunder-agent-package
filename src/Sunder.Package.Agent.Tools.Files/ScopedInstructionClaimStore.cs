@@ -355,7 +355,7 @@ internal sealed record ScopedInstructionPendingProbe(
     bool FollowFinalSymbolicLink)
 {
     public AgentScopedInstructionProbe ToProbe()
-        => new(Path, IsDirectory) { FollowFinalSymbolicLink = FollowFinalSymbolicLink };
+        => new() { Path = Path, IsDirectory = IsDirectory, FollowFinalSymbolicLink = FollowFinalSymbolicLink };
 
     public static ScopedInstructionPendingProbe FromProbe(AgentScopedInstructionProbe probe)
         => new(probe.Path, probe.IsDirectory, probe.FollowFinalSymbolicLink);

@@ -1,4 +1,4 @@
-using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Sdk.Settings;
 
@@ -9,16 +9,16 @@ internal static class GeminiModelCatalog
 {
     private static readonly IReadOnlyList<AgentModelVariantDescriptor> ThinkingLevelVariants =
     [
-        new("low", "Low", "Use low thinking effort for faster responses.", AgentReasoningEffort.Low),
-        new("medium", "Medium", "Use balanced thinking effort for most tasks.", AgentReasoningEffort.Medium),
-        new("high", "High", "Use high thinking effort for complex tasks.", AgentReasoningEffort.High),
+        new() { VariantId = "low", DisplayName = "Low", Description = "Use low thinking effort for faster responses.", ReasoningEffort = AgentReasoningEffort.Low },
+        new() { VariantId = "medium", DisplayName = "Medium", Description = "Use balanced thinking effort for most tasks.", ReasoningEffort = AgentReasoningEffort.Medium },
+        new() { VariantId = "high", DisplayName = "High", Description = "Use high thinking effort for complex tasks.", ReasoningEffort = AgentReasoningEffort.High },
     ];
 
     private static readonly IReadOnlyList<AgentModelVariantDescriptor> ThinkingBudgetVariants =
     [
-        new("low", "Low", "Use a low valid thinking-token budget.", AgentReasoningEffort.Low),
-        new("medium", "Medium", "Use a balanced valid thinking-token budget.", AgentReasoningEffort.Medium),
-        new("high", "High", "Use the model family's maximum thinking-token budget.", AgentReasoningEffort.High),
+        new() { VariantId = "low", DisplayName = "Low", Description = "Use a low valid thinking-token budget.", ReasoningEffort = AgentReasoningEffort.Low },
+        new() { VariantId = "medium", DisplayName = "Medium", Description = "Use a balanced valid thinking-token budget.", ReasoningEffort = AgentReasoningEffort.Medium },
+        new() { VariantId = "high", DisplayName = "High", Description = "Use the model family's maximum thinking-token budget.", ReasoningEffort = AgentReasoningEffort.High },
     ];
 
     private static readonly IReadOnlyDictionary<string, DateOnly> ReleaseDates =
@@ -40,18 +40,30 @@ internal static class GeminiModelCatalog
 
     private static readonly IReadOnlyList<AgentModelDescriptor> VendorModels =
         ProviderModelCatalog.ApplyReleaseDates([
-        new("gemini/gemini-3.5-flash", "Gemini 3.5 Flash", 1048576, 65536, IsRecommended: true, Variants: ThinkingLevelVariants),
-        new("gemini/gemini-3.1-pro-preview", "Gemini 3.1 Pro Preview", 1048576, 65536, IsRecommended: true, Variants: ThinkingLevelVariants),
-        new("gemini/gemini-3.1-pro-preview-customtools", "Gemini 3.1 Pro Preview Custom Tools", 1048576, 65536, Variants: ThinkingLevelVariants),
-        new("gemini/gemini-3.1-flash-lite", "Gemini 3.1 Flash Lite", 1048576, 65536, Variants: ThinkingLevelVariants),
-        new("gemini/gemini-3-flash-preview", "Gemini 3 Flash Preview", 1048576, 65536, Variants: ThinkingLevelVariants),
-        new("gemini/gemini-2.5-pro", "Gemini 2.5 Pro", 1048576, 65536, Variants: ThinkingBudgetVariants),
-        new("gemini/gemini-2.5-flash", "Gemini 2.5 Flash", 1048576, 65536, IsRecommended: true, Variants: ThinkingBudgetVariants),
-        new("gemini/gemini-2.5-flash-lite", "Gemini 2.5 Flash Lite", 1048576, 65536, Variants: ThinkingBudgetVariants),
-        new("gemini/gemini-flash-latest", "Gemini Flash Latest", 1048576, 65536),
-        new("gemini/gemini-flash-lite-latest", "Gemini Flash Lite Latest", 1048576, 65536),
-        new("gemini/gemma-4-31b-it", "Gemma 4 31B IT", 262144, 32768),
-        new("gemini/gemma-4-26b-a4b-it", "Gemma 4 26B A4B IT", 262144, 32768),
+        new() { ModelId = "gemini/gemini-3.5-flash", DisplayName = "Gemini 3.5 Flash", ContextWindow = 1048576, MaxOutputTokens = 65536,
+            IsRecommended = true, Variants = ThinkingLevelVariants, SpeedOptions = null, ModeOptions = null, ReleaseDate = null },
+        new() { ModelId = "gemini/gemini-3.1-pro-preview", DisplayName = "Gemini 3.1 Pro Preview", ContextWindow = 1048576, MaxOutputTokens = 65536,
+            IsRecommended = true, Variants = ThinkingLevelVariants, SpeedOptions = null, ModeOptions = null, ReleaseDate = null },
+        new() { ModelId = "gemini/gemini-3.1-pro-preview-customtools", DisplayName = "Gemini 3.1 Pro Preview Custom Tools", ContextWindow = 1048576, MaxOutputTokens = 65536,
+            IsRecommended = false, Variants = ThinkingLevelVariants, SpeedOptions = null, ModeOptions = null, ReleaseDate = null },
+        new() { ModelId = "gemini/gemini-3.1-flash-lite", DisplayName = "Gemini 3.1 Flash Lite", ContextWindow = 1048576, MaxOutputTokens = 65536,
+            IsRecommended = false, Variants = ThinkingLevelVariants, SpeedOptions = null, ModeOptions = null, ReleaseDate = null },
+        new() { ModelId = "gemini/gemini-3-flash-preview", DisplayName = "Gemini 3 Flash Preview", ContextWindow = 1048576, MaxOutputTokens = 65536,
+            IsRecommended = false, Variants = ThinkingLevelVariants, SpeedOptions = null, ModeOptions = null, ReleaseDate = null },
+        new() { ModelId = "gemini/gemini-2.5-pro", DisplayName = "Gemini 2.5 Pro", ContextWindow = 1048576, MaxOutputTokens = 65536,
+            IsRecommended = false, Variants = ThinkingBudgetVariants, SpeedOptions = null, ModeOptions = null, ReleaseDate = null },
+        new() { ModelId = "gemini/gemini-2.5-flash", DisplayName = "Gemini 2.5 Flash", ContextWindow = 1048576, MaxOutputTokens = 65536,
+            IsRecommended = true, Variants = ThinkingBudgetVariants, SpeedOptions = null, ModeOptions = null, ReleaseDate = null },
+        new() { ModelId = "gemini/gemini-2.5-flash-lite", DisplayName = "Gemini 2.5 Flash Lite", ContextWindow = 1048576, MaxOutputTokens = 65536,
+            IsRecommended = false, Variants = ThinkingBudgetVariants, SpeedOptions = null, ModeOptions = null, ReleaseDate = null },
+        new() { ModelId = "gemini/gemini-flash-latest", DisplayName = "Gemini Flash Latest", ContextWindow = 1048576, MaxOutputTokens = 65536,
+            IsRecommended = false, Variants = null, SpeedOptions = null, ModeOptions = null, ReleaseDate = null },
+        new() { ModelId = "gemini/gemini-flash-lite-latest", DisplayName = "Gemini Flash Lite Latest", ContextWindow = 1048576, MaxOutputTokens = 65536,
+            IsRecommended = false, Variants = null, SpeedOptions = null, ModeOptions = null, ReleaseDate = null },
+        new() { ModelId = "gemini/gemma-4-31b-it", DisplayName = "Gemma 4 31B IT", ContextWindow = 262144, MaxOutputTokens = 32768,
+            IsRecommended = false, Variants = null, SpeedOptions = null, ModeOptions = null, ReleaseDate = null },
+        new() { ModelId = "gemini/gemma-4-26b-a4b-it", DisplayName = "Gemma 4 26B A4B IT", ContextWindow = 262144, MaxOutputTokens = 32768,
+            IsRecommended = false, Variants = null, SpeedOptions = null, ModeOptions = null, ReleaseDate = null },
     ], ReleaseDates, requireEveryModel: true);
 
     private static readonly ProviderModelCatalogSnapshot Catalog = ProviderModelCatalog.ValidateAndOrder(

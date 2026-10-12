@@ -4,11 +4,11 @@ namespace Sunder.Package.Agent.Contracts.Models;
 public enum AgentPromptContextAuthority
 {
     /// <summary>Reference data that cannot independently direct behavior.</summary>
-    Reference = 0,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("reference")] Reference = 0,
 
     /// <summary>User standing instructions selected through a host-controlled profile workflow.</summary>
-    StandingInstruction = 1,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("standing-instruction")] StandingInstruction = 1,
 
     /// <summary>Host-verified instructions limited to one canonical directory subtree.</summary>
-    ScopedInstruction = 2,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("scoped-instruction")] ScopedInstruction = 2,
 }

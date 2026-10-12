@@ -68,7 +68,8 @@ internal static partial class AgentSourceMigrationProjectChanges
 
         void Replace(string current, string previous)
         {
-            Assert.Equal(2, text.Split(current, StringSplitOptions.None).Length);
+            var count = text.Split(current, StringSplitOptions.None).Length - 1;
+            Assert.True(count == 1, $"{path}: expected one pre-natural Agent composition occurrence of '{current}', found {count}.");
             text = text.Replace(current, previous, StringComparison.Ordinal);
         }
     }

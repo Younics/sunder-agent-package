@@ -1,18 +1,20 @@
 using System.Text;
-using Sunder.Package.Agent.Contracts.Contracts;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Memory.Semantic.Services;
+using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Memory.Semantic;
 
-public sealed class MemorySemanticFeature(
+[SunderServiceProvider(typeof(IProfileCapabilityConsumerService), ProviderId = "semantic.memory.profile.capabilities")]
+[SunderServiceProvider(typeof(IPromptContextContributorService), ProviderId = "semantic.memory.prompt.context")]
+[SunderServiceProvider(typeof(IDurableLifecycleObserverService), ProviderId = "semantic.memory.lifecycle")]
+[SunderServiceProvider(typeof(ISessionCleanerService), ProviderId = "semantic.memory.session.cleaner")]
+public sealed partial class MemorySemanticFeature(
     MemoryLocalStore store,
     SemanticMemoryRecallService recallService,
     SemanticMemoryPromotionService promotionService) :
-    IAgentProfileCapabilityConsumer,
-    IAgentPromptContextContributor,
-    IAgentDurableLifecycleObserver,
-    IAgentSessionDataCleaner
+    IProfileCapabilityConsumerService, IPromptContextContributorService, IDurableLifecycleObserverService, ISessionCleanerService
 {
     private readonly MemoryLocalStore _store = store;
     private readonly SemanticMemoryRecallService _recallService = recallService;
@@ -30,77 +32,68 @@ public sealed class MemorySemanticFeature(
 
     public string CleanerId => FeatureId;
 
-    public IReadOnlyList<AgentProfileCapabilityConsumerDescriptor> ListConsumedCapabilities()
-        =>
-        [
-            new(
-                AgentModelCapabilityKinds.Embedding,
-                "Embeddings",
-                "Use the selected embedding provider and model for semantic memory indexing and retrieval."),
-        ];
+    ValueTask<AgentProfileCapabilityConsumerSnapshot> IProfileCapabilityConsumerService.DescribeAsync(CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(new AgentProfileCapabilityConsumerSnapshot
+        {
+            ConsumerId = ConsumerId, DisplayName = DisplayName,
+            Capabilities = [new() { CapabilityKind = AgentModelCapabilityKinds.Embedding, DisplayName = "Embeddings",
+                Description = "Use the selected embedding provider and model for semantic memory indexing and retrieval." }],
+        });
+    }
 
-    public ValueTask<AgentMemoryRecallResult?> RecallAsync(
-        AgentMemoryRecallRequest request,
-        CancellationToken cancellationToken = default)
-        => _recallService.RecallAsync(request, cancellationToken);
+    ValueTask<AgentPromptContextContributorDescriptor> IPromptContextContributorService.DescribeAsync(CancellationToken token)
+    { token.ThrowIfCancellationRequested(); return ValueTask.FromResult(new AgentPromptContextContributorDescriptor { ContributorId = ContributorId, DisplayName = DisplayName, AcknowledgmentSinkId = null }); }
 
-    public async ValueTask<AgentPromptContextContribution?> ContributeContextAsync(
+    ValueTask<AgentServiceIdentity> IDurableLifecycleObserverService.DescribeAsync(CancellationToken token)
+    { token.ThrowIfCancellationRequested(); return ValueTask.FromResult(new AgentServiceIdentity { Id = ObserverId, DisplayName = DisplayName }); }
+
+    ValueTask<AgentServiceIdentity> ISessionCleanerService.DescribeAsync(CancellationToken token)
+    { token.ThrowIfCancellationRequested(); return ValueTask.FromResult(new AgentServiceIdentity { Id = CleanerId, DisplayName = CleanerId }); }
+
+    public async ValueTask<AgentPromptContextContribution?> ContributeAsync(
         AgentPromptContextRequest request,
         CancellationToken cancellationToken = default)
     {
-        if (!request.ContextPlan.ShouldContribute)
+        if (string.Equals(request.ContextPlan.Intent, "none", StringComparison.OrdinalIgnoreCase))
         {
             return null;
         }
 
-        var recallResult = await RecallAsync(
-            new AgentMemoryRecallRequest(
-                request.Session,
-                request.Run,
-                request.Turn,
-                request.Turns,
-                request.RecentLiveBufferTurns,
-                ToMemoryRecallPlan(request.ContextPlan))
-            {
-                MemoryConsistencyBarrier = request.MemoryConsistencyBarrier,
-            },
-            cancellationToken);
+        var recallResult = await _recallService.RecallAsync(request, ToMemoryRecallPlan(request.ContextPlan), cancellationToken);
         if (recallResult is null || recallResult.Entries.Count == 0)
         {
             return null;
         }
 
-        return new AgentPromptContextContribution(
-        [
-            new AgentPromptContextBlock(
-                "Recalled Session Context",
-                BuildRecallContextBlock(recallResult),
-                Priority: 100,
-                SourceId: FeatureId,
-                Provenance: AgentContextProvenance.DurableMemory,
-                Trust: AgentContextTrust.Untrusted),
-        ]);
+        return new AgentPromptContextContribution
+        {
+            Blocks = [new()
+            {
+                Title = "Recalled Session Context", Content = BuildRecallContextBlock(recallResult), Priority = 100, SourceId = FeatureId,
+                Provenance = AgentContextProvenance.DurableMemory, Trust = AgentContextTrust.Untrusted,
+                Usage = AgentPromptContextUsage.Reference, Scope = null, Authority = AgentPromptContextAuthority.Reference, HostIdentity = null,
+            }],
+        };
     }
 
-    public async ValueTask HandleDurableLifecycleEventAsync(
+    public async ValueTask HandleAsync(
         AgentDurableLifecycleEventEnvelope lifecycleEvent,
         CancellationToken cancellationToken = default)
     {
         await _promotionService.ProcessDurableLifecycleEventAsync(lifecycleEvent, cancellationToken);
     }
 
-    public async ValueTask HandleLifecycleEventAsync(
-        AgentLifecycleEvent lifecycleEvent,
-        CancellationToken cancellationToken = default)
-    {
-        await _promotionService.PromoteDurableMemoriesAsync(lifecycleEvent, cancellationToken);
-    }
+    public ValueTask DeleteSessionAsync(Guid sessionId, CancellationToken token = default)
+    { token.ThrowIfCancellationRequested(); _store.DeleteSessionData(sessionId); return ValueTask.CompletedTask; }
 
-    public void DeleteSessionData(Guid sessionId) => _store.DeleteSessionData(sessionId);
+    public ValueTask AcknowledgeAsync(AgentPromptContextReceipt request, CancellationToken token = default)
+    { token.ThrowIfCancellationRequested(); return ValueTask.CompletedTask; }
 
     private static AgentMemoryRecallPlan ToMemoryRecallPlan(AgentPromptContextPlan plan)
         => Enum.TryParse<AgentMemoryRecallIntent>(plan.Intent, ignoreCase: true, out var intent)
-            ? new AgentMemoryRecallPlan(intent, plan.QueryText, plan.Reason, plan.PreferredCategories, plan.MaxEntryCount, plan.MaxChars)
+            ? new AgentMemoryRecallPlan(intent, plan.QueryText, plan.Reason, plan.PreferredCategories, checked((int)plan.MaxEntryCount), checked((int)plan.MaxChars))
             : AgentMemoryRecallPlan.None(plan.Reason);
 
     private static string BuildRecallContextBlock(AgentMemoryRecallResult recallResult)

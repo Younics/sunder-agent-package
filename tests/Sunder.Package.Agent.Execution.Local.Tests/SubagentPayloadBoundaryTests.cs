@@ -1,11 +1,11 @@
 extern alias SubagentsWorker;
 
 using System.Text.Json;
-using SubagentsWorker::Sunder.Package.Agent.Contracts.Models;
 using SubagentsWorker::Sunder.Package.Agent.Subagents.Models;
 using SubagentsWorker::Sunder.Package.Agent.Subagents.Services;
-using SubagentsWorker::Sunder.Package.Agent.Subagents.Rpc;
 using Xunit;
+using AgentModels = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using SubagentServices = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -16,11 +16,11 @@ public sealed class SubagentPayloadBoundaryTests
     {
         using var scope = RegressionTestPackageScope.Create();
         using var catalog = new RegressionTestExtensionCatalog();
-        var bindings = catalog.OwnConsumer("sunder.package.agent.subagents", rpc => new SubagentRuntimeBindings(rpc));
         var renderer = new SubagentBatchResultRenderer(
             new SubagentService(new SubagentStore(scope.Context)),
             new SubagentRequestParser(),
-            new SubagentPermissionStatusAdapter(bindings));
+            new SubagentPermissionStatusAdapter(
+                catalog.Receiver("sunder.package.agent.subagents").Providers<SubagentServices.IToolSourceService>()));
         var childSessionId = Guid.NewGuid();
         var now = DateTimeOffset.UtcNow;
         var subagent = new SubagentRecord(
@@ -34,12 +34,14 @@ public sealed class SubagentPayloadBoundaryTests
             now,
             now);
         var payload = renderer.BuildChildSessionPayload(
-            new AgentChildRunResult(
-                childSessionId,
-                AgentRunStatus.Completed,
-                new string('s', 3_000),
-                Content: new string('x', 200_000),
-                Title: "Child"),
+            new AgentModels.AgentChildRunResult
+            {
+                SessionId = childSessionId,
+                Status = AgentModels.AgentRunStatus.Completed,
+                Summary = new string('s', 3_000),
+                Content = new string('x', 200_000),
+                Title = "Child",
+            },
             subagent,
             "Child",
             SubagentTaskResultState.Completed);
@@ -47,12 +49,17 @@ public sealed class SubagentPayloadBoundaryTests
         [
             new SubagentTaskResult(
                 SubagentTaskResultState.Completed,
-                new AgentToolResult(
-                    SubagentConstants.TaskToolId,
-                    "Completed",
-                    Content: "bounded parent text",
-                    StructuredPayloadJson: payload,
-                    BackendId: childSessionId.ToString("N"))),
+                new AgentModels.AgentToolResult
+                {
+                    ToolId = SubagentConstants.TaskToolId,
+                    Summary = "Completed",
+                    Content = "bounded parent text",
+                    StructuredPayloadJson = payload,
+                    BackendId = childSessionId.ToString("N"),
+                    IsError = false,
+                    RequiresPromptContextRefresh = false,
+                    WasTruncated = false,
+                }),
         ]);
 
         using var document = JsonDocument.Parse(result.StructuredPayloadJson!);

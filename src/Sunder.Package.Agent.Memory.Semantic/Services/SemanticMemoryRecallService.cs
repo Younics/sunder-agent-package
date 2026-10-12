@@ -12,7 +12,8 @@ public sealed class SemanticMemoryRecallService(
     private readonly SemanticMemoryMetricsService _metricsService = metricsService;
 
     public async ValueTask<AgentMemoryRecallResult?> RecallAsync(
-        AgentMemoryRecallRequest request,
+        AgentPromptContextRequest request,
+        AgentMemoryRecallPlan recallPlan,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -23,19 +24,19 @@ public sealed class SemanticMemoryRecallService(
             return null;
         }
 
-        if (!request.RecallPlan.ShouldRecall)
+        if (!recallPlan.ShouldRecall)
         {
             return null;
         }
 
-        var recallQuery = string.IsNullOrWhiteSpace(request.RecallPlan.QueryText)
+        var recallQuery = string.IsNullOrWhiteSpace(recallPlan.QueryText)
             ? request.Turn.UserMessage
-            : request.RecallPlan.QueryText;
+            : recallPlan.QueryText;
         var queryTokens = SemanticMemoryTextHelpers.Tokenize(recallQuery);
         var candidateSet = await _retrievalBackend.BuildRecallCandidatesAsync(
             request.Session.ProfileId,
             request.Session.SessionId,
-            request.RecallPlan,
+            recallPlan,
             recallQuery,
             cancellationToken);
         if (candidateSet.Memories.Count == 0)
@@ -46,7 +47,7 @@ public sealed class SemanticMemoryRecallService(
         var scored = candidateSet.Memories
             .Select(memory => ScoreMemory(
                 memory,
-                request.RecallPlan.Intent,
+                recallPlan.Intent,
                 recallQuery,
                 queryTokens,
                 candidateSet.TextSearchScores.TryGetValue(memory.MemoryId, out var textSearchScore) ? textSearchScore : null,
@@ -63,9 +64,9 @@ public sealed class SemanticMemoryRecallService(
             return null;
         }
 
-        var entries = BuildRecallEntries(scored, request.RecallPlan);
+        var entries = BuildRecallEntries(scored, recallPlan);
         _store.RecordRecall(entries.Select(entry => Guid.ParseExact(entry.MemoryId, "N")).ToArray());
-        _metricsService.RecordRecall(request.RecallPlan, entries.Count);
+        _metricsService.RecordRecall(recallPlan, entries.Count);
         return entries.Count == 0 ? null : new AgentMemoryRecallResult(entries);
     }
 

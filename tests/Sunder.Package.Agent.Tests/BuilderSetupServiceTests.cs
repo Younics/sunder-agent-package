@@ -1,9 +1,12 @@
 extern alias BuilderApp;
 
+using System.Text.Json;
 using BuilderApp::Sunder.Package.Agent.Builder;
-using BuilderApp::Sunder.Package.Agent.Contracts.Contracts;
-using BuilderApp::Sunder.Package.Agent.Contracts.Models;
+using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
 using Xunit;
+using BuilderModels = BuilderApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using BuilderServices = BuilderApp::Sunder.Generated.Packages.Sunder_Package_Agent_Builder_Services;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -12,12 +15,12 @@ public sealed class BuilderSetupServiceTests
     [Fact]
     public async Task InstallDotnetSdkAsync_OnPosix_UsesDistroNeutralTarballInstaller()
     {
-        var target = new CapturingPosixExecutionTarget();
+        var runtime = new CapturingPosixRuntime();
         var service = new BuilderSetupService();
 
-        var message = await service.InstallDotnetSdkAsync(CreateExecution(target));
+        var message = await service.InstallDotnetSdkAsync(CreateExecution(runtime));
 
-        var installCommand = Assert.Single(target.ShellCommands, command => command != "printf '%s' \"$HOME\"");
+        var installCommand = Assert.Single(runtime.ShellCommands, command => command != "printf '%s' \"$HOME\"");
         Assert.DoesNotContain("dotnet-install.sh", installCommand);
         Assert.DoesNotContain("bash", installCommand);
         Assert.Contains("latest.version", installCommand);
@@ -29,109 +32,107 @@ public sealed class BuilderSetupServiceTests
         Assert.Contains("zypper --non-interactive install", installCommand);
         Assert.Contains("pacman -Sy --noconfirm --needed", installCommand);
         Assert.Contains("$install_dir/dotnet", installCommand);
-        Assert.Equal(["/home/builder/.dotnet", "/home/builder/.dotnet/tools"], target.PathEntries);
+        Assert.Equal(["/home/builder/.dotnet", "/home/builder/.dotnet/tools"], runtime.PathEntries);
         Assert.Equal("Installed the .NET SDK into /home/builder/.dotnet.", message);
     }
 
-    private static BuilderWorkspaceExecution CreateExecution(CapturingPosixExecutionTarget target)
+    private static BuilderWorkspaceExecution CreateExecution(CapturingPosixRuntime runtime)
     {
-        var now = DateTimeOffset.UtcNow;
-        var workspace = new AgentWorkspaceRecord("workspace.local", "Local workspace", null, now, now);
-        var binding = new AgentWorkspaceBindingRecord(
-            "binding.local",
-            workspace.WorkspaceId,
-            "execution-targets",
-            "local",
-            "primary-execution-target",
-            true,
-            0,
-            now,
-            now);
-        var context = new AgentExecutionTargetContext(null, null, workspace, binding);
+        var now = new SunderRpcOffsetDateTime(DateTimeOffset.UtcNow.ToString("O"));
+        var workspace = new BuilderModels.AgentWorkspaceRecord
+        {
+            WorkspaceId = "workspace.local",
+            DisplayName = "Local workspace",
+            Description = null,
+            CreatedAtUtc = now,
+            UpdatedAtUtc = now,
+            Paths = [],
+            Documents = [],
+        };
+        var binding = new BuilderModels.AgentWorkspaceBindingRecord
+        {
+            BindingId = "binding.local",
+            WorkspaceId = workspace.WorkspaceId,
+            ExtensionPointId = "execution-targets",
+            ContributionId = "local",
+            Role = "primary-execution-target",
+            IsEnabled = true,
+            SortOrder = 0,
+            CreatedAtUtc = now,
+            UpdatedAtUtc = now,
+        };
         return new BuilderWorkspaceExecution(
             workspace,
             binding,
-            target.Descriptor,
-            new AgentExecutionScopeDescriptor("Local", ["/home/builder"], "/home/builder"),
-            target,
-            context,
-            new AgentExecutionShellDescriptor("sh", "POSIX sh", "/bin/sh", AgentShellSyntaxKinds.PosixSh, "POSIX sh"),
-            PathMapper: null,
-            target);
+            new BuilderModels.AgentExecutionTargetDescriptor
+            {
+                TargetId = "local",
+                TargetKind = "local",
+                DisplayName = "Local",
+                Description = null,
+                SupportsShell = true,
+                SupportsFiles = true,
+                Facets = [],
+            },
+            new BuilderModels.AgentExecutionScopeDescriptor
+            {
+                DisplayName = "Local",
+                WorkspacePaths = ["/home/builder"],
+                DefaultWorkingDirectory = "/home/builder",
+                PathStyleDescription = null,
+            },
+            new BuilderModels.AgentExecutionShellDescriptor
+            {
+                ShellId = "sh",
+                DisplayName = "POSIX sh",
+                ExecutablePath = "/bin/sh",
+                SyntaxKind = "posix-sh",
+                Description = "POSIX sh",
+            },
+            SupportsPathMapping: false,
+            SupportsPathEnvironment: true,
+            runtime);
     }
 
-    private sealed class CapturingPosixExecutionTarget : IAgentExecutionTarget, IAgentExecutionPathEnvironment
+    private sealed class CapturingPosixRuntime : BuilderServices.IBuilderRuntimeService
     {
-        public AgentExecutionTargetDescriptor Descriptor { get; } = new(
-            "local",
-            "local",
-            "Local",
-            null,
-            SupportsShell: true,
-            SupportsFiles: true);
-
         public List<string> ShellCommands { get; } = [];
 
         public List<string> PathEntries { get; } = [];
 
-        public ValueTask<AgentExecutionTargetReadiness> GetReadinessAsync(
-            AgentExecutionTargetContext context,
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromResult(new AgentExecutionTargetReadiness("local", "local", AgentExecutionTargetReadinessStatus.Ready, "Ready."));
-
-        public ValueTask<AgentExecutionShellDescriptor> GetShellAsync(
-            AgentExecutionTargetContext context,
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromResult(new AgentExecutionShellDescriptor("sh", "POSIX sh", "/bin/sh", AgentShellSyntaxKinds.PosixSh, "POSIX sh"));
-
-        public ValueTask<AgentResolvedResource> ResolveFileResourceAsync(
-            AgentExecutionTargetContext context,
-            string path,
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromResult(new AgentResolvedResource("file", path, path, "configured-scope", Exists: true));
-
-        public ValueTask<AgentShellCommandResult> ExecuteShellAsync(
-            AgentExecutionTargetContext context,
-            AgentShellCommandRequest request,
+        public ValueTask AddPathEntryAsync(
+            string workspaceId,
+            string executionPath,
             CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            PathEntries.Add(executionPath);
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask<SunderContent> ExecuteShellAsync(
+            string workspaceId,
+            BuilderModels.AgentShellCommandRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
             ShellCommands.Add(request.Command);
             var output = request.Command == "printf '%s' \"$HOME\""
                 ? "/home/builder"
                 : "/home/builder/.dotnet";
-            return ValueTask.FromResult(new AgentShellCommandResult(0, output));
+            return Content(new BuilderProcessResult(0, output, string.Empty));
         }
 
-        public ValueTask<AgentFileReadResult> ReadFileAsync(
-            AgentExecutionTargetContext context,
-            AgentFileReadRequest request,
-            CancellationToken cancellationToken = default)
+        public ValueTask<SunderContent> ExecuteProcessAsync(string workspaceId, BuilderModels.AgentProcessCommandRequest request,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public ValueTask<SunderContent> ListWorkspacesAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public ValueTask<BuilderModels.AgentExecutionPathMapping> MapToHostPathAsync(string workspaceId, string executionPath,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public ValueTask<SunderContent> ResolveWorkspaceAsync(string workspaceId, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
-        public ValueTask<AgentFileMutationResult> WriteFileAsync(
-            AgentExecutionTargetContext context,
-            AgentFileWriteRequest request,
-            CancellationToken cancellationToken = default)
-            => throw new NotSupportedException();
-
-        public ValueTask<AgentFileMutationResult> DeleteFileAsync(
-            AgentExecutionTargetContext context,
-            AgentFileDeleteRequest request,
-            CancellationToken cancellationToken = default)
-            => throw new NotSupportedException();
-
-        public ValueTask<IReadOnlyList<string>> ListPathEntriesAsync(
-            AgentExecutionTargetContext context,
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromResult<IReadOnlyList<string>>(PathEntries);
-
-        public ValueTask AddPathEntryAsync(
-            AgentExecutionTargetContext context,
-            string executionPath,
-            CancellationToken cancellationToken = default)
-        {
-            PathEntries.Add(executionPath);
-            return ValueTask.CompletedTask;
-        }
+        private static ValueTask<SunderContent> Content<T>(T value)
+            => ValueTask.FromResult(SunderContent.FromBytes(JsonSerializer.SerializeToUtf8Bytes(value, new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+                "application/json", "builder-result.json"));
     }
 }

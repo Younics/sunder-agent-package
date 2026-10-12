@@ -42,7 +42,7 @@ public sealed class WorkspacePresentationFailureDispatcherTests
         using var viewModel = new AgentWorkspacesViewModel(
             workspaceGateway,
             executionGateway,
-            catalog.AppCatalog,
+            catalog.WorkspaceEditors,
             settingsNavigationService: null,
             uiDispatcher: dispatcher);
         await viewModel.InitializeAsync().WaitAsync(TimeSpan.FromSeconds(2));
@@ -97,7 +97,7 @@ public sealed class WorkspacePresentationFailureDispatcherTests
             string? executionTargetId)
             => throw new NotSupportedException();
 
-        public void DeleteWorkspace(string workspaceId) => throw new NotSupportedException();
+        public Task DeleteWorkspaceAsync(string workspaceId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
         public IReadOnlyList<AgentWorkspaceBindingRecord> ListBindings(string workspaceId) => [];
 
@@ -119,7 +119,7 @@ public sealed class WorkspacePresentationFailureDispatcherTests
             });
     }
 
-    private sealed class FailingReloadExecutionGateway : IAgentExecutionGateway, IAgentExecutionTargetLoader
+    private sealed class FailingReloadExecutionGateway : IAgentExecutionGateway
     {
         public const string FailureMessage = "execution target reload failed";
         private readonly TaskCompletionSource _failReload =
@@ -128,8 +128,6 @@ public sealed class WorkspacePresentationFailureDispatcherTests
 
         public TaskCompletionSource ReloadStarted { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        public IReadOnlyList<AgentExecutionTargetDescriptor> ListTargets() => [];
 
         public Task<AgentExecutionTargetWarmupResult> WarmWorkspaceAsync(
             AgentWorkspaceRecord workspace,

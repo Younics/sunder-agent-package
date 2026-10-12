@@ -13,7 +13,7 @@ internal sealed partial class AgentBehaviorLoopHost(
     AgentPermissionService permissionService,
     AgentMemoryCoordinator memoryCoordinator,
     IPackageEventLogger eventLogger,
-    IAgentChatProvider provider,
+    AgentRunProviderSelection provider,
     AgentSessionRecord session,
     AgentProfileRecord profile,
     AgentWorkspaceRecord? workspace,
@@ -34,7 +34,7 @@ internal sealed partial class AgentBehaviorLoopHost(
     private readonly AgentPermissionService _permissionService = permissionService;
     private readonly AgentMemoryCoordinator _memoryCoordinator = memoryCoordinator;
     private readonly IPackageEventLogger _eventLogger = eventLogger;
-    private readonly IAgentChatProvider _provider = provider;
+    private readonly AgentRunProviderSelection _provider = provider;
     private readonly AgentSessionRecord _session = session;
     private readonly AgentProfileRecord _profile = profile;
     private readonly AgentWorkspaceRecord? _workspace = workspace;
@@ -117,53 +117,17 @@ internal sealed partial class AgentBehaviorLoopHost(
 
     public IReadOnlyList<AgentTurnRecord> ListRecentTurns(int limit) => _sessionService.ListRecentTurns(_session.SessionId, limit);
 
-    public async ValueTask<IReadOnlyList<AgentRuntimeTool>> ListReadyToolsAsync(CancellationToken cancellationToken = default)
-    {
-        var stopwatch = Stopwatch.StartNew();
-        LogEvent(PackageLogLevel.Debug, "tools.ready_list.start", "Listing ready tools.");
-        try
-        {
-            var ownedTools = await _toolService.ListReadyOwnedRuntimeToolsAsync(
-                _profile,
-                _session.SessionId,
-                _workspace,
-                cancellationToken);
-            _availableOwnedToolsById = ownedTools
-                .ToDictionary(tool => tool.RuntimeTool.Descriptor.ToolId, StringComparer.OrdinalIgnoreCase);
-            _availableToolsById = ownedTools
-                .Select(tool => tool.RuntimeTool.Descriptor)
-                .ToDictionary(tool => tool.ToolId, StringComparer.OrdinalIgnoreCase);
-            LogEvent(
-                PackageLogLevel.Debug,
-                "tools.ready_list.completed",
-                $"{ownedTools.Count} ready tool(s)",
-                stopwatch.ElapsedMilliseconds,
-                new Dictionary<string, object?>(StringComparer.Ordinal)
-                {
-                    ["tool.count"] = ownedTools.Count,
-                });
-            return ownedTools.Select(static tool => tool.RuntimeTool).ToArray();
-        }
-        catch (OperationCanceledException)
-        {
-            LogEvent(PackageLogLevel.Debug, "tools.ready_list.canceled", "Ready tool listing was canceled.", elapsedMilliseconds: stopwatch.ElapsedMilliseconds);
-            throw;
-        }
-        catch (Exception ex)
-        {
-            LogEvent(PackageLogLevel.Warning, "tools.ready_list.failed", "Ready tool listing failed.", stopwatch.ElapsedMilliseconds, exception: ex);
-            throw;
-        }
-    }
-
     public ValueTask<IChatClient> CreateChatClientAsync(
         AgentChatClientContext context,
         CancellationToken cancellationToken = default)
-        => _provider.CreateChatClientAsync(context with
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult<IChatClient>(new AgentModelChatClient(context with
         {
             EventLogger = _eventLogger,
             CorrelationAttributes = BuildProviderCorrelationAttributes(context.CorrelationAttributes),
-        }, cancellationToken);
+        }, _provider.Provider!.Service.StreamChatAsync));
+    }
 
     public AgentRunCheckpointRecord SaveCheckpoint(AgentRunStatus status, string? summary)
     {
@@ -321,11 +285,12 @@ internal sealed partial class AgentBehaviorLoopHost(
             });
         if (permissionRequest is not null)
         {
-            _toolService.BindPreparedResourceCapabilities(
+            await _toolService.BindPreparedResourceCapabilitiesAsync(
                 preparedExecution.ExecutionId,
                 permissionRequest,
-                preparedInvocation);
-            var permissionEvaluation = _permissionService.Evaluate(_session.SessionId, permissionRequest);
+                preparedInvocation).ConfigureAwait(false);
+            var permissionEvaluation = await _permissionService.EvaluateAsync(
+                _session.SessionId, permissionRequest, cancellationToken).ConfigureAwait(false);
             _allowOutsideConfiguredScopeByCallId[toolCall.CallId] =
                 permissionEvaluation.Decision == AgentPermissionDecision.Allow
                 && string.Equals(
@@ -360,7 +325,7 @@ internal sealed partial class AgentBehaviorLoopHost(
                     Content: $"### Permission denied\n\n{permissionRequest.Summary}",
                     IsError: true,
                     ErrorCode: "permission-denied");
-                _toolService.ReleasePreparedInvocation(preparedExecution.ExecutionId);
+                await _toolService.ReleasePreparedInvocationAsync(preparedExecution.ExecutionId).ConfigureAwait(false);
                 CompleteToolExecution(
                     toolCall,
                     denialResult,
@@ -395,7 +360,7 @@ internal sealed partial class AgentBehaviorLoopHost(
                     permissionResolution.ExecutionTarget,
                     permissionRequest,
                     _profile,
-                    _provider.Descriptor.ProviderId,
+                    _provider.Descriptor!.ProviderId,
                     chatBinding?.ModelId,
                     preparedExecution.OwnerPackageId,
                     preparedInvocation.ExecutionTargetOwnerPackageId,
@@ -436,7 +401,7 @@ internal sealed partial class AgentBehaviorLoopHost(
                         permissionResolution.ExecutionTarget,
                         permissionRequest,
                         _profile,
-                        _provider.Descriptor.ProviderId,
+                        _provider.Descriptor!.ProviderId,
                         chatBinding?.ModelId,
                         preparedExecution.OwnerPackageId,
                         preparedInvocation.ExecutionTargetOwnerPackageId,
@@ -461,7 +426,7 @@ internal sealed partial class AgentBehaviorLoopHost(
                 }
                 catch
                 {
-                    _toolService.ReleasePreparedInvocation(preparedExecution.ExecutionId);
+                    await _toolService.ReleasePreparedInvocationAsync(preparedExecution.ExecutionId).ConfigureAwait(false);
                     throw;
                 }
             }
@@ -482,7 +447,7 @@ internal sealed partial class AgentBehaviorLoopHost(
             && IsSamePendingExecution(preparedExecution, pending)
             && _sessionService.GetToolExecutionResult(preparedExecution.ExecutionId) is { } recordedResult)
         {
-            _toolService.ReleasePreparedInvocation(preparedExecution.ExecutionId);
+            await _toolService.ReleasePreparedInvocationAsync(preparedExecution.ExecutionId).ConfigureAwait(false);
             return new AgentToolCallOutcome(AgentToolCallOutcomeKind.Executed, Result: recordedResult);
         }
 
@@ -594,7 +559,7 @@ internal sealed partial class AgentBehaviorLoopHost(
             permissionResolution.ExecutionTarget,
             permissionResolution.PermissionRequest,
             _profile,
-            _provider.Descriptor.ProviderId,
+            _provider.Descriptor!.ProviderId,
             (_profile.ModelBindings ?? []).FirstOrDefault(binding => string.Equals(
                 binding.CapabilityKind,
                 AgentModelCapabilityKinds.Chat,
@@ -670,7 +635,7 @@ internal sealed partial class AgentBehaviorLoopHost(
             enforceExpectedExecutionContext: true);
         if (preflightResult is not null)
         {
-            _toolService.ReleasePreparedInvocation(preparedExecution.ExecutionId);
+            await _toolService.ReleasePreparedInvocationAsync(preparedExecution.ExecutionId).ConfigureAwait(false);
             var deferredTurn = CompleteToolExecution(
                 pending,
                 preflightResult,
@@ -690,7 +655,7 @@ internal sealed partial class AgentBehaviorLoopHost(
             cancellationToken.ThrowIfCancellationRequested();
             if (_sessionService.GetToolExecutionResult(preparedExecution.ExecutionId) is { } concurrentResult)
             {
-                _toolService.ReleasePreparedInvocation(preparedExecution.ExecutionId);
+                await _toolService.ReleasePreparedInvocationAsync(preparedExecution.ExecutionId).ConfigureAwait(false);
                 return new AgentToolCallOutcome(AgentToolCallOutcomeKind.Executed, Result: concurrentResult);
             }
             return await RecordApprovedSecurityDenialAsync(

@@ -4,6 +4,8 @@ using System.Reflection;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -15,19 +17,22 @@ public sealed partial class AgentSourceArtifactMigrationTests
         using var package = RegressionTestPackageScope.Create();
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
         var cleaned = new ConcurrentQueue<Guid>();
-        var cleaner = AddCleanupProvider(memory, state, "SessionCleanerProvider", ["durable.cleaner", (Action<Guid>)cleaned.Enqueue]);
+        var cleaner = AddCleanupCleaner(state, "durable.cleaner", cleaned.Enqueue);
         cleaner.FailuresRemaining = 1;
         var observer = new CleanupObserver();
-        var lifecycle = AddCleanupLifecycleProvider(memory, probes, state, observer);
+        var lifecycle = AddCleanupLifecycleProvider(state, observer);
         lifecycle.FailuresRemaining = 1;
         var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
-        using var catalog = AgentRpcCatalog.CreateDormant(rpc);
+        await using var receiver = new GeneratedServiceTestScope(rpc);
+        var cleaners = receiver.Providers(owner.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Services.ISessionCleanerService", true)!);
+        var observers = receiver.Providers(owner.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Services.IDurableLifecycleObserverService", true)!);
         var storeType = owner.GetType("Sunder.Package.Agent.Storage.AgentLocalStore", true)!;
         var store = Activator.CreateInstance(storeType, package.Context)!;
         await using var initialStoreLifetime = (IAsyncDisposable)store;
-        var sessions = AgentRoleBoundary.Create(owner.GetType("Sunder.Package.Agent.Services.AgentSessionService", true)!, store, catalog);
-        var workspaces = AgentRoleBoundary.Create(owner.GetType("Sunder.Package.Agent.Services.AgentWorkspaceService", true)!, store, catalog, sessions);
-        var sessionId = CreateAndDelete("First cleanup");
+        var sessions = AgentRoleBoundary.Create(owner.GetType("Sunder.Package.Agent.Services.AgentSessionService", true)!, store, cleaners);
+        var workspaces = AgentRoleBoundary.Create(owner.GetType("Sunder.Package.Agent.Services.AgentWorkspaceService", true)!, store,
+            cleaners, sessions, null);
+        var sessionId = await CreateAndDelete("First cleanup");
         var job = Assert.Single(Values(Call(store, "ListSessionCleanupJobs")));
         Assert.Equal("Pending", Property<string>(job, "Status")); Assert.Equal(1, Property<int>(job, "AttemptCount"));
         Assert.DoesNotContain("private-cleanup-failure", Property<string>(job, "LastError"), StringComparison.Ordinal);
@@ -42,7 +47,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
         await ((IAsyncDisposable)store).DisposeAsync();
         store = Activator.CreateInstance(storeType, package.Context)!;
         await using var storeLifetime = (IAsyncDisposable)store;
-        var cleanup = AgentRoleBoundary.Create(owner.GetType("Sunder.Package.Agent.Services.AgentSessionCleanupDispatcher", true)!, store, catalog);
+        var cleanup = AgentRoleBoundary.Create(owner.GetType("Sunder.Package.Agent.Services.AgentSessionCleanupDispatcher", true)!, store,
+            cleaners);
         await using var cleanupLifetime = (IAsyncDisposable)cleanup;
         await WaitUntilDue(job);
         await Flush(cleanup);
@@ -50,7 +56,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.Equal("Completed", Property<string>(job, "Status"));
         Assert.Equal(new[] { sessionId, sessionId }, cleaned.ToArray());
 
-        var dispatcher = AgentRoleBoundary.Create(owner.GetType("Sunder.Package.Agent.Services.AgentLifecycleDispatcher", true)!, store, catalog, null);
+        var dispatcher = AgentRoleBoundary.Create(owner.GetType("Sunder.Package.Agent.Services.AgentLifecycleDispatcher", true)!, store,
+            observers, null);
         await using var dispatcherLifetime = (IAsyncDisposable)dispatcher;
         var subscription = (string)storeType.GetMethod("BuildLifecycleSubscriptionId", BindingFlags.Static | BindingFlags.NonPublic)!
             .Invoke(null, ["sunder.package.agent.memory.semantic", observer.ObserverId, "Durable"])!;
@@ -64,9 +71,11 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.Equal(2, observer.Events.Count);
         Assert.All(observer.Events, item => { Assert.Equal(envelope.EventId, item.EventId); Assert.Equal(envelope.PayloadHash, item.PayloadHash); Assert.Equal(envelope.PayloadJson, item.PayloadJson); });
 
-        sessions = AgentRoleBoundary.Create(owner.GetType("Sunder.Package.Agent.Services.AgentSessionService", true)!, store, catalog);
-        workspaces = AgentRoleBoundary.Create(owner.GetType("Sunder.Package.Agent.Services.AgentWorkspaceService", true)!, store, catalog, sessions);
-        var secondSession = CreateAndDelete("Cancellation cleanup");
+        sessions = AgentRoleBoundary.Create(owner.GetType("Sunder.Package.Agent.Services.AgentSessionService", true)!, store,
+            cleaners);
+        workspaces = AgentRoleBoundary.Create(owner.GetType("Sunder.Package.Agent.Services.AgentWorkspaceService", true)!, store,
+            cleaners, sessions, null);
+        var secondSession = await CreateAndDelete("Cancellation cleanup");
         var second = Events().Single(item => item.Payload.DeletedSessionIds.Contains(secondSession));
         lifecycle.Gate = new();
         using (var cancelled = new CancellationTokenSource())
@@ -85,17 +94,17 @@ public sealed partial class AgentSourceArtifactMigrationTests
         await retiring.WaitAsync(TimeSpan.FromSeconds(5));
         delivery = Call(store, "GetLifecycleDeliveryState", subscription, second.Sequence)!;
         Assert.Equal("Pending", Property<string>(delivery, "Status")); Assert.Equal(0, Property<int>(delivery, "AttemptCount"));
-        var replacement = new CleanupObserver(); AddCleanupLifecycleProvider(memory, probes, state, replacement);
+        var replacement = new CleanupObserver(); AddCleanupLifecycleProvider(state, replacement);
         await Flush(dispatcher);
         Assert.Equal("Delivered", Property<string>(Call(store, "GetLifecycleDeliveryState", subscription, second.Sequence)!, "Status"));
         Assert.Equal(second.EventId, Assert.Single(replacement.Events).EventId);
         Assert.All(Values(Call(store, "ListSessionCleanupJobs")), item => Assert.Equal("Completed", Property<string>(item, "Status")));
 
-        Guid CreateAndDelete(string name)
+        async Task<Guid> CreateAndDelete(string name)
         {
             var workspace = (AgentWorkspaceRecord)Call(workspaces, "CreateWorkspace", name)!;
             var session = (AgentSessionRecord)Call(sessions, "CreateSession", name, null, null, null, null, null, null, "profile.cleanup", null, null, workspace.WorkspaceId)!;
-            Call(workspaces, "DeleteWorkspace", workspace.WorkspaceId);
+            await ((Task)Call(workspaces, "DeleteWorkspaceAsync", workspace.WorkspaceId, CancellationToken.None)!).WaitAsync(TimeSpan.FromSeconds(10));
             Assert.Null(Call(sessions, "GetSession", session.SessionId));
             return session.SessionId;
         }

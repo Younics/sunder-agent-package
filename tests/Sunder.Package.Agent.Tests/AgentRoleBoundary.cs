@@ -5,6 +5,7 @@ using System.Reflection.Emit;
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -115,51 +116,7 @@ internal static class AgentRoleBoundary
         {
             if (cache.TryGetValue(target, out var previous)) return previous;
             object result;
-            if (target.FullName == "Sunder.Package.Agent.Protocol.AgentRpcCatalog")
-            {
-                var client = Field(value.GetType(), "_client").GetValue(value)!;
-                result = target.GetMethod("CreateDormant", BindingFlags.Static | BindingFlags.Public)!.Invoke(null, [client])!;
-                var lifetime = (CancellationTokenSource)Field(value.GetType(), "_lifetime").GetValue(value)!;
-                lifetime.Token.Register(((IDisposable)result).Dispose);
-                if (Field(value.GetType(), "_watchTask").GetValue(value) is not null)
-                    target.GetMethod("StartWatching")!.Invoke(result, null);
-            }
-            else if (target.IsGenericType && target.GetGenericTypeDefinition().FullName is "Sunder.Package.Agent.Protocol.AgentRpcService`1" or "Sunder.Package.Agent.Protocol.AgentRpcProviderService`1")
-            {
-                var sourceFactory = value.GetType().GetProperty("ProviderFactory", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(value);
-                var id = value.GetType().GetProperty("ContractId")!.GetValue(value)!;
-                if (sourceFactory is not null)
-                {
-                    var factory = target.GetMethod("WithProviderIdentity", BindingFlags.Static | BindingFlags.NonPublic)!;
-                    result = factory.Invoke(null, [id, Convert(sourceFactory, factory.GetParameters()[1].ParameterType)])!;
-                }
-                else
-                {
-                    var factory = value.GetType().GetFields(BindingFlags.Instance | BindingFlags.NonPublic).Select(field => field.GetValue(value)).OfType<Delegate>().Single();
-                    var ctor = target.GetConstructors().Single();
-                    result = ctor.Invoke([id, Convert(factory, ctor.GetParameters()[1].ParameterType)]);
-                }
-            }
-            else if (target.IsGenericType && target.GetGenericTypeDefinition().FullName == "Sunder.Package.Agent.Protocol.AgentRpcReference`1")
-            {
-                var flags = BindingFlags.Instance | BindingFlags.NonPublic;
-                var ctor = target.GetConstructors(flags).Single();
-                var sourceService = value.GetType().GetField("_service", flags)!.GetValue(value)!;
-                var binding = value.GetType().GetField("_clientBinding", flags)!.GetValue(value)!;
-                Func<ISunderRpcClient, SunderRpcEndpointReference, object> borrow = (_, _) => binding;
-                var serviceType = ctor.GetParameters()[1].ParameterType;
-                var serviceConstructor = serviceType.GetConstructors().Single();
-                var service = serviceConstructor.Invoke([sourceService.GetType().GetProperty("ContractId")!.GetValue(sourceService),
-                    Convert(borrow, serviceConstructor.GetParameters()[1].ParameterType)]);
-                result = ctor.Invoke([
-                    value.GetType().GetField("_client", flags)!.GetValue(value),
-                    service,
-                    value.GetType().GetProperty("Provider")!.GetValue(value),
-                ]);
-                var lifetime = (CancellationTokenSource)value.GetType().GetField("_retirement", flags)!.GetValue(value)!;
-                lifetime.Token.Register(() => target.GetMethod("Retire", flags)!.Invoke(result, null));
-            }
-            else if (typeof(Delegate).IsAssignableFrom(target)) result = AdaptDelegate((Delegate)value, target);
+            if (typeof(Delegate).IsAssignableFrom(target)) result = AdaptDelegate((Delegate)value, target);
             else if (target.IsArray || target.IsGenericType && target.GenericTypeArguments.Length == 1
                 && typeof(IEnumerable).IsAssignableFrom(target))
             {
@@ -263,8 +220,27 @@ internal static class AgentRoleBoundary
         Func<int, object?[], object?> invoke = (index, arguments) =>
         {
             var destination = methods[index];
-            var contract = source.GetType().GetInterfaces().Single(type => type.FullName == destination.DeclaringType!.FullName);
-            var implementation = contract.GetMethods().Single(method => method.Name == destination.Name && method.GetParameters().Length == destination.GetParameters().Length);
+            var sourceType = source.GetType();
+            var contract = sourceType.GetInterfaces().SingleOrDefault(type => type.FullName == destination.DeclaringType!.FullName);
+            if (contract is null)
+            {
+                // An ordinary service owns its concrete methods; the generated
+                // interface is a consumer API, not a required implementation port.
+                // These mixed-role component tests still invoke the actual service.
+                var declaration = sourceType.GetCustomAttribute<SunderServiceAttribute>(inherit: false);
+                Assert.NotNull(declaration);
+                var generatedApi = sourceType.Assembly.GetType(destination.DeclaringType!.FullName!);
+                Assert.NotNull(generatedApi);
+                Assert.True(generatedApi.IsInterface);
+                var serviceName = declaration.ServiceId is { } serviceId
+                    ? string.Concat(serviceId.Split('-', '.', '_').Select(part => char.ToUpperInvariant(part[0]) + part[1..]))
+                    : sourceType.Name;
+                Assert.Equal("I" + serviceName + (serviceName.EndsWith("Service", StringComparison.Ordinal) ? "" : "Service"), generatedApi.Name);
+                Assert.StartsWith("Sunder.Generated.Packages.", generatedApi.Namespace, StringComparison.Ordinal);
+                Assert.EndsWith("_Services", generatedApi.Namespace, StringComparison.Ordinal);
+            }
+            var implementation = (contract ?? sourceType).GetMethods().Single(method => method.Name == destination.Name
+                && method.GetParameters().Length == destination.GetParameters().Length);
             try
             {
                 var returned = Invoke(() => implementation.Invoke(source, Arguments(implementation.GetParameters(), arguments)));

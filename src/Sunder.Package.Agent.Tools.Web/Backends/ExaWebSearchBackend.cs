@@ -1,7 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
 using Sunder.Package.Agent.Tools.Web.Services;
 
 namespace Sunder.Package.Agent.Tools.Web.Backends;
@@ -69,31 +69,45 @@ public sealed class ExaWebSearchBackend : IDisposable
     public async ValueTask<AgentToolReadiness> GetReadinessAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return new AgentToolReadiness(
-            "web_search",
-            AgentToolReadinessStatus.Ready,
-            string.IsNullOrWhiteSpace(await _settingsService.GetExaApiKeyAsync(cancellationToken))
+        return new AgentToolReadiness
+        {
+            ToolId = "web_search", Status = AgentToolReadinessStatus.Ready,
+            Message = string.IsNullOrWhiteSpace(await _settingsService.GetExaApiKeyAsync(cancellationToken))
                 ? "Web search is ready via the default Exa MCP-backed route."
-                : "Web search is ready via the Exa MCP-backed route using your optional Exa API key.");
+                : "Web search is ready via the Exa MCP-backed route using your optional Exa API key.",
+        };
     }
 
     public async Task<WebSearchBackendResult> SearchAsync(
         string query,
         int maxResults,
         CancellationToken cancellationToken = default)
+        => await SearchAsync(query, maxResults,
+            await _settingsService.GetExaApiKeyAsync(cancellationToken).ConfigureAwait(false),
+            cancellationToken).ConfigureAwait(false);
+
+    internal async Task<WebSearchBackendResult> SearchAsync(
+        string query,
+        int maxResults,
+        string? apiKey,
+        CancellationToken cancellationToken)
     {
         using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutSource.CancelAfter(_timeout);
         var requestCancellationToken = timeoutSource.Token;
         try
         {
-            var endpoint = await BuildEndpointUriAsync(requestCancellationToken).ConfigureAwait(false);
-            var parts = await new ExaMcpClient(_httpClient, endpoint, MaximumRawResponseBytes)
-                .SearchAsync(
+            var endpoint = BuildEndpointUri(apiKey);
+            var response = await new WebSearchMcpClient(
+                _httpClient, endpoint, MaximumRawResponseBytes, BackendId, "web_search_exa")
+                .CallAsync(new
+                {
                     query,
-                    Math.Clamp(maxResults, 1, MaximumResultCount),
-                    requestCancellationToken).ConfigureAwait(false);
-            var parsed = JoinBounded(parts, wasTruncated: false);
+                    type = "auto",
+                    numResults = Math.Clamp(maxResults, 1, MaximumResultCount),
+                    livecrawl = "fallback",
+                }, requestCancellationToken).ConfigureAwait(false);
+            var parsed = JoinBounded(response.Text, wasTruncated: false);
             var content = Truncate(parsed.Content, MaximumDisplayChars, out var displayTruncated);
             var structuredContent = Truncate(
                 parsed.Content,
@@ -135,13 +149,10 @@ public sealed class ExaWebSearchBackend : IDisposable
         }
     }
 
-    private async Task<Uri> BuildEndpointUriAsync(CancellationToken cancellationToken)
-    {
-        var apiKey = await _settingsService.GetExaApiKeyAsync(cancellationToken).ConfigureAwait(false);
-        return string.IsNullOrWhiteSpace(apiKey)
+    private static Uri BuildEndpointUri(string? apiKey)
+        => string.IsNullOrWhiteSpace(apiKey)
             ? new Uri("https://mcp.exa.ai/mcp")
             : new Uri($"https://mcp.exa.ai/mcp?exaApiKey={Uri.EscapeDataString(apiKey)}");
-    }
 
     private static ParsedSearchContent JoinBounded(IReadOnlyList<string> parts, bool wasTruncated)
     {
@@ -196,7 +207,7 @@ public sealed class ExaWebSearchBackend : IDisposable
                 continue;
             }
 
-            sources.Add(new AgentToolSourceItem(uri.Host, uri.AbsoluteUri));
+            sources.Add(new AgentToolSourceItem { Title = uri.Host, Url = uri.AbsoluteUri, Snippet = null });
             if (sources.Count == MaximumSources)
             {
                 break;

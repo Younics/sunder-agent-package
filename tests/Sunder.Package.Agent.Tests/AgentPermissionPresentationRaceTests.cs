@@ -184,7 +184,8 @@ public sealed class AgentPermissionPresentationRaceTests
 
         public AgentSessionPermissionState GetSessionState(Guid sessionId) => new(sessionId, false);
         public void SetSessionUnrestrictedMode(Guid sessionId, bool isEnabled) { }
-        public IReadOnlyList<AgentPermissionActionDescriptor> ListActions() => [];
+        public Task<IReadOnlyList<AgentPermissionActionDescriptor>> ListActionsAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<AgentPermissionActionDescriptor>>([]);
         public IReadOnlyList<AgentPermissionOverride> ListOverrides() => [];
         public void SaveOverride(string actionId, string boundaryId, AgentPermissionDecision decision) { }
         public void DeleteOverride(string actionId, string boundaryId) { }
@@ -446,7 +447,7 @@ public sealed class AgentPermissionPresentationRaceTests
         }
     }
 
-    private sealed class RacingPermissionOwnerClient : IAgentOwnerClient
+    private sealed class RacingPermissionOwnerClient : OwnerServiceStub
     {
         public TaskCompletionSource ReadStarted { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -454,14 +455,13 @@ public sealed class AgentPermissionPresentationRaceTests
         public TaskCompletionSource ReleaseRead { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public async ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-            AgentOwnerRpcOperation<TRequest, TResponse> operation,
+        public override async ValueTask<TResponse> RespondAsync<TRequest, TResponse>(
             TRequest request,
             CancellationToken cancellationToken = default)
             where TRequest : class
             where TResponse : class
         {
-            Assert.True(operation.Is(AgentRuntimeOperations.Permissions));
+            Assert.IsType<AgentPermissionCommand>(request);
             var command = Assert.IsType<AgentPermissionCommand>(request);
             if (command.Kind == AgentPermissionCommandKind.Read)
             {
@@ -474,8 +474,7 @@ public sealed class AgentPermissionPresentationRaceTests
             return (TResponse)(object)Projection(2, AgentPermissionDecision.Allow);
         }
 
-        public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-            AgentOwnerRpcStream<TRequest, TEvent> stream,
+        public override async IAsyncEnumerable<TEvent> ObserveAsync<TRequest, TEvent>(
             TRequest request,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
             where TRequest : class

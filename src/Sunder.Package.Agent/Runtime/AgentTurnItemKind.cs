@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Sunder.Package.Agent.Contracts.Models;
 
 /// <summary>
@@ -7,14 +9,14 @@ namespace Sunder.Package.Agent.Contracts.Models;
 public enum AgentTurnItemKind
 {
     /// <summary>Natural-language or plain-text content in <see cref="AgentTurnItemRecord.TextContent"/>.</summary>
-    Text = 0,
+    [JsonStringEnumMemberName("text")] Text = 0,
 
     /// <summary>A tool request carrying call, tool, and arguments fields.</summary>
-    ToolCall = 1,
+    [JsonStringEnumMemberName("tool-call")] ToolCall = 1,
 
     /// <summary>A tool outcome carrying correlation, result, structured payload, provenance, and error fields.</summary>
-    ToolResult = 2,
+    [JsonStringEnumMemberName("tool-result")] ToolResult = 2,
 
     /// <summary>An attachment reference whose structured payload contains <see cref="AgentAttachmentMetadata"/>.</summary>
-    Attachment = 3,
+    [JsonStringEnumMemberName("attachment")] Attachment = 3,
 }

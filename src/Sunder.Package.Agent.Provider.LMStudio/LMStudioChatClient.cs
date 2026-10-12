@@ -1,7 +1,6 @@
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.AI;
 using OpenAI.Chat;
-using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Provider.Shared;
 using AIChatMessage = Microsoft.Extensions.AI.ChatMessage;

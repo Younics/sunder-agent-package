@@ -16,8 +16,9 @@ internal sealed class RegressionTestProviderRoles : IDisposable
     private readonly object _gate = new();
     private bool _disposed;
 
-    internal SunderWorkerProviderRegistration Create(string family, string provider, params object?[] arguments)
-        => Assert.IsType<SunderWorkerProviderRegistration>(AgentRoleBoundary.Call(CreateObject(family, provider, arguments), "CreateSunderRpcProviderRegistration"));
+    internal SunderWorkerProviderRegistration Create(GeneratedServiceTestScope receiver, string contractId,
+        string family, string provider, params object?[] arguments)
+        => receiver.Register(CreateObject(family, provider, arguments), contractId);
 
     internal object CreateObject(string family, string typeName, params object?[] arguments)
     {
@@ -30,7 +31,7 @@ internal sealed class RegressionTestProviderRoles : IDisposable
 
     private object CreateObjectCore(string family, string typeName, object?[] arguments)
     {
-        var name = "Sunder.Package.Agent." + family;
+        var name = family == "Agent" ? "Sunder.Package.Agent" : "Sunder.Package.Agent." + family;
         var existing = arguments.Where(value => value is not null).Select(value => AgentRoleBoundary.Unwrap(value!).GetType().Assembly)
             .FirstOrDefault(assembly => assembly.GetName().Name == name
                 && assembly.EntryPoint?.DeclaringType?.FullName == "Sunder.Generated.Package.WorkerEntryPoint");
@@ -57,17 +58,6 @@ internal sealed class RegressionTestProviderRoles : IDisposable
             catch { context.Unload(); throw; }
         }
         return AgentRoleBoundary.Create(role.Assembly.GetType(name + "." + typeName, throwOnError: true)!, arguments);
-    }
-
-    // Declaration-only contracts have no first-party provider for arbitrary test
-    // collaborators. Use the owner's real generated handler/interface in that
-    // case and read its generated tuple independently of the frozen oracle.
-    internal static SunderWorkerProviderRegistration ForGeneratedHandler(string contractId, ISunderRpcServiceHandler handler)
-    {
-        var identity = handler.GetType().Assembly.GetTypes().Single(type => type.Namespace == handler.GetType().Namespace
-            && type.GetField("ContractId", BindingFlags.Public | BindingFlags.Static)?.GetRawConstantValue() as string == contractId);
-        string Value(string field) => (string)identity.GetField(field)!.GetRawConstantValue()!;
-        return new("test.generated.provider", contractId, Value("ContractVersion"), Value("DescriptorSha256"), Value("AbiSha256"), handler);
     }
 
     public void Dispose()

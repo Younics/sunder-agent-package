@@ -1,12 +1,16 @@
 extern alias AgentApp;
 
+using System.Reflection;
 using AgentApp::Sunder.Package.Agent.Contracts.Contracts;
 using AgentApp::Sunder.Package.Agent.Contracts.Models;
+using AgentAppServiceIdentity = AgentApp::Sunder.Package.Agent.Contracts.Models.AgentServiceIdentity;
 using AgentApp::Sunder.Package.Agent.PackageViews;
 using AgentApp::Sunder.Package.Agent.Protocol;
 using AgentApp::Sunder.Package.Agent.Runtime;
 using AgentApp::Sunder.Package.Agent.Services;
+using Sunder.Sdk.Services;
 using Xunit;
+using AppServices = AgentApp::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -19,11 +23,12 @@ public sealed class WorkspaceExecutionTargetAuthorityRaceTests
         var executionGateway = new DeferredExecutionGateway(
             Target("alpha"),
             Target("beta"));
-        using var catalog = new RegressionTestExtensionCatalog();
+        await using var editors = new FakeServiceCatalog<AppServices.IWorkspaceEditorService>(
+            CurrentPublicRpcDescriptors.Get(RegressionTestAppBindings.WorkspaceEditors));
         using var viewModel = new AgentWorkspacesViewModel(
             workspaceGateway,
             executionGateway,
-            catalog.AppCatalog);
+            editors);
         await viewModel.InitializeAsync().WaitAsync(TimeSpan.FromSeconds(2));
         viewModel.SelectedExecutionTarget = viewModel.ExecutionTargets.Single(
             target => target.TargetId == "alpha");
@@ -55,41 +60,40 @@ public sealed class WorkspaceExecutionTargetAuthorityRaceTests
     {
         var workspaceGateway = new BlockingInitializationWorkspaceGateway();
         var executionGateway = new CatalogReplayExecutionGateway();
-        using var catalog = new RegressionTestExtensionCatalog();
+        await using var editors = new FakeServiceCatalog<AppServices.IWorkspaceEditorService>(
+            CurrentPublicRpcDescriptors.Get(RegressionTestAppBindings.WorkspaceEditors));
         using var viewModel = new AgentWorkspacesViewModel(
             workspaceGateway,
             executionGateway,
-            catalog.AppCatalog);
+            editors);
 
         var initialization = viewModel.InitializeAsync();
         await workspaceGateway.InitializationStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        var catalogChanged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        catalog.AppCatalog.Changed += OnCatalogChanged;
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        await using var changes = editors.WatchAsync(0, 0, cancellation.Token).GetAsyncEnumerator();
         try
         {
-            catalog.AddProvider(
-                RegressionTestAppBindings.WorkspaceEditors,
-                new NoOpWorkspaceEditorContributor());
-            await catalogChanged.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            editors.Add(new NoOpWorkspaceEditorContributor());
+            Assert.True(await changes.MoveNextAsync());
+            Assert.Equal(ServiceProviderChangeKind.Added, changes.Current.Kind);
         }
-        finally
-        {
-            catalog.AppCatalog.Changed -= OnCatalogChanged;
-        }
+        finally { cancellation.Cancel(); }
 
+        // This watcher observing Added does not establish that the VM's separate
+        // asynchronous observer has processed it. Hold initialization until the
+        // intended "change during initialization" precondition actually holds.
+        var pendingRefresh = typeof(AgentWorkspacesViewModel).GetField(
+            "_initializationCatalogRefreshPending", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        using (var observed = new CancellationTokenSource(TimeSpan.FromSeconds(2)))
+        {
+            while (!(bool)pendingRefresh.GetValue(viewModel)!)
+                await Task.Delay(1, observed.Token);
+        }
         workspaceGateway.ReleaseInitialization.TrySetResult();
         await initialization.WaitAsync(TimeSpan.FromSeconds(2));
 
         Assert.Equal(2, executionGateway.LoadCount);
         Assert.Contains(viewModel.ExecutionTargets, target => target.TargetId == "catalog-replay");
-
-        void OnCatalogChanged(object? sender, AgentRpcCatalogChangedEventArgs change)
-        {
-            if (change.IncludesContract(AgentRpcContractIds.WorkspaceEditor))
-            {
-                catalogChanged.TrySetResult();
-            }
-        }
     }
 
     private static AgentExecutionTargetDescriptor Target(string id)
@@ -97,16 +101,13 @@ public sealed class WorkspaceExecutionTargetAuthorityRaceTests
 
     private sealed class DeferredExecutionGateway(
         params AgentExecutionTargetDescriptor[] initialTargets) :
-        IAgentExecutionGateway,
-        IAgentExecutionTargetLoader
+        IAgentExecutionGateway
     {
         private int _loadCount;
 
         public DeferredResult<IReadOnlyList<AgentExecutionTargetDescriptor>> FirstRefresh { get; } = new();
 
         public DeferredResult<IReadOnlyList<AgentExecutionTargetDescriptor>> SecondRefresh { get; } = new();
-
-        public IReadOnlyList<AgentExecutionTargetDescriptor> ListTargets() => initialTargets;
 
         public Task<AgentExecutionTargetWarmupResult> WarmWorkspaceAsync(
             AgentWorkspaceRecord workspace,
@@ -125,14 +126,11 @@ public sealed class WorkspaceExecutionTargetAuthorityRaceTests
     }
 
     private sealed class CatalogReplayExecutionGateway :
-        IAgentExecutionGateway,
-        IAgentExecutionTargetLoader
+        IAgentExecutionGateway
     {
         private int _loadCount;
 
         public int LoadCount => Volatile.Read(ref _loadCount);
-
-        public IReadOnlyList<AgentExecutionTargetDescriptor> ListTargets() => [];
 
         public Task<AgentExecutionTargetWarmupResult> WarmWorkspaceAsync(
             AgentWorkspaceRecord workspace,
@@ -203,7 +201,7 @@ public sealed class WorkspaceExecutionTargetAuthorityRaceTests
             string? executionTargetId)
             => throw new NotSupportedException();
 
-        public void DeleteWorkspace(string workspaceId) => throw new NotSupportedException();
+        public Task DeleteWorkspaceAsync(string workspaceId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
         public IReadOnlyList<AgentWorkspaceBindingRecord> ListBindings(string workspaceId) => [];
 
@@ -221,7 +219,19 @@ public sealed class WorkspaceExecutionTargetAuthorityRaceTests
     {
         public string ContributorId => "catalog-replay-editor";
 
+        public ValueTask<AgentAppServiceIdentity> DescribeAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult<AgentAppServiceIdentity>(new AgentAppServiceIdentity(ContributorId, ContributorId));
+        }
+
         public bool CanEdit(AgentWorkspaceEditorContext context) => false;
+
+        public ValueTask<bool> CanEditAsync(AgentWorkspaceEditorContext context, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult(CanEdit(context));
+        }
 
         public ValueTask<IReadOnlyList<AgentEditorSection>> GetSectionsAsync(
             AgentWorkspaceEditorContext context,

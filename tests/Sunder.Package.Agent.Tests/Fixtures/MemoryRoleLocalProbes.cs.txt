@@ -1,11 +1,11 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Sunder.Package.Agent.Contracts.Contracts;
-using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 using Sunder.Sdk.Rpc;
 
 public sealed class RoleLocalLifecycleProbe(string observerId, string displayName, Func<string, CancellationToken, ValueTask> handle)
-    : IAgentDurableLifecycleObserver
+    : IDurableLifecycleObserverService
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
@@ -14,16 +14,30 @@ public sealed class RoleLocalLifecycleProbe(string observerId, string displayNam
     };
     public string ObserverId => observerId;
     public string DisplayName => displayName;
-    public ValueTask HandleDurableLifecycleEventAsync(AgentDurableLifecycleEventEnvelope value, CancellationToken token = default)
+    public ValueTask<AgentServiceIdentity> DescribeAsync(CancellationToken token = default)
+    {
+        token.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(new AgentServiceIdentity { Id = ObserverId, DisplayName = DisplayName });
+    }
+    public ValueTask HandleAsync(AgentDurableLifecycleEventEnvelope value, CancellationToken token = default)
         => handle(JsonSerializer.Serialize(value, Json), token);
 }
 
 public sealed class RoleLocalProfileCapabilityProbe(string consumerId, string displayName, string capabilities)
-    : IAgentProfileCapabilityConsumer
+    : IProfileCapabilityConsumerService
 {
     private readonly AgentProfileCapabilityConsumerDescriptor[] _capabilities = JsonSerializer.Deserialize<AgentProfileCapabilityConsumerDescriptor[]>(
         capabilities, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
     public string ConsumerId => consumerId;
     public string DisplayName => displayName;
-    public IReadOnlyList<AgentProfileCapabilityConsumerDescriptor> ListConsumedCapabilities() => _capabilities;
+    public ValueTask<AgentProfileCapabilityConsumerSnapshot> DescribeAsync(CancellationToken token = default)
+    {
+        token.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(new AgentProfileCapabilityConsumerSnapshot
+        {
+            ConsumerId = ConsumerId,
+            DisplayName = DisplayName,
+            Capabilities = _capabilities,
+        });
+    }
 }

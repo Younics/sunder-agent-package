@@ -1,9 +1,12 @@
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
-using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Package.Agent.Provider.TestSupport;
 using Sunder.Sdk.Settings;
+using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Provider.OpenAI.Tests;
@@ -45,14 +48,14 @@ public sealed class ProviderSharedUtilitiesTests
     [Fact]
     public void EmbeddingCorrelation_UsesVendorIndicesRatherThanResponseOrder()
     {
-        var results = ProviderEmbeddingBatch.CreateResultBuffer(["first", " ", "third"], out var inputs);
+        var results = ProviderEmbeddingBatch.CreateResultBuffer<AgentEmbeddingGenerationResult>(["first", " ", "third"], out var inputs);
         var first = Embedding(1);
         var third = Embedding(3);
 
         ProviderEmbeddingBatch.ApplyIndexedResults(results, inputs,
         [
-            new ProviderIndexedEmbedding(1, third),
-            new ProviderIndexedEmbedding(0, first),
+            new ProviderIndexedEmbedding<AgentEmbeddingGenerationResult>(1, third),
+            new ProviderIndexedEmbedding<AgentEmbeddingGenerationResult>(0, first),
         ]);
 
         Assert.Same(first, results[0]);
@@ -63,12 +66,12 @@ public sealed class ProviderSharedUtilitiesTests
     [Fact]
     public void EmbeddingCorrelation_RejectsSparseIndices()
     {
-        var results = ProviderEmbeddingBatch.CreateResultBuffer(["first", "second"], out var inputs);
+        var results = ProviderEmbeddingBatch.CreateResultBuffer<AgentEmbeddingGenerationResult>(["first", "second"], out var inputs);
 
         var exception = Assert.Throws<InvalidOperationException>(() =>
             ProviderEmbeddingBatch.ApplyIndexedResults(results, inputs,
             [
-                new ProviderIndexedEmbedding(1, Embedding(2)),
+                new ProviderIndexedEmbedding<AgentEmbeddingGenerationResult>(1, Embedding(2)),
             ]));
 
         Assert.Contains("count/index mismatch", exception.Message, StringComparison.Ordinal);
@@ -78,13 +81,13 @@ public sealed class ProviderSharedUtilitiesTests
     [Fact]
     public void EmbeddingCorrelation_RejectsDuplicateIndices()
     {
-        var results = ProviderEmbeddingBatch.CreateResultBuffer(["first", "second"], out var inputs);
+        var results = ProviderEmbeddingBatch.CreateResultBuffer<AgentEmbeddingGenerationResult>(["first", "second"], out var inputs);
 
         var exception = Assert.Throws<InvalidOperationException>(() =>
             ProviderEmbeddingBatch.ApplyIndexedResults(results, inputs,
             [
-                new ProviderIndexedEmbedding(0, Embedding(1)),
-                new ProviderIndexedEmbedding(0, Embedding(2)),
+                new ProviderIndexedEmbedding<AgentEmbeddingGenerationResult>(0, Embedding(1)),
+                new ProviderIndexedEmbedding<AgentEmbeddingGenerationResult>(0, Embedding(2)),
             ]));
 
         Assert.Contains("duplicate index 0", exception.Message, StringComparison.Ordinal);
@@ -191,8 +194,8 @@ public sealed class ProviderSharedUtilitiesTests
         {
             Variants =
             [
-                new("reasoning", "Reasoning"),
-                new("REASONING", "Reasoning again"),
+                new() { VariantId = "reasoning", DisplayName = "Reasoning", Description = null, ReasoningEffort = null },
+                new() { VariantId = "REASONING", DisplayName = "Reasoning again", Description = null, ReasoningEffort = null },
             ],
         };
         Assert.Throws<InvalidOperationException>(() => ProviderModelCatalog.ValidateAndOrder(
@@ -204,7 +207,7 @@ public sealed class ProviderSharedUtilitiesTests
     [Fact]
     public void ModelCatalog_RejectsInvalidLimitsAndMissingOrIneligibleDefaults()
     {
-        var invalidLimits = new AgentModelDescriptor("vendor/invalid", "Invalid", 0, 10);
+        var invalidLimits = Model("vendor/invalid", "Invalid", null) with { ContextWindow = 0 };
         Assert.Throws<InvalidOperationException>(() => ProviderModelCatalog.ValidateAndOrder(
             [invalidLimits],
             "vendor/invalid",
@@ -316,11 +319,137 @@ public sealed class ProviderSharedUtilitiesTests
         Assert.Equal("ToolCallRequested", ProviderResponseUpdates.Describe(update));
     }
 
+    [Fact]
+    public async Task ChatMessages_ReadSingleUseAliasesOnceAndKeepRemoteUrisRemote()
+    {
+        await using var content = SunderContent.FromStream(new MemoryStream([1, 2, 3]), "image/png", "image.png", length: 3);
+        var binary = ChatContent("content-reference") with { Content = content };
+        var remote = ChatContent("content-reference") with
+        {
+            ContentUri = new SunderRpcUri("https://example.test/image.png"),
+            MediaType = "image/png",
+        };
+
+        var messages = await ProviderChatValues.MessagesAsync(
+            [new() { Role = "user", MessageId = "message", AuthorName = null, Contents = [binary, binary, remote] }],
+            CancellationToken.None);
+
+        var message = Assert.Single(messages);
+        Assert.Equal(3, message.Contents.Count);
+        Assert.Equal(new byte[] { 1, 2, 3 }, Assert.IsType<DataContent>(message.Contents[0]).Data.ToArray());
+        Assert.Equal(new byte[] { 1, 2, 3 }, Assert.IsType<DataContent>(message.Contents[1]).Data.ToArray());
+        Assert.Equal("image.png", Assert.IsType<DataContent>(message.Contents[1]).Name);
+        Assert.Equal(new Uri("https://example.test/image.png"), Assert.IsType<UriContent>(message.Contents[2]).Uri);
+    }
+
+    [Theory]
+    [InlineData(null, "content.bin")]
+    [InlineData("", "content.bin")]
+    [InlineData(" \t", "content.bin")]
+    [InlineData("reply.png", "reply.png")]
+    public async Task ChatUpdate_UsesBinaryContentAndPreservesExplicitJsonNull(string? name, string expectedFileName)
+    {
+        var update = await ProviderChatValues.UpdateAsync(new ChatResponseUpdate
+        {
+            Contents = [new DataContent(new byte[] { 4, 5, 6 }, "image/png") { Name = name }, new FunctionResultContent("call", null)],
+        });
+        try
+        {
+            var contents = Assert.IsAssignableFrom<IReadOnlyList<AgentChatContent>>(update.ContentItems);
+            var binary = Assert.IsType<SunderContent>(contents[0].Content);
+            Assert.Null(contents[0].ContentUri);
+            Assert.Equal(expectedFileName, binary.FileName);
+            Assert.False(contents[0].Json.TryGetValue(out _));
+            Assert.True(contents[1].Json.TryGetValue(out var value));
+            Assert.Equal(JsonValueKind.Null, value.ValueKind);
+            await using var stream = await binary.OpenReadAsync();
+            var bytes = new byte[3];
+            await stream.ReadExactlyAsync(bytes);
+            Assert.Equal(new byte[] { 4, 5, 6 }, bytes);
+        }
+        finally
+        {
+            await ProviderChatValues.DisposeContentAsync(update);
+        }
+    }
+
+    [Fact]
+    public async Task ChatStream_EarlyExitCancelsBackpressuredProducerAndDisposesBinaryContent()
+    {
+        var client = new BinaryStreamingClient();
+        var request = new AgentChatStreamRequest
+        {
+            ProviderId = "vendor", ModelId = "vendor/model", Messages = [],
+            Options = new()
+            {
+                Instructions = null, ConversationId = null, ModelId = null, Temperature = null,
+                MaxOutputTokens = null, TopP = null, TopK = null, FrequencyPenalty = null,
+                PresencePenalty = null, Seed = null, AllowMultipleToolCalls = null,
+                ReasoningEffort = null, Tools = [], AdditionalProperties = null, ContinuationHandle = null,
+            },
+        };
+        var enumerator = ProviderChatStream.ReadAsync((_, _) => ValueTask.FromResult<IChatClient>(client), request, CancellationToken.None)
+            .GetAsyncEnumerator();
+        SunderContent content;
+        try
+        {
+            Assert.True(await enumerator.MoveNextAsync());
+            var update = Assert.IsType<AgentChatUpdateEvent>(enumerator.Current);
+            content = Assert.IsType<SunderContent>(Assert.Single(update.ContentItems!).Content);
+            Assert.InRange(client.Produced, 2, 99);
+            await using var stream = await content.OpenReadAsync();
+            Assert.Equal(1, stream.ReadByte());
+        }
+        finally
+        {
+            await enumerator.DisposeAsync();
+        }
+
+        Assert.Equal(1, client.DisposeCount);
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => content.OpenReadAsync().AsTask());
+    }
+
+    private static AgentChatContent ChatContent(string kind) => new()
+    {
+        Kind = kind, Text = null, ProtectedData = null, CallId = null, Name = null,
+        Json = default, InformationalOnly = false, MediaType = null, ContentUri = null,
+        Content = null, Usage = null, ErrorCode = null, ErrorMessage = null,
+    };
+
+    private sealed class BinaryStreamingClient : IChatClient
+    {
+        public int Produced { get; private set; }
+        public int DisposeCount { get; private set; }
+
+        public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            IEnumerable<ChatMessage> messages, ChatOptions? options = null,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await Task.CompletedTask;
+            for (var index = 0; index < 100; index++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                Produced++;
+                yield return new() { Contents = [new DataContent(new byte[] { 1, 2, 3 }, "image/png")] };
+            }
+        }
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+        public void Dispose() => DisposeCount++;
+    }
+
     private static AgentEmbeddingGenerationResult Embedding(float value)
-        => new("vendor/embedding", [value]);
+        => new() { ModelId = "vendor/embedding", Values = [value] };
 
     private static AgentModelDescriptor Model(string id, string name, DateOnly? releaseDate)
-        => new AgentModelDescriptor(id, name, 100, 10) { ReleaseDate = releaseDate };
+        => new()
+        {
+            ModelId = id, DisplayName = name, ContextWindow = 100, MaxOutputTokens = 10,
+            IsRecommended = false, Variants = null, SpeedOptions = null, ModeOptions = null, ReleaseDate = releaseDate,
+        };
 
     private static async IAsyncEnumerable<ChatResponseUpdate> AsAsync(IEnumerable<ChatResponseUpdate> updates)
     {

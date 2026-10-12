@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Authenticated pre-natural relocated domain sources; historical data only.",
+  "sources": [
+    {
+      "path": "src/Sunder.Package.Agent.Subagents/Runtime/TranscriptPageCursor.cs",
+      "currentSha256": "fe4967a84628f89883129dc84436e3c51a0c2ec3702b8731a671bce0c6b4f602",
+      "beforeSha256": "d8159a1796fe56af163d258492f4fa2e12993dc605f31c4b2801b5e0dbfc7ee3",
+      "indexBlob": "fe098479b99a5c480e97b62429c329e5681f1472",
+      "provenance": "git-index-blob",
+      "textChunks": [
+        "H4sIAAAAAAAC/42QQUsDMRCF7/kVOe6C5A8UC2VF8SCW7upFPAzJdA3dnZTJhFLE/26SroLQg3N6vLw335AUPY26T+SQzRbsAUY0mxFJTBdIGKxE8xQcTnGl",
+        "FMGM8QgWrzf6D2B0P+arx1MpvS3Z3h2Wp4w0F3OJdhmwCxM2/48usPZdeRJkgkkzggs0nbOwgZ2OwsmKHhgoWvZH2ZZ+4hi4UTrPHQgOfsbn/T6i6C4vEHQb",
+        "eRF7UwMPyTs9JKZH16rPav3SooB4e3W7vucwl1pT/6Wo3eUkybKte8rcrjXhqSmm+QOvObOAV+pLfQN7ApYApwEAAA=="
+      ]
+    },
+    {
+      "path": "src/Sunder.Package.Agent/Services/AgentWorkspaceBindingRoles.cs",
+      "currentSha256": "a0e9da52dc73bfd62fb5670e550d3116f936555db9ad725bbec6d798991cf7e5",
+      "beforeSha256": "76fe6b263dc54b203b7f9166cef47bf0e2c2b9d5f08f91c2e93819819a146732",
+      "indexBlob": "ca853c46a477ceebd2b4e1982887aecc0e4907d5",
+      "provenance": "git-index-blob",
+      "textChunks": [
+        "H4sIAAAAAAAC/42OsQrCMBCG9zzF4aRD8wLFQcW9GMFBHM7kiKFtUi6pKOK7G9u4e8vBff93/B57igNqAjV6Qywb1C1akhtLPklFfHeaYi3EuQSUaUvIeSvn",
+        "Y5F2wdAhdLT8PyrVDZnM6iKG8do5DTFhykt3GCNMJU6B26ni1nmTH321KF4C8hRJBx9TVjljaNj1yM/9g/SYXPBHZEsJ1rAYZlLRD1VpYotavMUHjF3nsAoB",
+        "AAA="
+      ]
+    }
+  ]
+}

@@ -39,12 +39,24 @@ internal sealed class CanonicalPackageRoles : IDisposable
 
     internal static SunderRpcContractDescriptor OwnedDescriptor(string root, string contractId)
     {
+        using var receipt = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(Analysis(root), "authoring-receipt.v1.json")));
+        var emitted = Assert.Single(receipt.RootElement.GetProperty("contracts").EnumerateArray(),
+            entry => entry.GetProperty("contractId").GetString() == contractId);
+        if (emitted.GetProperty("exposure").GetString() == "package")
+        {
+            var successor = SunderRpcContractDescriptor.Parse(Encoding.UTF8.GetBytes(emitted.GetProperty("canonicalDescriptor").GetString()!));
+            CurrentPrivateRpcDescriptors.AssertCurrent(successor);
+            Assert.Equal(receipt.RootElement.GetProperty("packageVersion").GetString(), successor.Version);
+            return successor;
+        }
         using var owned = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(root, "sunder-contracts.owned.json")));
         var current = Assert.Single(owned.RootElement.GetProperty("contracts").EnumerateObject(),
             entry => entry.Value.GetProperty("contractId").GetString() == contractId).Value.GetProperty("current");
         Assert.Equal("release-frozen", current.GetProperty("state").GetString());
         var descriptor = SunderRpcContractDescriptor.Parse(Encoding.UTF8.GetBytes(current.GetProperty("canonicalDescriptor").GetString()!));
-        var oracle = RegressionTestRpcDescriptors.Get(contractId);
+        var oracle = CurrentPublicRpcDescriptors.IsAgentPublicContract(contractId)
+            ? CurrentPublicRpcDescriptors.Get(contractId)
+            : RegressionTestRpcDescriptors.Get(contractId);
         Assert.Equal(oracle.GetCanonicalUtf8(), descriptor.GetCanonicalUtf8());
         Assert.Equal(oracle.GetCanonicalAbiProjectionUtf8(), descriptor.GetCanonicalAbiProjectionUtf8());
         Assert.Equal(oracle.Sha256, current.GetProperty("descriptorSha256").GetString());

@@ -5,6 +5,7 @@
     <SunderSdkAvaloniaReference>true</SunderSdkAvaloniaReference>
     <SunderSdkStacksReference>true</SunderSdkStacksReference>
     <SunderAgentCurrentPackageStorageKey>true</SunderAgentCurrentPackageStorageKey>
+    <DefineConstants>$(DefineConstants);SUNDER_AGENT_PACKAGE_MODELS</DefineConstants>
   </PropertyGroup>
 
   <Import Project="$(MSBuildThisFileDirectory)..\..\Sunder.Agent.Worker.props" />
@@ -14,7 +15,7 @@
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
     <PackageReference Include="Avalonia" />
     <PackageReference Include="CommunityToolkit.Mvvm" />
-    <Compile Include="@(SunderAgentExecutionSource->Distinct())" LinkBase="Domain" />
+    <Compile Include="@(SunderAgentExecutionSupportSource->Distinct())" LinkBase="Execution" />
   </ItemGroup>
 
   <ItemGroup>
@@ -22,5 +23,9 @@
   </ItemGroup>
 
   <Import Project="..\Sunder.Package.Agent.Shared\Sunder.Package.Agent.Shared.props" />
+
+  <ItemGroup>
+    <Compile Remove="..\Sunder.Package.Agent.Shared\Presentation\CapabilitySelectionState.cs;..\Sunder.Package.Agent.Shared\Presentation\ModelBindingEditorState.cs;..\Sunder.Package.Agent.Shared\Presentation\ProviderModelLoader.cs;..\Sunder.Package.Agent.Shared\Presentation\AgentToolPresentationMarkdown.cs" />
+  </ItemGroup>
 
 </Project>

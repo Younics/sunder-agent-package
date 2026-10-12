@@ -1,10 +1,9 @@
 using System.Security.Cryptography;
 using System.Text;
-using Sunder.Package.Agent.Contracts.Models;
 
 namespace Sunder.Agent.Execution.Common;
 
-public static class FileOperation
+public static partial class FileOperation
 {
     public const string FileExistsErrorCode = "file-exists";
     public const string ContentChangedErrorCode = "file-content-changed";
@@ -19,7 +18,7 @@ public static class FileOperation
     public const int DefaultReadLimit = 2000;
     public const int MaximumReadLimit = 2000;
 
-    public static bool TryValidateRange(int? offset, int? limit, out string? error)
+    public static bool TryValidateRange(long? offset, long? limit, out string? error)
     {
         if (offset is <= 0)
         {
@@ -67,18 +66,4 @@ public static class FileOperation
     public static string ComputeContentHash(string content)
         => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(content))).ToLowerInvariant();
 
-    public static AgentFileMutationResult Written(string path, int characterCount)
-        => new(path, $"Wrote {characterCount} character(s).");
-
-    public static AgentFileMutationResult FileDeleted(string path)
-        => new(path, "File deleted.");
-
-    public static AgentFileMutationResult DirectoryDeleted(string path)
-        => new(path, "Directory deleted.");
-
-    public static AgentFileMutationResult Failure(string path, string summary, string errorCode)
-        => new(path, summary, IsError: true, ErrorCode: errorCode);
-
-    public static AgentFileMutationResult ContentChanged(string path)
-        => Failure(path, "The file changed after patch preflight; no mutation was applied.", ContentChangedErrorCode);
 }

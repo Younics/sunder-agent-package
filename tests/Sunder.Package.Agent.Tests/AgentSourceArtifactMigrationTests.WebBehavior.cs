@@ -13,6 +13,8 @@ using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
 
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+
 public sealed partial class AgentSourceArtifactMigrationTests
 {
     private static async Task VerifyWebBehavior(string root, string worker)
@@ -28,10 +30,10 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.Null(runtime.GetType("Sunder.Package.Agent.Tools.Web.WebWorkerComposition"));
             Assert.Null(runtime.GetType("Sunder.Package.Agent.Tools.Web.WebWorkerBindings"));
             Assert.DoesNotContain(runtime.GetReferencedAssemblies(), reference => reference.Name is "Sunder.Package.Agent.Protocol" or "Sunder.Agent.Execution.Common");
-            foreach (var type in new[] { "Sunder.Package.Agent.Contracts.Models.AgentToolExecutionContext", "Sunder.Package.Agent.Contracts.Models.AgentToolDescriptor",
-                "Sunder.Package.Agent.Contracts.Models.AgentToolResult", "Sunder.Package.Agent.Contracts.Contracts.IAgentToolSource", "Sunder.Agent.Execution.Common.BoundedValue" })
+            foreach (var type in new[] { "Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentToolExecutionContext", "Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentToolDescriptor",
+                "Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentToolResult", "Sunder.Generated.Packages.Sunder_Package_Agent_Services.IToolSourceService", "Sunder.Agent.Execution.Common.BoundedValue" })
                 Assert.Same(runtime, runtime.GetType(type, true)!.Assembly);
-            Assert.NotSame(typeof(AgentToolResult), runtime.GetType(typeof(AgentToolResult).FullName!));
+            Assert.NotSame(typeof(AgentToolResult), runtime.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentToolResult", true));
             using var package = RegressionTestPackageScope.Create();
             var context = new TestPackageContext("sunder.package.agent.tools.web", package.RootPath, version: "2.0.0", storage: package.Context.Storage);
             var peer = new WebHttpPeer();
@@ -43,22 +45,23 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.Empty(peer.Hosts); Assert.Empty(peer.Fetches); Assert.Empty(peer.Searches);
             var registration = Assert.Single(options.Providers);
             Assert.Equal("web.tools", registration.ProviderId);
-            var descriptor = RegressionTestRpcDescriptors.Get(AgentRpcContractIds.ToolSource);
+            var descriptor = CurrentPublicRpcDescriptors.Get(RegressionTestBindings.ToolSources);
             Assert.Equal(descriptor.Sha256, registration.DescriptorSha256); Assert.Equal(descriptor.AbiSha256, registration.AbiSha256);
             state.Add(context.PackageId, descriptor, registration.Handler, registration.Handler, Noop.Instance, registration.ProviderId, "2.0.0");
             var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
-            var endpoint = Assert.Single((await rpc.DiscoverAsync(descriptor.ContractId)).Providers).Endpoint;
-            Assert.Equal("web", (await Call("describe", new { })).GetProperty("sourceId").GetString());
-            var tools = await Call("list-tools", ToolSourceContext(new(null, null)));
-            Assert.Equal(new[] { "web_fetch", "web_search" }, tools.EnumerateArray().Select(tool => tool.GetProperty("toolId").GetString()));
-            Assert.All(tools.EnumerateArray(), tool => { Assert.True(tool.GetProperty("isReadOnly").GetBoolean()); Assert.True(tool.GetProperty("requiresNetwork").GetBoolean()); });
+            await using var receiver = new GeneratedServiceTestScope(rpc);
+            var source = Assert.Single((await receiver.Providers<AgentServices.IToolSourceService>().ListAsync()).Providers).Service;
+            Assert.Equal("web", (await source.DescribeAsync()).SourceId);
+            var tools = await source.ListToolsAsync(new(null, null));
+            Assert.Equal(new[] { "web_fetch", "web_search" }, tools.Select(tool => tool.ToolId));
+            Assert.All(tools, tool => { Assert.True(tool.IsReadOnly); Assert.True(tool.RequiresNetwork); });
             foreach (var tool in new[] { "web_fetch", "web_search" })
             {
-                Assert.Equal("ready", (await Call("get-readiness", ToolReadiness(tool, new(null, null)))).GetProperty("status").GetString());
-                Assert.Equal(JsonValueKind.Null, (await Call("permission", Request(tool, new { }))).ValueKind);
-                Assert.Equal(JsonValueKind.Null, (await Call("preflight", Request(tool, new { }))).ValueKind);
+                Assert.Equal("ready", (await source.GetReadinessAsync(tool, new(null, null)))!.Status.ToString().ToLowerInvariant());
+                Assert.Null(await source.PermissionAsync(new(null), new(tool, "{}")));
+                Assert.Null(await source.PreflightAsync(new(null), new(tool, "{}")));
             }
-            Assert.Equal(JsonValueKind.Null, (await Call("get-readiness", ToolReadiness("unknown", new(null, null)))).ValueKind);
+            Assert.Null(await source.GetReadinessAsync("unknown", new(null, null)));
             Assert.Equal("tool-not-found", (await Execute("unknown", new { })).ErrorCode);
             Assert.Empty(peer.Fetches); Assert.Empty(peer.Searches);
             foreach (var (args, code) in new (object, string)[]
@@ -82,8 +85,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.DoesNotContain("<p>", plain.Content!, StringComparison.Ordinal); Assert.Contains("Hello & world", plain.Content!, StringComparison.Ordinal);
             var html = await Execute("web_fetch", new { url = "https://public.example/final", format = "html" });
             Assert.Contains("<script>", html.Content!, StringComparison.Ordinal);
-            var fetchPresentation = await Call("presentation", new AgentToolPresentationRequest("web_fetch", "{\"url\":\"https://public.example/final\"}", fetched.Summary, fetched.Content, fetched.StructuredPayloadJson, null, false, null, fetched.BackendId));
-            Assert.Contains("public.example", fetchPresentation.GetProperty("detailMarkdown").GetString()!, StringComparison.Ordinal);
+            var fetchPresentation = await source.PresentationAsync(new AgentToolPresentationRequest("web_fetch", "{\"url\":\"https://public.example/final\"}", fetched.Summary, fetched.Content, fetched.StructuredPayloadJson, null, false, null, fetched.BackendId));
+            Assert.Contains("public.example", fetchPresentation!.DetailMarkdown!, StringComparison.Ordinal);
             foreach (var url in new[] { "https://public.example/private", "https://public.example/scheme", "https://rebind.example/start" })
             {
                 var before = peer.Fetches.Count;
@@ -99,6 +102,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.Equal(backend.FetchClients, backend.DisposedFetchClients);
 
             await context.Settings.SetValueAsync("search.maxResults.default", "7");
+            await context.Settings.SetValueAsync("search.provider", "exa");
             var search = await Execute("web_search", new { query = "artifact query" });
             Assert.False(search.IsError, search.Content); Assert.Equal("exa", search.BackendId); Assert.Equal(2, search.Sources!.Count);
             Assert.Equal(new[] { "initialize", "notifications/initialized", "tools/list", "tools/list", "tools/call" }, peer.Searches.Select(item => item.Method));
@@ -143,8 +147,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => retiring)).Error.Kind);
             await retirement.WaitAsync(TimeSpan.FromSeconds(5));
             state.Add(context.PackageId, descriptor, registration.Handler, registration.Handler, Noop.Instance, registration.ProviderId, "2.0.0");
-            Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => Call("describe", new { }))).Error.Kind);
-            endpoint = Assert.Single((await rpc.DiscoverAsync(descriptor.ContractId)).Providers).Endpoint;
+            Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => source.DescribeAsync().AsTask())).Error.Kind);
+            source = Assert.Single((await receiver.Providers<AgentServices.IToolSourceService>().ListAsync()).Providers).Service;
             Assert.False((await Execute("web_fetch", new { url = "https://public.example/final" })).IsError);
             var stopFetch = peer.BlockNext("fetch"); var stopSearch = peer.BlockNext("search");
             var fetching = Execute("web_fetch", new { url = "https://public.example/stop" });
@@ -156,14 +160,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
             await shutdown.WaitAsync(TimeSpan.FromSeconds(5)); await backend.DisposeAsync();
             Assert.Equal(backend.FetchClients, backend.DisposedFetchClients); Assert.Equal(1, backend.DisposedSearchClients);
 
-            async Task<JsonElement> Call(string method, object request, CancellationToken token = default)
-            {
-                await using var scope = await rpc.CreateCallScopeAsync(new(DeadlineUtc: DateTimeOffset.UtcNow.AddSeconds(15)), token);
-                return await scope.InvokeAsync(endpoint, "tool-source", method, JsonSerializer.SerializeToElement(request, MemoryProviderJson), cancellationToken: token).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
-            }
-            JsonElement Request(string tool, object args) => RegressionTestRpcValues.ToolInvocation(new(null), new(tool, JsonSerializer.Serialize(args)));
             async Task<AgentToolResult> Execute(string tool, object args, CancellationToken token = default)
-                => (await Call("execute", Request(tool, args), token)).Deserialize<AgentToolResult>(MemoryProviderJson)!;
+                => await source.ExecuteAsync(new(null), new(tool, JsonSerializer.Serialize(args)), token);
         }
         finally { load.Unload(); }
     }
@@ -183,18 +181,16 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.False(secrets.Started.Task.IsCompleted);
         var registration = Assert.Single(options.Providers);
         Assert.Equal("web.tools", registration.ProviderId);
-        var descriptor = RegressionTestRpcDescriptors.Get(AgentRpcContractIds.ToolSource);
+        var descriptor = CurrentPublicRpcDescriptors.Get(RegressionTestBindings.ToolSources);
         Assert.Equal(descriptor.Sha256, registration.DescriptorSha256);
         Assert.Equal(descriptor.AbiSha256, registration.AbiSha256);
         state.Add(context.PackageId, descriptor, registration.Handler, registration.Handler, Noop.Instance, registration.ProviderId, "2.0.0");
         var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
-        var endpoint = Assert.Single((await rpc.DiscoverAsync(descriptor.ContractId)).Providers).Endpoint;
-        await using var scope = await rpc.CreateCallScopeAsync(new(DeadlineUtc: DateTimeOffset.UtcNow.AddSeconds(15)));
-        var listed = await scope.InvokeAsync(endpoint, "tool-source", "list-tools",
-            JsonSerializer.SerializeToElement(ToolSourceContext(new(null, null)), MemoryProviderJson));
-        Assert.Equal(new[] { "web_fetch", "web_search" }, listed.EnumerateArray().Select(tool => tool.GetProperty("toolId").GetString()));
-        var pending = scope.InvokeAsync(endpoint, "tool-source", "get-readiness",
-            JsonSerializer.SerializeToElement(ToolReadiness("web_search", new(null, null)), MemoryProviderJson)).AsTask();
+        await using var receiver = new GeneratedServiceTestScope(rpc);
+        var source = Assert.Single((await receiver.Providers<AgentServices.IToolSourceService>().ListAsync()).Providers).Service;
+        var listed = await source.ListToolsAsync(new(null, null));
+        Assert.Equal(new[] { "web_fetch", "web_search" }, listed.Select(tool => tool.ToolId));
+        var pending = source.GetReadinessAsync("web_search", new(null, null)).AsTask();
         Task shutdown;
         try
         {

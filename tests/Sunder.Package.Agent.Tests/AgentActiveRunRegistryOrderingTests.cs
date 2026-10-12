@@ -1,4 +1,7 @@
+using System.Reflection;
+using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Services;
+using Sunder.Sdk.Rpc;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -62,6 +65,62 @@ public sealed class AgentActiveRunRegistryOrderingTests
         Assert.Same(current, registry.RemoveIfOlderThan(sessionId, runRevision: 3));
         Assert.False(registry.IsActive(sessionId));
         current.CancellationTokenSource.Dispose();
+    }
+
+    [Fact]
+    public void BehaviorInvocation_IsCallerBoundAndCannotSurviveRunReplacement()
+    {
+        var registry = new AgentActiveRunRegistry();
+        var sessionId = Guid.NewGuid();
+        var first = CreateHandle(1);
+        var next = CreateHandle(2);
+        using var firstCancellation = first.CancellationTokenSource;
+        using var nextCancellation = next.CancellationTokenSource;
+        var runtime = DispatchProxy.Create<IAgentBehaviorLoopRuntime, UnusedRuntime>();
+
+        registry.Activate(sessionId, first);
+        using var firstGrant = registry.OpenBehaviorInvocation(sessionId, first.RunId, first.RunRevision, runtime, "package.behavior");
+        Assert.Same(runtime, registry.ResolveBehaviorInvocation(firstGrant.InvocationId, "package.behavior"));
+        AssertDenied(() => registry.ResolveBehaviorInvocation(firstGrant.InvocationId, "package.foreign"));
+
+        registry.Activate(sessionId, next);
+        AssertDenied(() => registry.ResolveBehaviorInvocation(firstGrant.InvocationId, "package.behavior"));
+        AssertDenied(() => registry.OpenBehaviorInvocation(sessionId, first.RunId, first.RunRevision, runtime, "package.behavior"));
+        using var nextGrant = registry.OpenBehaviorInvocation(sessionId, next.RunId, next.RunRevision, runtime, "package.behavior");
+        firstGrant.Dispose();
+        Assert.Same(runtime, registry.ResolveBehaviorInvocation(nextGrant.InvocationId, "package.behavior"));
+    }
+
+    [Theory]
+    [InlineData("grant")]
+    [InlineData("complete")]
+    [InlineData("remove")]
+    public void BehaviorInvocation_ClosesWithItsGrantOrOwningRun(string completion)
+    {
+        var registry = new AgentActiveRunRegistry();
+        var sessionId = Guid.NewGuid();
+        var active = CreateHandle(1);
+        using var cancellation = active.CancellationTokenSource;
+        var runtime = DispatchProxy.Create<IAgentBehaviorLoopRuntime, UnusedRuntime>();
+        registry.Activate(sessionId, active);
+        using var grant = registry.OpenBehaviorInvocation(sessionId, active.RunId, active.RunRevision, runtime, "package.behavior");
+        if (completion == "grant") grant.Dispose();
+        else if (completion == "complete") registry.Complete(sessionId, active.RunId, active.RunRevision);
+        else registry.Remove(sessionId);
+        AssertDenied(() => registry.ResolveBehaviorInvocation(grant.InvocationId, "package.behavior"));
+    }
+
+    private static void AssertDenied(Action action)
+    {
+        var error = Assert.Throws<SunderRpcException>(action).Error;
+        Assert.Equal(SunderRpcErrorKind.PermissionDenied, error.Kind);
+        Assert.Equal("agent.run-control.invalid-invocation", error.Code);
+    }
+
+    public class UnusedRuntime : DispatchProxy
+    {
+        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
+            => throw new InvalidOperationException("An authorization-only test must not invoke the runtime.");
     }
 
     private static AgentActiveRunHandle CreateHandle(long revision)

@@ -1,20 +1,34 @@
 extern alias SubagentsPackage;
 
 using System.Collections.Concurrent;
-using SubagentsPackage::Sunder.Package.Agent.Contracts.Models;
+using System.Globalization;
 using SubagentsPackage::Sunder.Package.Agent.Subagents.Models;
 using SubagentsPackage::Sunder.Package.Agent.Subagents.PackageViews;
 using SubagentsPackage::Sunder.Package.Agent.Subagents.Runtime;
 using Xunit;
+using Sunder.Sdk.Rpc;
 using SubagentPresentationDispatcher = SubagentsPackage::Sunder.Package.Agent.Shared.Presentation.IPresentationDispatcher;
 using SubagentAdaptiveDetailPhase = SubagentsPackage::Sunder.Package.Agent.Shared.Presentation.AdaptiveDetailPhase;
 using SubagentProviderCatalogOption = SubagentsPackage::Sunder.Package.Agent.Shared.Presentation.ProviderCatalogOption;
 using SubagentProviderModelCatalogResult = SubagentsPackage::Sunder.Package.Agent.Shared.Presentation.ProviderModelCatalogResult;
+using AgentToolDescriptor = SubagentsPackage::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentToolDescriptor;
+using AgentProfileSelectableCapabilityDescriptor = SubagentsPackage::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentProfileSelectableCapabilityDescriptor;
+using AgentRunCheckpointRecord = SubagentsPackage::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentRunCheckpointRecord;
+using AgentMessageRole = SubagentsPackage::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentMessageRole;
+using AgentSessionRecord = SubagentsPackage::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionRecord;
+using AgentSessionState = SubagentsPackage::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionState;
+using AgentTurnItemKind = SubagentsPackage::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnItemKind;
+using AgentTurnItemRecord = SubagentsPackage::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnItemRecord;
+using AgentTurnKind = SubagentsPackage::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnKind;
+using AgentTurnRecord = SubagentsPackage::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnRecord;
 
 namespace Sunder.Package.Agent.Tests;
 
 public sealed class SubagentPresentationDispatcherTests
 {
+    private static SunderRpcOffsetDateTime RpcTimestamp(DateTimeOffset value)
+        => new(value.ToString("O", CultureInfo.InvariantCulture));
+
     [Fact]
     public Task CreateSubagentSuccess_AppliesHydrationAndCompletionOnDispatcher()
         => VerifyCreateHydrationAsync(failHydration: false);
@@ -636,22 +650,26 @@ public sealed class SubagentPresentationDispatcherTests
             var now = DateTimeOffset.UtcNow;
             _sessions.SetResult(new SubsessionSessionCatalog(
             [
-                new AgentSessionRecord(
-                    _rootSessionId,
-                    "Root",
-                    AgentSessionState.Active,
-                    now,
-                    now,
-                    RootSessionId: _rootSessionId),
-                new AgentSessionRecord(
-                    _childSessionId,
-                    "Child",
-                    AgentSessionState.Active,
-                    now,
-                    now,
-                    ParentSessionId: _rootSessionId,
-                    RootSessionId: _rootSessionId,
-                    AgentKind: "subagent"),
+                new AgentSessionRecord
+                {
+                    SessionId = _rootSessionId,
+                    Title = "Root",
+                    State = AgentSessionState.Active,
+                    CreatedAtUtc = RpcTimestamp(now),
+                    UpdatedAtUtc = RpcTimestamp(now),
+                    RootSessionId = _rootSessionId,
+                },
+                new AgentSessionRecord
+                {
+                    SessionId = _childSessionId,
+                    Title = "Child",
+                    State = AgentSessionState.Active,
+                    CreatedAtUtc = RpcTimestamp(now),
+                    UpdatedAtUtc = RpcTimestamp(now),
+                    ParentSessionId = _rootSessionId,
+                    RootSessionId = _rootSessionId,
+                    AgentKind = "subagent",
+                },
             ],
             []));
             _checkpoints.SetResult([]);
@@ -662,29 +680,32 @@ public sealed class SubagentPresentationDispatcherTests
             TurnEventThreadId = Environment.CurrentManagedThreadId;
             var now = DateTimeOffset.UtcNow;
             var turnId = Guid.NewGuid();
-            var turn = new AgentTurnRecord(
-                turnId,
-                _childSessionId,
-                AgentMessageRole.Assistant,
-                AgentTurnKind.Message,
-                [new AgentTurnItemRecord(
-                    Guid.NewGuid(),
-                    turnId,
-                    0,
-                    AgentTurnItemKind.Text,
-                    "Deferred transcript update",
-                    null,
-                    null,
-                    null,
-                    null,
-                    null,
-                    null,
-                    false,
-                    false,
-                    null,
-                    null)],
-                now,
-                now);
+            var turn = new AgentTurnRecord
+            {
+                TurnId = turnId,
+                SessionId = _childSessionId,
+                Role = AgentMessageRole.Assistant,
+                Kind = AgentTurnKind.Message,
+                Items =
+                [
+                    new AgentTurnItemRecord
+                    {
+                        ItemId = Guid.NewGuid(),
+                        TurnId = turnId,
+                        SequenceNumber = 0,
+                        Kind = AgentTurnItemKind.Text,
+                        TextContent = "Deferred transcript update",
+                        IsError = false,
+                        IsToolHeaderProjection = false,
+                        ToolDetailRevision = 0,
+                        WasTruncated = false,
+                    },
+                ],
+                ContentRevision = 1,
+                IsStreaming = false,
+                CreatedAtUtc = RpcTimestamp(now),
+                UpdatedAtUtc = RpcTimestamp(now),
+            };
             TurnChanged?.Invoke(_childSessionId, turn);
         }
 
@@ -701,29 +722,32 @@ public sealed class SubagentPresentationDispatcherTests
             Guid sessionId,
             DateTimeOffset timestamp,
             string text)
-            => new(
-                turnId,
-                sessionId,
-                AgentMessageRole.Assistant,
-                AgentTurnKind.Message,
-                [new AgentTurnItemRecord(
-                    Guid.NewGuid(),
-                    turnId,
-                    0,
-                    AgentTurnItemKind.Text,
-                    text,
-                    null,
-                    null,
-                    null,
-                    null,
-                    null,
-                    null,
-                    false,
-                    false,
-                    null,
-                    null)],
-                timestamp,
-                timestamp);
+            => new()
+            {
+                TurnId = turnId,
+                SessionId = sessionId,
+                Role = AgentMessageRole.Assistant,
+                Kind = AgentTurnKind.Message,
+                Items =
+                [
+                    new AgentTurnItemRecord
+                    {
+                        ItemId = Guid.NewGuid(),
+                        TurnId = turnId,
+                        SequenceNumber = 0,
+                        Kind = AgentTurnItemKind.Text,
+                        TextContent = text,
+                        IsError = false,
+                        IsToolHeaderProjection = false,
+                        ToolDetailRevision = 0,
+                        WasTruncated = false,
+                    },
+                ],
+                ContentRevision = 1,
+                IsStreaming = false,
+                CreatedAtUtc = RpcTimestamp(timestamp),
+                UpdatedAtUtc = RpcTimestamp(timestamp),
+            };
     }
 
     private sealed class DedicatedSubagentDispatcher : SubagentPresentationDispatcher, IDisposable

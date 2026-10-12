@@ -1,4 +1,3 @@
-using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Memory.Semantic.Services;
@@ -7,7 +6,7 @@ using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Memory.Semantic;
 
-public sealed class MemoryInspectorService(
+public sealed partial class MemoryInspectorService(
     MemoryLocalStore store,
     SemanticMemoryRetrievalBackend retrievalBackend,
     SemanticMemoryIndexingBackgroundService indexingBackgroundService,
@@ -175,18 +174,18 @@ public sealed class MemoryInspectorService(
         => FromResult(GetMetricsSnapshot(), cancellationToken);
 
     public IReadOnlyList<AgentSessionRecord> ListSessions()
-        => _modelRuntimeResolver.InvokeRuntimeCatalog(
-            static catalog => catalog.ListSessions().ToArray(),
+        => _modelRuntimeResolver.InvokeRuntimeCatalog<IReadOnlyList<AgentSessionRecord>>(
+            static (catalog, token) => catalog.ListSessionsAsync(token),
             Array.Empty<AgentSessionRecord>());
 
     public AgentSessionContextCheckpointRecord? GetSessionContextCheckpoint(Guid sessionId)
         => _modelRuntimeResolver.InvokeRuntimeCatalog(
-            catalog => catalog.GetLatestSessionContextCheckpoint(sessionId),
+            (catalog, token) => catalog.GetSessionContextCheckpointAsync(sessionId, token),
             fallback: null as AgentSessionContextCheckpointRecord);
 
     public AgentWorkingSummaryRecord? GetWorkingSummary(Guid sessionId)
         => _modelRuntimeResolver.InvokeRuntimeCatalog(
-            catalog => catalog.GetWorkingSummary(sessionId),
+            (catalog, token) => catalog.GetWorkingSummaryAsync(sessionId, token),
             fallback: null as AgentWorkingSummaryRecord);
 
     public IReadOnlyList<StoredMemoryRecord> ListMemories(
@@ -314,7 +313,7 @@ public sealed class MemoryInspectorService(
         );
     }
 
-    public async Task<SemanticMemorySessionStateRecord> GetSemanticSessionStateAsync(
+    internal async Task<SemanticMemorySessionStateRecord> GetSemanticSessionStateAsync(
         Guid sessionId,
         string? profileId = null,
         CancellationToken cancellationToken = default
@@ -343,27 +342,26 @@ public sealed class MemoryInspectorService(
         );
     }
 
-    public async Task<SemanticMemoryStatusRecord?> GetSemanticStatusAsync(
+    internal async Task<SemanticMemoryStatusRecord?> GetSemanticStatusAsync(
         Guid sessionId,
         string? profileId = null,
         CancellationToken cancellationToken = default
     ) => (await GetSemanticSessionStateAsync(sessionId, profileId, cancellationToken)).Status;
 
-    public async Task<SemanticMemoryReindexResult> ReindexSessionAsync(
+    internal async Task<SemanticMemoryReindexResult> ReindexSessionAsync(
         Guid sessionId,
         string? profileId = null,
         CancellationToken cancellationToken = default
     )
     {
-        var sessionProfile = _modelRuntimeResolver.InvokeRuntimeCatalog(
-            catalog => catalog.GetSession(sessionId) is null
-                ? new SessionProfileResolution(false, null)
-                : new SessionProfileResolution(
-                    true,
-                    string.IsNullOrWhiteSpace(profileId)
-                        ? catalog.GetSessionProfile(sessionId)?.ProfileId
-                        : catalog.GetProfile(profileId)?.ProfileId),
-            new SessionProfileResolution(false, null));
+        var sessionProfile = await _modelRuntimeResolver.InvokeRuntimeCatalogAsync(async (catalog, token) =>
+        {
+            if (await catalog.GetSessionAsync(sessionId, token).ConfigureAwait(false) is null) return new SessionProfileResolution(false, null);
+            var profile = string.IsNullOrWhiteSpace(profileId)
+                ? await catalog.GetSessionProfileAsync(sessionId, token).ConfigureAwait(false)
+                : await catalog.GetProfileAsync(profileId, token).ConfigureAwait(false);
+            return new SessionProfileResolution(true, profile?.ProfileId);
+        }, new SessionProfileResolution(false, null), cancellationToken).ConfigureAwait(false);
         if (!sessionProfile.SessionExists)
         {
             return new SemanticMemoryReindexResult("Session not found.", IndexedMemoryCount: 0);
@@ -439,7 +437,7 @@ public sealed class MemoryInspectorService(
     private void QueueMutationReindex(StoredMemoryRecord memory)
     {
         var profileId = _modelRuntimeResolver.InvokeRuntimeCatalog(
-            catalog => catalog.GetSessionProfile(memory.SessionId)?.ProfileId,
+            async (catalog, token) => (await catalog.GetSessionProfileAsync(memory.SessionId, token).ConfigureAwait(false))?.ProfileId,
             fallback: null as string);
         if (profileId is not null)
         {
@@ -477,6 +475,11 @@ public sealed class MemoryInspectorService(
         => _sessionChangedSubscription ??= _modelRuntimeResolver.SubscribeToSessionChanges(
             OnRuntimeSessionChanged,
             OnRuntimeResetRequired);
+
+    Task<SemanticMemorySessionStateRecord> IMemoryInspectorGateway.GetSemanticSessionStateAsync(Guid sessionId, string? profileId, CancellationToken token)
+        => GetSemanticSessionStateAsync(sessionId, profileId, token);
+    Task<SemanticMemoryReindexResult> IMemoryInspectorGateway.ReindexSessionAsync(Guid sessionId, string? profileId, CancellationToken token)
+        => ReindexSessionAsync(sessionId, profileId, token);
 
     private sealed record SessionProfileResolution(bool SessionExists, string? ProfileId);
 

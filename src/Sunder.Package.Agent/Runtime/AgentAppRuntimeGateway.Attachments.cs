@@ -16,7 +16,7 @@ internal sealed partial class AgentAppRuntimeGateway
     public Task<byte[]> ReadAttachmentBytesAsync(
         AgentAttachmentMetadata metadata,
         CancellationToken cancellationToken = default)
-        => _ownerClient.DownloadAttachmentAsync(metadata, cancellationToken).AsTask();
+        => _resources.DownloadAttachmentAsync(metadata, cancellationToken).AsTask();
 
     private async ValueTask<AgentRunCommandResult> InvokeRunWithAttachmentsAsync(
         AgentRunCommand command,
@@ -29,7 +29,7 @@ internal sealed partial class AgentAppRuntimeGateway
                 $"A message can include at most {AgentAttachmentUploadRules.MaxAttachmentsPerMessage} attachments.");
         }
 
-        var transportProfile = await _ownerClient.GetTransportProfileAsync(cancellationToken).ConfigureAwait(false);
+        var transportProfile = await _resources.GetTransportProfileAsync(cancellationToken).ConfigureAwait(false);
 
         AgentRuntimePayloadLimits.EnsureRequestFits(command with
         {
@@ -44,15 +44,15 @@ internal sealed partial class AgentAppRuntimeGateway
             foreach (var attachment in attachments)
             {
                 AgentAttachmentUploadRules.Inspect(attachment);
-                handles.Add(await _ownerClient.UploadAttachmentAsync(
+                handles.Add(await _resources.UploadAttachmentAsync(
                     attachment,
                     cancellationToken).ConfigureAwait(false));
             }
 
             var request = command with { AttachmentHandles = handles };
-            AgentRuntimePayloadLimits.EnsureRequestFits(request, _ownerClient.TransportProfile);
+            AgentRuntimePayloadLimits.EnsureRequestFits(request, _resources.TransportProfile);
             return await InvokeAsync(
-                AgentRuntimeOperations.Runs,
+                _owner.ExecuteRunCommandAsync,
                 request,
                 cancellationToken).ConfigureAwait(false);
         }
@@ -62,7 +62,7 @@ internal sealed partial class AgentAppRuntimeGateway
             {
                 try
                 {
-                    await _ownerClient.DiscardAttachmentAsync(handle, _lifetime.Token).ConfigureAwait(false);
+                    await _resources.DiscardAttachmentAsync(handle, _lifetime.Token).ConfigureAwait(false);
                 }
                 catch
                 {

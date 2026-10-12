@@ -1,9 +1,16 @@
 extern alias LocalWorker;
 
 using System.Runtime.Versioning;
-using LocalWorker::Sunder.Package.Agent.Contracts.Models;
 using LocalWorker::Sunder.Package.Agent.Execution.Local;
 using Xunit;
+using AgentFileDeleteRequest = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileDeleteRequest;
+using AgentFileReadRequest = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileReadRequest;
+using AgentFileSearchKind = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileSearchKind;
+using AgentFileSearchRequest = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileSearchRequest;
+using AgentFileWriteRequest = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileWriteRequest;
+using AgentFileSearchErrorCodes = Sunder.Package.Agent.Contracts.Models.AgentFileSearchErrorCodes;
+using AgentScopedInstructionDiscoveryRequest = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentScopedInstructionDiscoveryRequest;
+using AgentScopedInstructionProbe = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentScopedInstructionProbe;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
 
@@ -88,7 +95,7 @@ public sealed class StrictMutationReauditTests : IDisposable
 
         var written = await LocalFileSystemExecutor.WriteFileAsync(
             config,
-            new AgentFileWriteRequest(approvedPath, "approved", Overwrite: false),
+            new AgentFileWriteRequest { Path = approvedPath, Content = "approved", Overwrite = false },
             allowOutsideConfiguredScope: true,
             CancellationToken.None,
             approvedResourceReferences: approved.Context.ApprovedResourceReferences,
@@ -100,7 +107,7 @@ public sealed class StrictMutationReauditTests : IDisposable
         await File.WriteAllTextAsync(racedPath, "ATTACKER");
         var rejected = await LocalFileSystemExecutor.WriteFileAsync(
             config,
-            new AgentFileWriteRequest(racedPath, "must-not-replace", Overwrite: false),
+            new AgentFileWriteRequest { Path = racedPath, Content = "must-not-replace", Overwrite = false },
             allowOutsideConfiguredScope: true,
             CancellationToken.None,
             approvedResourceReferences: raced.Context.ApprovedResourceReferences,
@@ -130,7 +137,7 @@ public sealed class StrictMutationReauditTests : IDisposable
         Directory.CreateDirectory(approvedParent);
         var rejected = await LocalFileSystemExecutor.WriteFileAsync(
             config,
-            new AgentFileWriteRequest(approvedPath, "must-not-write", Overwrite: false),
+            new AgentFileWriteRequest { Path = approvedPath, Content = "must-not-write", Overwrite = false },
             allowOutsideConfiguredScope: true,
             CancellationToken.None,
             approvedResourceReferences: approved.Context.ApprovedResourceReferences,
@@ -160,24 +167,24 @@ public sealed class StrictMutationReauditTests : IDisposable
 
         var listing = await LocalFileSystemExecutor.ReadFileAsync(
             config,
-            new AgentFileReadRequest("."),
+            new AgentFileReadRequest { Path = "." },
             false,
             CancellationToken.None);
         var grep = await LocalSecureFileSearch.ExecuteAsync(
             config,
-            new AgentFileSearchRequest(".", AgentFileSearchKind.Grep, "secret"),
+            new AgentFileSearchRequest { Path = ".", Kind = AgentFileSearchKind.Grep, Pattern = "secret" },
             false,
             approvedResourceReferences: null,
             CancellationToken.None);
         var glob = await LocalSecureFileSearch.ExecuteAsync(
             config,
-            new AgentFileSearchRequest(".", AgentFileSearchKind.Glob, "**/*"),
+            new AgentFileSearchRequest { Path = ".", Kind = AgentFileSearchKind.Glob, Pattern = "**/*" },
             false,
             approvedResourceReferences: null,
             CancellationToken.None);
         var direct = await LocalFileSystemExecutor.ReadFileAsync(
             config,
-            new AgentFileReadRequest(".sunder-secure-temp-stale"),
+            new AgentFileReadRequest { Path = ".sunder-secure-temp-stale" },
             false,
             CancellationToken.None);
 
@@ -190,8 +197,10 @@ public sealed class StrictMutationReauditTests : IDisposable
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await LocalScopedInstructionDiscovery.DiscoverAsync(
                 config,
-                new AgentScopedInstructionDiscoveryRequest(
-                    [new AgentScopedInstructionProbe(".sunder-secure-quarantine-stale", IsDirectory: true)]),
+                new AgentScopedInstructionDiscoveryRequest
+                {
+                    Probes = [new AgentScopedInstructionProbe { Path = ".sunder-secure-quarantine-stale", IsDirectory = true, FollowFinalSymbolicLink = true }],
+                },
                 CancellationToken.None));
     }
 
@@ -206,7 +215,7 @@ public sealed class StrictMutationReauditTests : IDisposable
 
         var result = await LocalFileSystemExecutor.DeleteFileAsync(
             config,
-            new AgentFileDeleteRequest("nonempty", Recursive: false),
+            new AgentFileDeleteRequest { Path = "nonempty", Recursive = false },
             false,
             CancellationToken.None);
 
@@ -231,7 +240,7 @@ public sealed class StrictMutationReauditTests : IDisposable
 
         var result = await LocalFileSystemExecutor.WriteFileAsync(
             config,
-            new AgentFileWriteRequest("target.txt", "new"),
+            new AgentFileWriteRequest { Path = "target.txt", Content = "new", Overwrite = true },
             false,
             CancellationToken.None);
 
@@ -295,12 +304,12 @@ public sealed class StrictMutationReauditTests : IDisposable
         var results = await Task.WhenAll(
             LocalFileSystemExecutor.WriteFileAsync(
                 config,
-                new AgentFileWriteRequest("first.txt", "changed-first"),
+                new AgentFileWriteRequest { Path = "first.txt", Content = "changed-first", Overwrite = true },
                 false,
                 CancellationToken.None).AsTask(),
             LocalFileSystemExecutor.WriteFileAsync(
                 config,
-                new AgentFileWriteRequest("second.txt", "changed-second"),
+                new AgentFileWriteRequest { Path = "second.txt", Content = "changed-second", Overwrite = true },
                 false,
                 CancellationToken.None).AsTask());
 
@@ -326,7 +335,7 @@ public sealed class StrictMutationReauditTests : IDisposable
         await File.WriteAllTextAsync(Path.Combine(workspace, "value.txt"), "aa");
         var result = await LocalSecureFileSearch.ExecuteAsync(
             new LocalExecutionRuntimeConfig([workspace], workspace),
-            new AgentFileSearchRequest(".", AgentFileSearchKind.Grep, "(a)\\1"),
+            new AgentFileSearchRequest { Path = ".", Kind = AgentFileSearchKind.Grep, Pattern = "(a)\\1" },
             false,
             approvedResourceReferences: null,
             CancellationToken.None);
@@ -347,7 +356,7 @@ public sealed class StrictMutationReauditTests : IDisposable
 
         var result = await LocalSecureFileSearch.ExecuteAsync(
             new LocalExecutionRuntimeConfig([workspace], workspace),
-            new AgentFileSearchRequest(".", AgentFileSearchKind.Glob, "????-" + new string('?', 199)),
+            new AgentFileSearchRequest { Path = ".", Kind = AgentFileSearchKind.Glob, Pattern = "????-" + new string('?', 199) },
             false,
             approvedResourceReferences: null,
             CancellationToken.None);
@@ -371,7 +380,7 @@ public sealed class StrictMutationReauditTests : IDisposable
 
         var result = await LocalFileSystemExecutor.WriteFileAsync(
             new LocalExecutionRuntimeConfig([workspace], workspace),
-            new AgentFileWriteRequest("mode.txt", "new"),
+            new AgentFileWriteRequest { Path = "mode.txt", Content = "new", Overwrite = true },
             false,
             CancellationToken.None,
             hooks: hook);
@@ -401,13 +410,13 @@ public sealed class StrictMutationReauditTests : IDisposable
         var result = delete
             ? await LocalFileSystemExecutor.DeleteFileAsync(
                 config,
-                new AgentFileDeleteRequest(Path.GetFileName(path)),
+                new AgentFileDeleteRequest { Path = Path.GetFileName(path), Recursive = false },
                 false,
                 CancellationToken.None,
                 hooks: hook)
             : await LocalFileSystemExecutor.WriteFileAsync(
                 config,
-                new AgentFileWriteRequest(Path.GetFileName(path), "new-content"),
+                new AgentFileWriteRequest { Path = Path.GetFileName(path), Content = "new-content", Overwrite = true },
                 false,
                 CancellationToken.None,
                 hooks: hook);
@@ -434,8 +443,11 @@ public sealed class StrictMutationReauditTests : IDisposable
 
         var result = await LocalFileSystemExecutor.WriteFileAsync(
             new LocalExecutionRuntimeConfig([workspace], workspace),
-            new AgentFileWriteRequest("rollback.txt", "new")
+            new AgentFileWriteRequest
             {
+                Path = "rollback.txt",
+                Content = "new",
+                Overwrite = true,
                 ExpectedContentHash = FileOperation.ComputeContentHash("old"),
             },
             false,
@@ -471,7 +483,7 @@ public sealed class StrictMutationReauditTests : IDisposable
 
         var failed = await LocalFileSystemExecutor.WriteFileAsync(
             config,
-            new AgentFileWriteRequest("published-rollback.txt", "NEW-SECRET"),
+            new AgentFileWriteRequest { Path = "published-rollback.txt", Content = "NEW-SECRET", Overwrite = true },
             false,
             CancellationToken.None,
             hooks: hook);
@@ -483,12 +495,12 @@ public sealed class StrictMutationReauditTests : IDisposable
         Assert.Equal(oldMode, File.GetUnixFileMode(path) & (UnixFileMode)0x0fff);
         var listing = await LocalFileSystemExecutor.ReadFileAsync(
             config,
-            new AgentFileReadRequest("."),
+            new AgentFileReadRequest { Path = "." },
             false,
             CancellationToken.None);
         var search = await LocalSecureFileSearch.ExecuteAsync(
             config,
-            new AgentFileSearchRequest(".", AgentFileSearchKind.Grep, "NEW-SECRET"),
+            new AgentFileSearchRequest { Path = ".", Kind = AgentFileSearchKind.Grep, Pattern = "NEW-SECRET" },
             false,
             approvedResourceReferences: null,
             CancellationToken.None);
@@ -502,7 +514,7 @@ public sealed class StrictMutationReauditTests : IDisposable
 
         var retry = await LocalFileSystemExecutor.WriteFileAsync(
             config,
-            new AgentFileWriteRequest("published-rollback.txt", "retry"),
+            new AgentFileWriteRequest { Path = "published-rollback.txt", Content = "retry", Overwrite = true },
             false,
             CancellationToken.None);
         Assert.False(retry.IsError, retry.Summary);
@@ -521,7 +533,7 @@ public sealed class StrictMutationReauditTests : IDisposable
 
         var result = await LocalFileSystemExecutor.WriteFileAsync(
             config,
-            new AgentFileWriteRequest("fatal-rollback.txt", "FATAL-NEW-SECRET"),
+            new AgentFileWriteRequest { Path = "fatal-rollback.txt", Content = "FATAL-NEW-SECRET", Overwrite = true },
             false,
             CancellationToken.None,
             hooks: hook);
@@ -532,12 +544,12 @@ public sealed class StrictMutationReauditTests : IDisposable
         Assert.True(hook.RecoveryFailureInvoked);
         var listing = await LocalFileSystemExecutor.ReadFileAsync(
             config,
-            new AgentFileReadRequest("."),
+            new AgentFileReadRequest { Path = "." },
             false,
             CancellationToken.None);
         var search = await LocalSecureFileSearch.ExecuteAsync(
             config,
-            new AgentFileSearchRequest(".", AgentFileSearchKind.Grep, "FATAL-NEW-SECRET|old-recoverable"),
+            new AgentFileSearchRequest { Path = ".", Kind = AgentFileSearchKind.Grep, Pattern = "FATAL-NEW-SECRET|old-recoverable" },
             false,
             approvedResourceReferences: null,
             CancellationToken.None);
@@ -566,8 +578,11 @@ public sealed class StrictMutationReauditTests : IDisposable
 
         var result = await LocalFileSystemExecutor.WriteFileAsync(
             new LocalExecutionRuntimeConfig([workspace], workspace),
-            new AgentFileWriteRequest("validator.txt", "new")
+            new AgentFileWriteRequest
             {
+                Path = "validator.txt",
+                Content = "new",
+                Overwrite = true,
                 ExpectedContentHash = FileOperation.ComputeContentHash("old"),
             },
             false,
@@ -604,13 +619,13 @@ public sealed class StrictMutationReauditTests : IDisposable
         var result = delete
             ? await LocalFileSystemExecutor.DeleteFileAsync(
                 config,
-                new AgentFileDeleteRequest("cancel.txt") { ExpectedContentHash = FileOperation.ComputeContentHash("old") },
+                new AgentFileDeleteRequest { Path = "cancel.txt", Recursive = false, ExpectedContentHash = FileOperation.ComputeContentHash("old") },
                 false,
                 cancellation.Token,
                 hooks: hook)
             : await LocalFileSystemExecutor.WriteFileAsync(
                 config,
-                new AgentFileWriteRequest("cancel.txt", "new") { ExpectedContentHash = FileOperation.ComputeContentHash("old") },
+                new AgentFileWriteRequest { Path = "cancel.txt", Content = "new", Overwrite = true, ExpectedContentHash = FileOperation.ComputeContentHash("old") },
                 false,
                 cancellation.Token,
                 hooks: hook);
@@ -636,7 +651,7 @@ public sealed class StrictMutationReauditTests : IDisposable
 
         var result = await LocalFileSystemExecutor.WriteFileAsync(
             new LocalExecutionRuntimeConfig([workspace], workspace),
-            new AgentFileWriteRequest("publish-race.txt", "new"),
+            new AgentFileWriteRequest { Path = "publish-race.txt", Content = "new", Overwrite = true },
             false,
             CancellationToken.None,
             hooks: hook);
@@ -664,12 +679,12 @@ public sealed class StrictMutationReauditTests : IDisposable
 
         var write = await LocalFileSystemExecutor.WriteFileAsync(
             config,
-            new AgentFileWriteRequest("target.txt", "new"),
+            new AgentFileWriteRequest { Path = "target.txt", Content = "new", Overwrite = true },
             false,
             CancellationToken.None);
         var delete = await LocalFileSystemExecutor.DeleteFileAsync(
             config,
-            new AgentFileDeleteRequest("target.txt"),
+            new AgentFileDeleteRequest { Path = "target.txt", Recursive = false },
             false,
             CancellationToken.None);
 

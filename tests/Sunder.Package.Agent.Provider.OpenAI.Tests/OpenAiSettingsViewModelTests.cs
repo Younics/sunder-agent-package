@@ -1,8 +1,6 @@
 extern alias OpenAiApp;
 
-using OpenAiApp::Sunder.Package.Agent.Provider.Shared;
 using OpenAiSettingsViewModel = OpenAiApp::Sunder.Package.Agent.Provider.OpenAI.OpenAiSettingsViewModel;
-using OpenAiAuthPresentationService = OpenAiApp::Sunder.Package.Agent.Provider.OpenAI.OpenAiAuthPresentationService;
 using Sunder.Package.Agent.Provider.TestSupport;
 using OpenAiApp::Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Callbacks;
@@ -11,7 +9,7 @@ using Xunit;
 namespace Sunder.Package.Agent.Provider.OpenAI.Tests;
 
 using OpenAiAuthOperationResult = OpenAiApp::Sunder.Package.Agent.Provider.OpenAI.OpenAiAuthOperationResult;
-using IOpenAiOwnerManagementClient = OpenAiApp::Sunder.Package.Agent.Provider.OpenAI.IOpenAiOwnerManagementClient;
+using IManagementService = OpenAiApp::Sunder.Generated.Packages.Sunder_Package_Agent_Provider_Openai_Services.IManagementService;
 
 public sealed class OpenAiSettingsViewModelTests
 {
@@ -217,9 +215,8 @@ public sealed class OpenAiSettingsViewModelTests
         var dispatcher = new TrackingPresentationDispatcher();
         using var viewModel = new OpenAiSettingsViewModel(
             context,
-            new OpenAiAuthPresentationService(management),
+            management,
             new PackageCallbackFlowRunner(callbacks),
-            new ProviderCredentialOwnerClient(management),
             PresentationOperationObserver.CreateUnreported("OpenAI settings test"),
             dispatcher);
         var offDispatcherNotifications = 0;
@@ -259,9 +256,9 @@ public sealed class OpenAiSettingsViewModelTests
             });
         return new OpenAiSettingsViewModel(
             context,
-            new OpenAiAuthPresentationService(management),
+            management,
             callbackFlow,
-            new ProviderCredentialOwnerClient(management));
+            PresentationOperationObserver.CreateUnreported("OpenAI settings test"));
     }
 
     private static PackageCallbackSessionStatus CallbackStatus(
@@ -276,7 +273,7 @@ public sealed class OpenAiSettingsViewModelTests
             new Uri("https://auth.openai.example/authorize"),
             DateTimeOffset.UtcNow.AddMinutes(5));
 
-    private sealed class StubOwnerManagementClient(OpenAiAuthOperationResult response) : IOpenAiOwnerManagementClient
+    private sealed class StubOwnerManagementClient(OpenAiAuthOperationResult response) : IManagementService
     {
         private bool _hasCredential;
 
@@ -298,7 +295,7 @@ public sealed class OpenAiSettingsViewModelTests
             return ValueTask.FromResult(new OpenAiAuthOperationResult(false, false, null));
         }
 
-        public ValueTask<bool> HasCredentialAsync(CancellationToken cancellationToken = default)
+        public ValueTask<bool> GetCredentialStatusAsync(CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
             InvocationCount++;
@@ -324,7 +321,7 @@ public sealed class OpenAiSettingsViewModelTests
         }
     }
 
-    private sealed class FailOnceOwnerManagementClient : IOpenAiOwnerManagementClient
+    private sealed class FailOnceOwnerManagementClient : IManagementService
     {
         private int _authStatusCallCount;
 
@@ -346,7 +343,7 @@ public sealed class OpenAiSettingsViewModelTests
             CancellationToken cancellationToken = default)
             => ValueTask.FromResult(new OpenAiAuthOperationResult(false, false, null));
 
-        public ValueTask<bool> HasCredentialAsync(CancellationToken cancellationToken = default)
+        public ValueTask<bool> GetCredentialStatusAsync(CancellationToken cancellationToken = default)
             => ValueTask.FromResult(false);
 
         public ValueTask<bool> SetCredentialAsync(

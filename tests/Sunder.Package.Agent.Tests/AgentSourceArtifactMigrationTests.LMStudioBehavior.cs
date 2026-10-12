@@ -53,15 +53,15 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.NotNull(options.SettingsSchema); Assert.Empty(handler.Requests);
             var registrations = options.Providers.ToDictionary(value => value.ProviderId);
             Assert.Equal(new[] { "lmstudio.chat", "lmstudio.credentials", "lmstudio.embedding" }, registrations.Keys.Order(StringComparer.Ordinal));
-            var credentialDescriptor = RegressionTestRpcDescriptors.Get("sunder.package.agent.provider.lmstudio.credentials");
+            var credentialDescriptor = CurrentPrivateRpcDescriptors.Get("sunder.package.agent.provider.lmstudio.credentials");
             foreach (var provider in options.Providers)
             {
-                var descriptor = provider.ProviderId == "lmstudio.credentials" ? credentialDescriptor : RegressionTestRpcDescriptors.Get(provider.ContractId);
+                var descriptor = provider.ProviderId == "lmstudio.credentials" ? credentialDescriptor : CurrentPublicRpcDescriptors.Get(provider.ContractId);
                 Assert.Equal(descriptor.Sha256, provider.DescriptorSha256); Assert.Equal(descriptor.AbiSha256, provider.AbiSha256);
                 state.Add(context.PackageId, descriptor, provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, "2.0.0");
             }
             await using var appServices = CreateGeneratedApp(presentation, context, rpc);
-            var credentials = appServices.GetRequiredService(presentation.GetType("Sunder.Package.Agent.Provider.LMStudio.ProviderCredentialOwnerRpcClient", true)!);
+            var credentials = appServices.GetRequiredService(presentation.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Provider_Lmstudio_Services.ICredentialSettingsService", true)!);
             Assert.False(await Credential("GetStatusAsync", [CancellationToken.None]));
             foreach (var kind in new[] { "chat", "embedding" })
             {
@@ -82,8 +82,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.Equal(2, embeddings.GetArrayLength());
             Assert.Equal(3, Assert.Single(embeddings.EnumerateArray(), value => value.GetProperty("modelId").GetString() == "lmstudio/embedding-model").GetProperty("dimensions").GetInt32());
             Assert.Equal("lmstudio/chat-model", (await Rpc("chat", "resolve-utility-model", new { })).GetString());
-            Assert.True((await Rpc("chat", "get-capabilities", new { modelId = "lmstudio/chat-model" })).GetProperty("supportsStreamingToolCalls").GetBoolean());
-            Assert.Equal("http://127.0.0.1:43123/api/v1", (await Rpc("embedding", "space-identity", new { value = "lmstudio/embedding-model" })).GetString());
+            Assert.True((await Rpc("chat", "get-capabilities", "lmstudio/chat-model")).GetProperty("supportsStreamingToolCalls").GetBoolean());
+            Assert.Equal("http://127.0.0.1:43123/api/v1", (await Rpc("embedding", "space-identity", "lmstudio/embedding-model")).GetString());
             Assert.Equal(1, handler.ModelRequests);
 
             var viewModel = appServices.GetRequiredService(presentation.GetType("Sunder.Package.Agent.Provider.LMStudio.LMStudioSettingsViewModel", true)!);
@@ -108,7 +108,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
 
             await VerifyLMStudioCatalog(context, handler, clock, Rpc);
             await VerifyLMStudioEmbeddings(handler, Rpc);
-            var chatProvider = CreateAgentChatProvider(agentOwner, rpc.ForCaller("sunder.package.agent"), Assert.Single((await rpc.DiscoverAsync(AgentRpcContractIds.ChatProvider)).Providers));
+            var chatProvider = await CreateAgentChatProvider(agentOwner, rpc.ForCaller("sunder.package.agent"), Assert.Single((await rpc.DiscoverAsync(RegressionTestBindings.ChatProviders)).Providers));
             await using var chatLifetime = (IAsyncDisposable)chatProvider;
             using var chat = await CreateAgentChatClientAsync(chatProvider, new("lmstudio", "lmstudio/chat-model"));
             var tool = AIFunctionFactory.CreateDeclaration("read_file", "Read a file", JsonSerializer.SerializeToElement(new
@@ -165,13 +165,13 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.Equal(requestCount, handler.Requests.Count);
             await context.Settings.SetValueAsync("connection.baseUrl", "https://rotated.test/v1/"); await Read();
             Assert.Equal("rotated.test", handler.Requests.Last().Uri.Host);
-            Assert.Equal("https://rotated.test/v1", (await Rpc("embedding", "space-identity", new { value = "lmstudio/embedding-model" })).GetString());
+            Assert.Equal("https://rotated.test/v1", (await Rpc("embedding", "space-identity", "lmstudio/embedding-model")).GetString());
             Assert.False(await Credential("ClearAsync", [CancellationToken.None])); await Read();
             Assert.Null(handler.Requests.Last().Authorization); Assert.False(handler.IsDisposed);
             var oldCredentials = Assert.Single((await rpc.DiscoverAsync(credentialDescriptor.ContractId)).Providers).Endpoint;
             var credentialRegistration = registrations["lmstudio.credentials"];
             await state.RetireAsync(credentialRegistration.Handler).WaitAsync(TimeSpan.FromSeconds(5));
-            Assert.Equal("provider.credential.unavailable", (await Assert.ThrowsAsync<SunderRpcException>(() => Credential("GetStatusAsync", [CancellationToken.None]))).Error.Code);
+            Assert.Equal("rpc.provider-not-found", (await Assert.ThrowsAsync<SunderRpcException>(() => Credential("GetStatusAsync", [CancellationToken.None]))).Error.Code);
             state.Add(context.PackageId, credentialDescriptor, credentialRegistration.Handler, credentialRegistration.Handler, Noop.Instance, credentialRegistration.ProviderId, "2.0.0");
             Assert.NotEqual(oldCredentials, Assert.Single((await rpc.DiscoverAsync(credentialDescriptor.ContractId)).Providers).Endpoint);
             Assert.False(await Credential("GetStatusAsync", [CancellationToken.None]));
@@ -184,8 +184,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 var task = (Task)value.GetType().GetMethod("AsTask")!.Invoke(value, null)!;
                 await task.WaitAsync(TimeSpan.FromSeconds(10));
                 var result = task.GetType().GetProperty("Result")!.GetValue(task)!;
-                Assert.Same(presentation, result.GetType().Assembly);
-                return (bool)result.GetType().GetProperty("HasStoredCredential")!.GetValue(result)!;
+                return Assert.IsType<bool>(result);
             }
             async Task<JsonElement> Rpc(string kind, string method, object request, CancellationToken token = default)
             {

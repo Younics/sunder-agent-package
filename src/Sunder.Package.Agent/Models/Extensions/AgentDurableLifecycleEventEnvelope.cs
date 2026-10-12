@@ -2,113 +2,63 @@ using Sunder.Package.Agent.Contracts;
 
 namespace Sunder.Package.Agent.Contracts.Models;
 
-/// <summary>Contains a bounded source snapshot or a canonical content-erasure receipt for a durable lifecycle transition.</summary>
-public sealed record AgentDurableLifecycleEventPayload
+/// <summary>Contains a bounded source snapshot or canonical content-erasure receipt for a durable lifecycle transition.</summary>
+/// <remarks>
+/// Erased payloads must be acknowledged as a no-op before later events in the same
+/// ordering scope. Deletion chunks and their exact receipts are durable data; no
+/// invocation capabilities or process-local handles belong in this payload.
+/// </remarks>
+public sealed record AgentDurableLifecycleEventPayload(
+    bool ContentErased = false,
+    AgentSessionContextRecord? Session = null,
+    AgentRunContextRecord? Run = null,
+    string? UserMessage = null,
+    string? WorkingSummary = null,
+    IReadOnlyList<AgentTurnRecord>? Turns = null,
+    IReadOnlyList<AgentTurnRecord>? RecentLiveBufferTurns = null,
+    AgentTurnRecord? TriggerTurn = null,
+    AgentRunCheckpointRecord? Checkpoint = null,
+    Guid? SessionId = null,
+    Guid? RootSessionId = null,
+    string? WorkspaceId = null,
+    string? WorkspaceIncarnationId = null,
+    IReadOnlyList<Guid>? DeletedTurnIds = null,
+    IReadOnlyList<Guid>? DeletedChildSessionIds = null,
+    IReadOnlyList<Guid>? DeletedSessionIds = null,
+    string? DeletionBatchId = null,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] int? DeletionChunkIndex = null,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] int? DeletionChunkCount = null,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] int DeletedTurnCount = 0,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] int DeletedChildSessionCount = 0,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] int DeletedSessionCount = 0,
+    IReadOnlyList<AgentMemoryConsistencyBarrier>? DeletionChunkReceipts = null)
 {
-    /// <summary>Gets whether sensitive source content was erased after its owning session or workspace was deleted.</summary>
-    /// <remarks>An observer must acknowledge an erased payload as a no-op before processing later events in the same ordering scope.</remarks>
-    public bool ContentErased { get; init; }
-
-    /// <summary>Gets the session/profile context for run-scoped events.</summary>
-    public AgentSessionContextRecord? Session { get; init; }
-
-    /// <summary>Gets the run context for run-scoped events.</summary>
-    public AgentRunContextRecord? Run { get; init; }
-
-    /// <summary>Gets the originating user message for run-scoped events.</summary>
-    public string? UserMessage { get; init; }
-
-    /// <summary>Gets the bounded continuity summary captured with the event.</summary>
-    public string? WorkingSummary { get; init; }
-
-    /// <summary>Gets the bounded recent transcript snapshot in transcript order.</summary>
-    public IReadOnlyList<AgentTurnRecord> Turns { get; init; } = [];
-
-    /// <summary>Gets the bounded recent live-buffer subset in transcript order.</summary>
-    public IReadOnlyList<AgentTurnRecord> RecentLiveBufferTurns { get; init; } = [];
-
-    /// <summary>Gets the turn directly associated with the transition, when one exists.</summary>
-    public AgentTurnRecord? TriggerTurn { get; init; }
-
-    /// <summary>Gets the checkpoint committed with the transition, when one exists.</summary>
-    public AgentRunCheckpointRecord? Checkpoint { get; init; }
-
-    /// <summary>Gets the primary session identifier for the event.</summary>
-    public Guid? SessionId { get; init; }
-
-    /// <summary>Gets the root session identifier used for ordered delivery, when applicable.</summary>
-    public Guid? RootSessionId { get; init; }
-
-    /// <summary>Gets the workspace identifier captured before any source deletion.</summary>
-    public string? WorkspaceId { get; init; }
-
-    /// <summary>Gets the durable identity of the workspace incarnation captured with the event.</summary>
-    public string? WorkspaceIncarnationId { get; init; }
-
-    /// <summary>Gets the exact turn identifiers removed by a transcript rollback.</summary>
-    public IReadOnlyList<Guid> DeletedTurnIds { get; init; } = [];
-
-    /// <summary>Gets the exact descendant session identifiers removed by a transcript rollback or session deletion.</summary>
-    public IReadOnlyList<Guid> DeletedChildSessionIds { get; init; } = [];
-
-    /// <summary>Gets all session identifiers removed by a session-tree or workspace deletion.</summary>
-    public IReadOnlyList<Guid> DeletedSessionIds { get; init; } = [];
-
-    /// <summary>Gets the stable identity shared by chunks of one large deletion, when chunking was required.</summary>
-    public string? DeletionBatchId { get; init; }
-
-    /// <summary>Gets the zero-based chunk index, or <see langword="null"/> for an unchunked event or final manifest.</summary>
-    public int? DeletionChunkIndex { get; init; }
-
-    /// <summary>Gets the number of data chunks in a large deletion.</summary>
-    public int? DeletionChunkCount { get; init; }
-
-    /// <summary>Gets the exact number of deleted turn identifiers represented by the deletion batch.</summary>
-    public int DeletedTurnCount { get; init; }
-
-    /// <summary>Gets the exact number of deleted child-session identifiers represented by the deletion batch.</summary>
-    public int DeletedChildSessionCount { get; init; }
-
-    /// <summary>Gets the exact number of deleted session identifiers represented by the deletion batch.</summary>
-    public int DeletedSessionCount { get; init; }
-
-    /// <summary>Gets the immutable chunk receipts required before a final deletion manifest can be acknowledged.</summary>
-    public IReadOnlyList<AgentMemoryConsistencyBarrier> DeletionChunkReceipts { get; init; } = [];
+    public IReadOnlyList<AgentTurnRecord> Turns { get; init; } = Turns ?? [];
+    public IReadOnlyList<AgentTurnRecord> RecentLiveBufferTurns { get; init; } = RecentLiveBufferTurns ?? [];
+    public IReadOnlyList<Guid> DeletedTurnIds { get; init; } = DeletedTurnIds ?? [];
+    public IReadOnlyList<Guid> DeletedChildSessionIds { get; init; } = DeletedChildSessionIds ?? [];
+    public IReadOnlyList<Guid> DeletedSessionIds { get; init; } = DeletedSessionIds ?? [];
+    public IReadOnlyList<AgentMemoryConsistencyBarrier> DeletionChunkReceipts { get; init; } = DeletionChunkReceipts ?? [];
 }
 
 /// <summary>Represents one ordered, at-least-once durable Agent lifecycle delivery.</summary>
-public sealed record AgentDurableLifecycleEventEnvelope
+/// <remarks>
+/// PayloadJson is the exact stored source JSON or erasure receipt. PayloadHash
+/// identifies those bytes; OriginalPayloadHash preserves pre-erasure identity.
+/// Payload is the parsed value. Their integrity relationship is checked by Agent,
+/// not inferred or rewritten by transport serialization.
+/// </remarks>
+public sealed record AgentDurableLifecycleEventEnvelope(
+    string EventId = "",
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long Sequence = 0,
+    AgentLifecycleEventKind Kind = default,
+    string SourceKey = "",
+    string OrderingKey = "",
+    [property: Sunder.Sdk.Services.SunderValueConstraints(MinLength = 64, MaxLength = 64)] string PayloadHash = "",
+    [property: Sunder.Sdk.Services.SunderValueConstraints(MinLength = 64, MaxLength = 64)] string? OriginalPayloadHash = null,
+    string PayloadJson = "",
+    DateTimeOffset OccurredAtUtc = default,
+    AgentDurableLifecycleEventPayload? Payload = null)
 {
-    /// <summary>Gets the deterministic event identifier derived from the source key.</summary>
-    public string EventId { get; init; } = string.Empty;
-
-    /// <summary>Gets the SQLite-assigned monotonic outbox sequence.</summary>
-    public long Sequence { get; init; }
-
-    /// <summary>Gets the lifecycle transition kind.</summary>
-    public AgentLifecycleEventKind Kind { get; init; }
-
-    /// <summary>Gets the stable source identity from which <see cref="EventId"/> was derived.</summary>
-    public string SourceKey { get; init; } = string.Empty;
-
-    /// <summary>Gets the per-workspace/root ordering key.</summary>
-    public string OrderingKey { get; init; } = string.Empty;
-
-    /// <summary>Gets the lowercase SHA-256 hash of the currently delivered <see cref="PayloadJson"/>.</summary>
-    public string PayloadHash { get; init; } = string.Empty;
-
-    /// <summary>
-    /// Gets the original payload hash when the source content was replaced by a canonical erasure receipt; otherwise
-    /// <see langword="null"/>.
-    /// </summary>
-    public string? OriginalPayloadHash { get; init; }
-
-    /// <summary>Gets the bounded source JSON or canonical content-erasure receipt stored by the Agent Runtime.</summary>
-    public string PayloadJson { get; init; } = string.Empty;
-
-    /// <summary>Gets the UTC time at which the outbox event was committed.</summary>
-    public DateTimeOffset OccurredAtUtc { get; init; }
-
-    /// <summary>Gets the parsed source payload or content-erasure receipt.</summary>
-    public AgentDurableLifecycleEventPayload Payload { get; init; } = new();
+    public AgentDurableLifecycleEventPayload Payload { get; init; } = Payload ?? new();
 }

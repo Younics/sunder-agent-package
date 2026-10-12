@@ -41,10 +41,10 @@ public enum AgentTurnMutationKind
 public sealed record AgentTurnMutation(
     Guid SessionId,
     Guid TurnId,
-    long ContentRevision,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long ContentRevision,
     AgentTurnMutationKind Kind,
-    int BaseContentLength,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] int BaseContentLength,
     string? Text,
     DateTimeOffset UpdatedAtUtc,
     AgentTurnRecord? Turn = null,
-    long RuntimeRevision = 0);
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long RuntimeRevision = 0);

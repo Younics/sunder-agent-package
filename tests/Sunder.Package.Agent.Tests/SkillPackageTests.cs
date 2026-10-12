@@ -1,8 +1,11 @@
 using System.Text;
+using System.Globalization;
+using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
+using Sunder.Package.Agent.Services;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Stacks;
 using Xunit;
@@ -14,10 +17,42 @@ extern alias SkillsApp;
 using SkillsWorker::Sunder.Package.Agent.Skills.Runtime;
 using SkillsWorker::Sunder.Package.Agent.Skills.Services;
 using SkillsApp::Sunder.Package.Agent.Skills.PackageViews;
+using SkillsManagementServices = SkillsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Skills_Services;
+using SkillsRuntimeCatalogServices = SkillsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 public sealed class SkillPackageTests
 {
     private const string SkillsPackageId = "sunder.package.agent.skills";
+
+    [Theory]
+    [InlineData("2.0.0")]
+    [InlineData("2.0.1")]
+    public async Task GeneratedPackageApi_PreservesCompatibleInstalledVersionAndProfileValues(string installedVersion)
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        await using var runtime = RegressionTestRuntime.Create(scope.Context);
+        var profile = await runtime.GetRequiredService<AgentProfileService>()
+            .CreateProfileAsync("Generated API");
+        var catalog = runtime.GetRequiredService<AgentRuntimeCatalog>();
+        var registration = catalog.CreateSunderRpcProviderRegistration();
+        using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
+        state.Add("sunder.package.agent", CurrentPublicRpcDescriptors.Get(RegressionTestBindings.RuntimeCatalog),
+            catalog, registration.Handler, NoOpDisposable.Instance, registration.ProviderId,
+            installedVersion);
+        await using var receiver = new GeneratedServiceTestScope(new RegressionTestRpcClient(state, SkillsPackageId));
+        var selected = Assert.Single((await receiver.Providers<SkillsRuntimeCatalogServices.IRuntimeCatalogService>()
+            .ListAsync()).Providers);
+        Assert.Equal(installedVersion, selected.PackageVersion);
+        var result = await selected.Service.GetProfileAsync(profile.ProfileId);
+
+        Assert.NotNull(result);
+        Assert.Equal(profile.ProfileId, result.ProfileId);
+        Assert.Equal(profile.DisplayName, result.DisplayName);
+        Assert.Equal(profile.CreatedAtUtc, DateTimeOffset.Parse(
+            result.CreatedAtUtc.Value,
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.RoundtripKind));
+    }
 
     [Fact]
     public async Task ImportLocalFolderAsync_CopiesResourcesAndPreservesUnknownMetadata()
@@ -216,7 +251,7 @@ public sealed class SkillPackageTests
     }
 
     [Fact]
-    public void SkillSettingsViewModel_CompactLayout_UsesRowActivationAndReturnsToList()
+    public async Task SkillSettingsViewModel_CompactLayout_UsesRowActivationAndReturnsToList()
     {
         var root = CreateTempRoot();
         try
@@ -225,10 +260,12 @@ public sealed class SkillPackageTests
             var store = new SkillStore(context);
             var importer = new SkillImportService(store, new TestGitHubSkillClient(), context);
             InstallSkill(store, "docs-skill", "Docs Skill");
-            using var viewModel = new SkillSettingsViewModel(AgentRoleBoundary.As<SkillsApp::Sunder.Package.Agent.Skills.Runtime.ISkillManagementGateway>(new SkillLocalManagementGateway(store, importer)))
+            await using var gateway = await CreateManagementGatewayAsync(store, importer, context);
+            using var viewModel = new SkillSettingsViewModel(gateway.Gateway)
             {
                 IsCompactLayout = true,
             };
+            await viewModel.InitializeAsync();
 
             Assert.Null(viewModel.SelectedSkill);
             Assert.False(viewModel.IsDetailActive);
@@ -259,7 +296,7 @@ public sealed class SkillPackageTests
     }
 
     [Fact]
-    public void SkillSettingsViewModel_Delete_CompactLayout_ReturnsToListAndClearSelection()
+    public async Task SkillSettingsViewModel_Delete_CompactLayout_ReturnsToListAndClearSelection()
     {
         var root = CreateTempRoot();
         try
@@ -268,13 +305,15 @@ public sealed class SkillPackageTests
             var store = new SkillStore(context);
             var importer = new SkillImportService(store, new TestGitHubSkillClient(), context);
             InstallSkill(store, "docs-skill", "Docs Skill");
-            using var viewModel = new SkillSettingsViewModel(AgentRoleBoundary.As<SkillsApp::Sunder.Package.Agent.Skills.Runtime.ISkillManagementGateway>(new SkillLocalManagementGateway(store, importer)))
+            await using var gateway = await CreateManagementGatewayAsync(store, importer, context);
+            using var viewModel = new SkillSettingsViewModel(gateway.Gateway)
             {
                 IsCompactLayout = true,
             };
+            await viewModel.InitializeAsync();
             viewModel.ActivateSkill(viewModel.Skills.Single(skill => skill.SkillId == "docs-skill"));
 
-            viewModel.DeleteSelectedSkillCommand.Execute(null);
+            await viewModel.DeleteSelectedSkillCommand.ExecuteAsync(null);
 
             Assert.False(viewModel.IsDetailActive);
             Assert.Null(viewModel.SelectedSkill);
@@ -299,9 +338,9 @@ public sealed class SkillPackageTests
             var store = new SkillStore(context);
             var importer = new SkillImportService(store, new TestGitHubSkillClient(), context);
             var timeProvider = new ManualTimerTimeProvider();
-            using var viewModel = new SkillSettingsViewModel(
-                AgentRoleBoundary.As<SkillsApp::Sunder.Package.Agent.Skills.Runtime.ISkillManagementGateway>(new SkillLocalManagementGateway(store, importer)),
-                timeProvider);
+            await using var gateway = await CreateManagementGatewayAsync(store, importer, context);
+            using var viewModel = new SkillSettingsViewModel(gateway.Gateway, timeProvider);
+            await viewModel.InitializeAsync();
 
             await viewModel.ImportLocalFolderAsync(source);
 
@@ -343,10 +382,12 @@ public sealed class SkillPackageTests
             var context = new TestPackageContext(Path.Combine(root, "install"));
             var store = new SkillStore(context);
             var importer = new SkillImportService(store, new TestGitHubSkillClient(), context);
-            using var viewModel = new SkillSettingsViewModel(AgentRoleBoundary.As<SkillsApp::Sunder.Package.Agent.Skills.Runtime.ISkillManagementGateway>(new SkillLocalManagementGateway(store, importer)))
+            await using var gateway = await CreateManagementGatewayAsync(store, importer, context);
+            using var viewModel = new SkillSettingsViewModel(gateway.Gateway)
             {
                 IsCompactLayout = true,
             };
+            await viewModel.InitializeAsync();
             viewModel.NewSkillCommand.Execute(null);
 
             await viewModel.ImportLocalFolderAsync(source);
@@ -400,8 +441,33 @@ public sealed class SkillPackageTests
         var feature = new SkillsFeature(store, catalog.Skills());
 
         var result = await feature.ExecuteAsync(
-            new SkillsWorker::Sunder.Package.Agent.Contracts.Models.AgentToolExecutionContext(SessionId: null, ProfileId: profile.ProfileId),
-            new SkillsWorker::Sunder.Package.Agent.Contracts.Models.AgentToolRequest("skill_resource", "{\"skill\":\"docs-skill\",\"path\":\"references/guide.md\"}"));
+            new SkillsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.CSunder_Agent_Tool_Source_ToolSourceExecuteRequest
+            {
+                Context = new()
+                {
+                    AllowOutsideConfiguredScope = false,
+                    ApprovedResourceCapabilities = [],
+                    ApprovedResourceClaims = [],
+                    ApprovedResourceReferences = [],
+                    ExecutionBinding = null,
+                    ExecutionTarget = null,
+                    ExecutionTargetConfigurationGeneration = null,
+                    ProfileId = profile.ProfileId,
+                    ResourceOperation = null,
+                    RunId = null,
+                    RunRevision = null,
+                    SessionId = null,
+                    ToolCallId = null,
+                    TranscriptEpoch = 0,
+                    UserTurnId = null,
+                    Workspace = null,
+                },
+                Request = new()
+                {
+                    ToolId = "skill_resource",
+                    ArgumentsJson = "{\"skill\":\"docs-skill\",\"path\":\"references/guide.md\"}",
+                },
+            });
 
         Assert.False(result.IsError);
         Assert.Contains("1: first", result.Content);
@@ -531,6 +597,38 @@ public sealed class SkillPackageTests
         return root;
     }
 
+    private static async ValueTask<SkillManagementGatewayScope> CreateManagementGatewayAsync(
+        SkillStore store,
+        SkillImportService importer,
+        IPackageContext context)
+    {
+        var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
+        var receiver = new GeneratedServiceTestScope(
+            new RegressionTestRpcClient(state, SkillsPackageId));
+        try
+        {
+            var handler = new SkillRuntimeHandler(store, importer, context);
+            state.AddGenerated(
+                SkillsPackageId,
+                handler,
+                handler.CreateSunderRpcProviderRegistration(),
+                NoOpDisposable.Instance);
+            var client = Assert.Single((await receiver
+                .Providers<SkillsManagementServices.ISkillsManagementService>()
+                .ListAsync()).Providers).Service;
+            return new SkillManagementGatewayScope(
+                state,
+                receiver,
+                new SkillsApp::Sunder.Package.Agent.Skills.Runtime.SkillAppRuntimeGateway(client, context));
+        }
+        catch
+        {
+            await receiver.DisposeAsync();
+            state.Dispose();
+            throw;
+        }
+    }
+
     private static StackFragmentImport ToImportFragment(StackFragmentExport fragment)
         => new(
             fragment.FragmentId,
@@ -607,6 +705,36 @@ public sealed class SkillPackageTests
         catch
         {
             // Test cleanup should not hide assertion failures.
+        }
+    }
+
+    private sealed class SkillManagementGatewayScope(
+        RegressionTestRpcState state,
+        GeneratedServiceTestScope receiver,
+        SkillsApp::Sunder.Package.Agent.Skills.Runtime.SkillAppRuntimeGateway gateway) : IAsyncDisposable
+    {
+        public SkillsApp::Sunder.Package.Agent.Skills.Runtime.SkillAppRuntimeGateway Gateway { get; } = gateway;
+
+        public async ValueTask DisposeAsync()
+        {
+            try
+            {
+                await Gateway.DisposeAsync();
+                await receiver.DisposeAsync();
+            }
+            finally
+            {
+                state.Dispose();
+            }
+        }
+    }
+
+    private sealed class NoOpDisposable : IDisposable
+    {
+        public static NoOpDisposable Instance { get; } = new();
+
+        public void Dispose()
+        {
         }
     }
 

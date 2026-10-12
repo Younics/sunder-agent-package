@@ -31,7 +31,7 @@ internal sealed class AgentRunExecutionService(
         {
             var executionBinding = ResolveExecutionBinding(plan.Workspace);
             host = _behaviorLoopHostFactory.Create(
-                plan.Provider,
+            plan.ProviderSelection,
                 plan.Session,
                 plan.Profile,
                 plan.Workspace,
@@ -41,7 +41,7 @@ internal sealed class AgentRunExecutionService(
                 plan.UserMessage,
                 started.UserTurn.TurnId,
                 executionBinding);
-            using var behaviorLoop = _behaviorLoopResolver.Resolve(plan.Profile);
+            var behaviorLoop = await _behaviorLoopResolver.ResolveAsync(plan.Profile, started.RunCancellationToken).ConfigureAwait(false);
             _runEventLogger.LogRunEvent(
                 PackageLogLevel.Debug,
                 plan.RunKey.SessionId,

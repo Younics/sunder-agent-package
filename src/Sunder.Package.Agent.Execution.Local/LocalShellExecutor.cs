@@ -14,12 +14,8 @@ internal sealed class LocalShellExecutor(IPackageContext packageContext, LocalSh
             await shellCatalogService.ResolveShellAsync(config.SelectedShellId, cancellationToken));
 
     public static AgentExecutionShellDescriptor GetShellDescriptor(LocalShellDefinition shell)
-        => new(
-            shell.ShellId,
-            shell.DisplayName,
-            shell.ExecutablePath,
-            shell.SyntaxKind,
-            BuildShellDescription(shell));
+        => new() { ShellId = shell.ShellId, DisplayName = shell.DisplayName, ExecutablePath = shell.ExecutablePath,
+            SyntaxKind = shell.SyntaxKind, Description = BuildShellDescription(shell) };
 
     public async ValueTask<AgentShellCommandResult> ExecuteShellAsync(
         LocalExecutionRuntimeConfig config,
@@ -29,7 +25,7 @@ internal sealed class LocalShellExecutor(IPackageContext packageContext, LocalSh
     {
         if (string.IsNullOrWhiteSpace(request.Command))
         {
-            return new AgentShellCommandResult(1, "Command cannot be empty.");
+            return new AgentShellCommandResult { ExitCode = 1, Output = "Command cannot be empty.", TimedOut = false, WorkingDirectory = null, WasTruncated = false };
         }
 
         var shell = config.SelectedShell
@@ -40,7 +36,7 @@ internal sealed class LocalShellExecutor(IPackageContext packageContext, LocalSh
         LocalCommandRunner.ApplyPathEnvironment(startInfo, pathEntries);
         return await LocalCommandRunner.ExecuteAsync(
             startInfo,
-            request.TimeoutSeconds
+            checked((int?)request.TimeoutSeconds)
             ?? config.DefaultTimeoutSeconds
             ?? await LocalExecutionConfiguration.ResolveDefaultTimeoutSecondsAsync(packageContext, cancellationToken),
             workingDirectory,

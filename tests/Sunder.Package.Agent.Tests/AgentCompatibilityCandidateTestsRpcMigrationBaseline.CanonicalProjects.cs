@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Xml.Linq;
+using Sunder.Sdk.Rpc;
 using Xunit;
 using Xunit.Sdk;
 
@@ -42,7 +43,7 @@ public sealed partial class AgentCompatibilityCandidateTestsRpcMigrationBaseline
     }
 
     [Fact]
-    public void CanonicalOwnedContractClosure_MatchesEveryFrozenDescriptor()
+    public void CanonicalOwnedContractClosure_PreservesArchivedPrivateAndReviewedPublicDescriptors()
     {
         var root = AgentPackageRepositoryInventory.RepositoryRoot.FullName;
         AgentSourceMigrationProjectChanges.AssertCanonicalProjectTopology(root);
@@ -50,6 +51,12 @@ public sealed partial class AgentCompatibilityCandidateTestsRpcMigrationBaseline
         var descriptors = baseline.RootElement.GetProperty("descriptors").EnumerateArray().ToArray();
         Assert.Equal(31, descriptors.Length);
         Assert.Equal(19, descriptors.Count(descriptor => descriptor.GetProperty("exposure").GetString() == "public"));
+        using var successors = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(root, "compatibility/agent-service-public-successors.json")));
+        var publicSuccessors = successors.RootElement.GetProperty("contracts").EnumerateArray()
+            .ToDictionary(value => value.GetProperty("contractId").GetString()!, StringComparer.Ordinal);
+        Assert.Equal(descriptors.Where(value => value.GetProperty("exposure").GetString() == "public")
+                .Select(value => value.GetProperty("contractId").GetString()).Order(StringComparer.Ordinal),
+            publicSuccessors.Keys.Order(StringComparer.Ordinal));
         var verified = new HashSet<string>(StringComparer.Ordinal);
         foreach (var history in AgentSourceMigrationProjectChanges.CanonicalProjectHistories)
         {
@@ -63,7 +70,9 @@ public sealed partial class AgentCompatibilityCandidateTestsRpcMigrationBaseline
             Assert.Equal("package", owned.RootElement.GetProperty("authorityKind").GetString());
             Assert.Equal(history.PackageId, owned.RootElement.GetProperty("authorityId").GetString());
             Assert.Equal(history.PackageId, owned.RootElement.GetProperty("packageId").GetString());
-            var actual = owned.RootElement.GetProperty("contracts").EnumerateObject().Select(property => property.Value).ToArray();
+            var actual = owned.RootElement.GetProperty("contracts").EnumerateObject().Select(property => property.Value)
+                .Concat(owned.RootElement.TryGetProperty("retiredPrivateContracts", out var retired)
+                    ? retired.EnumerateObject().Select(property => property.Value) : []).ToArray();
             Assert.Equal(expected.Keys.Order(StringComparer.Ordinal), actual.Select(contract => contract.GetProperty("contractId").GetString()).Order(StringComparer.Ordinal));
             foreach (var contract in actual)
             {
@@ -73,6 +82,26 @@ public sealed partial class AgentCompatibilityCandidateTestsRpcMigrationBaseline
                 var current = contract.GetProperty("current");
                 Assert.Equal("release-frozen", current.GetProperty("state").GetString());
                 Assert.Equal(history.PackageId, current.GetProperty("packageRelease").GetProperty("packageId").GetString());
+                if (publicSuccessors.TryGetValue(id, out var reviewed))
+                {
+                    Assert.Equal("public", current.GetProperty("exposure").GetString());
+                    Assert.Equal(reviewed.GetProperty("version").GetString(), current.GetProperty("contractVersion").GetString());
+                    foreach (var field in new[] { "descriptorSha256", "abiSha256" })
+                        Assert.Equal(reviewed.GetProperty(field).GetString(), current.GetProperty(field).GetString());
+                    var bytes = Encoding.UTF8.GetBytes(current.GetProperty("canonicalDescriptor").GetString()!);
+                    var descriptor = SunderRpcContractDescriptor.Parse(bytes);
+                    Assert.Equal(bytes, descriptor.GetCanonicalUtf8());
+                    Assert.Equal(reviewed.GetProperty("descriptorSha256").GetString(), descriptor.Sha256);
+                    Assert.Equal(reviewed.GetProperty("abiSha256").GetString(), descriptor.AbiSha256);
+                    Assert.Equal(descriptor.GetCanonicalAbiProjectionUtf8(), Encoding.UTF8.GetBytes(current.GetProperty("canonicalAbiProjection").GetString()!));
+                    var methods = reviewed.GetProperty("methods");
+                    Assert.Equal(methods.EnumerateObject().Select(value => value.Name).Order(StringComparer.Ordinal),
+                        descriptor.Services.Select(value => value.ServiceId).Order(StringComparer.Ordinal));
+                    foreach (var service in descriptor.Services)
+                        Assert.Equal(methods.GetProperty(service.ServiceId).EnumerateArray().Select(value => value.GetString()),
+                            service.Methods.Select(value => value.MethodId).Order(StringComparer.Ordinal));
+                    continue;
+                }
                 Assert.Equal(original.GetProperty("version").GetString(), current.GetProperty("contractVersion").GetString());
                 foreach (var field in new[] { "exposure", "descriptorSha256", "abiSha256" })
                     Assert.Equal(original.GetProperty(field).GetString(), current.GetProperty(field).GetString());

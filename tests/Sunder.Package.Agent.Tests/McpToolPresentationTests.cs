@@ -5,7 +5,7 @@ using System.Text;
 using System.Text.Json;
 using Sunder.Package.Agent.Contracts.Models;
 using McpWorker::Sunder.Package.Agent.Mcp;
-using AgentToolPresentationRequest = McpWorker::Sunder.Package.Agent.Contracts.Models.AgentToolPresentationRequest;
+using AgentToolPresentationRequest = McpWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentToolPresentationRequest;
 using AgentApp::Sunder.Package.Agent.Services;
 using Xunit;
 
@@ -166,7 +166,7 @@ public sealed class McpToolPresentationTests
             ]
             """;
 
-        var presentation = McpToolPresentationAdapter.Resolve(new AgentToolPresentationRequest(
+        var presentation = McpToolPresentationAdapter.Resolve(PresentationRequest(
             toolId,
             argumentsJson,
             ResultSummary: "MCP: Stitch: Generate screen completed.",
@@ -210,7 +210,7 @@ public sealed class McpToolPresentationTests
         var toolId = McpToolIdentity.CreateStable("stitch-server", "generate_screen_from_text");
         const string malformedArguments = "{\"apiKey\":\"must-not-leak\"";
 
-        var presentation = McpToolPresentationAdapter.Resolve(new AgentToolPresentationRequest(
+        var presentation = McpToolPresentationAdapter.Resolve(PresentationRequest(
             toolId,
             malformedArguments,
             ResultSummary: null,
@@ -244,7 +244,7 @@ public sealed class McpToolPresentationTests
             },
         });
 
-        var presentation = McpToolPresentationAdapter.Resolve(new AgentToolPresentationRequest(
+        var presentation = McpToolPresentationAdapter.Resolve(PresentationRequest(
             toolId,
             arguments,
             ResultSummary: null,
@@ -277,7 +277,7 @@ public sealed class McpToolPresentationTests
                 [McpToolTimeoutMetadata.EnvelopeArgumentsPropertyName] = "also-server-owned",
             },
         });
-        var presentation = McpToolPresentationAdapter.Resolve(new AgentToolPresentationRequest(
+        var presentation = McpToolPresentationAdapter.Resolve(PresentationRequest(
             toolId,
             arguments,
             ResultSummary: null,
@@ -304,7 +304,7 @@ public sealed class McpToolPresentationTests
             [{ "type": "metadata", "text": "not a content block", "status": "failed" }]
             """;
 
-        var presentation = McpToolPresentationAdapter.Resolve(new AgentToolPresentationRequest(
+        var presentation = McpToolPresentationAdapter.Resolve(PresentationRequest(
             toolId,
             "{}",
             ResultSummary: null,
@@ -326,7 +326,7 @@ public sealed class McpToolPresentationTests
         var toolId = McpToolIdentity.CreateStable("stitch-server", "inspect_status");
         var structuredPayload = "[" + string.Join(',', Enumerable.Repeat("{\"value\":1}", 70_000)) + "]";
 
-        var presentation = McpToolPresentationAdapter.Resolve(new AgentToolPresentationRequest(
+        var presentation = McpToolPresentationAdapter.Resolve(PresentationRequest(
             toolId,
             "{}",
             ResultSummary: null,
@@ -352,7 +352,7 @@ public sealed class McpToolPresentationTests
         var longText = new string('x', prefixLength - 1) + "\U0001F600" + new string('x', 100);
         var toolId = McpToolIdentity.CreateStable("stitch-server", "inspect_status");
 
-        var presentation = McpToolPresentationAdapter.Resolve(new AgentToolPresentationRequest(
+        var presentation = McpToolPresentationAdapter.Resolve(PresentationRequest(
             toolId,
             "{}",
             ResultSummary: null,
@@ -411,4 +411,27 @@ public sealed class McpToolPresentationTests
             ToolExecutionStatus = status,
         };
     }
+
+    private static AgentToolPresentationRequest PresentationRequest(
+        string toolId,
+        string argumentsJson,
+        string? ResultSummary,
+        string? TextContent,
+        string? StructuredPayloadJson,
+        string? SourcesJson,
+        bool IsError,
+        string? ErrorCode,
+        string? BackendId)
+        => new()
+        {
+            ToolId = toolId,
+            ArgumentsJson = argumentsJson,
+            ResultSummary = ResultSummary,
+            TextContent = TextContent,
+            StructuredPayloadJson = StructuredPayloadJson,
+            SourcesJson = SourcesJson,
+            IsError = IsError,
+            ErrorCode = ErrorCode,
+            BackendId = BackendId,
+        };
 }

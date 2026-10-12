@@ -30,7 +30,7 @@ internal static class TranscriptTurnTransportProjection
 
     internal static long CreateDetailRevision(AgentTurnRecord turn)
         // Unix microseconds retain timestamp ordering while staying within the RPC safe-integer bound.
-        => Math.Max(1, (turn.UpdatedAtUtc.UtcDateTime.Ticks - DateTime.UnixEpoch.Ticks) / 10);
+        => Math.Max(1, (AgentTranscriptTime.Read(turn.UpdatedAtUtc).UtcDateTime.Ticks - DateTime.UnixEpoch.Ticks) / 10);
 
     internal static bool HasToolDetails(AgentTurnItemRecord item)
         => item.ToolHasDetails

@@ -13,11 +13,17 @@
     <PackageReference Include="Microsoft.Data.Sqlite" SunderPackageAssetRole="worker" />
     <PackageReference Include="Avalonia" />
     <PackageReference Include="CommunityToolkit.Mvvm" />
-    <Compile Include="@(SunderAgentMemorySource->Distinct())" LinkBase="Domain" />
+    <!-- Recall scoring vocabulary and worker-generation support are local algorithms;
+         every service snapshot is the selected package's generated model. -->
+    <Compile Include="$(_AgentModels)AgentMemoryProvenance.cs;$(_AgentModels)AgentMemoryMatchReason.cs;$(_AgentModels)AgentMemoryRecallEntry.cs;$(_AgentModels)AgentMemoryRecallIntent.cs;$(_AgentModels)AgentMemoryRecallPlan.cs;$(_AgentModels)AgentMemoryRecallResult.cs;$(_AgentModels)AgentMemoryTrustState.cs;$(_AgentModels)Providers\AgentModelCapabilityKinds.cs;$(_AgentModels)Extensions\AgentDurableLifecycleIntegrityException.cs;$(_AgentSource)Runtime\PackageRuntimeGeneration.cs" LinkBase="Domain" />
     <Compile Include="..\Sunder.Package.Agent.Shared\Storage\SqliteWalCheckpointMaintenance.cs"
              Link="Storage\SqliteWalCheckpointMaintenance.cs" />
   </ItemGroup>
 
   <Import Project="..\Sunder.Package.Agent.Shared\Sunder.Package.Agent.Shared.props" />
+
+  <ItemGroup>
+    <Compile Remove="..\Sunder.Package.Agent.Shared\Presentation\CapabilitySelectionState.cs;..\Sunder.Package.Agent.Shared\Presentation\ModelBindingEditorState.cs;..\Sunder.Package.Agent.Shared\Presentation\ProviderModelLoader.cs;..\Sunder.Package.Agent.Shared\Presentation\AgentToolPresentationMarkdown.cs" />
+  </ItemGroup>
 
 </Project>

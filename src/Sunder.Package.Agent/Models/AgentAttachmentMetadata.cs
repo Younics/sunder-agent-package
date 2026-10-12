@@ -24,8 +24,8 @@ public sealed record AgentAttachmentMetadata(
     string FileName,
     string MediaType,
     AgentAttachmentKind Kind,
-    long SizeBytes,
-    string Sha256,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long SizeBytes,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(MinLength = 64, MaxLength = 64)] string Sha256,
     string StorageRelativePath,
     bool IsText,
     bool WasTruncated);

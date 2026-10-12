@@ -15,9 +15,7 @@ namespace Sunder.Package.Agent.Tests;
 
 internal static class AgentAppSourceMigrationTests
 {
-    internal const string SourceClient = "src/Sunder.Package.Agent/Rpc/Owner/AgentOwnerRpcClient.cs";
     internal const string CompositionSource = "src/Sunder.Package.Agent/Rpc/Owner/AppComposition.cs";
-    internal const string SourceOperations = "src/Sunder.Package.Agent/Rpc/Owner/AgentRuntimeOperations.cs";
     internal const string LegacyOperations = "src/Sunder.Package.Agent/App/Runtime/AgentRuntimeOperations.Legacy.cs";
     internal const string OperationErrorSource = "src/Sunder.Package.Agent/Runtime/AgentOwnerOperationException.cs";
     internal static IEnumerable<string> ToolConsumerSources => AgentCanonicalSourceMigrationTests.ToolSources.Concat(
@@ -47,8 +45,8 @@ internal static class AgentAppSourceMigrationTests
     internal static Task<Assembly> Build(string repository, string core, string workerRoot, AssemblyLoadContext loadContext)
     {
         using var receipt = CanonicalAgentRoles.Receipt(app: true);
-        Assert.Equal(3, receipt.RootElement.GetProperty("uses").GetArrayLength());
-        Assert.Equal(20, receipt.RootElement.GetProperty("contracts").GetArrayLength());
+        Assert.Equal(11, receipt.RootElement.GetProperty("uses").GetArrayLength());
+        Assert.Equal(21, receipt.RootElement.GetProperty("contracts").GetArrayLength());
         Assert.All(receipt.RootElement.GetProperty("contracts").EnumerateArray(), contract => Assert.False(contract.TryGetProperty("runtimeUse", out _)));
         Assert.Empty(receipt.RootElement.GetProperty("providers").EnumerateArray());
         Assert.Empty(receipt.RootElement.GetProperty("platformImports").EnumerateArray());
@@ -70,14 +68,22 @@ internal static class AgentAppSourceMigrationTests
             Assert.NotSame(type, local);
         }
         Assert.Null(assembly.GetType("Sunder.Package.Agent.Runtime.AgentOwnerRuntimeRpc"));
-        Assert.Null(assembly.GetType("Sunder.Package.Agent.Runtime.IAgentOwnerRuntimeProvider"));
+        Assert.NotNull(assembly.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Services.IAgentRuntimeService"));
+        Assert.Null(assembly.GetType("Sunder.Package.Agent.Runtime.AgentOwnerRuntimeProvider"));
     }
 
     internal static async Task Exercise(Assembly assembly, ISunderRpcClient rpc, IPackageContext context)
     {
         await using var services = CreateAppServices();
+        await using var receiver = new GeneratedServiceTestScope(rpc);
         var gatewayType = assembly.GetType("Sunder.Package.Agent.Runtime.AgentAppRuntimeGateway", true)!;
-        var instance = services?.GetRequiredService(gatewayType) ?? Activator.CreateInstance(gatewayType, rpc)!;
+        var ownerType = assembly.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Internal.CSunder_Agent_Owner_RuntimeClient", true)!;
+        var ownerContract = assembly.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Services.IAgentRuntimeService", true)!;
+        var owner = services?.GetRequiredService(ownerContract) ?? Activator.CreateInstance(ownerType, rpc)!;
+        var resourceType = assembly.GetType("Sunder.Package.Agent.Runtime.AgentOwnerResources", true)!;
+        var resources = services?.GetRequiredService(resourceType)
+            ?? Activator.CreateInstance(resourceType, receiver.Providers(ownerContract), rpc)!;
+        var instance = services?.GetRequiredService(gatewayType) ?? AgentRoleBoundary.Create(gatewayType, owner, resources);
         await using var gateway = (IAsyncDisposable)instance;
         if (services is not null) Assert.Same(instance, services.GetRequiredService(gatewayType));
         async Task<AgentProfileRecord> createProfile(string name, CancellationToken token) => JsonSerializer.SerializeToElement(
@@ -89,17 +95,15 @@ internal static class AgentAppSourceMigrationTests
         var dashboard = await LoadDashboard();
         Assert.Contains(dashboard.GetProperty("profiles").EnumerateArray(), value => value.GetProperty("profileId").GetString() == profile.ProfileId && value.GetProperty("displayName").GetString() == profile.DisplayName);
         Assert.Contains(dashboard.GetProperty("workspaces").EnumerateArray(), value => value.GetProperty("workspaceId").GetString() == workspace.WorkspaceId && value.GetProperty("displayName").GetString() == workspace.DisplayName);
-        var clientType = assembly.GetType("Sunder.Package.Agent.Runtime.AgentOwnerRpcClient", true)!;
-        var client = Activator.CreateInstance(clientType, rpc)!;
+        var clientType = resourceType;
+        var client = resources;
         var transport = await AwaitValue(clientType.GetMethod("GetTransportProfileAsync")!.Invoke(client, [CancellationToken.None])!);
         Assert.Same(assembly, transport!.GetType().Assembly);
         Assert.Equal(transport, clientType.GetProperty("TransportProfile")!.GetValue(client));
         var commandType = assembly.GetType(typeof(AgentSessionCommand).FullName!, true)!;
-        var resultType = assembly.GetType(typeof(AgentSessionCommandResult).FullName!, true)!;
         var json = new JsonSerializerOptions(JsonSerializerDefaults.Web);
         var command = JsonSerializer.Deserialize(JsonSerializer.Serialize(new { kind = 0, title = "Source App session", profileId = profile.ProfileId, workspaceId = workspace.WorkspaceId }), commandType, json)!;
-        var operation = assembly.GetType("Sunder.Package.Agent.Runtime.AgentRuntimeOperations", true)!.GetField("SessionCommands")!.GetValue(null)!;
-        var session = await AwaitValue(clientType.GetMethod("InvokeAsync")!.MakeGenericMethod(commandType, resultType).Invoke(client, [operation, command, CancellationToken.None])!);
+        var session = await AwaitValue(ownerType.GetMethod("ExecuteSessionCommandAsync")!.Invoke(owner, [command, CancellationToken.None])!);
         Assert.Same(assembly, session!.GetType().Assembly);
         Assert.Equal(workspace.WorkspaceId, JsonSerializer.SerializeToElement(session, session.GetType(), json).GetProperty("session").GetProperty("session").GetProperty("workspaceId").GetString());
         var bytes = System.Text.Encoding.UTF8.GetBytes("Source App attachment 漢字");

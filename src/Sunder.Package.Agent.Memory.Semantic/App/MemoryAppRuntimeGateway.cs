@@ -4,6 +4,8 @@ using Sunder.Package.Agent.Memory.Semantic.Runtime;
 using Sunder.Package.Agent.Memory.Semantic.Services;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Memory_Semantic_Services;
 
 namespace Sunder.Package.Agent.Memory.Semantic;
 
@@ -13,7 +15,7 @@ internal sealed partial class MemoryAppRuntimeGateway :
     IDisposable,
     IAsyncDisposable
 {
-    private readonly ISunderRpcClient _rpc;
+    private readonly IMemoryInspectorService _service;
     private readonly CancellationTokenSource _lifetime = new();
     private readonly ILogger<MemoryAppRuntimeGateway>? _logger;
     private readonly OwnerStreamObserver _observer;
@@ -32,14 +34,14 @@ internal sealed partial class MemoryAppRuntimeGateway :
         remove => _observer.AvailabilityChanged -= value;
     }
 
-    internal MemoryAppRuntimeGateway(ISunderRpcClient rpc)
-        : this(rpc, loggerFactory: null)
+    internal MemoryAppRuntimeGateway(IMemoryInspectorService service)
+        : this(service, loggerFactory: null)
     {
     }
 
-    internal MemoryAppRuntimeGateway(ISunderRpcClient rpc, ILoggerFactory? loggerFactory)
+    internal MemoryAppRuntimeGateway(IMemoryInspectorService service, ILoggerFactory? loggerFactory)
     {
-        _rpc = rpc;
+        _service = service;
         _logger = loggerFactory?.CreateLogger<MemoryAppRuntimeGateway>();
         _observer = new OwnerStreamObserver(LogObservationRetry);
     }
@@ -58,16 +60,16 @@ internal sealed partial class MemoryAppRuntimeGateway :
     }
 
     public async Task<IReadOnlyList<AgentSessionRecord>> ListSessionsAsync(CancellationToken cancellationToken = default)
-        => (await QueryAsync(new(MemoryQueryKind.Sessions), cancellationToken).ConfigureAwait(false)).Sessions ?? [];
+        => (await InvokeAsync(token => _service.SessionsAsync(token), cancellationToken).ConfigureAwait(false)).Sessions ?? [];
 
     public async Task<AgentSessionContextCheckpointRecord?> GetSessionContextCheckpointAsync(Guid sessionId, CancellationToken cancellationToken = default)
-        => (await QueryAsync(new(MemoryQueryKind.SessionCheckpoint, SessionId: sessionId), cancellationToken).ConfigureAwait(false)).Checkpoint;
+        => (await InvokeAsync(token => _service.SessionCheckpointAsync(sessionId, token), cancellationToken).ConfigureAwait(false)).Checkpoint;
 
     public async Task<AgentWorkingSummaryRecord?> GetWorkingSummaryAsync(Guid sessionId, CancellationToken cancellationToken = default)
-        => (await QueryAsync(new(MemoryQueryKind.WorkingSummary, SessionId: sessionId), cancellationToken).ConfigureAwait(false)).WorkingSummary;
+        => (await InvokeAsync(token => _service.WorkingSummaryAsync(sessionId, token), cancellationToken).ConfigureAwait(false)).WorkingSummary;
 
     public async Task<IReadOnlyList<StoredMemoryRecord>> ListMemoriesAsync(Guid sessionId, string? searchText = null, bool includeInactive = false, CancellationToken cancellationToken = default)
-        => (await QueryAsync(new(MemoryQueryKind.Memories, SessionId: sessionId, SearchText: searchText, IncludeInactive: includeInactive), cancellationToken).ConfigureAwait(false)).Memories ?? [];
+        => (await InvokeAsync(token => _service.MemoriesAsync(sessionId, searchText, includeInactive, token), cancellationToken).ConfigureAwait(false)).Memories ?? [];
 
     public async Task<IReadOnlyList<StoredMemoryEvidenceRecord>> ListEvidenceAsync(Guid memoryId, CancellationToken cancellationToken = default)
         => (await DetailsAsync(memoryId, cancellationToken).ConfigureAwait(false)).Evidence ?? [];
@@ -82,37 +84,37 @@ internal sealed partial class MemoryAppRuntimeGateway :
         => (await DetailsAsync(memoryId, cancellationToken).ConfigureAwait(false)).CorrectionLineage ?? [];
 
     public async Task<StoredMemoryRecord> UpdateMemoryAsync(Guid memoryId, string category, string content, string? note, CancellationToken cancellationToken = default)
-        => (await CommandAsync(new(MemoryCommandKind.Update, memoryId, category, content, note), cancellationToken).ConfigureAwait(false)).Memory!;
+        => (await InvokeAsync(token => _service.UpdateAsync(memoryId, category, content, note, token), cancellationToken).ConfigureAwait(false)).Memory!;
 
     public async Task<StoredMemoryRecord> SetPinnedAsync(Guid memoryId, bool isPinned, CancellationToken cancellationToken = default)
-        => (await CommandAsync(new(MemoryCommandKind.Pin, memoryId, IsPinned: isPinned), cancellationToken).ConfigureAwait(false)).Memory!;
+        => (await InvokeAsync(token => _service.PinAsync(memoryId, isPinned, token), cancellationToken).ConfigureAwait(false)).Memory!;
 
     public async Task<StoredMemoryRecord> ContestMemoryAsync(Guid memoryId, CancellationToken cancellationToken = default)
-        => (await CommandAsync(new(MemoryCommandKind.Contest, memoryId), cancellationToken).ConfigureAwait(false)).Memory!;
+        => (await InvokeAsync(token => _service.ContestAsync(memoryId, token), cancellationToken).ConfigureAwait(false)).Memory!;
 
     public async Task<StoredMemoryRecord> ForgetMemoryAsync(Guid memoryId, CancellationToken cancellationToken = default)
-        => (await CommandAsync(new(MemoryCommandKind.Forget, memoryId), cancellationToken).ConfigureAwait(false)).Memory!;
+        => (await InvokeAsync(token => _service.ForgetAsync(memoryId, token), cancellationToken).ConfigureAwait(false)).Memory!;
 
     public async Task<StoredMemoryRecord> SupersedeMemoryAsync(Guid memoryId, CancellationToken cancellationToken = default)
-        => (await CommandAsync(new(MemoryCommandKind.Supersede, memoryId), cancellationToken).ConfigureAwait(false)).Memory!;
+        => (await InvokeAsync(token => _service.SupersedeAsync(memoryId, token), cancellationToken).ConfigureAwait(false)).Memory!;
 
     public async Task<MemoryCorrectionResult> CreateCorrectedMemoryAsync(Guid sourceMemoryId, string category, string content, CancellationToken cancellationToken = default)
-        => (await CommandAsync(new(MemoryCommandKind.Correct, sourceMemoryId, category, content), cancellationToken).ConfigureAwait(false)).Correction!;
+        => (await InvokeAsync(token => _service.CorrectAsync(sourceMemoryId, category, content, token), cancellationToken).ConfigureAwait(false)).Correction!;
 
     public async Task<MemorySemanticIndexStatusRecord> GetSemanticIndexStatusAsync(StoredMemoryRecord memory, SemanticEmbeddingContext? context, CancellationToken cancellationToken = default)
-        => (await QueryAsync(new(MemoryQueryKind.SemanticIndexStatus, Memory: memory, SemanticContext: context), cancellationToken).ConfigureAwait(false)).IndexStatus!;
+        => (await InvokeAsync(token => _service.IndexStatusAsync(memory.MemoryId, context, token), cancellationToken).ConfigureAwait(false)).IndexStatus!;
 
     public async Task<SemanticMemorySessionStateRecord> GetSemanticSessionStateAsync(Guid sessionId, string? profileId = null, CancellationToken cancellationToken = default)
-        => (await QueryAsync(new MemoryQuery(MemoryQueryKind.SemanticState, SessionId: sessionId, ProfileId: profileId), cancellationToken).ConfigureAwait(false)).SemanticState!;
+        => (await InvokeAsync(token => _service.SemanticStateAsync(sessionId, profileId, token), cancellationToken).ConfigureAwait(false)).SemanticState!;
 
     public async Task<SemanticMemoryReindexResult> ReindexSessionAsync(Guid sessionId, string? profileId = null, CancellationToken cancellationToken = default)
-        => (await CommandAsync(new MemoryCommand(MemoryCommandKind.Reindex, sessionId, ProfileId: profileId), cancellationToken).ConfigureAwait(false)).ReindexResult!;
+        => (await InvokeAsync(token => _service.ReindexAsync(sessionId, profileId, token), cancellationToken).ConfigureAwait(false)).ReindexResult!;
 
     public async Task<SemanticMemoryWorkerStatusRecord> GetSemanticWorkerStatusAsync(CancellationToken cancellationToken = default)
-        => (await QueryAsync(new(MemoryQueryKind.WorkerStatus), cancellationToken).ConfigureAwait(false)).WorkerStatus!;
+        => (await InvokeAsync(token => _service.WorkerStatusAsync(token), cancellationToken).ConfigureAwait(false)).WorkerStatus!;
 
     public async Task<SemanticMemoryMetricsSnapshot> GetMetricsSnapshotAsync(CancellationToken cancellationToken = default)
-        => (await QueryAsync(new(MemoryQueryKind.Metrics), cancellationToken).ConfigureAwait(false)).Metrics!;
+        => (await InvokeAsync(token => _service.MetricsAsync(token), cancellationToken).ConfigureAwait(false)).Metrics!;
 
     public void Dispose()
     {
@@ -153,20 +155,15 @@ internal sealed partial class MemoryAppRuntimeGateway :
     }
 
     private Task<MemoryProjection> DetailsAsync(Guid memoryId, CancellationToken cancellationToken)
-        => QueryAsync(new(MemoryQueryKind.Details, MemoryId: memoryId), cancellationToken);
-
-    private Task<MemoryProjection> QueryAsync(MemoryQuery request, CancellationToken cancellationToken)
-        => InvokeAsync(token => QueryTransportAsync(request, token), cancellationToken);
-
-    private Task<MemoryProjection> CommandAsync(MemoryCommand request, CancellationToken cancellationToken)
-        => InvokeAsync(token => CommandTransportAsync(request, token), cancellationToken);
+        => InvokeAsync(token => _service.DetailsAsync(memoryId, token), cancellationToken);
 
     private async Task<MemoryProjection> InvokeAsync(
-        Func<CancellationToken, ValueTask<MemoryProjection>> invoke,
+        Func<CancellationToken, ValueTask<SunderContent>> invoke,
         CancellationToken cancellationToken)
     {
         using var invocation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
-        return await invoke(invocation.Token).ConfigureAwait(false);
+        try { return await ProjectionContent.Read(invoke(invocation.Token), invocation.Token).ConfigureAwait(false); }
+        catch (SunderRpcException error) when (IsMissingProvider(error)) { throw Unavailable(); }
     }
 
     private async Task ObserveChangesOnceAsync(
@@ -174,8 +171,10 @@ internal sealed partial class MemoryAppRuntimeGateway :
         CancellationToken cancellationToken)
     {
         var connected = false;
-        await foreach (var change in WatchTransportAsync(cancellationToken).ConfigureAwait(false))
+        await using var changes = _service.ChangesAsync(cancellationToken).GetAsyncEnumerator(cancellationToken);
+        while (await MoveNextAsync(changes).ConfigureAwait(false))
         {
+            var change = changes.Current;
             if (!connected)
             {
                 connected = true;
@@ -197,6 +196,16 @@ internal sealed partial class MemoryAppRuntimeGateway :
             }
         }
     }
+
+    private static async ValueTask<bool> MoveNextAsync(IAsyncEnumerator<MemoryChanged> changes)
+    {
+        try { return await changes.MoveNextAsync().ConfigureAwait(false); }
+        catch (SunderRpcException error) when (IsMissingProvider(error)) { throw Unavailable(); }
+    }
+    private static bool IsMissingProvider(SunderRpcException error)
+        => error.Error.Kind == SunderRpcErrorKind.NotFound && error.Error.Code == "rpc.provider-not-found";
+    private static SunderRpcException Unavailable()
+        => new(new(SunderRpcErrorKind.Unavailable, "semantic-memory.inspector-unavailable", "The semantic memory inspector Runtime provider is unavailable."));
 
     private void LogObservationRetry(Exception exception, TimeSpan retryDelay)
         => _logger?.LogWarning(

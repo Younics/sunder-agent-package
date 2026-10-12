@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Sunder.Package.Agent.Contracts.Models;
 
 /// <summary>
@@ -19,8 +21,8 @@ namespace Sunder.Package.Agent.Contracts.Models;
 public sealed record AgentModelDescriptor(
     string ModelId,
     string DisplayName,
-    int ContextWindow,
-    int MaxOutputTokens,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] int ContextWindow,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] int MaxOutputTokens,
     bool IsRecommended = false,
     IReadOnlyList<AgentModelVariantDescriptor>? Variants = null,
     IReadOnlyList<AgentModelSpeedOptionDescriptor>? SpeedOptions = null,
@@ -80,17 +82,22 @@ public sealed record AgentModelModeOptionDescriptor(
 public enum AgentReasoningEffort
 {
     /// <summary>Explicitly disables provider reasoning when the selected model supports that control.</summary>
+    [JsonStringEnumMemberName("none")]
     None = 0,
 
     /// <summary>Requests low effort to favor latency and token efficiency.</summary>
+    [JsonStringEnumMemberName("low")]
     Low = 1,
 
     /// <summary>Requests a balanced reasoning effort.</summary>
+    [JsonStringEnumMemberName("medium")]
     Medium = 2,
 
     /// <summary>Requests high effort for more complex work.</summary>
+    [JsonStringEnumMemberName("high")]
     High = 3,
 
     /// <summary>Requests the provider's supported effort tier above high.</summary>
+    [JsonStringEnumMemberName("extra-high")]
     ExtraHigh = 4,
 }

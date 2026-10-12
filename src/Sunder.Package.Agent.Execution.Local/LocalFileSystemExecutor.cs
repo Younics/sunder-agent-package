@@ -19,7 +19,7 @@ internal static class LocalFileSystemExecutor
     {
         if (!FileOperation.TryValidateRange(request.Offset, request.Limit, out var rangeError))
         {
-            return AgentFileReadResult.Failure(
+            return FileOperation.ReadFailure(
                 request.Path,
                 AgentFileReadErrorCodes.InvalidRange,
                 rangeError!);
@@ -41,21 +41,21 @@ internal static class LocalFileSystemExecutor
         }
         catch (Exception ex) when (ex is LocalResourceReapprovalRequiredException or LocalSecureApprovalChangedException)
         {
-            return AgentFileReadResult.Failure(
+            return FileOperation.ReadFailure(
                 request.Path,
                 LocalResourceReference.ReapprovalRequiredErrorCode,
                 ex.Message);
         }
         catch (InvalidOperationException ex)
         {
-            return AgentFileReadResult.Failure(
+            return FileOperation.ReadFailure(
                 request.Path,
                 AgentFileReadErrorCodes.OutsideConfiguredScope,
                 ex.Message);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            return AgentFileReadResult.Failure(
+            return FileOperation.ReadFailure(
                 request.Path,
                 AgentFileReadErrorCodes.PathCanonicalizationFailed,
                 ex.Message);

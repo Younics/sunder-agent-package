@@ -210,8 +210,8 @@ def confirm(registry, request_path, result_path, archives):
                 platforms[tuple(item.values())] = item
     subjects = sorted([v["package"] for v in proposed["versions"]], key=lambda p: (p["packageId"], p["version"], p["packageContentIdentity"]))
     synchronization = {"nonce": nonce, "packages": subjects,
-                       "platformCatalogs": [platforms[key] for key in sorted(platforms)], "runtimes": [], "minimumPackagePolicy": minimum,
-                       "minimumRuntimePolicyRevision": 0, "minimumCheckpoint": floor}
+                       "platformCatalogs": [platforms[key] for key in sorted(platforms)], "minimumPackagePolicy": minimum,
+                       "minimumCheckpoint": floor}
     status, body, transport = http(registry, "/api/v1/policy/synchronize", encoded(synchronization))
     require(not transport and status == 200, "Fresh cohort policy synchronization failed")
     current = decode(body)

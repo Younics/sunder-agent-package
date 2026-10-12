@@ -108,29 +108,18 @@ public sealed partial class AgentProfilesViewModel
         AgentProfileRecord profile,
         CancellationToken cancellationToken)
     {
-        if (_catalogLoader is not null)
-        {
-            var catalog = await _catalogLoader.LoadCatalogAsync(
-                    new AgentCatalogRequest(Profile: profile),
-                    cancellationToken)
-                .ConfigureAwait(false);
-            return new AgentProfileEditorCatalog(
-                catalog.BehaviorLoops.Select(ToBehaviorLoopOption).ToArray(),
-                catalog.LocalTools,
-                catalog.SelectableCapabilities,
-                catalog.HasEmbeddingConsumers);
-        }
-
         var localToolsTask = _profileService.ListInstalledLocalToolsAsync(cancellationToken);
         var packageCapabilitiesTask = _profileService.ListSelectableProfileCapabilitiesAsync(
             profile,
             cancellationToken);
-        await Task.WhenAll(localToolsTask, packageCapabilitiesTask).ConfigureAwait(false);
+        var behaviorsTask = _profileService.ListBehaviorLoopDescriptorsAsync(cancellationToken);
+        var consumersTask = _profileService.HasProfileCapabilityConsumersAsync(AgentModelCapabilityKinds.Embedding, cancellationToken);
+        await Task.WhenAll(localToolsTask, packageCapabilitiesTask, behaviorsTask, consumersTask).ConfigureAwait(false);
         return new AgentProfileEditorCatalog(
-            _profileService.ListBehaviorLoopDescriptors().Select(ToBehaviorLoopOption).ToArray(),
+            (await behaviorsTask.ConfigureAwait(false)).Select(ToBehaviorLoopOption).ToArray(),
             await localToolsTask.ConfigureAwait(false),
             await packageCapabilitiesTask.ConfigureAwait(false),
-            _profileService.HasProfileCapabilityConsumers(AgentModelCapabilityKinds.Embedding));
+            await consumersTask.ConfigureAwait(false));
     }
 
     private static BehaviorLoopOption ToBehaviorLoopOption(AgentBehaviorLoopDescriptor loop)

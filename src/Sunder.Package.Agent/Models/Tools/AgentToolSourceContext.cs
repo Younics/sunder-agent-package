@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
-using Sunder.Package.Agent.Contracts.Contracts;
-using Sunder.Package.Agent.Protocol;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Contracts.Models;
 
@@ -24,9 +24,12 @@ public sealed record AgentToolSourceContext(
 {
     /// <summary>Gets an opaque reference to the exact execution-target activation selected for this discovery callback.</summary>
     [JsonIgnore]
-    public AgentRpcReference<IAgentExecutionTarget>? ExecutionTargetReference { get; init; }
+    [SunderServiceMember]
+    [SunderOptionalServiceReference]
+    public ServiceReference<IExecutionTargetService>? ExecutionTarget { get; init; }
 
     /// <summary>Gets the expected target-owned configuration generation for a fenced readiness check.</summary>
     [JsonIgnore]
+    [SunderServiceMember]
     public string? ExecutionTargetConfigurationGeneration { get; init; }
 }

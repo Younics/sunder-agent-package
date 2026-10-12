@@ -3,7 +3,8 @@
   "authorityKind": "package",
   "authorityId": "sunder.package.agent.provider.lmstudio",
   "packageId": "sunder.package.agent.provider.lmstudio",
-  "contracts": {
+  "contracts": {},
+  "retiredPrivateContracts": {
     "credential-settings": {
       "contractId": "sunder.package.agent.provider.lmstudio.credentials",
       "current": {

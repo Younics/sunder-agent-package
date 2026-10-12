@@ -80,10 +80,11 @@ public sealed class TranscriptToolDetailStateTests
                     loads++;
                     return Task.FromResult<AgentTranscriptToolDetailRecord?>(null);
                 },
-                _ =>
+                (_, cancellationToken) =>
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     resolutions++;
-                    return new AgentToolPresentation();
+                    return ValueTask.FromResult(new AgentToolPresentation());
                 }));
         }
 
@@ -115,10 +116,11 @@ public sealed class TranscriptToolDetailStateTests
                 loads++;
                 return Task.FromResult<AgentTranscriptToolDetailRecord?>(CreateDetail(request, revision: 17));
             },
-            _ =>
+            (_, cancellationToken) =>
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 resolutions++;
-                return new AgentToolPresentation("header", "detail", "output");
+                return ValueTask.FromResult(new AgentToolPresentation("header", "detail", "output"));
             });
         var request = Assert.IsType<CorePresentation.TranscriptToolExpansionRequest>(state.BeginExpansion());
 
@@ -151,10 +153,11 @@ public sealed class TranscriptToolDetailStateTests
                 await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
                 return null;
             },
-            _ =>
+            (_, cancellationToken) =>
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 resolutions++;
-                return new AgentToolPresentation();
+                return ValueTask.FromResult(new AgentToolPresentation());
             });
         var request = Assert.IsType<CorePresentation.TranscriptToolExpansionRequest>(state.BeginExpansion());
         var load = state.LoadAsync(request, CancellationToken.None);
@@ -164,7 +167,8 @@ public sealed class TranscriptToolDetailStateTests
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => load);
         Assert.False(state.IsCurrent(request));
-        Assert.False(state.TryMaterialize(request, CreateDetail(request.DetailRequest, revision: 21), out _));
+        Assert.False(state.TryMaterialize(request,
+            new CorePresentation.TranscriptToolDetailData(CreateDetail(request.DetailRequest, revision: 21), new AgentToolPresentation()), out _));
         Assert.Equal(0, resolutions);
         Assert.Equal(CorePresentation.TranscriptToolExpansionState.Collapsed, state.State);
         Assert.Null(state.Details);
@@ -178,7 +182,11 @@ public sealed class TranscriptToolDetailStateTests
             projection,
             (request, _) => Task.FromResult<AgentTranscriptToolDetailRecord?>(
                 CreateDetail(request, revision: 31)),
-            _ => new AgentToolPresentation("header", "loaded detail", "output"));
+            (_, cancellationToken) =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return ValueTask.FromResult(new AgentToolPresentation("header", "loaded detail", "output"));
+            });
         var request = Assert.IsType<CorePresentation.TranscriptToolExpansionRequest>(state.BeginExpansion());
         var detail = await state.LoadAsync(request, CancellationToken.None);
         Assert.True(state.TryMaterialize(request, detail, out var materialized));

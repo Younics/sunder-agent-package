@@ -47,7 +47,7 @@ namespace Sunder.Package.Agent.Contracts.Models;
 /// </param>
 /// <param name="SourceId">
 /// The stable contributing-source identity, normally
-/// <see cref="Contracts.IAgentSystemPromptContributor.ContributorId"/>. A missing value places the block
+/// the contributor's stable identity from its service description. A missing value places the block
 /// in a shared empty-source deduplication namespace and is therefore discouraged for package contributions.
 /// </param>
 /// <param name="Metadata">

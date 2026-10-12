@@ -24,7 +24,10 @@ internal static class AgentRuntimeUsePolicyAssertions
             Assert.Equal("runtime", use.GetProperty("role").GetString());
             var contract = contracts[use.GetProperty("contractKey").GetString()!];
             var declaration = Assert.Single(authored, item => item.Attribute("Include")!.Value == contract.GetProperty("contractId").GetString());
-            Assert.Equal(declaration.Attribute("ContractVersion")!.Value, contract.GetProperty("contractVersion").GetString());
+            // The preserved declaration supplies the reviewed permission policy;
+            // current public identity is qualified by the owning successor record.
+            Assert.Equal(CurrentPublicRpcDescriptors.Get(contract.GetProperty("contractId").GetString()!).Version,
+                contract.GetProperty("contractVersion").GetString());
             Assert.Equal(bool.Parse(declaration.Attribute("Required")!.Value), use.GetProperty("required").GetBoolean());
             Assert.Equal(declaration.Attribute("Actions")!.Value.Split(';'), use.GetProperty("actions").EnumerateArray().Select(action => action.GetString()));
             var policy = contract.GetProperty("runtimeUse");

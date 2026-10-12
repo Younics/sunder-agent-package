@@ -3,12 +3,15 @@ using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Storage;
 using Sunder.Package.Agent.Runtime;
+using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.Services;
 
 public sealed class AgentPermissionService(
     AgentLocalStore store,
-    AgentRpcCatalog rpcCatalog) : IAgentPermissionGateway
+    IServiceProviders<AgentServices.IPermissionSurfaceService> permissionSurfaces) : IAgentPermissionGateway
 {
     internal const string GenericMutationActionId = "agent.tool.mutate";
     internal const string GenericMutationBoundaryId = "provider-requested-mutation";
@@ -39,25 +42,34 @@ public sealed class AgentPermissionService(
         }
     }
 
-    public IReadOnlyList<AgentPermissionActionDescriptor> ListActions()
+    public async Task<IReadOnlyList<AgentPermissionActionDescriptor>> ListActionsAsync(
+        CancellationToken cancellationToken = default)
     {
         var actions = new List<AgentPermissionActionDescriptor>();
-        foreach (var reference in rpcCatalog.GetServiceReferences(Sunder.Package.Agent.Runtime.Rpc.AgentMetadataBindings.PermissionSurfaces))
+        var catalog = await permissionSurfaces.ListAsync(cancellationToken).ConfigureAwait(false);
+        foreach (var provider in catalog.Providers)
         {
-            if (!reference.TryAcquire(out var lease))
+            cancellationToken.ThrowIfCancellationRequested();
+            if (provider.State != ServiceProviderState.Active)
             {
                 continue;
             }
-            using (lease)
+            try
             {
-                var contributed = lease.Service.ListActions().ToArray();
-                if (!lease.RetirementToken.IsCancellationRequested)
+                var descriptor = await provider.Service.DescribeAsync(cancellationToken).ConfigureAwait(false);
+                actions.AddRange(descriptor.Actions.Select(action => action with
                 {
-                    actions.AddRange(contributed);
-                }
+                    Boundaries = action.Boundaries.ToArray(),
+                }));
+            }
+            catch (SunderRpcException exception) when (!cancellationToken.IsCancellationRequested
+                && exception.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable)
+            {
+                // A withdrawn surface contributes no defaults to this decision.
             }
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         return actions
             .Append(GenericMutationAction)
             .GroupBy(action => action.ActionId, StringComparer.OrdinalIgnoreCase)
@@ -105,13 +117,16 @@ public sealed class AgentPermissionService(
         => _store.TryClaimPendingPermissionRequest(sessionId, requestId);
 
     internal (AgentPendingPermissionClaimResult Claim, AgentPendingPermissionDecisionResult? PolicyDenial)
-        TryClaimPendingRequestForApproval(Guid sessionId, string requestId)
+        TryClaimPendingRequestForApproval(
+            Guid sessionId,
+            string requestId,
+            IReadOnlyList<AgentPermissionActionDescriptor> actions)
     {
         lock (_policySyncRoot)
         {
             var request = _store.GetPendingPermissionRequest(sessionId, requestId);
             if (request is not null
-                && EvaluateCore(sessionId, CreatePermissionRequest(request)).Decision
+                && EvaluateCore(sessionId, CreatePermissionRequest(request), actions).Decision
                     == AgentPermissionDecision.Deny)
             {
                 var denial = _store.TryDenyPendingPermissionRequest(
@@ -154,12 +169,13 @@ public sealed class AgentPermissionService(
 
     internal bool CommitApprovedExecution(
         AgentPendingPermissionRequestRecord request,
+        IReadOnlyList<AgentPermissionActionDescriptor> actions,
         bool approveForSession = false)
     {
         lock (_policySyncRoot)
         {
             if (string.IsNullOrWhiteSpace(request.ClaimToken)
-                || EvaluateCore(request.SessionId, CreatePermissionRequest(request)).Decision
+                || EvaluateCore(request.SessionId, CreatePermissionRequest(request), actions).Decision
                     == AgentPermissionDecision.Deny)
             {
                 return false;
@@ -197,15 +213,25 @@ public sealed class AgentPermissionService(
         string summary)
         => _store.ExpireActivePermissionRequest(sessionId, requestId, summary);
 
-    public AgentPermissionEvaluation Evaluate(Guid? sessionId, AgentPermissionRequest request)
+    public async Task<AgentPermissionEvaluation> EvaluateAsync(
+        Guid? sessionId,
+        AgentPermissionRequest request,
+        CancellationToken cancellationToken = default)
     {
+        IReadOnlyList<AgentPermissionActionDescriptor> actions = string.IsNullOrWhiteSpace(request.ActionId)
+            ? []
+            : await ListActionsAsync(cancellationToken).ConfigureAwait(false);
         lock (_policySyncRoot)
         {
-            return EvaluateCore(sessionId, request);
+            cancellationToken.ThrowIfCancellationRequested();
+            return EvaluateCore(sessionId, request, actions);
         }
     }
 
-    private AgentPermissionEvaluation EvaluateCore(Guid? sessionId, AgentPermissionRequest request)
+    private AgentPermissionEvaluation EvaluateCore(
+        Guid? sessionId,
+        AgentPermissionRequest request,
+        IReadOnlyList<AgentPermissionActionDescriptor> actions)
     {
         if (string.IsNullOrWhiteSpace(request.ActionId))
         {
@@ -221,7 +247,7 @@ public sealed class AgentPermissionService(
             ? AgentPermissionBoundaryIds.Unknown
             : request.BoundaryId;
 
-        var action = ListActions().FirstOrDefault(action => string.Equals(action.ActionId, request.ActionId, StringComparison.OrdinalIgnoreCase));
+        var action = actions.FirstOrDefault(action => string.Equals(action.ActionId, request.ActionId, StringComparison.OrdinalIgnoreCase));
         var boundary = action?.Boundaries.FirstOrDefault(item => string.Equals(item.BoundaryId, boundaryId, StringComparison.OrdinalIgnoreCase));
         if (action is null || boundary is null)
         {

@@ -72,26 +72,7 @@ public sealed partial class AgentProfilesViewModel
         {
             var profileId = SelectedProfile.ProfileId;
             var displayName = string.IsNullOrWhiteSpace(DisplayName) ? "Unnamed Profile" : DisplayName.Trim();
-            if (_profileCommands is null)
-            {
-                _profileService.SaveProfile(
-                    profileId,
-                    displayName,
-                    Normalize(Description),
-                    Normalize(Instructions),
-                    ChatBinding.SelectedProvider?.Id,
-                    ChatBinding.SelectedModel?.Id,
-                    CanConfigureEmbeddings ? EmbeddingBinding.SelectedProvider?.Id : null,
-                    CanConfigureEmbeddings ? EmbeddingBinding.SelectedModel?.Id : null,
-                    Capabilities.Assignments,
-                    SelectedBehaviorLoop?.LoopId ?? string.Empty,
-                    SelectedBehaviorLoop?.SourceId ?? string.Empty,
-                    SelectedProfile.BehaviorLoopSettingsJson ?? string.Empty,
-                    ChatBinding.SettingsJson ?? string.Empty);
-            }
-            else
-            {
-                await _profileCommands.SaveProfileAsync(
+            await _profileService.SaveProfileAsync(
                         profileId,
                         displayName,
                         Normalize(Description),
@@ -107,7 +88,6 @@ public sealed partial class AgentProfilesViewModel
                         ChatBinding.SettingsJson ?? string.Empty,
                         _lifetimeCancellation.Token)
                     .ConfigureAwait(false);
-            }
 
             DiscardPendingProfileRefresh();
             await _uiDispatcher.InvokeAsync(() =>
@@ -163,15 +143,8 @@ public sealed partial class AgentProfilesViewModel
             var profileId = SelectedProfile.ProfileId;
             var deletedName = SelectedProfile.DisplayName;
             var shouldClearSelection = IsCompactLayout;
-            if (_profileCommands is null)
-            {
-                _profileService.DeleteProfile(profileId);
-            }
-            else
-            {
-                await _profileCommands.DeleteProfileAsync(profileId, _lifetimeCancellation.Token)
-                    .ConfigureAwait(false);
-            }
+            await _profileService.DeleteProfileAsync(profileId, _lifetimeCancellation.Token)
+                .ConfigureAwait(false);
 
             DiscardPendingProfileRefresh();
             await _uiDispatcher.InvokeAsync(() =>
@@ -285,7 +258,7 @@ public sealed partial class AgentProfilesViewModel
 
     private async Task InitializeCoreAsync(CancellationToken cancellationToken)
     {
-        var initializationTask = _profileService is IAgentPresentationInitialization initialization
+        var initializationTask = _profileNotifications is IAgentPresentationInitialization initialization
             ? initialization.InitializeAsync(cancellationToken)
             : Task.CompletedTask;
         await Task.WhenAll(
@@ -320,11 +293,9 @@ public sealed partial class AgentProfilesViewModel
         }
     }
 
-    private async Task<IReadOnlyList<AgentProfileRecord>> LoadProfilesAsync(
+    private Task<IReadOnlyList<AgentProfileRecord>> LoadProfilesAsync(
         CancellationToken cancellationToken)
-        => _dashboardLoader is null
-            ? _profileService.ListProfiles()
-            : (await _dashboardLoader.LoadDashboardAsync(cancellationToken).ConfigureAwait(false)).Profiles;
+        => _profileService.ListProfilesAsync(cancellationToken);
 
     private void DiscardPendingProfileRefresh()
     {

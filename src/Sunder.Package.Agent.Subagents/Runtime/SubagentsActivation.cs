@@ -3,18 +3,17 @@ using Sunder.Sdk.Worker;
 
 namespace Sunder.Package.Agent.Subagents.Runtime;
 
-internal sealed class SubagentsActivation(SubagentStore store, ISubagentRuntimeBindings runtime, SubagentRuntimeChangeStream changes)
+internal sealed class SubagentsActivation(SubagentStore store, SubagentEditorCapabilityCatalog capabilities, SubagentRuntimeChangeStream changes)
     : ISunderWorkerActivationService, IAsyncDisposable
 {
     public async ValueTask ActivateAsync(SunderWorkerContext context, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         store.Activate();
-        await runtime.StartAsync(cancellationToken).ConfigureAwait(false);
-        // Catalog adapters still expose synchronous snapshots. Keep the Worker
-        // reader free to deliver their replies while initial subscriptions attach.
-        await Task.Run(changes.RefreshAfterActivation, cancellationToken).ConfigureAwait(false);
+        await capabilities.StartAsync(cancellationToken).ConfigureAwait(false);
+        await changes.StartAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public ValueTask DisposeAsync() => runtime.DisposeAsync();
+    public async ValueTask DisposeAsync()
+    { try { await changes.DisposeAsync().ConfigureAwait(false); } finally { await capabilities.DisposeAsync().ConfigureAwait(false); } }
 }

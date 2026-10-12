@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
-using Sunder.Package.Agent.Contracts.Contracts;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using Sunder.Sdk.Services;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Subagents.Models;
 using Sunder.Package.Agent.Subagents.Runtime;
@@ -10,40 +11,36 @@ namespace Sunder.Package.Agent.Subagents.Services;
 internal sealed partial class SubagentDescriptorSchema(
     SubagentService subagentService,
     SubagentPermissionStatusAdapter permissionStatusAdapter,
-    ISubagentRuntimeBindings runtimeBindings)
+    IServiceProviders<IRuntimeCatalogService> catalogs,
+    IServiceProviders<IBehaviorLoopService> behaviorLoops)
 {
     internal const string SourceDisplayName = "Subagents";
 
     private readonly SubagentService _subagentService = subagentService;
     private readonly SubagentPermissionStatusAdapter _permissionStatusAdapter = permissionStatusAdapter;
-    public ValueTask<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>> ListCapabilitiesAsync(
-        AgentProfileSelectableCapabilityRequest request,
+    public async ValueTask<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>> ListCapabilitiesAsync(
+        AgentProfileRecord? profile,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (!SupportsSubagentFeature(request.Profile))
+        if (!await SupportsSubagentFeatureAsync(profile, cancellationToken).ConfigureAwait(false))
         {
-            return ValueTask.FromResult<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>>([]);
+            return [];
         }
 
-        return ValueTask.FromResult<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>>(
-            _subagentService.ListSubagents()
-                .Select(agent => new AgentProfileSelectableCapabilityDescriptor(
-                    AgentProfileSelectableCapabilityKinds.Subagent,
-                    agent.SubagentId,
-                    SubagentConstants.PackageId,
-                    agent.DisplayName,
-                    agent.Description,
-                    SubagentService.IsUsable(agent)
+        return _subagentService.ListSubagents()
+                .Select(agent => new AgentProfileSelectableCapabilityDescriptor
+                {
+                    Kind = AgentProfileSelectableCapabilityKinds.Subagent, CapabilityId = agent.SubagentId,
+                    SourceId = SubagentConstants.PackageId, DisplayName = agent.DisplayName, Description = agent.Description,
+                    StatusText = SubagentService.IsUsable(agent)
                         ? "Available as a delegated task subagent."
                         : "Description is required before this subagent can be selected or used.",
-                    SubagentService.IsUsable(agent),
-                    SourceDisplayName: SourceDisplayName,
-                    GroupId: SubagentConstants.PackageId,
-                    GroupDisplayName: SourceDisplayName,
-                    GroupDescription: "Delegated specialists available to behavior loops with subagent support.",
-                    GroupSortOrder: 40))
-                .ToArray());
+                    IsSelectable = SubagentService.IsUsable(agent), SourceDisplayName = SourceDisplayName,
+                    GroupId = SubagentConstants.PackageId, GroupDisplayName = SourceDisplayName,
+                    GroupDescription = "Delegated specialists available to behavior loops with subagent support.", GroupSortOrder = 40,
+                })
+                .ToArray();
     }
 
     public async ValueTask<IReadOnlyList<AgentToolDescriptor>> ListToolsAsync(
@@ -52,25 +49,14 @@ internal sealed partial class SubagentDescriptorSchema(
     {
         cancellationToken.ThrowIfCancellationRequested();
         var enabledSubagents = ListEnabledSubagents(context.Profile, requireUsable: true);
-        if (!SupportsSubagentFeature(context.Profile) || enabledSubagents.Count == 0)
+        if (!await SupportsSubagentFeatureAsync(context.Profile, cancellationToken).ConfigureAwait(false) || enabledSubagents.Count == 0)
         {
             return [];
         }
 
         var descriptors = new List<AgentToolDescriptor>
         {
-            new(
-                SubagentConstants.TaskToolId,
-                "Task",
-                BuildTaskToolDescription(enabledSubagents),
-                IsReadOnly: false,
-                ArgumentsJsonSchema: BuildTaskArgumentsSchema(enabledSubagents),
-                SourceKind: "subagent",
-                SourceId: SubagentConstants.PackageId,
-                SourceDisplayName: SourceDisplayName,
-                RuntimeInstructions: BuildRuntimeInstructions(),
-                ActivationRequirement: new AgentToolActivationRequirement(AgentProfileSelectableCapabilityKinds.Subagent, SubagentConstants.PackageId),
-                Priority: AgentToolPriority.High),
+            TaskDescriptor(SubagentConstants.TaskToolId, "Task", BuildTaskToolDescription(enabledSubagents), false, BuildTaskArgumentsSchema(enabledSubagents)),
         };
 
         var readOnlySubagents = new List<SubagentRecord>();
@@ -84,66 +70,54 @@ internal sealed partial class SubagentDescriptorSchema(
 
         if (readOnlySubagents.Count > 0)
         {
-            descriptors.Add(new AgentToolDescriptor(
-                SubagentConstants.DelegateTasksToolId,
-                "Delegate Tasks",
-                BuildDelegateTasksToolDescription(readOnlySubagents),
-                IsReadOnly: true,
-                ArgumentsJsonSchema: BuildDelegateTasksArgumentsSchema(readOnlySubagents),
-                SourceKind: "subagent",
-                SourceId: SubagentConstants.PackageId,
-                SourceDisplayName: SourceDisplayName,
-                RuntimeInstructions: BuildRuntimeInstructions(),
-                ActivationRequirement: new AgentToolActivationRequirement(AgentProfileSelectableCapabilityKinds.Subagent, SubagentConstants.PackageId),
-                Priority: AgentToolPriority.High));
+            descriptors.Add(TaskDescriptor(SubagentConstants.DelegateTasksToolId, "Delegate Tasks", BuildDelegateTasksToolDescription(readOnlySubagents),
+                true, BuildDelegateTasksArgumentsSchema(readOnlySubagents)));
         }
 
         return descriptors;
     }
 
-    public ValueTask<AgentToolReadiness?> GetReadinessAsync(
+    public async ValueTask<AgentToolReadiness?> GetReadinessAsync(
         string requestedToolId,
         AgentToolSourceContext context,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var hasEnabledSubagents = SupportsSubagentFeature(context.Profile)
+        var hasEnabledSubagents = await SupportsSubagentFeatureAsync(context.Profile, cancellationToken).ConfigureAwait(false)
                                    && ListEnabledSubagents(context.Profile, requireUsable: true).Count > 0;
         if (!hasEnabledSubagents)
         {
-            return ValueTask.FromResult<AgentToolReadiness?>(null);
+            return null;
         }
 
-        return ValueTask.FromResult<AgentToolReadiness?>(
-            string.Equals(requestedToolId, SubagentConstants.TaskToolId, StringComparison.OrdinalIgnoreCase)
+        return string.Equals(requestedToolId, SubagentConstants.TaskToolId, StringComparison.OrdinalIgnoreCase)
             || string.Equals(requestedToolId, SubagentConstants.DelegateTasksToolId, StringComparison.OrdinalIgnoreCase)
-                ? new AgentToolReadiness(requestedToolId, AgentToolReadinessStatus.Ready, "Ready.")
-                : null);
+                ? new AgentToolReadiness { ToolId = requestedToolId, Status = AgentToolReadinessStatus.Ready, Message = "Ready." }
+                : null;
     }
 
-    public ValueTask<AgentPromptContextContribution?> ContributeContextAsync(
+    public async ValueTask<AgentPromptContextContribution?> ContributeContextAsync(
         AgentPromptContextRequest request,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var profile = request.Profile
-                       ?? ResolveProfile(request.Session.ProfileId);
+                       ?? await ResolveProfileAsync(request.Session.ProfileId, cancellationToken).ConfigureAwait(false);
         var enabledSubagents = ListEnabledSubagents(profile, requireUsable: true);
-        if (!SupportsSubagentFeature(profile) || enabledSubagents.Count == 0)
+        if (!await SupportsSubagentFeatureAsync(profile, cancellationToken).ConfigureAwait(false) || enabledSubagents.Count == 0)
         {
-            return ValueTask.FromResult<AgentPromptContextContribution?>(null);
+            return null;
         }
 
-        return ValueTask.FromResult<AgentPromptContextContribution?>(new AgentPromptContextContribution(
-        [
-            new AgentPromptContextBlock(
-                "Subagent Delegation",
-                "Enabled subagents:\n" + FormatSubagentList(enabledSubagents),
-                Priority: 120,
-                SourceId: SubagentConstants.PackageId,
-                Provenance: AgentContextProvenance.User,
-                Trust: AgentContextTrust.UserProvided),
-        ]));
+        return new AgentPromptContextContribution
+        {
+            Blocks = [new()
+            {
+                Title = "Subagent Delegation", Content = "Enabled subagents:\n" + FormatSubagentList(enabledSubagents), Priority = 120,
+                SourceId = SubagentConstants.PackageId, Provenance = AgentContextProvenance.User, Trust = AgentContextTrust.UserProvided,
+                Usage = AgentPromptContextUsage.Reference, Scope = null, Authority = AgentPromptContextAuthority.Reference, HostIdentity = null,
+            }],
+        };
     }
 
     public IReadOnlyList<SubagentRecord> ListEnabledSubagents(AgentProfileRecord? profile, bool requireUsable)
@@ -171,7 +145,7 @@ internal sealed partial class SubagentDescriptorSchema(
                 .FirstOrDefault(agent => string.Equals(agent.SubagentId, subagentType, StringComparison.OrdinalIgnoreCase)
                                          || string.Equals(agent.DisplayName, subagentType, StringComparison.OrdinalIgnoreCase));
 
-    public bool SupportsSubagentFeature(AgentProfileRecord? profile)
+    public async ValueTask<bool> SupportsSubagentFeatureAsync(AgentProfileRecord? profile, CancellationToken token)
     {
         if (profile is null)
         {
@@ -184,7 +158,8 @@ internal sealed partial class SubagentDescriptorSchema(
         var requestedSourceId = string.IsNullOrWhiteSpace(profile.BehaviorLoopSourceId)
             ? null
             : profile.BehaviorLoopSourceId.Trim();
-        var loops = SnapshotBehaviorLoops();
+        var loops = (await SubagentCatalogSelection.SnapshotAsync(behaviorLoops, token,
+            static (service, cancellation) => service.DescribeAsync(cancellation)).ConfigureAwait(false)).Select(item => item.Metadata).ToArray();
         var behaviorLoop = loops.FirstOrDefault(loop =>
                                string.Equals(loop.LoopId, requestedLoopId, StringComparison.OrdinalIgnoreCase)
                                && (requestedSourceId is null
@@ -195,48 +170,29 @@ internal sealed partial class SubagentDescriptorSchema(
             string.Equals(kind, SubagentConstants.FeatureKind, StringComparison.OrdinalIgnoreCase)) == true;
     }
 
-    private AgentProfileRecord? ResolveProfile(string profileId)
+    private async ValueTask<AgentProfileRecord?> ResolveProfileAsync(string profileId, CancellationToken token)
     {
-        foreach (var reference in runtimeBindings.GetRuntimeCatalogs())
+        foreach (var provider in (await catalogs.ListAsync(token).ConfigureAwait(false)).Providers.Where(item => item.State == ServiceProviderState.Active))
         {
-            if (!reference.TryAcquire(out var lease))
-            {
-                continue;
-            }
-            using (lease)
-            {
-                var profile = lease.Service.GetProfile(profileId);
-                if (!lease.RetirementToken.IsCancellationRequested)
-                {
-                    return profile;
-                }
-            }
+            using var invocation = CancellationTokenSource.CreateLinkedTokenSource(token, provider.RetirementToken);
+            await provider.EnsureCurrentAsync(invocation.Token).ConfigureAwait(false);
+            var profile = await provider.Service.GetProfileAsync(profileId, invocation.Token).ConfigureAwait(false);
+            await provider.EnsureCurrentAsync(invocation.Token).ConfigureAwait(false);
+            return profile;
         }
 
         return null;
     }
 
-    private IReadOnlyList<AgentBehaviorLoopDescriptor> SnapshotBehaviorLoops()
+    private static AgentToolDescriptor TaskDescriptor(string id, string displayName, string description, bool readOnly, string schema) => new()
     {
-        var descriptors = new List<AgentBehaviorLoopDescriptor>();
-        foreach (var reference in runtimeBindings.GetBehaviorLoops())
-        {
-            if (!reference.TryAcquire(out var lease))
-            {
-                continue;
-            }
-            using (lease)
-            {
-                var descriptor = lease.Service.Descriptor;
-                if (!lease.RetirementToken.IsCancellationRequested)
-                {
-                    descriptors.Add(descriptor);
-                }
-            }
-        }
-
-        return descriptors;
-    }
+        ToolId = id, DisplayName = displayName, Description = description, IsReadOnly = readOnly, RequiresNetwork = false,
+        ArgumentsJsonSchema = schema, SourceKind = "subagent", SourceId = SubagentConstants.PackageId, SourceDisplayName = SourceDisplayName,
+        RuntimeInstructions = BuildRuntimeInstructions(), Priority = AgentToolPriority.High,
+        ActivationRequirement = new() { CapabilityKind = AgentProfileSelectableCapabilityKinds.Subagent, SourceId = SubagentConstants.PackageId, CapabilityId = null },
+        Aliases = null, SelectionScope = AgentToolSelectionScope.Tool, SelectionGroupId = null, SelectionGroupDisplayName = null,
+        SelectionGroupDescription = null, ConcurrencyMode = AgentToolConcurrencyMode.Sequential,
+    };
 
     private static string BuildTaskToolDescription(IReadOnlyList<SubagentRecord> agents)
         => string.Join("\n", [

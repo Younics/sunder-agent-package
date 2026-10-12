@@ -12,7 +12,7 @@ internal static class SubsessionAroundTurnPayload
 
     internal static SubsessionTranscriptPage FitPage(
         SubsessionTranscriptPage page,
-        SubagentQueryKind direction)
+        SubsessionPageDirection direction)
     {
         page = page with
         {
@@ -27,7 +27,7 @@ internal static class SubsessionAroundTurnPayload
         var turns = page.Turns.ToList();
         while (turns.Count > 1)
         {
-            if (direction is SubagentQueryKind.RecentTurns or SubagentQueryKind.TurnsBefore)
+            if (direction is SubsessionPageDirection.Recent or SubsessionPageDirection.Before)
             {
                 turns.RemoveAt(0);
             }
@@ -205,10 +205,10 @@ internal static class SubsessionAroundTurnPayload
 
     private static TranscriptPageCursor? ResolveContinuation(
         IReadOnlyList<AgentTurnRecord> turns,
-        SubagentQueryKind direction)
+        SubsessionPageDirection direction)
     {
-        var continuationTurn = direction is SubagentQueryKind.RecentTurns
-            or SubagentQueryKind.TurnsBefore
+        var continuationTurn = direction is SubsessionPageDirection.Recent
+            or SubsessionPageDirection.Before
             ? turns.FirstOrDefault()
             : turns.LastOrDefault();
         return continuationTurn is null

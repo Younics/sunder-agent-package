@@ -21,10 +21,10 @@ public interface IAgentProfileGateway
         string? behaviorLoopId = null, string? behaviorLoopSourceId = null,
         string? behaviorLoopSettingsJson = null, string? chatModelSettingsJson = null);
     void DeleteProfile(string profileId);
-    IReadOnlyList<AgentBehaviorLoopDescriptor> ListBehaviorLoopDescriptors();
-    IReadOnlyList<AgentProviderDescriptor> ListChatProviderDescriptors();
-    IReadOnlyList<AgentEmbeddingProviderDescriptor> ListEmbeddingProviderDescriptors();
-    bool HasProfileCapabilityConsumers(string capabilityKind);
+    Task<IReadOnlyList<AgentBehaviorLoopDescriptor>> ListBehaviorLoopDescriptorsAsync(CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<AgentProviderDescriptor>> ListChatProviderDescriptorsAsync(CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<AgentEmbeddingProviderDescriptor>> ListEmbeddingProviderDescriptorsAsync(CancellationToken cancellationToken = default);
+    Task<bool> HasProfileCapabilityConsumersAsync(string capabilityKind, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>> ListSelectableProfileCapabilitiesAsync(
         AgentProfileRecord? profile = null, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<AgentToolCatalogEntry>> ListInstalledLocalToolsAsync(CancellationToken cancellationToken = default);
@@ -47,7 +47,7 @@ public interface IAgentWorkspaceGateway
         IReadOnlyList<AgentWorkspacePathRecord> paths,
         IReadOnlyList<AgentWorkspaceDocumentRecord> documents,
         string? executionTargetId);
-    void DeleteWorkspace(string workspaceId);
+    Task DeleteWorkspaceAsync(string workspaceId, CancellationToken cancellationToken = default);
     IReadOnlyList<AgentWorkspaceBindingRecord> ListBindings(string workspaceId);
     AgentWorkspaceBindingRecord SavePrimaryExecutionBinding(string workspaceId, string contributionId,
         string displayRole = AgentWorkspaceBindingRoles.PrimaryExecutionTarget);
@@ -70,7 +70,7 @@ public interface IAgentSessionGateway
         string? agentKind = null, string? workspaceId = null);
     AgentSessionRecord? GetSession(Guid sessionId);
     void UpdateSession(AgentSessionRecord session);
-    void DeleteSession(Guid sessionId);
+    Task DeleteSessionAsync(Guid sessionId, CancellationToken cancellationToken = default);
     IReadOnlyList<AgentTurnRecord> ListTurns(Guid sessionId);
     IReadOnlyList<AgentTurnRecord> ListRecentTurns(Guid sessionId, int limit);
     IReadOnlyList<AgentTurnRecord> ListTurnsBefore(Guid sessionId, DateTimeOffset beforeCreatedAtUtc, Guid beforeTurnId, int limit);
@@ -107,7 +107,7 @@ public interface IAgentPermissionGateway
 {
     AgentSessionPermissionState GetSessionState(Guid sessionId);
     void SetSessionUnrestrictedMode(Guid sessionId, bool isEnabled);
-    IReadOnlyList<AgentPermissionActionDescriptor> ListActions();
+    Task<IReadOnlyList<AgentPermissionActionDescriptor>> ListActionsAsync(CancellationToken cancellationToken = default);
     IReadOnlyList<AgentPermissionOverride> ListOverrides();
     void SaveOverride(string actionId, string boundaryId, AgentPermissionDecision decision);
     void DeleteOverride(string actionId, string boundaryId);
@@ -142,7 +142,7 @@ public interface IAgentAttachmentGateway
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 public interface IAgentExecutionGateway
 {
-    IReadOnlyList<AgentExecutionTargetDescriptor> ListTargets();
+    Task<IReadOnlyList<AgentExecutionTargetDescriptor>> ListTargetsAsync(CancellationToken cancellationToken = default);
     Task<AgentExecutionTargetWarmupResult> WarmWorkspaceAsync(AgentWorkspaceRecord workspace,
         CancellationToken cancellationToken = default);
 }
@@ -150,10 +150,4 @@ public interface IAgentExecutionGateway
 internal interface IAgentPresentationInitialization
 {
     Task InitializeAsync(CancellationToken cancellationToken = default);
-}
-
-internal interface IAgentExecutionTargetLoader
-{
-    Task<IReadOnlyList<AgentExecutionTargetDescriptor>> ListTargetsAsync(
-        CancellationToken cancellationToken = default);
 }

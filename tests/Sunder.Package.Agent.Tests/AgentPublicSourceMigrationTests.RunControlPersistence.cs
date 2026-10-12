@@ -11,6 +11,8 @@ using Sunder.Package.Agent.Services.BehaviorLoops;
 using Sunder.Package.Agent.Storage;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -36,82 +38,96 @@ public sealed partial class AgentPublicSourceMigrationTests
         using var cancellation = new CancellationTokenSource();
         var durableLease = new AgentDurableRunLease(run);
         activeRuns.Activate(session.SessionId, new(run.Key.RunId, run.Key.RunRevision, run.StartedAtUtc, profile.ProfileId, run.UserMessage, cancellation) { DurableLease = durableLease });
-        var host = services.GetRequiredService<AgentBehaviorLoopHostFactory>().Create(new RunControlProvider(), session, profile, workspace,
+        await using var chatProviders = new FakeServiceCatalog<AgentServices.IChatProviderService>(CurrentPublicRpcDescriptors.Get(RegressionTestBindings.ChatProviders));
+        var provider = new RunControlProvider();
+        var host = services.GetRequiredService<AgentBehaviorLoopHostFactory>().Create(new(null, chatProviders.Add(provider), provider.Descriptor), session, profile, workspace,
             run.Key.RunId, run.Key.RunRevision, run.StartedAtUtc, run.UserMessage, started.UserTurn.TurnId, null);
         await using var fixture = await CreateRunControlFixture(assembly, descriptor);
         using var lease = fixture.Registry.Open(host, RunControlCaller, out var invocationId);
-        var invocation = new RunControlInvocation(invocationId);
-        Assert.True((await Call("IsCurrentAsync", invocation)).GetBoolean());
-        Assert.Single((await Call("ListTurnsAsync", invocation)).EnumerateArray());
-        var charge = new RunControlBudgetChargeRequest(invocation, new(2, 3, 4000));
-        await Call("ChargeRunBudgetAsync", charge);
-        await Call("ChargeRunBudgetAsync", charge);
+        var control = fixture.Client;
+        Assert.True(await control.IsCurrentAsync(invocationId));
+        Assert.Single(await control.ListTurnsAsync(invocationId));
+        var charge = new AgentRunBudgetCharge(2, 3, 4000);
+        await control.ChargeRunBudgetAsync(invocationId, charge);
+        await control.ChargeRunBudgetAsync(invocationId, charge);
         Assert.Equal(new AgentRunBudgetState(4, 6, 8000), store.GetRun(run.Key.RunId)!.BudgetState);
-        Assert.Equal(8000, (await Call("GetRunBudgetAsync", invocation)).GetProperty("submittedContextTokens").GetInt64());
+        Assert.Equal(8000, (await control.GetRunBudgetAsync(invocationId)).SubmittedContextTokens);
         using (var canceled = new CancellationTokenSource())
         {
             canceled.Cancel();
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => InvokeGeneratedClient(fixture.Client, "ChargeRunBudgetAsync", RunJson(charge), canceled.Token));
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => control.ChargeRunBudgetAsync(invocationId, charge, canceled.Token).AsTask());
             Assert.Equal(new AgentRunBudgetState(4, 6, 8000), store.GetRun(run.Key.RunId)!.BudgetState);
         }
-        await Call("SelectSessionContextAsync", new RunControlSessionProjectionRequest(invocation, new([started.UserTurn], false, 0)));
-        var context = await Call("BuildInstructionContextAsync", invocation);
-        Assert.Equal(JsonValueKind.Object, context.ValueKind);
-        await Call("AcknowledgePromptContextAsync", new RunControlPromptContextRequest(invocation, []));
-        await Call("DiscardPromptContextAsync", invocation);
-        await Call("ReportActivityAsync", new RunControlActivityRequest(invocation, AgentRunActivityKind.Thinking, "Working"));
-        Assert.Empty((await Call("ListReadyToolsAsync", invocation)).EnumerateArray());
-        Assert.Empty((await Call("InvokeToolsAsync", new RunControlToolsRequest(invocation, [], null))).EnumerateArray());
+        await control.SelectSessionContextAsync(invocationId, new([started.UserTurn], false, 0));
+        Assert.NotNull(await control.BuildInstructionContextAsync(invocationId));
+        await control.AcknowledgePromptContextAsync(invocationId, []);
+        await control.DiscardPromptContextAsync(invocationId);
+        await control.ReportActivityAsync(invocationId, AgentRunActivityKind.Thinking, "Working");
+        Assert.Empty(await control.ListReadyToolsAsync(invocationId));
+        Assert.Empty(await control.InvokeToolsAsync(invocationId, [], null));
 
-        var first = await Call("UpsertAssistantTurnAsync", new RunControlAssistantTurnRequest(invocation, null, "First"));
-        var turn = first.Deserialize<AgentTurnRecord>(ExecutionJson)!;
+        var turn = await control.UpsertAssistantTurnAsync(invocationId, null, "First");
         Assert.True(turn.IsStreaming);
-        var updated = (await Call("UpsertAssistantTurnAsync", new RunControlAssistantTurnRequest(invocation, turn, "First 漢字"))).Deserialize<AgentTurnRecord>(ExecutionJson)!;
+        var updated = await control.UpsertAssistantTurnAsync(invocationId, turn, "First 漢字");
         Assert.Equal(turn.TurnId, updated.TurnId);
         Assert.True(updated.ContentRevision > turn.ContentRevision);
-        var completed = (await Call("CompleteAssistantTurnAsync", new RunControlCompleteTurnRequest(invocation, updated))).Deserialize<AgentTurnRecord>(ExecutionJson)!;
+        var completed = await control.CompleteAssistantTurnAsync(invocationId, updated);
         Assert.False(completed.IsStreaming);
         Assert.Equal("First 漢字", Assert.Single(sessions.GetTurn(completed.TurnId)!.Items).TextContent);
-        await Call("PublishLifecycleAsync", new RunControlLifecycleRequest(invocation, AgentLifecycleEventKind.AssistantTurnCompleted, AgentRunStatus.Running, completed, null, false));
+        await control.PublishLifecycleAsync(invocationId, AgentLifecycleEventKind.AssistantTurnCompleted, AgentRunStatus.Running, completed, null, false);
 
-        var open = (await Call("UpsertAssistantTurnAsync", new RunControlAssistantTurnRequest(invocation, null, "Open at terminal"))).Deserialize<AgentTurnRecord>(ExecutionJson)!;
-        var terminal = (await Call("SaveCheckpointAsync", new RunControlCheckpointRequest(invocation, AgentRunStatus.Completed, "Done"))).Deserialize<AgentRunCheckpointRecord>(ExecutionJson)!;
+        var open = await control.UpsertAssistantTurnAsync(invocationId, null, "Open at terminal");
+        var terminal = await control.SaveCheckpointAsync(invocationId, AgentRunStatus.Completed, "Done");
         Assert.Equal(AgentRunStatus.Completed, sessions.GetLatestCheckpoint(session.SessionId)!.Status);
         Assert.False(sessions.GetTurn(open.TurnId)!.IsStreaming);
-        Assert.Equal(terminal.CheckpointId, (await Call("SaveCheckpointAsync", new RunControlCheckpointRequest(invocation, AgentRunStatus.Completed, "Repeated"))).GetProperty("checkpointId").GetGuid());
+        Assert.Equal(terminal.CheckpointId, (await control.SaveCheckpointAsync(invocationId, AgentRunStatus.Completed, "Repeated")).CheckpointId);
         var turnsBefore = RunJson(sessions.ListTurns(session.SessionId));
-        var error = await Assert.ThrowsAsync<SunderRpcException>(() => Call("UpsertAssistantTurnAsync", new RunControlAssistantTurnRequest(invocation, null, "Rejected after terminal")));
+        var error = await Assert.ThrowsAsync<SunderRpcException>(() => control.UpsertAssistantTurnAsync(invocationId, null, "Rejected after terminal").AsTask());
         Assert.Equal(SunderRpcErrorKind.ProviderFaulted, error.Error.Kind);
         Assert.True(JsonElement.DeepEquals(turnsBefore, RunJson(sessions.ListTurns(session.SessionId))));
         activeRuns.Complete(session.SessionId, run.Key.RunId, run.Key.RunRevision);
-        Assert.False((await Call("IsCurrentAsync", invocation)).GetBoolean());
+        Assert.False(await control.IsCurrentAsync(invocationId));
 
         // A different actor can revoke the durable epoch while the invocation lease still exists.
         var next = sessions.ReserveRun(session.SessionId, profile.ProfileId, "Next run");
         var nextStarted = store.TryStartRun(next.Key, next.Epoch, "Next run", [], null, "Running")!;
-        var nextHost = services.GetRequiredService<AgentBehaviorLoopHostFactory>().Create(new RunControlProvider(), session, profile, workspace,
+        var nextProvider = new RunControlProvider();
+        var nextHost = services.GetRequiredService<AgentBehaviorLoopHostFactory>().Create(new(null, chatProviders.Add(nextProvider), nextProvider.Descriptor), session, profile, workspace,
             next.Key.RunId, next.Key.RunRevision, next.StartedAtUtc, next.UserMessage, nextStarted.UserTurn.TurnId, null);
         using var nextLease = fixture.Registry.Open(nextHost, RunControlCaller, out var nextId);
         Assert.NotNull(store.TryTransitionRun(nextStarted.Transition.Run.Key, nextStarted.Transition.Run.Epoch, AgentRunStatus.Stopped, "External stop"));
         var budgetBefore = store.GetRun(next.Key.RunId)!.BudgetState;
-        await Assert.ThrowsAsync<SunderRpcException>(() => Call("ChargeRunBudgetAsync", new RunControlBudgetChargeRequest(new(nextId), new(1, 1, 1))));
+        await Assert.ThrowsAsync<SunderRpcException>(() => control.ChargeRunBudgetAsync(nextId, new(1, 1, 1)).AsTask());
         Assert.Equal(budgetBefore, store.GetRun(next.Key.RunId)!.BudgetState);
 
-        Task<JsonElement> Call<T>(string method, T request) => InvokeGeneratedClient(fixture.Client, method, RunJson(request));
     }
 
-    private sealed class RunControlProvider(Func<IChatClient>? create = null) : IAgentChatProvider
+    private sealed class RunControlProvider(Func<IChatClient>? create = null) : AgentServices.IChatProviderService
     {
         public AgentChatClientContext? LastContext { get; private set; }
         public AgentProviderDescriptor Descriptor { get; } = new("provider.one", "Provider", [], true, true);
-        public ValueTask<IReadOnlyList<AgentModelDescriptor>> GetAvailableModelsAsync(CancellationToken cancellationToken = default)
+        public ValueTask<AgentProviderDescriptor> DescribeAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(Descriptor);
+        public ValueTask<IReadOnlyList<AgentModelDescriptor>> ListModelsAsync(CancellationToken cancellationToken = default)
             => ValueTask.FromResult<IReadOnlyList<AgentModelDescriptor>>([]);
-        public ValueTask<AgentProviderReadiness> GetReadinessAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public ValueTask<AgentProviderRunCapabilities> GetRunCapabilitiesAsync(string? modelId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public ValueTask<IChatClient> CreateChatClientAsync(AgentChatClientContext context, CancellationToken cancellationToken = default)
+        public ValueTask<AgentProviderReadiness> GetReadinessAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new AgentProviderReadiness(Descriptor.ProviderId, AgentProviderReadinessStatus.Ready, "Ready"));
+        public ValueTask<AgentProviderRunCapabilities> GetCapabilitiesAsync(string? modelId, CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new AgentProviderRunCapabilities(true, true, true, "Test capabilities"));
+        public ValueTask<string?> ResolveUtilityModelAsync(CancellationToken cancellationToken = default) => ValueTask.FromResult<string?>(null);
+        private ValueTask<IChatClient> CreateChatClientAsync(AgentChatClientContext context, CancellationToken cancellationToken = default)
         {
             LastContext = context;
             return ValueTask.FromResult(create?.Invoke() ?? new RunControlChatProbe([new(ChatRole.Assistant, "Done")]));
+        }
+        public async IAsyncEnumerable<AgentChatStreamEvent> StreamChatAsync(AgentChatStreamRequest request,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            using var client = await CreateChatClientAsync(new(Descriptor.ProviderId, request.ModelId), cancellationToken);
+            var messages = await AgentChatMapper.ToChatMessagesAsync(request.Messages, cancellationToken);
+            await foreach (var update in client.GetStreamingResponseAsync(messages, AgentChatMapper.ToChatOptions(request.Options), cancellationToken)
+                               .WithCancellation(cancellationToken))
+                yield return AgentChatMapper.FromUpdate(update);
         }
     }
 }

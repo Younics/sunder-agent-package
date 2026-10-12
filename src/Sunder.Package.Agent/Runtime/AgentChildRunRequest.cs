@@ -23,8 +23,8 @@ namespace Sunder.Package.Agent.Contracts.Models;
 public sealed record AgentChildRunRequest(
     Guid ParentSessionId,
     Guid ParentRunId,
-    long ParentRunRevision,
-    string ParentToolCallId,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long ParentRunRevision,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(MinLength = 1)] string ParentToolCallId,
     string WorkspaceId,
     string? TaskId,
     AgentProfileRecord ChildProfile,

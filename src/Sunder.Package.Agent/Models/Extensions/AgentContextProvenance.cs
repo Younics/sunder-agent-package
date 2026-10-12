@@ -15,7 +15,7 @@ public enum AgentContextProvenance
     /// The immediate source cannot be established.
     /// </summary>
     /// <remarks>Unknown-origin content must use <see cref="AgentContextTrust.Untrusted"/>.</remarks>
-    Unknown = 0,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("unknown")] Unknown = 0,
 
     /// <summary>
     /// The current user supplied the exact content directly.
@@ -24,25 +24,25 @@ public enum AgentContextProvenance
     /// This origin can support <see cref="AgentContextTrust.UserProvided"/>, but does not validate claims or
     /// elevate the content to system-level instruction.
     /// </remarks>
-    User = 1,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("user")] User = 1,
 
     /// <summary>
     /// The content is a derived summary or projection of earlier transcript turns.
     /// </summary>
     /// <remarks>Derivation loses direct-user guarantees and must be treated as untrusted reference data.</remarks>
-    TranscriptSummary = 2,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("transcript-summary")] TranscriptSummary = 2,
 
     /// <summary>
     /// The content was produced or inferred by an assistant model.
     /// </summary>
     /// <remarks>Model output is untrusted even when generated during a successful run.</remarks>
-    Assistant = 3,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("assistant")] Assistant = 3,
 
     /// <summary>
     /// The content was returned by a tool, command, service, or other external system.
     /// </summary>
     /// <remarks>Installed tool code does not make its external or model-controlled result trusted instruction text.</remarks>
-    Tool = 4,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("tool")] Tool = 4,
 
     /// <summary>
     /// The content was assembled by an installed extension without a more specific upstream origin.
@@ -51,7 +51,7 @@ public enum AgentContextProvenance
     /// Package code provenance does not make extension-generated supplementary content privileged; use a trusted
     /// system-prompt contributor only for package-controlled policy.
     /// </remarks>
-    Extension = 5,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("extension")] Extension = 5,
 
     /// <summary>
     /// The content was recalled from durable semantic memory or another persisted recall index.
@@ -60,5 +60,5 @@ public enum AgentContextProvenance
     /// Recall can be stale, merged, or derived and must remain untrusted even when its original evidence was a
     /// user turn; retain evidence-level provenance separately when available.
     /// </remarks>
-    DurableMemory = 6,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("durable-memory")] DurableMemory = 6,
 }

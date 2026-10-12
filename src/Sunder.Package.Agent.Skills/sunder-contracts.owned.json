@@ -3,7 +3,8 @@
   "authorityKind": "package",
   "authorityId": "sunder.package.agent.skills",
   "packageId": "sunder.package.agent.skills",
-  "contracts": {
+  "contracts": {},
+  "retiredPrivateContracts": {
     "management": {
       "contractId": "sunder.package.agent.skills.owner",
       "current": {

@@ -32,19 +32,19 @@ internal sealed record AgentTransportProfile(
 
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentChatSnapshotRequest(
-    int InitialTranscriptLimit = 60,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "1", Maximum = "500")] int InitialTranscriptLimit = 60,
     string? PreferredProfileId = null,
     string? PreferredWorkspaceId = null,
     Guid? PreferredSessionId = null,
     bool IncludeInitialTranscript = true);
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentChatPermissionProjection(
-    long Revision,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long Revision,
     AgentSessionPermissionState? SessionState,
     IReadOnlyList<AgentPendingPermissionRequestRecord> PendingRequests);
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentChatSnapshotProjection(
-    long Revision,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long Revision,
     IReadOnlyList<AgentProfileRecord> Profiles,
     IReadOnlyList<AgentWorkspaceRecord> Workspaces,
     IReadOnlyList<AgentWorkspaceBindingRecord> WorkspaceBindings,
@@ -71,7 +71,7 @@ internal interface IAgentChatSnapshotGateway
 internal sealed record AgentDashboardRequest;
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentDashboardProjection(
-    long Revision,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long Revision,
     IReadOnlyList<AgentProfileRecord> Profiles,
     IReadOnlyList<AgentWorkspaceRecord> Workspaces,
     IReadOnlyList<AgentWorkspaceBindingRecord> WorkspaceBindings);
@@ -93,12 +93,12 @@ internal enum AgentTranscriptPageDirection { Recent, Before, After, Turn }
 internal sealed record AgentTranscriptPageRequest(
     Guid SessionId,
     AgentTranscriptPageDirection Direction,
-    int Limit = 60,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "1", Maximum = "500")] int Limit = 60,
     DateTimeOffset? AnchorCreatedAtUtc = null,
     Guid? AnchorTurnId = null);
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentTranscriptPage(
-    long Revision,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long Revision,
     IReadOnlyList<AgentTurnRecord> Turns,
     bool HasMore,
     TranscriptPageCursor? Continuation = null);
@@ -201,7 +201,7 @@ internal sealed record AgentCatalogRequest(
     string? EmbeddingProviderId = null);
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentCatalogProjection(
-    long Revision,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long Revision,
     IReadOnlyList<AgentProviderDescriptor> ChatProviders,
     IReadOnlyList<AgentEmbeddingProviderDescriptor> EmbeddingProviders,
     IReadOnlyList<AgentBehaviorLoopDescriptor> BehaviorLoops,
@@ -240,7 +240,8 @@ internal sealed record AgentProfileCommand(
     string? BehaviorLoopSettingsJson = null,
     string? ChatModelSettingsJson = null);
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
-internal sealed record AgentProfileCommandResult(long Revision, AgentProfileRecord? Profile);
+internal sealed record AgentProfileCommandResult(
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long Revision, AgentProfileRecord? Profile);
 
 internal interface IAgentProfileCommandGateway
 {
@@ -278,7 +279,7 @@ internal sealed record AgentWorkspaceCommand(
     string? ExecutionTargetId = null);
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentWorkspaceCommandResult(
-    long Revision,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long Revision,
     AgentWorkspaceRecord? Workspace,
     AgentExecutionTargetWarmupResult? Warmup = null);
 
@@ -313,7 +314,8 @@ internal sealed record AgentSessionCommand(
     string? BehaviorLoopId = null,
     string? WorkspaceId = null);
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
-internal sealed record AgentSessionCommandResult(long Revision, AgentSessionSnapshot? Session);
+internal sealed record AgentSessionCommandResult(
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long Revision, AgentSessionSnapshot? Session);
 
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal enum AgentRunCommandKind { Start, RollbackAndStart, Stop, ApprovePermission, DenyPermission }
@@ -331,7 +333,7 @@ internal sealed record AgentRunCommand(
     Guid? UserTurnId = null);
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentRunCommandResult(
-    long Revision,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long Revision,
     AgentRunCheckpointRecord? Checkpoint,
     Guid? RunId = null,
     Guid? UserTurnId = null);
@@ -340,7 +342,8 @@ internal sealed record AgentRunCommandStatusRequest(Guid SessionId, Guid UserTur
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal enum AgentRunCommandStatus { Pending, Committed, Absent }
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
-internal sealed record AgentRunCommandStatusResult(long Revision, AgentRunCommandStatus Status);
+internal sealed record AgentRunCommandStatusResult(
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long Revision, AgentRunCommandStatus Status);
 
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal enum AgentPermissionCommandKind { Read, SetUnrestricted, SaveOverride, DeleteOverride }
@@ -354,7 +357,7 @@ internal sealed record AgentPermissionCommand(
     AgentPermissionDecision? Decision = null);
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentPermissionProjection(
-    long Revision,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long Revision,
     AgentSessionPermissionState? SessionState,
     IReadOnlyList<AgentPermissionActionDescriptor> Actions,
     IReadOnlyList<AgentPermissionOverride> Overrides,
@@ -383,20 +386,20 @@ internal interface IAgentGlobalPermissionGateway
 internal sealed record AgentAttachmentUploadDescriptor(
     string FileName,
     string? MediaType,
-    int SizeBytes,
-    string Sha256);
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "1")] int SizeBytes,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(MinLength = 64, MaxLength = 64)] string Sha256);
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentAttachmentUploadHandle(string TransferId);
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentAttachmentContentUploadRequest(
     AgentAttachmentUploadDescriptor Upload,
-    SunderRpcContentReference Content);
+    Sunder.Sdk.Services.SunderContent Content);
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentAttachmentContentUploadResult(AgentAttachmentUploadHandle Handle);
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentAttachmentContentDownloadRequest(AgentAttachmentMetadata Metadata);
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
-internal sealed record AgentAttachmentContentDownloadResult(SunderRpcContentReference Content);
+internal sealed record AgentAttachmentContentDownloadResult(Sunder.Sdk.Services.SunderContent Content);
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentAttachmentContentDiscardRequest(AgentAttachmentUploadHandle Handle);
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
@@ -404,7 +407,7 @@ internal sealed record AgentAttachmentContentDiscardResult(bool Discarded);
 
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentChangeSubscription(
-    long AfterRevision = 0,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long AfterRevision = 0,
     bool SupportsTurnMutations = false);
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal enum AgentRuntimeChangeKind
@@ -423,7 +426,7 @@ internal enum AgentRuntimeChangeKind
 }
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentRuntimeChange(
-    long Revision,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long Revision,
     AgentRuntimeChangeKind Kind,
     string? ProfileId = null,
     string? WorkspaceId = null,

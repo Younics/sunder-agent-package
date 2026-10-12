@@ -23,7 +23,14 @@ internal static partial class AgentSourceMigrationProjectChanges
             var path = Path.GetFullPath(Path.Combine(directory, include[prefix.Length..].Replace('\\', '/')));
             var original = "src/Sunder.Package.Agent.Contracts/" + source.Attribute("Link")!.Value;
             Assert.True(actual.TryAdd(original, Path.GetRelativePath(root, path).Replace('\\', '/')));
-            Assert.True(File.Exists(path), $"Relocated semantic source is missing: {path}");
+            if (!File.Exists(path))
+            {
+                // The six retired natural-service helpers are historical data, not
+                // compilable source. Preserve their reviewed semantic destination
+                // only when the captured authenticated before-image is available.
+                Assert.True(TryReadNaturalServiceHistory(root, path, out _),
+                    $"Relocated semantic source is missing without captured history: {path}");
+            }
             Assert.False(File.Exists(Path.Combine(root, original)), $"Both copies of semantic source remain: {original}");
         }
         // Assertions alone consult the immutable disposition. Builds consume only

@@ -1,4 +1,6 @@
+using System.Reflection;
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Rpc;
@@ -8,155 +10,191 @@ namespace Sunder.Package.Agent.Tests;
 
 public sealed partial class AgentSourceArtifactMigrationTests
 {
-    private static async Task VerifySkillsConsumers(Type type)
+    private static async Task VerifySkillsConsumers(Type type, Assembly agentOwner)
     {
+        Assert.True(agentOwner.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Services.IRuntimeCatalogService", true)!.IsInterface);
+        using var package = RegressionTestPackageScope.Create();
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        var client = new MemoryConsumerRpc(new RegressionTestRpcClient(state, "sunder.package.agent.skills"));
-        var instance = Activator.CreateInstance(type, client)!;
-        await using var owned = (IAsyncDisposable)instance;
-        Assert.Null(await profile("profile.generated", default));
-        Assert.Equal(0, client.DiscoveryCount);
-        Assert.Equal(0, client.ActiveWatches);
-        await type.GetMethod("StartAsync")!.CreateDelegate<Func<CancellationToken, ValueTask>>(instance)(default);
-        Assert.Null(await profile("profile.generated", default));
-        var runtime = new MemoryConsumerRuntime();
-        var catalog = new SkillsConsumerHandler(new Rpc.Public.RuntimeCatalogService(runtime).CreateSunderRpcProviderRegistration().Handler);
-        AddCatalog(catalog);
-        Assert.Equal(runtime.Profile.ProfileId, (await profile(runtime.Profile.ProfileId, default))!.ProfileId);
-        Assert.Null(await profile("missing", default));
+        var (_, composition, services) = CreateGeneratedWorker(type.Assembly, package.Context,
+            new RegressionTestRpcClient(state, "sunder.package.agent.skills"));
+        await using var compositionLifetime = composition;
+        var store = services.GetRequiredService(type.Assembly.GetType("Sunder.Package.Agent.Skills.Services.SkillStore", true)!);
+        var importer = services.GetRequiredService(type.Assembly.GetType("Sunder.Package.Agent.Skills.Services.SkillImportService", true)!);
+        var source = Directory.CreateDirectory(Path.Combine(package.RootPath, "consumer-skill")).FullName;
+        File.WriteAllText(Path.Combine(source, "SKILL.md"), "---\nname: Fixture skill\ndescription: Resource consumer fixture\n---\nFixture instructions.");
+        var installed = (await AgentRoleBoundary.Await(AgentRoleBoundary.Call(importer, "ImportLocalFolderAsync", source, CancellationToken.None)!))!;
+        var skillId = (string)installed.GetType().GetProperty("SkillId")!.GetValue(installed)!;
+        var hostPath = (string)AgentRoleBoundary.Call(store, "GetSkillRootPath", installed)!;
+        var now = DateTimeOffset.UtcNow;
+        var profile = new AgentProfileRecord("profile.generated", "Generated", null, null, null, null, null, null, now, now,
+            SelectableCapabilityAssignments: [new("skill", skillId, "sunder.package.agent.skills")]);
+        var runtime = new MemoryConsumerRuntime(profile);
+        await using var consumer = NewConsumer();
+        Assert.Equal(0, consumer.Transport.DiscoveryCount);
+        Assert.Equal(0, consumer.Transport.ActiveWatches);
+        Assert.Null(await consumer.Profile(profile.ProfileId));
+        var catalog = AddCatalog();
+        Assert.Equal(profile.ProfileId, (await consumer.Profile(profile.ProfileId))!.ProfileId);
+        Assert.Null(await consumer.Profile("missing"));
         var target = new SkillsConsumerHandler();
         AddTarget(target);
-        var handle = SelectTarget();
-        var now = DateTimeOffset.UtcNow;
-        var context = new AgentExecutionTargetContext(Guid.NewGuid(), runtime.Profile.ProfileId,
+        var handle = await consumer.Target();
+        var context = new AgentExecutionTargetContext(Guid.NewGuid(), profile.ProfileId,
             new("workspace.skills", "Skills", null, now, now),
-            new("binding.skills", "workspace.skills", AgentRpcContractIds.ExecutionTarget, "test-target", "execution", true, 0, now, now));
-        AgentExecutionResourceDescriptor[] resources = [new("skill.fixture", "skill", "sunder.package.agent.skills", "Fixture skill", "/host/skills/fixture", "/sunder/skills/fixture",
-            AgentExecutionResourceAccessMode.ReadOnly, new Dictionary<string, string> { ["skill_id"] = "skill.fixture" })];
-        Assert.Empty(await resolve(context, resources, null, default));
-        var result = Assert.Single(await resolve(context, resources, handle, default));
-        Assert.Equal("/executor/skill.fixture", result.ExecutionPath);
-        Assert.Equal(resources[0].HostPath, result.HostPath);
+            new("binding.skills", "workspace.skills", RegressionTestBindings.ExecutionTargets, "test-target", "execution", true, 0, now, now));
+        Assert.Empty(await consumer.Resolve(context, null));
+        var result = Assert.Single(await consumer.Resolve(context, handle));
+        Assert.Equal("/executor/" + skillId, result.ExecutionPath);
+        Assert.Equal(hostPath, result.HostPath);
         Assert.Equal(AgentExecutionResourceAccessMode.ReadOnly, result.AccessMode);
-        Assert.Equal("skill.fixture", result.Metadata!["skill_id"]);
-        Assert.Equal(context.Binding.BindingId, target.LastRequest.GetProperty("context").GetProperty("context").GetProperty("binding").GetProperty("bindingId").GetString());
+        Assert.Equal(skillId, result.Metadata!["skill_id"]);
+        Assert.Equal(context.Binding.BindingId, target.LastRequest.GetProperty("context").GetProperty("binding").GetProperty("bindingId").GetString());
         Assert.Empty(target.LastRequest.GetProperty("context").GetProperty("approvedResourceCapabilities").EnumerateArray());
         var count = target.Calls;
         using (var cancelled = new CancellationTokenSource())
         {
             cancelled.Cancel();
-            var discoveries = client.DiscoveryCount;
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => profile(runtime.Profile.ProfileId, cancelled.Token).AsTask());
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => resolve(context, resources, handle, cancelled.Token).AsTask());
-            Assert.Equal(discoveries, client.DiscoveryCount);
+            var discoveries = consumer.Transport.DiscoveryCount;
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => consumer.Profile(profile.ProfileId, cancelled.Token));
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => consumer.Resolve(context, handle, cancelled.Token));
+            Assert.Equal(discoveries, consumer.Transport.DiscoveryCount);
             Assert.Equal(count, target.Calls);
         }
-        Assert.Empty(await resolve(context with { Binding = context.Binding with { ContributionId = "wrong-target" } }, resources, handle, default));
+        Assert.Empty(await consumer.Resolve(context with { Binding = context.Binding with { ContributionId = "wrong-target" } }, handle));
         target.HasFacet = false;
-        Assert.Empty(await resolve(context, resources, handle, default));
+        Assert.Empty(await consumer.Resolve(context, handle));
         target.HasFacet = true;
         Assert.Equal(count, target.Calls);
-        Assert.Single(await resolve(context with { Binding = context.Binding with { ContributionId = "TEST" } }, resources, handle, default));
-        foreach (var stale in new[] { handle with { SessionGeneration = handle.SessionGeneration + 1 }, handle with { ActivationEpoch = handle.ActivationEpoch + 1 },
-                     handle with { ActivationId = Guid.NewGuid() }, handle with { PackageVersion = "2.0.1" }, handle with { DescriptorSha256 = new('0', 64) } })
+        Assert.Single(await consumer.Resolve(context with { Binding = context.Binding with { ContributionId = "TEST" } }, handle));
+
+        // References are opaque SDK values. Inject each identity mismatch at the
+        // metadata boundary rather than manufacturing a forged CLR reference.
+        foreach (var mutate in new Func<SunderRpcProviderSnapshot, SunderRpcProviderSnapshot>[]
         {
+            value => value with { SessionGeneration = value.SessionGeneration + 1 },
+            value => value with { ActivationEpoch = value.ActivationEpoch + 1 },
+            value => value with { ActivationId = Guid.NewGuid() },
+            value => value with { PackageVersion = "2.0.1" },
+            value => value with { DescriptorSha256 = new('0', 64) },
+        })
+        {
+            await using var invalid = NewConsumer();
+            var selected = await invalid.Target();
+            invalid.Transport.LookupTransform = mutate;
             count = target.Calls;
-            Assert.Empty(await resolve(context, resources, stale, default));
+            Assert.Empty(await invalid.Resolve(context, selected));
             Assert.Equal(count, target.Calls);
         }
-        client.LookupFailure = SunderRpcErrorKind.Unavailable;
-        Assert.Empty(await resolve(context, resources, handle, default));
-        Assert.Null(await profile(runtime.Profile.ProfileId, default));
-        client.LookupFailure = SunderRpcErrorKind.PermissionDenied;
-        Assert.Equal(SunderRpcErrorKind.PermissionDenied, (await Assert.ThrowsAsync<SunderRpcException>(() => resolve(context, resources, handle, default).AsTask())).Error.Kind);
-        Assert.Equal(SunderRpcErrorKind.PermissionDenied, (await Assert.ThrowsAsync<SunderRpcException>(() => profile(runtime.Profile.ProfileId, default).AsTask())).Error.Kind);
-        client.LookupFailure = null;
-        target.Failure = SunderRpcErrorKind.PermissionDenied;
-        // A provider cannot mint a Host-authenticated denial or availability failure.
-        // The real Worker boundary sanitizes both; Skills must propagate that fault.
-        Assert.Equal(SunderRpcErrorKind.ProviderFaulted, (await Assert.ThrowsAsync<SunderRpcException>(() => resolve(context, resources, handle, default).AsTask())).Error.Kind);
-        target.Failure = SunderRpcErrorKind.Unavailable;
-        Assert.Equal(SunderRpcErrorKind.ProviderFaulted, (await Assert.ThrowsAsync<SunderRpcException>(() => resolve(context, resources, handle, default).AsTask())).Error.Kind);
-        target.Failure = null;
-        target.AfterResponse = () => client.LookupTransform = value => value with { SessionGeneration = value.SessionGeneration + 1 };
-        Assert.Empty(await resolve(context, resources, handle, default));
-        client.LookupTransform = null;
-        target.AfterResponse = null;
-        catalog.AfterResponse = () => client.LookupTransform = value => value with { SessionGeneration = value.SessionGeneration + 1 };
-        Assert.Null(await profile(runtime.Profile.ProfileId, default));
-        catalog.AfterResponse = null;
-        client.LookupTransform = null;
-
-        target.Hold();
-        using (var caller = new CancellationTokenSource())
+        foreach (var failure in new[] { SunderRpcErrorKind.Unavailable, SunderRpcErrorKind.PermissionDenied })
         {
-            var cancelled = resolve(context, resources, handle, caller.Token).AsTask();
-            await target.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            caller.Cancel();
-            var failure = await Record.ExceptionAsync(() => cancelled.WaitAsync(TimeSpan.FromSeconds(5)));
-            Assert.True(failure is OperationCanceledException || failure is SunderRpcException { Error.Kind: SunderRpcErrorKind.Cancelled });
+            await using var failed = NewConsumer();
+            var selected = await failed.Target();
+            failed.Transport.LookupFailure = failure;
+            if (failure == SunderRpcErrorKind.Unavailable)
+            {
+                Assert.Empty(await failed.Resolve(context, selected));
+                Assert.Null(await failed.Profile(profile.ProfileId));
+            }
+            else
+            {
+                Assert.Equal(failure, (await Assert.ThrowsAsync<SunderRpcException>(() => failed.Resolve(context, selected))).Error.Kind);
+                Assert.Equal(failure, (await Assert.ThrowsAsync<SunderRpcException>(() => failed.Profile(profile.ProfileId))).Error.Kind);
+            }
+        }
+        foreach (var failure in new[] { SunderRpcErrorKind.PermissionDenied, SunderRpcErrorKind.Unavailable })
+        {
+            target.Failure = failure;
+            Assert.Equal(SunderRpcErrorKind.ProviderFaulted, (await Assert.ThrowsAsync<SunderRpcException>(() => consumer.Resolve(context, handle))).Error.Kind);
+        }
+        target.Failure = null;
+        await using (var stale = NewConsumer())
+        {
+            var selected = await stale.Target();
+            target.AfterResponse = () => stale.Transport.LookupTransform = value => value with { SessionGeneration = value.SessionGeneration + 1 };
+            try { Assert.Empty(await stale.Resolve(context, selected)); }
+            finally { target.AfterResponse = null; }
+        }
+        await using (var stale = NewConsumer())
+        {
+            catalog.AfterResponse = () => stale.Transport.LookupTransform = value => value with { SessionGeneration = value.SessionGeneration + 1 };
+            try { Assert.Null(await stale.Profile(profile.ProfileId)); }
+            finally { catalog.AfterResponse = null; }
         }
         target.Hold();
-        var retiring = resolve(context, resources, handle, default).AsTask();
+        using (var caller = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
+        {
+            var pending = consumer.Resolve(context, handle, caller.Token);
+            await target.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            caller.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending.WaitAsync(TimeSpan.FromSeconds(5)));
+        }
+        target.Hold();
+        var retiring = consumer.Resolve(context, handle);
         await target.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await state.RetireAsync(target).WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Empty(await retiring.WaitAsync(TimeSpan.FromSeconds(5)));
         var replacement = new SkillsConsumerHandler();
         AddTarget(replacement);
-        Assert.Empty(await resolve(context, resources, handle, default));
+        Assert.Empty(await consumer.Resolve(context, handle));
         Assert.Equal(0, replacement.Calls);
-        handle = SelectTarget();
-        Assert.Single(await resolve(context, resources, handle, default));
+        handle = await consumer.Target();
+        Assert.Single(await consumer.Resolve(context, handle));
         catalog.Hold();
-        var retiringProfile = profile(runtime.Profile.ProfileId, default).AsTask();
+        var retiringProfile = consumer.Profile(profile.ProfileId);
         await catalog.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await state.RetireAsync(catalog).WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Null(await retiringProfile.WaitAsync(TimeSpan.FromSeconds(5)));
-        AddCatalog(new(new Rpc.Public.RuntimeCatalogService(runtime).CreateSunderRpcProviderRegistration().Handler));
-        Assert.NotNull(await profile(runtime.Profile.ProfileId, default));
-
+        AddCatalog();
+        Assert.NotNull(await consumer.Profile(profile.ProfileId));
         replacement.Hold();
-        var inFlight = resolve(context, resources, handle, default).AsTask();
+        var inFlight = consumer.Resolve(context, handle);
         await replacement.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        var stopping = owned.DisposeAsync().AsTask();
-        Assert.Same(stopping, owned.DisposeAsync().AsTask());
+        var stopping = consumer.DisposeAsync().AsTask();
+        Assert.Same(stopping, consumer.DisposeAsync().AsTask());
         await stopping.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Empty(await inFlight.WaitAsync(TimeSpan.FromSeconds(5)));
-        Assert.Equal(0, client.ActiveWatches);
-        foreach (var scope in client.Scopes)
-            await Assert.ThrowsAsync<ObjectDisposedException>(() => scope.GetProviderAsync(new(handle.EndpointReference)).AsTask());
-        await Assert.ThrowsAsync<ObjectDisposedException>(() => profile(runtime.Profile.ProfileId, default).AsTask());
+        Assert.Equal(0, consumer.Transport.ActiveWatches);
+        foreach (var scope in consumer.Transport.Scopes)
+            await Assert.ThrowsAsync<ObjectDisposedException>(() => scope.GetProviderAsync(handle.Snapshot.Endpoint).AsTask());
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => consumer.Profile(profile.ProfileId));
 
-        void AddTarget(SkillsConsumerHandler value) => state.Add("example.skills.executor", RegressionTestRpcDescriptors.Get(AgentRpcContractIds.ExecutionTarget), value, value, Noop.Instance, "skills.execution.target", "2.0.0");
-        void AddCatalog(SkillsConsumerHandler value) => state.Add("sunder.package.agent", RegressionTestRpcDescriptors.Get(AgentRpcContractIds.RuntimeCatalog), value, value, Noop.Instance, "agent.runtime.catalog", "2.0.0");
-        AgentRpcProviderHandle SelectTarget()
-            => ToProviderHandle(Assert.Single(state.Discover(AgentRpcContractIds.ExecutionTarget).Providers));
-
-        async ValueTask<AgentProfileRecord?> profile(string? id, CancellationToken token)
-        {
-            var value = await Call(instance, "GetProfileAsync", id, token);
-            if (value is null) return null;
-            Assert.Same(type.Assembly, value.GetType().Assembly);
-            return JsonSerializer.SerializeToElement(value, MemoryProviderJson).Deserialize<AgentProfileRecord>(MemoryProviderJson);
-        }
-        async ValueTask<IReadOnlyList<AgentResolvedExecutionResource>> resolve(AgentExecutionTargetContext context,
-            IReadOnlyList<AgentExecutionResourceDescriptor> resources, AgentRpcProviderHandle? handle, CancellationToken token)
-        {
-            var parameters = type.GetMethod("ResolveResourcesAsync")!.GetParameters();
-            object? Local(object? value, int index) => value is null ? null
-                : JsonSerializer.SerializeToElement(value, MemoryProviderJson).Deserialize(parameters[index].ParameterType, MemoryProviderJson);
-            var result = (await Call(instance, "ResolveResourcesAsync", Local(context, 0), Local(resources, 1), Local(handle, 2), token))!;
-            Assert.All(((System.Collections.IEnumerable)result).Cast<object>(), value => Assert.Same(type.Assembly, value.GetType().Assembly));
-            return JsonSerializer.SerializeToElement(result, MemoryProviderJson).Deserialize<AgentResolvedExecutionResource[]>(MemoryProviderJson)!;
-        }
+        SkillsConsumerScope NewConsumer() => new(type, store, profile, state);
+        void AddTarget(SkillsConsumerHandler value) => state.Add("example.skills.executor", CurrentPublicRpcDescriptors.Get(RegressionTestBindings.ExecutionTargets),
+            value, value, Noop.Instance, "skills.execution.target", "2.0.0");
+        SkillsConsumerHandler AddCatalog() => (SkillsConsumerHandler)AddGeneratedPeer(state, "sunder.package.agent", RegressionTestBindings.RuntimeCatalog,
+            runtime, "agent.runtime.catalog", handler => new SkillsConsumerHandler(handler));
     }
 
-    private static AgentRpcProviderHandle ToProviderHandle(SunderRpcProviderSnapshot value)
-        => new(value.PackageId, value.PackageVersion, value.ProviderId, value.ContractId, value.ContractVersion, value.DescriptorSha256,
-            value.AbiSha256, value.ActivationId, value.ActivationEpoch, value.SessionGeneration, value.Endpoint.Value);
+    private sealed class SkillsConsumerScope : IAsyncDisposable
+    {
+        private readonly Type _type;
+        private readonly AgentProfileRecord _profile;
+        private readonly GeneratedServiceTestScope _receiver;
+        private readonly RoleLocalValue _feature;
+        internal MemoryConsumerRpc Transport { get; }
+        internal SkillsConsumerScope(Type type, object store, AgentProfileRecord profile, RegressionTestRpcState state)
+        {
+            _type = type; _profile = profile;
+            Transport = new(new RegressionTestRpcClient(state, "sunder.package.agent.skills"));
+            _receiver = new(Transport);
+            var catalog = _receiver.Providers(type.Assembly.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Services.IRuntimeCatalogService", true)!);
+            _feature = new(Activator.CreateInstance(type, store, catalog)!);
+        }
+        internal Task<AgentProfileRecord?> Profile(string? id, CancellationToken token = default)
+            => _feature.InvokeAsync<AgentProfileRecord?>("GetProfileAsync", id, token).AsTask();
+        internal async Task<ProjectedArtifactProvider> Target()
+            => Assert.Single(await ProjectedProviders(_receiver, _type.Assembly, "IExecutionTargetService"));
+        internal Task<AgentResolvedExecutionResource[]> Resolve(AgentExecutionTargetContext context, ProjectedArtifactProvider? reference,
+            CancellationToken token = default)
+            => _feature.InvokeAsync<AgentResolvedExecutionResource[]>("ResolveResourcesAsync", _profile, context.SessionId,
+                context.Workspace, context.Binding, reference?.Reference, token).AsTask();
+        public ValueTask DisposeAsync() => _receiver.DisposeAsync();
+    }
 
     private sealed class SkillsConsumerHandler(ISunderRpcServiceHandler? inner = null) : ISunderRpcServiceHandler
     {
+        private static readonly JsonSerializerOptions Json = new(MemoryProviderJson)
+        { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.Never };
         internal bool HasFacet = true;
         internal int Calls;
         internal bool Block;
@@ -169,7 +207,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (inner is null && methodId == "describe") return JsonSerializer.SerializeToElement(new AgentExecutionTargetDescriptor("test", "test-target", "Skills Target", null, false, false)
-            { Facets = HasFacet ? ["resource-resolution"] : [] }, MemoryProviderJson);
+            { Facets = HasFacet ? ["resource-resolution"] : [] }, Json);
             Assert.Equal(inner is null ? "resolve-resources" : "get-profile", methodId);
             LastRequest = request.Clone();
             Interlocked.Increment(ref Calls);
@@ -180,9 +218,9 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             }
             var result = inner is not null ? await inner.InvokeUnaryAsync(context, serviceId, methodId, request, cancellationToken)
-                : JsonSerializer.SerializeToElement(request.GetProperty("resources").Deserialize<AgentExecutionResourceDescriptor[]>(MemoryProviderJson)!
+                : JsonSerializer.SerializeToElement(request.GetProperty("resources").Deserialize<AgentExecutionResourceDescriptor[]>(Json)!
                     .Select(value => new AgentResolvedExecutionResource(value.ResourceId, value.ResourceKind, value.SourceId, value.DisplayName,
-                        value.HostPath, "/executor/" + value.ResourceId, value.AccessMode, value.Metadata)).ToArray(), MemoryProviderJson);
+                        value.HostPath, "/executor/" + value.ResourceId, value.AccessMode, value.Metadata)).ToArray(), Json);
             AfterResponse?.Invoke();
             return result;
         }

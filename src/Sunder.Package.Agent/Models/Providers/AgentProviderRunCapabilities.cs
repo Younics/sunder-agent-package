@@ -26,5 +26,5 @@ public sealed record AgentProviderRunCapabilities(
     bool SupportsPdfInput = false,
     bool SupportsAudioInput = false,
     bool SupportsVideoInput = false,
-    int? ContextWindowTokens = null,
-    int? MaxOutputTokens = null);
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] int? ContextWindowTokens = null,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] int? MaxOutputTokens = null);

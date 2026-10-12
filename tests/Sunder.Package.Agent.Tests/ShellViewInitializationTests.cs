@@ -1,18 +1,35 @@
 extern alias SubagentsPackage;
 
-using SubagentsPackage::Sunder.Package.Agent.Contracts.Models;
+using System.Globalization;
 using SubagentsPackage::Sunder.Package.Agent.Subagents.Models;
 using SubagentsPackage::Sunder.Package.Agent.Subagents.PackageViews;
 using SubagentsPackage::Sunder.Package.Agent.Subagents.Runtime;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
 using Xunit;
 using SubagentProviderCatalogOption = SubagentsPackage::Sunder.Package.Agent.Shared.Presentation.ProviderCatalogOption;
 using SubagentProviderModelCatalogResult = SubagentsPackage::Sunder.Package.Agent.Shared.Presentation.ProviderModelCatalogResult;
+using AgentToolDescriptor = SubagentsPackage::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentToolDescriptor;
+using AgentMessageRole = SubagentsPackage::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentMessageRole;
+using AgentProfileSelectableCapabilityDescriptor = SubagentsPackage::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentProfileSelectableCapabilityDescriptor;
+using AgentRunCheckpointRecord = SubagentsPackage::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentRunCheckpointRecord;
+using AgentSessionRecord = SubagentsPackage::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionRecord;
+using AgentSessionState = SubagentsPackage::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionState;
+using AgentTranscriptToolDetailRequest = SubagentsPackage::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTranscriptToolDetailRequest;
+using AgentTurnItemKind = SubagentsPackage::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnItemKind;
+using AgentTurnItemRecord = SubagentsPackage::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnItemRecord;
+using AgentTurnKind = SubagentsPackage::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnKind;
+using AgentTurnRecord = SubagentsPackage::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnRecord;
+using SubagentManagementServices = SubagentsPackage::Sunder.Generated.Packages.Sunder_Package_Agent_Subagents_Services;
 
 namespace Sunder.Package.Agent.Tests;
 
 public sealed class ShellViewInitializationTests
 {
+    private static SunderRpcOffsetDateTime RpcTimestamp(DateTimeOffset value)
+        => new(value.ToString("O", CultureInfo.InvariantCulture));
+
     [Fact]
     public async Task SubagentsViewModel_ConstructionIsColdAndInitializationIsShared()
     {
@@ -76,10 +93,12 @@ public sealed class ShellViewInitializationTests
         Assert.True(viewModel.ShowCompactEditor);
     }
 
-    [Fact]
-    public async Task SubsessionsViewModel_WarmupAndNavigationShareOneSnapshotLoad()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SubsessionsViewModel_WarmupAndNavigationShareOneSnapshotLoad(bool resetDuringInitialRead)
     {
-        var gateway = new BlockingSubsessionGateway();
+        var gateway = new BlockingSubsessionGateway(resetDuringInitialRead);
         using var viewModel = new SubsessionsViewModel(gateway, gateway, gateway, gateway);
         var context = new PackageViewNavigationContext("subsessions", new Dictionary<string, string?>());
 
@@ -89,21 +108,33 @@ public sealed class ShellViewInitializationTests
         await Task.WhenAll(
             gateway.SessionListStarted.Task,
             gateway.CheckpointListStarted.Task).WaitAsync(TimeSpan.FromSeconds(2));
+        if (resetDuringInitialRead)
+        {
+            await gateway.InitialReadCanceled.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            await Assert.ThrowsAsync<TimeoutException>(() => warmup.WaitAsync(TimeSpan.FromMilliseconds(100)));
+        }
+        Assert.False(warmup.IsCompleted);
         var navigation = viewModel.OnNavigatedToAsync(context).AsTask();
         using var cancellation = new CancellationTokenSource();
         var canceledNavigation = viewModel.OnNavigatedToAsync(context, cancellation.Token).AsTask();
         cancellation.Cancel();
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => canceledNavigation);
-        Assert.Equal(1, gateway.SessionListCount);
-        Assert.Equal(1, gateway.CheckpointListCount);
+        if (!resetDuringInitialRead)
+        {
+            Assert.Equal(1, gateway.SessionListCount);
+            Assert.Equal(1, gateway.CheckpointListCount);
+        }
+        Assert.False(warmup.IsCompleted);
         gateway.ReleaseLists.TrySetResult();
         await warmup;
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => navigation);
+        var sessionReads = gateway.SessionListCount;
+        var checkpointReads = gateway.CheckpointListCount;
         await viewModel.OnNavigatedToAsync(context);
 
-        Assert.Equal(1, gateway.SessionListCount);
-        Assert.Equal(1, gateway.CheckpointListCount);
+        Assert.Equal(sessionReads, gateway.SessionListCount);
+        Assert.Equal(checkpointReads, gateway.CheckpointListCount);
     }
 
     [Fact]
@@ -522,7 +553,7 @@ public sealed class ShellViewInitializationTests
         }
     }
 
-    private sealed class BlockingSubsessionGateway :
+    private sealed class BlockingSubsessionGateway(bool resetDuringInitialRead = false) :
         ISubsessionSessionReader,
         ISubsessionCheckpointReader,
         ISubsessionTranscriptPageReader,
@@ -539,6 +570,8 @@ public sealed class ShellViewInitializationTests
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource ReleaseLists { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource InitialReadCanceled { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public event Action<Guid>? SessionChanged
         {
@@ -552,18 +585,26 @@ public sealed class ShellViewInitializationTests
             remove { }
         }
 
-        public event Action? ResnapshotRequired
-        {
-            add { }
-            remove { }
-        }
+        public event Action? ResnapshotRequired;
 
         public async Task<SubsessionSessionCatalog> ListSessionsAsync(
             CancellationToken cancellationToken = default)
         {
-            Interlocked.Increment(ref _sessionListCount);
+            var initialRead = Interlocked.Increment(ref _sessionListCount) == 1;
+            if (initialRead && resetDuringInitialRead)
+            {
+                ResnapshotRequired?.Invoke();
+            }
             SessionListStarted.TrySetResult();
-            await ReleaseLists.Task.WaitAsync(cancellationToken);
+            try
+            {
+                await ReleaseLists.Task.WaitAsync(cancellationToken);
+            }
+            catch (OperationCanceledException) when (initialRead && cancellationToken.IsCancellationRequested)
+            {
+                InitialReadCanceled.TrySetResult();
+                throw;
+            }
             return new SubsessionSessionCatalog([], []);
         }
 
@@ -657,29 +698,35 @@ public sealed class ShellViewInitializationTests
             var now = DateTimeOffset.UtcNow;
             return Task.FromResult(new SubsessionSessionCatalog(
                 [
-                    new AgentSessionRecord(
-                        _rootSessionId,
-                        "Root",
-                        AgentSessionState.Active,
-                        now,
-                        now,
-                        RootSessionId: _rootSessionId),
-                    new AgentSessionRecord(
-                        FirstSessionId,
-                        "First",
-                        AgentSessionState.Active,
-                        now,
-                        now,
-                        ParentSessionId: _rootSessionId,
-                        RootSessionId: _rootSessionId),
-                    new AgentSessionRecord(
-                        SecondSessionId,
-                        "Second",
-                        AgentSessionState.Active,
-                        now.AddSeconds(-1),
-                        now.AddSeconds(-1),
-                        ParentSessionId: _rootSessionId,
-                        RootSessionId: _rootSessionId),
+                    new AgentSessionRecord
+                    {
+                        SessionId = _rootSessionId,
+                        Title = "Root",
+                        State = AgentSessionState.Active,
+                        CreatedAtUtc = RpcTimestamp(now),
+                        UpdatedAtUtc = RpcTimestamp(now),
+                        RootSessionId = _rootSessionId,
+                    },
+                    new AgentSessionRecord
+                    {
+                        SessionId = FirstSessionId,
+                        Title = "First",
+                        State = AgentSessionState.Active,
+                        CreatedAtUtc = RpcTimestamp(now),
+                        UpdatedAtUtc = RpcTimestamp(now),
+                        ParentSessionId = _rootSessionId,
+                        RootSessionId = _rootSessionId,
+                    },
+                    new AgentSessionRecord
+                    {
+                        SessionId = SecondSessionId,
+                        Title = "Second",
+                        State = AgentSessionState.Active,
+                        CreatedAtUtc = RpcTimestamp(now.AddSeconds(-1)),
+                        UpdatedAtUtc = RpcTimestamp(now.AddSeconds(-1)),
+                        ParentSessionId = _rootSessionId,
+                        RootSessionId = _rootSessionId,
+                    },
                 ],
                 []));
         }
@@ -755,29 +802,32 @@ public sealed class ShellViewInitializationTests
             Guid turnId,
             Guid itemId,
             string content)
-            => new(
-                turnId,
-                sessionId,
-                AgentMessageRole.Assistant,
-                AgentTurnKind.Message,
-                [new AgentTurnItemRecord(
-                    itemId,
-                    turnId,
-                    0,
-                    AgentTurnItemKind.Text,
-                    content,
-                    null,
-                    null,
-                    null,
-                    null,
-                    null,
-                    null,
-                    false,
-                    false,
-                    null,
-                    null)],
-                DateTimeOffset.UnixEpoch,
-                DateTimeOffset.UnixEpoch);
+            => new()
+            {
+                TurnId = turnId,
+                SessionId = sessionId,
+                Role = AgentMessageRole.Assistant,
+                Kind = AgentTurnKind.Message,
+                Items =
+                [
+                    new AgentTurnItemRecord
+                    {
+                        ItemId = itemId,
+                        TurnId = turnId,
+                        SequenceNumber = 0,
+                        Kind = AgentTurnItemKind.Text,
+                        TextContent = content,
+                        IsError = false,
+                        IsToolHeaderProjection = false,
+                        ToolDetailRevision = 0,
+                        WasTruncated = false,
+                    },
+                ],
+                ContentRevision = 1,
+                IsStreaming = false,
+                CreatedAtUtc = RpcTimestamp(DateTimeOffset.UnixEpoch),
+                UpdatedAtUtc = RpcTimestamp(DateTimeOffset.UnixEpoch),
+            };
     }
 
     private sealed class RefreshRaceSubsessionGateway :
@@ -838,29 +888,35 @@ public sealed class ShellViewInitializationTests
             var now = DateTimeOffset.UnixEpoch.AddMinutes(10);
             return new SubsessionSessionCatalog(
                 [
-                    new AgentSessionRecord(
-                        _rootSessionId,
-                        "Root",
-                        AgentSessionState.Active,
-                        now,
-                        now,
-                        RootSessionId: _rootSessionId),
-                    new AgentSessionRecord(
-                        FirstSessionId,
-                        $"First {suffix}",
-                        AgentSessionState.Active,
-                        now,
-                        now,
-                        ParentSessionId: _rootSessionId,
-                        RootSessionId: _rootSessionId),
-                    new AgentSessionRecord(
-                        SecondSessionId,
-                        $"Second {suffix}",
-                        AgentSessionState.Active,
-                        now.AddMinutes(-1),
-                        now.AddMinutes(-1),
-                        ParentSessionId: _rootSessionId,
-                        RootSessionId: _rootSessionId),
+                    new AgentSessionRecord
+                    {
+                        SessionId = _rootSessionId,
+                        Title = "Root",
+                        State = AgentSessionState.Active,
+                        CreatedAtUtc = RpcTimestamp(now),
+                        UpdatedAtUtc = RpcTimestamp(now),
+                        RootSessionId = _rootSessionId,
+                    },
+                    new AgentSessionRecord
+                    {
+                        SessionId = FirstSessionId,
+                        Title = $"First {suffix}",
+                        State = AgentSessionState.Active,
+                        CreatedAtUtc = RpcTimestamp(now),
+                        UpdatedAtUtc = RpcTimestamp(now),
+                        ParentSessionId = _rootSessionId,
+                        RootSessionId = _rootSessionId,
+                    },
+                    new AgentSessionRecord
+                    {
+                        SessionId = SecondSessionId,
+                        Title = $"Second {suffix}",
+                        State = AgentSessionState.Active,
+                        CreatedAtUtc = RpcTimestamp(now.AddMinutes(-1)),
+                        UpdatedAtUtc = RpcTimestamp(now.AddMinutes(-1)),
+                        ParentSessionId = _rootSessionId,
+                        RootSessionId = _rootSessionId,
+                    },
                 ],
                 []);
         }
@@ -918,71 +974,57 @@ public sealed class ShellViewInitializationTests
                 turnId));
 
         private static AgentTurnRecord CreateTextTurn(Guid sessionId, Guid turnId)
-            => new(
-                turnId,
-                sessionId,
-                AgentMessageRole.Assistant,
-                AgentTurnKind.Message,
-                [new AgentTurnItemRecord(
-                    Guid.NewGuid(),
-                    turnId,
-                    0,
-                    AgentTurnItemKind.Text,
-                    sessionId.ToString("D"),
-                    null,
-                    null,
-                    null,
-                    null,
-                    null,
-                    null,
-                    false,
-                    false,
-                    null,
-                    null)],
-                DateTimeOffset.UnixEpoch,
-                DateTimeOffset.UnixEpoch);
+            => new()
+            {
+                TurnId = turnId,
+                SessionId = sessionId,
+                Role = AgentMessageRole.Assistant,
+                Kind = AgentTurnKind.Message,
+                Items =
+                [
+                    new AgentTurnItemRecord
+                    {
+                        ItemId = Guid.NewGuid(),
+                        TurnId = turnId,
+                        SequenceNumber = 0,
+                        Kind = AgentTurnItemKind.Text,
+                        TextContent = sessionId.ToString("D"),
+                        IsError = false,
+                        IsToolHeaderProjection = false,
+                        ToolDetailRevision = 0,
+                        WasTruncated = false,
+                    },
+                ],
+                ContentRevision = 1,
+                IsStreaming = false,
+                CreatedAtUtc = RpcTimestamp(DateTimeOffset.UnixEpoch),
+                UpdatedAtUtc = RpcTimestamp(DateTimeOffset.UnixEpoch),
+            };
     }
 
-    private sealed class FailOnceSubsessionRuntimeClient : ISubagentOwnerClient
+    private sealed class FailOnceSubsessionRuntimeClient : SubagentManagementClientStub
     {
         private int _runtimeCatalogQueryCount;
 
         public int RuntimeCatalogQueryCount => Volatile.Read(ref _runtimeCatalogQueryCount);
 
-        public ValueTask<SubagentProjection> QueryAsync(
-            SubagentQuery request,
-            CancellationToken cancellationToken = default)
+        public override ValueTask<SunderContent> RuntimeCatalogAsync(CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            Assert.Equal(SubagentQueryKind.RuntimeCatalog, request.Kind);
             if (Interlocked.Increment(ref _runtimeCatalogQueryCount) == 1)
             {
-                return ValueTask.FromException<SubagentProjection>(
+                return ValueTask.FromException<SunderContent>(
                     new InvalidOperationException("Injected Runtime catalog failure."));
             }
 
-            return ValueTask.FromResult(new SubagentProjection(
+            return ValueTask.FromResult(Content(new SubagentProjection(
                 Sessions: [],
                 Profiles: [],
-                Checkpoints: []));
-        }
-
-        public ValueTask<SubagentProjection> CommandAsync(
-            SubagentCommand request,
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromException<SubagentProjection>(new NotSupportedException(request.Kind.ToString()));
-
-        public async IAsyncEnumerable<SubagentChanged> SubscribeChangesAsync(
-            SubagentChangeSubscription request,
-            [System.Runtime.CompilerServices.EnumeratorCancellation]
-            CancellationToken cancellationToken = default)
-        {
-            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
-            yield break;
+                Checkpoints: [])));
         }
     }
 
-    private sealed class BlockingSubsessionRuntimeClient : ISubagentOwnerClient
+    private sealed class BlockingSubsessionRuntimeClient : SubagentManagementClientStub
     {
         private int _runtimeCatalogQueryCount;
 
@@ -995,9 +1037,7 @@ public sealed class ShellViewInitializationTests
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         public bool FailRuntimeCatalog { get; set; }
 
-        public async ValueTask<SubagentProjection> QueryAsync(
-            SubagentQuery request,
-            CancellationToken cancellationToken = default)
+        public override async ValueTask<SunderContent> RuntimeCatalogAsync(CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref _runtimeCatalogQueryCount);
             RuntimeCatalogStarted.TrySetResult();
@@ -1008,10 +1048,10 @@ public sealed class ShellViewInitializationTests
                 {
                     throw new InvalidOperationException("Injected Runtime catalog failure.");
                 }
-                return new SubagentProjection(
+                return Content(new SubagentProjection(
                     Sessions: [],
                     Profiles: [],
-                    Checkpoints: []);
+                    Checkpoints: []));
             }
             finally
             {
@@ -1019,18 +1059,29 @@ public sealed class ShellViewInitializationTests
             }
         }
 
-        public ValueTask<SubagentProjection> CommandAsync(
-            SubagentCommand request,
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromException<SubagentProjection>(new NotSupportedException(request.Kind.ToString()));
+    }
 
-        public async IAsyncEnumerable<SubagentChanged> SubscribeChangesAsync(
-            SubagentChangeSubscription request,
-            [System.Runtime.CompilerServices.EnumeratorCancellation]
-            CancellationToken cancellationToken = default)
+    private abstract class SubagentManagementClientStub : SubagentManagementServices.ISubagentsManagementService
+    {
+        public virtual ValueTask<SunderContent> ManagementAsync(CancellationToken cancellationToken = default) => Unavailable();
+        public virtual ValueTask<SunderContent> ProviderModelsAsync(string providerId, CancellationToken cancellationToken = default) => Unavailable();
+        public virtual ValueTask<SunderContent> RuntimeCatalogAsync(CancellationToken cancellationToken = default) => Unavailable();
+        public virtual ValueTask<SunderContent> RecentTurnsAsync(Guid sessionId, int limit, CancellationToken cancellationToken = default) => Unavailable();
+        public virtual ValueTask<SunderContent> TurnsBeforeAsync(Guid sessionId, DateTimeOffset createdAtUtc, Guid turnId, int limit, CancellationToken cancellationToken = default) => Unavailable();
+        public virtual ValueTask<SunderContent> TurnsAfterAsync(Guid sessionId, DateTimeOffset createdAtUtc, Guid turnId, int limit, CancellationToken cancellationToken = default) => Unavailable();
+        public virtual ValueTask<SunderContent> AroundTurnAsync(Guid sessionId, Guid turnId, DateTimeOffset createdAtUtc, Guid itemId, int beforeLimit, int afterLimit, CancellationToken cancellationToken = default) => Unavailable();
+        public virtual ValueTask<SunderContent> ToolDetailAsync(AgentTranscriptToolDetailRequest request, CancellationToken cancellationToken = default) => Unavailable();
+        public virtual ValueTask<SunderContent> CreateAsync(string displayName, CancellationToken cancellationToken = default) => Unavailable();
+        public virtual ValueTask<SunderContent> SaveAsync(SubagentSaveRequest request, CancellationToken cancellationToken = default) => Unavailable();
+        public virtual ValueTask<SunderContent> DeleteAsync(string subagentId, CancellationToken cancellationToken = default) => Unavailable();
+        public virtual async IAsyncEnumerable<SunderContent> ChangesAsync(long afterRevision, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             yield break;
         }
+
+        protected static SunderContent Content<T>(T projection)
+            => SubagentProjectionContent.Create(projection);
+        private static ValueTask<SunderContent> Unavailable() => ValueTask.FromException<SunderContent>(new NotSupportedException());
     }
 }

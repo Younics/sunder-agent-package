@@ -8,7 +8,7 @@ namespace Sunder.Package.Agent.Contracts.Models;
 public sealed record AgentPromptContextReceipt(
     Guid SessionId,
     Guid RunId,
-    long TranscriptEpoch,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long TranscriptEpoch,
     IReadOnlyList<AgentPromptContextReceiptBlock> Blocks);
 
 /// <summary>Identifies one fully retained host-reserved instruction block.</summary>
@@ -20,4 +20,4 @@ public sealed record AgentPromptContextReceiptBlock(
     string HostIdentity,
     string ContextIdentity,
     string DocumentPath,
-    string ContentHash);
+    [property: Sunder.Sdk.Services.SunderValueConstraints(MinLength = 64, MaxLength = 64)] string ContentHash);

@@ -1,15 +1,11 @@
 # Agent Family Releases
 
-> **Release blocked:** inventory/path cleanup is prepared, but canonical prebuilt
-> packing is not qualified. Core explicitly rejects `SunderPackageUsePrebuiltLeaves=true`
-> pending qualified role-input evidence. Keep this failure; ordinary rebuilding Pack
-> cannot substitute for preservation of tested/signed native leaves. The 26 obsolete
-> projects are physically removed and recorded after required local source/artifact
-> acceptance; native qualification and V1 publication/promotion remain open. Final fifteen-artifact qualification
-> and normal parallel workspace Build/Rebuild now pass after the Core lease fix.
-> Required Main/source acceptance passed 1,835/0/6 scoped skips, including the actual
-> all-family artifact test. Local NuGet-mode qualification is not remote release evidence. See
-> [`../compatibility/README.md`](../compatibility/README.md).
+> **Source channel:** release tooling uses qualified Core role inputs and native
+> schema 3. Native package compilation/fan-in, exact cold inputs, immutable
+> provenance and atomic package cohort acceptance remain required. Host now obtains
+> official language runtimes directly; no separately published runtime family is
+> a prerequisite. Production/native qualification is distinct from local mocks.
+> Historical canonical acceptance remains in [`../compatibility/README.md`](../compatibility/README.md).
 
 Agent releases are coordinated family releases: exactly fifteen `.sunderpkg`
 entries in `packages.json`, from one Agent commit, one Core commit and one version.
@@ -24,30 +20,17 @@ or complete verified cache evidence supports offline builds. Published dependenc
 use the explicitly selected Registry, and publication evidence is a separate operation.
 The production Registry's API/deployment state does not gate canonical development.
 
-## Remaining Release Implementation
+## Active Release Boundaries
 
-- Core must consume qualified prebuilt generated-role inputs and check their
-  source/owned-baseline/import-lock, role-plan, configuration/TFM/RID and payload
-  identities without rebuilding either role. Missing, stale or mismatched evidence
-  must fail before replacing complete output; preserve the existing leases and
-  signed/tested bytes. Current schema-version-2 leaf hashes alone are insufficient.
-- Native recording/fan-in must transfer the qualified evidence with all Worker and
-  optional App inputs once that Core contract exists. Current paths identify the
-  combined RID output; they do not establish this missing contract.
-- Publication, promotion and handoff shell fixtures now use fifteen archives and
-  generated RID paths. Their existing tamper/provenance/ordering/idempotency/recovery
-  cases pass with the corrected inventory; missing/extra handoff files and an
-  obsolete sixteenth NuGet inventory entry are rejected. These mocked checks do not
-  qualify prebuilt role inputs or native execution. The retained Protocol feed/
-  retirement check still requires current residue/evaluation and live feed evidence;
-  physical project removal alone does not satisfy it.
-- The scripts below retain the older immutable-publication and per-package dist-tag
-  orchestration. Final V1 needs origin-free candidate/catalog cache hydration,
-  explicit Registry binding where selected, authenticated ownership/publication
-  evidence, initial-Yanked family uploads and the Registry's atomic cohort visibility
-  operation. The bounded initial-Yanked publisher primitive below is implemented;
-  the complete family/cohort/commit orchestration is not. Preserve the
-  independent shared-runtime signing, native acceptance and immutable provenance gates.
+- Core-qualified Worker/App role inputs, source/baseline/lock identity, all six native
+  RIDs, safe transport and no-rebuild fan-in are described in [native inputs](native-release-inputs.md).
+- Reviewed candidate/catalog delivery, isolated homes, lock-byte invariance and
+  offline builds are described in [cold inputs](cold-release-inputs.md).
+- Initial-Yanked publication, immutable retry/readback, distinct artifact/evidence
+  commits and atomic cohort visibility remain the package release path below.
+- Official .NET 10 Runtime installation and launch are Host-owned native acceptance
+  evidence. Registry package requirements, package/platform permissions, WORM and
+  revocation remain in force; Registry runtime availability/signing is retired.
 
 ## Core Coordination
 
@@ -63,7 +46,7 @@ Production release coordination requires this order (local development precedes 
 
 Do not create an Agent release tag until the matching `Sunder.Sdk`, `Sunder.Sdk.Avalonia`, `Sunder.Sdk.Stacks`, `Sunder.Sdk.Worker`, and `Sunder.Package.Build` packages and their public Core SDK release are final. Release CI runs the complete behavioral solution once against the exact provenance-matched Core source, then rebuilds the focused package-compatibility lane and all production bytes with `SunderUseSourceSdk=false`, locked mode, and NuGet.org. Agent production bytes are never built from the Core source checkout; that checkout also supplies the exact Runtime Host, Package Format, App, and Core metric gates.
 
-During coordinated compatibility preparation, release locks can be refreshed before publication from an exact local Core candidate feed with `scripts/release/refresh-release-locks.sh <version> <feed>`. The script restores with an isolated package and artifacts root, then verifies every referenced Core package lock hash against the candidate `.nupkg` bytes. Local candidate locks are preparation evidence only and never replace the immutable Core release checks required by production CI.
+During coordinated compatibility preparation, release locks can be refreshed before publication from an exact local Core candidate feed with `scripts/dev/refresh-release-locks.sh <version> <feed>`. The script restores with an isolated package and artifacts root, then verifies every referenced Core package lock hash against the candidate `.nupkg` bytes. Local candidate locks are preparation evidence only and never replace the immutable Core release checks required by production CI. See the [script guide](../scripts/README.md) for the supported Core feed producer and path migration.
 
 The cleaned Agent solution now has **31 release locks**, verified against the supplied
 local Core `1.1.0` candidates: **108 matching Core package entries**. Representative
@@ -79,11 +62,11 @@ these locks; do not disable locked mode or rewrite the lock to hide the mismatch
 
 ## Native Build Boundary
 
-The release has one native job for each supported RID: `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `osx-x64`, and `osx-arm64`. Each job must run on that exact native architecture and build all fifteen canonical projects, including generated App roles where present. Role leaves live at `bin/Release/net10.0/sunder-roles/{worker,app}/<rid>/sunder-dev`; the combined native leaf is `bin/Release/net10.0/sunder-targets/<rid>/sunder-dev`. The scripts request current-RID smoke archives using `SunderPackageUsePrebuiltLeaves=true`, `BuildProjectReferences=false`, and `SunderPackageComposeRuntimeIdentifiers=<rid>`. Core currently rejects that request. It must remain non-rebuilding when qualified.
+The release has one native job for each supported RID: `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `osx-x64`, and `osx-arm64`. Each job must run on that exact native architecture and build all fifteen canonical projects, including generated App roles where present. Role leaves live at `bin/Release/net10.0/sunder-roles/{worker,app}/<rid>/sunder-dev`; the combined native leaf is `bin/Release/net10.0/sunder-targets/<rid>/sunder-dev`. The scripts select exact Core V1 qualification and request current-RID smoke archives using `SunderPackageUsePrebuiltLeaves=true`, `BuildProjectReferences=false`, and `SunderPackageComposeRuntimeIdentifiers=<rid>`, without rebuilding retained roles.
 
 Every Worker is an untrimmed framework-dependent .NET 10 module with `SelfContained=false`, `UseAppHost=false`, `PublishSingleFile=false`, and `PublishTrimmed=false`. Each RID leaf contains the canonical `lib/<AssemblyName>.dll`, its `.deps.json`, and a runtimeconfig requiring `Microsoft.NETCore.App` 10.x. Package-owned managed and native dependencies remain in the leaf, while the .NET runtime, BCL, SDK, and toolchain do not. The native job launches all 15 resulting modules through a real Runtime Host lifecycle and records Core-enforced archive size, current-RID installed size, startup latency, process-count, and steady-RSS evidence for each Worker. The same gate exercises owner unary and server-stream RPC, MCP callback dispatch, OpenAI host auth, both Agent SQLite baselines, forced Worker crash recovery, disable/enable retirement, process cleanup, and temporary-directory cleanup. It also invokes Builder through an App-scoped RPC call, the packaged Builder Worker, the Agent workspace resolver, and the selected Local execution-target Worker. That regression prepends the exact CI-selected SDK directory through Builder RPC, pins its exact version with `global.json`, and creates, builds, and publishes a project while requiring the SDK executable to remain outside the shared Worker execution-runtime root.
 
-Each job uploads an opaque tarball so exact tested bytes survive Actions artifact transfer. Fan-in verifies every module, runtimeconfig, dependency-manifest, leaf-file, archive and metric hash and extracts all six sets. Generated App payloads are part of the retained RID leaves; fan-in no longer builds authored App or Protocol projects. It invokes canonical `PackSunderPackage` with `SunderPackageUsePrebuiltLeaves=true` and `BuildProjectReferences=false`. That request remains blocked pending Core's qualified input contract. CI's final RID module/hash comparisons remain required.
+Each job uploads a bounded qualified tarball so exact tested bytes survive Actions artifact transfer. Fan-in verifies every module, runtimeconfig, dependency-manifest, leaf-file, archive and metric hash before extracting all six sets. Generated App payloads remain in the retained RID leaves. Canonical `PackSunderPackage` uses Core V1 role-input selection, `SunderPackageUsePrebuiltLeaves=true` and `BuildProjectReferences=false`; it performs no rebuild. CI's complete Worker/App/native/shared projection comparisons remain required.
 
 ## Shell Fixture Scope
 
@@ -95,8 +78,8 @@ and promotion-before-finalization checks, and make no production writes.
 Publication verification mocks only the evidence writer's `dotnet --version` and
 `--list-sdks` probes; it does not need a .NET build.
 
-The owning Registry publication, dist-tag compensation, acceptance upload and
-execution-runtime availability fixtures also remain required. The existing
+The owning Registry publication, atomic cohort, retained acceptance and
+official Host evidence checks remain required. The existing
 `native-release.fixture.sh` checks source policy/release-lock metadata and a
 wrong-Core-lock rejection; it uses read-only `dotnet sln list`, not native builds.
 Its pass is not six-RID evidence or proof that prebuilt packing succeeds. Final
@@ -183,7 +166,7 @@ The protected publication orchestration is:
 3. Fans in only those exact native leaves and packs all 15 immutable universal archives. CI caps each runtime archive at 256 MiB compressed and 640 MiB indexed payload, and the compressed family at 4 GiB. The deterministic output audit separately requires each six-RID selected-current-RID family installed projection to be no larger than 360,003,313 bytes, a 75 percent reduction from the fixed 1,440,013,254-byte Phase 0 baseline, and preserves the complete package-owned SQLite, Onigwrap, and `System.Management` closure. Universal indexed payload remains diagnostic and is not used as the installed-footprint gate.
 4. Validates the exact fan-in bytes with provenance-matched `Sunder.Package.Format`, reruns the complete family install/activate/unload/reload/reinstall lifecycle, and transfers the Runtime-produced Agent UI snapshot into the real App package host.
 5. Uploads one Actions artifact containing exactly 17 tested inputs: the 15 archives, `native-test-evidence.json`, and deterministic `package-output-audit.json`. The immutable publication job downloads that artifact by exact name, invokes the owning qualified-native verifier, regenerates the output audit, byte-compares it, and verifies all hashes before any external write.
-6. Calls the anonymous public Registry execution-runtime resolution API for the exact `sunder.runtime.dotnet`, `>=10.0.0 <11.0.0`, `sunder.dotnet-worker-module.v1` profile and Host trust generation for all six RIDs. Every result must be currently `supported`; network errors, conflicts, deprecated results, missing RIDs, and malformed responses fail closed before any GitHub draft or Registry version is published.
+6. Preserves each package target's logical runtime requirement. Host-native acceptance proves official .NET 10 Runtime installation and Worker launch from verified private roots. Package publication does not consult a Registry runtime catalog or require language-runtime release assets.
 7. Creates a GitHub draft whose notes and evidence record the exact Agent commit, Core SDK tag/package/commit, numeric release id, publication workflow/ref, run id, and originating run attempt plus the SHA-256 of every release-evidence asset. It uploads the exact inventory, downloads it again, regenerates the output audit, and byte-compares all 21 primary and evidence assets. After all immutable publication checks pass, the current attempt archives those exact 21 files plus deterministic Actions-only `publication-handoff-provenance.json` as `sunder-agent-publication-evidence-<release-id>-<current-run-attempt>`. Recovery and final verification require the same body-bound release bytes, including `toolchain.txt`, and the 22nd file must reproduce the publisher's canonical SHA-256 over their complete path/hash/size inventory while binding it to the exact current attempt; structural validation alone is insufficient.
 8. Publishes the owner first and all dependents in complete dependency order using `initialAvailability=Yanked`, a package-scoped publish token, explicit `X-Sunder-Set-Latest: false` and multipart `setLatest=false`. Before upload and after an ambiguous outcome, only exact owner/content/inventory/initial-current availability plus canonical/projection bytes confirm acceptance. Every production lock hash remains unchanged.
 9. Re-downloads and verifies the exact GitHub draft. It does not receive a Registry CLI token, move `latest` or `preview`, or finalize the GitHub Release.
@@ -225,9 +208,9 @@ syntactically valid but fabricated baseline publication time cannot pass promoti
 Production acceptance has two explicit phases against the exact retained versions and draft bytes. The only trusted producer is the workflow named `Sunder Agent Production Acceptance` at `.github/workflows/sunder-agent-production-acceptance.yml`, invoked from protected `main` by `workflow_dispatch`. Policy scripts come only from that protected-main commit; the immutable release commit is checked out separately as data and never supplies acceptance or promotion policy. Acceptance downloads `sunder-agent-publication-evidence-<release-id>-<publication-run-attempt>` from the explicitly selected publication run, requires the artifact creation time to fall within jobs from that exact successful attempt, and revalidates its workflow, source, tag, numeric draft, metadata, all 21 immutable release files, and the additive handoff linking them to their original provenance attempt. Its protected fan-in persists canonical `agent-family-acceptance.json` bytes as `agent-family-acceptance-<run-id>-<run-attempt>.json` and archives a redundant 90-day Actions artifact named `sunder-agent-production-acceptance-<run-id>-<run-attempt>`. The acceptance run `head_sha` identifies the protected policy commit; the document separately identifies the immutable release commit and successful publication handoff attempt. An equal same-attempt retry reuses exact bytes; a new attempt uses a new asset name and leaves prior complete or partial attempt assets intact.
 
 Dispatch `phase=pre-visibility` with the exact `publication_evidence_commit` while
-the family remains Yanked. Its native checks cover retained/native bytes, runtime
-trust, contracts, native assets, performance/security, clean artifact-source
-reproduction, evidence-only publication changes, and exclusion from ordinary
+the family remains Yanked. Its native checks cover retained/native bytes, verified
+official-runtime acquisition/launch, contracts, native assets, performance/security,
+clean artifact-source reproduction, evidence-only publication changes, and exclusion from ordinary
 resolution. The approved coordinator must also establish the remaining final-gate
 conditions evaluable while Yanked, including initial-Yanked admission behavior.
 The document retains the exact proposed cohort request and a null result. It does
@@ -245,9 +228,17 @@ receipt bindings; an older driver or a fixture cannot satisfy them.
 
 The protected promotion handoff separately records the publication run id/attempt, positive numeric release id, acceptance run id/attempt, protected acceptance workflow SHA, and lowercase SHA-256 of the durable JSON. Promotion itself must be dispatched from protected `main`; it checks out promotion policy and immutable release source separately. It independently downloads and verifies the publication Actions artifact, fetches the exact successful acceptance workflow attempt and every paginated job for that attempt, then downloads the uniquely named release asset by numeric asset id and requires its size, GitHub `sha256:` digest, downloaded bytes, document coordinates, and protected-policy SHA to agree. The acceptance Actions artifact is redundant, but the publication artifact is an explicit promotion input.
 
-The dispatch-only producer is implemented at that designated path and remains fail-closed until the protected `sunder-agent-production-acceptance` environment, real production Registry origin, exact Core `production.lock.json`, approved runtime source/signing/runner/publication references, public release and attestation key directories, six native runner labels and lock-matching profiles, six Agent scenario drivers with reviewed SHA-256 values, and the external acceptance coordinator with its reviewed SHA-256 are configured. Each external executable runs only from a hash-matching file inside a non-writable temporary directory, receives its digest as an argument, and must bind that digest into its receipt. Native lanes receive no GitHub release, NuGet, or Registry publication/promotion credential. Runner labels used by `runs-on` must be repository or organization variables because environment variables are unavailable during runner selection. Drivers must use approved workload identity for production prerequisites; the workflow does not accept embedded credentials, fixture locks, operator assertions, or fabricated hashes.
+The dispatch-only producer requires the protected `sunder-agent-production-acceptance` environment, package Registry origin, six native runner labels/profiles, six Agent scenario drivers with reviewed SHA-256 values, and the acceptance coordinator with its reviewed SHA-256. Runner/profile variables are `SUNDER_AGENT_PRODUCTION_ACCEPTANCE_RUNNER_<RID>` and `SUNDER_AGENT_PRODUCTION_ACCEPTANCE_PROFILE_<RID>` (uppercase RID with `_`). Each external executable runs from a hash-matching non-writable snapshot, receives its digest and binds that digest into its output. Publication credentials are withheld from scenario execution. Official source configuration belongs to Host; this workflow accepts no vendor source override, runtime lock, signer, attestation or runtime-publication prerequisite.
 
-Each native lane re-verifies the exact Agent tag and Core SDK provenance, requires the Registry to resolve the exact signed and native-attested .NET runtime entry from the production lock, and compares all nine lock-bound fields: runtime id, version, packaging revision, RID, module ABI, Worker protocol, minimum Host trust generation, release signing key id, and native attestation key id. It archives a driver-digest-bound receipt for its phase-specific scenarios. Docker and credentialed Web Search coverage may use deterministic fakes only when at least one accepted native receipt proves each prerequisite with a real runner. Fan-in requires all six receipts, re-downloads every exact publication asset, verifies the current-attempt handoff and all 15 Registry canonical package bytes, uploads only the schema-version-4 acceptance document as the detached attempt-specific durable release asset, and byte-verifies it after download. Promotion independently verifies the publication and acceptance attempts plus selected durable asset digest/bytes; evidence from another workflow, event, attempt, repository, release, policy commit, or asset is never accepted.
+Each native lane re-verifies the exact Agent tag and Core SDK provenance and records `runtimeInstallation` using Host's current `InstalledExecutionRuntimeSummary` DTO. Identity includes official source, actual vendor patch version, RID, module ABI and vendor checksum (SHA-512 for .NET). `installedArtifact` binds the original archive's SHA-256/size, private content identity and Host download provenance. Required checks include `official-runtime-install-launch`, `official-runtime-source-checksum` and `ambient-runtime-isolation`; no signature or runtime authorization receipt is fabricated. Docker and credentialed Web Search coverage may use deterministic fakes only when at least one accepted native receipt proves each prerequisite with a real runner. Fan-in requires all six phase-specific receipts, exact package/source/cohort bindings and the existing schema-4 acceptance document. Numeric asset identity, hashes, immutable readback and successful trusted run/attempt gates retain their existing semantics.
+
+Drivers obtain that DTO from the released Host's management API
+(`GetExecutionRuntimesAsync` / `GetExecutionRuntimeAsync`) after acquisition and
+verification, retaining health, support and provenance. Match the exact official
+identity to each package target requirement, installed binding and private-root
+Worker launch. A raw download-cache entry or private on-disk receipt is supplementary
+audit evidence, not a substitute management snapshot. Preserve the actual vendor
+patch selected by Host; sample versions and requirement floors are not observations.
 
 The evidence document is schema version 4 and records:
 
@@ -382,8 +373,10 @@ policy synchronization binds every exact package/platform catalog and proves a
 policy/checkpoint floor newer than the original request's expected revision. The
 same owner POST can therefore only return its retained idempotent result or fail
 stale; it cannot create a new visibility transition. The retained result must equal
-the accepted document. The final release path never invokes the standalone
-`promote-family-dist-tag.sh` helper.
+the accepted document. The superseded standalone `promote-family-dist-tag.sh`
+helper has been removed; its CLI is not compatible with the approved atomic cohort
+contract. The [retirement mapping](../scripts/README.md#sequential-dist-tag-publisher-retirement)
+records retained concurrency, downgrade, credential and recovery checks.
 
 After post-visibility acceptance and retained-result confirmation, promotion re-fetches the handoff, tag, and accepted numeric draft, re-downloads all 21 publication assets plus the selected durable acceptance document, validates metadata for retained attempt assets, revalidates all 15 immutable Registry identities, and verifies the full promoted family. Because those are long operations, it then performs one final just-in-time sequence: handoff first, followed by a fresh exact tag ref and numeric release fetch requiring `draft: true`, title, original body, and all accepted asset metadata, followed by another read-only verification of the complete resulting Registry tag map and availability. That family verification is the last remote operation before the numeric release PATCH. A replacement draft or a family member changed in the former gap cannot be finalized.
 
@@ -418,8 +411,8 @@ Release and promotion automation require:
   isolation is unavailable. All four workflows explicitly require Python 3.9+.
 
 - Optional repository variables `SUNDER_AGENT_RUNNER_WIN_X64`, `SUNDER_AGENT_RUNNER_WIN_ARM64`, `SUNDER_AGENT_RUNNER_LINUX_X64`, `SUNDER_AGENT_RUNNER_LINUX_ARM64`, `SUNDER_AGENT_RUNNER_OSX_X64`, and `SUNDER_AGENT_RUNNER_OSX_ARM64`. Each value is a JSON array of hosted, larger-runner, or self-hosted labels. Defaults use `windows-latest`, `windows-11-arm`, `ubuntu-24.04`, `ubuntu-24.04-arm`, `macos-15-intel`, and `macos-14` respectively.
-- Repository variable `SUNDER_REGISTRY_API_URL` containing the Registry's absolute HTTPS origin without a path. Its public execution-runtime API must resolve the exact supported .NET 10 profile for all six release RIDs before publication starts.
-- Protected `sunder-agent-production-acceptance` configuration containing the coordinator path and SHA-256, each RID-specific Agent driver path and SHA-256, the runtime release-driver SHA-256 values required by Core preflight, and the release and attestation public-key directories. Native lanes consume no GitHub release, NuGet, Registry publish, or Registry promotion secret.
+- Repository variable `SUNDER_REGISTRY_API_URL` containing the package Registry's absolute HTTPS origin without a path. Official language-runtime acquisition uses Host policy and does not consume this origin or Registry credentials.
+- Protected `sunder-agent-production-acceptance` configuration containing the coordinator path/SHA-256, each RID-specific Agent scenario driver path/SHA-256 and matching native runner/profile. Host installer/launcher qualification supplies official vendor/source/version/RID/checksum evidence; it needs no Sunder runtime-publication key or approval.
 - Repository secret `SUNDER_REGISTRY_PUBLISH_TOKEN` containing a `sunder_pub_v1` token with an exact `package:publish` grant for every family package. Only immutable tag publication receives it; publication always sends the expected package id and cannot move a dist tag.
 - Protected GitHub environment `sunder-agent-release-promotion`, with required reviewers and `SUNDER_AGENT_ARTIFACT_SOURCE_COMMIT`, `SUNDER_AGENT_LOCK_SET_SHA256`, `SUNDER_AGENT_RELEASE_APPROVAL_REFERENCE`, and `SUNDER_AGENT_RELEASE_OWNER_PRINCIPAL_ID`. Preparation and immutable publication both require this approved exact source/lock binding.
 - The `SUNDER_REGISTRY_CLI_TOKEN` environment secret belongs to the immutable owner of every cohort package. The manual promotion/rollback jobs use it for the retained atomic transition, idempotent confirmation, or separately reviewed reverse; token-free guards and anonymous downloads never receive it.

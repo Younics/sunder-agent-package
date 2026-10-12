@@ -1,5 +1,4 @@
 using System.Reflection;
-using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
@@ -10,6 +9,7 @@ using Sunder.Package.Agent.Storage;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Worker;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -50,53 +50,48 @@ public sealed partial class AgentPublicSourceMigrationTests
 
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
         var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
+        await using var receiver = new GeneratedServiceTestScope(rpc);
         var baseType = assembly.GetType("Sunder.Package.Agent.Rpc.Public.SessionCleanerService", true)!;
-        var historyType = assembly.GetType("Sunder.Package.Agent.Rpc.Public.HistorySessionCleanerProvider", true)!;
-        Assert.Equal(baseType, historyType.BaseType);
-        Assert.False(baseType.IsInterface);
-        Register(baseType, attachments, "agent.attachment.cleaner");
-        Register(historyType, history, "agent.history.cleaner");
-        var providers = (await rpc.DiscoverAsync(descriptor.ContractId)).Providers;
+        Assert.True(baseType.IsInterface);
+        Assert.Null(assembly.GetType("Sunder.Package.Agent.Rpc.Public.HistorySessionCleanerProvider"));
+        Register(attachments, "agent.attachment.cleaner");
+        Register(history, "agent.history.cleaner");
+        var providers = (await receiver.Providers<AgentServices.ISessionCleanerService>().ListAsync()).Providers;
         Assert.Equal(2, providers.Count);
-        await using var scope = await rpc.CreateCallScopeAsync();
-        var clientType = assembly.GetType("Sunder.Generated.Rpc.SessionCleaner.SessionCleanerClient", true)!;
-        var clients = providers.ToDictionary(provider => provider.ProviderId,
-            provider => Activator.CreateInstance(clientType, scope, provider.Endpoint)!, StringComparer.Ordinal);
+        var clients = providers.ToDictionary(provider => provider.ProviderId, provider => provider.Service, StringComparer.Ordinal);
         foreach (var (id, cleanerId) in new[] { ("agent.attachment.cleaner", attachments.CleanerId), ("agent.history.cleaner", history.CleanerId) })
         {
-            var identity = await InvokeGeneratedClient(clients[id], "DescribeAsync", EmptyRequest());
-            Assert.Equal(cleanerId, identity.GetProperty("id").GetString());
-            Assert.Equal(cleanerId, identity.GetProperty("displayName").GetString());
+            var identity = await clients[id].DescribeAsync();
+            Assert.Equal(cleanerId, identity.Id);
+            Assert.Equal(cleanerId, identity.DisplayName);
         }
 
         services.GetRequiredService<AgentLocalStore>().DeleteSessionTree(removed.SessionId);
-        var request = JsonSerializer.SerializeToElement(new { sessionId = removed.SessionId });
-        await InvokeGeneratedClient(clients["agent.attachment.cleaner"], "DeleteSessionAsync", request);
+        await clients["agent.attachment.cleaner"].DeleteSessionAsync(removed.SessionId);
         Assert.False(Directory.Exists(removedFolder));
         Assert.True(Directory.Exists(keptFolder));
         Assert.Equal(2, projection.GetSnapshot().DocumentCount);
-        await InvokeGeneratedClient(clients["agent.history.cleaner"], "DeleteSessionAsync", request);
+        await clients["agent.history.cleaner"].DeleteSessionAsync(removed.SessionId);
         Assert.Equal(1, projection.GetSnapshot().DocumentCount);
-        foreach (var client in clients.Values) await InvokeGeneratedClient(client, "DeleteSessionAsync", request);
+        foreach (var client in clients.Values) await client.DeleteSessionAsync(removed.SessionId);
         Assert.Equal(1, projection.GetSnapshot().DocumentCount);
         Assert.Equal(new byte[] { 4, 5, 6 }, await attachments.ReadAttachmentBytesAsync(keptAttachment.Metadata));
         using (var cancellation = new CancellationTokenSource())
         {
             cancellation.Cancel();
             foreach (var client in clients.Values)
-                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => InvokeGeneratedClient(client, "DeleteSessionAsync",
-                    JsonSerializer.SerializeToElement(new { sessionId = kept.SessionId }), cancellation.Token));
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.DeleteSessionAsync(kept.SessionId, cancellation.Token).AsTask());
             Assert.True(Directory.Exists(keptFolder));
             Assert.Equal(1, projection.GetSnapshot().DocumentCount);
         }
 
-        await VerifyStartedCleanupDrainsAsync(baseType, descriptor, clientType);
+        await VerifyStartedCleanupDrainsAsync(descriptor);
 
-        void Register(Type type, IAgentSessionDataCleaner cleaner, string expectedId)
+        void Register(IAgentSessionDataCleaner cleaner, string expectedId)
         {
-            var implementation = Activator.CreateInstance(type, cleaner)!;
-            var registration = Assert.IsType<SunderWorkerProviderRegistration>(type.GetMethod("CreateSunderRpcProviderRegistration",
-                BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly)!.Invoke(implementation, null));
+            var implementation = AgentRoleBoundary.Unwrap(cleaner);
+            using var sources = new RegressionTestSourceProviders();
+            var registration = sources.Create(descriptor.ContractId, implementation, receiver);
             Assert.Equal(expectedId, registration.ProviderId);
             Assert.Equal(descriptor.Sha256, registration.DescriptorSha256);
             Assert.Equal(descriptor.AbiSha256, registration.AbiSha256);
@@ -104,20 +99,19 @@ public sealed partial class AgentPublicSourceMigrationTests
         }
     }
 
-    private static async Task VerifyStartedCleanupDrainsAsync(Type serviceType, SunderRpcContractDescriptor descriptor, Type clientType)
+    private static async Task VerifyStartedCleanupDrainsAsync(SunderRpcContractDescriptor descriptor)
     {
         var cleaner = new BlockingSourceCleaner();
-        var implementation = Activator.CreateInstance(serviceType, cleaner)!;
-        var registration = (SunderWorkerProviderRegistration)serviceType.GetMethod("CreateSunderRpcProviderRegistration")!.Invoke(implementation, null)!;
+        var implementation = cleaner;
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
         var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
+        await using var receiver = new GeneratedServiceTestScope(rpc);
+        using var sources = new RegressionTestSourceProviders();
+        var registration = sources.Create(descriptor.ContractId, implementation, receiver);
         state.Add("sunder.package.agent", descriptor, implementation, registration.Handler, EmptyDisposable.Instance, registration.ProviderId, "2.0.0");
-        var provider = Assert.Single((await rpc.DiscoverAsync(descriptor.ContractId)).Providers);
-        await using var scope = await rpc.CreateCallScopeAsync();
-        var client = Activator.CreateInstance(clientType, scope, provider.Endpoint)!;
+        var client = Assert.Single((await receiver.Providers<AgentServices.ISessionCleanerService>().ListAsync()).Providers).Service;
         using var cancellation = new CancellationTokenSource();
-        var invocation = Task.Run(() => InvokeGeneratedClient(client, "DeleteSessionAsync",
-            JsonSerializer.SerializeToElement(new { sessionId = Guid.NewGuid() }), cancellation.Token));
+        var invocation = Task.Run(() => client.DeleteSessionAsync(Guid.NewGuid(), cancellation.Token).AsTask());
         try
         {
             await cleaner.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -130,8 +124,7 @@ public sealed partial class AgentPublicSourceMigrationTests
         Assert.True(failure is null or OperationCanceledException, failure?.ToString());
         Assert.True(cleaner.Completed);
         cleaner.Fail = true;
-        var rejected = await Assert.ThrowsAsync<SunderRpcException>(() => InvokeGeneratedClient(client, "DeleteSessionAsync",
-            JsonSerializer.SerializeToElement(new { sessionId = Guid.NewGuid() })));
+        var rejected = await Assert.ThrowsAsync<SunderRpcException>(() => client.DeleteSessionAsync(Guid.NewGuid()).AsTask());
         Assert.Equal(SunderRpcErrorKind.ProviderFaulted, rejected.Error.Kind);
         Assert.DoesNotContain("private cleanup backend detail", rejected.Message, StringComparison.Ordinal);
     }

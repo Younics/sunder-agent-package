@@ -18,6 +18,7 @@ using Xunit;
 namespace Sunder.Package.Agent.Tests;
 
 extern alias LocalWorker;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 using LocalWorker::Sunder.Package.Agent.Execution.Local;
 
 public sealed partial class AgentSourceArtifactMigrationTests
@@ -40,7 +41,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
             foreach (var assembly in new[] { runtime, presentation })
             {
                 Assert.DoesNotContain(assembly.GetReferencedAssemblies(), reference => reference.Name == "Sunder.Package.Agent.Execution.Local.Protocol");
-                foreach (var name in new[] { "LocalExecutionOperationRequest", "LocalExecutionOperationResponse", "LocalShellDefinition", "LocalExecutionPresentationDefaults" })
+                Assert.Null(assembly.GetType("Sunder.Package.Agent.Execution.Local.LocalExecutionOperationRequest"));
+                foreach (var name in new[] { "LocalExecutionOperationResponse", "LocalShellDefinition", "LocalExecutionPresentationDefaults" })
                     Assert.Same(assembly, assembly.GetType("Sunder.Package.Agent.Execution.Local." + name, true)!.Assembly);
             }
             Assert.DoesNotContain(presentation.GetReferencedAssemblies(), reference => reference.Name is "Sunder.Package.Agent.Execution.Local" or "Sunder.Sdk.Worker");
@@ -67,13 +69,14 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.Equal(new[] { "local.execution.target", "local.presentation", "local.workspace.editor", "local.workspace.path.migrator" }, registrations.Keys.Order(StringComparer.Ordinal));
             foreach (var provider in options.Providers)
             {
-                var descriptor = provider.ProviderId == "local.presentation" ? RegressionTestRpcDescriptors.Get("sunder.package.agent.execution.local.presentation") : RegressionTestRpcDescriptors.Get(provider.ContractId);
+                var descriptor = provider.ProviderId == "local.presentation" ? CurrentPrivateRpcDescriptors.Get("sunder.package.agent.execution.local.presentation") : CurrentPublicRpcDescriptors.Get(provider.ContractId);
                 Assert.Equal(descriptor.Sha256, provider.DescriptorSha256); Assert.Equal(descriptor.AbiSha256, provider.AbiSha256);
                 state.Add("sunder.package.agent.execution.local", descriptor, provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, "2.0.0");
             }
             await using var appServices = CreateGeneratedApp(presentation, context, rpc);
-            var client = appServices.GetRequiredService(presentation.GetType("Sunder.Package.Agent.Execution.Local.App.LocalExecutionSourceClient", true)!);
-            Assert.Equal("Sunder.Package.Agent.Execution.Local.App.LocalExecutionSourceClient", client.GetType().FullName);
+            var presentationContract = presentation.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Execution_Local_Services.IPresentationService", true)!;
+            var client = appServices.GetRequiredService(presentationContract);
+            Assert.Null(presentation.GetType("Sunder.Package.Agent.Execution.Local.App.LocalExecutionSourceClient"));
             var initial = await Present(new { kind = "get-settings" });
             Assert.Equal("300", initial.GetProperty("timeoutSeconds").GetString());
             Assert.Equal("41", (await Present(new { kind = "save-settings", timeoutSeconds = "41" })).GetProperty("timeoutSeconds").GetString());
@@ -101,137 +104,140 @@ public sealed partial class AgentSourceArtifactMigrationTests
             var now = DateTimeOffset.UtcNow;
             var workspace = new AgentWorkspaceRecord("workspace.local", "Local artifact", null, now, now,
                 [new("path.local", "workspace.local", workspaceRoot, true, 0, now, now)]);
-            var binding = new AgentWorkspaceBindingRecord("binding.local", workspace.WorkspaceId, AgentRpcContractIds.ExecutionTarget, "local", "primary-execution-target", true, 0, now, now);
+            var binding = new AgentWorkspaceBindingRecord("binding.local", workspace.WorkspaceId, RegressionTestBindings.ExecutionTargets, "local", "primary-execution-target", true, 0, now, now);
             var targetContext = new AgentExecutionTargetContext(Guid.NewGuid(), "profile.local", workspace, binding);
             var editorContext = new AgentWorkspaceEditorContext(
                 AgentRoleBoundary.As<AgentApp::Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord>(workspace), "local", binding.BindingId);
-            var editorClient = CreateAgentWorkspaceEditor(agentApp, rpc.ForCaller("sunder.package.agent"), Assert.Single(state.Discover(AgentRpcContractIds.WorkspaceEditor).Providers));
+            var editorClient = CreateAgentWorkspaceEditor(agentApp, rpc.ForCaller("sunder.package.agent"), Assert.Single(state.Discover(RegressionTestBindings.WorkspaceEditors).Providers));
             await using var editorLifetime = (IAsyncDisposable)editorClient;
-            Assert.True(editorClient.CanEdit(editorContext)); Assert.Single(await editorClient.GetSectionsAsync(editorContext));
+            Assert.True(await editorClient.CanEditAsync(editorContext)); Assert.Single(await editorClient.GetSectionsAsync(editorContext));
             Assert.True((await editorClient.SaveSectionAsync(editorContext,
                 new("local-execution-settings", new Dictionary<string, AgentEditorFieldValue> { ["shell"] = new("artifact.shell") }))).Success);
             var migration = new AgentWorkspacePathMigrationContext(workspace, binding);
-            Assert.True((await Rpc("local.workspace.path.migrator", "workspace-path-migrator", "can-migrate", migration)).GetBoolean());
+            await using var migrationReceiver = new GeneratedServiceTestScope(rpc.ForCaller("sunder.package.agent"));
+            var migrator = Assert.Single((await migrationReceiver.Providers<AgentServices.IWorkspacePathMigratorService>().ListAsync()).Providers).Service;
+            Assert.True(await migrator.CanMigrateAsync(migration));
             var key = (string)runtime.GetType("Sunder.Package.Agent.Execution.Local.LocalExecutionWorkspaceConfigService", true)!
                 .GetMethod("BuildKey", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, [binding.BindingId])!;
             await context.Storage.State.SetValueAsync(key, JsonSerializer.Serialize(new { SelectedShellId = "artifact.shell", PathEntries = Array.Empty<string>(), AllowedRoots = new[] { workspaceRoot }, DefaultWorkingDirectory = workspaceRoot }));
-            var paths = await Rpc("local.workspace.path.migrator", "workspace-path-migrator", "list-legacy-paths", migration);
-            Assert.Equal(workspaceRoot, Assert.Single(paths.EnumerateArray()).GetProperty("hostPath").GetString());
-            await Rpc("local.workspace.path.migrator", "workspace-path-migrator", "complete", migration);
-            Assert.Empty((await Rpc("local.workspace.path.migrator", "workspace-path-migrator", "list-legacy-paths", migration)).EnumerateArray());
+            var paths = await migrator.ListLegacyPathsAsync(migration);
+            Assert.Equal(workspaceRoot, Assert.Single(paths).HostPath);
+            await migrator.CompleteAsync(migration);
+            Assert.Empty(await migrator.ListLegacyPathsAsync(migration));
             var executionRpc = new FilesRpcObserver(new RegressionTestRpcClient(state, "sunder.package.agent"));
-            var executionClient = CreateAgentExecutionClient(owner, executionRpc, Assert.Single((await executionRpc.DiscoverAsync(AgentRpcContractIds.ExecutionTarget)).Providers));
-            await using var executionLifetime = (IAsyncDisposable)executionClient;
-            await VerifyLocalExecution(targetContext, workspaceRoot, outsideRoot, shell,
-                (method, request, token) => InvokeAgentExecution(executionClient, method, request, token));
+            await using var executionReceiver = new GeneratedServiceTestScope(executionRpc);
+            var executionClient = Assert.Single((await executionReceiver.Providers<AgentServices.IExecutionTargetService>().ListAsync()).Providers,
+                provider => provider.ProviderId == "local.execution.target").Service;
+            await VerifyLocalExecution(targetContext, workspaceRoot, outsideRoot, shell, executionClient);
             await VerifyAgentExecutionSelection(owner, state, workspace);
-            Assert.Equal(0, executionRpc.UnscopedLookups); Assert.All(executionRpc.Scopes, scope => Assert.True(scope.Disposed));
+            executionRpc.AssertScopedOperations(); Assert.All(executionRpc.Scopes, scope => Assert.True(scope.Disposed));
             await state.RetireAsync(registrations["local.execution.target"].Handler).WaitAsync(TimeSpan.FromSeconds(5));
             await state.RetireAsync(registrations["local.presentation"].Handler).WaitAsync(TimeSpan.FromSeconds(5));
-            Assert.Equal("local.presentation.unavailable", (await Assert.ThrowsAsync<SunderRpcException>(() => Present(new { kind = "get-settings" }))).Error.Code);
+            var unavailable = await Assert.ThrowsAsync<SunderRpcException>(() => Present(new { kind = "get-settings" }));
+            Assert.Equal("rpc.provider-not-found", unavailable.Error.Code);
+            Assert.Equal(SunderRpcErrorKind.NotFound, unavailable.Error.Kind);
             await lifetime.DisposeAsync();
             Assert.Throws<ObjectDisposedException>(() => runtimeServices.GetService(targetService.GetType()));
 
             async Task<JsonElement> Present(object request, CancellationToken token = default)
             {
-                var method = client.GetType().GetMethod("ExecuteAsync")!;
-                var value = JsonSerializer.SerializeToElement(request, MemoryProviderJson).Deserialize(method.GetParameters()[0].ParameterType, MemoryProviderJson)!;
-                var pending = method.Invoke(client, [value, token])!;
+                var value = JsonSerializer.SerializeToElement(request, MemoryProviderJson);
+                var method = presentationContract.GetMethod(value.GetProperty("kind").GetString() switch
+                {
+                    "get-settings" => "GetSettingsAsync", "save-settings" => "SaveSettingsAsync",
+                    "save-shells" => "SaveShellsAsync", _ => throw new InvalidOperationException("Unknown presentation fixture operation."),
+                })!;
+                var arguments = method.GetParameters().Select(parameter => parameter.ParameterType == typeof(CancellationToken)
+                    ? (object)token : value.GetProperty(parameter.Name!).Deserialize(parameter.ParameterType, MemoryProviderJson)).ToArray();
+                var pending = method.Invoke(client, arguments)!;
                 var task = (Task)pending.GetType().GetMethod("AsTask")!.Invoke(pending, null)!;
                 await task.WaitAsync(TimeSpan.FromSeconds(10));
                 var result = task.GetType().GetProperty("Result")!.GetValue(task)!;
                 Assert.Same(presentation, result.GetType().Assembly);
                 return JsonSerializer.SerializeToElement(result, result.GetType(), MemoryProviderJson);
             }
-            async Task<JsonElement> Rpc(string id, string service, string method, object request, CancellationToken token = default)
-            {
-                var selected = Assert.Single((await rpc.DiscoverAsync(registrations[id].ContractId, token)).Providers, value => value.ProviderId == id);
-                return await rpc.InvokeAsync(selected.Endpoint, service, method, JsonSerializer.SerializeToElement(request, MemoryProviderJson), cancellationToken: token).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
-            }
         }
         finally { load.Unload(); }
     }
 
     private static async Task VerifyLocalExecution(AgentExecutionTargetContext context, string workspace, string outside, string shell,
-        Func<string, object, CancellationToken, Task<JsonElement>> invoke)
+        AgentServices.IExecutionTargetService client)
     {
-        var covered = new HashSet<string>(StringComparer.Ordinal);
-        var descriptor = await Call("describe", new { });
+        var descriptor = Json(await client.DescribeAsync());
         Assert.Equal(9, descriptor.GetProperty("facets").GetArrayLength());
-        var generation = (await Call("configuration-generation", ExecutionWireContext(context))).GetString()!;
-        Assert.Equal("ready", (await Call("readiness", ExecutionWireContext(context))).GetProperty("status").GetString());
-        Assert.Equal(shell, (await Call("shell", ExecutionWireContext(context))).GetProperty("executablePath").GetString());
-        Assert.Equal(workspace, (await Call("execution-scope", ExecutionWireContext(context))).GetProperty("defaultWorkingDirectory").GetString());
+        var generation = await client.ConfigurationGenerationAsync(context);
+        Assert.Equal("ready", Json(await client.ReadinessAsync(context)).GetProperty("status").GetString());
+        Assert.Equal(shell, (await client.ShellAsync(context)).ExecutablePath);
+        Assert.Equal(workspace, (await client.ExecutionScopeAsync(context)).DefaultWorkingDirectory);
         var file = Path.Combine(workspace, "artifact.txt");
         await File.WriteAllTextAsync(file, "first\nneedle\nthird");
-        var read = await Call("read-file", new { context = ExecutionWireContext(context), request = new AgentFileReadRequest("artifact.txt", 2, 1) });
+        var read = Json(await client.ReadFileAsync(context, new AgentFileReadRequest("artifact.txt", 2, 1)));
         Assert.Equal("needle", read.GetProperty("content").GetString()); Assert.Equal(3, read.GetProperty("totalLines").GetInt32());
         Assert.True(read.GetProperty("wasTruncated").GetBoolean());
-        var search = await Call("structured-file-search", new { context = ExecutionWireContext(context), request = new AgentFileSearchRequest(".", AgentFileSearchKind.Grep, "needle") });
+        var search = Json(await client.StructuredFileSearchAsync(context, new AgentFileSearchRequest(".", AgentFileSearchKind.Grep, "needle")));
         Assert.Single(search.GetProperty("matches").EnumerateArray());
-        var mapping = await Call("map-path", new { context = ExecutionWireContext(context), path = file });
+        var mapping = Json(await client.MapPathAsync(context, file));
         Assert.Equal(file, mapping.GetProperty("hostPath").GetString());
         await File.WriteAllTextAsync(Path.Combine(workspace, "AGENTS.md"), "Artifact instructions");
-        var instructions = await Call("discover-instructions", new { context = ExecutionWireContext(context), request = new AgentScopedInstructionDiscoveryRequest([new(workspace, true) { FollowFinalSymbolicLink = false }]) });
+        var instructions = Json(await client.DiscoverInstructionsAsync(context, new AgentScopedInstructionDiscoveryRequest([new(workspace, true) { FollowFinalSymbolicLink = false }])));
         Assert.Contains(instructions.GetProperty("scopes").EnumerateArray().SelectMany(value => value.GetProperty("documents").EnumerateArray()), value => value.GetProperty("content").GetString() == "Artifact instructions");
-        var resources = await Call("resolve-resources", new { context = ExecutionWireContext(context), resources = new[] {
-            new AgentExecutionResourceDescriptor("artifact", "skill", "fixture", "Artifact", workspace, "/sunder/artifact", AgentExecutionResourceAccessMode.ReadOnly) } });
+        var resources = Json(await client.ResolveResourcesAsync(context, [
+            new AgentExecutionResourceDescriptor("artifact", "skill", "fixture", "Artifact", workspace, "/sunder/artifact", AgentExecutionResourceAccessMode.ReadOnly) ]));
         Assert.Equal(workspace, Assert.Single(resources.EnumerateArray()).GetProperty("executionPath").GetString());
         var outsideFile = Path.Combine(outside, "outside.txt"); await File.WriteAllTextAsync(outsideFile, "original");
-        var denied = await Call("read-file", new { context = ExecutionWireContext(context), request = new AgentFileReadRequest(outsideFile) });
+        var denied = Json(await client.ReadFileAsync(context, new AgentFileReadRequest(outsideFile)));
         Assert.True(denied.GetProperty("isError").GetBoolean());
         var operation = new AgentResourceOperationContext(Guid.NewGuid(), 7, "call.local", "files.mutate", 0, "workspace-generation", "binding-generation",
             "sunder.package.agent.tools.files", "sunder.package.agent.execution.local", Guid.NewGuid().ToString("N"), 1, true);
         var planning = context with { AllowOutsideConfiguredScope = true, ResourceOperation = operation, ExpectedConfigurationGeneration = generation };
-        var planned = ReadExecutionResource(await Call("resolve-file", new { context = ExecutionWireContext(planning), path = outsideFile }));
+        var planned = await client.ResolveFileAsync(planning, outsideFile);
         Assert.NotNull(planned.ResourceClaim); Assert.NotEmpty(planned.AuthorityReferences);
         var approved = planning with { ApprovedResourceReferences = [planned.CanonicalReference], ApprovedResourceClaims = [planned.ResourceClaim!],
             ApprovedResourceCapabilities = planned.AuthorityReferences, ResourceOperation = operation with { CanIssueOutsideAuthority = false }, CapturePostMutationResource = true };
-        Assert.True((await Call("validate-resource-authority", ExecutionWireContext(approved))).GetProperty("isValid").GetBoolean());
-        var written = ReadExecutionMutation(await Call("write-file", new { context = ExecutionWireContext(approved), request = new AgentFileWriteRequest(outsideFile, "approved") }));
+        Assert.True((await client.ValidateResourceAuthorityAsync(approved)).IsValid);
+        var written = await client.WriteFileAsync(approved, new AgentFileWriteRequest(outsideFile, "approved"));
         if (!OperatingSystem.IsWindows())
         {
             Assert.False(written.IsError, written.Summary); Assert.Equal("approved", await File.ReadAllTextAsync(outsideFile));
             Assert.NotNull(written.PostMutationResource);
             var receipt = written.PostMutationResource;
             var next = approved with { ApprovedResourceReferences = [receipt.CanonicalReference], ApprovedResourceClaims = [receipt.ResourceClaim!], ApprovedResourceCapabilities = receipt.AuthorityReferences, CapturePostMutationResource = false };
-            Assert.True((await Call("validate-resource-authority", ExecutionWireContext(next))).GetProperty("isValid").GetBoolean());
+            Assert.True((await client.ValidateResourceAuthorityAsync(next)).IsValid);
             var wrongActivation = next with { ResourceOperation = next.ResourceOperation! with { AuthorityActivationId = Guid.NewGuid().ToString("N") } };
-            Assert.False((await Call("validate-resource-authority", ExecutionWireContext(wrongActivation))).GetProperty("isValid").GetBoolean());
-            await Call("release-resource-authority", new { capabilities = receipt.AuthorityReferences.Concat(receipt.DeleteAuthorityReferences).ToArray() });
-            Assert.False((await Call("validate-resource-authority", ExecutionWireContext(next))).GetProperty("isValid").GetBoolean());
+            Assert.False((await client.ValidateResourceAuthorityAsync(wrongActivation)).IsValid);
+            await client.ReleaseResourceAuthorityAsync(receipt.AuthorityReferences.Concat(receipt.DeleteAuthorityReferences).ToArray());
+            Assert.False((await client.ValidateResourceAuthorityAsync(next)).IsValid);
         }
-        else { Assert.True(written.IsError); await Call("release-resource-authority", new { capabilities = planned.AuthorityReferences }); }
-        var deleted = ReadExecutionMutation(await Call("delete-file", new { context = ExecutionWireContext(context), request = new AgentFileDeleteRequest("artifact.txt") }));
+        else { Assert.True(written.IsError); await client.ReleaseResourceAuthorityAsync(planned.AuthorityReferences); }
+        var deleted = await client.DeleteFileAsync(context, new AgentFileDeleteRequest("artifact.txt"));
         if (!OperatingSystem.IsWindows()) { Assert.False(deleted.IsError, deleted.Summary); Assert.False(File.Exists(file)); }
         using (var cancelled = new CancellationTokenSource())
         {
             cancelled.Cancel();
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Call("write-file", new { context = ExecutionWireContext(context), request = new AgentFileWriteRequest("cancelled.txt", "no") }, cancelled.Token));
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.WriteFileAsync(context, new AgentFileWriteRequest("cancelled.txt", "no"), cancelled.Token).AsTask());
             Assert.False(File.Exists(Path.Combine(workspace, "cancelled.txt")));
         }
         var command = OperatingSystem.IsWindows() ? "echo artifact-shell" : "printf 'artifact-shell'";
-        var executed = await Call("execute-shell", new { context = ExecutionWireContext(context), request = new AgentShellCommandRequest(command) });
-        Assert.Contains("artifact-shell", executed.GetProperty("output").GetString()!, StringComparison.Ordinal);
+        var executed = await client.ExecuteShellAsync(context, new AgentShellCommandRequest(command));
+        Assert.Contains("artifact-shell", executed.Output!, StringComparison.Ordinal);
         var arguments = OperatingSystem.IsWindows() ? new[] { "/d", "/c", "echo artifact-process" } : new[] { "-c", "printf 'artifact-process'" };
-        var process = await Call("execute-process", new { context = ExecutionWireContext(context), request = new AgentProcessCommandRequest(shell, arguments) });
-        Assert.Contains("artifact-process", process.GetProperty("output").GetString()!, StringComparison.Ordinal);
+        var process = await client.ExecuteProcessAsync(context, new AgentProcessCommandRequest(shell, arguments));
+        Assert.Contains("artifact-process", process.Output!, StringComparison.Ordinal);
         if (!OperatingSystem.IsWindows())
         {
             using var cancelled = new CancellationTokenSource();
             var marker = Path.Combine(workspace, "process-started");
-            var pending = Call("execute-process", new { context = ExecutionWireContext(context),
-                request = new AgentProcessCommandRequest(shell, ["-c", $"printf started > '{marker}'; sleep 30"]) }, cancelled.Token);
+            var pending = client.ExecuteProcessAsync(context,
+                new AgentProcessCommandRequest(shell, ["-c", $"printf started > '{marker}'; sleep 30"]), cancelled.Token).AsTask();
             var started = Stopwatch.StartNew();
             while (!File.Exists(marker) && started.Elapsed < TimeSpan.FromSeconds(5)) await Task.Delay(10);
             Assert.True(File.Exists(marker)); cancelled.Cancel();
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending.WaitAsync(TimeSpan.FromSeconds(5)));
         }
-        await Call("add-path", new { context = ExecutionWireContext(context with { ExpectedConfigurationGeneration = generation }), path = workspace });
-        Assert.Contains((await Call("list-path", ExecutionWireContext(context))).EnumerateArray(), value => value.GetString() == workspace);
-        Assert.NotEqual(generation, (await Call("configuration-generation", ExecutionWireContext(context))).GetString());
-        await Assert.ThrowsAsync<SunderRpcException>(() => Call("read-file", new { context = ExecutionWireContext(context with { ExpectedConfigurationGeneration = generation }), request = new AgentFileReadRequest("AGENTS.md") }));
-        Assert.Equal(RegressionTestRpcDescriptors.Get(AgentRpcContractIds.ExecutionTarget).Services.Single().Methods.Select(value => value.MethodId).Order(StringComparer.Ordinal), covered.Order(StringComparer.Ordinal));
-        Task<JsonElement> Call(string method, object request, CancellationToken token = default) { covered.Add(method); return invoke(method, request, token); }
+        await client.AddPathAsync(context with { ExpectedConfigurationGeneration = generation }, workspace);
+        Assert.Contains(await client.ListPathAsync(context), value => value == workspace);
+        Assert.NotEqual(generation, await client.ConfigurationGenerationAsync(context));
+        await Assert.ThrowsAsync<SunderRpcException>(() => client.ReadFileAsync(context with { ExpectedConfigurationGeneration = generation }, new AgentFileReadRequest("AGENTS.md")).AsTask());
+        static JsonElement Json<T>(T value) => JsonSerializer.SerializeToElement(value, MemoryProviderJson);
     }
 }

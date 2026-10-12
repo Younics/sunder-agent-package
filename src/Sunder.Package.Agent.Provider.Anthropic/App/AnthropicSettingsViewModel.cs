@@ -1,8 +1,8 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Sunder.Package.Agent.Provider.Shared;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Provider_Anthropic_Services;
 using Sunder.Sdk.Abstractions;
-using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Provider.Anthropic;
 
@@ -19,23 +19,16 @@ public sealed partial class AnthropicSettingsViewModel : ObservableObject,
     internal static IReadOnlyCollection<string> OwnedConfigurationKeys { get; } =
         [AnthropicProviderConfiguration.ApiKeySecretKey, AnthropicProviderConfiguration.UtilityModelKey];
 
-    public AnthropicSettingsViewModel(
-        IPackageContext packageContext,
-        ISunderRpcClient rpcClient)
-        : this(
-            packageContext,
-            new ProviderCredentialOwnerRpcClient(rpcClient))
-    {
-    }
-
     [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
     internal AnthropicSettingsViewModel(
         IPackageContext packageContext,
-        IProviderCredentialOwnerClient credentials)
+        ICredentialSettingsService credentials)
     {
         _settings = new ApiKeyUtilitySettingsState(
             packageContext,
-            credentials,
+            credentials.GetStatusAsync,
+            credentials.SetAsync,
+            credentials.ClearAsync,
             "A stored API key is used for Claude chat. Blank input retains the current key.",
             "sk-ant-...",
             static hasCredential => hasCredential

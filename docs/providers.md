@@ -4,48 +4,71 @@ Provider packages run as supervised workers in the Sunder Runtime. Keep network 
 
 ## Chat Provider Contract
 
-Implement `IAgentChatProvider`, adapt it with `AgentChatProviderRpc.CreateHandler`, and publish the handler under `sunder.agent.chat.provider`.
+First-party implementations directly implement generated `IChatProviderService`.
+Select `sunder.agent.chat.provider` from the reviewed
+Agent archive and declare the provider with `SunderServiceProvider` from
+`Sunder.Sdk.Services`; Core generates its registration and Worker composition.
+Import `Sunder.Generated.Packages.Sunder_Package_Agent_Services` and
+`Sunder.Generated.Packages.Sunder_Package_Agent_Models`. Model names are shared across
+the selected Agent contracts; implementations do not maintain copied wire records.
 
 | Member | Author responsibility |
 | --- | --- |
-| `Descriptor` | Return a stable, case-insensitive `ProviderId`, display name, supported auth modes, streaming support, and interruptibility. Set `PackageId = context.PackageId`. |
-| `GetAvailableModelsAsync` | Return a bounded snapshot of models. Keep `ModelId` stable after profiles can persist it. Populate context/output limits and `ReleaseDate` when known. |
+| `DescribeAsync` | Return a stable, case-insensitive `ProviderId`, display name, supported auth modes, streaming support, and interruptibility. Set `PackageId = context.PackageId`. |
+| `ListModelsAsync` | Return a bounded snapshot of models. Keep `ModelId` stable after profiles can persist it. Populate context/output limits and `ReleaseDate` when known. |
 | `GetReadinessAsync` | Perform cheap configuration/auth checks and return `Ready`, `NeedsConfiguration`, or `Failed`; do not throw for an expected missing key. |
-| `GetRunCapabilitiesAsync` | Describe native tool calls, multiple/streaming calls, attachment media, and token limits for the selected model. Be conservative. |
-| `CreateChatClientAsync` | Return a configured `Microsoft.Extensions.AI.IChatClient` for the exact provider/model context. Honor cancellation and throw a safe `AgentChatProviderException` for expected user-actionable failures. |
+| `GetCapabilitiesAsync` | Describe native tool calls, multiple/streaming calls, attachment media, and token limits for the selected model. Be conservative. |
+| `ResolveUtilityModelAsync` | Return the configured utility model id, or `null`. |
+| `StreamChatAsync` | Translate the selected provider's streaming behavior into `AgentChatStreamEvent` values, preserving cancellation, content and failures. |
 
 The Runtime resolves a profile's chat binding by case-insensitive `ProviderId`; duplicate ids are ambiguous and the first active provider wins. Model ids are provider-owned strings and should include a provider prefix when the upstream namespace is not globally clear.
 
 ### Descriptor And Models
 
 ```csharp
-public AgentProviderDescriptor Descriptor { get; } = new(
-    "acme",
-    "Acme AI",
-    [AgentAuthMode.ApiKey],
-    SupportsStreaming: true,
-    SupportsInterruptibleRuns: true)
+public ValueTask<AgentProviderDescriptor> DescribeAsync(CancellationToken token = default)
 {
-    PackageId = packageContext.PackageId,
-};
+    token.ThrowIfCancellationRequested();
+    return ValueTask.FromResult(new AgentProviderDescriptor
+    {
+        ProviderId = "acme",
+        DisplayName = "Acme AI",
+        SupportedAuthModes = [AgentAuthMode.ApiKey],
+        SupportsStreaming = true,
+        SupportsInterruptibleRuns = true,
+        PackageId = packageContext.PackageId,
+    });
+}
 
-public ValueTask<IReadOnlyList<AgentModelDescriptor>> GetAvailableModelsAsync(
+public ValueTask<IReadOnlyList<AgentModelDescriptor>> ListModelsAsync(
     CancellationToken cancellationToken = default)
 {
     cancellationToken.ThrowIfCancellationRequested();
     return ValueTask.FromResult<IReadOnlyList<AgentModelDescriptor>>(
     [
-        new("acme/chat-pro", "Chat Pro", 128_000, 16_384, IsRecommended: true)
+        new()
         {
+            ModelId = "acme/chat-pro",
+            DisplayName = "Chat Pro",
+            ContextWindow = 128_000,
+            MaxOutputTokens = 16_384,
+            IsRecommended = true,
+            Variants = null,
+            SpeedOptions = null,
+            ModeOptions = null,
             ReleaseDate = new DateOnly(2026, 1, 15),
         },
     ]);
 }
 ```
 
-Model `Variants`, `SpeedOptions`, and `ModeOptions` are persisted as `AgentChatModelSettings`. Do not encode a UI-only option into a transient model id. The Runtime forwards selected values in `AgentBehaviorLoopContext`; provider-specific `IChatClient` middleware may translate them to upstream request options.
+Model `Variants`, `SpeedOptions`, and `ModeOptions` are persisted as `AgentChatModelSettings`. Do not encode a UI-only option into a transient model id. Chat calls carry the selected options in `AgentChatStreamRequest`; provider-specific middleware translates them to upstream request options. Imported records use init properties and support `with` updates.
 
 ### Chat Client Behavior
+
+First-party providers retain their local `CreateChatClientAsync` vendor integration
+and shared MEAI translation algorithms. These are business adapters behind
+`StreamChatAsync`, not another public service interface or transport layer.
 
 - Implement the standard `IChatClient` metadata and streaming/non-streaming paths expected by the chosen provider library.
 - Preserve function call ids and names. Tool calls must be valid JSON objects and must respect the depth, property-count, and case-collision policy exposed through `AgentPayloadLimits`; Runtime's RPC resource profile owns transport size.
@@ -61,23 +84,33 @@ Use `AgentChatProviderException(message, content, errorCode, innerException)` wh
 
 ## Embedding Provider Contract
 
-Implement `IAgentEmbeddingProvider`, adapt it with `AgentEmbeddingProviderRpc.CreateHandler`, and publish the handler under `sunder.agent.embedding.provider`.
+First-party implementations directly implement imported `IEmbeddingProviderService`. Select
+`sunder.agent.embedding.provider` from the reviewed Agent archive and let neutral
+provider metadata drive generated registration and Worker composition.
 
 | Member | Author responsibility |
 | --- | --- |
-| `Descriptor` | Stable `ProviderId`, display name, auth modes, and package id. Chat and embedding implementations may share a provider id. |
-| `GetAvailableModelsAsync` | Return stable model ids, optional dimensions, and recommendation state. |
+| `DescribeAsync` | Stable `ProviderId`, display name, auth modes, and package id. Chat and embedding descriptions may share a business provider id; registration ids remain distinct. |
+| `ListModelsAsync` | Return stable model ids, optional dimensions, and recommendation state. |
 | `GetReadinessAsync` | Return expected missing configuration as readiness, not an exception. |
-| `GenerateEmbeddingAsync` | Return one result or `null` only when the input intentionally has no embedding. |
-| `GenerateEmbeddingsAsync` | Preserve input count and index order. Use `null` at an invalid/empty input's index rather than shifting later results. |
+| `SpaceIdentityAsync` | Return the provider-owned embedding space identity for the model. |
+| `GenerateAsync` | Return one result or `null` only when the input intentionally has no embedding. |
+| `GenerateBatchAsync` | Preserve input count and index order. Use `null` at an invalid/empty input's index rather than shifting later results. |
 
-Every non-null `AgentEmbeddingGenerationResult` must repeat the selected `ModelId`; `Dimensions` is derived from the returned binary64 (`double`) values. Do not narrow embedding components to `float` at the Agent RPC boundary. A provider must not mix dimensions for one model generation. Validate upstream response indexes and counts before returning.
+The multi-argument operations take generated Models envelopes:
+`CSunder_Agent_Embedding_Provider_EmbeddingProviderGenerateRequest` (`ModelId`, `Text`)
+and `CSunder_Agent_Embedding_Provider_EmbeddingProviderGenerateBatchRequest`
+(`ModelId`, `Texts`). Use these generated types directly. Every non-null
+`AgentEmbeddingGenerationResult` repeats the selected `ModelId`; dimensions come
+from `Values.Count`. Do not narrow binary64 (`double`) components to `float` at the
+service boundary. Validate upstream indexes, counts and consistent dimensions.
 
 Semantic memory resolves the embedding binding on the profile, checks readiness, and degrades to lexical/full-text recall when embeddings are disabled, absent, or unavailable. Background indexing records generation failures and retries bounded work; an embedding outage must not corrupt existing memory generations. Internal semantic-memory similarity scores and compact history-index vector storage may use binary32 because they are domain-internal derived data, not Agent RPC values.
 
 ## Utility Models
 
-A chat provider may additionally implement `IAgentUtilityModelProvider` to expose a provider-specific model used for small internal tasks. The chat RPC adapter exposes this through `resolve-utility-model`; it is not a separate provider contract. Return `null` when no utility model is configured.
+`IChatProviderService.ResolveUtilityModelAsync` exposes a provider-specific model
+for small internal tasks. Return `null` when none is configured.
 
 ## Authentication And Settings
 
@@ -90,35 +123,51 @@ A chat provider may additionally implement `IAgentUtilityModelProvider` to expos
 
 ## Registration
 
-```csharp
-await SunderWorker.RunAsync(context =>
-{
-    var chat = new AcmeChatProvider(context);
-    var embedding = new AcmeEmbeddingProvider(context);
-    return new SunderWorkerOptions(
-    [
-        Register("acme.chat", AgentRpcContractIds.ChatProvider, AgentChatProviderRpc.CreateHandler(chat)),
-        Register("acme.embedding", AgentRpcContractIds.EmbeddingProvider, AgentEmbeddingProviderRpc.CreateHandler(embedding)),
-    ]);
-});
+Add reviewed provider imports to the canonical package lock with the owning tools.
+Canonical authority package and service IDs determine generated namespaces and
+interface names. The declaration on an actual partial chat provider is:
 
-static SunderWorkerProviderRegistration Register(
-    string providerId,
-    string contractId,
-    ISunderRpcServiceHandler handler)
-{
-    var descriptor = AgentRpcContractDescriptors.Get(contractId);
-    return new(
-        providerId,
-        descriptor.ContractId,
-        descriptor.Version,
-        descriptor.Sha256,
-        descriptor.AbiSha256 ?? throw new InvalidDataException("Agent RPC is missing its ABI hash."),
-        handler);
-}
+```csharp
+[SunderServiceProvider(typeof(IChatProviderService), ProviderId = "acme.chat")]
 ```
 
-Declare matching `SunderRpcProvider` items in the project and register only capabilities actually implemented. A chat-only provider does not need a placeholder embedding provider.
+Import that attribute from `Sunder.Sdk.Services` and implement the generated
+provider interface. See [GeminiAgentProvider](../src/Sunder.Package.Agent.Provider.Gemini/GeminiAgentProvider.cs)
+and [GeminiEmbeddingProvider](../src/Sunder.Package.Agent.Provider.Gemini/GeminiEmbeddingProvider.cs)
+for direct implementations. Core generates Worker entry
+points and registration tuples. A chat-only provider needs no placeholder embedding
+provider, hand-authored descriptor hashes or manual registration factory.
+
+One real class can bind several contracts with repeated `SunderServiceProvider`
+attributes and explicit interface methods for colliding signatures. Provider
+selection does not grant consumer actions. Consumers use
+`IServiceProviders<IChatProviderService>` / `IServiceProviders<IEmbeddingProviderService>`
+and call the chosen entry's `.Service`; `.Reference` carries an exact typed binding.
+Entries are borrowed, with generated DI managing retirement and cleanup.
+
+Chat binary content uses `AgentChatContent.Content` (`SunderContent`), with ordinary
+content/read-stream disposal and no authored RPC scope. URI content remains a URI;
+`AgentChatContent.Json` preserves absence versus explicit JSON null. Transient
+authority stays JSON-ignored and transfers only through explicit
+`SunderServiceMember` intent. Server context is reserved for authenticated-caller
+policy, not content conversion.
+
+Reference availability stays strict by default. A transferred direct nullable
+reference property may use `SunderOptionalServiceReference` for safe-absence-as-null
+behavior; permission denial and unsafe failures still propagate. A provider that
+only checks an imported execution target can declare
+`[SunderRuntimeUse(typeof(IExecutionTargetService), Actions = ["discover"])]`
+without requesting invocation. The contract must already be selected.
+
+`CompleteOnResponseContentRetirement` is a provider-local opt-in for replayable
+content-output watches whose consumers resnapshot/resume, not a blanket chat-stream
+success policy. Caller cancellation and business failures remain failures.
+Generated service codecs use compiled model JSON metadata without reflection-cache
+retention of collectible types; authors add no serializer resolver or Unit wrapper.
+
+Private credential settings can inject generated `ICredentialSettingsService`
+directly. Its get/set/clear methods return presence only; App owns presentation
+state while Runtime owns the credential store.
 
 ## Provider Test Matrix
 

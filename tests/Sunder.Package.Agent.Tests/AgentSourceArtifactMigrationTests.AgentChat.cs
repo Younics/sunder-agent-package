@@ -24,42 +24,72 @@ public sealed partial class AgentSourceArtifactMigrationTests
         return load.LoadFromStream(source);
     }
 
-    private static IAgentChatProvider CreateAgentChatProvider(Assembly owner, ISunderRpcClient rpc, SunderRpcProviderSnapshot provider)
-        => AgentRoleBoundary.As<IAgentChatProvider>(Activator.CreateInstance(owner.GetType("Sunder.Package.Agent.Runtime.Rpc.GeneratedChatProviderClient", true)!, rpc, provider)!);
+    private static async Task<AgentChatSelection> CreateAgentChatProvider(Assembly owner, ISunderRpcClient rpc, SunderRpcProviderSnapshot provider)
+    {
+        var receiver = new GeneratedServiceTestScope(rpc);
+        try
+        {
+            var contract = owner.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Services.IChatProviderService", true)!;
+            var catalog = receiver.Providers(contract);
+            var snapshot = (await Call(catalog, "ListAsync", CancellationToken.None))!;
+            var entries = ((System.Collections.IEnumerable)snapshot.GetType().GetProperty("Providers")!.GetValue(snapshot)!).Cast<object>();
+            var selected = Assert.Single(entries, entry =>
+                Equals(entry.GetType().GetProperty("ActivationId")!.GetValue(entry), provider.ActivationId)
+                && Equals(entry.GetType().GetProperty("ProviderId")!.GetValue(entry), provider.ProviderId));
+            foreach (var name in new[] { "PackageId", "PackageVersion", "ProviderId", "ContractId", "ContractVersion",
+                         "DescriptorSha256", "AbiSha256", "ActivationId", "ActivationEpoch", "SessionGeneration" })
+                Assert.Equal(typeof(SunderRpcProviderSnapshot).GetProperty(name)!.GetValue(provider),
+                    selected.GetType().GetProperty(name)!.GetValue(selected));
+            return new(owner, receiver, selected, selected.GetType().GetProperty("Service")!.GetValue(selected)!);
+        }
+        catch { await receiver.DisposeAsync(); throw; }
+    }
+
+    private sealed record AgentChatSelection(Assembly Owner, GeneratedServiceTestScope Receiver, object Entry, object Service) : IAsyncDisposable
+    {
+        public ValueTask DisposeAsync() => Receiver.DisposeAsync();
+    }
 
     // IChatClient is shared across roles. Borrow the owner's actual client so
     // source probes observe its original failures, stream and disposal lifetime.
-    private static async Task<IChatClient> CreateAgentChatClientAsync(IAgentChatProvider provider, AgentChatClientContext context)
-        => (IChatClient)(await AgentRoleBoundary.Await(AgentRoleBoundary.Call(provider,
-            "CreateChatClientAsync", context, CancellationToken.None)!))!;
+    private static Task<IChatClient> CreateAgentChatClientAsync(AgentChatSelection provider, AgentChatClientContext context)
+    {
+        var client = provider.Owner.GetType("Sunder.Package.Agent.Services.AgentModelChatClient", true)!;
+        var constructor = Assert.Single(client.GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic));
+        var stream = provider.Service.GetType().GetMethod("StreamChatAsync")!
+            .CreateDelegate(constructor.GetParameters()[1].ParameterType, provider.Service);
+        return Task.FromResult((IChatClient)AgentRoleBoundary.Create(client, context, stream));
+    }
 
     internal static async Task VerifyAgentChatConsumer(Assembly owner)
     {
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        using var providers = new RegressionTestProviderRoles();
+        using var providers = new RegressionTestSourceProviders();
         var peer = new AgentChatPeer();
-        var registration = providers.Create("Provider.Gemini", "Rpc.ChatProvider", peer);
+        await using var providerReceiver = new GeneratedServiceTestScope(new RegressionTestRpcClient(state, "sunder.package.agent"));
+        var registration = providers.Create(RegressionTestBindings.ChatProviders, peer, providerReceiver);
         state.AddGenerated("example.chat", peer, registration, Noop.Instance, "fixture.chat");
         var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
-        var snapshot = Assert.Single((await rpc.DiscoverAsync(AgentRpcContractIds.ChatProvider)).Providers);
+        var snapshot = Assert.Single((await rpc.DiscoverAsync(RegressionTestBindings.ChatProviders)).Providers);
         var observed = new FilesRpcObserver(rpc, "get-readiness");
-        var provider = CreateAgentChatProvider(owner, observed, snapshot);
+        var provider = await CreateAgentChatProvider(owner, observed, snapshot);
         await using var lifetime = (IAsyncDisposable)provider;
-        Assert.Equal(peer.Descriptor.ProviderId, provider.Descriptor.ProviderId);
-        Assert.Equal(peer.Descriptor.DisplayName, provider.Descriptor.DisplayName);
-        Assert.Equal(peer.Descriptor.SupportedAuthModes, provider.Descriptor.SupportedAuthModes);
-        Assert.True(provider.Descriptor.SupportsStreaming); Assert.True(provider.Descriptor.SupportsInterruptibleRuns);
-        Assert.Null(provider.Descriptor.PackageId);
-        var model = Assert.Single(await provider.GetAvailableModelsAsync());
+        var description = AgentRoleBoundary.As<AgentProviderDescriptor>((await Call(provider.Service, "DescribeAsync", CancellationToken.None))!);
+        Assert.Equal(peer.Descriptor.ProviderId, description.ProviderId);
+        Assert.Equal(peer.Descriptor.DisplayName, description.DisplayName);
+        Assert.Equal(peer.Descriptor.SupportedAuthModes, description.SupportedAuthModes);
+        Assert.True(description.SupportsStreaming); Assert.True(description.SupportsInterruptibleRuns);
+        Assert.Null(description.PackageId);
+        var model = Assert.Single(AgentRoleBoundary.As<IReadOnlyList<AgentModelDescriptor>>((await Call(provider.Service, "ListModelsAsync", CancellationToken.None))!));
         Assert.Equal(peer.Model.ReleaseDate, model.ReleaseDate);
         Assert.Equal(AgentReasoningEffort.ExtraHigh, Assert.Single(model.Variants!).ReasoningEffort);
         Assert.Equal("fast", Assert.Single(model.SpeedOptions!).SpeedOptionId);
         Assert.True(Assert.Single(model.ModeOptions!).DisablesReasoning);
-        Assert.Equal("chat/test", await ((IAgentUtilityModelProvider)provider).ResolveUtilityModelIdAsync());
+        Assert.Equal("chat/test", await Call(provider.Service, "ResolveUtilityModelAsync", CancellationToken.None));
         peer.UtilityModel = null;
-        Assert.Null(await ((IAgentUtilityModelProvider)provider).ResolveUtilityModelIdAsync());
-        Assert.Equal(AgentProviderReadinessStatus.Ready, (await provider.GetReadinessAsync()).Status);
-        Assert.Null((await provider.GetRunCapabilitiesAsync(null)).ContextWindowTokens);
+        Assert.Null(await Call(provider.Service, "ResolveUtilityModelAsync", CancellationToken.None));
+        Assert.Equal(AgentProviderReadinessStatus.Ready, AgentRoleBoundary.As<AgentProviderReadiness>((await Call(provider.Service, "GetReadinessAsync", CancellationToken.None))!).Status);
+        Assert.Null(AgentRoleBoundary.As<AgentProviderRunCapabilities>((await Call(provider.Service, "GetCapabilitiesAsync", null, CancellationToken.None))!).ContextWindowTokens);
         Assert.Null(peer.RequestedModel);
 
         using var chat = await CreateAgentChatClientAsync(provider, new("chat", "chat/test"));
@@ -111,7 +141,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(async () => await stream.MoveNextAsync())).Error.Kind);
         peer.BeforeUpdate = null; observed.Transform = null;
         observed.InvalidateAfterInvoke = true;
-        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => provider.GetReadinessAsync().AsTask())).Error.Kind);
+        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => Call(provider.Service, "GetReadinessAsync", CancellationToken.None))).Error.Kind);
         observed.InvalidateAfterInvoke = false; observed.Transform = null;
 
         using (var package = RegressionTestPackageScope.Create())
@@ -125,12 +155,12 @@ public sealed partial class AgentSourceArtifactMigrationTests
                     "{\"reasoningVariantId\":\"deep\",\"speedOptionId\":\"fast\"}", host.Started)],
             };
             SurfaceCall(profiles, "ImportProfile", profile);
-            Assert.Equal("chat", Assert.Single((IReadOnlyList<AgentProviderDescriptor>)SurfaceCall(profiles, "ListChatProviderDescriptors")!).ProviderId);
+            Assert.Equal("chat", Assert.Single((IReadOnlyList<AgentProviderDescriptor>)(await Call(profiles, "ListChatProviderDescriptorsAsync", CancellationToken.None))!).ProviderId);
             Assert.Equal("chat/test", Assert.Single((IReadOnlyList<AgentModelDescriptor>)(await Call(profiles, "ListChatModelsAsync", "CHAT", CancellationToken.None))!).ModelId);
             var resolver = host.Services.GetRequiredService(owner.GetType("Sunder.Package.Agent.Services.AgentRunProviderResolver", true)!);
-            using var selection = (IDisposable)SurfaceCall(resolver, "ResolveChatProvider", profile)!;
-            var selected = selection.GetType().GetProperty("Provider", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(selection)!;
-            Assert.Equal(AgentRoleBoundary.Unwrap(provider).GetType(), selected.GetType());
+            var selection = (await Call(resolver, "ResolveChatProviderAsync", profile, CancellationToken.None))!;
+            var selected = selection.GetType().GetProperty("Provider", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!.GetValue(selection)!;
+            Assert.Equal(provider.Service.GetType(), selected.GetType().GetProperty("Service")!.GetValue(selected)!.GetType());
             var metadata = (await Call(resolver, "ResolveRunMetadataAsync", selection, CancellationToken.None))!;
             var capabilities = AgentRoleBoundary.As<AgentProviderRunCapabilities>(metadata.GetType().GetProperty("RunCapabilities")!.GetValue(metadata)!);
             Assert.Equal(peer.Model.ContextWindow, capabilities.ContextWindowTokens); Assert.Equal(peer.Model.MaxOutputTokens, capabilities.MaxOutputTokens);
@@ -147,12 +177,18 @@ public sealed partial class AgentSourceArtifactMigrationTests
             await peer.Gate.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
             var stopped = lifetime.DisposeAsync().AsTask();
             Assert.Same(stopped, lifetime.DisposeAsync().AsTask());
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+            var ended = await Assert.ThrowsAsync<SunderRpcException>(() => pending);
+            Assert.Equal(SunderRpcErrorKind.Unavailable, ended.Error.Kind);
+            Assert.Equal("rpc.binding.retired", ended.Error.Code);
+            Assert.Equal(SunderRpcDispatchState.PossiblyDispatched, ended.Error.DispatchState);
+            Assert.Equal(SunderRpcRetrySafety.Unsafe, ended.Error.RetrySafety);
             await stopped.WaitAsync(TimeSpan.FromSeconds(5));
             await peer.Gate.Cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
         }
-        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, Assert.Throws<SunderRpcException>(() => provider.Descriptor).Error.Kind);
-        Assert.Equal(0, observed.UnscopedLookups); Assert.All(observed.Scopes, scope => Assert.True(scope.Disposed));
+        var disposed = Assert.Throws<SunderRpcException>(() => AgentRoleBoundary.Call(provider.Entry, "get_Service"));
+        Assert.Equal(SunderRpcErrorKind.Unavailable, disposed.Error.Kind);
+        Assert.Equal("rpc.binding.lifetime-disposed", disposed.Error.Code);
+        observed.AssertScopedOperations(); Assert.All(observed.Scopes, scope => Assert.True(scope.Disposed));
         Assert.Equal(peer.Calls, peer.Disposals);
     }
 

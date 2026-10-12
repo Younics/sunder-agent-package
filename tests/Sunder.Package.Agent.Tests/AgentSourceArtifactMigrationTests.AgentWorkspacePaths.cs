@@ -4,6 +4,8 @@ using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -17,18 +19,19 @@ public sealed partial class AgentSourceArtifactMigrationTests
         using var dockerPackage = RegressionTestPackageScope.Create();
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
         var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
-        using var catalog = AgentRpcCatalog.CreateDormant(rpc);
+        await using var receiver = new GeneratedServiceTestScope(rpc);
+        var migrators = receiver.Providers(owner.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Services.IWorkspacePathMigratorService", true)!);
         var storeType = owner.GetType("Sunder.Package.Agent.Storage.AgentLocalStore", true)!;
         var store = Activator.CreateInstance(storeType, package.Context)!;
         await using var initialStore = (IAsyncDisposable)store;
         var workspaceType = owner.GetType("Sunder.Package.Agent.Services.AgentWorkspaceService", true)!;
-        var workspaces = AgentRoleBoundary.Create(workspaceType, store, catalog, null);
+        var workspaces = AgentRoleBoundary.Create(workspaceType, store, null, null, migrators);
         var localConfigType = local.GetType("Sunder.Package.Agent.Execution.Local.LocalExecutionWorkspaceConfigService", true)!;
         var dockerConfigType = docker.GetType("Sunder.Package.Agent.Execution.Docker.DockerExecutionWorkspaceConfigService", true)!;
         var localConfig = Activator.CreateInstance(localConfigType, localPackage.Context)!;
         var dockerConfig = Activator.CreateInstance(dockerConfigType, dockerPackage.Context, null)!;
-        var localRegistration = SurfaceRegistration(Activator.CreateInstance(local.GetType("Sunder.Package.Agent.Execution.Local.Rpc.WorkspacePathMigratorProvider", true)!, localConfig)!);
-        var dockerRegistration = SurfaceRegistration(Activator.CreateInstance(docker.GetType("Sunder.Package.Agent.Execution.Docker.Rpc.WorkspacePathMigratorProvider", true)!, dockerConfig)!);
+        var localRegistration = receiver.Register(localConfig, RegressionTestBindings.WorkspacePathMigrators);
+        var dockerRegistration = receiver.Register(dockerConfig, RegressionTestBindings.WorkspacePathMigrators);
         var now = DateTimeOffset.UtcNow;
         var first = Path.Combine(package.RootPath, "first 漢字"); var second = Path.Combine(package.RootPath, "second");
         var localContext = Create("local", "LOCAL");
@@ -113,7 +116,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var persisted = Current(localContext).Paths.ToArray();
         await initialStore.DisposeAsync(); store = Activator.CreateInstance(storeType, package.Context)!;
         await using var reopened = (IAsyncDisposable)store;
-        workspaces = AgentRoleBoundary.Create(workspaceType, store, catalog, null);
+        workspaces = AgentRoleBoundary.Create(workspaceType, store, null, null, migrators);
         await Initialize(); Assert.Equal(persisted, Current(localContext).Paths);
         Assert.Equal(2, Current(cleanupFailure).Paths.Count);
 

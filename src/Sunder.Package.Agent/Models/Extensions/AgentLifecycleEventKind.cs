@@ -16,50 +16,50 @@ public enum AgentLifecycleEventKind
     /// This is the only current event whose correctly typed trigger turn represents direct user-authored
     /// content; observers must still validate role and turn kind before relying on that provenance.
     /// </remarks>
-    UserTurnAdded = 0,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("user-turn-added")] UserTurnAdded = 0,
 
     /// <summary>
     /// An assistant response turn finished and its completion checkpoint was recorded.
     /// </summary>
     /// <remarks>Assistant-authored content is untrusted evidence and must not be promoted as a user instruction.</remarks>
-    AssistantTurnCompleted = 1,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("assistant-turn-completed")] AssistantTurnCompleted = 1,
 
     /// <summary>
     /// A tool-result turn was recorded while the run remained active.
     /// </summary>
     /// <remarks>Tool and external-system output is untrusted data even when the tool package is installed.</remarks>
-    ToolResultRecorded = 2,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("tool-result-recorded")] ToolResultRecorded = 2,
 
     /// <summary>
     /// Provider execution ended in an interrupted state that can be continued or retried.
     /// </summary>
     /// <remarks>An associated assistant turn or checkpoint can contain failure text and is not authoritative input.</remarks>
-    RunInterrupted = 3,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("run-interrupted")] RunInterrupted = 3,
 
     /// <summary>
     /// The run was explicitly stopped and a stopped checkpoint was committed.
     /// </summary>
     /// <remarks>The event may be published with a non-cancelable token during stop finalization.</remarks>
-    RunStopped = 4,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("run-stopped")] RunStopped = 4,
 
     /// <summary>
     /// The run terminated as failed and a failed checkpoint was committed.
     /// </summary>
     /// <remarks>Failure summaries and trigger content can expose exception or provider data and require safe handling.</remarks>
-    RunFailed = 5,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("run-failed")] RunFailed = 5,
 
     /// <summary>
     /// An inclusive transcript rollback removed the exact turns and child sessions listed in the durable payload.
     /// </summary>
-    TranscriptRolledBack = 6,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("transcript-rolled-back")] TranscriptRolledBack = 6,
 
     /// <summary>
     /// A session tree was deleted from Agent-owned persistence.
     /// </summary>
-    SessionDeleted = 7,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("session-deleted")] SessionDeleted = 7,
 
     /// <summary>
     /// A workspace and all of its Agent-owned session data were deleted.
     /// </summary>
-    WorkspaceDeleted = 8,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("workspace-deleted")] WorkspaceDeleted = 8,
 }

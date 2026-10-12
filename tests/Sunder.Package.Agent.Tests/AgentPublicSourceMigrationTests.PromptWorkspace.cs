@@ -32,30 +32,30 @@ public sealed partial class AgentPublicSourceMigrationTests
                     Document("unsupported", unsupported, 30), Document("empty", empty, 40), Document("missing", Path.Combine(work, "missing.md"), 50)]);
             var service = new WorkspaceDocumentationContextService();
             await using var fixture = await CreatePromptFixture(assembly, descriptor, service);
-            var description = await InvokeGeneratedClient(fixture.Client, "DescribeAsync", EmptyRequest());
-            Assert.Equal(service.ContributorId, description.GetProperty("contributorId").GetString());
-            Assert.False(description.TryGetProperty("acknowledgmentSinkId", out _));
+            var description = await fixture.Client.DescribeAsync();
+            Assert.Equal(service.ContributorId, description.ContributorId);
+            Assert.Null(description.AcknowledgmentSinkId);
             var request = CreatePromptRequest() with { Workspace = workspace };
             var expected = RunJson(await service.ContributeContextAsync(request.DomainRequestWithoutTarget()));
-            var actual = await InvokeGeneratedClient(fixture.Client, "ContributeAsync", RunJson(request));
-            Assert.True(JsonElement.DeepEquals(expected, actual));
-            var block = Assert.Single(actual.GetProperty("blocks").EnumerateArray());
-            Assert.Equal("reference", block.GetProperty("usage").GetString());
-            Assert.Equal("reference", block.GetProperty("authority").GetString());
-            Assert.Equal("tool", block.GetProperty("provenance").GetString());
-            Assert.Equal("untrusted", block.GetProperty("trust").GetString());
-            Assert.False(block.TryGetProperty("scope", out _));
-            Assert.False(block.TryGetProperty("hostIdentity", out _));
-            var content = block.GetProperty("content").GetString()!;
+            var actual = await fixture.Client.ContributeAsync(request.DomainRequestWithoutTarget());
+            Assert.True(JsonElement.DeepEquals(expected, RunJson(actual)));
+            var block = Assert.Single(actual!.Blocks);
+            Assert.Equal(AgentPromptContextUsage.Reference, block.Usage);
+            Assert.Equal(AgentPromptContextAuthority.Reference, block.Authority);
+            Assert.Equal(AgentContextProvenance.Tool, block.Provenance);
+            Assert.Equal(AgentContextTrust.Untrusted, block.Trust);
+            Assert.Null(block.Scope);
+            Assert.Null(block.HostIdentity);
+            var content = block.Content;
             Assert.True(content.IndexOf("Explicit external reference", StringComparison.Ordinal) < content.IndexOf("First document 漢字", StringComparison.Ordinal));
             Assert.Equal(2, content.Split("First document 漢字", StringSplitOptions.None).Length);
             Assert.DoesNotContain("Unsupported file canary", content, StringComparison.Ordinal);
             Assert.DoesNotContain("Unlisted instruction canary", content, StringComparison.Ordinal);
 
             foreach (var absent in new AgentWorkspaceRecord?[] { null, workspace with { Documents = [] }, workspace with { Documents = [Document("empty", empty, 0)] } })
-                Assert.Equal(JsonValueKind.Null, (await InvokeGeneratedClient(fixture.Client, "ContributeAsync", RunJson(request with { Workspace = absent }))).ValueKind);
+                Assert.Null(await fixture.Client.ContributeAsync((request with { Workspace = absent }).DomainRequestWithoutTarget()));
             var receipt = new AgentPromptContextReceipt(request.Session.SessionId, request.Run.RunId, request.TranscriptEpoch, []);
-            Assert.Equal("{}", (await InvokeGeneratedClient(fixture.Client, "AcknowledgeAsync", RunJson(receipt))).GetRawText());
+            await fixture.Client.AcknowledgeAsync(receipt);
 
             var documents = new List<AgentWorkspaceDocumentRecord>();
             for (var index = 0; index < 7; index++)
@@ -65,11 +65,10 @@ public sealed partial class AgentPublicSourceMigrationTests
                 documents.Add(Document("large-" + index, path, index));
             }
             var largeInput = request with { Workspace = workspace with { Documents = documents } };
-            var largeRequest = RunJson(largeInput);
             var expectedLarge = RunJson(await service.ContributeContextAsync(largeInput.DomainRequestWithoutTarget()));
-            var large = await InvokeGeneratedClient(fixture.Client, "ContributeAsync", largeRequest);
-            Assert.True(JsonElement.DeepEquals(expectedLarge, large));
-            var bounded = large.GetProperty("blocks")[0].GetProperty("content").GetString()!;
+            var large = await fixture.Client.ContributeAsync(largeInput.DomainRequestWithoutTarget());
+            Assert.True(JsonElement.DeepEquals(expectedLarge, RunJson(large)));
+            var bounded = Assert.Single(large!.Blocks).Content;
             Assert.DoesNotContain("EXCLUDED-SUFFIX", bounded, StringComparison.Ordinal);
             Assert.Equal(6, bounded.Split("[truncated]", StringSplitOptions.None).Length);
             Assert.DoesNotContain("large-5.txt", bounded, StringComparison.Ordinal);
@@ -77,7 +76,7 @@ public sealed partial class AgentPublicSourceMigrationTests
             Assert.InRange(bounded.Length, 60000, 65000);
             using var canceled = new CancellationTokenSource();
             canceled.Cancel();
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => InvokeGeneratedClient(fixture.Client, "ContributeAsync", largeRequest, canceled.Token));
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => fixture.Client.ContributeAsync(largeInput.DomainRequestWithoutTarget(), canceled.Token).AsTask());
 
             AgentWorkspaceDocumentRecord Document(string id, string path, int order) => new(id, "workspace.docs", path, order, now, now);
         }

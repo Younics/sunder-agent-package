@@ -480,14 +480,17 @@ public sealed partial class SemanticMemoryIndexingBackgroundService : ISunderWor
 
     private async Task QueueSessionsNeedingReconciliationAsync(CancellationToken cancellationToken)
     {
-        var sessions = _modelRuntimeResolver.InvokeRuntimeCatalog(
-            catalog => catalog.ListSessions()
-                .Select(session => new SemanticSessionBinding(
-                    session.SessionId,
-                    catalog.GetSessionModelBinding(session.SessionId, AgentModelCapabilityKinds.Embedding)
-                    ?? SemanticModelRuntimeResolver.ResolveLegacyBinding(catalog.GetSessionProfile(session.SessionId))))
-                .ToArray(),
-            Array.Empty<SemanticSessionBinding>());
+        var sessions = await _modelRuntimeResolver.InvokeRuntimeCatalogAsync(async (catalog, token) =>
+        {
+            var result = new List<SemanticSessionBinding>();
+            foreach (var session in await catalog.ListSessionsAsync(token).ConfigureAwait(false))
+            {
+                var binding = await catalog.GetSessionModelBindingAsync(new() { SessionId = session.SessionId, CapabilityKind = AgentModelCapabilityKinds.Embedding }, token).ConfigureAwait(false)
+                    ?? SemanticModelRuntimeResolver.ResolveLegacyBinding(await catalog.GetSessionProfileAsync(session.SessionId, token).ConfigureAwait(false));
+                result.Add(new(session.SessionId, binding));
+            }
+            return result.ToArray();
+        }, Array.Empty<SemanticSessionBinding>(), cancellationToken).ConfigureAwait(false);
         foreach (var session in sessions)
         {
             cancellationToken.ThrowIfCancellationRequested();

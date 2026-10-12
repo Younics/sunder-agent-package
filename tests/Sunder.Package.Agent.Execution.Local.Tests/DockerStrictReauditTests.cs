@@ -1,7 +1,10 @@
 extern alias DockerWorker;
 
-using DockerWorker::Sunder.Package.Agent.Contracts.Models;
 using DockerWorker::Sunder.Package.Agent.Execution.Docker;
+using Sunder.Sdk.Rpc;
+using AgentFileDeleteRequest = DockerWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileDeleteRequest;
+using AgentFileReadRequest = DockerWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileReadRequest;
+using DockerModels = DockerWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
 using Xunit;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
@@ -77,7 +80,7 @@ public sealed class DockerStrictReauditTests : IDisposable
             CancellationToken.None,
             context: context);
         var path = DockerPathResolver.ResolveHostBinding(config, "/workspace/new.txt");
-        var claim = Assert.IsType<AgentResourceClaim>(resolved.ResourceClaim);
+        var claim = Assert.IsType<DockerModels.AgentResourceClaim>(resolved.ResourceClaim);
 
         Assert.Empty(resolved.AuthorityReferences);
         Assert.StartsWith(DockerFileSystemExecutor.ClaimNamespacePrefix, resolved.CanonicalReference, StringComparison.Ordinal);
@@ -98,7 +101,12 @@ public sealed class DockerStrictReauditTests : IDisposable
             context);
         var result = await executor.WriteFileAsync(
             config,
-            new AgentFileWriteRequest("/workspace/new.txt", "content", Overwrite: false),
+            new DockerModels.AgentFileWriteRequest
+            {
+                Path = "/workspace/new.txt",
+                Content = "content",
+                Overwrite = false,
+            },
             authority,
             CancellationToken.None);
 
@@ -106,33 +114,55 @@ public sealed class DockerStrictReauditTests : IDisposable
         Assert.Equal("content", await File.ReadAllTextAsync(Path.Combine(_root, "new.txt")));
     }
 
-    private static AgentExecutionTargetContext CreateResourceContext(string actionId)
+    private static DockerModels.AgentExecutionTargetContext CreateResourceContext(string actionId)
     {
         var now = DateTimeOffset.UtcNow;
-        var workspace = new AgentWorkspaceRecord("workspace", "Workspace", null, now, now);
-        var binding = new AgentWorkspaceBindingRecord(
-            "binding",
-            workspace.WorkspaceId,
-            "execution-targets",
-            "docker",
-            "primary-execution-target",
-            true,
-            0,
-            now,
-            now);
-        return new AgentExecutionTargetContext(null, null, workspace, binding)
+        var timestamp = new SunderRpcOffsetDateTime(now.ToString("O"));
+        var workspace = new DockerModels.AgentWorkspaceRecord
         {
-            ResourceOperation = new AgentResourceOperationContext(
-                Guid.NewGuid(),
-                1,
-                "tool-call",
-                actionId,
-                0,
-                "workspace-generation",
-                "binding-generation",
-                "sunder.package.agent.tools.files",
-                "sunder.package.agent.execution.docker",
-                Guid.NewGuid().ToString("N")),
+            WorkspaceId = "workspace",
+            DisplayName = "Workspace",
+            CreatedAtUtc = timestamp,
+            UpdatedAtUtc = timestamp,
+            Paths = [],
+            Documents = [],
+        };
+        var binding = new DockerModels.AgentWorkspaceBindingRecord
+        {
+            BindingId = "binding",
+            WorkspaceId = workspace.WorkspaceId,
+            ExtensionPointId = "execution-targets",
+            ContributionId = "docker",
+            Role = "primary-execution-target",
+            IsEnabled = true,
+            SortOrder = 0,
+            CreatedAtUtc = timestamp,
+            UpdatedAtUtc = timestamp,
+        };
+        return new DockerModels.AgentExecutionTargetContext
+        {
+            Workspace = workspace,
+            Binding = binding,
+            AllowOutsideConfiguredScope = false,
+            ApprovedResourceReferences = [],
+            ApprovedResourceClaims = [],
+            ApprovedResourceCapabilities = [],
+            CapturePostMutationResource = false,
+            ResourceOperation = new DockerModels.AgentResourceOperationContext
+            {
+                RunId = Guid.NewGuid(),
+                RunRevision = 1,
+                ToolCallId = "tool-call",
+                ActionId = actionId,
+                ResourceIndex = 0,
+                WorkspaceGeneration = "workspace-generation",
+                BindingGeneration = "binding-generation",
+                ToolOwnerPackageId = "sunder.package.agent.tools.files",
+                ExecutionTargetOwnerPackageId = "sunder.package.agent.execution.docker",
+                AuthorityActivationId = Guid.NewGuid().ToString("N"),
+                AuthorityUseCount = 1,
+                CanIssueOutsideAuthority = false,
+            },
         };
     }
 
@@ -237,7 +267,7 @@ public sealed class DockerStrictReauditTests : IDisposable
 
         var result = await new DockerFileSystemExecutor().DeleteFileAsync(
             config,
-            new AgentFileDeleteRequest("/outer-alias/nested", Recursive: true),
+            new AgentFileDeleteRequest { Path = "/outer-alias/nested", Recursive = true },
             CancellationToken.None);
 
         Assert.Equal(DockerPathResolver.StructuredRootDeleteErrorCode, result.ErrorCode);
@@ -269,7 +299,7 @@ public sealed class DockerStrictReauditTests : IDisposable
         var authority = HostSecurePathEngine.CaptureFromRoot(outerRoot, path.HostPath);
         var result = await executor.DeleteFileAsync(
             config,
-            new AgentFileDeleteRequest("/outer/NestedRoot", Recursive: true),
+            new AgentFileDeleteRequest { Path = "/outer/NestedRoot", Recursive = true },
             authority,
             currentChains,
             CancellationToken.None);
@@ -287,7 +317,7 @@ public sealed class DockerStrictReauditTests : IDisposable
 
         var result = await new DockerFileSystemExecutor().ReadFileAsync(
             config,
-            new AgentFileReadRequest("/workspace"),
+            new AgentFileReadRequest { Path = "/workspace" },
             CancellationToken.None);
 
         Assert.False(result.IsError, result.ErrorMessage);

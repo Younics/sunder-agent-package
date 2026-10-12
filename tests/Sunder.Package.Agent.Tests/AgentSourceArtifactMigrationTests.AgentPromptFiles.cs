@@ -5,7 +5,9 @@ using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.TestSupport;
 using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
 using Sunder.Sdk.Worker;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -22,9 +24,9 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var (localOptions, localLifetime, _) = CreateGeneratedWorker(local, localContext, new RegressionTestRpcClient(state, localContext.PackageId));
         await using var ownedLocal = localLifetime;
         var target = Assert.Single(localOptions.Providers, value => value.ProviderId == "local.execution.target");
-        state.Add(localContext.PackageId, RegressionTestRpcDescriptors.Get(target.ContractId), target.Handler, target.Handler, Noop.Instance, target.ProviderId, "2.0.0");
+        state.Add(localContext.PackageId, CurrentPublicRpcDescriptors.Get(target.ContractId), target.Handler, target.Handler, Noop.Instance, target.ProviderId, "2.0.0");
         var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
-        var targetHandle = ToProviderHandle(Assert.Single((await rpc.DiscoverAsync(AgentRpcContractIds.ExecutionTarget)).Providers));
+        var targetReceiver = new GeneratedServiceTestScope(rpc);
         var filesRpc = new FilesRpcObserver(new RegressionTestRpcClient(state, filesContext.PackageId));
         var (options, filesLifetime, _) = CreateGeneratedWorker(files, filesContext, filesRpc);
         await using var ownedFiles = filesLifetime;
@@ -39,15 +41,13 @@ public sealed partial class AgentSourceArtifactMigrationTests
         await using var host = new AgentPromptHost(owner, package.Context, rpc, workspace, "local");
         Assert.NotNull(host.Binding);
         var targetContext = new AgentExecutionTargetContext(host.Session.SessionId, host.Profile.ProfileId, host.Workspace, host.Binding);
-        var generation = (await Target("configuration-generation", ExecutionWireContext(targetContext))).GetString()!;
+        var targetProvider = Assert.Single((await targetReceiver.Providers<AgentServices.IExecutionTargetService>().ListAsync()).Providers);
+        var targetReference = targetProvider.Reference;
+        var generation = await targetProvider.Service.ConfigurationGenerationAsync(targetContext);
         await options.OnActivated!(null!, default);
-        var toolClient = CreateAgentToolClient(owner, rpc, Assert.Single((await rpc.DiscoverAsync(AgentRpcContractIds.ToolSource)).Providers));
-        await using var toolLifetime = (IAsyncDisposable)toolClient;
-        var targetService = AgentRoleBoundary.As<AgentRpcService<IAgentExecutionTarget>>(owner.GetType("Sunder.Package.Agent.Runtime.Rpc.AgentExecutionBindings", true)!
-            .GetProperty("Service", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!);
-        var targetReference = host.Catalog.GetServiceReference(targetService, targetHandle);
+        var toolClient = Assert.Single((await targetReceiver.Providers<AgentServices.IToolSourceService>().ListAsync()).Providers).Service;
         host.AvailableTools = await toolClient.ListToolsAsync(new(host.Session.SessionId, host.Profile, host.Workspace, host.Binding)
-        { ExecutionTargetReference = targetReference, ExecutionTargetConfigurationGeneration = generation });
+        { ExecutionTarget = targetReference, ExecutionTargetConfigurationGeneration = generation });
         var built = await host.Build("hello"); // Required scope collection is independent of optional memory recall.
         var receipt = host.Receipt(built); Assert.NotEmpty(receipt.Blocks); Assert.True(receipt.TranscriptEpoch > 0);
         Assert.Contains(built.Blocks, block => block.Content.Contains("Use scoped fixture instructions.", StringComparison.Ordinal));
@@ -65,8 +65,18 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.Equal(AgentPromptContextAuthority.Reference, reference.Authority); Assert.Null(reference.HostIdentity);
         Assert.Equal(AgentContextTrust.Untrusted, reference.Trust);
         var sent = handlers["files.prompt.context"].Calls.Last(call => call.Method == "contribute").Request;
-        Assert.False(sent.GetProperty("contextPlan").GetProperty("shouldContribute").GetBoolean());
-        Assert.True(JsonElement.DeepEquals(JsonSerializer.SerializeToElement(targetHandle, MemoryProviderJson), sent.GetProperty("executionTarget")));
+        Assert.False(sent.GetProperty("contextPlan").Deserialize<AgentPromptContextPlan>(MemoryProviderJson)!.ShouldContribute());
+        var targetSnapshot = (SunderRpcProviderSnapshot)targetReference.GetType()
+            .GetProperty("Snapshot", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(targetReference)!;
+        var expectedLocator = JsonSerializer.SerializeToElement(new
+        {
+            targetSnapshot.PackageId, targetSnapshot.PackageVersion, targetSnapshot.ProviderId,
+            targetSnapshot.ContractId, targetSnapshot.ContractVersion, targetSnapshot.DescriptorSha256,
+            targetSnapshot.AbiSha256, targetSnapshot.ActivationId, targetSnapshot.ActivationEpoch,
+            targetSnapshot.SessionGeneration, endpoint = targetSnapshot.Endpoint.Value,
+        }, MemoryProviderJson);
+        Assert.Equal(11, sent.GetProperty("executionTarget").EnumerateObject().Count());
+        Assert.True(JsonElement.DeepEquals(expectedLocator, sent.GetProperty("executionTarget")));
         var withheld = await Read(); Assert.Equal("files-prompt-context-refresh-required", withheld.ErrorCode);
         Assert.DoesNotContain("protected fixture content", withheld.Content ?? "", StringComparison.Ordinal);
         var invalid = receipt with { Blocks = [receipt.Blocks[0] with { ContentHash = new string('e', 64) }] };
@@ -74,10 +84,10 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.Equal("files-prompt-context-refresh-required", (await Read()).ErrorCode);
         built = await host.Build("hello"); receipt = host.Receipt(built); await host.Acknowledge(receipt);
         var read = await Read(); Assert.False(read.IsError, read.Content); Assert.Contains("protected fixture content", read.Content!, StringComparison.Ordinal);
-        var classified = await ((IAgentPermissionAwareToolSource)toolClient).BuildPermissionRequestAsync(Execution(), new("read", "{\"path\":\"data.txt\"}"));
+        var classified = await toolClient.PermissionAsync(Execution(), new("read", "{\"path\":\"data.txt\"}"));
         Assert.Equal("files.read", classified!.ActionId); Assert.Equal(AgentPermissionBoundaryIds.ConfiguredScope, classified.BoundaryId);
-        Assert.Null(await ((IAgentToolExecutionPreflightSource)toolClient).PreflightExecutionAsync(Execution(), new("read", "{\"path\":\"data.txt\"}")));
-        Assert.NotNull(((IAgentToolPresentationResolver)toolClient).ResolveToolPresentation(new("read", "{\"path\":\"data.txt\"}", read.Summary,
+        Assert.Null(await toolClient.PreflightAsync(Execution(), new("read", "{\"path\":\"data.txt\"}")));
+        Assert.NotNull(await toolClient.PresentationAsync(new("read", "{\"path\":\"data.txt\"}", read.Summary,
             read.Content, null, null, read.IsError, read.ErrorCode, read.BackendId)));
         await Assert.ThrowsAsync<InvalidOperationException>(() => host.Acknowledge(receipt));
 
@@ -94,7 +104,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var secondRoot = Directory.CreateDirectory(Path.Combine(root, "second scope")).FullName;
         host.SetWorkspacePaths([.. host.Workspace.Paths, new("second", host.Workspace.WorkspaceId, secondRoot, false, 1, now, now)]);
         targetContext = targetContext with { Workspace = host.Workspace };
-        generation = (await Target("configuration-generation", ExecutionWireContext(targetContext))).GetString()!;
+        generation = await targetProvider.Service.ConfigurationGenerationAsync(targetContext);
         built = await host.Build("hello"); var reconfigured = host.Receipt(built);
         Assert.NotEqual(changed.Blocks[0].ContextIdentity, reconfigured.Blocks[0].ContextIdentity);
         await Assert.ThrowsAsync<InvalidOperationException>(() => host.Acknowledge(changed));
@@ -109,17 +119,13 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.Empty(replacement.Calls);
         built = await host.Build("hello"); await host.Acknowledge(host.Receipt(built));
         Assert.Single(replacement.Calls, call => call.Method == "acknowledge");
+        await targetReceiver.DisposeAsync();
         await filesLifetime.DisposeAsync();
-        Assert.Equal(0, filesRpc.ActiveWatches); Assert.Equal(0, filesRpc.UnscopedLookups); Assert.All(filesRpc.Scopes, scope => Assert.True(scope.Disposed));
+        Assert.Equal(0, filesRpc.ActiveWatches); filesRpc.AssertScopedOperations(); Assert.All(filesRpc.Scopes, scope => Assert.True(scope.Disposed));
 
-        async Task<JsonElement> Target(string method, object request)
-        {
-            await using var scope = await rpc.CreateCallScopeAsync();
-            return await scope.InvokeAsync(new(targetHandle.EndpointReference), "execution-target", method, JsonSerializer.SerializeToElement(request, MemoryProviderJson));
-        }
         AgentToolExecutionContext Execution() => new(host.Session.SessionId, host.Profile.ProfileId, host.Workspace, host.Binding,
                 RunId: host.RunId, RunRevision: 1, ToolCallId: "prompt.read")
-            { TranscriptEpoch = built.TranscriptEpoch, ExecutionTargetConfigurationGeneration = generation, ExecutionTargetReference = targetReference };
+            { TranscriptEpoch = built.TranscriptEpoch, ExecutionTargetConfigurationGeneration = generation, ExecutionTarget = targetReference };
         Task<AgentToolResult> Read() => toolClient.ExecuteAsync(Execution(), new("read", "{\"path\":\"data.txt\"}")).AsTask();
     }
 }

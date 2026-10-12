@@ -6,7 +6,7 @@
         "type": "Direct",
         "requested": "[1.1.0, 1.2.0)",
         "resolved": "1.1.0",
-        "contentHash": "J23vCBbnsxgImNKeJ4SmCo1SuYT88TmHN/u+wpLA7jRlgHtNeyO81fDsqST4YUHR6yCLteHOryJWbgOhkJsm8g==",
+        "contentHash": "K+MrJIKZ/tuG3F/AfGVFy3Gxgmt+IFyA3V3Me3jUOREXZWviXlzeZTK+cvft3DJk2IFIvl68OuGi+to5LWgtgA==",
         "dependencies": {
           "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.8",
           "Microsoft.Extensions.Logging.Abstractions": "10.0.8"

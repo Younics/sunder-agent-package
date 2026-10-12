@@ -11,8 +11,10 @@ using Sunder.Package.Agent.TestSupport;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Notifications;
 using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
 using Sunder.Sdk.Worker;
 using Xunit;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -27,13 +29,15 @@ public sealed partial class AgentSourceArtifactMigrationTests
             var presentation = Load(worker, "Sunder.Package.Agent.Builder.App", runtimeRole: false, singleProject: true);
             AssertBuilderSemanticOwnership(runtime, app: false);
             AssertBuilderSemanticOwnership(presentation, app: true);
-            Assert.NotSame(runtime.GetType("Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord"), presentation.GetType("Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord"));
+            Assert.NotSame(runtime.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentWorkspaceRecord", true), presentation.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentWorkspaceRecord", true));
             var local = Load(Path.Combine(root, "LocalWorker"), "Sunder.Package.Agent.Execution.Local", runtimeRole: true, singleProject: true);
             var owner = Load(Path.Combine(root, "Worker"), "Sunder.Package.Agent", runtimeRole: true, singleProject: true);
             foreach (var assembly in new[] { runtime, presentation })
             {
                 Assert.DoesNotContain(assembly.GetReferencedAssemblies(), reference => reference.Name == "Sunder.Package.Agent.Builder.Protocol");
-                foreach (var name in new[] { "BuilderRpcRequest", "BuilderRpcResponse", "BuilderProcessResult", "BuilderRpcPayloadLimits" })
+                foreach (var name in new[] { "BuilderRpcRequest", "BuilderRpcResponse", "BuilderRpcPayloadLimits" })
+                    Assert.Null(assembly.GetType("Sunder.Package.Agent.Builder." + name));
+                foreach (var name in new[] { "BuilderProcessResult", "BuilderWorkspaceExecutionProjection", "BuilderContent" })
                     Assert.Same(assembly, assembly.GetType("Sunder.Package.Agent.Builder." + name, true)!.Assembly);
             }
             Assert.DoesNotContain(presentation.GetReferencedAssemblies(), reference => reference.Name is "Sunder.Package.Agent.Builder" or "Sunder.Sdk.Worker");
@@ -51,44 +55,46 @@ public sealed partial class AgentSourceArtifactMigrationTests
             await using var ownedLocal = localLifetime;
             var targetRegistration = Assert.Single(localOptions.Providers, value => value.ProviderId == "local.execution.target");
             var process = new BuilderProcessProbe(targetRegistration.Handler, workspaceRoot);
-            var targetDescriptor = RegressionTestRpcDescriptors.Get(AgentRpcContractIds.ExecutionTarget);
+            var targetDescriptor = CurrentPublicRpcDescriptors.Get(RegressionTestBindings.ExecutionTargets);
             state.Add(localContext.PackageId, targetDescriptor, process, process, Noop.Instance, targetRegistration.ProviderId, "2.0.0");
             var now = DateTimeOffset.UtcNow;
             var workspace = new AgentWorkspaceRecord("workspace.builder", "Builder workspace", null, now, now,
                 [new("path.builder", "workspace.builder", workspaceRoot, true, 0, now, now)]);
-            var binding = new AgentWorkspaceBindingRecord("binding.builder", workspace.WorkspaceId, AgentRpcContractIds.ExecutionTarget, "local", "primary-execution-target", true, 0, now, now);
+            var binding = new AgentWorkspaceBindingRecord("binding.builder", workspace.WorkspaceId, RegressionTestBindings.ExecutionTargets, "local", "primary-execution-target", true, 0, now, now);
             var targetContext = new AgentExecutionTargetContext(null, null, workspace, binding);
             var targetEndpoint = Assert.Single(state.Discover(targetDescriptor.ContractId).Providers);
             var targetRpc = new RegressionTestRpcClient(state, "sunder.package.agent");
-            var description = (await targetRpc.InvokeAsync(targetEndpoint.Endpoint, "execution-target", "describe", JsonSerializer.SerializeToElement(new { })))
-                .Deserialize<AgentExecutionTargetDescriptor>(MemoryProviderJson)!;
-            var scope = (await targetRpc.InvokeAsync(targetEndpoint.Endpoint, "execution-target", "execution-scope",
-                ExecutionWireContext(targetContext))).Deserialize<AgentExecutionScopeDescriptor>(MemoryProviderJson)!;
-            var resolver = new BuilderArtifactResolver(workspace, binding, description, scope)
-            { Handle = ToProviderHandle(targetEndpoint) };
-            var resolverType = owner.GetType("Sunder.Package.Agent.Rpc.Public.WorkspaceExecutionResolverService", true)!;
-            var resolverService = AgentRoleBoundary.Create(resolverType, resolver);
-            var resolverRegistration = (SunderWorkerProviderRegistration)resolverType.GetMethod("CreateSunderRpcProviderRegistration")!.Invoke(resolverService, null)!;
-            var resolverDescriptor = RegressionTestRpcDescriptors.Get(AgentRpcContractIds.WorkspaceExecutionResolver);
+            await using var targetReceiver = new GeneratedServiceTestScope(targetRpc);
+            var targetReference = Assert.Single((await targetReceiver.Providers<AgentServices.IExecutionTargetService>().ListAsync()).Providers).Reference;
+            var description = await targetReference.Service.DescribeAsync();
+            var scope = await targetReference.Service.ExecutionScopeAsync(targetContext);
+            var resolver = new BuilderArtifactResolver(workspace, binding, description, scope, targetReference);
+            Assert.True(owner.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Services.IWorkspaceExecutionResolverService", true)!.IsInterface);
+            var resolverService = resolver;
+            using var resolverProviders = new RegressionTestSourceProviders();
+            var resolverRegistration = resolverProviders.Create(RegressionTestBindings.WorkspaceExecutionResolver, resolver, targetReceiver);
+            var resolverDescriptor = CurrentPublicRpcDescriptors.Get(RegressionTestBindings.WorkspaceExecutionResolver);
             var observer = new FilesRpcObserver(new RegressionTestRpcClient(state, context.PackageId), "execute-process");
             Assert.Null(runtime.GetType("Sunder.Package.Agent.Builder.BuilderWorkerComposition"));
             Assert.Null(runtime.GetType("Sunder.Package.Agent.Builder.BuilderWorkerBindings"));
             var (options, lifetime, runtimeServices) = CreateGeneratedWorker(runtime, context, observer);
             await using var owned = lifetime;
             Assert.Null(options.Composition);
-            Assert.NotNull(runtimeServices.GetService(runtime.GetType("Sunder.Package.Agent.Builder.Rpc.BuilderExecutionBindings", true)!));
+            Assert.Null(runtime.GetType("Sunder.Package.Agent.Builder.Rpc.BuilderExecutionBindings"));
+            Assert.NotNull(runtimeServices.GetService(typeof(IServiceProviders<>).MakeGenericType(
+                runtime.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Services.IWorkspaceExecutionResolverService", true)!)));
             var registration = Assert.Single(options.Providers);
-            var descriptor = RegressionTestRpcDescriptors.Get("sunder.package.agent.builder.runtime");
+            var descriptor = CurrentPrivateRpcDescriptors.Get("sunder.package.agent.builder.runtime");
             Assert.Equal(descriptor.Sha256, registration.DescriptorSha256); Assert.Equal(descriptor.AbiSha256, registration.AbiSha256);
             state.Add(context.PackageId, descriptor, registration.Handler, registration.Handler, Noop.Instance, registration.ProviderId, "2.0.0");
             var client = new RegressionTestRpcClient(state, context.PackageId);
             await using var appServices = CreateGeneratedApp(presentation, context, client, new BuilderArtifactQueue());
             var execution = appServices.GetRequiredService(presentation.GetType("Sunder.Package.Agent.Builder.BuilderWorkspaceExecutionService", true)!);
             var appOperations = appServices.GetRequiredService(presentation.GetType("Sunder.Package.Agent.Builder.BuilderProjectApplicationService", true)!);
-            Assert.Equal("Sunder.Package.Agent.Builder.BuilderRpcGateway", execution.GetType().GetField("_rpc", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(execution)!.GetType().FullName);
-            Assert.Equal("agent.builder.workspace-execution-unavailable", (await Assert.ThrowsAsync<SunderRpcException>(() => Call(execution, "ListWorkspacesAsync", CancellationToken.None))).Error.Code);
+            Assert.Same(appServices.GetRequiredService(presentation.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Builder_Services.IBuilderRuntimeService", true)!),
+                execution.GetType().GetField("_runtime", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(execution));
             Assert.Empty(observer.Scopes); Assert.Equal(0, observer.ActiveWatches);
-            await options.OnActivated!(null!, default);
+            Assert.Null(options.OnActivated);
             Assert.Equal("agent.builder.workspace-execution-unavailable", (await Assert.ThrowsAsync<SunderRpcException>(() => Call(execution, "ListWorkspacesAsync", CancellationToken.None))).Error.Code);
             RegisterResolver();
             Assert.Single((IEnumerable)(await Call(execution, "ListWorkspacesAsync", CancellationToken.None))!);
@@ -106,7 +112,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 executionProjectFolder = "", projectFolder = "", createdAtUtc = now, updatedAtUtc = now, workspacePathId = workspace.Paths[0].PathId }, MemoryProviderJson).Deserialize(projectType, MemoryProviderJson)!;
             var background = new BackgroundProcessContext(CancellationToken.None, _ => { }, (_, _) => { }, _ => { });
             var workspacePath = JsonSerializer.SerializeToElement(workspace.Paths[0], MemoryProviderJson)
-                .Deserialize(presentation.GetType("Sunder.Package.Agent.Contracts.Models.AgentWorkspacePathRecord", true)!, MemoryProviderJson)!;
+                .Deserialize(presentation.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentWorkspacePathRecord", true)!, MemoryProviderJson)!;
             var initialized = (await Call(appOperations, "InitializeProjectAsync", project, workspacePath, background, null))!;
             project = initialized.GetType().GetProperty("Project")!.GetValue(initialized)!;
             Assert.True(Directory.Exists((string)projectType.GetProperty("ProjectFolder")!.GetValue(project)!));
@@ -114,8 +120,12 @@ public sealed partial class AgentSourceArtifactMigrationTests
             await Call(appOperations, "BuildProjectAsync", project, background);
             var published = (await Call(appOperations, "PublishProjectAsync", project, background))!;
             Assert.Contains("Package archive created", published.GetType().GetProperty("RuntimeLog")!.GetValue(published)!.ToString()!, StringComparison.Ordinal);
-            Assert.Contains(process.Processes, request => request.Arguments.SequenceEqual(new[]
-                { "msbuild", "-t:AcceptSunderContracts", "-p:SunderContractKey=sample", "-p:SunderContractNextVersion=2.0.0" }));
+            var projectOperations = process.Processes.Where(request => request.Arguments[0] is "restore" or "build" or "msbuild").ToArray();
+            Assert.Equal(new[] { "restore", "build", "msbuild" }, projectOperations.Select(request => request.Arguments[0]).ToArray());
+            var projectFolder = (string)projectType.GetProperty("ExecutionProjectFolder")!.GetValue(project)!;
+            Assert.Equal(new[] { "restore", projectFolder }, projectOperations[0].Arguments);
+            Assert.Equal(new[] { "build", projectFolder }, projectOperations[1].Arguments);
+            Assert.All(projectOperations, request => Assert.Equal(projectFolder, request.WorkingDirectory));
             Assert.Contains(process.Processes, request => request.TimeoutSeconds == 900 && request.Arguments.SequenceEqual(new[]
                 { "msbuild", "-t:CheckSunderContracts;FreezeSunderContracts;PackSunderPackage", "-p:Configuration=Release" }));
             Assert.DoesNotContain(process.Processes, request => request.Arguments[0] == "publish" || request.Arguments.Contains("--createInPlace"));
@@ -139,20 +149,6 @@ public sealed partial class AgentSourceArtifactMigrationTests
             process.EmptyFacets = true;
             Assert.Equal("agent.builder.unsupported-operation", (await Assert.ThrowsAsync<SunderRpcException>(() => Call(resolved, "RunProcessAsync", "dotnet", new[] { "--list-sdks" }, workspaceRoot, 5, CancellationToken.None))).Error.Code);
             process.EmptyFacets = false;
-            foreach (var transform in new Func<AgentRpcProviderHandle, AgentRpcProviderHandle>[]
-            {
-                handle => handle with { PackageId = "example.wrong" }, handle => handle with { PackageVersion = "2.0.1" },
-                handle => handle with { ProviderId = "wrong" }, handle => handle with { ContractId = "example.wrong" },
-                handle => handle with { ContractVersion = "9.0.0" }, handle => handle with { DescriptorSha256 = new string('0', 64) },
-                handle => handle with { AbiSha256 = new string('0', 64) }, handle => handle with { ActivationId = Guid.NewGuid() },
-                handle => handle with { ActivationEpoch = handle.ActivationEpoch + 1 }, handle => handle with { SessionGeneration = handle.SessionGeneration + 1 },
-                handle => handle with { EndpointReference = "missing-endpoint" },
-            })
-            {
-                resolver.Transform = transform;
-                Assert.Equal("agent.builder.execution-target-unavailable", (await Assert.ThrowsAsync<SunderRpcException>(() => Call(execution, "ResolveAsync", workspace.WorkspaceId, CancellationToken.None))).Error.Code);
-            }
-            resolver.Transform = null;
             process.BlockProcess = new FilesCallGate();
             using (var cancelled = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
             {
@@ -169,8 +165,14 @@ public sealed partial class AgentSourceArtifactMigrationTests
             await retired.WaitAsync(TimeSpan.FromSeconds(5));
             process = new BuilderProcessProbe(targetRegistration.Handler, workspaceRoot);
             state.Add(localContext.PackageId, targetDescriptor, process, process, Noop.Instance, targetRegistration.ProviderId, "2.0.0");
-            Assert.Equal("agent.builder.execution-target-unavailable", (await Assert.ThrowsAsync<SunderRpcException>(() => Call(execution, "ResolveAsync", workspace.WorkspaceId, CancellationToken.None))).Error.Code);
-            resolver.Handle = ToProviderHandle(Assert.Single(state.Discover(targetDescriptor.ContractId).Providers));
+            // The resolver is now returning an already-retired required reference:
+            // generated output validation rejects that provider result before Builder
+            // can use it. It must not silently bind the replacement target.
+            var staleResolution = await Assert.ThrowsAsync<SunderRpcException>(() => Call(execution, "ResolveAsync", workspace.WorkspaceId, CancellationToken.None));
+            Assert.Equal(SunderRpcErrorKind.ProviderFaulted, staleResolution.Error.Kind);
+            Assert.Equal("rpc.provider.handler-fault", staleResolution.Error.Code);
+            Assert.Empty(process.Processes);
+            resolver.ExecutionTarget = Assert.Single((await targetReceiver.Providers<AgentServices.IExecutionTargetService>().ListAsync()).Providers).Reference;
             await Call(appOperations, "BuildProjectAsync", project, background);
             resolver.BlockList = new FilesCallGate();
             var listing = Call(execution, "ListWorkspacesAsync", CancellationToken.None);
@@ -183,10 +185,15 @@ public sealed partial class AgentSourceArtifactMigrationTests
             process.BlockProcess = new FilesCallGate();
             var stopping = Call(appOperations, "BuildProjectAsync", project, background);
             await process.BlockProcess.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            var stop = lifetime.DisposeAsync().AsTask();
-            await Assert.ThrowsAsync<SunderRpcException>(() => stopping);
-            await stop.WaitAsync(TimeSpan.FromSeconds(5)); await lifetime.DisposeAsync();
-            Assert.Equal(0, observer.ActiveWatches); Assert.Equal(0, observer.UnscopedLookups); Assert.All(observer.Scopes, scope => Assert.True(scope.Disposed));
+            var stop = state.RetireAsync(registration.Handler);
+            var shutdownError = await Assert.ThrowsAsync<SunderRpcException>(() => stopping.WaitAsync(TimeSpan.FromSeconds(5)));
+            Assert.Equal(SunderRpcErrorKind.StaleEndpoint, shutdownError.Error.Kind);
+            Assert.Equal("test.rpc.stale-endpoint", shutdownError.Error.Code);
+            await process.BlockProcess.Cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await stop.WaitAsync(TimeSpan.FromSeconds(5));
+            await lifetime.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            await lifetime.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(0, observer.ActiveWatches); observer.AssertScopedOperations(); Assert.All(observer.Scopes, scope => Assert.True(scope.Disposed));
 
             void RegisterResolver() => state.Add("sunder.package.agent", resolverDescriptor, resolverService, resolverRegistration.Handler, Noop.Instance, resolverRegistration.ProviderId, "2.0.0");
             Assembly Load(string directory, string name, bool runtimeRole, bool singleProject = false)

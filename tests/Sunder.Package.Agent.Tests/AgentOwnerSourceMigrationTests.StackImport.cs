@@ -24,7 +24,8 @@ public sealed partial class AgentOwnerSourceMigrationTests
         Assert.Empty(receipt.GetProperty("packageArtifacts").EnumerateArray());
         Assert.Empty(receipt.GetProperty("packageArtifactImports").EnumerateArray());
         using var export = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(CanonicalAgentRoles.AnalysisRoot, "package-export.v1.json")));
-        Assert.Equal(20, export.RootElement.GetProperty("contracts").GetArrayLength());
+        Assert.Equal("2.0.0", export.RootElement.GetProperty("packageVersion").GetString());
+        Assert.Equal(21, export.RootElement.GetProperty("contracts").GetArrayLength());
         Assert.DoesNotContain(export.RootElement.GetProperty("contracts").EnumerateArray(), value => value.GetProperty("contractId").GetString() == "sunder.stack.contributor");
 
         var catalog = Environment.GetEnvironmentVariable("SUNDER_AGENT_SOURCE_PLATFORM_CATALOG");
@@ -53,6 +54,7 @@ public sealed partial class AgentOwnerSourceMigrationTests
             var baselinePath = Path.Combine(projectRoot, "sunder-contracts.owned.json");
             var locked = File.ReadAllBytes(lockPath);
             var baseline = File.ReadAllBytes(baselinePath);
+            var taskAssembly = Path.Combine(core, "languages/csharp/dotnet/packages/Sunder.Package.Build/bin/Debug/net10.0/Sunder.Package.Build.dll");
             var common = new[]
             {
                 "-p:Configuration=Debug", "-p:RuntimeIdentifier=" + RuntimeInformation.RuntimeIdentifier,
@@ -60,6 +62,10 @@ public sealed partial class AgentOwnerSourceMigrationTests
                 "-p:SunderSdkProject=" + Sdk("Sunder.Sdk"), "-p:SunderSdkWorkerProject=" + Sdk("Sunder.Sdk.Worker"),
                 "-p:SunderSdkAvaloniaProject=" + Sdk("Sunder.Sdk.Avalonia"), "-p:SunderSdkStacksProject=" + Sdk("Sunder.Sdk.Stacks"),
                 "-p:SunderPackageBuildTargets=" + Path.Combine(core, "languages/csharp/dotnet/packages/Sunder.Package.Build/build/Sunder.Package.Build.targets"),
+                "-p:SunderPackageBuildTaskAssembly=" + taskAssembly,
+                "-p:SunderPackageBuildTaskSourceIsImmutable=true",
+                "-p:SunderPackageBuildTaskShadowRoot=" + Path.Combine(sandbox, "artifacts/task-shadows"),
+                "-p:SunderPackageBuildTaskShadowStamp=" + Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(taskAssembly))),
                 "-nodeReuse:false", "-nologo",
             };
             await Command("restore", ["--disable-parallel"]);

@@ -7,6 +7,45 @@ namespace Sunder.Package.Agent.Services.BehaviorLoops;
 
 internal sealed partial class AgentBehaviorLoopHost
 {
+    public async ValueTask<IReadOnlyList<AgentRuntimeTool>> ListReadyToolsAsync(CancellationToken cancellationToken = default)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        LogEvent(PackageLogLevel.Debug, "tools.ready_list.start", "Listing ready tools.");
+        try
+        {
+            var ownedTools = await _toolService.ListReadyOwnedRuntimeToolsAsync(
+                _profile,
+                _session.SessionId,
+                _workspace,
+                cancellationToken);
+            _availableOwnedToolsById = ownedTools
+                .ToDictionary(tool => tool.RuntimeTool.Descriptor.ToolId, StringComparer.OrdinalIgnoreCase);
+            _availableToolsById = ownedTools
+                .Select(tool => tool.RuntimeTool.Descriptor)
+                .ToDictionary(tool => tool.ToolId, StringComparer.OrdinalIgnoreCase);
+            LogEvent(
+                PackageLogLevel.Debug,
+                "tools.ready_list.completed",
+                $"{ownedTools.Count} ready tool(s)",
+                stopwatch.ElapsedMilliseconds,
+                new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["tool.count"] = ownedTools.Count,
+                });
+            return ownedTools.Select(static tool => tool.RuntimeTool).ToArray();
+        }
+        catch (OperationCanceledException)
+        {
+            LogEvent(PackageLogLevel.Debug, "tools.ready_list.canceled", "Ready tool listing was canceled.", elapsedMilliseconds: stopwatch.ElapsedMilliseconds);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            LogEvent(PackageLogLevel.Warning, "tools.ready_list.failed", "Ready tool listing failed.", stopwatch.ElapsedMilliseconds, exception: ex);
+            throw;
+        }
+    }
+
     internal void RecordToolCallStart(AgentToolCallRequest toolCall)
     {
         SaveCheckpoint(AgentRunStatus.Running, $"Executing tool '{toolCall.ToolId}'.");
@@ -29,7 +68,7 @@ internal sealed partial class AgentBehaviorLoopHost
             Content: $"### Tool denied\n\n{summary}",
             IsError: true,
             ErrorCode: errorCode);
-        _toolService.ReleasePreparedInvocation(GetToolExecution(toolCall.CallId).ExecutionId);
+        await _toolService.ReleasePreparedInvocationAsync(GetToolExecution(toolCall.CallId).ExecutionId).ConfigureAwait(false);
         var resultTurn = CompleteToolExecution(
             toolCall,
             result,
@@ -59,7 +98,7 @@ internal sealed partial class AgentBehaviorLoopHost
             ErrorCode: errorCode);
         if (pending.ToolExecutionId is { } executionId)
         {
-            _toolService.ReleasePreparedInvocation(executionId);
+            await _toolService.ReleasePreparedInvocationAsync(executionId).ConfigureAwait(false);
         }
         var resultTurn = CompleteToolExecution(
             pending,
@@ -350,7 +389,7 @@ internal sealed partial class AgentBehaviorLoopHost
             enforceExpectedExecutionContext: true);
         if (preflight is not null)
         {
-            _toolService.ReleasePreparedInvocation(execution.ExecutionId);
+            await _toolService.ReleasePreparedInvocationAsync(execution.ExecutionId).ConfigureAwait(false);
             return preflight;
         }
 
@@ -383,7 +422,7 @@ internal sealed partial class AgentBehaviorLoopHost
         }
         finally
         {
-            _toolService.ReleasePreparedInvocation(execution.ExecutionId);
+            await _toolService.ReleasePreparedInvocationAsync(execution.ExecutionId).ConfigureAwait(false);
         }
     }
 
@@ -454,7 +493,7 @@ internal sealed partial class AgentBehaviorLoopHost
             }
             if (pending.ToolExecutionId is { } executionId)
             {
-                _toolService.ReleasePreparedInvocation(executionId);
+                await _toolService.ReleasePreparedInvocationAsync(executionId).ConfigureAwait(false);
             }
         }
     }
@@ -503,7 +542,7 @@ internal sealed partial class AgentBehaviorLoopHost
         }
     }
 
-    internal AgentToolCallOutcome RecordUnexecutedToolCall(
+    internal async ValueTask<AgentToolCallOutcome> RecordUnexecutedToolCallAsync(
         AgentToolCallRequest toolCall,
         string summary)
     {
@@ -515,7 +554,7 @@ internal sealed partial class AgentBehaviorLoopHost
                 Content: $"### Tool call canceled\n\n{summary}",
                 IsError: true,
                 ErrorCode: "tool-batch-canceled");
-            _toolService.ReleasePreparedInvocation(GetToolExecution(toolCall.CallId).ExecutionId);
+            await _toolService.ReleasePreparedInvocationAsync(GetToolExecution(toolCall.CallId).ExecutionId).ConfigureAwait(false);
             CompleteToolExecution(
                 toolCall,
                 result,

@@ -1,13 +1,11 @@
 using System.Text;
 using System.Text.Json;
-using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Shared.Presentation;
 
 namespace Sunder.Package.Agent.Shared.PackageViews;
 
-internal sealed class TranscriptToolPresentationService(
-    Func<IEnumerable<IAgentToolPresentationResolver>>? resolverSource = null)
+internal sealed class TranscriptToolPresentationService
 {
     private const int MaxHeaderChars = 160;
     private const int MaxHeaderLines = 2;
@@ -23,9 +21,16 @@ internal sealed class TranscriptToolPresentationService(
         "pattern",
     ];
 
-    public AgentToolPresentation Resolve(AgentTurnItemRecord item)
-    {
-        var request = new AgentToolPresentationRequest(
+    internal static AgentToolPresentationRequest CreateRequest(AgentTurnItemRecord item)
+#if SUNDER_SUBAGENTS_APP || SUNDER_SUBAGENTS_WORKER
+        => new()
+        {
+            ToolId = item.ToolId ?? string.Empty, ArgumentsJson = item.ArgumentsJson ?? "{}", ResultSummary = item.ResultSummary,
+            TextContent = item.TextContent, StructuredPayloadJson = item.StructuredPayloadJson, SourcesJson = item.SourcesJson,
+            IsError = item.IsError, ErrorCode = item.ErrorCode, BackendId = item.BackendId,
+        };
+#else
+        => new(
             item.ToolId ?? string.Empty,
             item.ArgumentsJson ?? "{}",
             item.ResultSummary,
@@ -35,50 +40,22 @@ internal sealed class TranscriptToolPresentationService(
             item.IsError,
             item.ErrorCode,
             item.BackendId);
-        var fallback = BuildFallbackPresentation(request);
+#endif
 
-        foreach (var resolver in ListResolvers())
-        {
-            try
-            {
-                if (resolver.ResolveToolPresentation(request) is { } resolved)
-                {
-                    return NormalizePresentation(MergeResolved(resolved, fallback));
-                }
-            }
-            catch
-            {
-                // Presentation extensions must not break transcript rendering.
-            }
-        }
+    public AgentToolPresentation Resolve(AgentTurnItemRecord item, AgentToolPresentation? contribution = null)
+    {
+        var request = CreateRequest(item);
+        var fallback = BuildFallbackPresentation(request);
+        if (contribution is not null) return NormalizePresentation(MergeResolved(contribution, fallback));
 
         return NormalizePresentation(fallback);
-    }
-
-    private IReadOnlyList<IAgentToolPresentationResolver> ListResolvers()
-    {
-        if (resolverSource is null)
-        {
-            return [];
-        }
-
-        try
-        {
-            return resolverSource().Where(resolver => resolver is not null).ToArray();
-        }
-        catch
-        {
-            return [];
-        }
     }
 
     private static AgentToolPresentation MergeResolved(
         AgentToolPresentation resolved,
         AgentToolPresentation fallback)
-        => new(
-            string.IsNullOrWhiteSpace(resolved.HeaderText) ? fallback.HeaderText : resolved.HeaderText,
-            resolved.DetailMarkdown,
-            resolved.OutputText ?? fallback.OutputText);
+        => resolved with { HeaderText = string.IsNullOrWhiteSpace(resolved.HeaderText) ? fallback.HeaderText : resolved.HeaderText,
+            OutputText = resolved.OutputText ?? fallback.OutputText };
 
     private static AgentToolPresentation NormalizePresentation(AgentToolPresentation presentation)
         => presentation with { HeaderText = NormalizeHeader(presentation.HeaderText) };
@@ -109,10 +86,14 @@ internal sealed class TranscriptToolPresentationService(
     }
 
     private static AgentToolPresentation BuildFallbackPresentation(AgentToolPresentationRequest request)
+#if SUNDER_SUBAGENTS_APP || SUNDER_SUBAGENTS_WORKER
+        => new() { HeaderText = BuildHeaderPreview(request.ArgumentsJson), DetailMarkdown = BuildFallbackDetailMarkdown(request), OutputText = request.TextContent?.Trim() };
+#else
         => new(
             BuildHeaderPreview(request.ArgumentsJson),
             BuildFallbackDetailMarkdown(request),
             request.TextContent?.Trim());
+#endif
 
     private static string? BuildHeaderPreview(string argumentsJson)
     {

@@ -1,0 +1,40 @@
+using System.Runtime.CompilerServices;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using Sunder.Sdk.Services;
+
+namespace ControlledNaturalProviders;
+
+[SunderServiceProvider(typeof(IToolExecutionObservedService), ProviderId = "fixture.tools.observed")]
+public sealed partial class ControlledObservedTools : IToolExecutionObservedService
+{
+    private readonly TaskCompletionSource _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _cancelled = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _exited = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public Task Started => _started.Task;
+    public Task Cancelled => _cancelled.Task;
+    public Task Exited => _exited.Task;
+    public void Release() => _release.TrySetResult();
+
+    public ValueTask<string> DescribeAsync(CancellationToken token = default)
+    { token.ThrowIfCancellationRequested(); return ValueTask.FromResult("fixture.tools"); }
+
+    public async IAsyncEnumerable<AgentObservedToolExecutionEvent> ExecuteAsync(
+        CSunder_Agent_Tool_Execution_Observed_ToolExecutionObservedExecuteRequest request,
+        [EnumeratorCancellation] CancellationToken token = default)
+    {
+        try
+        {
+            yield return new AgentToolDispatchedEvent();
+            _started.TrySetResult();
+            try { await _release.Task.WaitAsync(token).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            { _cancelled.TrySetResult(); throw; }
+            var target = request.Context.ExecutionTarget ?? throw new InvalidOperationException("A typed execution target is required.");
+            var descriptor = await target.Service.DescribeAsync(token).ConfigureAwait(false);
+            yield return new AgentToolExecutionCompletedEvent { Result = ControlledTools.Result(request.Request.ToolId, descriptor.TargetId) };
+        }
+        finally { _exited.TrySetResult(); }
+    }
+}

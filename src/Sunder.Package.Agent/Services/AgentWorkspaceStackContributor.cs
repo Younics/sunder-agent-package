@@ -3,13 +3,16 @@ using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Stacks;
+using Sunder.Sdk.Services;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.Services;
 
-public sealed class AgentWorkspaceStackContributor(
+[SunderServiceProvider(typeof(IPackageStackContributor), ProviderId = "agent.stack.workspaces")]
+public sealed partial class AgentWorkspaceStackContributor(
     AgentWorkspaceService workspaceService,
     IPackageContext packageContext,
-    AgentRpcCatalog rpcCatalog) : IPackageStackExporter, IPackageStackImporter, IPackageStackImportAppliedHandler
+    IServiceProviders<AgentServices.IExecutionTargetService> executionTargets) : IPackageStackExporter, IPackageStackImporter, IPackageStackImportAppliedHandler
 {
     private const string PackageId = "sunder.package.agent";
     private const string SchemaId = "sunder.package.agent/workspace";
@@ -40,7 +43,7 @@ public sealed class AgentWorkspaceStackContributor(
         return ValueTask.FromResult<IReadOnlyList<StackExportItemDescriptor>>(workspaces);
     }
 
-    public ValueTask<StackExportContribution> ExportAsync(
+    public async ValueTask<StackExportContribution> ExportAsync(
         StackExportRequest request,
         CancellationToken cancellationToken = default)
     {
@@ -70,10 +73,10 @@ public sealed class AgentWorkspaceStackContributor(
                 SourceItemId: workspace.WorkspaceId));
         }
 
-        return ValueTask.FromResult(new StackExportContribution(
+        return new StackExportContribution(
             fragments,
-            fragments.Count == 0 ? [] : BuildPackageRequirements(payloads),
-            warnings));
+            fragments.Count == 0 ? [] : await BuildPackageRequirementsAsync(payloads, cancellationToken).ConfigureAwait(false),
+            warnings);
     }
 
     public ValueTask<StackImportPreview> PreviewImportAsync(
@@ -181,7 +184,9 @@ public sealed class AgentWorkspaceStackContributor(
             PackageId,
             packageContext.Version.ToString());
 
-    private IReadOnlyList<StackPackageRequirement> BuildPackageRequirements(IReadOnlyList<AgentWorkspaceStackPayload> payloads)
+    private async Task<IReadOnlyList<StackPackageRequirement>> BuildPackageRequirementsAsync(
+        IReadOnlyList<AgentWorkspaceStackPayload> payloads,
+        CancellationToken cancellationToken)
     {
         var packageIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { PackageId };
         var targetIds = payloads
@@ -191,15 +196,15 @@ public sealed class AgentWorkspaceStackContributor(
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (targetIds.Count > 0)
         {
-            foreach (var contribution in AgentRpcInvocation.Snapshot(
-                         rpcCatalog,
-                         Sunder.Package.Agent.Runtime.Rpc.AgentExecutionBindings.Service,
-                         static target => target.Descriptor))
+            var catalog = await executionTargets.ListAsync(cancellationToken).ConfigureAwait(false);
+            foreach (var provider in catalog.Providers)
             {
-                var descriptor = contribution.Metadata;
+                cancellationToken.ThrowIfCancellationRequested();
+                if (provider.State != ServiceProviderState.Active) continue;
+                var descriptor = await provider.Service.DescribeAsync(cancellationToken).ConfigureAwait(false);
                 if (targetIds.Contains(descriptor.TargetId) || targetIds.Contains(descriptor.TargetKind))
                 {
-                    AddPackageId(packageIds, contribution.PackageId);
+                    AddPackageId(packageIds, provider.PackageId);
                 }
             }
         }
@@ -260,7 +265,7 @@ public sealed class AgentWorkspaceStackContributor(
         }
 
         var primaryBinding = bindings.FirstOrDefault(binding => binding.IsEnabled
-                                                                && string.Equals(binding.ExtensionPointId, AgentRpcContractIds.ExecutionTarget, StringComparison.OrdinalIgnoreCase)
+                                                                && string.Equals(binding.ExtensionPointId, AgentWorkspaceBindingRoles.ExecutionTargetExtensionPoint, StringComparison.OrdinalIgnoreCase)
                                                                && string.Equals(binding.Role, AgentWorkspaceBindingRoles.PrimaryExecutionTarget, StringComparison.OrdinalIgnoreCase));
         if (primaryBinding is not null)
         {
@@ -459,7 +464,7 @@ public sealed class AgentWorkspaceStackContributor(
         {
             var primaryBinding = bindings
                 .FirstOrDefault(binding => binding.IsEnabled
-                                           && string.Equals(binding.ExtensionPointId, AgentRpcContractIds.ExecutionTarget, StringComparison.OrdinalIgnoreCase)
+                                           && string.Equals(binding.ExtensionPointId, AgentWorkspaceBindingRoles.ExecutionTargetExtensionPoint, StringComparison.OrdinalIgnoreCase)
                                            && string.Equals(binding.Role, AgentWorkspaceBindingRoles.PrimaryExecutionTarget, StringComparison.OrdinalIgnoreCase));
             return new AgentWorkspaceStackPayload(
                 workspace.WorkspaceId,

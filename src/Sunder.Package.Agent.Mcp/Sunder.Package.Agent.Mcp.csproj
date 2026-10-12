@@ -22,7 +22,7 @@
     <PackageReference Include="Avalonia.AvaloniaEdit" />
     <PackageReference Include="AvaloniaEdit.TextMate" />
     <PackageReference Include="CommunityToolkit.Mvvm" />
-    <Compile Include="@(SunderAgentMcpSource->Distinct())" LinkBase="Domain" />
+    <Compile Include="$(_AgentModels)Tools\AgentToolArgumentObject.cs;$(_AgentModels)Tools\AgentPayloadLimits.cs;$(_AgentModels)Tools\AgentToolResultErrorCodes.cs;$(_AgentModels)Extensions\AgentProfileSelectableCapabilityKinds.cs" LinkBase="Domain" />
   </ItemGroup>
 
   <ItemGroup>
@@ -31,5 +31,9 @@
 
   <Import Project="..\Sunder.Package.Agent.Shared\Sunder.Package.Agent.Shared.props" />
   <Import Project="..\Sunder.Package.Agent.Shared\Importing\Sunder.Package.Agent.Importing.props" />
+
+  <ItemGroup>
+    <Compile Remove="..\Sunder.Package.Agent.Shared\Presentation\CapabilitySelectionState.cs;..\Sunder.Package.Agent.Shared\Presentation\ModelBindingEditorState.cs;..\Sunder.Package.Agent.Shared\Presentation\ProviderModelLoader.cs" />
+  </ItemGroup>
 
 </Project>

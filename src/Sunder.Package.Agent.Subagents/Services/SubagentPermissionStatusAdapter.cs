@@ -1,11 +1,12 @@
-using Sunder.Package.Agent.Contracts.Contracts;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using Sunder.Sdk.Services;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Subagents.Runtime;
 using Sunder.Package.Agent.Subagents.Models;
 
 namespace Sunder.Package.Agent.Subagents.Services;
 
-internal sealed partial class SubagentPermissionStatusAdapter(ISubagentRuntimeBindings runtimeBindings)
+internal sealed partial class SubagentPermissionStatusAdapter(IServiceProviders<IToolSourceService> tools)
 {
     public async ValueTask<bool> IsReadOnlySubagentAsync(
         SubagentRecord subagent,
@@ -48,24 +49,19 @@ internal sealed partial class SubagentPermissionStatusAdapter(ISubagentRuntimeBi
             var content = string.IsNullOrWhiteSpace(result.Content) ? result.Summary : result.Content!;
             return new SubagentTaskResult(
                 state,
-                new AgentToolResult(
+                Result(
                     resultToolId,
                     $"Subagent '{subagent.DisplayName}' completed.",
-                    Content: SubagentBatchResultRenderer.TruncateParentResultContent(content),
-                    StructuredPayloadJson: payloadJson,
-                    BackendId: result.SessionId.ToString("N")));
+                    SubagentBatchResultRenderer.TruncateParentResultContent(content), payloadJson, result.SessionId.ToString("N")));
         }
 
         return new SubagentTaskResult(
             state,
-            new AgentToolResult(
+            Result(
                 resultToolId,
                 result.Summary,
-                Content: SubagentBatchResultRenderer.TruncateParentResultContent(result.Content ?? result.Summary),
-                StructuredPayloadJson: payloadJson,
-                IsError: true,
-                ErrorCode: AgentToolResultErrorCodes.SubagentRunFailed,
-                BackendId: result.SessionId.ToString("N")));
+                SubagentBatchResultRenderer.TruncateParentResultContent(result.Content ?? result.Summary), payloadJson,
+                result.SessionId.ToString("N"), true, AgentToolResultErrorCodes.SubagentRunFailed));
     }
 
     public AgentToolResult CreateBatchResult(
@@ -85,17 +81,14 @@ internal sealed partial class SubagentPermissionStatusAdapter(ISubagentRuntimeBi
         }
 
         var failed = results.Any(result => result.State != SubagentTaskResultState.Completed);
-        return new AgentToolResult(
+        return Result(
             SubagentConstants.DelegateTasksToolId,
             failed ? "One or more delegated subagent tasks failed." : "Delegated subagent tasks completed.",
-            Content: content,
-            StructuredPayloadJson: payloadJson,
-            IsError: failed,
-            ErrorCode: failed ? AgentToolResultErrorCodes.SubagentRunFailed : null);
+            content, payloadJson, null, failed, failed ? AgentToolResultErrorCodes.SubagentRunFailed : null);
     }
 
     public AgentToolResult CreateError(string toolId, string message, string code)
-        => new(toolId, message, Content: $"### Task failed\n\n{message}", IsError: true, ErrorCode: code);
+        => Result(toolId, message, $"### Task failed\n\n{message}", null, null, true, code);
 
     public SubagentTaskResult CreateTaskFailure(string toolId, string message, string code)
         => new(SubagentTaskResultState.Failed, CreateError(toolId, message, code));
@@ -128,59 +121,32 @@ internal sealed partial class SubagentPermissionStatusAdapter(ISubagentRuntimeBi
         string content,
         string payloadJson,
         string? backendId)
-        => new(
-            toolId,
-            summary,
-            Content: content,
-            StructuredPayloadJson: payloadJson,
-            IsError: false,
-            ErrorCode: AgentToolResultErrorCodes.ChildWaitingForApproval,
-            BackendId: backendId);
+        => Result(toolId, summary, content, payloadJson, backendId, false, AgentToolResultErrorCodes.ChildWaitingForApproval);
 
     private async ValueTask<AgentToolDescriptor?> ResolveToolDescriptorAsync(
         AgentProfileSelectableCapabilityAssignmentRecord assignment,
         CancellationToken cancellationToken)
     {
-        var context = new AgentToolSourceContext(SessionId: null, Profile: null, Workspace: null, ExecutionBinding: null);
-        foreach (var reference in runtimeBindings.GetToolSources())
+        var context = new AgentToolSourceContext { SessionId = null, Profile = null, Workspace = null, ExecutionBinding = null,
+            ExecutionTarget = null, ExecutionTargetConfigurationGeneration = null };
+        foreach (var provider in (await tools.ListAsync(cancellationToken).ConfigureAwait(false)).Providers.Where(item => item.State == ServiceProviderState.Active))
         {
-            if (!reference.TryAcquire(out var lease))
-            {
-                continue;
-            }
-            using (lease)
-            {
-                var retirementToken = lease.RetirementToken;
-                using var invocation = CancellationTokenSource.CreateLinkedTokenSource(
-                    cancellationToken,
-                    retirementToken);
-                IReadOnlyList<AgentToolDescriptor> descriptors;
-                try
-                {
-                    descriptors = await lease.Service.ListToolsAsync(context, invocation.Token);
-                }
-                catch (OperationCanceledException) when (
-                    retirementToken.IsCancellationRequested
-                    && !cancellationToken.IsCancellationRequested)
-                {
-                    continue;
-                }
-                if (retirementToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
-                {
-                    continue;
-                }
-                foreach (var descriptor in descriptors)
-                {
-                    if (IsToolAssignmentMatch(assignment, descriptor))
-                    {
-                        return descriptor;
-                    }
-                }
-            }
+            var result = await SubagentCatalogSelection.InvokeOptionalAsync(provider, cancellationToken,
+                (service, token) => service.ListToolsAsync(context, token)).ConfigureAwait(false);
+            if (!result.IsAvailable) continue;
+            foreach (var descriptor in result.Value)
+                if (IsToolAssignmentMatch(assignment, descriptor)) return descriptor;
         }
 
         return null;
     }
+
+    private static AgentToolResult Result(string toolId, string summary, string? content, string? payload, string? backendId,
+        bool isError = false, string? errorCode = null) => new()
+    {
+        ToolId = toolId, Summary = summary, Content = content, StructuredPayloadJson = payload, BackendId = backendId,
+        IsError = isError, ErrorCode = errorCode, Sources = null, WasTruncated = false, PresentationPayloadJson = null, RequiresPromptContextRefresh = false,
+    };
 
     private static bool IsToolAssignmentMatch(
         AgentProfileSelectableCapabilityAssignmentRecord assignment,

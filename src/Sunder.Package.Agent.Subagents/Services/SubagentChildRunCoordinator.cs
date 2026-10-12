@@ -1,16 +1,18 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using Sunder.Package.Agent.Contracts.Contracts;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Subagents.Runtime;
 using Sunder.Package.Agent.Subagents.Models;
 using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Subagents.Services;
 
 internal sealed partial class SubagentChildRunCoordinator(
-    ISubagentRuntimeBindings runtimeBindings,
+    IServiceProviders<IRuntimeCatalogService> catalogs,
+    IServiceProviders<IChildRunExecutorService> executors,
     SubagentDescriptorSchema descriptors,
     SubagentPermissionStatusAdapter permissionStatusAdapter,
     SubagentBatchResultRenderer resultRenderer)
@@ -19,68 +21,51 @@ internal sealed partial class SubagentChildRunCoordinator(
     private readonly SubagentPermissionStatusAdapter _permissionStatusAdapter = permissionStatusAdapter;
     private readonly SubagentBatchResultRenderer _resultRenderer = resultRenderer;
 
-    public bool TryPrepare(
+    public async ValueTask<(SubagentChildRunEnvironment? Environment, SubagentTaskResult? Failure)> PrepareAsync(
         AgentToolExecutionContext context,
         string resultToolId,
-        out SubagentChildRunEnvironment? environment,
-        out SubagentTaskResult? failure)
+        CancellationToken token)
     {
-        environment = null;
-        failure = null;
+        token.ThrowIfCancellationRequested();
         if (context.SessionId is null || context.RunId is null || context.RunRevision is null || string.IsNullOrWhiteSpace(context.ToolCallId))
         {
-            failure = _permissionStatusAdapter.CreateTaskFailure(resultToolId, "Task tool requires an active parent run context.", "task-context-missing");
-            return false;
+            return (null, _permissionStatusAdapter.CreateTaskFailure(resultToolId, "Task tool requires an active parent run context.", "task-context-missing"));
         }
 
         AgentProfileRecord? parentProfile = null;
-        foreach (var reference in runtimeBindings.GetRuntimeCatalogs())
+        foreach (var provider in (await catalogs.ListAsync(token).ConfigureAwait(false)).Providers.Where(item => item.State == ServiceProviderState.Active))
         {
-            if (!reference.TryAcquire(out var lease))
-            {
-                continue;
-            }
-            using (lease)
-            {
-                parentProfile = string.IsNullOrWhiteSpace(context.ProfileId)
-                    ? null
-                    : lease.Service.GetProfile(context.ProfileId);
-                if (!lease.RetirementToken.IsCancellationRequested)
-                {
-                    break;
-                }
-                parentProfile = null;
-            }
+            using var invocation = CancellationTokenSource.CreateLinkedTokenSource(token, provider.RetirementToken);
+            await provider.EnsureCurrentAsync(invocation.Token).ConfigureAwait(false);
+            parentProfile = string.IsNullOrWhiteSpace(context.ProfileId) ? null
+                : await provider.Service.GetProfileAsync(context.ProfileId, invocation.Token).ConfigureAwait(false);
+            await provider.EnsureCurrentAsync(invocation.Token).ConfigureAwait(false);
+            break;
         }
         if (parentProfile is null)
         {
-            failure = _permissionStatusAdapter.CreateTaskFailure(resultToolId, "Task tool requires the base Agent runtime catalog extension.", "task-runtime-unavailable");
-            return false;
+            return (null, _permissionStatusAdapter.CreateTaskFailure(resultToolId, "Task tool requires the base Agent runtime catalog extension.", "task-runtime-unavailable"));
         }
 
-        var childRunExecutorReference = runtimeBindings
-            .GetChildRunExecutors()
-            .FirstOrDefault(IsAvailable);
+        var childRunExecutorReference = (await executors.ListAsync(token).ConfigureAwait(false)).Providers
+            .FirstOrDefault(item => item.State == ServiceProviderState.Active && !item.RetirementToken.IsCancellationRequested);
         if (childRunExecutorReference is null)
         {
-            failure = _permissionStatusAdapter.CreateTaskFailure(resultToolId, "Task tool requires the base Agent child-run executor extension.", "task-child-executor-unavailable");
-            return false;
+            return (null, _permissionStatusAdapter.CreateTaskFailure(resultToolId, "Task tool requires the base Agent child-run executor extension.", "task-child-executor-unavailable"));
         }
 
         if (string.IsNullOrWhiteSpace(context.Workspace?.WorkspaceId))
         {
-            failure = _permissionStatusAdapter.CreateTaskFailure(resultToolId, "Task tool requires an active workspace.", "task-workspace-unavailable");
-            return false;
+            return (null, _permissionStatusAdapter.CreateTaskFailure(resultToolId, "Task tool requires an active workspace.", "task-workspace-unavailable"));
         }
 
-        if (!_descriptors.SupportsSubagentFeature(parentProfile))
+        if (!await _descriptors.SupportsSubagentFeatureAsync(parentProfile, token).ConfigureAwait(false))
         {
-            failure = _permissionStatusAdapter.CreateTaskFailure(resultToolId, "The task tool is only available to profiles using a behavior loop with subagent support.", "task-loop-disabled");
-            return false;
+            return (null, _permissionStatusAdapter.CreateTaskFailure(resultToolId, "The task tool is only available to profiles using a behavior loop with subagent support.", "task-loop-disabled"));
         }
 
-        environment = new SubagentChildRunEnvironment(context, parentProfile, childRunExecutorReference);
-        return true;
+        await childRunExecutorReference.EnsureCurrentAsync(token).ConfigureAwait(false);
+        return (new SubagentChildRunEnvironment(context, parentProfile, childRunExecutorReference), null);
     }
 
     public async ValueTask<SubagentTaskResult> RunAsync(
@@ -95,7 +80,8 @@ internal sealed partial class SubagentChildRunCoordinator(
             ? subagent.DisplayName
             : request.Description.Trim();
         var context = environment.Context;
-        if (!environment.ChildRunExecutorReference.TryAcquire(out var executorLease))
+        var executor = environment.ChildRunExecutorReference;
+        if (executor.RetirementToken.IsCancellationRequested)
         {
             return _permissionStatusAdapter.CreateTaskFailure(
                 resultToolId,
@@ -104,48 +90,35 @@ internal sealed partial class SubagentChildRunCoordinator(
         }
 
         AgentChildRunResult result;
-        using (executorLease)
-        {
-            var retirementToken = executorLease.RetirementToken;
+            var retirementToken = executor.RetirementToken;
             using var invocation = CancellationTokenSource.CreateLinkedTokenSource(
                 cancellationToken,
                 retirementToken);
             try
             {
-                result = await executorLease.Service.RunChildAsync(
-                    new AgentChildRunRequest(
-                        context.SessionId!.Value,
-                        context.RunId!.Value,
-                        context.RunRevision!.Value,
-                        context.ToolCallId!,
-                        context.Workspace!.WorkspaceId,
-                        request.TaskId,
-                        childProfile,
-                        request.Prompt!,
-                        childSessionTitle),
-                    invocation.Token);
+                await executor.EnsureCurrentAsync(invocation.Token).ConfigureAwait(false);
+                result = await executor.Service.RunChildAsync(new AgentChildRunRequest
+                {
+                    ParentSessionId = context.SessionId!.Value, ParentRunId = context.RunId!.Value, ParentRunRevision = context.RunRevision!.Value,
+                    ParentToolCallId = context.ToolCallId!, WorkspaceId = context.Workspace!.WorkspaceId, TaskId = request.TaskId,
+                    ChildProfile = childProfile, UserMessage = request.Prompt!, Title = childSessionTitle, AgentKind = "subagent",
+                }, invocation.Token);
+                await executor.EnsureCurrentAsync(invocation.Token).ConfigureAwait(false);
                 if (retirementToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                 {
                     return _permissionStatusAdapter.CreateTaskFailure(
                         resultToolId,
-                        $"Child-run executor package '{executorLease.PackageId}' became unavailable while the task was running.",
+                        $"Child-run executor package '{executor.PackageId}' became unavailable while the task was running.",
                         AgentToolResultErrorCodes.PackageUnavailable);
                 }
             }
-            catch (Exception exception) when (
-                !cancellationToken.IsCancellationRequested
-                && (retirementToken.IsCancellationRequested
-                    || exception is SunderRpcException
-                    {
-                        Error.Kind: SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable,
-                    }))
+            catch (Exception exception) when (SubagentCatalogSelection.IsUnavailable(exception, retirementToken, cancellationToken))
             {
                 return _permissionStatusAdapter.CreateTaskFailure(
                     resultToolId,
-                    $"Child-run executor package '{executorLease.PackageId}' became unavailable while the task was running.",
+                    $"Child-run executor package '{executor.PackageId}' became unavailable while the task was running.",
                     AgentToolResultErrorCodes.PackageUnavailable);
             }
-        }
         var state = SubagentPermissionStatusAdapter.ToTaskState(result.Status);
         var payload = _resultRenderer.BuildChildSessionPayload(result, subagent, childSessionTitle, state);
         return _permissionStatusAdapter.AdaptChildResult(resultToolId, result, subagent, payload);
@@ -153,7 +126,7 @@ internal sealed partial class SubagentChildRunCoordinator(
 
     internal static AgentProfileRecord BuildChildProfile(AgentProfileRecord parentProfile, SubagentRecord subagent)
     {
-        var now = DateTimeOffset.UtcNow;
+        var now = new SunderRpcOffsetDateTime(DateTimeOffset.UtcNow.ToString("O", System.Globalization.CultureInfo.InvariantCulture));
         var profileId = $"subagent-{subagent.SubagentId}-{BuildProfileSnapshotId(parentProfile, subagent)}";
         var parentChatBinding = FindModelBinding(parentProfile, AgentModelCapabilityKinds.Chat);
         var hasChatOverride = !string.IsNullOrWhiteSpace(subagent.ChatProviderId);
@@ -164,7 +137,8 @@ internal sealed partial class SubagentChildRunCoordinator(
         var bindings = new List<AgentProfileModelBindingRecord>();
         if (!string.IsNullOrWhiteSpace(chatProviderId) || !string.IsNullOrWhiteSpace(chatModelId))
         {
-            bindings.Add(new AgentProfileModelBindingRecord(profileId, AgentModelCapabilityKinds.Chat, chatProviderId, chatModelId, chatSettingsJson, now));
+            bindings.Add(new AgentProfileModelBindingRecord { ProfileId = profileId, CapabilityKind = AgentModelCapabilityKinds.Chat,
+                ProviderId = chatProviderId, ModelId = chatModelId, SettingsJson = chatSettingsJson, UpdatedAtUtc = now });
         }
 
         if (embeddingBinding is not null)
@@ -172,40 +146,21 @@ internal sealed partial class SubagentChildRunCoordinator(
             bindings.Add(embeddingBinding with { ProfileId = profileId, UpdatedAtUtc = now });
         }
 
-        return new AgentProfileRecord(
-            profileId,
-            subagent.DisplayName,
-            subagent.Description,
-            subagent.Instructions,
-            chatProviderId,
-            chatModelId,
-            embeddingBinding?.ProviderId ?? parentProfile.EmbeddingProviderId,
-            embeddingBinding?.ModelId ?? parentProfile.EmbeddingModelId,
-            now,
-            now,
-            bindings,
-            subagent.SelectableCapabilityAssignments ?? [],
-            AgentBehaviorLoopIds.Default,
-            null,
-            null,
-            IsInternal: true);
+        return new AgentProfileRecord
+        {
+            ProfileId = profileId, DisplayName = subagent.DisplayName, Description = subagent.Description, Instructions = subagent.Instructions,
+            ChatProviderId = chatProviderId, ChatModelId = chatModelId,
+            EmbeddingProviderId = embeddingBinding?.ProviderId ?? parentProfile.EmbeddingProviderId,
+            EmbeddingModelId = embeddingBinding?.ModelId ?? parentProfile.EmbeddingModelId,
+            CreatedAtUtc = now, UpdatedAtUtc = now, ModelBindings = bindings,
+            SelectableCapabilityAssignments = subagent.SelectableCapabilityAssignments ?? [],
+            BehaviorLoopId = AgentBehaviorLoopIds.Default, BehaviorLoopSourceId = null, BehaviorLoopSettingsJson = null, IsInternal = true,
+        };
     }
 
     private static AgentProfileModelBindingRecord? FindModelBinding(AgentProfileRecord profile, string capabilityKind)
         => profile.ModelBindings?.FirstOrDefault(binding =>
             string.Equals(binding.CapabilityKind, capabilityKind, StringComparison.OrdinalIgnoreCase));
-
-    private static bool IsAvailable(SubagentProviderReference<IAgentChildRunExecutor> reference)
-    {
-        if (!reference.TryAcquire(out var lease))
-        {
-            return false;
-        }
-        using (lease)
-        {
-            return !lease.RetirementToken.IsCancellationRequested;
-        }
-    }
 
     private static string BuildProfileSnapshotId(
         AgentProfileRecord parentProfile,
@@ -236,4 +191,4 @@ internal sealed partial class SubagentChildRunCoordinator(
 internal sealed partial record SubagentChildRunEnvironment(
     AgentToolExecutionContext Context,
     AgentProfileRecord ParentProfile,
-    SubagentProviderReference<IAgentChildRunExecutor> ChildRunExecutorReference);
+    ServiceProvider<IChildRunExecutorService> ChildRunExecutorReference);

@@ -1,12 +1,14 @@
-using Sunder.Package.Agent.Contracts.Contracts;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using Sunder.Sdk.Services;
 using Sunder.Package.Agent.Contracts.Models;
 
 namespace Sunder.Package.Agent.Execution.Docker;
 
-public sealed class DockerExecutionWorkspaceEditorContributor(
+[SunderServiceProvider(typeof(IWorkspaceEditorService), ProviderId = "docker.workspace.editor")]
+public sealed partial class DockerExecutionWorkspaceEditorContributor(
     DockerExecutionWorkspaceConfigService configService,
     DockerImageCatalogService imageCatalogService)
-    : IAgentWorkspaceEditorContributor
+    : IWorkspaceEditorService
 {
     private const string PackageId = "sunder.package.agent.execution.docker";
     private const string TargetId = "docker";
@@ -16,8 +18,11 @@ public sealed class DockerExecutionWorkspaceEditorContributor(
 
     public string ContributorId => "sunder.package.agent.execution.docker.workspace-editor";
 
-    public bool CanEdit(AgentWorkspaceEditorContext context)
-        => string.Equals(context.TargetId, TargetId, StringComparison.OrdinalIgnoreCase);
+    public ValueTask<AgentServiceIdentity> DescribeAsync(CancellationToken token = default)
+    { token.ThrowIfCancellationRequested(); return ValueTask.FromResult(new AgentServiceIdentity { Id = ContributorId, DisplayName = ContributorId }); }
+
+    public ValueTask<bool> CanEditAsync(AgentWorkspaceEditorContext context, CancellationToken token = default)
+    { token.ThrowIfCancellationRequested(); return ValueTask.FromResult(string.Equals(context.TargetId, TargetId, StringComparison.OrdinalIgnoreCase)); }
 
     public async ValueTask<IReadOnlyList<AgentEditorSection>> GetSectionsAsync(
         AgentWorkspaceEditorContext context,
@@ -29,65 +34,59 @@ public sealed class DockerExecutionWorkspaceEditorContributor(
         var images = await imageCatalogService.RefreshImagesAsync(cancellationToken);
         var imageOptions = images
             .Where(image => image.Status == DockerImageStatus.Ready)
-            .Select(image => new AgentEditorOption(image.ImageReference, image.ImageReference))
+            .Select(image => new AgentEditorOption { Value = image.ImageReference, Label = image.ImageReference, Description = null })
             .ToArray();
         var imageActions = new List<AgentEditorAction>
         {
-            new(
-                "refresh-docker-images",
-                "Refresh Images",
-                AgentEditorActionKind.RefreshField),
+            new() { ActionId = "refresh-docker-images", Label = "Refresh Images", Kind = AgentEditorActionKind.RefreshField, PackageId = null, Parameters = null },
         };
         if (imageOptions.Length == 0)
         {
-            imageActions.Add(new AgentEditorAction(
-                "open-docker-execution-settings",
-                "Open Settings",
-                AgentEditorActionKind.OpenPackageSettings,
-                PackageId));
+            imageActions.Add(new AgentEditorAction { ActionId = "open-docker-execution-settings", Label = "Open Settings",
+                Kind = AgentEditorActionKind.OpenPackageSettings, PackageId = PackageId, Parameters = null });
         }
 
         IReadOnlyList<AgentEditorSection> sections =
         [
-            new AgentEditorSection(
-                SectionId,
-                "Docker Execution Settings",
-                "Docker creates a resource-bounded container with no network, no added Linux capabilities, and writable workspace bind mounts. It reduces exposure but is not a complete security sandbox. Workspace paths are mounted automatically from the main Workspace section.",
-                [
-                    new AgentEditorField(
-                        ImageFieldId,
-                        "Docker image",
-                        AgentEditorFieldKind.Select,
-                        imageOptions.Length == 0
+            new AgentEditorSection
+            {
+                SectionId = SectionId, Title = "Docker Execution Settings",
+                Description = "Docker creates a resource-bounded container with no network, no added Linux capabilities, and writable workspace bind mounts. It reduces exposure but is not a complete security sandbox. Workspace paths are mounted automatically from the main Workspace section.",
+                Fields = [
+                    new AgentEditorField
+                    {
+                        FieldId = ImageFieldId, Label = "Docker image", Kind = AgentEditorFieldKind.Select,
+                        Description = imageOptions.Length == 0
                             ? "Pull at least one configured image in Docker Execution settings."
                             : "Choose a ready image with an explicit tag or sha256 digest.",
-                        Value: config.ImageReference,
-                        Options: imageOptions)
-                    {
-                        Actions = imageActions,
+                        Value = config.ImageReference, Options = imageOptions, Actions = imageActions,
+                        Items = null, AddItemLabel = null, UseFolderPicker = false, DefaultNewItemValue = null,
+                        ItemValueLabel = null, SecondaryItemValueLabel = null, UseSecondaryFolderPicker = false, DefaultNewSecondaryItemValue = null,
                     },
-                    new AgentEditorField(
-                        ShellPathFieldId,
-                        "Shell path inside container",
-                        AgentEditorFieldKind.Text,
-                        "POSIX-compatible shell used by shell and file tool commands.",
-                        Value: config.ShellPath ?? DockerExecutionWorkspaceConfigService.DefaultShellPath),
-                ]),
+                    new AgentEditorField
+                    {
+                        FieldId = ShellPathFieldId, Label = "Shell path inside container", Kind = AgentEditorFieldKind.Text,
+                        Description = "POSIX-compatible shell used by shell and file tool commands.",
+                        Value = config.ShellPath ?? DockerExecutionWorkspaceConfigService.DefaultShellPath, Options = null, Actions = null,
+                        Items = null, AddItemLabel = null, UseFolderPicker = false, DefaultNewItemValue = null,
+                        ItemValueLabel = null, SecondaryItemValueLabel = null, UseSecondaryFolderPicker = false, DefaultNewSecondaryItemValue = null,
+                    },
+                ],
+            },
         ];
 
         return sections;
     }
 
     public async ValueTask<AgentEditorSaveResult> SaveSectionAsync(
-        AgentWorkspaceEditorContext context,
-        AgentEditorSaveRequest request,
+        CSunder_Agent_Workspace_Editor_WorkspaceEditorSaveSectionRequest invocation,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-
+        var (context, request) = (invocation.Context, invocation.Request);
         if (!string.Equals(request.SectionId, SectionId, StringComparison.OrdinalIgnoreCase))
         {
-            return AgentEditorSaveResult.Failed("Unknown Docker execution settings section.");
+            return new() { Success = false, Message = "Unknown Docker execution settings section." };
         }
 
         var image = request.Fields.TryGetValue(ImageFieldId, out var imageValue)
@@ -95,7 +94,7 @@ public sealed class DockerExecutionWorkspaceEditorContributor(
             : null;
         if (string.IsNullOrWhiteSpace(image))
         {
-            return AgentEditorSaveResult.Failed("Pull at least one configured Docker image in Docker Execution settings before saving this workspace.");
+            return new() { Success = false, Message = "Pull at least one configured Docker image in Docker Execution settings before saving this workspace." };
         }
 
         try
@@ -104,13 +103,13 @@ public sealed class DockerExecutionWorkspaceEditorContributor(
         }
         catch (InvalidOperationException ex)
         {
-            return AgentEditorSaveResult.Failed(ex.Message);
+            return new() { Success = false, Message = ex.Message };
         }
 
         var imageReadiness = await imageCatalogService.GetReadinessAsync(image, cancellationToken);
         if (!imageReadiness.IsReady)
         {
-            return AgentEditorSaveResult.Failed(imageReadiness.Message);
+            return new() { Success = false, Message = imageReadiness.Message };
         }
 
         var shellPath = request.Fields.TryGetValue(ShellPathFieldId, out var shellPathValue)
@@ -125,11 +124,11 @@ public sealed class DockerExecutionWorkspaceEditorContributor(
                 ImageReferenceNeedsAttention = false,
                 ShellPath = shellPath,
             }, cancellationToken);
-            return AgentEditorSaveResult.Ok("Docker execution settings saved.");
+            return new() { Success = true, Message = "Docker execution settings saved." };
         }
         catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
-            return AgentEditorSaveResult.Failed(ex.Message);
+            return new() { Success = false, Message = ex.Message };
         }
     }
 }

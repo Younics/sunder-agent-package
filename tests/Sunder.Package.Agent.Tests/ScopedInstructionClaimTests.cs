@@ -104,7 +104,7 @@ public sealed class ScopedInstructionClaimTests
 
         await PresentAsync(source, fixture.PromptRequest(firstSession, epoch: 1));
         Assert.True(File.Exists(fixture.ClaimPath(firstSession)));
-        source.DeleteSessionData(firstSession);
+        await source.DeleteSessionAsync(firstSession);
         Assert.False(File.Exists(fixture.ClaimPath(firstSession)));
         var afterCleanup = await source.ExecuteAsync(
             fixture.ToolContext(firstSession, epoch: 1),
@@ -538,17 +538,17 @@ public sealed class ScopedInstructionClaimTests
         var target = new IncompleteDiscoveryExecutionTarget(fixture.Root);
         var catalog = new RegressionTestExtensionCatalog();
         catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target);
-        var targetReference = catalog.GetRequiredReference(RegressionTestBindings.ExecutionTargets);
+        var targetReference = (await catalog.GetRequiredProviderAsync(catalog.ExecutionTargets)).Reference;
         using var source = new GeneratedToolSourceProbe(catalog, new FilesToolSource(fixture.PackageContext),
             "sunder.package.agent.tools.files", withPromptContext: true, withSessionCleaner: true);
         await PresentAsync(source, fixture.PromptRequest(epoch: 1) with
         {
-            ExecutionTargetReference = targetReference,
+            ExecutionTarget = targetReference,
         });
         target.ReturnIncompleteDiscovery = true;
 
         var withheld = await source.ExecuteAsync(
-            fixture.ToolContext(epoch: 1) with { ExecutionTargetReference = targetReference },
+            fixture.ToolContext(epoch: 1) with { ExecutionTarget = targetReference },
             Request("read", new { path = "nested/secret.txt" }));
 
         Assert.True(withheld.IsError);
@@ -561,10 +561,10 @@ public sealed class ScopedInstructionClaimTests
             "sunder.package.agent.tools.files", withPromptContext: true, withSessionCleaner: true);
         await PresentAsync(restarted, fixture.PromptRequest(epoch: 1) with
         {
-            ExecutionTargetReference = targetReference,
+            ExecutionTarget = targetReference,
         });
         var rerun = await restarted.ExecuteAsync(
-            fixture.ToolContext(epoch: 1) with { ExecutionTargetReference = targetReference },
+            fixture.ToolContext(epoch: 1) with { ExecutionTarget = targetReference },
             Request("read", new { path = "nested/secret.txt" }));
 
         Assert.False(rerun.IsError, rerun.Content);
@@ -946,7 +946,7 @@ public sealed class ScopedInstructionClaimTests
                 ExecutionBinding = binding ?? Binding,
                 AvailableTools = [FilesTool],
                 TranscriptEpoch = epoch,
-                ExecutionTargetReference = _catalog.GetRequiredReference(RegressionTestBindings.ExecutionTargets),
+                ExecutionTarget = _catalog.GetRequiredProviderAsync(_catalog.ExecutionTargets).AsTask().GetAwaiter().GetResult().Reference,
             };
         }
 
@@ -968,7 +968,7 @@ public sealed class ScopedInstructionClaimTests
                 AllowOutsideConfiguredScope: allowOutsideConfiguredScope)
             {
                 TranscriptEpoch = epoch,
-                ExecutionTargetReference = _catalog.GetRequiredReference(RegressionTestBindings.ExecutionTargets),
+                ExecutionTarget = _catalog.GetRequiredProviderAsync(_catalog.ExecutionTargets).AsTask().GetAwaiter().GetResult().Reference,
             };
 
         public async Task<AgentToolExecutionContext> ApprovedToolContextAsync(
@@ -999,8 +999,8 @@ public sealed class ScopedInstructionClaimTests
                 RunRevision = 1,
                 ToolCallId = toolCallId,
             };
-            var resource = AgentRoleBoundary.As<AgentResolvedResource>(await _target.ResolveFileResourceAsync(
-                AgentRoleBoundary.As<LocalWorker::Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetContext>(new AgentExecutionTargetContext(
+            var target = await _catalog.GetRequiredProviderAsync(_catalog.ExecutionTargets);
+            var resource = await target.Service.ResolveFileAsync(new AgentExecutionTargetContext(
                     sessionId,
                     null,
                     Workspace,
@@ -1008,8 +1008,8 @@ public sealed class ScopedInstructionClaimTests
                     AllowOutsideConfiguredScope: true)
                 {
                     ResourceOperation = operation,
-                }),
-                path));
+                },
+                path);
             return context with
             {
                 ApprovedResourceReferences = new[]
@@ -1046,9 +1046,28 @@ public sealed class ScopedInstructionClaimTests
             string capability,
             AgentResourceClaim claim,
             AgentResourceOperationContext operation)
-            => _target.ResourceReferences.IsCurrent(capability,
-                AgentRoleBoundary.As<LocalWorker::Sunder.Package.Agent.Contracts.Models.AgentResourceClaim>(claim),
-                AgentRoleBoundary.As<LocalWorker::Sunder.Package.Agent.Contracts.Models.AgentResourceOperationContext>(operation));
+            => _target.ResourceReferences.IsCurrent(
+                capability,
+                new LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentResourceClaim
+                {
+                    Version = claim.Version, NamespaceId = claim.NamespaceId, LogicalPath = claim.LogicalPath,
+                    ConfiguredRoot = claim.ConfiguredRoot, RootIdentityChainFingerprint = claim.RootIdentityChainFingerprint,
+                    TargetExists = claim.TargetExists, TargetKind = claim.TargetKind, TargetIdentity = claim.TargetIdentity,
+                    TargetIsAuthorityRoot = claim.TargetIsAuthorityRoot, CaseSensitivePath = claim.CaseSensitivePath,
+                    ActionId = claim.ActionId, WorkspaceId = claim.WorkspaceId, WorkspaceGeneration = claim.WorkspaceGeneration,
+                    BindingId = claim.BindingId, BindingGeneration = claim.BindingGeneration, ToolCallId = claim.ToolCallId,
+                    ResourceIndex = claim.ResourceIndex, ToolOwnerPackageId = claim.ToolOwnerPackageId,
+                    ExecutionTargetOwnerPackageId = claim.ExecutionTargetOwnerPackageId,
+                },
+                new LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentResourceOperationContext
+                {
+                    RunId = operation.RunId, RunRevision = operation.RunRevision, ToolCallId = operation.ToolCallId,
+                    ActionId = operation.ActionId, ResourceIndex = operation.ResourceIndex,
+                    WorkspaceGeneration = operation.WorkspaceGeneration, BindingGeneration = operation.BindingGeneration,
+                    ToolOwnerPackageId = operation.ToolOwnerPackageId, ExecutionTargetOwnerPackageId = operation.ExecutionTargetOwnerPackageId,
+                    AuthorityActivationId = operation.AuthorityActivationId, AuthorityUseCount = operation.AuthorityUseCount,
+                    CanIssueOutsideAuthority = operation.CanIssueOutsideAuthority,
+                });
 
         public void Dispose()
         {
@@ -1064,7 +1083,7 @@ public sealed class ScopedInstructionClaimTests
             return new AgentWorkspaceBindingRecord(
                 bindingId,
                 workspaceId,
-                AgentRpcContractIds.ExecutionTarget,
+                RegressionTestBindings.ExecutionTargets,
                 "local",
                 "primary-execution-target",
                 IsEnabled: true,

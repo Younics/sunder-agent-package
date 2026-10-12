@@ -198,6 +198,9 @@ internal sealed class AgentUserTurnAdmissionService(
             fingerprint,
             storedAttachments);
 
+        var cleaners = admissionKind == AgentRunAdmissionKind.Rollback
+            ? await _sessionService.SnapshotSessionDataCleanersAsync(cancellationToken).ConfigureAwait(false)
+            : [];
         AgentUserTurnAdmissionResult result;
         using (await _transitionGate.EnterAsync(sessionId, cancellationToken).ConfigureAwait(false))
         {
@@ -215,13 +218,14 @@ internal sealed class AgentUserTurnAdmissionService(
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            result = _sessionService.AdmitUserTurn(request);
+            result = _sessionService.AdmitUserTurn(request, cleaners);
             if (!result.IsExisting)
             {
                 CancelSupersededProcessRun(sessionId, result.Run.Key);
             }
         }
 
+        await _sessionService.CompleteAdmissionCleanupAsync(result).ConfigureAwait(false);
         return result;
     }
 

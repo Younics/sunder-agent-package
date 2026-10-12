@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Authenticated pre-natural Subagents owner ports, envelopes and JSON boundary; historical data only.",
+  "sources": [
+    {
+      "path": "src/Sunder.Package.Agent.Subagents/Runtime/SubagentRuntimeContracts.cs",
+      "currentSha256": "f6759ec529131fc340d93f62d9c24643210aa90f41eb0c1c38d1bdde2b5134fe",
+      "beforeSha256": "5a69facd4d69605143a55a2834bd7a493a2445bc84e98c187e1b1c282b77d6fd",
+      "indexBlob": "33d9c4b8e301138e42eb021ef7b25b80c6565fcb",
+      "provenance": "git-index-blob",
+      "textChunks": [
+        "H4sIAAAAAAAC/9VYSXMqNxC+8yt0tKsoyjnjxxTBWUi8xZB3SeUgZhqsICQiaexyUvnvaS2zaJgByu+V4flgZnqRetPXrck1Eysyy0UGavBI0zVdwWC8AmEG",
+        "EymMoqnR1dOwlx8jfycz4PuFZ89UQVYQPzN4PSCfL6h9qBbvCboBvaUpHNJ4yoVhG0CVP4LkLFsHadxw4IlBe4LLP0kOF8eLBmcu/+wxYUAJyol7WFrbpmiH",
+        "Bq2ZFDP/8wQU1+j92yP4N6d6fb0jMqGGcrkakVumTaDpsX4T6cWEihQ4pwZJc7kGQdIdyieSwZLm3FwOe/+d2uvJM6TrrUTeruNTS3oQ/M36ee3yhsmqa6RS",
+        "ZSMfh1tqQJuKGQLiVrN/31xk5ooKnSq2NY+ova8sYkkfDowNhmueK9EMxE85y0jQnGb9ko5GEM42zPTfHbNjjXNmfQ9LqeBI424wu3M8pQ/LpQZDFk53ogDJ",
+        "2dj8btJ+vIQXsPuc0sXxEvP6Pg+pVd3joON/kH9jJbGQ7WbBP0mzinakf45uGgY3nLbsPT4zA5umuz7Rt7HTluECdPu1guHAp8rzXEp+A4Yy7jEo8UGpyI2g",
+        "7FH/O0fYIsr/vtfUUu3TyNk7+FHJzRNo5B02/ULknJ9HL6BiBffSsCVLnZ86AB68oA9knFrata2FUUJmdaVs2C7XD6HHwgrdIiH2pVMrIRg2Qbf6WRqbHKas",
+        "FIamw3Q3RDwq0PjjTJ4KZhjl7B/3VgNsUnLgW+vVzsmHV4GIxBk+Bq8+U55DgRUhEPIvcHEckd9yUG+Nc1DIOd6XFv3wCCMmcrOhIuswI3C/jiFTt8kPIt+A",
+        "ogsOpT2h1kZ2W3sGF+Apussqxw3CW7vhlxv4kbWjgXKwQbXnjXRNr97vlhGvnIPdcS2Oue53yWO6l4xDIR9e9eXwDFyOO2enyzV4cugUnF0gVJOfqX7gaERM",
+        "uofXguRa41ikzzLMA2fheTwTvdfzO+ztnhKvN8mVlioh9lLJRO6KHus9NLITeu8O8Iy+QGjs3nFtlL+6en4xwwTyDdNbTt/u8cJapyfkBkoEiBlTgU+5gzgd",
+        "cxA77IF4YWh+vI3nuetxweg+TDPgiKAWxSZ0SxeMM4NQrtlKbKC8dyWkIumOrWZgMEEr/YuW4kMzA4jDcbv5lYksNK47KpBu7fZmFxHzHw88LXwWCGgVaNWl",
+        "KlRldZGpEdzY798rAAj8cvrqnxaTq7j4Et0JFbH/4qxWhRXOWgVA5TjW4NlJ3A3hSP3u6soT46k/CeBVH/xb1q8jXAt76u4GO3uPy1sAssL2h4bxhOzO5yfA",
+        "lqiCw6RSq2EfLu+RBZwQWjy4lnr62goWx9VVc6OlvtwoF6WwBVET5+35gH1xKKqpM8L8djDuxvxgxh6IdiBVtAapEIY9bEWBG9dNs2swgefTXm7C41kFMApc",
+        "7HIhVfac8sNta6GEO235Hgm1r7ybwFEFdXrPAh5HHFTUkmEJB7X2tNlosZLM4OCa8dxcAvKxtpR6xQB9SK/tU6zt/OUH2GaCWifDpDHZdSjFg3RS66u7Zb/n",
+        "W0cN2c/nAOze9y64RIxwvesJXpj20+3VCduPM7HefaQQWLqQFYNR85tJfCzDuBQNU6E+q7mpnMVs+Z1FC/MXdw9LLiVFNmLvqujUmtq+qahx9fGfpCKJ2shl",
+        "o9HQL7hhRrXXAXv7L6WwUP4H3lLYZbobAAA="
+      ]
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Subagents/Runtime/SubagentOwnerRpc.cs",
+      "currentSha256": "679733cea7e8cbb3f89a9a5ed543753e851b9e04501894b6f8c64159c6894d63",
+      "beforeSha256": "7f3a49c4efce545a8e5ac83638b1aa15cb0158e5f403ae7efce6896ab4bcb92a",
+      "indexBlob": "6e1ca575eedcb6defb0294d302d7ba69e94291fc",
+      "provenance": "git-index-blob",
+      "textChunks": [
+        "H4sIAAAAAAAC/4VUyW7bMBC96ysInyTAZRf0UNhwgiIuULd1HFgJciiKgpbGMhuKUknKSwz/e4daKMtREV1EzvLmzcIpNJcJCQ/aQErvYW/oN53JsVf0ymkI",
+        "ijPBn5nhZ1aFjEHRMH6iyzwae55kKeicRdCo7lj0xBKgnxOQhobFitmDpstCGp4CunBpQEkmiDaIHZFIMK1JY7nYSVCWgHf0CH6X1lbVUAO1yC07TZr/kSRg",
+        "xuREJkTCzu8aT2HNCoFcHmEVlOBVCPvdqSwHZQ63mM8N0zCTGqTmhm8BsdZMaBg64weZsjyHeA7pCtRXJmNhizMpyfUr6ZRrJkS2q1BOWIe+7KoiYmlvMtRI",
+        "s4SEa6PKHjQ51qr66qPaBl9zAZb8kIgMrwJkYjaBozy5Kgvi7vYbIE/BoxL87R+kPhh29A6yI62Qu7Il5MAMW3HBzWHUk8WZmoZIV8CDvsCdsz1PixTlekTe",
+        "B/8p0CrLBAk3WSHiOcv9L/sIyjoQaE6dnJ2U8IsRW2C7y8wdxGstaWPZyK+AXfJpJ23LFME3o9EbJ6bqHp3p20KIhXrccAOhfU++A6DzyjrolOuaDO43QBT8",
+        "LQBfbuyy0yRr2ODcYgtjOuh4jsgL6LEz4Gvi1+zoj7LT5Ip8+P3u46c2/LED1+ZSn35SWjr8alFP7qTAFEraWewprN8VK5Wp7sR2dd+5jOk0SxmX3VEaaLd2",
+        "Mtse6irypqrIxaDXxIOgYnzyTudbChh69G2pl12v2NYvskatQjmTaxww9G0HBTcVtj7AtszkFhdV3APbQF34It9/1EJvjNUFAAA="
+      ]
+    }
+  ]
+}

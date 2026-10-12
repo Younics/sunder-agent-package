@@ -18,7 +18,7 @@ public enum AgentContextTrust
     /// Use this for assistant claims, transcript summaries, durable recall, tool output, remote content, and
     /// extension-generated data unless the current user directly supplied the exact content.
     /// </remarks>
-    Untrusted = 0,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("untrusted")] Untrusted = 0,
 
     /// <summary>
     /// The exact content was supplied directly by the current user in the current trust context.
@@ -27,5 +27,5 @@ public enum AgentContextTrust
     /// User provenance does not grant system authority, validate factual claims, authorize unrelated actions,
     /// or make embedded third-party text safe. Do not use this value for summaries or recalled paraphrases.
     /// </remarks>
-    UserProvided = 1,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("user-provided")] UserProvided = 1,
 }

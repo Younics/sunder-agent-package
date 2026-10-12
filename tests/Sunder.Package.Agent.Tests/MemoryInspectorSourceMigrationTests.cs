@@ -1,18 +1,24 @@
-using System.Runtime.CompilerServices;
-using Sunder.Package.Agent.Protocol;
+using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using Sunder.Sdk.Rpc;
-using Sunder.Sdk.Worker;
+using Sunder.Sdk.Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
 
 extern alias MemoryWorker;
+extern alias MemoryApp;
 using MemoryWorker::Sunder.Package.Agent.Memory.Semantic;
 using MemoryWorker::Sunder.Package.Agent.Memory.Semantic.Runtime;
 using MemoryWorker::Sunder.Package.Agent.Memory.Semantic.Services;
+using MemoryServices = MemoryApp::Sunder.Generated.Packages.Sunder_Package_Agent_Memory_Semantic_Services;
+using AppMemoryChangeKind = MemoryApp::Sunder.Package.Agent.Memory.Semantic.Runtime.MemoryChangeKind;
+using AppSemanticEmbeddingContext = MemoryApp::Sunder.Package.Agent.Memory.Semantic.Services.SemanticEmbeddingContext;
 
 public sealed class MemoryInspectorSourceMigrationTests
 {
+    // Authenticated migration input inventory. The historical reader resolves
+    // physically retired paths from captured data, never compiled legacy code.
     internal static readonly string[] SourcePaths = new[]
     {
         "ManagementService.cs", "ManagementClient.cs", "ManagementModels.cs", "MemoryValueMapper.cs", "MemoryValueJson.cs", "ProjectionContent.cs",
@@ -21,114 +27,130 @@ public sealed class MemoryInspectorSourceMigrationTests
     [AgentPublicSourceMigrationFact]
     public async Task InspectorSource_PreservesContractStoreMutationsStreamsAndBoundedContentAcrossIsolatedApp()
     {
-        using var source = PrivateManagementSourceFixture.Load("Memory.Semantic", RegressionTestRpcDescriptors.Get("sunder.agent.memory.semantic.inspector"));
+        using var source = PrivateManagementSourceFixture.Load("Memory.Semantic", CurrentPrivateRpcDescriptors.Get("sunder.agent.memory.semantic.inspector"));
         using var package = RegressionTestPackageScope.Create();
-        await using var store = new MemoryLocalStore(package.Context);
-        using var catalog = new RegressionTestExtensionCatalog();
-        var settings = new MemorySemanticSettingsService(package.Context);
-        using var resolver = new SemanticModelRuntimeResolver(catalog.Memory(), settings);
-        var metrics = new SemanticMemoryMetricsService();
-        var retrieval = new SemanticMemoryRetrievalBackend(store, resolver, settings);
-        await using var indexing = new SemanticMemoryIndexingBackgroundService(store, resolver, settings, retrieval, metrics);
-        using var inspector = new MemoryInspectorService(store, retrieval, indexing, resolver, metrics);
-        var operations = new Operations(new MemoryRuntimeHandler(inspector));
-        var type = source.Worker.GetType("Sunder.Package.Agent.Memory.Semantic.Rpc.ManagementService", true)!;
-        var service = AgentRoleBoundary.Create(type, operations);
-        var registration = Assert.IsType<SunderWorkerProviderRegistration>(type.GetMethod("CreateSunderRpcProviderRegistration")!.Invoke(service, null));
-        Assert.Equal("semantic.memory.inspector", registration.ProviderId);
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        state.Add("sunder.package.agent.memory.semantic", source.Descriptor, service, registration.Handler, Noop.Instance, registration.ProviderId, "2.0.0");
-        var clientType = source.App.GetType("Sunder.Package.Agent.Memory.Semantic.Runtime.MemoryInspectorSourceClient", true)!;
-        var client = AgentRoleBoundary.Create(clientType, new RegressionTestRpcClient(state, "sunder.package.agent.memory.semantic"));
-        ValueTask<MemoryProjection> query(MemoryQuery request, CancellationToken token)
-            => AgentRoleBoundary.As<ValueTask<MemoryProjection>>(AgentRoleBoundary.Call(client, "QueryAsync", request, token)!);
-        ValueTask<MemoryProjection> command(MemoryCommand request, CancellationToken token)
-            => AgentRoleBoundary.As<ValueTask<MemoryProjection>>(AgentRoleBoundary.Call(client, "CommandAsync", request, token)!);
-        IAsyncEnumerable<MemoryChanged> subscribe(MemoryChangeSubscription request, CancellationToken token)
-            => AgentRoleBoundary.As<IAsyncEnumerable<MemoryChanged>>(AgentRoleBoundary.Call(client, "ChangesAsync", request, token)!);
-        var sessionId = Guid.NewGuid();
-        var memory = store.UpsertMemory(new(sessionId, "preference", "Initial λ content", "initial λ content", "Evidence", Guid.NewGuid(), false, 0.8f, 0.9f));
-        Assert.Equal(memory.MemoryId, Assert.Single((await query(new(MemoryQueryKind.Memories, sessionId), default)).Memories!).MemoryId);
-        Assert.Empty((await query(new(MemoryQueryKind.Sessions), default)).Sessions!);
-        Assert.Null((await query(new(MemoryQueryKind.SessionCheckpoint, sessionId), default)).Checkpoint);
-        Assert.Null((await query(new(MemoryQueryKind.WorkingSummary, sessionId), default)).WorkingSummary);
-        Assert.NotNull((await query(new(MemoryQueryKind.Details, MemoryId: memory.MemoryId), default)).Evidence);
-        Assert.NotNull((await query(new(MemoryQueryKind.SemanticState, sessionId), default)).SemanticState);
-        Assert.NotNull((await query(new(MemoryQueryKind.WorkerStatus), default)).WorkerStatus);
-        Assert.NotNull((await query(new(MemoryQueryKind.Metrics), default)).Metrics);
-        var context = new SemanticEmbeddingContext("Unavailable", "No provider selected", false, null, null, null, null);
-        Assert.NotNull((await query(new(MemoryQueryKind.SemanticIndexStatus, Memory: memory, SemanticContext: context), default)).IndexStatus);
-        Assert.Equal(memory, operations.LastQuery!.Memory);
-        Assert.Equal(context, operations.LastQuery.SemanticContext);
+        await using var agentRuntime = RegressionTestRuntime.Create(package.Context,
+            new RegressionTestRpcClient(state, "sunder.package.agent"));
+        var runtimeCatalog = agentRuntime.GetRequiredService<Sunder.Package.Agent.Services.AgentRuntimeCatalog>();
+        state.AddGenerated("sunder.package.agent", runtimeCatalog,
+            runtimeCatalog.CreateSunderRpcProviderRegistration(), Noop.Instance, "agent.runtime.catalog");
+        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent.memory.semantic");
+        var (options, workerLifetime, workerServices) = AgentSourceArtifactMigrationTests.CreateGeneratedWorker(source.Worker, package.Context, rpc);
+        await using var workerOwner = workerLifetime;
+        await AgentSourceArtifactMigrationTests.ActivateGeneratedComposition(options);
+        var registration = Assert.Single(options.Providers, value => value.ProviderId == "semantic.memory.inspector");
+        state.Add("sunder.package.agent.memory.semantic", source.Descriptor, registration.Handler, registration.Handler,
+            Noop.Instance, registration.ProviderId, "2.0.0");
+        await using var receiver = new GeneratedServiceTestScope(rpc);
+        var entry = Assert.Single((await receiver.Providers<MemoryServices.IMemoryInspectorService>().ListAsync()).Providers);
+        var service = entry.Service;
+        Assert.Null(source.App.GetType("Sunder.Package.Agent.Memory.Semantic.Runtime.MemoryInspectorSourceClient"));
+        Assert.NotNull(source.App.GetType(typeof(MemoryServices.IMemoryInspectorService).FullName!, true));
 
+        await using var store = new MemoryLocalStore(package.Context);
+        var sessionId = Guid.NewGuid();
+        var memory = store.UpsertMemory(new(sessionId, "preference", "Initial content", "initial content", "Evidence", Guid.NewGuid(), false, 0.8f, 0.9f));
+
+        Assert.Equal(memory.MemoryId, Assert.Single((await ReadAsync(service.MemoriesAsync(sessionId, "Initial", includeInactive: true))).Memories!).MemoryId);
+        Assert.Empty((await ReadAsync(service.SessionsAsync())).Sessions!);
+        Assert.Null((await ReadAsync(service.SessionCheckpointAsync(sessionId))).Checkpoint);
+        Assert.Null((await ReadAsync(service.WorkingSummaryAsync(sessionId))).WorkingSummary);
+        Assert.NotNull((await ReadAsync(service.DetailsAsync(memory.MemoryId))).Evidence);
+        Assert.NotNull((await ReadAsync(service.SemanticStateAsync(sessionId, profileId: null))).SemanticState);
+        Assert.NotNull((await ReadAsync(service.WorkerStatusAsync())).WorkerStatus);
+        Assert.NotNull((await ReadAsync(service.MetricsAsync())).Metrics);
+        var context = new AppSemanticEmbeddingContext("Unavailable", "No provider selected", false, null, null, null, null);
+        Assert.NotNull((await ReadAsync(service.IndexStatusAsync(memory.MemoryId, context))).IndexStatus);
+
+        // Establish the real runtime-catalog subscription before observing worker
+        // changes. An absent catalog legitimately emits resets, which can coalesce
+        // a worker notification; that is not a worker-event ordering guarantee.
+        var inspector = workerServices.GetRequiredService(source.Worker.GetType(
+            "Sunder.Package.Agent.Memory.Semantic.MemoryInspectorService", true)!);
+        var resetEvent = inspector.GetType().GetEvent("ResetRequired")!;
+        var catalogReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Action initialReset = () => catalogReady.TrySetResult();
+        resetEvent.AddEventHandler(inspector, initialReset);
         using var lifetime = new CancellationTokenSource();
-        await using var changes = subscribe(new(), lifetime.Token).GetAsyncEnumerator();
-        Assert.True(await changes.MoveNextAsync());
-        Assert.Equal(MemoryChangeKind.ResetRequired, changes.Current.Kind);
-        var next = changes.MoveNextAsync().AsTask();
-        var updated = await command(new(MemoryCommandKind.Update, memory.MemoryId, "preference", "Updated content", "A note"), default);
+        await using var changes = service.ChangesAsync(lifetime.Token).GetAsyncEnumerator();
+        try
+        {
+            await catalogReady.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.True(await changes.MoveNextAsync());
+        }
+        finally { resetEvent.RemoveEventHandler(inspector, initialReset); }
+        Assert.Equal(AppMemoryChangeKind.ResetRequired, changes.Current.Kind);
+        var workerChange = changes.MoveNextAsync().AsTask();
+        var updated = await ReadAsync(service.UpdateAsync(memory.MemoryId, "preference", "Updated content", "A note"));
         Assert.Equal("Updated content", updated.Memory!.Content);
-        Assert.True(indexing.QueueMemoryIndex(memory.MemoryId, "source-profile"));
-        Assert.True(await next.WaitAsync(TimeSpan.FromSeconds(5)));
-        Assert.Equal(MemoryChangeKind.Worker, changes.Current.Kind);
+        Assert.Equal("Updated content", store.GetMemory(memory.MemoryId)!.Content);
+        var indexing = workerServices.GetRequiredService(source.Worker.GetType(
+            "Sunder.Package.Agent.Memory.Semantic.Services.SemanticMemoryIndexingBackgroundService", true)!);
+        Assert.True((bool)AgentRoleBoundary.Call(indexing, "QueueMemoryIndex", memory.MemoryId, "source-profile")!);
+        Assert.True(await workerChange.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(AppMemoryChangeKind.Worker, changes.Current.Kind);
         Assert.Null(changes.Current.SessionId);
-        Assert.True((await command(new(MemoryCommandKind.Pin, memory.MemoryId, IsPinned: true), default)).Memory!.IsPinned);
-        Assert.Equal(MemoryLocalStore.ContestedState, (await command(new(MemoryCommandKind.Contest, memory.MemoryId), default)).Memory!.State);
-        var correction = (await command(new(MemoryCommandKind.Correct, memory.MemoryId, "preference", "Corrected content"), default)).Correction!;
+
+        Assert.True((await ReadAsync(service.PinAsync(memory.MemoryId, true))).Memory!.IsPinned);
+        Assert.Equal(MemoryLocalStore.ContestedState, (await ReadAsync(service.ContestAsync(memory.MemoryId))).Memory!.State);
+        var correction = (await ReadAsync(service.CorrectAsync(memory.MemoryId, "preference", "Corrected content"))).Correction!;
         Assert.Equal(correction.CorrectedMemory.MemoryId, store.GetMemory(memory.MemoryId)!.SupersededByMemoryId);
-        Assert.Equal(MemoryLocalStore.ForgottenState, (await command(new(MemoryCommandKind.Forget, correction.CorrectedMemory.MemoryId), default)).Memory!.State);
-        Assert.Equal(MemoryLocalStore.SupersededState, (await command(new(MemoryCommandKind.Supersede, memory.MemoryId), default)).Memory!.State);
-        Assert.NotNull((await command(new(MemoryCommandKind.Reindex, sessionId), default)).ReindexResult);
-        var missingId = await Assert.ThrowsAsync<SunderRpcException>(() => query(new(MemoryQueryKind.Memories), default).AsTask());
+        Assert.Equal(MemoryLocalStore.ForgottenState, (await ReadAsync(service.ForgetAsync(correction.CorrectedMemory.MemoryId))).Memory!.State);
+        Assert.Equal(MemoryLocalStore.SupersededState, (await ReadAsync(service.SupersedeAsync(memory.MemoryId))).Memory!.State);
+        Assert.NotNull((await ReadAsync(service.ReindexAsync(sessionId, profileId: null))).ReindexResult);
+        var missingId = await Assert.ThrowsAsync<SunderRpcException>(() => service.UpdateAsync(Guid.NewGuid(), "preference", "Missing memory", null).AsTask());
         Assert.Equal("memory.semantic.operation-failed", missingId.Error.Code);
+        var endpoint = Assert.Single((await rpc.DiscoverAsync(source.Descriptor.ContractId)).Providers).Endpoint;
+        var absentId = await Assert.ThrowsAsync<SunderRpcException>(() => rpc.InvokeAsync(endpoint, "memory-inspector", "memories",
+            JsonSerializer.SerializeToElement(new { searchText = (string?)null, includeInactive = false })).AsTask());
+        Assert.Equal(SunderRpcErrorKind.Validation, absentId.Error.Kind);
+
         using (var cancelled = new CancellationTokenSource())
         {
             cancelled.Cancel();
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => command(new(MemoryCommandKind.Pin, memory.MemoryId, IsPinned: false), cancelled.Token).AsTask());
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.PinAsync(memory.MemoryId, false, cancelled.Token).AsTask());
             Assert.True(store.GetMemory(memory.MemoryId)!.IsPinned);
         }
-        await lifetime.CancelAsync();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => changes.MoveNextAsync().AsTask());
 
-        operations.Response = new(Memory: memory with { Content = new string('m', 2 * 1024 * 1024) });
-        Assert.Equal(operations.Response.Memory, (await query(new(MemoryQueryKind.Memories, sessionId), default)).Memory);
         state.FailNextResponseContentRegistration(new IOException("private memory content failure"));
-        var contentFault = await Assert.ThrowsAsync<SunderRpcException>(() => query(new(MemoryQueryKind.Memories, sessionId), default).AsTask());
+        var contentFault = await Assert.ThrowsAsync<SunderRpcException>(() => ReadAsync(service.MemoriesAsync(sessionId, null, false)).AsTask());
         Assert.Equal(SunderRpcErrorKind.ProviderFaulted, contentFault.Error.Kind);
         Assert.DoesNotContain("private memory content failure", contentFault.Message, StringComparison.Ordinal);
-        operations.Response = new(Memory: memory with { Content = new string('m', 16 * 1024 * 1024) });
-        var oversized = await Assert.ThrowsAsync<SunderRpcException>(() => query(new(MemoryQueryKind.Memories, sessionId), default).AsTask());
-        Assert.Equal("memory.semantic.operation-failed", oversized.Error.Code);
-        operations.StreamFailure = new MemoryInspectorOperationException(new string('f', 3000));
-        await using (var failed = subscribe(new(), default).GetAsyncEnumerator())
+        var large = "00000:" + new string('m', 4_090);
+        var largeMemory = store.UpsertMemory(new(sessionId, "preference", large, large, "Evidence", Guid.NewGuid(), false, 0.8f, 0.9f));
+        for (var index = 1; index < 512; index++)
         {
-            var error = await Assert.ThrowsAsync<SunderRpcException>(() => failed.MoveNextAsync().AsTask());
-            Assert.Equal("memory.semantic.operation-failed", error.Error.Code);
-            Assert.Equal(2048, error.Error.Message.Length);
+            var content = index.ToString("D5") + ":" + new string('m', 4_090);
+            store.UpsertMemory(new(sessionId, "preference", content, content, "Evidence", Guid.NewGuid(), false, 0.8f, 0.9f));
         }
-        await state.RetireAsync(service);
-        var unavailable = await Assert.ThrowsAsync<SunderRpcException>(() => query(new(MemoryQueryKind.Sessions), default).AsTask());
-        Assert.Equal("rpc.provider-not-found", unavailable.Error.Code);
+        var acceptedProjection = (await ReadAsync(service.MemoriesAsync(sessionId, null, includeInactive: true))).Memories!;
+        Assert.True(acceptedProjection.Sum(value => value.Content.Length) >= 2 * 1024 * 1024);
+        Assert.Equal(large.Length, acceptedProjection.Single(value => value.MemoryId == largeMemory.MemoryId).Content.Length);
+        for (var index = 512; index < 4_096; index++)
+        {
+            var content = index.ToString("D5") + ":" + new string('m', 4_090);
+            store.UpsertMemory(new(sessionId, "preference", content, content, "Evidence", Guid.NewGuid(), false, 0.8f, 0.9f));
+        }
+        var oversized = await Assert.ThrowsAsync<SunderRpcException>(() => service.MemoriesAsync(sessionId, null, includeInactive: true).AsTask());
+        Assert.Equal("memory.semantic.operation-failed", oversized.Error.Code);
+        var failure = (SunderRpcException)typeof(MemoryInspectorService)
+            .GetMethod("Failure", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(null, [new MemoryInspectorOperationException(new string('f', 3000))])!;
+        Assert.Equal("memory.semantic.operation-failed", failure.Error.Code);
+        Assert.Equal(2048, failure.Error.Message.Length);
+        await lifetime.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => changes.MoveNextAsync().AsTask());
+        await state.RetireAsync(registration.Handler);
+        var stale = await Assert.ThrowsAsync<SunderRpcException>(() => entry.EnsureCurrentAsync().AsTask());
+        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, stale.Error.Kind);
+        var retired = await Assert.ThrowsAsync<SunderRpcException>(() => service.SessionsAsync().AsTask());
+        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, retired.Error.Kind);
+        Assert.Equal("rpc.stale-endpoint", retired.Error.Code);
     }
 
-    private sealed class Operations(IMemoryInspectorRpcService inner) : IMemoryInspectorRpcService
-    {
-        internal MemoryQuery? LastQuery { get; private set; }
-        internal MemoryProjection? Response { get; set; }
-        internal Exception? StreamFailure { get; set; }
-        public ValueTask<MemoryProjection> QueryAsync(SunderRpcInvocationContext context, MemoryQuery request, CancellationToken cancellationToken = default)
-        {
-            LastQuery = request;
-            return Response is { } response ? ValueTask.FromResult(response) : inner.QueryAsync(context, request, cancellationToken);
-        }
-        public ValueTask<MemoryProjection> CommandAsync(SunderRpcInvocationContext context, MemoryCommand request, CancellationToken cancellationToken = default)
-            => inner.CommandAsync(context, request, cancellationToken);
-        public async IAsyncEnumerable<MemoryChanged> ChangesAsync(SunderRpcInvocationContext context, MemoryChangeSubscription request, [EnumeratorCancellation] CancellationToken cancellationToken = default)
-        {
-            if (StreamFailure is { } failure) throw failure;
-            await foreach (var item in inner.ChangesAsync(context, request, cancellationToken).WithCancellation(cancellationToken)) yield return item;
-        }
-    }
+    private static ValueTask<MemoryProjection> ReadAsync(ValueTask<SunderContent> content, CancellationToken token = default)
+        => ProjectionContent.Read(content, token);
 
     private sealed class Noop : IDisposable { internal static Noop Instance { get; } = new(); public void Dispose() { } }
 }

@@ -13,13 +13,13 @@ internal interface IAgentTranscriptAnchorGateway
 internal sealed record AgentTranscriptAroundTurnRequest(
     Guid SessionId,
     Guid TurnId,
-    int BeforeLimit = 20,
-    int AfterLimit = 20,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0", Maximum = "30")] int BeforeLimit = 20,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0", Maximum = "30")] int AfterLimit = 20,
     Guid? ItemId = null);
 
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentTranscriptAroundTurnPage(
-    long Revision,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long Revision,
     IReadOnlyList<AgentTurnRecord> Turns,
     bool HasOlder,
     bool HasNewer,

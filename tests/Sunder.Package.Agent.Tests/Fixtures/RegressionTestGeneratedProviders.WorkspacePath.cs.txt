@@ -1,0 +1,16 @@
+using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using Sunder.Sdk.Services;
+
+namespace RegressionTestGeneratedProviders;
+
+[SunderServiceProvider(typeof(IWorkspacePathMigratorService), ProviderId = "fixture.regression.workspace.path")]
+public sealed partial class WorkspacePathProvider(Func<string, Type, object?[], CancellationToken, object> invoke) : IWorkspacePathMigratorService
+{
+    private ValueTask<T> Reply<T>(string operation, object?[] arguments, CancellationToken token) => (ValueTask<T>)invoke(operation, typeof(T), arguments, token);
+    private ValueTask ReplyVoid(string operation, object?[] arguments, CancellationToken token) => (ValueTask)invoke(operation, typeof(void), arguments, token);
+    public ValueTask<AgentServiceIdentity> DescribeAsync(CancellationToken token = default) => Reply<AgentServiceIdentity>(nameof(DescribeAsync), [], token);
+    public ValueTask<bool> CanMigrateAsync(AgentWorkspacePathMigrationContext context, CancellationToken token = default) => Reply<bool>(nameof(CanMigrateAsync), [context], token);
+    public ValueTask<IReadOnlyList<AgentWorkspacePathMigrationItem>> ListLegacyPathsAsync(AgentWorkspacePathMigrationContext context, CancellationToken token = default) => Reply<IReadOnlyList<AgentWorkspacePathMigrationItem>>(nameof(ListLegacyPathsAsync), [context], token);
+    public ValueTask CompleteAsync(AgentWorkspacePathMigrationContext context, CancellationToken token = default) => ReplyVoid(nameof(CompleteAsync), [context], token);
+}

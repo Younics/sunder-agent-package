@@ -66,7 +66,8 @@ internal sealed class AgentProviderCycleRunner(AgentStreamingTurnWriter streamin
         {
             await retryPipeline.ExecuteAsync(async attemptCancellationToken =>
             {
-                budgetTracker?.ChargeProviderAttempt(Math.Max(1, estimatedInputTokens));
+                if (budgetTracker is not null)
+                    await budgetTracker.ChargeProviderAttemptAsync(Math.Max(1, estimatedInputTokens), attemptCancellationToken).ConfigureAwait(false);
                 if (streamAttempt > 0)
                 {
                     _streamingTurnWriter.ResetForRetry(streamState);

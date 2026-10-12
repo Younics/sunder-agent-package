@@ -1,10 +1,14 @@
-using System.Reflection;
 using System.Text.Json;
+using System.Text.Json.Nodes;
+using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
+using Sunder.Package.Agent.Runtime;
+using Sunder.Package.Agent.Services;
 using Sunder.Sdk.Logging;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Worker;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -13,91 +17,116 @@ public sealed partial class AgentPublicSourceMigrationTests
 {
     private const string RunControlCaller = "sunder.package.agent.test.loop";
 
-    private static async Task VerifyRunControlAsync(Assembly assembly, SunderRpcContractDescriptor descriptor)
+    private static async Task VerifyRunControlAsync(System.Reflection.Assembly assembly, SunderRpcContractDescriptor descriptor)
     {
         await using var fixture = await CreateRunControlFixture(assembly, descriptor);
         var runtime = new FullRunControlProbe();
         using var lease = fixture.Registry.Open(runtime, RunControlCaller, out var invocationId);
-        using var callbackCatalog = new AgentRpcCatalog(fixture.Rpc);
-        var callback = (Sunder.Package.Agent.Contracts.Contracts.IAgentBehaviorLoopRuntime)Activator.CreateInstance(
-            assembly.GetType("Sunder.Package.Agent.Runtime.Rpc.GeneratedBehaviorRuntime", true)!, callbackCatalog, invocationId,
-            AgentRpcProviderHandle.From(Assert.Single(fixture.State.Discover(descriptor.ContractId).Providers, provider => provider.Endpoint == fixture.Source)))!;
-        var invocation = new RunControlInvocation(invocationId);
-        var requests = RunControlRequests(runtime, invocation);
-        Assert.Equal(19, requests.Count);
-        Assert.Equal(requests.Select(value => value.Route).Order(StringComparer.Ordinal),
-            descriptor.Services.Single().Methods.Where(method => method.MethodId != "stream-chat").Select(method => method.MethodId).Order(StringComparer.Ordinal));
-        foreach (var (route, method, request) in requests)
-        {
-            var expected = await InvokeRunControlRuntime(runtime, route, request);
-            var arguments = runtime.Arguments.Clone();
-            var actual = await InvokeGeneratedClient(fixture.Client, method, request);
-            Assert.True(JsonElement.DeepEquals(expected, actual), $"{route} output: {expected} != {actual}");
-            Assert.True(JsonElement.DeepEquals(arguments, runtime.Arguments), $"{route} domain arguments: {arguments} != {runtime.Arguments}");
-            if (route == "list-ready-tools")
-            {
-                await Assert.ThrowsAnyAsync<JsonException>(() => callback.ListReadyToolsAsync().AsTask()); // The intentionally opaque schema is not valid executable tool metadata.
-                runtime.ToolSchema = "{\"type\":\"object\"}";
-                Assert.Equal(runtime.ToolSchema, Assert.Single(await callback.ListReadyToolsAsync()).Descriptor.ArgumentsJsonSchema);
-                runtime.ToolSchema = "{opaque-schema";
-            }
-            else
-            {
-                var callbackResult = await InvokeRunControlRuntime(callback, route, request);
-                Assert.True(JsonElement.DeepEquals(expected, callbackResult), $"{route} callback result: {expected} != {callbackResult}");
-                Assert.True(JsonElement.DeepEquals(arguments, runtime.Arguments), $"{route} callback arguments: {arguments} != {runtime.Arguments}");
-            }
-        }
-        foreach (var limit in new[] { 0, 1001 })
+        var control = fixture.Client;
+        var checkpoint = runtime.Context.RunningCheckpoint;
+        var contextCheckpoint = new AgentSessionContextCheckpointRecord(Guid.NewGuid(), runtime.Turn.SessionId, Guid.NewGuid(), runtime.Turn.TurnId, 2, "Summary", "{details", checkpoint.CreatedAtUtc);
+        var tool = new AgentToolCallRequest("call.one", "tool.one", "{arguments");
+
+        Assert.Equal(runtime.IsCurrentRun(), await control.IsCurrentAsync(invocationId));
+        Assert.True(JsonElement.DeepEquals(RunJson(runtime.ListTurns()), RunJson(await control.ListTurnsAsync(invocationId))));
+        Assert.True(JsonElement.DeepEquals(RunJson(runtime.ListRecentTurns(100)), RunJson(await control.ListRecentTurnsAsync(invocationId, 100))));
+        var validRecentTurnsRequest = fixture.State.LastInvocationRequest;
+        Assert.True(JsonElement.DeepEquals(RunJson(await runtime.BuildInstructionContextAsync()), RunJson(await control.BuildInstructionContextAsync(invocationId))));
+        var projection = new AgentSessionPromptProjection([runtime.Turn], true, 2, contextCheckpoint);
+        runtime.SelectSessionContextProjection(projection);
+        await control.SelectSessionContextAsync(invocationId, projection);
+        Assert.Equal(invocationId, fixture.State.LastInvocationRequest.GetProperty("invocationId").GetGuid());
+        Assert.True(JsonElement.DeepEquals(runtime.Arguments, RunJson(new { projection })));
+        runtime.ReportRunActivity(AgentRunActivityKind.Reasoning, "Reasoning 漢字");
+        await control.ReportActivityAsync(invocationId, AgentRunActivityKind.Reasoning, "Reasoning 漢字");
+        Assert.Equal(invocationId, fixture.State.LastInvocationRequest.GetProperty("invocationId").GetGuid());
+        Assert.True(JsonElement.DeepEquals(runtime.Arguments, RunJson(new { kind = AgentRunActivityKind.Reasoning, text = "Reasoning 漢字" })));
+        Assert.Equal(runtime.GetRunBudgetState(), await control.GetRunBudgetAsync(invocationId));
+        var charge = new AgentRunBudgetCharge(2, 3, 4000);
+        Assert.Equal(runtime.ChargeRunBudget(charge), await control.ChargeRunBudgetAsync(invocationId, charge));
+        await Assert.IsAssignableFrom<IAgentPromptContextAcknowledgmentRuntime>(runtime).AcknowledgePromptContextAsync([], default);
+        await control.AcknowledgePromptContextAsync(invocationId, []);
+        await control.DiscardPromptContextAsync(invocationId);
+        Assert.Equal(runtime.ToolSchema, Assert.Single(await control.ListReadyToolsAsync(invocationId)).ArgumentsJsonSchema);
+        runtime.ToolSchema = "{\"type\":\"object\"}";
+        Assert.Equal(runtime.ToolSchema, Assert.Single(await control.ListReadyToolsAsync(invocationId)).ArgumentsJsonSchema);
+        runtime.ToolSchema = "{opaque-schema";
+        Assert.Equal(runtime.SaveCheckpoint(AgentRunStatus.Completed, "Done"), await control.SaveCheckpointAsync(invocationId, AgentRunStatus.Completed, "Done"));
+        var attributes = new Dictionary<string, JsonElement> { ["null"] = RunJson((object?)null), ["array"] = RunJson(new object[] { false, 3, "漢字" }) };
+        runtime.LogEvent(PackageLogLevel.Warning, "loop.event", "Message", 0, attributes.ToDictionary(item => item.Key, item => (object?)item.Value));
+        var expectedLog = runtime.Arguments;
+        await control.LogEventAsync(invocationId, "warning", "loop.event", "Message", 0, attributes);
+        Assert.True(JsonElement.DeepEquals(expectedLog, runtime.Arguments));
+        var assistant = runtime.UpsertAssistantTurn(runtime.Turn, "Complete text");
+        Assert.True(JsonElement.DeepEquals(RunJson(assistant), RunJson(await control.UpsertAssistantTurnAsync(invocationId, runtime.Turn, "Complete text"))));
+        Assert.True(JsonElement.DeepEquals(RunJson(runtime.CompleteAssistantTurn(runtime.Turn)), RunJson(await control.CompleteAssistantTurnAsync(invocationId, runtime.Turn))));
+        await runtime.PublishLifecycleEventAsync(AgentLifecycleEventKind.RunInterrupted, AgentRunStatus.Interrupted, runtime.Turn, checkpoint, true, default);
+        await control.PublishLifecycleAsync(invocationId, AgentLifecycleEventKind.RunInterrupted, AgentRunStatus.Interrupted, runtime.Turn, checkpoint, true);
+        Assert.True(JsonElement.DeepEquals(RunJson(await runtime.InvokeToolAsync(tool, runtime.Turn)), RunJson(await control.InvokeToolAsync(invocationId, tool, runtime.Turn))));
+        var tools = new[] { tool, tool with { CallId = "call.two", ToolId = "tool.two" } };
+        Assert.True(JsonElement.DeepEquals(RunJson(await runtime.InvokeToolsAsync(tools, runtime.Turn)), RunJson(await control.InvokeToolsAsync(invocationId, tools, runtime.Turn))));
+        Assert.True(JsonElement.DeepEquals(RunJson(await Assert.IsAssignableFrom<IAgentInnerBehaviorLoopRuntime>(runtime).RunDefaultLoopAsync(runtime.Context)), RunJson(await control.RunDefaultAsync(invocationId, runtime.Context))));
+
+        foreach (var limit in new[] { 0, 101, 1001 })
         {
             var calls = runtime.Calls;
-            var error = await Assert.ThrowsAsync<SunderRpcException>(() => InvokeGeneratedClient(fixture.Client, "ListRecentTurnsAsync", RunJson(new { invocation, limit })));
+            var peerCalls = fixture.State.InvocationAttemptCount;
+            await Assert.ThrowsAsync<JsonException>(() => control.ListRecentTurnsAsync(invocationId, limit).AsTask());
+            Assert.Equal(peerCalls, fixture.State.InvocationAttemptCount);
+            Assert.Equal(calls, runtime.Calls);
+            var invalidWire = JsonNode.Parse(validRecentTurnsRequest.GetRawText())!.AsObject();
+            invalidWire["limit"] = limit;
+            var error = await Assert.ThrowsAsync<SunderRpcException>(() => fixture.Rpc.InvokeAsync(fixture.Source,
+                "run-control", "list-recent-turns", JsonSerializer.SerializeToElement(invalidWire)).AsTask());
             Assert.Equal(SunderRpcErrorKind.Validation, error.Error.Kind);
+            Assert.Equal(peerCalls + 1, fixture.State.InvocationAttemptCount);
             Assert.Equal(calls, runtime.Calls);
         }
         runtime.Current = false;
-        Assert.False((await InvokeGeneratedClient(fixture.Client, "IsCurrentAsync", RunJson(invocation))).GetBoolean());
+        Assert.False(await control.IsCurrentAsync(invocationId));
 
-        // Every route must resolve the caller-bound lease before it reaches the runtime.
-        var foreign = new RegressionTestRpcClient(fixture.State, "sunder.package.agent.foreign.loop");
+        // A generated catalog bound to another caller must not acquire this lease.
+        var foreignRpc = new RegressionTestRpcClient(fixture.State, "sunder.package.agent.foreign.loop");
+        await using var foreignScope = new GeneratedServiceTestScope(foreignRpc);
+        var foreign = Assert.Single((await foreignScope.Providers<AgentServices.IRunControlService>().ListAsync()).Providers).Service;
         var before = runtime.Calls;
-        foreach (var (route, _, request) in requests)
-        {
-            await Assert.ThrowsAsync<SunderRpcException>(() => foreign.InvokeAsync(fixture.Source, "run-control", route, request).AsTask());
-            Assert.Equal("agent.run-control.invalid-invocation", Assert.IsType<SunderRpcException>(fixture.State.LastInvocationFailure).Error.Code);
-        }
-        await Assert.ThrowsAsync<SunderRpcException>(async () =>
-        {
-            await foreach (var _ in foreign.SubscribeAsync(fixture.Source, "run-control", "stream-chat", RunJson(RunChatRequest(invocation)))) { }
-        });
+        await Assert.ThrowsAsync<SunderRpcException>(() => foreign.IsCurrentAsync(invocationId).AsTask());
+        await Assert.ThrowsAsync<SunderRpcException>(() => ReadRunControlStream(foreign, invocationId, RunChatRequest(), null, default));
         Assert.Equal(before, runtime.Calls);
+        Assert.Equal("agent.run-control.invalid-invocation", Assert.IsType<SunderRpcException>(fixture.State.LastInvocationFailure).Error.Code);
 
-        await VerifyRunControlCapabilitiesAsync(fixture, requests);
-        foreach (var method in new[] { "BuildInstructionContextAsync", "InvokeToolAsync", "InvokeToolsAsync", "RunDefaultAsync", "AcknowledgePromptContextAsync" })
+        await VerifyRunControlCapabilitiesAsync(fixture);
+        foreach (var call in new Func<CancellationToken, Task>[]
+        {
+            token => control.BuildInstructionContextAsync(invocationId, token).AsTask(),
+            token => control.InvokeToolAsync(invocationId, tool, runtime.Turn, token).AsTask(),
+            token => control.InvokeToolsAsync(invocationId, tools, runtime.Turn, token).AsTask(),
+            token => control.RunDefaultAsync(invocationId, runtime.Context, token).AsTask(),
+            token => control.AcknowledgePromptContextAsync(invocationId, [], token).AsTask(),
+        })
         {
             runtime.Block = true;
             runtime.Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
             using var cancellation = new CancellationTokenSource();
-            var pending = InvokeGeneratedClient(fixture.Client, method, requests.Single(value => value.Method == method).Request, cancellation.Token);
+            var pending = call(cancellation.Token);
             await runtime.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
             cancellation.Cancel();
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending.WaitAsync(TimeSpan.FromSeconds(5)));
         }
         runtime.Block = false;
         runtime.Failure = new SunderRpcException(new(SunderRpcErrorKind.Domain, "agent.run-control.capability-unavailable", "private unrelated domain error"));
-        var forged = await Assert.ThrowsAsync<SunderRpcException>(() => InvokeGeneratedClient(fixture.Client, "SaveCheckpointAsync",
-            requests.Single(value => value.Route == "save-checkpoint").Request));
+        var forged = await Assert.ThrowsAsync<SunderRpcException>(() => control.SaveCheckpointAsync(invocationId, AgentRunStatus.Completed, "Done").AsTask());
         Assert.Equal(SunderRpcErrorKind.ProviderFaulted, forged.Error.Kind);
         Assert.DoesNotContain("private unrelated", forged.Message, StringComparison.Ordinal);
         runtime.Failure = new IOException("private run storage failure");
-        var failure = await Assert.ThrowsAsync<SunderRpcException>(() => InvokeGeneratedClient(fixture.Client, "ListTurnsAsync", RunJson(invocation)));
+        var failure = await Assert.ThrowsAsync<SunderRpcException>(() => control.ListTurnsAsync(invocationId).AsTask());
         Assert.Equal(SunderRpcErrorKind.ProviderFaulted, failure.Error.Kind);
         Assert.DoesNotContain("private run storage", failure.Message, StringComparison.Ordinal);
         runtime.Failure = null;
         lease.Dispose();
         lease.Dispose();
         var finalCalls = runtime.Calls;
-        await Assert.ThrowsAsync<SunderRpcException>(() => InvokeGeneratedClient(fixture.Client, "IsCurrentAsync", RunJson(invocation)));
+        await Assert.ThrowsAsync<SunderRpcException>(() => control.IsCurrentAsync(invocationId).AsTask());
         Assert.Equal(finalCalls, runtime.Calls);
         Assert.Equal("agent.run-control.invalid-invocation", Assert.IsType<SunderRpcException>(fixture.State.LastInvocationFailure).Error.Code);
 
@@ -105,89 +134,58 @@ public sealed partial class AgentPublicSourceMigrationTests
         await VerifyRunControlPersistenceAsync(assembly, descriptor);
     }
 
-    private static async Task VerifyRunControlCapabilitiesAsync(RunControlFixture fixture, IReadOnlyList<(string Route, string Method, JsonElement Request)> requests)
+    private static async Task VerifyRunControlCapabilitiesAsync(RunControlFixture fixture)
     {
         var runtime = new RunControlProbe();
         using var lease = fixture.Registry.Open(runtime, RunControlCaller, out var invocationId);
-        foreach (var (route, method, original) in requests.Where(value => value.Route is "select-session-context" or "report-activity" or "get-run-budget"
-                     or "charge-run-budget" or "acknowledge-prompt-context" or "run-default"))
+        var control = fixture.Client;
+        foreach (var (call, code) in new (Func<Task> Call, string Code)[]
         {
-            var request = System.Text.Json.Nodes.JsonNode.Parse(original.GetRawText())!;
-            if (route == "get-run-budget") request["invocationId"] = invocationId;
-            else request["invocation"]!["invocationId"] = invocationId;
-            var json = RunJson(request);
-            var actual = await Assert.ThrowsAsync<SunderRpcException>(() => InvokeGeneratedClient(fixture.Client, method, json));
+            (() => control.SelectSessionContextAsync(invocationId, new([], true, 2)).AsTask(), "agent.run-control.capability-unavailable"),
+            (() => control.ReportActivityAsync(invocationId, AgentRunActivityKind.Reasoning, "Reasoning").AsTask(), "agent.run-control.capability-unavailable"),
+            (() => control.GetRunBudgetAsync(invocationId).AsTask(), "agent.run-control.capability-unavailable"),
+            (() => control.ChargeRunBudgetAsync(invocationId, new(2, 3, 4000)).AsTask(), "agent.run-control.capability-unavailable"),
+            (() => control.AcknowledgePromptContextAsync(invocationId, []).AsTask(), "agent.run-control.prompt-context-acknowledgment-unavailable"),
+            (() => control.RunDefaultAsync(invocationId, runtime.Context).AsTask(), "agent.run-control.default-loop-unavailable"),
+        })
+        {
+            var actual = await Assert.ThrowsAsync<SunderRpcException>(call);
             Assert.Equal(SunderRpcErrorKind.Domain, actual.Error.Kind);
-            Assert.Equal(route switch
-            {
-                "acknowledge-prompt-context" => "agent.run-control.prompt-context-acknowledgment-unavailable",
-                "run-default" => "agent.run-control.default-loop-unavailable",
-                _ => "agent.run-control.capability-unavailable",
-            }, actual.Error.Code);
+            Assert.Equal(code, actual.Error.Code);
         }
         Assert.Equal(0, runtime.Calls);
-        Assert.Equal("{}", (await InvokeGeneratedClient(fixture.Client, "DiscardPromptContextAsync", RunJson(new RunControlInvocation(invocationId)))).GetRawText());
+        await control.DiscardPromptContextAsync(invocationId);
     }
 
-    private static List<(string Route, string Method, JsonElement Request)> RunControlRequests(FullRunControlProbe runtime, RunControlInvocation invocation)
+    private static async Task<RunControlFixture> CreateRunControlFixture(System.Reflection.Assembly assembly, SunderRpcContractDescriptor descriptor)
     {
-        var checkpoint = runtime.Context.RunningCheckpoint;
-        var contextCheckpoint = new AgentSessionContextCheckpointRecord(Guid.NewGuid(), runtime.Turn.SessionId, Guid.NewGuid(), runtime.Turn.TurnId, 2, "Summary", "{details", checkpoint.CreatedAtUtc);
-        var tool = new AgentToolCallRequest("call.one", "tool.one", "{arguments");
-        return
-        [
-            ("is-current", "IsCurrentAsync", RunJson(invocation)),
-            ("list-turns", "ListTurnsAsync", RunJson(invocation)),
-            ("list-recent-turns", "ListRecentTurnsAsync", RunJson(new RunControlRecentTurnsRequest(invocation, 1000))),
-            ("build-instruction-context", "BuildInstructionContextAsync", RunJson(invocation)),
-            ("select-session-context", "SelectSessionContextAsync", RunJson(new RunControlSessionProjectionRequest(invocation, new([runtime.Turn], true, 2, contextCheckpoint)))),
-            ("report-activity", "ReportActivityAsync", RunJson(new RunControlActivityRequest(invocation, AgentRunActivityKind.Reasoning, "Reasoning 漢字"))),
-            ("get-run-budget", "GetRunBudgetAsync", RunJson(invocation)),
-            ("charge-run-budget", "ChargeRunBudgetAsync", RunJson(new RunControlBudgetChargeRequest(invocation, new(2, 3, 4000)))),
-            ("acknowledge-prompt-context", "AcknowledgePromptContextAsync", RunJson(new RunControlPromptContextRequest(invocation, [new("host.one", "context.one", "/workspace/AGENTS.md", new string('b', 64))]))),
-            ("discard-prompt-context", "DiscardPromptContextAsync", RunJson(invocation)),
-            ("list-ready-tools", "ListReadyToolsAsync", RunJson(invocation)),
-            ("save-checkpoint", "SaveCheckpointAsync", RunJson(new RunControlCheckpointRequest(invocation, AgentRunStatus.Completed, "Done"))),
-            ("log-event", "LogEventAsync", RunJson(new RunControlLogRequest(invocation, PackageLogLevel.Warning, "loop.event", "Message", 0,
-                new Dictionary<string, JsonElement> { ["null"] = RunJson((object?)null), ["array"] = RunJson(new object[] { false, 3, "漢字" }) }, "ignored.type", "ignored.message"))),
-            ("upsert-assistant-turn", "UpsertAssistantTurnAsync", RunJson(new RunControlAssistantTurnRequest(invocation, runtime.Turn, "Complete text"))),
-            ("complete-assistant-turn", "CompleteAssistantTurnAsync", RunJson(new RunControlCompleteTurnRequest(invocation, runtime.Turn))),
-            ("publish-lifecycle", "PublishLifecycleAsync", RunJson(new RunControlLifecycleRequest(invocation, AgentLifecycleEventKind.RunInterrupted, AgentRunStatus.Interrupted, runtime.Turn, checkpoint, true))),
-            ("invoke-tool", "InvokeToolAsync", RunJson(new RunControlToolRequest(invocation, tool, runtime.Turn))),
-            ("invoke-tools", "InvokeToolsAsync", RunJson(new RunControlToolsRequest(invocation, [tool, tool with { CallId = "call.two", ToolId = "tool.two" }], runtime.Turn))),
-            ("run-default", "RunDefaultAsync", RunJson(new RunControlDefaultLoopRequest(invocation, runtime.Context))),
-        ];
-    }
-
-    private static async Task<RunControlFixture> CreateRunControlFixture(Assembly assembly, SunderRpcContractDescriptor descriptor)
-    {
-        var registry = new AgentRunControlRegistry();
-        var type = assembly.GetType("Sunder.Package.Agent.Rpc.Public.RunControlService", true)!;
-        var implementation = Activator.CreateInstance(type, registry)!;
-        var registration = Assert.IsType<SunderWorkerProviderRegistration>(type.GetMethod("CreateSunderRpcProviderRegistration")!.Invoke(implementation, null));
+        var activeRuns = new AgentActiveRunRegistry();
+        var registry = new AgentRoleRunControls(assembly, activeRuns);
+        var implementation = new AgentRunControlService(activeRuns);
+        var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
+        var rpc = new RegressionTestRpcClient(state, RunControlCaller);
+        var receiver = new GeneratedServiceTestScope(rpc);
+        var registration = receiver.Register(implementation, descriptor.ContractId);
         Assert.Equal("agent.run.control", registration.ProviderId);
         Assert.Equal(descriptor.Sha256, registration.DescriptorSha256);
         Assert.Equal(descriptor.AbiSha256, registration.AbiSha256);
-        var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        var rpc = new RegressionTestRpcClient(state, RunControlCaller);
         state.Add("sunder.package.agent", descriptor, implementation, registration.Handler, EmptyDisposable.Instance, registration.ProviderId, "2.0.0");
-        var providers = (await rpc.DiscoverAsync(descriptor.ContractId)).Providers;
-        var endpoint = providers.Single(value => value.ProviderId == registration.ProviderId).Endpoint;
+        var endpoint = (await rpc.DiscoverAsync(descriptor.ContractId)).Providers.Single(value => value.ProviderId == registration.ProviderId).Endpoint;
+        var client = Assert.Single((await receiver.Providers<AgentServices.IRunControlService>().ListAsync()).Providers).Service;
         var scope = await rpc.CreateCallScopeAsync();
-        var client = Activator.CreateInstance(assembly.GetType("Sunder.Generated.Rpc.RunControl.RunControlClient", true)!, scope, endpoint)!;
-        return new(state, rpc, scope, client, registry, endpoint);
+        return new(state, rpc, scope, receiver, client, registry, endpoint);
     }
 
-    private sealed class RunControlFixture(RegressionTestRpcState state, RegressionTestRpcClient rpc, ISunderRpcCallScope scope, object client,
-        AgentRunControlRegistry registry, SunderRpcEndpointReference source) : IAsyncDisposable
+    private sealed class RunControlFixture(RegressionTestRpcState state, RegressionTestRpcClient rpc, ISunderRpcCallScope scope, GeneratedServiceTestScope receiver,
+        AgentServices.IRunControlService client, AgentRoleRunControls registry, SunderRpcEndpointReference source) : IAsyncDisposable
     {
         public RegressionTestRpcState State { get; } = state;
         public RegressionTestRpcClient Rpc { get; } = rpc;
         public ISunderRpcCallScope Scope { get; } = scope;
-        public object Client { get; } = client;
-        public AgentRunControlRegistry Registry { get; } = registry;
+        public AgentServices.IRunControlService Client { get; } = client;
+        public AgentRoleRunControls Registry { get; } = registry;
         public SunderRpcEndpointReference Source { get; } = source;
-        public async ValueTask DisposeAsync() { await Scope.DisposeAsync(); State.Dispose(); }
+        public async ValueTask DisposeAsync() { await Scope.DisposeAsync(); await receiver.DisposeAsync(); State.Dispose(); }
     }
 
     private static JsonElement RunJson<T>(T value) => JsonSerializer.SerializeToElement(value, ExecutionJson);

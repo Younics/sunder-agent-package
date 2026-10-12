@@ -1,13 +1,12 @@
 using System.Security.Cryptography;
 using System.Text;
-using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Tools.Files;
 
-internal sealed partial class ScopedInstructionContextService(IPackageContext packageContext) : IAgentSessionDataCleaner
+internal sealed partial class ScopedInstructionContextService(IPackageContext packageContext)
 {
     private const int MaxMutationPaths = 64;
     private const int MaxRenderedDocuments = 20;
@@ -23,7 +22,7 @@ internal sealed partial class ScopedInstructionContextService(IPackageContext pa
         => _store.Delete(sessionId);
 
     public async ValueTask<IReadOnlyList<AgentPromptContextBlock>> BuildPromptContextAsync(
-        IAgentExecutionTarget target,
+        FileExecutionTarget target,
         AgentPromptContextRequest request,
         CancellationToken cancellationToken)
     {
@@ -32,9 +31,7 @@ internal sealed partial class ScopedInstructionContextService(IPackageContext pa
             return [];
         }
         if (!FilesExecutionFacets.SupportsFacet(target, AgentExecutionFacetIds.ScopedInstructionDiscovery)
-            || target is not IAgentScopedInstructionDiscoveryTarget discoveryTarget
-            || !FilesExecutionFacets.SupportsFacet(target, AgentExecutionFacetIds.ExecutionScope)
-            || target is not IAgentExecutionScopeProvider scopeProvider)
+            || !FilesExecutionFacets.SupportsFacet(target, AgentExecutionFacetIds.ExecutionScope))
         {
             throw new InvalidOperationException("The selected execution target does not provide the scoped-instruction discovery required by first-party Files enforcement.");
         }
@@ -54,7 +51,7 @@ internal sealed partial class ScopedInstructionContextService(IPackageContext pa
             request.Profile?.ProfileId,
             request.Workspace!,
             request.ExecutionBinding!);
-        var scope = await scopeProvider.GetExecutionScopeAsync(targetContext, cancellationToken).ConfigureAwait(false);
+        var scope = await target.Service.ExecutionScopeAsync(targetContext, cancellationToken).ConfigureAwait(false);
         var rootPaths = scope.WorkspacePaths
             .Where(path => !string.IsNullOrWhiteSpace(path))
             .Distinct(StringComparer.Ordinal)
@@ -71,8 +68,8 @@ internal sealed partial class ScopedInstructionContextService(IPackageContext pa
         var tentativeClaims = matchedState?.Claims ?? [];
         var pendingProbes = matchedState?.PendingAccessProbes ?? [];
         var probes = rootPaths
-            .Select(path => new AgentScopedInstructionProbe(path, IsDirectory: true))
-            .Concat(tentativeClaims.Select(claim => new AgentScopedInstructionProbe(claim.Directory, IsDirectory: true)))
+            .Select(path => new AgentScopedInstructionProbe { Path = path, IsDirectory = true, FollowFinalSymbolicLink = true })
+            .Concat(tentativeClaims.Select(claim => new AgentScopedInstructionProbe { Path = claim.Directory, IsDirectory = true, FollowFinalSymbolicLink = true }))
             .Concat(pendingProbes.Select(probe => probe.ToProbe()))
             .DistinctBy(ProbeKey)
             .ToArray();
@@ -82,7 +79,7 @@ internal sealed partial class ScopedInstructionContextService(IPackageContext pa
         }
 
         var discovery = await DiscoverBatchedAsync(
-            discoveryTarget,
+            target,
             targetContext,
             probes,
             cancellationToken).ConfigureAwait(false);
@@ -166,7 +163,7 @@ internal sealed partial class ScopedInstructionContextService(IPackageContext pa
     }
 
     public async ValueTask<AgentToolResult?> PreflightMutationAsync(
-        IAgentExecutionTarget target,
+        FileExecutionTarget target,
         AgentToolExecutionContext context,
         AgentToolRequest request,
         IReadOnlyList<AgentScopedInstructionProbe> probes,
@@ -184,8 +181,7 @@ internal sealed partial class ScopedInstructionContextService(IPackageContext pa
         {
             return null;
         }
-        if (!FilesExecutionFacets.SupportsFacet(target, AgentExecutionFacetIds.ScopedInstructionDiscovery)
-            || target is not IAgentScopedInstructionDiscoveryTarget discoveryTarget)
+        if (!FilesExecutionFacets.SupportsFacet(target, AgentExecutionFacetIds.ScopedInstructionDiscovery))
         {
             return DeferredError(
                 request.ToolId,
@@ -236,7 +232,7 @@ internal sealed partial class ScopedInstructionContextService(IPackageContext pa
             await SaveIfChangedAsync(loaded, stagedState!, cancellationToken).ConfigureAwait(false);
             var discoveryProbes = stagedState!.PendingAccessProbes.Select(probe => probe.ToProbe()).ToArray();
             var discovery = await DiscoverBatchedAsync(
-                discoveryTarget,
+                target,
                 targetContext,
                 discoveryProbes,
                 cancellationToken).ConfigureAwait(false);
@@ -288,15 +284,11 @@ internal sealed partial class ScopedInstructionContextService(IPackageContext pa
                 content.Append("- ").AppendLine(path);
             }
 
-            return new AgentToolResult(
-                request.ToolId,
-                "File mutation deferred until scoped AGENTS.md context is refreshed.",
-                Content: content.ToString().TrimEnd(),
-                WasTruncated: update.UnpresentedDocumentPaths.Count > changedPaths.Length,
-                IsError: true,
-                ErrorCode: "files-prompt-context-refresh-required",
-                BackendId: FileToolResult.BackendId(target))
+            return FileToolResult.Error(request.ToolId, "File mutation deferred until scoped AGENTS.md context is refreshed.",
+                "files-prompt-context-refresh-required") with
             {
+                Content = content.ToString().TrimEnd(), WasTruncated = update.UnpresentedDocumentPaths.Count > changedPaths.Length,
+                BackendId = FileToolResult.BackendId(target),
                 RequiresPromptContextRefresh = true,
             };
         }
@@ -315,7 +307,7 @@ internal sealed partial class ScopedInstructionContextService(IPackageContext pa
     }
 
     public async ValueTask<ScopedInstructionAccessClaimResult> ClaimAfterAccessAsync(
-        IAgentExecutionTarget target,
+        FileExecutionTarget target,
         AgentToolExecutionContext context,
         IReadOnlyList<AgentScopedInstructionProbe> probes,
         CancellationToken cancellationToken)
@@ -329,8 +321,7 @@ internal sealed partial class ScopedInstructionContextService(IPackageContext pa
         {
             throw new InvalidOperationException($"Scoped instruction discovery supports at most {MaxMutationPaths} probes per batch.");
         }
-        if (!FilesExecutionFacets.SupportsFacet(target, AgentExecutionFacetIds.ScopedInstructionDiscovery)
-            || target is not IAgentScopedInstructionDiscoveryTarget discoveryTarget)
+        if (!FilesExecutionFacets.SupportsFacet(target, AgentExecutionFacetIds.ScopedInstructionDiscovery))
         {
             throw new InvalidOperationException("The selected execution target does not support required scoped-instruction discovery.");
         }
@@ -364,7 +355,7 @@ internal sealed partial class ScopedInstructionContextService(IPackageContext pa
         await SaveIfChangedAsync(loaded, stagedState!, cancellationToken).ConfigureAwait(false);
         var discoveryProbes = stagedState!.PendingAccessProbes.Select(probe => probe.ToProbe()).ToArray();
         var discovery = await DiscoverBatchedAsync(
-            discoveryTarget,
+            target,
             targetContext,
             discoveryProbes,
             cancellationToken).ConfigureAwait(false);
@@ -420,7 +411,7 @@ internal sealed partial class ScopedInstructionContextService(IPackageContext pa
         AgentWorkspaceRecord workspace,
         AgentWorkspaceBindingRecord binding,
         string? expectedConfigurationGeneration = null)
-        => new(sessionId, profileId, workspace, binding, AllowOutsideConfiguredScope: false)
+        => FileExecutionTarget.Context(sessionId, profileId, workspace, binding) with
         {
             ExpectedConfigurationGeneration = expectedConfigurationGeneration,
         };
@@ -429,7 +420,7 @@ internal sealed partial class ScopedInstructionContextService(IPackageContext pa
         Guid sessionId,
         AgentWorkspaceRecord workspace,
         AgentWorkspaceBindingRecord binding,
-        IAgentExecutionTarget target,
+        FileExecutionTarget target,
         long transcriptEpoch,
         AgentScopedInstructionDiscoveryResult discovery)
         => new(
@@ -449,7 +440,7 @@ internal sealed partial class ScopedInstructionContextService(IPackageContext pa
         Guid sessionId,
         AgentWorkspaceRecord workspace,
         AgentWorkspaceBindingRecord binding,
-        IAgentExecutionTarget target,
+        FileExecutionTarget target,
         long transcriptEpoch)
         => state is not null
            && MatchesStaticIdentity(state, sessionId, workspace, binding, target, transcriptEpoch)
@@ -494,7 +485,7 @@ internal sealed partial class ScopedInstructionContextService(IPackageContext pa
         Guid sessionId,
         AgentWorkspaceRecord workspace,
         AgentWorkspaceBindingRecord binding,
-        IAgentExecutionTarget target,
+        FileExecutionTarget target,
         long transcriptEpoch)
         => state.SessionId == sessionId
            && state.TranscriptEpoch == transcriptEpoch
@@ -508,7 +499,7 @@ internal sealed partial class ScopedInstructionContextService(IPackageContext pa
         Guid sessionId,
         AgentWorkspaceRecord workspace,
         AgentWorkspaceBindingRecord binding,
-        IAgentExecutionTarget target,
+        FileExecutionTarget target,
         long transcriptEpoch,
         AgentScopedInstructionDiscoveryResult discovery)
         => MatchesStaticIdentity(state, sessionId, workspace, binding, target, transcriptEpoch)
@@ -689,21 +680,15 @@ internal sealed partial class ScopedInstructionContextService(IPackageContext pa
         var blocks = documents.Select(document =>
         {
             var rendered = $"Instruction file: {document.Path}\nScope root: {document.ScopeRoot}\nApplies only to directory subtree: {document.AppliesToDirectory}\n\n{document.Content}";
-            return new AgentPromptContextBlock(
-                $"Scoped AGENTS.md: {document.AppliesToDirectory}",
-                rendered,
-                Priority: 180 + Math.Min(64, GetScopeDepth(document)),
-                SourceId: FileToolDescriptorRegistry.SourceId,
-                Provenance: AgentContextProvenance.Tool,
-                Trust: AgentContextTrust.Untrusted)
+            return new AgentPromptContextBlock
             {
+                Title = $"Scoped AGENTS.md: {document.AppliesToDirectory}", Content = rendered,
+                Priority = 180 + Math.Min(64, GetScopeDepth(document)), SourceId = FileToolDescriptorRegistry.SourceId,
+                Provenance = AgentContextProvenance.Tool, Trust = AgentContextTrust.Untrusted,
+                Authority = AgentPromptContextAuthority.Reference, HostIdentity = null,
                 Usage = AgentPromptContextUsage.ScopedInstruction,
-                Scope = new AgentPromptContextScope(
-                    document.ScopeRoot,
-                    document.AppliesToDirectory,
-                    document.Path,
-                    document.ContentHash,
-                    contextIdentity),
+                Scope = new() { ScopeRoot = document.ScopeRoot, AppliesToDirectory = document.AppliesToDirectory,
+                    DocumentPath = document.Path, ContentHash = document.ContentHash, ContextIdentity = contextIdentity },
             };
         }).ToArray();
         if (blocks.Sum(block => block.Content.Length) > MaxRenderedChars)
@@ -762,13 +747,9 @@ internal sealed partial class ScopedInstructionContextService(IPackageContext pa
         string message,
         string errorCode,
         bool requiresRefresh)
-        => new(
-            toolId,
-            message,
-            Content: $"### File mutation not dispatched\n\n{message}",
-            IsError: true,
-            ErrorCode: errorCode)
+        => FileToolResult.Error(toolId, message, errorCode) with
         {
+            Content = $"### File mutation not dispatched\n\n{message}",
             RequiresPromptContextRefresh = requiresRefresh,
         };
 }

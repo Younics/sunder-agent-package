@@ -21,11 +21,9 @@ internal static class LocalCommandRunner
             cancellationToken);
         if (run.StartException is not null)
         {
-            return new AgentShellCommandResult(
-                127,
-                BuildStartFailureMessage(startInfo, workingDirectory, executableResolution, run.StartException),
-                TimedOut: false,
-                WorkingDirectory: workingDirectory);
+            return new AgentShellCommandResult { ExitCode = 127,
+                Output = BuildStartFailureMessage(startInfo, workingDirectory, executableResolution, run.StartException),
+                TimedOut = false, WorkingDirectory = workingDirectory, WasTruncated = false };
         }
 
         var output = ProcessOutput.Format(
@@ -35,20 +33,12 @@ internal static class LocalCommandRunner
             stripAnsiEscapeSequences: true);
         if (run.TimedOut)
         {
-            return new AgentShellCommandResult(
-                124,
-                output.Content,
-                TimedOut: true,
-                WorkingDirectory: workingDirectory,
-                WasTruncated: output.WasTruncated);
+            return new AgentShellCommandResult { ExitCode = 124, Output = output.Content,
+                TimedOut = true, WorkingDirectory = workingDirectory, WasTruncated = output.WasTruncated };
         }
 
-        return new AgentShellCommandResult(
-            run.ExitCode,
-            output.Content,
-            TimedOut: false,
-            WorkingDirectory: workingDirectory,
-            WasTruncated: output.WasTruncated);
+        return new AgentShellCommandResult { ExitCode = run.ExitCode, Output = output.Content,
+            TimedOut = false, WorkingDirectory = workingDirectory, WasTruncated = output.WasTruncated };
     }
 
     public static void ApplyPathEnvironment(ProcessStartInfo startInfo, IReadOnlyList<string> pathEntries)

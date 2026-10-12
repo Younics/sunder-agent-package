@@ -17,5 +17,6 @@ public sealed record AgentFileMutationResult(
     /// <summary>Gets a transient receipt for the exact state created by the mutation, when requested by the caller.</summary>
     /// <remarks>The receipt can carry process-local authority and must not be persisted.</remarks>
     [System.Text.Json.Serialization.JsonIgnore]
+    [Sunder.Sdk.Services.SunderServiceMember]
     public AgentResolvedResource? PostMutationResource { get; init; }
 }

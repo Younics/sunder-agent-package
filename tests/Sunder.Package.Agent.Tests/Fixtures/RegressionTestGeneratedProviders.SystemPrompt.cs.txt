@@ -1,0 +1,13 @@
+using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using Sunder.Sdk.Services;
+
+namespace RegressionTestGeneratedProviders;
+
+[SunderServiceProvider(typeof(ISystemPromptContributorService), ProviderId = "fixture.regression.system.prompt")]
+public sealed partial class SystemPromptProvider(Func<string, Type, object?[], CancellationToken, object> invoke) : ISystemPromptContributorService
+{
+    private ValueTask<T> Reply<T>(string operation, object?[] arguments, CancellationToken token) => (ValueTask<T>)invoke(operation, typeof(T), arguments, token);
+    public ValueTask<AgentServiceIdentity> DescribeAsync(CancellationToken token = default) => Reply<AgentServiceIdentity>(nameof(DescribeAsync), [], token);
+    public ValueTask<IReadOnlyList<AgentSystemPromptBlock>> ContributeAsync(AgentSystemPromptRequest request, CancellationToken token = default) => Reply<IReadOnlyList<AgentSystemPromptBlock>>(nameof(ContributeAsync), [request], token);
+}

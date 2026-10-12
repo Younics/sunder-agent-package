@@ -69,75 +69,50 @@ internal sealed class AgentRunPreparationService(
         }
 
         session = SynchronizeSessionProfile(session, profile);
-        var providerSelection = _providerResolver.ResolveChatProvider(profile);
-        var selectionTransferred = false;
-        try
+        var providerSelection = await _providerResolver.ResolveChatProviderAsync(profile, cancellationToken).ConfigureAwait(false);
+        LogRunStarted(reservedRun, profile, workspace, providerSelection.ChatBinding);
+        if (!providerSelection.IsAvailable
+            || providerSelection.ChatBinding is null
+            || string.IsNullOrWhiteSpace(providerSelection.ChatBinding.ModelId))
         {
-            LogRunStarted(reservedRun, profile, workspace, providerSelection.ChatBinding);
-            if (!providerSelection.IsAvailable
-                || providerSelection.ChatBinding is null
-                || string.IsNullOrWhiteSpace(providerSelection.ChatBinding.ModelId))
-            {
-                _runEventLogger.LogRunEvent(
-                    PackageLogLevel.Error,
-                    session.SessionId,
-                    reservedRun.Key.RunId,
-                    reservedRun.Key.RunRevision,
-                    "run.failed",
-                    MissingProviderSummary,
-                    ElapsedMilliseconds(reservedRun));
-                return Failed(MissingProviderSummary);
-            }
-
-            var chatBinding = providerSelection.ChatBinding;
-            var readinessFailure = await CheckReadinessAsync(
+            _runEventLogger.LogRunEvent(
+                PackageLogLevel.Error,
                 session.SessionId,
-                reservedRun,
-                providerSelection,
-                chatBinding,
-                cancellationToken).ConfigureAwait(false);
-            if (readinessFailure is not null)
-            {
-                return Failed(readinessFailure);
-            }
-
-            var metadataResult = await ResolveMetadataAsync(
-                session.SessionId,
-                reservedRun,
-                providerSelection,
-                cancellationToken).ConfigureAwait(false);
-            if (metadataResult.FailureSummary is not null)
-            {
-                return Failed(metadataResult.FailureSummary);
-            }
-
-            var metadata = metadataResult.Metadata!;
-            selectionTransferred = true;
-            return new AgentRunPrepared(new AgentRunPlan(
-                reservedRun.Key,
-                runHandle,
-                reservedRun.StartedAtUtc,
-                session,
-                profile,
-                workspace,
-                providerSelection,
-                chatBinding,
-                metadata.RunCapabilities,
-                metadata.ModelVariant,
-                metadata.ModelSpeedOption,
-                metadata.ModelModeOption,
-                attachments.ToArray(),
-                reservedRun.UserMessage,
-                rollbackAnchorTurnId,
-                shouldGenerateSessionTitle));
+                reservedRun.Key.RunId,
+                reservedRun.Key.RunRevision,
+                "run.failed",
+                MissingProviderSummary,
+                ElapsedMilliseconds(reservedRun));
+            return Failed(MissingProviderSummary);
         }
-        finally
-        {
-            if (!selectionTransferred)
-            {
-                providerSelection.Dispose();
-            }
-        }
+
+        var chatBinding = providerSelection.ChatBinding;
+        var readinessFailure = await CheckReadinessAsync(
+            session.SessionId, reservedRun, providerSelection, chatBinding, cancellationToken).ConfigureAwait(false);
+        if (readinessFailure is not null) return Failed(readinessFailure);
+
+        var metadataResult = await ResolveMetadataAsync(
+            session.SessionId, reservedRun, providerSelection, cancellationToken).ConfigureAwait(false);
+        if (metadataResult.FailureSummary is not null) return Failed(metadataResult.FailureSummary);
+
+        var metadata = metadataResult.Metadata!;
+        return new AgentRunPrepared(new AgentRunPlan(
+            reservedRun.Key,
+            runHandle,
+            reservedRun.StartedAtUtc,
+            session,
+            profile,
+            workspace,
+            providerSelection,
+            chatBinding,
+            metadata.RunCapabilities,
+            metadata.ModelVariant,
+            metadata.ModelSpeedOption,
+            metadata.ModelModeOption,
+            attachments.ToArray(),
+            reservedRun.UserMessage,
+            rollbackAnchorTurnId,
+            shouldGenerateSessionTitle));
     }
 
     private async Task<string?> CheckReadinessAsync(
@@ -162,9 +137,7 @@ internal sealed class AgentRunPreparationService(
                     ["provider.id"] = selection.Descriptor!.ProviderId,
                     ["model.id"] = chatBinding.ModelId,
                 });
-            var readiness = await selection.InvokeAsync(
-                cancellationToken,
-                static (provider, token) => provider.GetReadinessAsync(token)).ConfigureAwait(false);
+            var readiness = await selection.Provider!.Service.GetReadinessAsync(cancellationToken).ConfigureAwait(false);
             _runEventLogger.LogRunEvent(
                 PackageLogLevel.Debug,
                 sessionId,

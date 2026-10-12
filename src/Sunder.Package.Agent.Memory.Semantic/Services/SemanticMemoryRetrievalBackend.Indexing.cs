@@ -188,7 +188,7 @@ public sealed partial class SemanticMemoryRetrievalBackend
                     throw new InvalidOperationException(
                         $"Embedding provider returned an invalid result for memory '{batch[index].Memory.MemoryId}'.");
                 }
-                expectedDimensions ??= result!.Dimensions;
+                expectedDimensions ??= result!.Values.Count;
                 validatedResults[index] = result!;
             }
 
@@ -207,7 +207,7 @@ public sealed partial class SemanticMemoryRetrievalBackend
                     resolved.ProviderId,
                     resolved.ModelId,
                     batch[index].CanonicalTextHash,
-                    result.Dimensions,
+                    result.Values.Count,
                     result.Values,
                     existing?.CreatedAtUtc ?? now,
                     now)

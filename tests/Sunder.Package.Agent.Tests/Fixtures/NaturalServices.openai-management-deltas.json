@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Authenticated pre-natural OpenAI owner management port; historical data only.",
+  "sources": [
+    {
+      "path": "src/Sunder.Package.Agent.Provider.OpenAI/Management/OpenAiManagementModels.cs",
+      "currentSha256": "9752071e283f6ba1e114bf59c4c066edcf6138e112bf8b92064cbb4304d2c773",
+      "beforeSha256": "9dce61eedce51b2803bce2fbc63b9b18c068677a759abe3ff903aff948345d02",
+      "indexBlob": "145a2c571c6595962a3981ab31506061e3bece72",
+      "provenance": "git-index-blob",
+      "textChunks": [
+        "H4sIAAAAAAAC/71Sy0oDMRTdz1dk2UKZH9BWhqloF6WlU92Ii2typg2T3pQk4wPx381MSgVFKFjMIoRzz32dE6Yd/J4kRNWygsuXJBvaIC824JAvnX3WHbzY",
+        "g4vZRZY9HHiVag5czZs8gYfc0iqsrMHgdGpebclBDR8zzQGOyQgPMlDCQVqnRN9fF23YxpejoC2v4FsTBpmI58laI2a+tMyQAWr0hd6SL0luoSp4H9NSaEoB",
+        "a73Doq49wpW4ft1rB1+EuyATwwcXx40R56ybx9w4rhgLbo0Z/qcO/aPuHJolERYvDDcnjmm76FFpdLyz937oezIt1uSby18Fm4gbhA6vAoXWF/6NZRKxOyWx",
+        "hDE9f20bsJA/kLFQqCmW6nQ4uetUe5ns6cLnbdsZPemdjuJFNTSZ1OAsdSuE73WPg6dfIuQxPjrvTqUBub9u9ZF9AivRc0vnAwAA"
+      ]
+    }
+  ]
+}

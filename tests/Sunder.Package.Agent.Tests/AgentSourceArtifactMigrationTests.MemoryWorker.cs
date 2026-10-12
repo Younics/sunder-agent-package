@@ -34,7 +34,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.True(store.GetProperty("activation").GetBoolean());
             Assert.False(store.GetProperty("lifecycle").GetBoolean());
             Assert.Equal("packageContext", Assert.Single(store.GetProperty("arguments").EnumerateArray()).GetProperty("name").GetString());
-            Assert.Equal(new[] { prefix + "MemoryLocalStore", prefix + "Rpc.SemanticMemoryRpcCatalog", prefix + "Services.SemanticMemoryIndexingBackgroundService" },
+            Assert.Equal(new[] { prefix + "MemoryLocalStore", prefix + "Services.SemanticModelRuntimeResolver", prefix + "Services.SemanticMemoryIndexingBackgroundService" },
                 services.Where(service => service.GetProperty("activation").GetBoolean() || service.GetProperty("lifecycle").GetBoolean())
                     .Select(service => service.GetProperty("type").GetString()));
         }

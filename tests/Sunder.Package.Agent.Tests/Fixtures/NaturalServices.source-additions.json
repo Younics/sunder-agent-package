@@ -1,0 +1,150 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Exact current-source guards for paths absent from authenticated HEAD and index; omit only from the historical source view.",
+  "sources": [
+    {
+      "path": "src/Sunder.Package.Agent.Builder/Runtime/BuilderContent.cs",
+      "currentSha256": "22919557bb7fa974373e9609e76488ca00ed51f95f14951e321fdc8f0b5855fd",
+      "headCommit": "1ca6dcf7cf85e41bd93292c7833ad53eb48bccaa",
+      "provenance": "git-head-and-index-absence"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Builder/Runtime/BuilderRuntimeService.cs",
+      "currentSha256": "9c8cc5ecf2fd368eaa8045617a7af9dd1e2590d5952eddd38a2efe03cff32709",
+      "headCommit": "1ca6dcf7cf85e41bd93292c7833ad53eb48bccaa",
+      "provenance": "git-head-and-index-absence"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Execution.Docker/DockerExecutionPresentationService.cs",
+      "currentSha256": "2848c89d0a0b4facf8b48c8d876db5379c8ec3b313a93440a94e9f0f8eecf906",
+      "headCommit": "1ca6dcf7cf85e41bd93292c7833ad53eb48bccaa",
+      "provenance": "git-head-and-index-absence"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Execution.Docker/Runtime/DockerPresentationContent.cs",
+      "currentSha256": "51c2fd8861fe1fcf56e1a444d03c67d903ad121ad0bea471f13623e57ac0acfb",
+      "headCommit": "1ca6dcf7cf85e41bd93292c7833ad53eb48bccaa",
+      "provenance": "git-head-and-index-absence"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Execution.Local/LocalExecutionPresentationService.cs",
+      "currentSha256": "77c628c20efb274c3de39e65c9956a137900f5597f252031719c5c64b35e5ea2",
+      "headCommit": "1ca6dcf7cf85e41bd93292c7833ad53eb48bccaa",
+      "provenance": "git-head-and-index-absence"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Mcp/Runtime/McpManagementService.cs",
+      "currentSha256": "feaecebe56e5a294b8728e915f0c05f8e034f743c4a47165f271b66e269523fd",
+      "headCommit": "1ca6dcf7cf85e41bd93292c7833ad53eb48bccaa",
+      "provenance": "git-head-and-index-absence"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Memory.Semantic/MemoryInspectorService.Service.cs",
+      "currentSha256": "e0c283c693912487ea770acb85a069f5c82f2bdd13ca9df3c9f9cf0accafc049",
+      "headCommit": "1ca6dcf7cf85e41bd93292c7833ad53eb48bccaa",
+      "provenance": "git-head-and-index-absence"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Memory.Semantic/Runtime/ProjectionContent.cs",
+      "currentSha256": "91e778ee3003439ffc8895fd7ee52f4d412749dd8d5ccc6d64bd6344fe36644a",
+      "headCommit": "1ca6dcf7cf85e41bd93292c7833ad53eb48bccaa",
+      "provenance": "git-head-and-index-absence"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.OpenAI/Management/OpenAiManagementService.cs",
+      "currentSha256": "8d90d6c786ae92ad39757f8a4d6f75885608370769d31de2e5e0726c46eaa91a",
+      "headCommit": "1ca6dcf7cf85e41bd93292c7833ad53eb48bccaa",
+      "provenance": "git-head-and-index-absence"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.Shared/ProviderChatStream.cs",
+      "currentSha256": "d77a5f5be178caf888f3154d65b1861ae667c7e65562471d262587cb71c9a1a0",
+      "headCommit": "1ca6dcf7cf85e41bd93292c7833ad53eb48bccaa",
+      "provenance": "git-head-and-index-absence"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.Shared/ProviderChatValues.cs",
+      "currentSha256": "81e1462f136f40c6a601e99fc0183132b5a717e54d9c2999df92f955f716d8c2",
+      "headCommit": "1ca6dcf7cf85e41bd93292c7833ad53eb48bccaa",
+      "provenance": "git-head-and-index-absence"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Skills/Runtime/SkillProjectionContent.cs",
+      "currentSha256": "4571721ef41de718484fb1bf5fc99fed4dcc2452efc01c80d8348f632553faaf",
+      "headCommit": "1ca6dcf7cf85e41bd93292c7833ad53eb48bccaa",
+      "provenance": "git-head-and-index-absence"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Subagents/Runtime/SubagentManagementService.cs",
+      "currentSha256": "887ffed145468ae1f0f497aecff7a344b81b5eb806981c0be16a72ba229ba029",
+      "headCommit": "1ca6dcf7cf85e41bd93292c7833ad53eb48bccaa",
+      "provenance": "git-head-and-index-absence"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Subagents/Runtime/SubagentProjectionContent.cs",
+      "currentSha256": "e5b7f0194bdfc60b5a43601752121c1b19186c26a87d97a58ee73b2994637405",
+      "headCommit": "1ca6dcf7cf85e41bd93292c7833ad53eb48bccaa",
+      "provenance": "git-head-and-index-absence"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Subagents/Runtime/SubsessionTranscriptReader.cs",
+      "currentSha256": "56d03bd22c2a25a56a4178aaa7b070f3aa47a2f925430bd80bcc4de62f1edd80",
+      "headCommit": "1ca6dcf7cf85e41bd93292c7833ad53eb48bccaa",
+      "provenance": "git-head-and-index-absence"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Subagents/Services/SubagentCatalogSelection.cs",
+      "currentSha256": "2b001b2f202c5520fef3f18b7044535b387fb8c3fa5dae8b4ed070d854703ba5",
+      "headCommit": "1ca6dcf7cf85e41bd93292c7833ad53eb48bccaa",
+      "provenance": "git-head-and-index-absence"
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Tools.Files/Runtime/FileExecutionTarget.cs",
+      "currentSha256": "8042ed1a293982134f687b0a5f0588e8a1357444dbf12dba7184623d3b82c56d",
+      "headCommit": "1ca6dcf7cf85e41bd93292c7833ad53eb48bccaa",
+      "provenance": "git-head-and-index-absence"
+    },
+    {
+      "path": "src/Sunder.Package.Agent/Models/Extensions/AgentRuntimeCatalogEvent.cs",
+      "currentSha256": "9d7bdadacaea5e9f8bab810fa889e5a2d12c682ead8032f6286216672cddbae9",
+      "headCommit": "1ca6dcf7cf85e41bd93292c7833ad53eb48bccaa",
+      "provenance": "git-head-and-index-absence"
+    },
+    {
+      "path": "src/Sunder.Package.Agent/Models/Providers/AgentChatModels.cs",
+      "currentSha256": "e1e7266a4d8bb786c6d0019c5bc322cca1a6165b19f3bbdad4b1a00eedb6531d",
+      "headCommit": "1ca6dcf7cf85e41bd93292c7833ad53eb48bccaa",
+      "provenance": "git-head-and-index-absence"
+    },
+    {
+      "path": "src/Sunder.Package.Agent/Models/Tools/AgentObservedToolExecutionEvent.cs",
+      "currentSha256": "37fa848aa6bf5f0bdd6b23822662a970ce598c50f58b4ee0b0eea33eaae0170c",
+      "headCommit": "1ca6dcf7cf85e41bd93292c7833ad53eb48bccaa",
+      "provenance": "git-head-and-index-absence"
+    },
+    {
+      "path": "src/Sunder.Package.Agent/Services/AgentChatFailureProjection.cs",
+      "currentSha256": "42d05fb677bf22031dad9bb29f0a87853dd5f028343bf1159863716377892ef6",
+      "headCommit": "1ca6dcf7cf85e41bd93292c7833ad53eb48bccaa",
+      "provenance": "git-head-and-index-absence"
+    },
+    {
+      "path": "src/Sunder.Package.Agent/Services/AgentChatMapper.cs",
+      "currentSha256": "2524ffb3161d6f0da2a3d46e32953e69769dd8d8d4fa77ed6e2f564298e94f70",
+      "headCommit": "1ca6dcf7cf85e41bd93292c7833ad53eb48bccaa",
+      "provenance": "git-head-and-index-absence"
+    },
+    {
+      "path": "src/Sunder.Package.Agent/Services/AgentProfileService.Observation.cs",
+      "currentSha256": "e3e2bae10903cb09aca5b471a369e1491385a12fa272f8ddb40e52258fe6c1a7",
+      "headCommit": "1ca6dcf7cf85e41bd93292c7833ad53eb48bccaa",
+      "provenance": "git-head-and-index-absence"
+    },
+    {
+      "path": "src/Sunder.Package.Agent/Services/AgentRunControlService.cs",
+      "currentSha256": "f226d7b5e7290c6712dfbc0b785c0f8631d93c26ac7e95fe037add7965f8e4ed",
+      "headCommit": "1ca6dcf7cf85e41bd93292c7833ad53eb48bccaa",
+      "provenance": "git-head-and-index-absence"
+    }
+  ]
+}

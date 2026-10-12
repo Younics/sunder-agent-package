@@ -19,8 +19,10 @@ extern alias SubagentsWorker;
 extern alias AgentApp;
 using AgentApp::Sunder.Package.Agent.Runtime;
 using SubagentsWorker::Sunder.Package.Agent.Subagents.Runtime;
-using SubagentModels = SubagentsWorker::Sunder.Package.Agent.Contracts.Models;
+using SubagentModels = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
 using WorkerRuntime = Sunder.Package.Agent.Runtime;
+using AgentAppServices = AgentApp::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 public sealed class AgentRuntimeTransportLimitTests
 {
@@ -406,7 +408,7 @@ public sealed class AgentRuntimeTransportLimitTests
         Assert.Contains(Assert.Single(fitted.Turns).Items, item => item.ItemId == requestedItemId);
 
         var subsession = SubsessionAroundTurnPayload.Fit(
-            new SubsessionAroundTurnPage([AgentRoleBoundary.As<SubagentModels.AgentTurnRecord>(turn)], true, true, turnId),
+            new SubsessionAroundTurnPage([ToSubagentTurn(turn)], true, true, turnId),
             requestedItemId);
         Assert.True(JsonSerializer.SerializeToUtf8Bytes(subsession).Length
                     <= SubsessionAroundTurnPayload.MaximumResponseBytes);
@@ -457,6 +459,9 @@ public sealed class AgentRuntimeTransportLimitTests
         await using var services = RegressionTestRuntime.Create(scope.Context, catalog);
         var client = catalog.AddOwnerRuntimeProvider(
             services.GetRequiredService<WorkerRuntime.AgentOwnerRuntimeProvider>());
+        var resources = new AgentOwnerResources(
+            catalog.GetServiceProviders<AgentAppServices.IAgentRuntimeService>(),
+            catalog.RpcForCaller("sunder.package.agent"));
         var uploads = services.GetRequiredService<AgentAttachmentTransferService>();
         var attachments = services.GetRequiredService<AgentAttachmentService>();
         var content = CreateBytes((2 * 1024 * 1024) + 137);
@@ -465,7 +470,7 @@ public sealed class AgentRuntimeTransportLimitTests
             "application/octet-stream",
             content);
 
-        var handle = await client.UploadAttachmentAsync(request, CancellationToken.None);
+        var handle = await resources.UploadAttachmentAsync(request, CancellationToken.None);
         var workerHandle = AgentRoleBoundary.As<WorkerRuntime.AgentAttachmentUploadHandle>(handle);
         var adoption = uploads.BeginAdoption([workerHandle]);
         try
@@ -478,10 +483,10 @@ public sealed class AgentRuntimeTransportLimitTests
         }
 
         var stored = await attachments.StoreAttachmentAsync(Guid.NewGuid(), AgentRoleBoundary.As<Sunder.Package.Agent.Contracts.Models.AgentAttachmentUploadRequest>(request));
-        var downloaded = await client.DownloadAttachmentAsync(AgentRoleBoundary.As<AgentAttachmentMetadata>(stored.Metadata), CancellationToken.None);
+        var downloaded = await resources.DownloadAttachmentAsync(AgentRoleBoundary.As<AgentAttachmentMetadata>(stored.Metadata), CancellationToken.None);
 
         Assert.Equal(content, downloaded);
-        await client.DiscardAttachmentAsync(handle, CancellationToken.None);
+        await resources.DiscardAttachmentAsync(handle, CancellationToken.None);
         Assert.Throws<AgentAttachmentTransferOperationException>(() => uploads.BeginAdoption([workerHandle]));
     }
 
@@ -544,7 +549,7 @@ public sealed class AgentRuntimeTransportLimitTests
             9,
             SubagentChangeKind.Turn,
             SessionId: turn.SessionId,
-            Turn: AgentRoleBoundary.As<SubagentModels.AgentTurnRecord>(turn),
+            Turn: ToSubagentTurn(turn),
             RuntimeInstanceId: "subagent-runtime"));
         Assert.Equal(SubagentChangeKind.ResnapshotRequired, subsessionChange.Kind);
         Assert.True(
@@ -618,7 +623,7 @@ public sealed class AgentRuntimeTransportLimitTests
             Revision: 42);
 
         var agent = AgentRuntimePayloadLimits.FitToolDetail(detail, ResponsePayloadBytes);
-        var subsession = SubsessionAroundTurnPayload.FitToolDetail(AgentRoleBoundary.As<SubagentModels.AgentTranscriptToolDetailRecord>(detail));
+        var subsession = SubsessionAroundTurnPayload.FitToolDetail(ToSubagentToolDetail(detail));
 
         Assert.True(agent.WasTransportTruncated);
         Assert.Equal(sessionId, agent.SessionId);
@@ -662,14 +667,16 @@ public sealed class AgentRuntimeTransportLimitTests
 
         foreach (var direction in new[]
                  {
-                     SubagentQueryKind.RecentTurns,
-                     SubagentQueryKind.TurnsBefore,
-                     SubagentQueryKind.TurnsAfter,
+                     SubsessionPageDirection.Recent,
+                     SubsessionPageDirection.Before,
+                     SubsessionPageDirection.After,
                  })
         {
-            var page = SubsessionLocalRuntimeAdapter.BuildTranscriptPage([AgentRoleBoundary.As<SubagentModels.AgentTurnRecord>(turn)], 30, direction);
+            var page = SubsessionAroundTurnPayload.FitPage(
+                new([ToSubagentTurn(turn)], HasMore: false),
+                direction);
 
-            AssertProjectedTurn(page.Turns, page.HasMore, page.Continuation?.TurnId, turn.TurnId);
+            AssertProjectedSubagentTurn(page.Turns, page.HasMore, page.Continuation?.TurnId, turn.TurnId);
             Assert.True(SubsessionAroundTurnPayload.Size(page)
                         <= SubsessionAroundTurnPayload.MaximumResponseBytes);
             var roundTrip = Assert.IsType<SubsessionTranscriptPage>(
@@ -712,27 +719,24 @@ public sealed class AgentRuntimeTransportLimitTests
         Assert.Equal(agentRecent.Turns[0].TurnId, agentRecent.Continuation?.TurnId);
         Assert.Equal(agentAfter.Turns[^1].TurnId, agentAfter.Continuation?.TurnId);
 
-        var subsessionRecent = SubsessionLocalRuntimeAdapter.BuildTranscriptPage(
-            AgentRoleBoundary.As<IReadOnlyList<SubagentModels.AgentTurnRecord>>(turns),
-            30,
-            SubagentQueryKind.RecentTurns);
-        var subsessionBefore = SubsessionLocalRuntimeAdapter.BuildTranscriptPage(
-            AgentRoleBoundary.As<IReadOnlyList<SubagentModels.AgentTurnRecord>>(turns),
-            30,
-            SubagentQueryKind.TurnsBefore);
-        var subsessionAfter = SubsessionLocalRuntimeAdapter.BuildTranscriptPage(
-            AgentRoleBoundary.As<IReadOnlyList<SubagentModels.AgentTurnRecord>>(turns),
-            30,
-            SubagentQueryKind.TurnsAfter);
-        AssertDirectionalPage(
+        var subsessionRecent = SubsessionAroundTurnPayload.FitPage(
+            new(turns.Select(ToSubagentTurn).ToArray(), HasMore: true),
+            SubsessionPageDirection.Recent);
+        var subsessionBefore = SubsessionAroundTurnPayload.FitPage(
+            new(turns.Select(ToSubagentTurn).ToArray(), HasMore: true),
+            SubsessionPageDirection.Before);
+        var subsessionAfter = SubsessionAroundTurnPayload.FitPage(
+            new(turns.Select(ToSubagentTurn).ToArray(), HasMore: true),
+            SubsessionPageDirection.After);
+        AssertDirectionalSubagentPage(
             subsessionRecent.Turns,
             subsessionRecent.HasMore,
             turns[^1].TurnId);
-        AssertDirectionalPage(
+        AssertDirectionalSubagentPage(
             subsessionBefore.Turns,
             subsessionBefore.HasMore,
             turns[^1].TurnId);
-        AssertDirectionalPage(
+        AssertDirectionalSubagentPage(
             subsessionAfter.Turns,
             subsessionAfter.HasMore,
             turns[0].TurnId);
@@ -773,6 +777,112 @@ public sealed class AgentRuntimeTransportLimitTests
         Assert.InRange(turns.Count, 1, 29);
         Assert.Contains(turns, turn => turn.TurnId == cursorAdjacentTurnId);
     }
+
+    private static void AssertProjectedSubagentTurn(
+        IReadOnlyList<SubagentModels.AgentTurnRecord> turns,
+        bool hasMore,
+        Guid? continuationTurnId,
+        Guid expectedTurnId)
+    {
+        Assert.True(hasMore);
+        var turn = Assert.Single(turns);
+        Assert.Equal(expectedTurnId, turn.TurnId);
+        Assert.Equal(expectedTurnId, continuationTurnId);
+        var item = Assert.Single(turn.Items);
+        Assert.True(item.WasTruncated);
+        Assert.Contains("Content truncated for display", item.TextContent, StringComparison.Ordinal);
+    }
+
+    private static void AssertDirectionalSubagentPage(
+        IReadOnlyList<SubagentModels.AgentTurnRecord> turns,
+        bool hasMore,
+        Guid cursorAdjacentTurnId)
+    {
+        Assert.True(hasMore);
+        Assert.InRange(turns.Count, 1, 29);
+        Assert.Contains(turns, turn => turn.TurnId == cursorAdjacentTurnId);
+    }
+
+    private static SubagentModels.AgentTurnRecord ToSubagentTurn(AgentTurnRecord turn)
+        => new()
+        {
+            TurnId = turn.TurnId,
+            SessionId = turn.SessionId,
+            Role = (SubagentModels.AgentMessageRole)(int)turn.Role,
+            Kind = (SubagentModels.AgentTurnKind)(int)turn.Kind,
+            Items = turn.Items.Select(ToSubagentTurnItem).ToArray(),
+            ContentRevision = turn.ContentRevision,
+            IsStreaming = turn.IsStreaming,
+            RunId = turn.RunId,
+            RunRevision = turn.RunRevision,
+            CreatedAtUtc = new SunderRpcOffsetDateTime(turn.CreatedAtUtc.ToString("O")),
+            UpdatedAtUtc = new SunderRpcOffsetDateTime(turn.UpdatedAtUtc.ToString("O")),
+        };
+
+    private static SubagentModels.AgentTurnItemRecord ToSubagentTurnItem(AgentTurnItemRecord item)
+        => new()
+        {
+            ItemId = item.ItemId,
+            TurnId = item.TurnId,
+            SequenceNumber = item.SequenceNumber,
+            Kind = (SubagentModels.AgentTurnItemKind)(int)item.Kind,
+            TextContent = item.TextContent,
+            CallId = item.CallId,
+            ToolId = item.ToolId,
+            ArgumentsJson = item.ArgumentsJson,
+            ResultSummary = item.ResultSummary,
+            StructuredPayloadJson = item.StructuredPayloadJson,
+            SourcesJson = item.SourcesJson,
+            WasTruncated = item.WasTruncated,
+            IsError = item.IsError,
+            ErrorCode = item.ErrorCode,
+            BackendId = item.BackendId,
+            PresentationPayloadJson = item.PresentationPayloadJson,
+            ToolExecutionId = item.ToolExecutionId,
+            ToolExecutionStatus = item.ToolExecutionStatus is { } status
+                ? (SubagentModels.AgentToolExecutionStatus)(int)status
+                : null,
+            ToolOwnerPackageId = item.ToolOwnerPackageId,
+            ToolSchemaId = item.ToolSchemaId,
+            ToolSchemaVersion = item.ToolSchemaVersion,
+            ToolHeaderHint = item.ToolHeaderHint,
+            ToolErrorSummary = item.ToolErrorSummary,
+            ToolDetailRevision = item.ToolDetailRevision,
+            ToolHasDetails = item.ToolHasDetails,
+            IsToolHeaderProjection = item.IsToolHeaderProjection,
+        };
+
+    private static SubagentModels.AgentTranscriptToolDetailRecord ToSubagentToolDetail(
+        AgentTranscriptToolDetailRecord detail)
+        => new()
+        {
+            SessionId = detail.SessionId,
+            ToolExecutionId = detail.ToolExecutionId,
+            CallId = detail.CallId,
+            CallItemId = detail.CallItemId,
+            ResultItemId = detail.ResultItemId,
+            ToolId = detail.ToolId,
+            ArgumentsJson = detail.ArgumentsJson,
+            OutputText = detail.OutputText,
+            ResultSummary = detail.ResultSummary,
+            StructuredPayloadJson = detail.StructuredPayloadJson,
+            SourcesJson = detail.SourcesJson,
+            PresentationPayloadJson = detail.PresentationPayloadJson,
+            WasTruncated = detail.WasTruncated,
+            WasTransportTruncated = detail.WasTransportTruncated,
+            IsError = detail.IsError,
+            ErrorCode = detail.ErrorCode,
+            BackendId = detail.BackendId,
+            Status = detail.Status is { } status
+                ? (SubagentModels.AgentToolExecutionStatus)(int)status
+                : null,
+            ToolOwnerPackageId = detail.ToolOwnerPackageId,
+            ToolSchemaId = detail.ToolSchemaId,
+            ToolSchemaVersion = detail.ToolSchemaVersion,
+            Revision = detail.Revision,
+            RunId = detail.RunId,
+            RunRevision = detail.RunRevision,
+        };
 
     private static AgentTurnRecord CreateTurn(string content)
     {
@@ -823,7 +933,7 @@ public sealed class AgentRuntimeTransportLimitTests
             MaximumInlineDecodedBytes: 512 * 1024,
             contentBytes);
 
-    private static AgentOwnerRpcClient CreateOwnerClient(
+    private static AgentOwnerResources CreateOwnerClient(
         RegressionTestRpcState state,
         SunderRpcResourceProfile? resourceProfile,
         AgentTransportProfile response,
@@ -832,15 +942,16 @@ public sealed class AgentRuntimeTransportLimitTests
         handler = new TransportProfileRpcHandler(response);
         state.Add(
             "sunder.package.agent",
-            RegressionTestRpcDescriptors.Get("sunder.agent.owner.runtime"),
+            CurrentPrivateRpcDescriptors.Get("sunder.agent.owner.runtime"),
             handler,
             handler,
             handler,
             "agent.owner.runtime", packageVersion: "2.0.0");
-        return new AgentOwnerRpcClient(new RegressionTestRpcClient(
-            state,
-            "sunder.package.agent",
-            resourceProfile));
+        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent", resourceProfile);
+        var services = new GeneratedServiceTestScope(rpc);
+        return new AgentOwnerResources(
+            services.Providers<AgentAppServices.IAgentRuntimeService>(),
+            rpc);
     }
 
     private sealed class TransportProfileRpcHandler(AgentTransportProfile response)
@@ -879,12 +990,12 @@ public sealed class AgentRuntimeTransportLimitTests
     }
 
     private sealed class BoundedAttachmentOwnerClient(byte[] downloadContent)
-        : IAgentOwnerClient
+        : OwnerServiceStub
     {
         private readonly Dictionary<string, byte[]> _uploads = new(StringComparer.Ordinal);
         private readonly byte[] _downloadContent = downloadContent;
 
-        public AgentTransportProfile TransportProfile => TestProfile;
+        public override AgentTransportProfile TransportProfile => TestProfile;
         public int MaximumRequestBytes { get; private set; }
         public int MaximumResponseBytes { get; private set; }
         public int UploadContentCount { get; private set; }
@@ -892,13 +1003,13 @@ public sealed class AgentRuntimeTransportLimitTests
         public byte[]? UploadedContent { get; private set; }
         public AgentRunCommand? RunCommand { get; private set; }
 
-        public ValueTask<AgentTransportProfile> GetTransportProfileAsync(CancellationToken cancellationToken)
+        public override ValueTask<AgentTransportProfile> GetTransportProfileAsync(CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
             return ValueTask.FromResult(TransportProfile);
         }
 
-        public ValueTask<AgentAttachmentUploadHandle> UploadAttachmentAsync(
+        public override ValueTask<AgentAttachmentUploadHandle> UploadAttachmentAsync(
             AgentAttachmentUploadRequest upload,
             CancellationToken cancellationToken)
         {
@@ -910,7 +1021,7 @@ public sealed class AgentRuntimeTransportLimitTests
             return ValueTask.FromResult(new AgentAttachmentUploadHandle(transferId));
         }
 
-        public ValueTask<byte[]> DownloadAttachmentAsync(
+        public override ValueTask<byte[]> DownloadAttachmentAsync(
             AgentAttachmentMetadata metadata,
             CancellationToken cancellationToken)
         {
@@ -920,7 +1031,7 @@ public sealed class AgentRuntimeTransportLimitTests
             return ValueTask.FromResult(_downloadContent.ToArray());
         }
 
-        public ValueTask DiscardAttachmentAsync(
+        public override ValueTask DiscardAttachmentAsync(
             AgentAttachmentUploadHandle handle,
             CancellationToken cancellationToken)
         {
@@ -929,8 +1040,7 @@ public sealed class AgentRuntimeTransportLimitTests
             return ValueTask.CompletedTask;
         }
 
-        public ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-            AgentOwnerRpcOperation<TRequest, TResponse> operation,
+        public override ValueTask<TResponse> RespondAsync<TRequest, TResponse>(
             TRequest request,
             CancellationToken cancellationToken = default)
             where TRequest : class
@@ -945,7 +1055,7 @@ public sealed class AgentRuntimeTransportLimitTests
             }
 
             object response;
-            if (operation.Is(AgentRuntimeOperations.Runs))
+            if (request is AgentRunCommand)
             {
                 RunCommand = (AgentRunCommand)(object)request;
                 var handle = Assert.Single(RunCommand.AttachmentHandles!);
@@ -963,7 +1073,7 @@ public sealed class AgentRuntimeTransportLimitTests
             }
             else
             {
-                throw new NotSupportedException(operation.Describe());
+                throw new NotSupportedException(typeof(TRequest).Name);
             }
 
             var responseBytes = JsonSerializer.SerializeToUtf8Bytes(response, JsonOptions).Length;
@@ -975,8 +1085,7 @@ public sealed class AgentRuntimeTransportLimitTests
             return ValueTask.FromResult((TResponse)response);
         }
 
-        public async IAsyncEnumerable<TEvent> SubscribeAsync<TRequest, TEvent>(
-            AgentOwnerRpcStream<TRequest, TEvent> stream,
+        public override async IAsyncEnumerable<TEvent> ObserveAsync<TRequest, TEvent>(
             TRequest request,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
             where TRequest : class

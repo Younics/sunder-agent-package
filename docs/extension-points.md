@@ -1,22 +1,26 @@
 # RPC Contract Catalog
 
-> **Pre-cutover catalog:** contract semantics and identifiers are compatibility
-> inputs, but the checked-in descriptor bundle and Protocol-generated CLR surface
-> are migration machinery. Final V1 derives canonical contracts and role-local
-> bindings from ordinary source. See
-> [`../compatibility/README.md`](../compatibility/README.md).
-
-Agent 2.x bundles 19 schema-first Sunder RPC contracts. Eighteen are supported third-party extension points; `sunder.agent.tool.execution.observed` is a reserved first-party bridge. There is no second object-discovery path. Each provider declaration has a stable provider id, contract id, contract version, host-stamped owner, and opaque endpoint reference.
+Agent 2.x owns 19 public service declarations, all currently unpublished. Their clean
+source successors have accepted, frozen history with mixed contract versions
+(2.0.0, 2.1.0, 3.0.0 and 4.0.0), independent of package version 2.0.0. Local
+qualification includes completed coherent Main/artifact integration; release
+qualification remains separate. Original migration evidence remains immutable.
+Eighteen are supported third-party extension points; `sunder.agent.tool.execution.observed` is
+a reserved first-party bridge. Each provider declaration has a stable provider id,
+contract id/version, host-stamped owner and opaque endpoint reference. See the
+[ordinary-service status](ordinary-service-refactor.md).
 
 ## Contract Rules
 
-- Bundle every imported or provided descriptor locally. `Sunder.Package.Agent.Protocol` supplies all 19 descriptors through `buildTransitive` assets.
-- Declare providers with `SunderRpcProvider`. Worker V1 targets pass the matching immutable `SunderWorkerProviderRegistration` entries to `SunderWorker.RunAsync` through `SunderWorkerOptions`.
-- Declare consumers with `SunderUsesContract`; discovery and invocation remain default-denied unless the package manifest grants the relevant action.
-- Retain endpoint references, not provider objects. A reference names one exact activation and becomes stale when that activation retires.
+- Select a reviewed Agent archive through the owning package API/provider import commands. Build tooling generates the local descriptor bundles and role-local bindings from the selected lock; there is no Protocol NuGet dependency.
+- Declare imported providers with `SunderServiceProvider` from `Sunder.Sdk.Services`, implementing the generated imported provider interface. Core generates matching immutable Worker registrations and the Worker entry point.
+- Ordinary consumers inject `Sunder.Generated.Packages.Sunder_Package_Agent_Services.IPackageApi`; generated values live in `Sunder.Generated.Packages.Sunder_Package_Agent_Models`. Reviewed `consumerRoles`, readiness and action policy determine uses; type availability never grants access.
+- Use `IServiceProviders<TService>` for business selection among implementations. Call `provider.Service` and pass `provider.Reference` for an exact typed binding. Entries are borrowed; generated DI owns their lifetime and a retired reference never retargets.
 - The host validates each request, response, and stream event against the selected method schema before forwarding it.
 - Provider retirement cancels in-flight work with `StaleEndpoint` and waits for exact-activation calls to drain.
 - Catalog order is not a precedence API. Resolve semantic ids explicitly and reject or deterministically handle duplicates.
+- Nullable references remain strict when non-null unless the declaring transferred property explicitly uses `SunderOptionalServiceReference`. Safe absence then becomes null; permissions, exact identity and unsafe-failure semantics remain enforced.
+- Narrow imported Runtime use can declare `SunderRuntimeUse(typeof(IExecutionTargetService), Actions = ["discover"])` on the consuming class. The contract must already be selected; this adds no invocation action.
 - Runtime catalog, run control, workspace resolution, and child execution are base-Agent-owned ports. Peer packages consume them and must not publish competing providers.
 
 ## Provider Contracts
@@ -64,4 +68,10 @@ from the 18 public extension points.
 - Durable lifecycle handlers must be idempotent by event id because delivery is at least once.
 - Session cleaners must be bounded and idempotent because pending jobs survive restart and provider absence.
 
-Generated DTOs, clients, and provider interfaces live under `Sunder.Package.Agent.Protocol.Generated.*`. First-party adapters in `Sunder.Package.Agent.Protocol` map those wire shapes to package-local implementation interfaces. Every worker binds its manifest-declared provider ids with immutable `SunderWorkerProviderRegistration` entries supplied to `SunderWorker.RunAsync`.
+All 19 declarations live under the owner's `Rpc/Public`; real implementations bind
+those interfaces without forwarding service classes. External implementations use
+the flat generated Services and Models namespaces. A class may bind multiple
+contracts with repeated `SunderServiceProvider` attributes and explicit interface
+methods. Business records are authored once; Core owns model projection, codecs,
+Worker/App composition and exact binding lifetime. Content uses `SunderContent`
+with normal disposal. See the [extension quickstart](extension-quickstart.md).

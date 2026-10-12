@@ -1,67 +1,40 @@
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Protocol;
-using Sunder.Sdk.Rpc;
-using Wire = Sunder.Generated.Rpc.ToolSource;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.Tests;
 
-internal sealed class RegressionTestToolProvider(IAgentToolSource source, AgentRpcCatalog catalog) : Wire.IToolSourceProvider
+// A local domain collaborator implementing the actual generated service signature.
+// There is no request envelope, JSON conversion, endpoint or call-scope here.
+internal sealed class RegressionTestToolProvider(IAgentToolSource source) : AgentServices.IToolSourceService
 {
-    public ValueTask<Wire.ToolSourceDescription> DescribeAsync(SunderRpcInvocationContext invocation, Wire.Unit request, CancellationToken token = default)
+    public ValueTask<AgentToolSourceDescriptor> DescribeAsync(CancellationToken cancellationToken = default)
     {
-        token.ThrowIfCancellationRequested();
-        return ValueTask.FromResult(new Wire.ToolSourceDescription { SourceId = source.SourceId, DisplayName = source.DisplayName, SourceKind = source.SourceKind });
-    }
-    public async ValueTask<IReadOnlyList<Wire.AgentToolDescriptor>> ListToolsAsync(SunderRpcInvocationContext invocation, Wire.AgentToolSourceContextWire request, CancellationToken token = default)
-        => RegressionTestRpcValues.Convert<Wire.AgentToolDescriptor[]>(await source.ListToolsAsync(await Context(request, token).ConfigureAwait(false), token).ConfigureAwait(false));
-    public async ValueTask<Wire.AgentToolReadiness?> GetReadinessAsync(SunderRpcInvocationContext invocation, Wire.ToolReadinessRequest request, CancellationToken token = default)
-        => RegressionTestRpcValues.Optional<Wire.AgentToolReadiness>(await source.GetReadinessAsync(request.ToolId, await Context(request.Context, token).ConfigureAwait(false), token).ConfigureAwait(false));
-    public async ValueTask<Wire.AgentToolResult> ExecuteAsync(SunderRpcInvocationContext invocation, Wire.ToolInvocationRequest request, CancellationToken token = default)
-        => RegressionTestRpcValues.Convert<Wire.AgentToolResult>(await source.ExecuteAsync(await Context(request.Context, token).ConfigureAwait(false),
-            RegressionTestRpcValues.Convert<AgentToolRequest>(request.Request), token).ConfigureAwait(false));
-    public async ValueTask<Wire.AgentToolResult?> PreflightAsync(SunderRpcInvocationContext invocation, Wire.ToolInvocationRequest request, CancellationToken token = default)
-        => source is IAgentToolExecutionPreflightSource preflight ? RegressionTestRpcValues.Optional<Wire.AgentToolResult>(await preflight.PreflightExecutionAsync(
-            await Context(request.Context, token).ConfigureAwait(false), RegressionTestRpcValues.Convert<AgentToolRequest>(request.Request), token).ConfigureAwait(false)) : null;
-    public async ValueTask<Wire.AgentPermissionRequestWire?> PermissionAsync(SunderRpcInvocationContext invocation, Wire.ToolInvocationRequest request, CancellationToken token = default)
-    {
-        if (source is not IAgentPermissionAwareToolSource permission) return null;
-        var value = await permission.BuildPermissionRequestAsync(await Context(request.Context, token).ConfigureAwait(false),
-            RegressionTestRpcValues.Convert<AgentToolRequest>(request.Request), token).ConfigureAwait(false);
-        return value is null ? null : new() { Request = RegressionTestRpcValues.Convert<Wire.AgentPermissionRequest>(value), ResourceCapabilities = value.ResourceCapabilities };
-    }
-    public ValueTask<Wire.AgentToolPresentation?> PresentationAsync(SunderRpcInvocationContext invocation, Wire.AgentToolPresentationRequest request, CancellationToken token = default)
-    {
-        token.ThrowIfCancellationRequested();
-        return ValueTask.FromResult(source is IAgentToolPresentationResolver presentation
-            ? RegressionTestRpcValues.Optional<Wire.AgentToolPresentation>(presentation.ResolveToolPresentation(RegressionTestRpcValues.Convert<AgentToolPresentationRequest>(request))) : null);
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(new AgentToolSourceDescriptor(source.SourceId, source.DisplayName, source.SourceKind));
     }
 
-    private async ValueTask<AgentToolSourceContext> Context(Wire.AgentToolSourceContextWire value, CancellationToken token)
-        => RegressionTestRpcValues.Convert<AgentToolSourceContext>(value.Context) with
-        {
-            ExecutionTargetReference = await Target(value.ExecutionTarget, token).ConfigureAwait(false),
-            ExecutionTargetConfigurationGeneration = value.ExecutionTargetConfigurationGeneration,
-        };
-    private async ValueTask<AgentToolExecutionContext> Context(Wire.AgentToolExecutionContextWire value, CancellationToken token)
-        => RegressionTestRpcValues.Convert<AgentToolExecutionContext>(value.Context) with
-        {
-            ExecutionTargetReference = await Target(value.ExecutionTarget, token).ConfigureAwait(false),
-            ExecutionTargetConfigurationGeneration = value.ExecutionTargetConfigurationGeneration,
-            ApprovedResourceCapabilities = value.ApprovedResourceCapabilities,
-            ResourceOperation = value.ResourceOperation is { } operation ? new(operation.RunId, operation.RunRevision, operation.ToolCallId,
-                operation.ActionId, checked((int)operation.ResourceIndex), operation.WorkspaceGeneration, operation.BindingGeneration,
-                operation.ToolOwnerPackageId, operation.ExecutionTargetOwnerPackageId, operation.AuthorityActivationId,
-                checked((int)operation.AuthorityUseCount), operation.CanIssueOutsideAuthority) : null,
-        };
-
-    private ValueTask<AgentRpcReference<IAgentExecutionTarget>?> Target(Wire.AgentRpcProviderHandle? handle, CancellationToken token)
-        => handle is null ? ValueTask.FromResult<AgentRpcReference<IAgentExecutionTarget>?>(null)
-            : RegressionTestBindings.ResolveExecutionAsync(catalog, RegressionTestRpcValues.Convert<AgentRpcProviderHandle>(handle), token);
+    public ValueTask<IReadOnlyList<AgentToolDescriptor>> ListToolsAsync(AgentToolSourceContext context, CancellationToken cancellationToken = default)
+        => source.ListToolsAsync(context, cancellationToken);
+    public ValueTask<AgentToolReadiness?> GetReadinessAsync(string toolId, AgentToolSourceContext context, CancellationToken cancellationToken = default)
+        => source.GetReadinessAsync(toolId, context, cancellationToken);
+    public ValueTask<AgentToolResult> ExecuteAsync(AgentToolExecutionContext context, AgentToolRequest request, CancellationToken cancellationToken = default)
+        => source.ExecuteAsync(context, request, cancellationToken);
+    public ValueTask<AgentToolResult?> PreflightAsync(AgentToolExecutionContext context, AgentToolRequest request, CancellationToken cancellationToken = default)
+        => source is IAgentToolExecutionPreflightSource preflight
+            ? preflight.PreflightExecutionAsync(context, request, cancellationToken)
+            : ValueTask.FromResult<AgentToolResult?>(null);
+    public ValueTask<AgentPermissionRequest?> PermissionAsync(AgentToolExecutionContext context, AgentToolRequest request, CancellationToken cancellationToken = default)
+        => source is IAgentPermissionAwareToolSource permission
+            ? permission.BuildPermissionRequestAsync(context, request, cancellationToken)
+            : ValueTask.FromResult<AgentPermissionRequest?>(null);
+    public ValueTask<AgentToolPresentation?> PresentationAsync(AgentToolPresentationRequest request, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(source is IAgentToolPresentationResolver presentation ? presentation.ResolveToolPresentation(request) : null);
+    }
 }
 
-// AddTool's single controlled collaborator, without the retired central static
-// tool adapter. Requests continue through the generated tool-source handler.
 internal sealed class RegressionTestSingleToolSource(IAgentTool tool) : IAgentToolSource, IAgentPermissionAwareToolSource, IAgentToolPresentationResolver
 {
     public string SourceId => "installed-packages";

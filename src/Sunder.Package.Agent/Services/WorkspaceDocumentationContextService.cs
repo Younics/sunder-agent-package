@@ -1,10 +1,12 @@
 using System.Text;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Services;
 
-public sealed class WorkspaceDocumentationContextService : IAgentPromptContextContributor
+[SunderServiceProvider(typeof(Rpc.Public.PromptContextContributorService), ProviderId = "agent.workspace.documentation")]
+public sealed partial class WorkspaceDocumentationContextService : IAgentPromptContextContributor, Rpc.Public.PromptContextContributorService
 {
     private const int MaxDocumentChars = 12000;
     private const int MaxPromptChars = 60000;
@@ -13,6 +15,21 @@ public sealed class WorkspaceDocumentationContextService : IAgentPromptContextCo
     public string ContributorId => "workspace-documentation-context";
 
     public string DisplayName => "Workspace Documentation";
+
+    public ValueTask<AgentPromptContextContributorDescriptor> DescribeAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(new AgentPromptContextContributorDescriptor(ContributorId, DisplayName));
+    }
+
+    public ValueTask<AgentPromptContextContribution?> ContributeAsync(AgentPromptContextRequest request,
+        CancellationToken cancellationToken = default) => ContributeContextAsync(request, cancellationToken);
+
+    public ValueTask AcknowledgeAsync(AgentPromptContextReceipt receipt, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.CompletedTask; // Documentation contributes reference data, not scoped authority receipts.
+    }
 
     public async ValueTask<AgentPromptContextContribution?> ContributeContextAsync(
         AgentPromptContextRequest request,

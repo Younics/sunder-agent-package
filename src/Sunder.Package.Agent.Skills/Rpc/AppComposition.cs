@@ -10,12 +10,3 @@ namespace Sunder.Package.Agent.Skills.PackageViews
         internal SkillSettingsViewModel(SkillAppRuntimeGateway gateway) : this((ISkillManagementGateway)gateway) { }
     }
 }
-
-namespace Sunder.Package.Agent.Skills.Runtime
-{
-    internal sealed partial class SkillAppRuntimeGateway
-    {
-        [ActivatorUtilitiesConstructor]
-        internal SkillAppRuntimeGateway(SkillOwnerClient client, IPackageContext context) : this((ISkillOwnerClient)client, context) { }
-    }
-}

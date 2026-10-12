@@ -8,6 +8,7 @@ extern alias WebWorker;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 using System.Collections.Specialized;
+using System.Runtime.CompilerServices;
 using System.Runtime.Versioning;
 using System.Text.Json;
 using Sunder.Package.Agent.Contracts;
@@ -29,8 +30,13 @@ using WebWorker::Sunder.Package.Agent.Tools.Web.Backends;
 using WebWorker::Sunder.Package.Agent.Tools.Web.Services;
 using AppRuntime = AgentApp::Sunder.Package.Agent.Runtime;
 using AppModels = AgentApp::Sunder.Package.Agent.Contracts.Models;
+using AgentAppServiceIdentity = AgentApp::Sunder.Package.Agent.Contracts.Models.AgentServiceIdentity;
 using AgentToolPresentationService = AgentApp::Sunder.Package.Agent.Services.AgentToolPresentationService;
+using DockerWorkerModels = DockerWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using LocalWorkerModels = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
 using Sunder.Sdk.Storage;
 using Sunder.Sdk.Stacks;
 using Xunit;
@@ -226,11 +232,7 @@ public sealed class WorkspaceTests
             ChatProviderId = "openai",
             ChatModelId = "gpt-test",
         });
-        var contributor = new AgentProfileStackContributor(
-            profileService,
-            scope.Context,
-            services.Catalog,
-            services.Catalog.BehaviorLoops);
+        var contributor = new AgentProfileStackContributor(profileService, scope.Context);
 
         var item = Assert.Single(await contributor.ListExportItemsAsync(
             new StackExportDiscoveryContext(scope.Context.PackageId)));
@@ -257,7 +259,8 @@ public sealed class WorkspaceTests
             [new AgentWorkspacePathRecord("root", "workspace.stack", workspaceRoot, IsDefault: true, 0, default, default)],
             [new AgentWorkspaceDocumentRecord("doc", "workspace.stack", documentPath, 0, default, default)]);
         service.SavePrimaryExecutionBinding("workspace.stack", "local");
-        var contributor = new AgentWorkspaceStackContributor(service, scope.Context, new TestExtensionCatalog());
+        using var catalog = new TestExtensionCatalog();
+        var contributor = new AgentWorkspaceStackContributor(service, scope.Context, catalog.ExecutionTargets);
         var selections = new List<StackExportItemSelection>
         {
             new("workspace.stack"),
@@ -298,7 +301,7 @@ public sealed class WorkspaceTests
             RegressionTestBindings.ExecutionTargets,
             new CountingExecutionTarget("contoso-target"),
             packageId: "contoso.execution");
-        var contributor = new AgentWorkspaceStackContributor(service, scope.Context, catalog);
+        var contributor = new AgentWorkspaceStackContributor(service, scope.Context, catalog.ExecutionTargets);
 
         var contribution = await contributor.ExportAsync(new StackExportRequest(
             [new StackExportItemSelection(workspace.WorkspaceId)]));
@@ -325,7 +328,8 @@ public sealed class WorkspaceTests
             [new AgentWorkspacePathRecord("root", "workspace.stack", Path.Combine(scope.RootPath, "source-repo"), IsDefault: true, 0, default, default)],
             [new AgentWorkspaceDocumentRecord("doc", "workspace.stack", Path.Combine(scope.RootPath, "source-guide.md"), 0, default, default)]);
         sourceService.SavePrimaryExecutionBinding("workspace.stack", "local");
-        var sourceContributor = new AgentWorkspaceStackContributor(sourceService, sourceContext, new TestExtensionCatalog());
+        using var catalog = new TestExtensionCatalog();
+        var sourceContributor = new AgentWorkspaceStackContributor(sourceService, sourceContext, catalog.ExecutionTargets);
         var sourceRoot = Path.Combine(scope.RootPath, "source-repo");
         var sourceDocumentPath = Path.Combine(scope.RootPath, "source-guide.md");
         var fragment = Assert.Single((await sourceContributor.ExportAsync(new StackExportRequest(
@@ -333,7 +337,7 @@ public sealed class WorkspaceTests
 
         var targetContext = new TestPackageContext(Path.Combine(scope.RootPath, "target"));
         var targetService = new AgentWorkspaceService(new AgentLocalStore(targetContext));
-        var targetContributor = new AgentWorkspaceStackContributor(targetService, targetContext, new TestExtensionCatalog());
+        var targetContributor = new AgentWorkspaceStackContributor(targetService, targetContext, catalog.ExecutionTargets);
         var importFragment = ToImportFragment(fragment, sourceContributor.ContributorId);
         var preview = await targetContributor.PreviewImportAsync(new StackImportPreviewRequest(
             [importFragment],
@@ -368,10 +372,11 @@ public sealed class WorkspaceTests
             new AgentWorkspaceRecord("workspace.atomic", "Atomic Workspace", null, default, default),
             [new AgentWorkspacePathRecord("root", "workspace.atomic", scope.RootPath, true, 0, default, default)],
             primaryExecutionTargetId: "local");
+        using var catalog = new TestExtensionCatalog();
         var sourceContributor = new AgentWorkspaceStackContributor(
             sourceService,
             sourceContext,
-            new TestExtensionCatalog());
+            catalog.ExecutionTargets);
         var fragment = Assert.Single((await sourceContributor.ExportAsync(new StackExportRequest(
             [new StackExportItemSelection("workspace.atomic")]))).Fragments);
         var importFragment = ToImportFragment(fragment, sourceContributor.ContributorId);
@@ -391,7 +396,7 @@ public sealed class WorkspaceTests
         var targetContributor = new AgentWorkspaceStackContributor(
             targetService,
             targetContext,
-            new TestExtensionCatalog());
+            catalog.ExecutionTargets);
         var preview = await targetContributor.PreviewImportAsync(new StackImportPreviewRequest(
             [importFragment],
             new Dictionary<string, string>(),
@@ -884,7 +889,7 @@ public sealed class WorkspaceTests
         using var catalog = new TestExtensionCatalog();
         var sessionService = new AgentSessionService(store);
         var workspaceService = new AgentWorkspaceService(store);
-        var executionTargetService = new AgentExecutionTargetService(catalog);
+        var executionTargetService = new AgentExecutionTargetService(catalog.ExecutionTargets);
         var toolDescriptor = new AgentToolDescriptor(
             "stitch_create_project",
             "Stitch: Create Project",
@@ -896,7 +901,7 @@ public sealed class WorkspaceTests
             SelectionGroupId: "stitch-server-id",
             SelectionGroupDisplayName: "stitch");
         catalog.AddProvider(RegressionTestBindings.ToolSources, new StaticToolSource("mcp", "mcp", "Model Context Protocol", [toolDescriptor]));
-        var toolService = new AgentToolService(sessionService, workspaceService, executionTargetService, catalog);
+        var toolService = new AgentToolService(sessionService, workspaceService, executionTargetService, catalog.ToolSources, catalog.ObservedToolExecutions);
         var profile = CreateProfile("profile") with
         {
             SelectableCapabilityAssignments =
@@ -926,9 +931,12 @@ public sealed class WorkspaceTests
         var target = new LocalExecutionTarget(scope.Context, configService, shellCatalogService);
         var (workspace, binding) = await CreateLocalWorkspaceAsync(root, configService);
 
-        var result = await AgentRoleBoundary.As<IAgentExecutionTarget>(target).ReadFileAsync(
-            new AgentExecutionTargetContext(null, null, workspace, binding),
-            new AgentFileReadRequest(Path.Combine(scope.RootPath, "outside.txt")));
+        var result = await target.ReadFileAsync(
+            new LocalWorkerModels.CSunder_Agent_Execution_Target_ExecutionTargetReadFileRequest
+            {
+                Context = ToLocalExecutionContext(new AgentExecutionTargetContext(null, null, workspace, binding)),
+                Request = new() { Path = Path.Combine(scope.RootPath, "outside.txt"), Offset = null, Limit = null },
+            });
 
         Assert.True(result.IsError);
         Assert.Equal(AgentFileReadErrorCodes.OutsideConfiguredScope, result.ErrorCode);
@@ -948,9 +956,12 @@ public sealed class WorkspaceTests
         var target = new LocalExecutionTarget(scope.Context, configService, shellCatalogService);
         var (workspace, binding) = await CreateLocalWorkspaceAsync(root, configService);
 
-        var result = await AgentRoleBoundary.As<IAgentExecutionTarget>(target).ReadFileAsync(
-            new AgentExecutionTargetContext(null, null, workspace, binding),
-            new AgentFileReadRequest(binaryPath));
+        var result = await target.ReadFileAsync(
+            new LocalWorkerModels.CSunder_Agent_Execution_Target_ExecutionTargetReadFileRequest
+            {
+                Context = ToLocalExecutionContext(new AgentExecutionTargetContext(null, null, workspace, binding)),
+                Request = new() { Path = binaryPath, Offset = null, Limit = null },
+            });
 
         Assert.True(result.IsError);
         Assert.Equal(AgentFileReadErrorCodes.BinaryFile, result.ErrorCode);
@@ -997,9 +1008,18 @@ public sealed class WorkspaceTests
         var (workspace, binding) = await CreateLocalWorkspaceAsync(root, configService);
         const string missingExecutable = "sunder-missing-executable-for-test";
 
-        var result = await AgentRoleBoundary.As<IAgentProcessExecutionTarget>(target).ExecuteProcessAsync(
-            new AgentExecutionTargetContext(null, null, workspace, binding),
-            new AgentProcessCommandRequest(missingExecutable, []));
+        var result = await target.ExecuteProcessAsync(
+            new LocalWorkerModels.CSunder_Agent_Execution_Target_ExecutionTargetExecuteProcessRequest
+            {
+                Context = ToLocalExecutionContext(new AgentExecutionTargetContext(null, null, workspace, binding)),
+                Request = new()
+                {
+                    FileName = missingExecutable,
+                    Arguments = [],
+                    TimeoutSeconds = null,
+                    WorkingDirectory = null,
+                },
+            });
 
         Assert.Equal(127, result.ExitCode);
         Assert.Contains($"Executable '{missingExecutable}' was not found", result.Output);
@@ -1226,12 +1246,8 @@ public sealed class WorkspaceTests
             context,
             "app/page.tsx",
             "files.mutate");
-        var result = await AgentRoleBoundary.As<IAgentExecutionTarget>(target).WriteFileAsync(
-            approvedContext,
-            new AgentFileWriteRequest("app/page.tsx", content));
-        var replay = await AgentRoleBoundary.As<IAgentExecutionTarget>(target).WriteFileAsync(
-            approvedContext,
-            new AgentFileWriteRequest("app/page.tsx", "replay"));
+        var result = await WriteDockerFileAsync(target, approvedContext, new AgentFileWriteRequest("app/page.tsx", content));
+        var replay = await WriteDockerFileAsync(target, approvedContext, new AgentFileWriteRequest("app/page.tsx", "replay"));
 
         Assert.False(result.IsError, result.Summary);
         Assert.Empty(resource.AuthorityReferences);
@@ -1257,7 +1273,7 @@ public sealed class WorkspaceTests
         var (workspace, _) = CreateDockerWorkspace(scope);
         var binding = CreateBinding(workspace.WorkspaceId, "docker");
         await configService.SaveConfigAsync(binding.BindingId, new DockerExecutionWorkspaceConfig("test-image:1.0", "sunder-agent-test", "/bin/sh"));
-        var containerRoot = (await AgentRoleBoundary.As<IAgentExecutionScopeProvider>(target).GetExecutionScopeAsync(new AgentExecutionTargetContext(null, null, workspace, binding))).DefaultWorkingDirectory!;
+        var containerRoot = (await GetDockerExecutionScopeAsync(target, new AgentExecutionTargetContext(null, null, workspace, binding))).DefaultWorkingDirectory!;
 
         var context = new AgentExecutionTargetContext(null, null, workspace, binding);
         var (_, approvedContext) = await ApproveDockerResourceAsync(
@@ -1265,9 +1281,7 @@ public sealed class WorkspaceTests
             context,
             "missing.txt",
             "files.read");
-        var result = await AgentRoleBoundary.As<IAgentExecutionTarget>(target).ReadFileAsync(
-            approvedContext,
-            new AgentFileReadRequest("missing.txt"));
+        var result = await ReadDockerFileAsync(target, approvedContext, new AgentFileReadRequest("missing.txt"));
 
         Assert.False(result.IsDirectory);
         Assert.Equal($"{containerRoot}/missing.txt", result.Path);
@@ -1302,9 +1316,7 @@ public sealed class WorkspaceTests
             context,
             "image.png",
             "files.read");
-        var result = await AgentRoleBoundary.As<IAgentExecutionTarget>(target).ReadFileAsync(
-            approvedContext,
-            new AgentFileReadRequest("image.png"));
+        var result = await ReadDockerFileAsync(target, approvedContext, new AgentFileReadRequest("image.png"));
 
         Assert.True(result.IsError);
         Assert.Equal(AgentFileReadErrorCodes.BinaryFile, result.ErrorCode);
@@ -1328,7 +1340,7 @@ public sealed class WorkspaceTests
         var (workspace, _) = CreateDockerWorkspace(scope);
         var binding = CreateBinding(workspace.WorkspaceId, "docker");
         await configService.SaveConfigAsync(binding.BindingId, new DockerExecutionWorkspaceConfig("test-image:1.0", "sunder-agent-test", "/bin/sh"));
-        var containerRoot = (await AgentRoleBoundary.As<IAgentExecutionScopeProvider>(target).GetExecutionScopeAsync(new AgentExecutionTargetContext(null, null, workspace, binding))).DefaultWorkingDirectory!;
+        var containerRoot = (await GetDockerExecutionScopeAsync(target, new AgentExecutionTargetContext(null, null, workspace, binding))).DefaultWorkingDirectory!;
 
         var context = new AgentExecutionTargetContext(null, null, workspace, binding);
         var (_, approvedContext) = await ApproveDockerResourceAsync(
@@ -1336,9 +1348,7 @@ public sealed class WorkspaceTests
             context,
             "missing.txt",
             "files.mutate");
-        var result = await AgentRoleBoundary.As<IAgentExecutionTarget>(target).DeleteFileAsync(
-            approvedContext,
-            new AgentFileDeleteRequest("missing.txt"));
+        var result = await DeleteDockerFileAsync(target, approvedContext, new AgentFileDeleteRequest("missing.txt"));
 
         Assert.True(result.IsError);
         Assert.Equal("path-not-found", result.ErrorCode);
@@ -1375,9 +1385,7 @@ public sealed class WorkspaceTests
             ApprovedResourceReferences = ["docker-resource-v1:legacy"],
         };
 
-        var result = await AgentRoleBoundary.As<IAgentExecutionTarget>(target).ReadFileAsync(
-            context,
-            new AgentFileReadRequest("/container-private/secret.txt"));
+        var result = await ReadDockerFileAsync(target, context, new AgentFileReadRequest("/container-private/secret.txt"));
 
         Assert.True(result.IsError);
         Assert.Equal(DockerPathResolver.StructuredBindRequiredErrorCode, result.ErrorCode);
@@ -1405,9 +1413,10 @@ public sealed class WorkspaceTests
             new DockerExecutionWorkspaceConfig("test-image:1.0", "sunder-agent-test", "/bin/sh"));
         await File.WriteAllTextAsync(Path.Combine(hostPath, "AGENTS.md"), "container policy");
         var context = new AgentExecutionTargetContext(null, null, workspace, binding);
-        var containerRoot = (await AgentRoleBoundary.As<IAgentExecutionScopeProvider>(target).GetExecutionScopeAsync(context)).DefaultWorkingDirectory!;
+        var containerRoot = (await GetDockerExecutionScopeAsync(target, context)).DefaultWorkingDirectory!;
 
-        var result = await AgentRoleBoundary.As<IAgentScopedInstructionDiscoveryTarget>(target).DiscoverScopedInstructionsAsync(
+        var result = await DiscoverDockerInstructionsAsync(
+            target,
             context,
             new AgentScopedInstructionDiscoveryRequest(
                 [new AgentScopedInstructionProbe(containerRoot, IsDirectory: true)]));
@@ -1457,13 +1466,15 @@ public sealed class WorkspaceTests
                 context,
                 "nested/file.txt",
                 "files.mutate");
-            var write = await AgentRoleBoundary.As<IAgentExecutionTarget>(target).WriteFileAsync(
+            var write = await WriteDockerFileAsync(
+                target,
                 approvedContext,
                 new AgentFileWriteRequest("nested/file.txt", "container-readable", Overwrite: false));
             Assert.False(write.IsError, write.Summary);
 
-            var scopeDescriptor = await AgentRoleBoundary.As<IAgentExecutionScopeProvider>(target).GetExecutionScopeAsync(context);
-            var shell = await AgentRoleBoundary.As<IAgentExecutionTarget>(target).ExecuteShellAsync(
+            var scopeDescriptor = await GetDockerExecutionScopeAsync(target, context);
+            var shell = await ExecuteDockerShellAsync(
+                target,
                 context,
                 new AgentShellCommandRequest(
                     $"cat {DockerCommandRunner.Quote(scopeDescriptor.DefaultWorkingDirectory + "/nested/file.txt")}"));
@@ -1531,9 +1542,7 @@ public sealed class WorkspaceTests
             "files.read");
         ambientEndpoint = "unix:///second.sock";
 
-        var result = await AgentRoleBoundary.As<IAgentExecutionTarget>(target).ReadFileAsync(
-            approvedContext,
-            new AgentFileReadRequest("file.txt"));
+        var result = await ReadDockerFileAsync(target, approvedContext, new AgentFileReadRequest("file.txt"));
 
         Assert.Equal(AgentFileReadErrorCodes.FileNotFound, result.ErrorCode);
         Assert.Equal(1, endpointCalls);
@@ -1605,11 +1614,11 @@ public sealed class WorkspaceTests
             new DockerExecutionWorkspaceConfig("test-image:1.0", "sunder-agent-test", "/bin/sh"));
         var context = new AgentExecutionTargetContext(null, null, workspace, binding);
 
-        var first = await AgentRoleBoundary.As<IAgentExecutionTarget>(target).GetReadinessAsync(context);
-        var second = await AgentRoleBoundary.As<IAgentExecutionTarget>(target).GetReadinessAsync(context);
+        var first = await GetDockerReadinessAsync(target, context);
+        var second = await GetDockerReadinessAsync(target, context);
 
-        Assert.True(first.Status == AgentExecutionTargetReadinessStatus.Ready, first.Message);
-        Assert.True(second.Status == AgentExecutionTargetReadinessStatus.Ready, second.Message);
+        Assert.True(first.Status.ToString() == nameof(AgentExecutionTargetReadinessStatus.Ready), first.Message);
+        Assert.True(second.Status.ToString() == nameof(AgentExecutionTargetReadinessStatus.Ready), second.Message);
 
         Assert.Equal(2, verifier.VerifyCount);
         var createdWith = Assert.IsAssignableFrom<IReadOnlyList<string>>(runArgs);
@@ -1715,7 +1724,7 @@ public sealed class WorkspaceTests
             new DockerExecutionWorkspaceConfig("test-image:1.0", null, "/bin/bash"));
 
         var config = await configService.GetConfigAsync(bindingId);
-        var runtimeConfig = configService.BuildRuntimeConfig(bindingId, AgentRoleBoundary.As<DockerWorker::Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord>(workspace), config);
+        var runtimeConfig = configService.BuildRuntimeConfig(bindingId, ToDockerWorkspace(workspace), config);
 
         Assert.Equal("/bin/bash", config.ShellPath);
         Assert.NotNull(config.ContainerName);
@@ -1741,7 +1750,7 @@ public sealed class WorkspaceTests
             new DockerExecutionWorkspaceConfig("test-image:1.0", null, "/bin/sh"));
 
         var config = await configService.GetConfigAsync(bindingId);
-        var runtimeConfig = configService.BuildRuntimeConfig(bindingId, AgentRoleBoundary.As<DockerWorker::Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord>(workspace), config);
+        var runtimeConfig = configService.BuildRuntimeConfig(bindingId, ToDockerWorkspace(workspace), config);
         var mount = Assert.Single(configService.ResolveMounts(runtimeConfig));
 
         Assert.Equal(Path.GetFullPath(hostRoot), mount.HostPath);
@@ -1758,7 +1767,7 @@ public sealed class WorkspaceTests
         var bindingId = "workspace:primary-execution-target";
         var config = new DockerExecutionWorkspaceConfig("test-image:1.0", null, "/bin/sh");
 
-        var exception = Assert.Throws<InvalidOperationException>(() => configService.BuildRuntimeConfig(bindingId, AgentRoleBoundary.As<DockerWorker::Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord>(workspace), config));
+        var exception = Assert.Throws<InvalidOperationException>(() => configService.BuildRuntimeConfig(bindingId, ToDockerWorkspace(workspace), config));
 
         Assert.Contains("cannot contain commas", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -1776,7 +1785,7 @@ public sealed class WorkspaceTests
 
         var runtimeConfig = configService.BuildRuntimeConfig(
             bindingId,
-            AgentRoleBoundary.As<DockerWorker::Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord>(workspace),
+            ToDockerWorkspace(workspace),
             new DockerExecutionWorkspaceConfig("test-image:1.0", null, "/bin/sh"));
 
         Assert.Equal(2, runtimeConfig.Mounts.Count);
@@ -1804,19 +1813,19 @@ public sealed class WorkspaceTests
             bindingId,
             new DockerExecutionWorkspaceConfig("custom:1.0", null, "/bin/sh"));
 
-        var sections = await AgentRoleBoundary.As<IAgentWorkspaceEditorContributor>(contributor).GetSectionsAsync(
-            new AgentWorkspaceEditorContext(AgentRoleBoundary.As<AppModels.AgentWorkspaceRecord>(workspace), "docker", bindingId));
+        var sections = await contributor.GetSectionsAsync(
+            CreateDockerEditorContext(workspace, "docker", bindingId));
 
         var imageField = sections.Single().Fields.Single(field => field.FieldId == "image");
-        Assert.Equal(AgentEditorFieldKind.Select, imageField.Kind);
+        Assert.Equal(nameof(AgentEditorFieldKind.Select), imageField.Kind.ToString());
         Assert.Equal("custom:1.0", imageField.Value);
         var option = Assert.Single(imageField.Options!);
         Assert.Equal("custom:1.0", option.Value);
         Assert.Equal("custom:1.0", option.Label);
         Assert.Null(option.Description);
-        Assert.Contains(imageField.Actions!, action => action.Kind == AgentEditorActionKind.RefreshField
-                                                     && action.ActionId == "refresh-docker-images");
-        Assert.DoesNotContain(imageField.Actions!, action => action.Kind == AgentEditorActionKind.OpenPackageSettings);
+        Assert.Contains(imageField.Actions!, action => action.Kind.ToString() == nameof(AgentEditorActionKind.RefreshField)
+                                                      && action.ActionId == "refresh-docker-images");
+        Assert.DoesNotContain(imageField.Actions!, action => action.Kind.ToString() == nameof(AgentEditorActionKind.OpenPackageSettings));
     }
 
     [Fact]
@@ -1830,17 +1839,20 @@ public sealed class WorkspaceTests
         var contributor = new DockerExecutionWorkspaceEditorContributor(configService, imageCatalog);
         var workspace = CreateWorkspace();
 
-        var sections = await AgentRoleBoundary.As<IAgentWorkspaceEditorContributor>(contributor).GetSectionsAsync(
-            new AgentWorkspaceEditorContext(AgentRoleBoundary.As<AppModels.AgentWorkspaceRecord>(workspace), "docker", AgentWorkspaceService.BuildPrimaryBindingId(workspace.WorkspaceId)));
+        var sections = await contributor.GetSectionsAsync(
+            CreateDockerEditorContext(
+                workspace,
+                "docker",
+                AgentWorkspaceService.BuildPrimaryBindingId(workspace.WorkspaceId)));
 
         var imageField = sections.Single().Fields.Single(field => field.FieldId == "image");
         Assert.Empty(imageField.Options!);
         Assert.Contains("Pull at least one", imageField.Description, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains(imageField.Actions!, action => action.Kind == AgentEditorActionKind.OpenPackageSettings
-                                                     && action.PackageId == "sunder.package.agent.execution.docker"
-                                                     && action.Label == "Open Settings");
-        Assert.Contains(imageField.Actions!, action => action.Kind == AgentEditorActionKind.RefreshField
-                                                     && action.ActionId == "refresh-docker-images");
+        Assert.Contains(imageField.Actions!, action => action.Kind.ToString() == nameof(AgentEditorActionKind.OpenPackageSettings)
+                                                      && action.PackageId == "sunder.package.agent.execution.docker"
+                                                      && action.Label == "Open Settings");
+        Assert.Contains(imageField.Actions!, action => action.Kind.ToString() == nameof(AgentEditorActionKind.RefreshField)
+                                                      && action.ActionId == "refresh-docker-images");
     }
 
     [Fact]
@@ -1852,15 +1864,23 @@ public sealed class WorkspaceTests
         var contributor = new DockerExecutionWorkspaceEditorContributor(configService, imageCatalog);
         var workspace = CreateWorkspace();
 
-        var result = await AgentRoleBoundary.As<IAgentWorkspaceEditorContributor>(contributor).SaveSectionAsync(
-            new AgentWorkspaceEditorContext(AgentRoleBoundary.As<AppModels.AgentWorkspaceRecord>(workspace), "docker", AgentWorkspaceService.BuildPrimaryBindingId(workspace.WorkspaceId)),
-            new AgentEditorSaveRequest(
-                "docker-execution-settings",
-                new Dictionary<string, AgentEditorFieldValue>(StringComparer.OrdinalIgnoreCase)
+        var result = await contributor.SaveSectionAsync(
+            new DockerWorkerModels.CSunder_Agent_Workspace_Editor_WorkspaceEditorSaveSectionRequest
+            {
+                Context = CreateDockerEditorContext(
+                    workspace,
+                    "docker",
+                    AgentWorkspaceService.BuildPrimaryBindingId(workspace.WorkspaceId)),
+                Request = new DockerWorkerModels.AgentEditorSaveRequest
                 {
-                    ["image"] = new("missing:1.0"),
-                    ["shell-path"] = new("/bin/sh"),
-                }));
+                    SectionId = "docker-execution-settings",
+                    Fields = new Dictionary<string, DockerWorkerModels.AgentEditorFieldValue>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["image"] = new() { Value = "missing:1.0", Items = null },
+                        ["shell-path"] = new() { Value = "/bin/sh", Items = null },
+                    },
+                },
+            });
 
         Assert.False(result.Success);
         Assert.Contains("not configured", result.Message, StringComparison.OrdinalIgnoreCase);
@@ -1878,15 +1898,23 @@ public sealed class WorkspaceTests
         var contributor = new DockerExecutionWorkspaceEditorContributor(configService, imageCatalog);
         var workspace = CreateWorkspace();
 
-        var result = await AgentRoleBoundary.As<IAgentWorkspaceEditorContributor>(contributor).SaveSectionAsync(
-            new AgentWorkspaceEditorContext(AgentRoleBoundary.As<AppModels.AgentWorkspaceRecord>(workspace), "docker", AgentWorkspaceService.BuildPrimaryBindingId(workspace.WorkspaceId)),
-            new AgentEditorSaveRequest(
-                "docker-execution-settings",
-                new Dictionary<string, AgentEditorFieldValue>(StringComparer.OrdinalIgnoreCase)
+        var result = await contributor.SaveSectionAsync(
+            new DockerWorkerModels.CSunder_Agent_Workspace_Editor_WorkspaceEditorSaveSectionRequest
+            {
+                Context = CreateDockerEditorContext(
+                    workspace,
+                    "docker",
+                    AgentWorkspaceService.BuildPrimaryBindingId(workspace.WorkspaceId)),
+                Request = new DockerWorkerModels.AgentEditorSaveRequest
                 {
-                    ["image"] = new("custom:1.0"),
-                    ["shell-path"] = new("/bin/sh"),
-                }));
+                    SectionId = "docker-execution-settings",
+                    Fields = new Dictionary<string, DockerWorkerModels.AgentEditorFieldValue>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["image"] = new() { Value = "custom:1.0", Items = null },
+                        ["shell-path"] = new() { Value = "/bin/sh", Items = null },
+                    },
+                },
+            });
 
         Assert.False(result.Success);
         Assert.Contains("not ready", result.Message, StringComparison.OrdinalIgnoreCase);
@@ -1923,9 +1951,9 @@ public sealed class WorkspaceTests
         var binding = CreateBinding(workspace.WorkspaceId, "docker");
         await configService.SaveConfigAsync(binding.BindingId, new DockerExecutionWorkspaceConfig("custom:1.0", "sunder-agent-test", "/bin/sh"));
 
-        var readiness = await AgentRoleBoundary.As<IAgentExecutionTarget>(target).GetReadinessAsync(new AgentExecutionTargetContext(null, null, workspace, binding));
+        var readiness = await GetDockerReadinessAsync(target, new AgentExecutionTargetContext(null, null, workspace, binding));
 
-        Assert.Equal(AgentExecutionTargetReadinessStatus.Failed, readiness.Status);
+        Assert.Equal(nameof(AgentExecutionTargetReadinessStatus.Failed), readiness.Status.ToString());
         Assert.Contains("Pull it", readiness.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(0, targetCallCount);
     }
@@ -1979,9 +2007,9 @@ public sealed class WorkspaceTests
         var binding = CreateBinding(workspace.WorkspaceId, "docker");
         await configService.SaveConfigAsync(binding.BindingId, new DockerExecutionWorkspaceConfig("custom:1.0", "sunder-agent-test", "/bin/sh"));
 
-        var readiness = await AgentRoleBoundary.As<IAgentExecutionTarget>(target).GetReadinessAsync(new AgentExecutionTargetContext(null, null, workspace, binding));
+        var readiness = await GetDockerReadinessAsync(target, new AgentExecutionTargetContext(null, null, workspace, binding));
 
-        Assert.Equal(AgentExecutionTargetReadinessStatus.Failed, readiness.Status);
+        Assert.Equal(nameof(AgentExecutionTargetReadinessStatus.Failed), readiness.Status.ToString());
         Assert.Contains("failed to start from image 'custom:1.0'", readiness.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("No such image", readiness.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("--pull", runArgs);
@@ -2058,8 +2086,8 @@ public sealed class WorkspaceTests
             new DockerExecutionWorkspaceConfig("custom:1.0", "sunder-agent-test", "/bin/sh"));
         var context = new AgentExecutionTargetContext(null, null, workspace, binding);
 
-        Assert.Equal(AgentExecutionTargetReadinessStatus.Ready, (await AgentRoleBoundary.As<IAgentExecutionTarget>(target).GetReadinessAsync(context)).Status);
-        var generation = await AgentRoleBoundary.As<IAgentExecutionTarget>(target).GetConfigurationGenerationAsync(context);
+        Assert.Equal(nameof(AgentExecutionTargetReadinessStatus.Ready), (await GetDockerReadinessAsync(target, context)).Status.ToString());
+        var generation = await GetDockerConfigurationGenerationAsync(target, context);
         using (var restartedLifecycle = new DockerContainerLifecycleService())
         {
             var restartedTarget = new DockerExecutionTarget(
@@ -2069,15 +2097,15 @@ public sealed class WorkspaceTests
                 imageCatalog,
                 targetRunner,
                 new PassThroughDockerMountIdentityVerifier());
-            Assert.Equal(generation, await AgentRoleBoundary.As<IAgentExecutionTarget>(restartedTarget).GetConfigurationGenerationAsync(context));
+            Assert.Equal(generation, await GetDockerConfigurationGenerationAsync(restartedTarget, context));
         }
-        var staleReadiness = await AgentRoleBoundary.As<IAgentExecutionTarget>(target).GetReadinessAsync(context with
+        var staleReadiness = await GetDockerReadinessAsync(target, context with
         {
             ExpectedConfigurationGeneration = generation,
         });
-        Assert.Equal(AgentExecutionTargetReadinessStatus.Failed, staleReadiness.Status);
+        Assert.Equal(nameof(AgentExecutionTargetReadinessStatus.Failed), staleReadiness.Status.ToString());
         Assert.Contains("image identity changed", staleReadiness.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(AgentExecutionTargetReadinessStatus.Ready, (await AgentRoleBoundary.As<IAgentExecutionTarget>(target).GetReadinessAsync(context)).Status);
+        Assert.Equal(nameof(AgentExecutionTargetReadinessStatus.Ready), (await GetDockerReadinessAsync(target, context)).Status.ToString());
 
         Assert.Equal(2, runCalls.Count);
         Assert.Contains(firstImageId, runCalls[0]);
@@ -2130,10 +2158,11 @@ public sealed class WorkspaceTests
             binding.BindingId,
             new DockerExecutionWorkspaceConfig("custom:1.0", "sunder-agent-test", "/bin/sh"));
 
-        var readiness = await AgentRoleBoundary.As<IAgentExecutionTarget>(target).GetReadinessAsync(
+        var readiness = await GetDockerReadinessAsync(
+            target,
             new AgentExecutionTargetContext(null, null, workspace, binding));
 
-        Assert.Equal(AgentExecutionTargetReadinessStatus.Failed, readiness.Status);
+        Assert.Equal(nameof(AgentExecutionTargetReadinessStatus.Failed), readiness.Status.ToString());
         Assert.Contains("retained-root identity challenge", readiness.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(targetRunner.Calls, args => args.SequenceEqual(["rm", "-f", "sunder-agent-test"]));
     }
@@ -2249,7 +2278,7 @@ public sealed class WorkspaceTests
         var target = new CountingExecutionTarget("test-target");
         catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target);
         var workspaceService = new AgentWorkspaceService(store);
-        var executionTargetService = new AgentExecutionTargetService(catalog);
+        var executionTargetService = new AgentExecutionTargetService(catalog.ExecutionTargets);
         var warmupService = new AgentExecutionTargetWarmupService(workspaceService, executionTargetService);
         var workspace = workspaceService.CreateWorkspace("Warmup Workspace");
         workspaceService.SavePrimaryExecutionBinding(workspace.WorkspaceId, target.Descriptor.TargetId);
@@ -2270,9 +2299,9 @@ public sealed class WorkspaceTests
         var target = new CountingExecutionTarget("test-target");
         catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target);
         var workspaceService = new AgentWorkspaceService(store);
-        var executionTargetService = new AgentExecutionTargetService(catalog);
+        var executionTargetService = new AgentExecutionTargetService(catalog.ExecutionTargets);
         var warmupService = new AgentExecutionTargetWarmupService(workspaceService, executionTargetService);
-        using var viewModel = new AgentWorkspacesViewModel(AppWorkspace(workspaceService), AppExecution(warmupService), catalog.AppCatalog);
+        using var viewModel = new AgentWorkspacesViewModel(AppWorkspace(workspaceService), AppExecution(warmupService), catalog.WorkspaceEditors);
         await viewModel.InitializeAsync();
 
         viewModel.CreateWorkspaceCommand.Execute(null);
@@ -2287,11 +2316,16 @@ public sealed class WorkspaceTests
     public async Task AgentWorkspacesViewModel_RefreshesExecutionTargets_WhenCatalogChanges()
     {
         using var scope = TestScope.Create();
-        var store = new AgentLocalStore(scope.Context);
         using var catalog = new TestExtensionCatalog();
-        var workspaceService = new AgentWorkspaceService(store);
-        var executionTargetService = new AgentExecutionTargetService(catalog);
-        using var viewModel = new AgentWorkspacesViewModel(AppWorkspace(workspaceService), AppExecution(executionTargetService), catalog.AppCatalog);
+        await using var runtime = RegressionTestRuntime.Create(scope.Context, catalog);
+        var owner = (AgentOwnerRuntimeProvider)runtime.GetService(typeof(AgentOwnerRuntimeProvider))!;
+        catalog.AddGeneratedProvider("sunder.package.agent", owner, owner.CreateSunderRpcProviderRegistration());
+        var rpc = catalog.RpcForCaller("sunder.package.agent");
+        await using var receiver = new GeneratedServiceTestScope(rpc);
+        var owners = receiver.Providers<AgentApp::Sunder.Generated.Packages.Sunder_Package_Agent_Services.IAgentRuntimeService>();
+        using var gateway = new AppRuntime.AgentAppRuntimeGateway(Assert.Single((await owners.ListAsync()).Providers).Service,
+            new AppRuntime.AgentOwnerResources(owners, rpc));
+        using var viewModel = new AgentWorkspacesViewModel(gateway, gateway, catalog.WorkspaceEditors);
         await viewModel.InitializeAsync();
 
         viewModel.CreateWorkspaceCommand.Execute(null);
@@ -2312,14 +2346,22 @@ public sealed class WorkspaceTests
     public async Task AgentWorkspacesViewModel_RefreshesEditorSections_WhenCatalogChanges()
     {
         using var scope = TestScope.Create();
-        var store = new AgentLocalStore(scope.Context);
         using var catalog = new TestExtensionCatalog();
-        var workspaceService = new AgentWorkspaceService(store);
-        var executionTargetService = new AgentExecutionTargetService(catalog);
-        using var viewModel = new AgentWorkspacesViewModel(AppWorkspace(workspaceService), AppExecution(executionTargetService), catalog.AppCatalog);
+        await using var runtime = RegressionTestRuntime.Create(scope.Context, catalog);
+        var owner = (AgentOwnerRuntimeProvider)runtime.GetService(typeof(AgentOwnerRuntimeProvider))!;
+        catalog.AddGeneratedProvider("sunder.package.agent", owner, owner.CreateSunderRpcProviderRegistration());
+        var rpc = catalog.RpcForCaller("sunder.package.agent");
+        await using var receiver = new GeneratedServiceTestScope(rpc);
+        var owners = receiver.Providers<AgentApp::Sunder.Generated.Packages.Sunder_Package_Agent_Services.IAgentRuntimeService>();
+        using var gateway = new AppRuntime.AgentAppRuntimeGateway(Assert.Single((await owners.ListAsync()).Providers).Service,
+            new AppRuntime.AgentOwnerResources(owners, rpc));
+        var editorCatalog = new ObservedServiceProviders<AgentApp::Sunder.Generated.Packages.Sunder_Package_Agent_Services.IWorkspaceEditorService>(catalog.WorkspaceEditors);
+        using var viewModel = new AgentWorkspacesViewModel(gateway, gateway, editorCatalog);
         await viewModel.InitializeAsync();
+        await editorCatalog.WatchStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
-        viewModel.CreateWorkspaceCommand.Execute(null);
+        await viewModel.CreateWorkspaceCommand.ExecuteAsync(null);
+        Assert.NotNull(viewModel.SelectedWorkspace);
         var target = new CountingExecutionTarget("docker");
         await WaitForExecutionTargetAddedAsync(
             viewModel,
@@ -2344,11 +2386,11 @@ public sealed class WorkspaceTests
         catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target);
         catalog.AddProvider(RegressionTestAppBindings.WorkspaceEditors, contributor);
         var workspaceService = new AgentWorkspaceService(store);
-        var executionTargetService = new AgentExecutionTargetService(catalog);
+        var executionTargetService = new AgentExecutionTargetService(catalog.ExecutionTargets);
         var workspace = workspaceService.CreateWorkspace("Docker Workspace");
         workspaceService.SavePrimaryExecutionBinding(workspace.WorkspaceId, target.Descriptor.TargetId);
 
-        using var viewModel = new AgentWorkspacesViewModel(AppWorkspace(workspaceService), AppExecution(executionTargetService), catalog.AppCatalog);
+        using var viewModel = new AgentWorkspacesViewModel(AppWorkspace(workspaceService), AppExecution(executionTargetService), catalog.WorkspaceEditors);
         await viewModel.InitializeAsync();
 
         await WaitUntilAsync(() => viewModel.EditorSections.Count == 1);
@@ -2366,8 +2408,8 @@ public sealed class WorkspaceTests
         catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target);
         catalog.AddProvider(RegressionTestAppBindings.WorkspaceEditors, contributor);
         var workspaceService = new AgentWorkspaceService(store);
-        var executionTargetService = new AgentExecutionTargetService(catalog);
-        using var viewModel = new AgentWorkspacesViewModel(AppWorkspace(workspaceService), AppExecution(executionTargetService), catalog.AppCatalog)
+        var executionTargetService = new AgentExecutionTargetService(catalog.ExecutionTargets);
+        using var viewModel = new AgentWorkspacesViewModel(AppWorkspace(workspaceService), AppExecution(executionTargetService), catalog.WorkspaceEditors)
         {
             IsCompactLayout = true,
         };
@@ -2406,8 +2448,8 @@ public sealed class WorkspaceTests
         catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target);
         catalog.AddProvider(RegressionTestAppBindings.WorkspaceEditors, contributor);
         var workspaceService = new AgentWorkspaceService(store);
-        var executionTargetService = new AgentExecutionTargetService(catalog);
-        using var viewModel = new AgentWorkspacesViewModel(AppWorkspace(workspaceService), AppExecution(executionTargetService), catalog.AppCatalog);
+        var executionTargetService = new AgentExecutionTargetService(catalog.ExecutionTargets);
+        using var viewModel = new AgentWorkspacesViewModel(AppWorkspace(workspaceService), AppExecution(executionTargetService), catalog.WorkspaceEditors);
         await viewModel.InitializeAsync();
 
         viewModel.CreateWorkspaceCommand.Execute(null);
@@ -2449,8 +2491,8 @@ public sealed class WorkspaceTests
         catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target);
         catalog.AddProvider(RegressionTestAppBindings.WorkspaceEditors, contributor);
         var workspaceService = new AgentWorkspaceService(store);
-        var executionTargetService = new AgentExecutionTargetService(catalog);
-        using var viewModel = new AgentWorkspacesViewModel(AppWorkspace(workspaceService), AppExecution(executionTargetService), catalog.AppCatalog)
+        var executionTargetService = new AgentExecutionTargetService(catalog.ExecutionTargets);
+        using var viewModel = new AgentWorkspacesViewModel(AppWorkspace(workspaceService), AppExecution(executionTargetService), catalog.WorkspaceEditors)
         {
             IsCompactLayout = true,
         };
@@ -2479,15 +2521,15 @@ public sealed class WorkspaceTests
         catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target);
         catalog.AddProvider(RegressionTestAppBindings.WorkspaceEditors, contributor);
         var workspaceService = new AgentWorkspaceService(store);
-        var executionTargetService = new AgentExecutionTargetService(catalog);
+        var executionTargetService = new AgentExecutionTargetService(catalog.ExecutionTargets);
         var originalWorkspace = workspaceService.CreateWorkspace("Original Workspace");
         var otherWorkspace = workspaceService.CreateWorkspace("Other Workspace");
         using var viewModel = new AgentWorkspacesViewModel(
             AppWorkspace(workspaceService),
             AppExecution(executionTargetService),
-            catalog.AppCatalog);
+            catalog.WorkspaceEditors);
         await viewModel.InitializeAsync();
-        viewModel.ActivateWorkspace(AgentRoleBoundary.As<AppModels.AgentWorkspaceRecord>(originalWorkspace));
+        viewModel.ActivateWorkspace(ToAppWorkspace(originalWorkspace));
         viewModel.SelectedExecutionTarget = viewModel.ExecutionTargets.Single(option =>
             string.Equals(option.TargetId, "docker", StringComparison.OrdinalIgnoreCase));
         await contributor.SectionsLoaded.WaitAsync(TimeSpan.FromSeconds(10));
@@ -2495,7 +2537,7 @@ public sealed class WorkspaceTests
 
         var save = viewModel.SaveWorkspaceCommand.ExecuteAsync(null);
         await contributor.SaveEntered.WaitAsync(TimeSpan.FromSeconds(10));
-        viewModel.ActivateWorkspace(AgentRoleBoundary.As<AppModels.AgentWorkspaceRecord>(otherWorkspace));
+        viewModel.ActivateWorkspace(ToAppWorkspace(otherWorkspace));
         contributor.ReleaseSave();
         await save.WaitAsync(TimeSpan.FromSeconds(10));
 
@@ -2534,33 +2576,23 @@ public sealed class WorkspaceTests
             using var catalog = new TestExtensionCatalog();
             var target = new CountingExecutionTarget("docker");
             var contributor = new BlockingWorkspaceEditorContributor("docker");
-            var editorProviderChanged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            void OnCatalogChanged(object? _, AgentRpcCatalogChangedEventArgs change)
-            {
-                if (change.IncludesContract(AgentRpcContractIds.WorkspaceEditor))
-                {
-                    editorProviderChanged.TrySetResult();
-                }
-            }
-            catalog.Changed += OnCatalogChanged;
+            catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target);
+            using var changeCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            await using var changes = catalog.WorkspaceEditors.WatchAsync(0, 0, changeCancellation.Token).GetAsyncEnumerator();
             try
             {
-                catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target);
                 catalog.AddProvider(RegressionTestAppBindings.WorkspaceEditors, contributor);
-                await editorProviderChanged.Task.WaitAsync(TimeSpan.FromSeconds(2));
+                Assert.True(await changes.MoveNextAsync());
             }
-            finally
-            {
-                catalog.Changed -= OnCatalogChanged;
-            }
+            finally { changeCancellation.Cancel(); }
             var workspaceService = new AgentWorkspaceService(store);
-            var executionTargetService = new AgentExecutionTargetService(catalog);
+            var executionTargetService = new AgentExecutionTargetService(catalog.ExecutionTargets);
             var workspace = workspaceService.CreateWorkspace("Original Workspace");
             workspaceService.SavePrimaryExecutionBinding(workspace.WorkspaceId, "docker");
             using var viewModel = new AgentWorkspacesViewModel(
                 AppWorkspace(workspaceService),
                 AppExecution(executionTargetService),
-                catalog.AppCatalog);
+                catalog.WorkspaceEditors);
             await viewModel.InitializeAsync();
             await viewModel.CurrentEditorSectionRefresh.WaitAsync(TimeSpan.FromSeconds(2));
             var section = Assert.Single(viewModel.EditorSections);
@@ -2621,8 +2653,8 @@ public sealed class WorkspaceTests
         workspaceService.SavePrimaryExecutionBinding(workspace.WorkspaceId, "docker");
         using var viewModel = new AgentWorkspacesViewModel(
             AppWorkspace(workspaceService),
-            AppExecution(new AgentExecutionTargetService(catalog)),
-            catalog.AppCatalog);
+            AppExecution(new AgentExecutionTargetService(catalog.ExecutionTargets)),
+            catalog.WorkspaceEditors);
         await viewModel.InitializeAsync();
         await contributor.SectionsLoaded.WaitAsync(TimeSpan.FromSeconds(2));
         viewModel.DisplayName = "Saved workspace";
@@ -2649,7 +2681,7 @@ public sealed class WorkspaceTests
         catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target);
         catalog.AddProvider(RegressionTestAppBindings.WorkspaceEditors, contributor);
         var workspaceService = new AgentWorkspaceService(store);
-        var executionTargetService = new AgentExecutionTargetService(catalog);
+        var executionTargetService = new AgentExecutionTargetService(catalog.ExecutionTargets);
         var first = workspaceService.CreateWorkspace("First Workspace");
         var second = workspaceService.CreateWorkspace("Second Workspace");
         workspaceService.SavePrimaryExecutionBinding(first.WorkspaceId, "docker");
@@ -2657,7 +2689,7 @@ public sealed class WorkspaceTests
         using var viewModel = new AgentWorkspacesViewModel(
             AppWorkspace(workspaceService),
             AppExecution(executionTargetService),
-            catalog.AppCatalog);
+            catalog.WorkspaceEditors);
         await viewModel.InitializeAsync();
         await contributor.FirstStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
         var staleRefresh = viewModel.CurrentEditorSectionRefresh;
@@ -2681,7 +2713,7 @@ public sealed class WorkspaceTests
     {
         using var scope = TestScope.Create();
         using var services = CreateWorkspaceViewServices(scope.Context);
-        using var viewModel = new AgentWorkspacesViewModel(AppWorkspace(services.WorkspaceService), AppExecution(services.ExecutionTargetService), services.Catalog.AppCatalog)
+        using var viewModel = new AgentWorkspacesViewModel(AppWorkspace(services.WorkspaceService), AppExecution(services.ExecutionTargetService), services.Catalog.WorkspaceEditors)
         {
             IsCompactLayout = true,
         };
@@ -2703,7 +2735,7 @@ public sealed class WorkspaceTests
         using var scope = TestScope.Create();
         using var services = CreateWorkspaceViewServices(scope.Context);
         var workspace = services.WorkspaceService.CreateWorkspace("Alpha Workspace");
-        using var viewModel = new AgentWorkspacesViewModel(AppWorkspace(services.WorkspaceService), AppExecution(services.ExecutionTargetService), services.Catalog.AppCatalog);
+        using var viewModel = new AgentWorkspacesViewModel(AppWorkspace(services.WorkspaceService), AppExecution(services.ExecutionTargetService), services.Catalog.WorkspaceEditors);
         await viewModel.InitializeAsync();
         Assert.Equal(workspace.WorkspaceId, viewModel.SelectedWorkspace?.WorkspaceId);
 
@@ -2725,7 +2757,7 @@ public sealed class WorkspaceTests
         using var viewModel = new AgentWorkspacesViewModel(
             AppWorkspace(services.WorkspaceService),
             AppExecution(services.ExecutionTargetService),
-            services.Catalog.AppCatalog);
+            services.Catalog.WorkspaceEditors);
         await viewModel.InitializeAsync();
 
         viewModel.DisplayName = "Edited automatic workspace";
@@ -2744,8 +2776,8 @@ public sealed class WorkspaceTests
         using var catalog = new TestExtensionCatalog();
         using var viewModel = new AgentWorkspacesViewModel(
             AppWorkspace(gateway),
-            AppExecution(new AgentExecutionTargetService(catalog)),
-            catalog.AppCatalog);
+            AppExecution(new AgentExecutionTargetService(catalog.ExecutionTargets)),
+            catalog.WorkspaceEditors);
 
         var initialization = viewModel.InitializeAsync();
         try
@@ -2788,7 +2820,7 @@ public sealed class WorkspaceTests
         using var viewModel = new AgentWorkspacesViewModel(
             AppWorkspace(services.WorkspaceService),
             AppExecution(services.ExecutionTargetService),
-            services.Catalog.AppCatalog);
+            services.Catalog.WorkspaceEditors);
         await viewModel.InitializeAsync();
         viewModel.IsCompactLayout = true;
         Assert.Null(viewModel.SelectedWorkspace);
@@ -2806,7 +2838,7 @@ public sealed class WorkspaceTests
         using var scope = TestScope.Create();
         using var services = CreateWorkspaceViewServices(scope.Context);
         var workspace = services.WorkspaceService.CreateWorkspace("Alpha Workspace");
-        using var viewModel = new AgentWorkspacesViewModel(AppWorkspace(services.WorkspaceService), AppExecution(services.ExecutionTargetService), services.Catalog.AppCatalog)
+        using var viewModel = new AgentWorkspacesViewModel(AppWorkspace(services.WorkspaceService), AppExecution(services.ExecutionTargetService), services.Catalog.WorkspaceEditors)
         {
             IsCompactLayout = true,
         };
@@ -2839,7 +2871,7 @@ public sealed class WorkspaceTests
         using var services = CreateWorkspaceViewServices(scope.Context);
         var firstWorkspace = services.WorkspaceService.CreateWorkspace("Alpha Workspace");
         var secondWorkspace = services.WorkspaceService.CreateWorkspace("Beta Workspace");
-        using var viewModel = new AgentWorkspacesViewModel(AppWorkspace(services.WorkspaceService), AppExecution(services.ExecutionTargetService), services.Catalog.AppCatalog);
+        using var viewModel = new AgentWorkspacesViewModel(AppWorkspace(services.WorkspaceService), AppExecution(services.ExecutionTargetService), services.Catalog.WorkspaceEditors);
         await viewModel.InitializeAsync();
         Assert.Equal(firstWorkspace.WorkspaceId, viewModel.SelectedWorkspace?.WorkspaceId);
 
@@ -2858,7 +2890,7 @@ public sealed class WorkspaceTests
         using var services = CreateWorkspaceViewServices(scope.Context);
         var firstWorkspace = services.WorkspaceService.CreateWorkspace("Alpha Workspace");
         var secondWorkspace = services.WorkspaceService.CreateWorkspace("Beta Workspace");
-        using var viewModel = new AgentWorkspacesViewModel(AppWorkspace(services.WorkspaceService), AppExecution(services.ExecutionTargetService), services.Catalog.AppCatalog)
+        using var viewModel = new AgentWorkspacesViewModel(AppWorkspace(services.WorkspaceService), AppExecution(services.ExecutionTargetService), services.Catalog.WorkspaceEditors)
         {
             IsCompactLayout = true,
         };
@@ -2884,7 +2916,7 @@ public sealed class WorkspaceTests
         using var services = CreateWorkspaceViewServices(scope.Context);
         var firstWorkspace = services.WorkspaceService.CreateWorkspace("Alpha Workspace");
         var secondWorkspace = services.WorkspaceService.CreateWorkspace("Beta Workspace");
-        using var viewModel = new AgentWorkspacesViewModel(AppWorkspace(services.WorkspaceService), AppExecution(services.ExecutionTargetService), services.Catalog.AppCatalog);
+        using var viewModel = new AgentWorkspacesViewModel(AppWorkspace(services.WorkspaceService), AppExecution(services.ExecutionTargetService), services.Catalog.WorkspaceEditors);
         await viewModel.InitializeAsync();
         viewModel.SelectedWorkspace = viewModel.Workspaces.Single(item => item.WorkspaceId == secondWorkspace.WorkspaceId);
 
@@ -2975,8 +3007,8 @@ public sealed class WorkspaceTests
         catalog.AddProvider(RegressionTestBindings.ExecutionTargets, new CountingExecutionTarget("docker"));
         catalog.AddProvider(RegressionTestAppBindings.WorkspaceEditors, contributor);
         var workspaceService = new AgentWorkspaceService(store);
-        var executionTargetService = new AgentExecutionTargetService(catalog);
-        using var viewModel = new AgentWorkspacesViewModel(AppWorkspace(workspaceService), AppExecution(executionTargetService), catalog.AppCatalog);
+        var executionTargetService = new AgentExecutionTargetService(catalog.ExecutionTargets);
+        using var viewModel = new AgentWorkspacesViewModel(AppWorkspace(workspaceService), AppExecution(executionTargetService), catalog.WorkspaceEditors);
         await viewModel.InitializeAsync();
 
         viewModel.CreateWorkspaceCommand.Execute(null);
@@ -3023,21 +3055,23 @@ public sealed class WorkspaceTests
         catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target);
         var sessionService = new AgentSessionService(store);
         var workspaceService = new AgentWorkspaceService(store);
-        var executionTargetService = new AgentExecutionTargetService(catalog);
-        var toolService = new AgentToolService(sessionService, workspaceService, executionTargetService, catalog);
-        var profileService = new AgentProfileService(store, toolService, catalog, catalog.BehaviorLoops);
-        var permissionService = new AgentPermissionService(store, catalog);
-        var memoryCoordinator = new AgentMemoryCoordinator(sessionService, catalog);
-        var promptComposer = new AgentSystemPromptComposer(catalog);
+        var executionTargetService = new AgentExecutionTargetService(catalog.ExecutionTargets);
+        var toolService = new AgentToolService(sessionService, workspaceService, executionTargetService, catalog.ToolSources, catalog.ObservedToolExecutions);
+        var profileService = catalog.CreateProfileService(store, toolService);
+        var permissionService = new AgentPermissionService(store, catalog.PermissionSurfaces);
+        await using var lifecycle = new AgentLifecycleDispatcher(store, catalog.DurableLifecycleObservers);
+        var memoryCoordinator = new AgentMemoryCoordinator(sessionService, catalog.PromptContextContributors, lifecycle);
+        var promptComposer = new AgentSystemPromptComposer(catalog.SystemPromptContributors);
         var attachmentService = new AgentAttachmentService(scope.Context);
         var behaviorLoop = new DefaultAgentBehaviorLoop(promptComposer, attachmentService);
         var runAttachmentStore = new AgentRunAttachmentStore(attachmentService);
-        var activeRunRegistry = new AgentActiveRunRegistry();
+        var activeRunRegistry = catalog.ActiveRuns;
         var runEventLogger = new AgentRunEventLogger(scope.Context);
-        var providerResolver = new AgentRunProviderResolver(profileService, catalog);
+        var providerResolver = new AgentRunProviderResolver(profileService, catalog.ChatProviders);
         var behaviorLoopResolver = new AgentBehaviorLoopResolver(
-            catalog,
             catalog.BehaviorLoops,
+            catalog.RunControls,
+            activeRunRegistry,
             behaviorLoop);
         var stopCoordinator = new AgentRunStopCoordinator(sessionService, permissionService, memoryCoordinator, activeRunRegistry, profileService);
         var behaviorLoopHostFactory = new AgentBehaviorLoopHostFactory(sessionService, toolService, permissionService, memoryCoordinator, runEventLogger, activeRunRegistry, behaviorLoop);
@@ -3056,7 +3090,8 @@ public sealed class WorkspaceTests
             runStartService,
             runExecutionService,
             activeRunRegistry);
-        var runCoordinator = new AgentRunCoordinator(userMessageRunCoordinator, stopCoordinator, childRunSessionService, permissionResumeCoordinator);
+        var runCoordinator = new AgentRunCoordinator(userMessageRunCoordinator, stopCoordinator,
+            new AgentChildRunExecutor(userMessageRunCoordinator, childRunSessionService), permissionResumeCoordinator);
         var warmupService = new AgentExecutionTargetWarmupService(workspaceService, executionTargetService);
         var firstWorkspace = workspaceService.CreateWorkspace("First Workspace");
         workspaceService.SavePrimaryExecutionBinding(firstWorkspace.WorkspaceId, target.Descriptor.TargetId);
@@ -3080,12 +3115,12 @@ public sealed class WorkspaceTests
     }
 
     [Fact]
-    public void PermissionService_UsesLastMatchingRule_AndUnrestrictedModeCannotBypassDeny()
+    public async Task PermissionService_UsesLastMatchingRule_AndUnrestrictedModeCannotBypassDeny()
     {
         using var scope = TestScope.Create();
         var store = new AgentLocalStore(scope.Context);
         using var catalog = new TestExtensionCatalog();
-        var permissions = new AgentPermissionService(store, catalog);
+        var permissions = new AgentPermissionService(store, catalog.PermissionSurfaces);
         var workspace = CreateWorkspace();
         store.SaveWorkspace(workspace);
         var session = store.CreateSession("Permission Test", workspaceId: workspace.WorkspaceId);
@@ -3094,9 +3129,9 @@ public sealed class WorkspaceTests
         permissions.SaveOverride("shell.execute", AgentPermissionBoundaryIds.SelectedExecutionTarget, AgentPermissionDecision.Deny);
         permissions.SetSessionUnrestrictedMode(session.SessionId, true);
 
-        var denied = permissions.Evaluate(session.SessionId, new AgentPermissionRequest("shell.execute", AgentPermissionBoundaryIds.SelectedExecutionTarget, "remove", Command: "rm -rf tmp"));
+        var denied = await permissions.EvaluateAsync(session.SessionId, new AgentPermissionRequest("shell.execute", AgentPermissionBoundaryIds.SelectedExecutionTarget, "remove", Command: "rm -rf tmp"));
         permissions.SaveOverride("shell.execute", AgentPermissionBoundaryIds.SelectedExecutionTarget, AgentPermissionDecision.Ask);
-        var allowed = permissions.Evaluate(session.SessionId, new AgentPermissionRequest("shell.execute", AgentPermissionBoundaryIds.SelectedExecutionTarget, "list", Command: "ls"));
+        var allowed = await permissions.EvaluateAsync(session.SessionId, new AgentPermissionRequest("shell.execute", AgentPermissionBoundaryIds.SelectedExecutionTarget, "list", Command: "ls"));
 
         Assert.Equal(AgentPermissionDecision.Allow, allowed.Decision);
         Assert.Equal(AgentPermissionDecision.Deny, denied.Decision);
@@ -3116,8 +3151,9 @@ public sealed class WorkspaceTests
         var workspace = CreateWorkspace();
         var binding = CreateBinding(workspace.WorkspaceId);
 
-        using var sourceLease = catalog.AcquireProvider(RegressionTestBindings.ToolSources, source, "sunder.package.agent.tools.files");
-        var result = await sourceLease.Service.ExecuteAsync(
+        catalog.AddProvider(RegressionTestBindings.ToolSources, source, "sunder.package.agent.tools.files");
+        var sourceProvider = await catalog.GetRequiredProviderAsync(catalog.ToolSources);
+        var result = await sourceProvider.Service.ExecuteAsync(
             CreateToolExecutionContext(catalog, workspace, binding),
             new AgentToolRequest("glob", "{\"pattern\":\"*.txt\"}"));
 
@@ -3142,8 +3178,8 @@ public sealed class WorkspaceTests
         var workspace = CreateWorkspace();
         var binding = CreateBinding(workspace.WorkspaceId);
 
-        using var sourceLease = catalog.AcquireProvider(RegressionTestBindings.ToolSources, source, "sunder.package.agent.tools.files");
-        var permission = await ((IAgentPermissionAwareToolSource)sourceLease.Service).BuildPermissionRequestAsync(
+        using var sourceProbe = new GeneratedToolSourceProbe(catalog, source, "sunder.package.agent.tools.files");
+        var permission = await sourceProbe.BuildPermissionRequestAsync(
             CreateToolExecutionContext(catalog, workspace, binding) with
             {
                 ResourceOperation = CreateResourceOperation("files.search"),
@@ -3167,8 +3203,9 @@ public sealed class WorkspaceTests
         var workspace = CreateWorkspace();
         var binding = CreateBinding(workspace.WorkspaceId);
 
-        using var sourceLease = catalog.AcquireProvider(RegressionTestBindings.ToolSources, source, "sunder.package.agent.tools.files");
-        var result = await sourceLease.Service.ExecuteAsync(
+        catalog.AddProvider(RegressionTestBindings.ToolSources, source, "sunder.package.agent.tools.files");
+        var sourceProvider = await catalog.GetRequiredProviderAsync(catalog.ToolSources);
+        var result = await sourceProvider.Service.ExecuteAsync(
             CreateToolExecutionContext(catalog, workspace, binding),
             new AgentToolRequest("edit", "{\"path\":\"notes.txt\",\"oldString\":\"hello\",\"newString\":\"bye\",\"replaceAll\":\"true\"}"));
 
@@ -3193,8 +3230,9 @@ public sealed class WorkspaceTests
             newString = "new\nsame",
         });
 
-        using var sourceLease = catalog.AcquireProvider(RegressionTestBindings.ToolSources, source, "sunder.package.agent.tools.files");
-        var result = await sourceLease.Service.ExecuteAsync(
+        catalog.AddProvider(RegressionTestBindings.ToolSources, source, "sunder.package.agent.tools.files");
+        var sourceProvider = await catalog.GetRequiredProviderAsync(catalog.ToolSources);
+        var result = await sourceProvider.Service.ExecuteAsync(
             CreateToolExecutionContext(catalog, workspace, binding),
             new AgentToolRequest("edit", argumentsJson));
 
@@ -3237,8 +3275,9 @@ public sealed class WorkspaceTests
             """;
         var argumentsJson = ApplyPatchArgs(patchText);
 
-        using var sourceLease = catalog.AcquireProvider(RegressionTestBindings.ToolSources, source, "sunder.package.agent.tools.files");
-        var result = await sourceLease.Service.ExecuteAsync(
+        catalog.AddProvider(RegressionTestBindings.ToolSources, source, "sunder.package.agent.tools.files");
+        var sourceProvider = await catalog.GetRequiredProviderAsync(catalog.ToolSources);
+        var result = await sourceProvider.Service.ExecuteAsync(
             CreateToolExecutionContext(catalog, workspace, binding),
             new AgentToolRequest("apply_patch", argumentsJson));
 
@@ -3274,8 +3313,9 @@ public sealed class WorkspaceTests
         var workspace = CreateWorkspace();
         var binding = CreateBinding(workspace.WorkspaceId);
 
-        using var sourceLease = catalog.AcquireProvider(RegressionTestBindings.ToolSources, source, "sunder.package.agent.tools.files");
-        var result = await sourceLease.Service.ExecuteAsync(
+        catalog.AddProvider(RegressionTestBindings.ToolSources, source, "sunder.package.agent.tools.files");
+        var sourceProvider = await catalog.GetRequiredProviderAsync(catalog.ToolSources);
+        var result = await sourceProvider.Service.ExecuteAsync(
             CreateToolExecutionContext(catalog, workspace, binding),
             new AgentToolRequest("edit", "{\"path\":\"notes.txt\",\"oldString\":\"hello\",\"newString\":\"bye\",\"replaceAll\":\"maybe\"}"));
 
@@ -3294,8 +3334,8 @@ public sealed class WorkspaceTests
         var workspace = CreateWorkspace();
         var binding = CreateBinding(workspace.WorkspaceId);
 
-        using var sourceLease = catalog.AcquireProvider(RegressionTestBindings.ToolSources, source, "sunder.package.agent.tools.files");
-        var result = await sourceLease.Service.ExecuteAsync(
+        using var sourceProbe = new GeneratedToolSourceProbe(catalog, source, "sunder.package.agent.tools.files");
+        var result = await sourceProbe.ExecuteAsync(
             CreateToolExecutionContext(catalog, workspace, binding),
             new AgentToolRequest("read", "{\"path\":\"notes.txt\",\"offset\":\"2\",\"limit\":\"1\"}"));
 
@@ -3313,8 +3353,9 @@ public sealed class WorkspaceTests
         var workspace = CreateWorkspace();
         var binding = CreateBinding(workspace.WorkspaceId);
 
-        using var sourceLease = catalog.AcquireProvider(RegressionTestBindings.ToolSources, source, "sunder.package.agent.tools.shell");
-        var result = await sourceLease.Service.ExecuteAsync(
+        catalog.AddProvider(RegressionTestBindings.ToolSources, source, "sunder.package.agent.tools.shell");
+        var sourceProvider = await catalog.GetRequiredProviderAsync(catalog.ToolSources);
+        var result = await sourceProvider.Service.ExecuteAsync(
             CreateToolExecutionContext(catalog, workspace, binding),
             new AgentToolRequest("shell", "{\"command\":\"echo ok\",\"timeoutSeconds\":\"30\"}"));
 
@@ -3349,8 +3390,8 @@ public sealed class WorkspaceTests
             binding.BindingId,
             new DockerExecutionWorkspaceConfig("test-image:1.0", null, "/bin/sh"));
 
-        using var sourceLease = catalog.AcquireProvider(RegressionTestBindings.ToolSources, source, "sunder.package.agent.tools.files");
-        var permission = await ((IAgentPermissionAwareToolSource)sourceLease.Service).BuildPermissionRequestAsync(
+        using var sourceProbe = new GeneratedToolSourceProbe(catalog, source, "sunder.package.agent.tools.files");
+        var permission = await sourceProbe.BuildPermissionRequestAsync(
             CreateToolExecutionContext(catalog, workspace, binding),
             new AgentToolRequest(toolId, argumentsJson));
 
@@ -3375,8 +3416,8 @@ public sealed class WorkspaceTests
         var source = new FilesToolSource(scope.Context);
         var (workspace, binding) = await CreateLocalWorkspaceAsync(root, configService);
 
-        using var sourceLease = catalog.AcquireProvider(RegressionTestBindings.ToolSources, source, "sunder.package.agent.tools.files");
-        var permission = await ((IAgentPermissionAwareToolSource)sourceLease.Service).BuildPermissionRequestAsync(
+        using var sourceProbe = new GeneratedToolSourceProbe(catalog, source, "sunder.package.agent.tools.files");
+        var permission = await sourceProbe.BuildPermissionRequestAsync(
             CreateToolExecutionContext(catalog, workspace, binding),
             new AgentToolRequest("apply_patch", ApplyPatchArgs("""
                 *** Begin Patch
@@ -3405,8 +3446,8 @@ public sealed class WorkspaceTests
         var source = new FilesToolSource(scope.Context);
         var (workspace, binding) = await CreateLocalWorkspaceAsync(root, configService);
 
-        using var sourceLease = catalog.AcquireProvider(RegressionTestBindings.ToolSources, source, "sunder.package.agent.tools.files");
-        var permission = await ((IAgentPermissionAwareToolSource)sourceLease.Service).BuildPermissionRequestAsync(
+        using var sourceProbe = new GeneratedToolSourceProbe(catalog, source, "sunder.package.agent.tools.files");
+        var permission = await sourceProbe.BuildPermissionRequestAsync(
             CreateToolExecutionContext(catalog, workspace, binding),
             new AgentToolRequest("apply_patch", ApplyPatchArgs("""
                 *** Begin Patch
@@ -3438,8 +3479,8 @@ public sealed class WorkspaceTests
         var source = new FilesToolSource(scope.Context);
         var (workspace, binding) = await CreateLocalWorkspaceAsync(root, configService);
 
-        using var sourceLease = catalog.AcquireProvider(RegressionTestBindings.ToolSources, source, "sunder.package.agent.tools.files");
-        var permission = await ((IAgentPermissionAwareToolSource)sourceLease.Service).BuildPermissionRequestAsync(
+        using var sourceProbe = new GeneratedToolSourceProbe(catalog, source, "sunder.package.agent.tools.files");
+        var permission = await sourceProbe.BuildPermissionRequestAsync(
             CreateToolExecutionContext(catalog, workspace, binding),
             new AgentToolRequest("apply_patch", ApplyPatchArgs($"""
                 *** Begin Patch
@@ -3470,8 +3511,8 @@ public sealed class WorkspaceTests
         var source = new FilesToolSource(scope.Context);
         var (workspace, binding) = await CreateLocalWorkspaceAsync(root, configService);
 
-        using var sourceLease = catalog.AcquireProvider(RegressionTestBindings.ToolSources, source, "sunder.package.agent.tools.files");
-        var permission = await ((IAgentPermissionAwareToolSource)sourceLease.Service).BuildPermissionRequestAsync(
+        using var sourceProbe = new GeneratedToolSourceProbe(catalog, source, "sunder.package.agent.tools.files");
+        var permission = await sourceProbe.BuildPermissionRequestAsync(
             CreateToolExecutionContext(catalog, workspace, binding),
             new AgentToolRequest("apply_patch", ApplyPatchArgs("not a patch")));
 
@@ -3492,8 +3533,8 @@ public sealed class WorkspaceTests
         var workspace = CreateWorkspace();
         var binding = CreateBinding(workspace.WorkspaceId);
 
-        using var sourceLease = catalog.AcquireProvider(RegressionTestBindings.ToolSources, source, "sunder.package.agent.tools.files");
-        var permission = await ((IAgentPermissionAwareToolSource)sourceLease.Service).BuildPermissionRequestAsync(
+        using var sourceProbe = new GeneratedToolSourceProbe(catalog, source, "sunder.package.agent.tools.files");
+        var permission = await sourceProbe.BuildPermissionRequestAsync(
             CreateToolExecutionContext(catalog, workspace, binding),
             new AgentToolRequest("apply_patch", ApplyPatchArgs("""
                 *** Begin Patch
@@ -3517,8 +3558,8 @@ public sealed class WorkspaceTests
         var workspace = CreateWorkspace();
         var binding = CreateBinding(workspace.WorkspaceId);
 
-        using var sourceLease = catalog.AcquireProvider(RegressionTestBindings.ToolSources, source, "sunder.package.agent.tools.files");
-        var permission = await ((IAgentPermissionAwareToolSource)sourceLease.Service).BuildPermissionRequestAsync(
+        using var sourceProbe = new GeneratedToolSourceProbe(catalog, source, "sunder.package.agent.tools.files");
+        var permission = await sourceProbe.BuildPermissionRequestAsync(
             CreateToolExecutionContext(catalog, workspace, binding),
             new AgentToolRequest("apply_patch", ApplyPatchArgs("""
                 *** Begin Patch
@@ -3543,8 +3584,8 @@ public sealed class WorkspaceTests
         catalog.AddProvider(RegressionTestBindings.ToolSources, new FilesToolSource(scope.Context));
         var sessionService = new AgentSessionService(store);
         var workspaceService = new AgentWorkspaceService(store);
-        var executionTargetService = new AgentExecutionTargetService(catalog);
-        var toolService = new AgentToolService(sessionService, workspaceService, executionTargetService, catalog);
+        var executionTargetService = new AgentExecutionTargetService(catalog.ExecutionTargets);
+        var toolService = new AgentToolService(sessionService, workspaceService, executionTargetService, catalog.ToolSources, catalog.ObservedToolExecutions);
 
         var tools = await toolService.ListInstalledLocalToolsAsync();
 
@@ -3565,11 +3606,13 @@ public sealed class WorkspaceTests
     public async Task FilesToolSource_ListToolsAsync_UsesMediumPriorityAndRuntimeGuidance()
     {
         using var scope = TestScope.Create();
+        using var catalog = new TestExtensionCatalog();
         var source = new FilesToolSource(scope.Context);
+        using var sourceProbe = new GeneratedToolSourceProbe(catalog, source, "sunder.package.agent.tools.files");
 
-        var tools = await source.ListToolsAsync(new(null, null, null, null));
+        var tools = await sourceProbe.ListToolsAsync(new(null, null));
 
-        Assert.All(tools, tool => Assert.Equal(FilesWorker::Sunder.Package.Agent.Contracts.Models.AgentToolPriority.Medium, tool.Priority));
+        Assert.All(tools, tool => Assert.Equal(AgentToolPriority.Medium, tool.Priority));
         Assert.Contains(tools, tool => tool.ToolId == "read" && tool.RuntimeInstructions?.Contains("Use this tool to read file contents", StringComparison.Ordinal) == true);
         Assert.Contains(tools, tool => tool.ToolId == "grep" && tool.RuntimeInstructions?.Contains("Prefer this over shell commands", StringComparison.Ordinal) == true);
     }
@@ -3577,21 +3620,25 @@ public sealed class WorkspaceTests
     [Fact]
     public async Task ShellToolSource_ListToolsAsync_UsesLowPriorityAndFallbackGuidance()
     {
+        using var catalog = new TestExtensionCatalog();
         var source = new ShellToolSource();
+        using var sourceProbe = new GeneratedToolSourceProbe(catalog, source, "sunder.package.agent.tools.shell");
 
-        var tools = await source.ListToolsAsync(new(null, null, null, null));
+        var tools = await sourceProbe.ListToolsAsync(new(null, null));
         var shell = Assert.Single(tools);
 
         Assert.Equal("shell", shell.ToolId);
-        Assert.Equal(ShellWorker::Sunder.Package.Agent.Contracts.Models.AgentToolPriority.Low, shell.Priority);
+        Assert.Equal(AgentToolPriority.Low, shell.Priority);
         Assert.Contains("Use this low-priority tool only", shell.RuntimeInstructions ?? string.Empty, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void FilesToolSource_ApplyPatchPresentation_CompactsHeaderAndKeepsPatchInDetails()
+    public async Task FilesToolSource_ApplyPatchPresentation_CompactsHeaderAndKeepsPatchInDetails()
     {
         using var scope = TestScope.Create();
+        using var catalog = new TestExtensionCatalog();
         var source = new FilesToolSource(scope.Context);
+        using var sourceProbe = new GeneratedToolSourceProbe(catalog, source, "sunder.package.agent.tools.files");
         var patchText = """
             *** Begin Patch
             *** Add File: first.txt
@@ -3603,7 +3650,7 @@ public sealed class WorkspaceTests
             *** End Patch
             """;
 
-        var presentation = source.ResolveToolPresentation(new FilesWorker::Sunder.Package.Agent.Contracts.Models.AgentToolPresentationRequest(
+        var presentation = await sourceProbe.PresentationAsync(new AgentToolPresentationRequest(
             "apply_patch",
             ApplyPatchArgs(patchText),
             ResultSummary: null,
@@ -3621,16 +3668,16 @@ public sealed class WorkspaceTests
     }
 
     [Fact]
-    public void FilesToolSource_GlobPresentation_UsesSemanticDetailsAndCleanSummary()
+    public async Task FilesToolSource_GlobPresentation_UsesSemanticDetailsAndCleanSummary()
     {
         using var catalog = new TestExtensionCatalog();
         using var scope = TestScope.Create();
         var source = new FilesToolSource(scope.Context);
         catalog.AddProvider(RegressionTestBindings.ToolSources, source);
-        var service = new AgentToolPresentationService(rpcCatalog: catalog.AppCatalog);
+        var service = catalog.CreateToolPresentationService(scope.Context);
         var argumentsJson = JsonSerializer.Serialize(new { pattern = "*.html", path = "." });
 
-        var presentation = service.Resolve(CreateToolItem("glob", argumentsJson, textContent: "index.html", resultSummary: "Found 1 match."));
+        var presentation = await service.ResolveAsync(CreateToolItem("glob", argumentsJson, textContent: "index.html", resultSummary: "Found 1 match."));
 
         Assert.Equal("Found 1 match", presentation.HeaderText);
         Assert.Contains("**Request**", presentation.DetailMarkdown, StringComparison.Ordinal);
@@ -3645,7 +3692,7 @@ public sealed class WorkspaceTests
         using var scope = TestScope.Create();
         var source = new FilesToolSource(scope.Context);
         catalog.AddProvider(RegressionTestBindings.ToolSources, source);
-        var service = new AgentToolPresentationService(rpcCatalog: catalog.AppCatalog);
+        var service = catalog.CreateToolPresentationService(scope.Context);
         var patchText = """
             *** Begin Patch
             *** Update File: index.html
@@ -3680,7 +3727,7 @@ public sealed class WorkspaceTests
         using var scope = TestScope.Create();
         var source = new FilesToolSource(scope.Context);
         catalog.AddProvider(RegressionTestBindings.ToolSources, source);
-        var service = new AgentToolPresentationService(rpcCatalog: catalog.AppCatalog);
+        var service = catalog.CreateToolPresentationService(scope.Context);
         var patchText = """
             *** Begin Patch
             *** Update File: /workspace/src/Foo.cs
@@ -3716,7 +3763,7 @@ public sealed class WorkspaceTests
         using var scope = TestScope.Create();
         var source = new FilesToolSource(scope.Context);
         catalog.AddProvider(RegressionTestBindings.ToolSources, source);
-        var service = new AgentToolPresentationService(rpcCatalog: catalog.AppCatalog);
+        var service = catalog.CreateToolPresentationService(scope.Context);
         var patchText = """
             *** Begin Patch
             *** Update File: /workspace/src/Foo.cs
@@ -3777,7 +3824,7 @@ public sealed class WorkspaceTests
         using var scope = TestScope.Create();
         var source = new FilesToolSource(scope.Context);
         catalog.AddProvider(RegressionTestBindings.ToolSources, source);
-        var service = new AgentToolPresentationService(rpcCatalog: catalog.AppCatalog);
+        var service = catalog.CreateToolPresentationService(scope.Context);
 
         using var row = TranscriptToolTestHarness.CreateAgentRow(
             CreateToolTurn(),
@@ -3791,17 +3838,20 @@ public sealed class WorkspaceTests
     }
 
     [Fact]
-    public void WebTools_PresentationResolvers_AreResolvedThroughInstalledPackageSource()
+    public async Task WebTools_PresentationResolvers_AreResolvedThroughInstalledPackageSource()
     {
         using var scope = TestScope.Create();
         using var catalog = new TestExtensionCatalog();
         var settings = new WebToolsSettingsService(scope.Context);
-        catalog.AddTool(new WebSearchTool(new ExaWebSearchBackend(settings), settings));
-        catalog.AddTool(new WebFetchTool(new WebFetchService()));
-        var service = new AgentToolPresentationService(catalog.AppCatalog);
+        using var exa = new ExaWebSearchBackend(settings);
+        using var parallel = new ParallelWebSearchBackend(settings);
+        await using var source = new WebToolSource(new WebFetchTool(new WebFetchService()),
+            new WebSearchTool(new WebSearchService(exa, parallel, settings), settings));
+        catalog.AddProvider(RegressionTestBindings.ToolSources, source);
+        var service = catalog.CreateToolPresentationService(scope.Context);
 
-        var search = service.Resolve(CreateToolItem("web_search", JsonSerializer.Serialize(new { query = "avalonia docs", maxResults = 3 })));
-        var fetch = service.Resolve(CreateToolItem("web_fetch", JsonSerializer.Serialize(new { url = "https://example.com", format = "markdown" })));
+        var search = await service.ResolveAsync(CreateToolItem("web_search", JsonSerializer.Serialize(new { query = "avalonia docs", maxResults = 3 })));
+        var fetch = await service.ResolveAsync(CreateToolItem("web_fetch", JsonSerializer.Serialize(new { url = "https://example.com", format = "markdown" })));
 
         Assert.Equal("avalonia docs", search.HeaderText);
         Assert.Contains("Query: avalonia docs", search.DetailMarkdown, StringComparison.Ordinal);
@@ -3812,13 +3862,15 @@ public sealed class WorkspaceTests
     }
 
     [Fact]
-    public void ShellToolSource_Presentation_CompactsLongCommandAndKeepsCommandInDetails()
+    public async Task ShellToolSource_Presentation_CompactsLongCommandAndKeepsCommandInDetails()
     {
+        using var catalog = new TestExtensionCatalog();
         var source = new ShellToolSource();
+        using var sourceProbe = new GeneratedToolSourceProbe(catalog, source, "sunder.package.agent.tools.shell");
         var command = string.Join('\n', Enumerable.Range(1, 8).Select(index => $"echo line-{index}"));
         var argumentsJson = JsonSerializer.Serialize(new { command });
 
-        var presentation = source.ResolveToolPresentation(new ShellWorker::Sunder.Package.Agent.Contracts.Models.AgentToolPresentationRequest(
+        var presentation = await sourceProbe.PresentationAsync(new AgentToolPresentationRequest(
             "shell",
             argumentsJson,
             ResultSummary: null,
@@ -3836,12 +3888,12 @@ public sealed class WorkspaceTests
     }
 
     [Fact]
-    public void AgentToolPresentationService_Fallback_CompactsUnknownMultilineArguments()
+    public async Task AgentToolPresentationService_Fallback_CompactsUnknownMultilineArguments()
     {
         var service = new AgentToolPresentationService();
         var argumentsJson = JsonSerializer.Serialize(new { script = string.Join('\n', Enumerable.Range(1, 6).Select(index => $"line-{index}")) });
 
-        var presentation = service.Resolve(CreateToolItem("unknown_tool", argumentsJson));
+        var presentation = await service.ResolveAsync(CreateToolItem("unknown_tool", argumentsJson));
 
         Assert.Equal("script: 6 lines", presentation.HeaderText);
         Assert.Contains("line-6", presentation.DetailMarkdown, StringComparison.Ordinal);
@@ -3969,8 +4021,8 @@ public sealed class WorkspaceTests
         catalog.AddTool(new TestTool("medium", AgentToolPriority.Medium));
         var sessionService = new AgentSessionService(store);
         var workspaceService = new AgentWorkspaceService(store);
-        var executionTargetService = new AgentExecutionTargetService(catalog);
-        var toolService = new AgentToolService(sessionService, workspaceService, executionTargetService, catalog);
+        var executionTargetService = new AgentExecutionTargetService(catalog.ExecutionTargets);
+        var toolService = new AgentToolService(sessionService, workspaceService, executionTargetService, catalog.ToolSources, catalog.ObservedToolExecutions);
 
         var tools = await toolService.ListReadyRuntimeToolsAsync();
 
@@ -3982,7 +4034,7 @@ public sealed class WorkspaceTests
     {
         using var scope = TestScope.Create();
         using var services = CreateWorkspaceViewServices(scope.Context);
-        using var viewModel = new AgentWorkspacesViewModel(AppWorkspace(services.WorkspaceService), AppExecution(services.ExecutionTargetService), services.Catalog.AppCatalog);
+        using var viewModel = new AgentWorkspacesViewModel(AppWorkspace(services.WorkspaceService), AppExecution(services.ExecutionTargetService), services.Catalog.WorkspaceEditors);
         await viewModel.InitializeAsync();
 
         viewModel.CreateWorkspaceCommand.Execute(null);
@@ -3997,7 +4049,7 @@ public sealed class WorkspaceTests
         using var scope = TestScope.Create();
         using var services = CreateWorkspaceViewServices(scope.Context);
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        using var viewModel = new AgentWorkspacesViewModel(AppWorkspace(services.WorkspaceService), AppExecution(services.ExecutionTargetService), services.Catalog.AppCatalog);
+        using var viewModel = new AgentWorkspacesViewModel(AppWorkspace(services.WorkspaceService), AppExecution(services.ExecutionTargetService), services.Catalog.WorkspaceEditors);
         await viewModel.InitializeAsync();
 
         viewModel.CreateWorkspaceCommand.Execute(null);
@@ -4038,7 +4090,7 @@ public sealed class WorkspaceTests
         {
             ResourceOperation = CreateResourceOperation(actionId),
         };
-        var resource = await AgentRoleBoundary.As<IAgentExecutionTarget>(target).ResolveFileResourceAsync(planningContext, path);
+        var resource = ToAgentResource(await ResolveDockerFileAsync(target, planningContext, path));
         return (resource, planningContext with
         {
             ApprovedResourceReferences = [resource.CanonicalReference],
@@ -4052,7 +4104,7 @@ public sealed class WorkspaceTests
         AgentWorkspaceBindingRecord binding)
         => new(null, Workspace: workspace, ExecutionBinding: binding)
         {
-            ExecutionTargetReference = catalog.GetRequiredReference(RegressionTestBindings.ExecutionTargets),
+            ExecutionTarget = catalog.GetRequiredProviderAsync(catalog.ExecutionTargets).AsTask().GetAwaiter().GetResult().Reference,
         };
 
     private static AgentResourceOperationContext CreateResourceOperation(string actionId)
@@ -4114,8 +4166,8 @@ public sealed class WorkspaceTests
         var contributor = new TestWorkspaceEditorContributor("docker");
         catalog.AddProvider(RegressionTestAppBindings.WorkspaceEditors, contributor);
         return new AgentEditorSectionViewModel(
-            catalog.GetRequiredReference(RegressionTestAppBindings.WorkspaceEditors),
-            new AgentWorkspaceEditorContext(AgentRoleBoundary.As<AppModels.AgentWorkspaceRecord>(workspace), "docker", CreateBinding(workspace.WorkspaceId, "docker").BindingId),
+            catalog.GetRequiredProviderAsync(catalog.WorkspaceEditors).AsTask().GetAwaiter().GetResult(),
+            new AgentWorkspaceEditorContext(ToAppWorkspace(workspace), "docker", CreateBinding(workspace.WorkspaceId, "docker").BindingId),
             new AgentEditorSection("test-section", "Test Section", null, fields));
     }
 
@@ -4167,6 +4219,330 @@ public sealed class WorkspaceTests
     private static string ApplyPatchArgs(string patchText)
         => JsonSerializer.Serialize(new { patchText });
 
+    private static DockerWorkerModels.AgentWorkspaceRecord ToDockerWorkspace(AgentWorkspaceRecord workspace)
+        => new()
+        {
+            WorkspaceId = workspace.WorkspaceId,
+            DisplayName = workspace.DisplayName,
+            Description = workspace.Description,
+            CreatedAtUtc = DockerTime(workspace.CreatedAtUtc),
+            UpdatedAtUtc = DockerTime(workspace.UpdatedAtUtc),
+            Paths = workspace.Paths.Select(path => new DockerWorkerModels.AgentWorkspacePathRecord
+            {
+                PathId = path.PathId,
+                WorkspaceId = path.WorkspaceId,
+                HostPath = path.HostPath,
+                IsDefault = path.IsDefault,
+                SortOrder = path.SortOrder,
+                CreatedAtUtc = DockerTime(path.CreatedAtUtc),
+                UpdatedAtUtc = DockerTime(path.UpdatedAtUtc),
+            }).ToArray(),
+            Documents = workspace.Documents.Select(document => new DockerWorkerModels.AgentWorkspaceDocumentRecord
+            {
+                DocumentId = document.DocumentId,
+                WorkspaceId = document.WorkspaceId,
+                FilePath = document.FilePath,
+                SortOrder = document.SortOrder,
+                CreatedAtUtc = DockerTime(document.CreatedAtUtc),
+                UpdatedAtUtc = DockerTime(document.UpdatedAtUtc),
+            }).ToArray(),
+        };
+
+    private static DockerWorkerModels.AgentWorkspaceEditorContext CreateDockerEditorContext(
+        AgentWorkspaceRecord workspace,
+        string targetId,
+        string bindingId)
+        => new()
+        {
+            ConfigurationId = bindingId,
+            TargetId = targetId,
+            Workspace = ToDockerWorkspace(workspace),
+        };
+
+    private static SunderRpcOffsetDateTime DockerTime(DateTimeOffset value)
+        => new(value.ToString("O", System.Globalization.CultureInfo.InvariantCulture));
+
+    private static LocalWorkerModels.AgentExecutionTargetContext ToLocalExecutionContext(
+        AgentExecutionTargetContext context)
+        => new()
+        {
+            SessionId = context.SessionId,
+            ProfileId = context.ProfileId,
+            Workspace = new()
+            {
+                WorkspaceId = context.Workspace.WorkspaceId,
+                DisplayName = context.Workspace.DisplayName,
+                Description = context.Workspace.Description,
+                CreatedAtUtc = DockerTime(context.Workspace.CreatedAtUtc),
+                UpdatedAtUtc = DockerTime(context.Workspace.UpdatedAtUtc),
+                Paths = context.Workspace.Paths.Select(path => new LocalWorkerModels.AgentWorkspacePathRecord
+                {
+                    PathId = path.PathId,
+                    WorkspaceId = path.WorkspaceId,
+                    HostPath = path.HostPath,
+                    IsDefault = path.IsDefault,
+                    SortOrder = path.SortOrder,
+                    CreatedAtUtc = DockerTime(path.CreatedAtUtc),
+                    UpdatedAtUtc = DockerTime(path.UpdatedAtUtc),
+                }).ToArray(),
+                Documents = context.Workspace.Documents.Select(document => new LocalWorkerModels.AgentWorkspaceDocumentRecord
+                {
+                    DocumentId = document.DocumentId,
+                    WorkspaceId = document.WorkspaceId,
+                    FilePath = document.FilePath,
+                    SortOrder = document.SortOrder,
+                    CreatedAtUtc = DockerTime(document.CreatedAtUtc),
+                    UpdatedAtUtc = DockerTime(document.UpdatedAtUtc),
+                }).ToArray(),
+            },
+            Binding = new()
+            {
+                BindingId = context.Binding.BindingId,
+                WorkspaceId = context.Binding.WorkspaceId,
+                ExtensionPointId = context.Binding.ExtensionPointId,
+                ContributionId = context.Binding.ContributionId,
+                Role = context.Binding.Role,
+                IsEnabled = context.Binding.IsEnabled,
+                SortOrder = context.Binding.SortOrder,
+                CreatedAtUtc = DockerTime(context.Binding.CreatedAtUtc),
+                UpdatedAtUtc = DockerTime(context.Binding.UpdatedAtUtc),
+            },
+            AllowOutsideConfiguredScope = context.AllowOutsideConfiguredScope,
+            ApprovedResourceReferences = context.ApprovedResourceReferences,
+            ApprovedResourceClaims = [],
+            ApprovedResourceCapabilities = context.ApprovedResourceCapabilities,
+            ResourceOperation = null,
+            CapturePostMutationResource = context.CapturePostMutationResource,
+            ExpectedConfigurationGeneration = context.ExpectedConfigurationGeneration,
+        };
+
+    private static DockerWorkerModels.AgentExecutionTargetContext ToDockerExecutionContext(
+        AgentExecutionTargetContext context)
+        => new()
+        {
+            SessionId = context.SessionId,
+            ProfileId = context.ProfileId,
+            Workspace = ToDockerWorkspace(context.Workspace),
+            Binding = new()
+            {
+                BindingId = context.Binding.BindingId,
+                WorkspaceId = context.Binding.WorkspaceId,
+                ExtensionPointId = context.Binding.ExtensionPointId,
+                ContributionId = context.Binding.ContributionId,
+                Role = context.Binding.Role,
+                IsEnabled = context.Binding.IsEnabled,
+                SortOrder = context.Binding.SortOrder,
+                CreatedAtUtc = DockerTime(context.Binding.CreatedAtUtc),
+                UpdatedAtUtc = DockerTime(context.Binding.UpdatedAtUtc),
+            },
+            AllowOutsideConfiguredScope = context.AllowOutsideConfiguredScope,
+            ApprovedResourceReferences = context.ApprovedResourceReferences,
+            ApprovedResourceClaims = context.ApprovedResourceClaims.Select(claim => new DockerWorkerModels.AgentResourceClaim
+            {
+                Version = claim.Version,
+                NamespaceId = claim.NamespaceId,
+                LogicalPath = claim.LogicalPath,
+                ConfiguredRoot = claim.ConfiguredRoot,
+                RootIdentityChainFingerprint = claim.RootIdentityChainFingerprint,
+                TargetExists = claim.TargetExists,
+                TargetKind = claim.TargetKind,
+                TargetIdentity = claim.TargetIdentity,
+                TargetIsAuthorityRoot = claim.TargetIsAuthorityRoot,
+                CaseSensitivePath = claim.CaseSensitivePath,
+                ActionId = claim.ActionId,
+                WorkspaceId = claim.WorkspaceId,
+                WorkspaceGeneration = claim.WorkspaceGeneration,
+                BindingId = claim.BindingId,
+                BindingGeneration = claim.BindingGeneration,
+                ToolCallId = claim.ToolCallId,
+                ResourceIndex = claim.ResourceIndex,
+                ToolOwnerPackageId = claim.ToolOwnerPackageId,
+                ExecutionTargetOwnerPackageId = claim.ExecutionTargetOwnerPackageId,
+            }).ToArray(),
+            ApprovedResourceCapabilities = context.ApprovedResourceCapabilities,
+            ResourceOperation = context.ResourceOperation is { } operation
+                ? new DockerWorkerModels.AgentResourceOperationContext
+                {
+                    RunId = operation.RunId,
+                    RunRevision = operation.RunRevision,
+                    ToolCallId = operation.ToolCallId,
+                    ActionId = operation.ActionId,
+                    ResourceIndex = operation.ResourceIndex,
+                    WorkspaceGeneration = operation.WorkspaceGeneration,
+                    BindingGeneration = operation.BindingGeneration,
+                    ToolOwnerPackageId = operation.ToolOwnerPackageId,
+                    ExecutionTargetOwnerPackageId = operation.ExecutionTargetOwnerPackageId,
+                    AuthorityActivationId = operation.AuthorityActivationId,
+                    AuthorityUseCount = operation.AuthorityUseCount,
+                    CanIssueOutsideAuthority = operation.CanIssueOutsideAuthority,
+                }
+                : null,
+            CapturePostMutationResource = context.CapturePostMutationResource,
+            ExpectedConfigurationGeneration = context.ExpectedConfigurationGeneration,
+        };
+
+    private static ValueTask<DockerWorkerModels.AgentFileReadResult> ReadDockerFileAsync(
+        DockerExecutionTarget target,
+        AgentExecutionTargetContext context,
+        AgentFileReadRequest request)
+        => target.ReadFileAsync(new()
+        {
+            Context = ToDockerExecutionContext(context),
+            Request = new() { Path = request.Path, Offset = request.Offset, Limit = request.Limit },
+        });
+
+    private static ValueTask<DockerWorkerModels.AgentFileMutationResult> WriteDockerFileAsync(
+        DockerExecutionTarget target,
+        AgentExecutionTargetContext context,
+        AgentFileWriteRequest request)
+        => target.WriteFileAsync(new()
+        {
+            Context = ToDockerExecutionContext(context),
+            Request = new()
+            {
+                Path = request.Path,
+                Content = request.Content,
+                Overwrite = request.Overwrite,
+                ExpectedContentHash = request.ExpectedContentHash,
+            },
+        });
+
+    private static ValueTask<DockerWorkerModels.AgentFileMutationResult> DeleteDockerFileAsync(
+        DockerExecutionTarget target,
+        AgentExecutionTargetContext context,
+        AgentFileDeleteRequest request)
+        => target.DeleteFileAsync(new()
+        {
+            Context = ToDockerExecutionContext(context),
+            Request = new()
+            {
+                Path = request.Path,
+                Recursive = request.Recursive,
+                ExpectedContentHash = request.ExpectedContentHash,
+            },
+        });
+
+    private static ValueTask<DockerWorkerModels.AgentExecutionScopeDescriptor> GetDockerExecutionScopeAsync(
+        DockerExecutionTarget target,
+        AgentExecutionTargetContext context)
+        => target.ExecutionScopeAsync(ToDockerExecutionContext(context));
+
+    private static ValueTask<DockerWorkerModels.AgentExecutionTargetReadiness> GetDockerReadinessAsync(
+        DockerExecutionTarget target,
+        AgentExecutionTargetContext context)
+        => target.ReadinessAsync(ToDockerExecutionContext(context));
+
+    private static ValueTask<string?> GetDockerConfigurationGenerationAsync(
+        DockerExecutionTarget target,
+        AgentExecutionTargetContext context)
+        => target.ConfigurationGenerationAsync(ToDockerExecutionContext(context));
+
+    private static ValueTask<DockerWorkerModels.AgentResolvedResource> ResolveDockerFileAsync(
+        DockerExecutionTarget target,
+        AgentExecutionTargetContext context,
+        string path)
+        => target.ResolveFileAsync(new()
+        {
+            Context = ToDockerExecutionContext(context),
+            Path = path,
+        });
+
+    private static AgentResolvedResource ToAgentResource(DockerWorkerModels.AgentResolvedResource resource)
+        => new(
+            resource.ResourceKind,
+            resource.DisplayName,
+            resource.CanonicalReference,
+            resource.PermissionBoundaryId,
+            resource.Exists)
+        {
+            ScopeClassificationBasis = Enum.Parse<AgentPermissionScopeClassificationBasis>(resource.ScopeClassificationBasis.ToString()),
+            ResourceClaim = resource.ResourceClaim is { } claim ? ToAgentResourceClaim(claim) : null,
+            AuthorityReferences = resource.AuthorityReferences,
+            DeleteCanonicalReference = resource.DeleteCanonicalReference,
+            DeleteResourceClaim = resource.DeleteResourceClaim is { } deleteClaim ? ToAgentResourceClaim(deleteClaim) : null,
+            DeleteAuthorityReferences = resource.DeleteAuthorityReferences,
+            DeletePermissionBoundaryId = resource.DeletePermissionBoundaryId,
+            IsScopedInstructionDocument = resource.IsScopedInstructionDocument,
+        };
+
+    private static AgentResourceClaim ToAgentResourceClaim(DockerWorkerModels.AgentResourceClaim claim)
+        => new(
+            (int)claim.Version,
+            claim.NamespaceId,
+            claim.LogicalPath,
+            claim.ConfiguredRoot,
+            claim.RootIdentityChainFingerprint,
+            claim.TargetExists,
+            claim.TargetKind,
+            claim.TargetIdentity,
+            claim.TargetIsAuthorityRoot,
+            claim.CaseSensitivePath,
+            claim.ActionId,
+            claim.WorkspaceId,
+            claim.WorkspaceGeneration,
+            claim.BindingId,
+            claim.BindingGeneration,
+            claim.ToolCallId,
+            (int)claim.ResourceIndex,
+            claim.ToolOwnerPackageId,
+            claim.ExecutionTargetOwnerPackageId);
+
+    private static ValueTask<DockerWorkerModels.AgentShellCommandResult> ExecuteDockerShellAsync(
+        DockerExecutionTarget target,
+        AgentExecutionTargetContext context,
+        AgentShellCommandRequest request)
+        => target.ExecuteShellAsync(new()
+        {
+            Context = ToDockerExecutionContext(context),
+            Request = new()
+            {
+                Command = request.Command,
+                WorkingDirectory = request.WorkingDirectory,
+                TimeoutSeconds = request.TimeoutSeconds,
+            },
+        });
+
+    private static ValueTask<DockerWorkerModels.AgentScopedInstructionDiscoveryResult> DiscoverDockerInstructionsAsync(
+        DockerExecutionTarget target,
+        AgentExecutionTargetContext context,
+        AgentScopedInstructionDiscoveryRequest request)
+        => target.DiscoverInstructionsAsync(new()
+        {
+            Context = ToDockerExecutionContext(context),
+            Request = new()
+            {
+                Probes = request.Probes.Select(probe => new DockerWorkerModels.AgentScopedInstructionProbe
+                {
+                    Path = probe.Path,
+                    IsDirectory = probe.IsDirectory,
+                    FollowFinalSymbolicLink = probe.FollowFinalSymbolicLink,
+                }).ToArray(),
+            },
+        });
+
+    private static AppModels.AgentWorkspaceRecord ToAppWorkspace(AgentWorkspaceRecord workspace)
+        => new(
+            workspace.WorkspaceId,
+            workspace.DisplayName,
+            workspace.Description,
+            workspace.CreatedAtUtc,
+            workspace.UpdatedAtUtc,
+            workspace.Paths.Select(path => new AppModels.AgentWorkspacePathRecord(
+                path.PathId,
+                path.WorkspaceId,
+                path.HostPath,
+                path.IsDefault,
+                path.SortOrder,
+                path.CreatedAtUtc,
+                path.UpdatedAtUtc)).ToArray(),
+            workspace.Documents.Select(document => new AppModels.AgentWorkspaceDocumentRecord(
+                document.DocumentId,
+                document.WorkspaceId,
+                document.FilePath,
+                document.SortOrder,
+                document.CreatedAtUtc,
+                document.UpdatedAtUtc)).ToArray());
+
     private static AppModels.AgentTurnRecord CreateToolTurn(AgentTurnKind kind = AgentTurnKind.ToolResult)
     {
         var now = DateTimeOffset.UtcNow;
@@ -4174,7 +4550,13 @@ public sealed class WorkspaceTests
             Guid.NewGuid(),
             Guid.NewGuid(),
             AppModels.AgentMessageRole.Assistant,
-            AgentRoleBoundary.As<AppModels.AgentTurnKind>(kind),
+            kind switch
+            {
+                AgentTurnKind.Message => AppModels.AgentTurnKind.Message,
+                AgentTurnKind.ToolCall => AppModels.AgentTurnKind.ToolCall,
+                AgentTurnKind.ToolResult => AppModels.AgentTurnKind.ToolResult,
+                _ => throw new ArgumentOutOfRangeException(nameof(kind)),
+            },
             [],
             now,
             now);
@@ -4195,10 +4577,17 @@ public sealed class WorkspaceTests
         return new AppModels.AgentTurnItemRecord(
             Guid.NewGuid(),
             turnId,
-            SequenceNumber: 0,
-            AgentRoleBoundary.As<AppModels.AgentTurnItemKind>(kind),
+            0,
+            kind switch
+            {
+                AgentTurnItemKind.Text => AppModels.AgentTurnItemKind.Text,
+                AgentTurnItemKind.ToolCall => AppModels.AgentTurnItemKind.ToolCall,
+                AgentTurnItemKind.ToolResult => AppModels.AgentTurnItemKind.ToolResult,
+                AgentTurnItemKind.Attachment => AppModels.AgentTurnItemKind.Attachment,
+                _ => throw new ArgumentOutOfRangeException(nameof(kind)),
+            },
             textContent,
-            CallId: "call-1",
+            "call-1",
             toolId,
             argumentsJson,
             resultSummary,
@@ -4217,9 +4606,9 @@ public sealed class WorkspaceTests
         var catalog = new TestExtensionCatalog();
         var sessionService = new AgentSessionService(store);
         var workspaceService = new AgentWorkspaceService(store);
-        var executionTargetService = new AgentExecutionTargetService(catalog);
-        var toolService = new AgentToolService(sessionService, workspaceService, executionTargetService, catalog);
-        var profileService = new AgentProfileService(store, toolService, catalog, catalog.BehaviorLoops);
+        var executionTargetService = new AgentExecutionTargetService(catalog.ExecutionTargets);
+        var toolService = new AgentToolService(sessionService, workspaceService, executionTargetService, catalog.ToolSources, catalog.ObservedToolExecutions);
+        var profileService = catalog.CreateProfileService(store, toolService);
         return new WorkspaceViewServices(store, catalog, workspaceService, profileService, executionTargetService);
     }
 
@@ -4243,7 +4632,7 @@ public sealed class WorkspaceTests
     private static AgentWorkspaceBindingRecord CreateBinding(string workspaceId, string contributionId = "local")
     {
         var now = DateTimeOffset.UtcNow;
-        return new AgentWorkspaceBindingRecord("binding-test", workspaceId, AgentRpcContractIds.ExecutionTarget, contributionId, "primary-execution-target", true, 0, now, now);
+        return new AgentWorkspaceBindingRecord("binding-test", workspaceId, RegressionTestBindings.ExecutionTargets, contributionId, "primary-execution-target", true, 0, now, now);
     }
 
     private static StackFragmentImport ToImportFragment(StackFragmentExport fragment, string contributorId)
@@ -4426,6 +4815,31 @@ public sealed class WorkspaceTests
 
     private sealed class TestExtensionCatalog : RegressionTestExtensionCatalog;
 
+    private sealed class ObservedServiceProviders<TService>(IServiceProviders<TService> inner)
+        : IServiceProviders<TService> where TService : class
+    {
+        public TaskCompletionSource WatchStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public ValueTask<ServiceProviderCatalog<TService>> ListAsync(CancellationToken cancellationToken = default)
+            => inner.ListAsync(cancellationToken);
+
+        public async IAsyncEnumerable<ServiceProviderCatalogEvent<TService>> WatchAsync(
+            long afterRevision,
+            long afterSequence,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await using var watch = inner.WatchAsync(afterRevision, afterSequence, cancellationToken)
+                .GetAsyncEnumerator(cancellationToken);
+            var moveNext = watch.MoveNextAsync();
+            WatchStarted.TrySetResult();
+            while (await moveNext.ConfigureAwait(false))
+            {
+                yield return watch.Current;
+                moveNext = watch.MoveNextAsync();
+            }
+        }
+    }
+
     private sealed class FakeExecutionTarget(string shellOutput) : IAgentExecutionTarget, IAgentStructuredFileSearchExecutionTarget
     {
         public AgentExecutionTargetDescriptor Descriptor { get; } = new("local", "local", "Fake", null, SupportsShell: true, SupportsFiles: true);
@@ -4507,8 +4921,20 @@ public sealed class WorkspaceTests
     {
         public string ContributorId => "test-workspace-editor";
 
+        public ValueTask<AgentAppServiceIdentity> DescribeAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult<AgentAppServiceIdentity>(new AgentAppServiceIdentity(ContributorId, ContributorId));
+        }
+
         public bool CanEdit(AgentWorkspaceEditorContext context)
             => string.Equals(context.TargetId, targetId, StringComparison.OrdinalIgnoreCase);
+
+        public ValueTask<bool> CanEditAsync(AgentWorkspaceEditorContext context, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult(CanEdit(context));
+        }
 
         public ValueTask<IReadOnlyList<AgentEditorSection>> GetSectionsAsync(
             AgentWorkspaceEditorContext context,
@@ -4532,12 +4958,24 @@ public sealed class WorkspaceTests
 
         public string ContributorId => "counting-workspace-editor";
 
+        public ValueTask<AgentAppServiceIdentity> DescribeAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult<AgentAppServiceIdentity>(new AgentAppServiceIdentity(ContributorId, ContributorId));
+        }
+
         public int GetSectionsCallCount => Volatile.Read(ref _getSectionsCallCount);
 
         public int SaveSectionCallCount => Volatile.Read(ref _saveSectionCallCount);
 
         public bool CanEdit(AgentWorkspaceEditorContext context)
             => string.Equals(context.TargetId, targetId, StringComparison.OrdinalIgnoreCase);
+
+        public ValueTask<bool> CanEditAsync(AgentWorkspaceEditorContext context, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult(CanEdit(context));
+        }
 
         public ValueTask<IReadOnlyList<AgentEditorSection>> GetSectionsAsync(
             AgentWorkspaceEditorContext context,
@@ -4572,6 +5010,12 @@ public sealed class WorkspaceTests
 
         public string ContributorId => "blocking-workspace-editor";
 
+        public ValueTask<AgentAppServiceIdentity> DescribeAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult<AgentAppServiceIdentity>(new AgentAppServiceIdentity(ContributorId, ContributorId));
+        }
+
         public Task SectionsLoaded => _sectionsLoaded.Task;
 
         public Task SaveEntered => _saveEntered.Task;
@@ -4580,6 +5024,12 @@ public sealed class WorkspaceTests
 
         public bool CanEdit(AgentWorkspaceEditorContext context)
             => string.Equals(context.TargetId, targetId, StringComparison.OrdinalIgnoreCase);
+
+        public ValueTask<bool> CanEditAsync(AgentWorkspaceEditorContext context, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult(CanEdit(context));
+        }
 
         public ValueTask<IReadOnlyList<AgentEditorSection>> GetSectionsAsync(
             AgentWorkspaceEditorContext context,
@@ -4704,13 +5154,15 @@ public sealed class WorkspaceTests
             string? executionTargetId)
             => SaveWorkspace(workspaceId, displayName, description);
 
-        public void DeleteWorkspace(string workspaceId)
+        public Task DeleteWorkspaceAsync(string workspaceId, CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             lock (_syncRoot)
             {
                 _workspaces.RemoveAll(workspace => workspace.WorkspaceId == workspaceId);
             }
             WorkspacesChanged?.Invoke();
+            return Task.CompletedTask;
         }
 
         public IReadOnlyList<AgentWorkspaceBindingRecord> ListBindings(string workspaceId) => [];
@@ -4745,6 +5197,12 @@ public sealed class WorkspaceTests
 
         public string ContributorId => "selection-race-workspace-editor";
 
+        public ValueTask<AgentAppServiceIdentity> DescribeAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult<AgentAppServiceIdentity>(new AgentAppServiceIdentity(ContributorId, ContributorId));
+        }
+
         public TaskCompletionSource FirstStarted { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -4753,6 +5211,12 @@ public sealed class WorkspaceTests
 
         public bool CanEdit(AgentWorkspaceEditorContext context)
             => string.Equals(context.TargetId, targetId, StringComparison.OrdinalIgnoreCase);
+
+        public ValueTask<bool> CanEditAsync(AgentWorkspaceEditorContext context, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult(CanEdit(context));
+        }
 
         public async ValueTask<IReadOnlyList<AgentEditorSection>> GetSectionsAsync(
             AgentWorkspaceEditorContext context,

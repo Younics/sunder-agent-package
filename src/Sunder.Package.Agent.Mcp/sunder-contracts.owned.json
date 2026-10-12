@@ -3,7 +3,8 @@
   "authorityKind": "package",
   "authorityId": "sunder.package.agent.mcp",
   "packageId": "sunder.package.agent.mcp",
-  "contracts": {
+  "contracts": {},
+  "retiredPrivateContracts": {
     "management": {
       "contractId": "sunder.package.agent.mcp.management",
       "current": {

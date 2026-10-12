@@ -27,7 +27,8 @@ public sealed class McpSettingsRaceTests
         context.State.ListKeysFailure = new InvalidOperationException("Injected MCP catalog failure.");
         var catalog = new McpServerCatalogService(context);
         await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance);
-        using var viewModel = CreateViewModel(catalog, manager);
+        await using var runtime = CreateRuntime(context, catalog, manager);
+        using var viewModel = new AgentMcpSettingsViewModel(runtime.Gateway);
 
         var first = viewModel.InitializeAsync();
         var second = viewModel.InitializeAsync();
@@ -47,7 +48,8 @@ public sealed class McpSettingsRaceTests
         await catalog.SaveServerAsync(Server("alpha"), Empty, Empty, TestContext.Current.CancellationToken);
         await catalog.SaveServerAsync(Server("beta"), Empty, Empty, TestContext.Current.CancellationToken);
         await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance);
-        using var viewModel = CreateViewModel(catalog, manager);
+        await using var runtime = CreateRuntime(context, catalog, manager);
+        using var viewModel = new AgentMcpSettingsViewModel(runtime.Gateway);
         await GetTask(viewModel, "Initialization");
         var read = context.State.BlockRead(ServerStorageKey("beta"));
 
@@ -79,17 +81,25 @@ public sealed class McpSettingsRaceTests
         await catalog.SaveServerAsync(Server("alpha"), Empty, Empty, TestContext.Current.CancellationToken);
         await catalog.SaveServerAsync(Server("beta"), Empty, Empty, TestContext.Current.CancellationToken);
         await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance);
-        using var viewModel = CreateViewModel(catalog, manager);
-        await GetTask(viewModel, "Initialization");
+        McpFixturePhaseLog.Mark("RapidSelection:before-CreateRuntime");
+        await using var runtime = CreateRuntime(context, catalog, manager);
+        McpFixturePhaseLog.Mark("RapidSelection:after-CreateRuntime");
+        McpFixturePhaseLog.Mark("RapidSelection:before-view-model-construction");
+        using var viewModel = new AgentMcpSettingsViewModel(runtime.Gateway);
+        McpFixturePhaseLog.Mark("RapidSelection:after-view-model-construction");
+        await AwaitPhaseAsync(GetTask(viewModel, "Initialization"), "initialization");
+        McpFixturePhaseLog.Mark("RapidSelection:after-initialization");
         var read = context.State.BlockRead(ServerStorageKey("beta"));
 
         viewModel.SelectedServer = viewModel.Servers.Single(server => server.ServerId == "beta");
         var staleLoad = GetTask(viewModel, "CurrentDocumentLoad");
         await read.Started.Task.WaitAsync(TestContext.Current.CancellationToken);
         viewModel.SelectedServer = viewModel.Servers.Single(server => server.ServerId == "alpha");
-        await GetTask(viewModel, "CurrentDocumentLoad");
+        await AwaitPhaseAsync(GetTask(viewModel, "CurrentDocumentLoad"), "replacement document load");
+        McpFixturePhaseLog.Mark("RapidSelection:after-replacement-document-load");
         read.Release.SetResult();
-        await staleLoad;
+        await AwaitPhaseAsync(staleLoad, "retired document load");
+        McpFixturePhaseLog.Mark("RapidSelection:after-retired-document-load");
 
         AdaptiveEditorLifecycleContract.CurrentSelectionWins(
             Adapt(viewModel),
@@ -97,6 +107,7 @@ public sealed class McpSettingsRaceTests
             "beta");
         Assert.Equal("alpha", viewModel.SelectedServer?.ServerId);
         Assert.Equal("alpha", viewModel.Name);
+        McpFixturePhaseLog.Mark("RapidSelection:assertions-complete");
     }
 
     [AvaloniaFact]
@@ -121,7 +132,8 @@ public sealed class McpSettingsRaceTests
             TestContext.Current.CancellationToken);
         await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance);
         await using var oauth = new McpOAuthService(context);
-        using var viewModel = CreateViewModel(catalog, manager, oauth);
+        await using var runtime = CreateRuntime(context, catalog, manager, oauth);
+        using var viewModel = new AgentMcpSettingsViewModel(runtime.Gateway);
         await GetTask(viewModel, "Initialization");
         var blockedSecret = context.SecretsStore.BlockNextRead();
 
@@ -146,7 +158,8 @@ public sealed class McpSettingsRaceTests
         var catalog = new McpServerCatalogService(context);
         await catalog.SaveServerAsync(Server("alpha"), Empty, Empty, TestContext.Current.CancellationToken);
         await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance);
-        using var viewModel = CreateViewModel(catalog, manager);
+        await using var runtime = CreateRuntime(context, catalog, manager);
+        using var viewModel = new AgentMcpSettingsViewModel(runtime.Gateway);
         await GetTask(viewModel, "Initialization");
         var write = context.State.BlockNextWrite();
         var newerEdit = """
@@ -180,7 +193,8 @@ public sealed class McpSettingsRaceTests
         var catalog = new McpServerCatalogService(context);
         await catalog.SaveServerAsync(Server("alpha"), Empty, Empty, TestContext.Current.CancellationToken);
         await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance);
-        using var viewModel = CreateViewModel(catalog, manager);
+        await using var runtime = CreateRuntime(context, catalog, manager);
+        using var viewModel = new AgentMcpSettingsViewModel(runtime.Gateway);
         await GetTask(viewModel, "Initialization");
         var selected = Assert.IsType<McpApp::Sunder.Package.Agent.Mcp.ConfiguredMcpServerRecord>(viewModel.SelectedServer);
         viewModel.EditorText = """
@@ -214,7 +228,8 @@ public sealed class McpSettingsRaceTests
         await catalog.SaveServerAsync(Server("alpha"), Empty, Empty, TestContext.Current.CancellationToken);
         await catalog.SaveServerAsync(Server("beta"), Empty, Empty, TestContext.Current.CancellationToken);
         await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance);
-        using var viewModel = CreateViewModel(catalog, manager);
+        await using var runtime = CreateRuntime(context, catalog, manager);
+        using var viewModel = new AgentMcpSettingsViewModel(runtime.Gateway);
         await GetTask(viewModel, "Initialization");
         var read = context.State.BlockRead(ServerStorageKey("beta"));
         viewModel.SelectedServer = viewModel.Servers.Single(server => server.ServerId == "beta");
@@ -245,7 +260,8 @@ public sealed class McpSettingsRaceTests
         await catalog.SaveServerAsync(Server("alpha"), Empty, Empty, TestContext.Current.CancellationToken);
         await catalog.SaveServerAsync(Server("beta"), Empty, Empty, TestContext.Current.CancellationToken);
         await using var manager = new McpClientConnectionManager(NullLoggerFactory.Instance);
-        var viewModel = CreateViewModel(catalog, manager);
+        await using var runtime = CreateRuntime(context, catalog, manager);
+        var viewModel = new AgentMcpSettingsViewModel(runtime.Gateway);
         await GetTask(viewModel, "Initialization");
         var read = context.State.BlockRead(ServerStorageKey("beta"));
         viewModel.SelectedServer = viewModel.Servers.Single(server => server.ServerId == "beta");
@@ -283,18 +299,12 @@ public sealed class McpSettingsRaceTests
         UpdatedAtUtc = DateTimeOffset.UtcNow,
     };
 
-    private static AgentMcpSettingsViewModel CreateViewModel(
+    private static McpManagementGatewayFixture CreateRuntime(
+        IPackageContext context,
         McpServerCatalogService catalog,
         McpClientConnectionManager manager,
         McpOAuthService? oauth = null)
-        => new(
-            AgentRoleBoundary.As<McpApp::Sunder.Package.Agent.Mcp.Runtime.IMcpManagementGateway>(new McpLocalManagementGateway(
-                new McpSettingsEditorService(catalog),
-                new McpConfigurationCoordinator(
-                    new McpEcosystemConfigurationImporter(catalog),
-                    syncService: null),
-                new McpServerConnectionService(catalog, manager, oauth),
-                 new McpOAuthCoordinator(oauth, manager))));
+        => McpManagementGatewayFixture.Create(context, catalog, manager, oauth);
 
     private static IAdaptiveEditorLifecycleAdapter Adapt(
         AgentMcpSettingsViewModel viewModel,
@@ -319,6 +329,18 @@ public sealed class McpSettingsRaceTests
         => Assert.IsAssignableFrom<Task>(instance.GetType()
             .GetProperty(propertyName, BindingFlags.Instance | BindingFlags.NonPublic)!
             .GetValue(instance));
+
+    private static async Task AwaitPhaseAsync(Task task, string phase)
+    {
+        try
+        {
+            await task.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        catch (TimeoutException exception)
+        {
+            throw new TimeoutException($"MCP race fixture timed out during {phase}.", exception);
+        }
+    }
 
     private sealed class ControlledMcpPackageContext : IPackageContext
     {

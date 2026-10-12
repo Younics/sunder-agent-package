@@ -94,7 +94,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.Equal(true, Field(transport, "_ownsHttpClient"));
         var http = (HttpClient)Field(transport, "_httpClient");
         var apiKey = Service("Auth.ApiKeyAuthStrategy");
-        var management = Service("OpenAiRuntimeManagementClient");
+        var management = Service("OpenAiManagementService");
         var set = management.GetType().GetMethod("SetCredentialAsync")!.CreateDelegate<Func<string, CancellationToken, ValueTask<bool>>>(management);
         var clear = management.GetType().GetMethod("ClearCredentialAsync")!.CreateDelegate<Func<CancellationToken, ValueTask<bool>>>(management);
         var read = apiKey.GetType().GetMethod("GetApiKeyAsync")!.CreateDelegate<Func<CancellationToken, Task<string?>>>(apiKey);
@@ -199,27 +199,27 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.Same(credentials, Field(chat, "_credentials"));
             if (embedding is not null) Assert.Same(credentials, Field(embedding, "_credentials"));
         }
-        var credentialDescriptor = RegressionTestRpcDescriptors.Get($"sunder.package.agent.provider.{family.ToLowerInvariant()}.credentials");
+        var credentialDescriptor = CurrentPrivateRpcDescriptors.Get($"sunder.package.agent.provider.{family.ToLowerInvariant()}.credentials");
         foreach (var registration in options.Providers)
         {
-            var descriptor = registration.ProviderId == id + ".credentials" ? credentialDescriptor : RegressionTestRpcDescriptors.Get(registration.ContractId);
+            var descriptor = registration.ProviderId == id + ".credentials" ? credentialDescriptor : CurrentPublicRpcDescriptors.Get(registration.ContractId);
             Assert.Equal(descriptor.Sha256, registration.DescriptorSha256); Assert.Equal(descriptor.AbiSha256, registration.AbiSha256);
             state.Add(context.PackageId, descriptor, registration.Handler, registration.Handler, Noop.Instance, registration.ProviderId, "2.0.0");
         }
         var credentialEndpoint = Assert.Single((await rpc.DiscoverAsync(credentialDescriptor.ContractId)).Providers).Endpoint;
-        Assert.False((await Command("query", new { })).GetProperty("hasStoredCredential").GetBoolean());
-        Assert.True((await Command("command", new { kind = "set", credential = "  generated-credential  " })).GetProperty("hasStoredCredential").GetBoolean());
+        Assert.False((await Command("get-status", new { })).GetBoolean());
+        Assert.True((await Command("set", "  generated-credential  ")).GetBoolean());
         Assert.Equal("generated-credential", await context.Secrets.GetSecretAsync(family == "LMStudio" ? "connection.apiKey" : "auth.apiKey"));
         if (family != "LMStudio")
         {
-            foreach (var contract in family == "Gemini" ? new[] { AgentRpcContractIds.ChatProvider, AgentRpcContractIds.EmbeddingProvider } : [AgentRpcContractIds.ChatProvider])
+            foreach (var contract in family == "Gemini" ? new[] { RegressionTestBindings.ChatProviders, RegressionTestBindings.EmbeddingProviders } : [RegressionTestBindings.ChatProviders])
             {
                 var endpoint = Assert.Single((await rpc.DiscoverAsync(contract)).Providers).Endpoint;
-                var result = await rpc.InvokeAsync(endpoint, contract == AgentRpcContractIds.ChatProvider ? "chat-provider" : "embedding-provider", "get-readiness", JsonSerializer.SerializeToElement(new { }));
+                var result = await rpc.InvokeAsync(endpoint, contract == RegressionTestBindings.ChatProviders ? "chat-provider" : "embedding-provider", "get-readiness", JsonSerializer.SerializeToElement(new { }));
                 Assert.Equal("ready", result.GetProperty("status").GetString());
             }
         }
-        Assert.False((await Command("command", new { kind = "clear" })).GetProperty("hasStoredCredential").GetBoolean());
+        Assert.False((await Command("clear", new { })).GetBoolean());
         await lifetime.DisposeAsync();
         if (connectionHttp is not null) Assert.Throws<ObjectDisposedException>(() => connectionHttp.Timeout = TimeSpan.FromSeconds(1));
         Assert.Throws<ObjectDisposedException>(() => services.GetService(settings.GetType()));

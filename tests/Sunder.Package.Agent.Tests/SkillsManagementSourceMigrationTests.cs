@@ -3,66 +3,70 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Sunder.Sdk.Rpc;
-using Sunder.Sdk.Worker;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
 
+extern alias SkillsApp;
 extern alias SkillsWorker;
 using SkillsWorker::Sunder.Package.Agent.Skills.Runtime;
 using SkillsWorker::Sunder.Package.Agent.Skills.Services;
+using SkillProjection = SkillsApp::Sunder.Package.Agent.Skills.Runtime.SkillProjection;
+using SkillProjectionContent = SkillsApp::Sunder.Package.Agent.Skills.Runtime.SkillProjectionContent;
+using SkillsManagementServices = SkillsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Skills_Services;
 
 public sealed class SkillsManagementSourceMigrationTests
 {
     internal static readonly string[] SourcePaths =
     [
-        "src/Sunder.Package.Agent.Skills/Rpc/ManagementService.cs",
-        "src/Sunder.Package.Agent.Skills/Rpc/ManagementClient.cs",
-        "src/Sunder.Package.Agent.Skills/Runtime/SkillRuntimeOwnerClient.cs",
+        "src/Sunder.Package.Agent.Skills/Runtime/SkillRuntimeGateway.cs",
     ];
 
     [AgentPublicSourceMigrationFact]
     public async Task ManagementSource_PreservesContractAndRealTransferOperationsAcrossIsolatedApp()
     {
-        using var source = PrivateManagementSourceFixture.Load("Skills", RegressionTestRpcDescriptors.Get("sunder.package.agent.skills.owner"));
         using var package = RegressionTestPackageScope.Create();
         var store = new SkillStore(package.Context);
         store.Activate();
         var handler = new SkillRuntimeHandler(store, new SkillImportService(store, new UnusedGitHubClient(), package.Context), package.Context);
         await handler.OrphanedTransferCleanup;
-        var operations = new SkillRuntimeOwnerClient(handler, new SkillRuntimeChangeStream(store));
-        var type = source.Worker.GetType("Sunder.Package.Agent.Skills.Rpc.ManagementService", true)!;
-        var service = AgentRoleBoundary.Create(type, operations);
-        var registration = Assert.IsType<SunderWorkerProviderRegistration>(type.GetMethod("CreateSunderRpcProviderRegistration")!.Invoke(service, null));
+        var registration = handler.CreateSunderRpcProviderRegistration();
         Assert.Equal("skills.management", registration.ProviderId);
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        state.Add(SkillConstants.PackageId, source.Descriptor, service, registration.Handler, Noop.Instance, registration.ProviderId, "2.0.0");
-        var rpc = new RegressionTestRpcClient(state, SkillConstants.PackageId);
-        var client = AgentRoleBoundary.As<ISkillOwnerClient>(AgentRoleBoundary.Create(source.App.GetType("Sunder.Package.Agent.Skills.Runtime.SkillOwnerClient", true)!, rpc));
-        Assert.Empty((await client.QueryAsync()).Skills);
+        await using var receiver = new GeneratedServiceTestScope(
+            new RegressionTestRpcClient(state, SkillConstants.PackageId));
+        state.AddGenerated(SkillConstants.PackageId, handler, registration, Noop.Instance, registration.ProviderId);
+        var selected = Assert.Single((await receiver.Providers<SkillsManagementServices.ISkillsManagementService>()
+            .ListAsync()).Providers);
+        var client = selected.Service;
+        Assert.Empty((await ReadProjectionAsync(client.QueryAsync())).Skills);
         using var lifetime = new CancellationTokenSource();
-        await using var changes = client.SubscribeChangesAsync(lifetime.Token).GetAsyncEnumerator();
+        await using var changes = client.ChangesAsync(lifetime.Token).GetAsyncEnumerator();
         Assert.True(await changes.MoveNextAsync());
+        Assert.Equal(0, changes.Current);
 
         var archive = CreateArchive("SKILL.md", "---\nname: Source Skill\n---\nSource transport import.");
         var transferId = await Upload(archive);
         var next = changes.MoveNextAsync().AsTask();
-        var imported = await client.CommandAsync(new(SkillCommandKind.ImportTransfer, transferId));
+        var imported = await ReadProjectionAsync(client.ImportTransferAsync(transferId));
         var skill = Assert.Single(imported.Skills);
         Assert.Equal("Source Skill", skill.Name);
         Assert.Null(skill.SourceUri);
         Assert.Equal(skill.SkillId, Assert.Single(imported.ImportedSkillIds));
         Assert.True(await next.WaitAsync(TimeSpan.FromSeconds(5)));
-        Assert.Equal(skill.SkillId, Assert.Single((await client.QueryAsync()).Skills).SkillId);
+        Assert.Equal(1, changes.Current);
+        Assert.Equal(skill.SkillId, Assert.Single((await ReadProjectionAsync(client.QueryAsync())).Skills).SkillId);
         Assert.Null(await package.Context.Storage.Files.ReadAsync($"skill-import-transfers/{transferId}/manifest.json"));
-        Assert.Contains("Source transport import.", await File.ReadAllTextAsync(Path.Combine(store.GetSkillRootPath(skill), "SKILL.md")), StringComparison.Ordinal);
+        var storedSkill = Assert.Single(store.ListSkills(), value => value.SkillId == skill.SkillId);
+        Assert.Equal(skill.Name, storedSkill.Name);
+        Assert.Contains("Source transport import.", await File.ReadAllTextAsync(Path.Combine(store.GetSkillRootPath(storedSkill), "SKILL.md")), StringComparison.Ordinal);
 
-        var required = await Assert.ThrowsAsync<SunderRpcException>(() => client.CommandAsync(new(SkillCommandKind.Delete)).AsTask());
+        var required = await Assert.ThrowsAsync<SunderRpcException>(() => client.DeleteAsync(string.Empty).AsTask());
         Assert.Equal("skills.owner.operation-failed", required.Error.Code);
-        var invalid = await Assert.ThrowsAsync<SunderRpcException>(() => client.CommandAsync(new((SkillCommandKind)999)).AsTask());
+        var invalid = await Assert.ThrowsAsync<SunderRpcException>(() => client.ImportTransferAsync("invalid").AsTask());
         Assert.Equal("skills.owner.operation-failed", invalid.Error.Code);
         var unsafeId = await Upload(CreateArchive("../escape.txt", "not allowed"));
-        var unsafePath = await Assert.ThrowsAsync<SunderRpcException>(() => client.CommandAsync(new(SkillCommandKind.ImportTransfer, unsafeId)).AsTask());
+        var unsafePath = await Assert.ThrowsAsync<SunderRpcException>(() => client.ImportTransferAsync(unsafeId).AsTask());
         Assert.Equal("skills.owner.operation-failed", unsafePath.Error.Code);
         Assert.Null(await package.Context.Storage.Files.ReadAsync($"skill-import-transfers/{unsafeId}/manifest.json"));
         Assert.Single(store.ListSkills());
@@ -74,14 +78,20 @@ public sealed class SkillsManagementSourceMigrationTests
         using (var cancelled = new CancellationTokenSource())
         {
             cancelled.Cancel();
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.CommandAsync(new(SkillCommandKind.Delete, skill.SkillId), cancelled.Token).AsTask());
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.DeleteAsync(skill.SkillId, cancelled.Token).AsTask());
             Assert.Single(store.ListSkills());
         }
-        Assert.Empty((await client.CommandAsync(new(SkillCommandKind.Delete, skill.SkillId))).Skills);
+        await client.DeleteAsync(skill.SkillId);
+        Assert.Empty((await ReadProjectionAsync(client.QueryAsync())).Skills);
         await lifetime.CancelAsync();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => changes.MoveNextAsync().AsTask());
-        await state.RetireAsync(service);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => client.QueryAsync().AsTask());
+        await state.RetireAsync(handler);
+        var stale = await Assert.ThrowsAsync<SunderRpcException>(() => selected.EnsureCurrentAsync().AsTask());
+        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, stale.Error.Kind);
+        Assert.True(selected.RetirementToken.IsCancellationRequested);
+        var retired = await Assert.ThrowsAsync<SunderRpcException>(() => client.QueryAsync().AsTask());
+        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, retired.Error.Kind);
+        Assert.Equal("rpc.stale-endpoint", retired.Error.Code);
 
         async Task<string> Upload(byte[] bytes)
         {
@@ -92,6 +102,9 @@ public sealed class SkillsManagementSourceMigrationTests
             return id;
         }
     }
+
+    private static ValueTask<SkillProjection> ReadProjectionAsync(ValueTask<Sunder.Sdk.Services.SunderContent> content)
+        => SkillProjectionContent.ReadAsync(content, CancellationToken.None);
 
     private static byte[] CreateArchive(string path, string contents)
     {

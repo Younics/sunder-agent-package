@@ -9,9 +9,10 @@ public sealed partial class AgentSourceArtifactMigrationTests
     {
         Assert.DoesNotContain(assembly.GetReferencedAssemblies(), reference => reference.Name is "Sunder.Package.Agent.Protocol" or "Sunder.Agent.Execution.Common");
         foreach (var name in new[] { "AgentSessionRecord", "AgentTurnRecord", "AgentTranscriptToolDetailRecord", "AgentProfileRecord", "AgentModelDescriptor" })
-            Assert.Same(assembly, assembly.GetType("Sunder.Package.Agent.Contracts.Models." + name, true)!.Assembly);
-        Assert.Equal(!app, assembly.GetType("Sunder.Package.Agent.Contracts.Contracts.IAgentChildRunExecutor") is not null);
-        Assert.Equal(!app, assembly.GetType("Sunder.Package.Agent.Contracts.Models.AgentBehaviorLoopContext") is not null);
+            AssertImportedRoleModel(assembly, name);
+        Assert.Null(assembly.GetType("Sunder.Package.Agent.Contracts.Contracts.IAgentChildRunExecutor"));
+        Assert.Same(assembly, assembly.GetType(ImportedServices + "IChildRunExecutorService", true)!.Assembly);
+        AssertImportedRoleModel(assembly, "AgentBehaviorLoopContext");
         if (app)
         {
             Assert.DoesNotContain(assembly.GetReferencedAssemblies(), reference => reference.Name is "Sunder.Sdk.Worker" or "Sunder.Sdk.Stacks" or "Microsoft.Extensions.AI.Abstractions");

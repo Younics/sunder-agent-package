@@ -10,18 +10,28 @@ public sealed partial class AgentSourceArtifactMigrationTests
     {
         Assert.DoesNotContain(assembly.GetReferencedAssemblies(), reference => reference.Name is "Sunder.Package.Agent.Protocol" or "Sunder.Agent.Execution.Common");
         foreach (var name in new[] { "AgentWorkspaceRecord", "AgentWorkspacePathRecord", "AgentExecutionPathMapping", "AgentExecutionScopeDescriptor", "AgentResourceOperationContext" })
-            Assert.Same(assembly, assembly.GetType("Sunder.Package.Agent.Contracts.Models." + name, true)!.Assembly);
-        var context = assembly.GetType("Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetContext", true)!;
+            AssertImportedRoleModel(assembly, name);
+        var context = AssertImportedRoleModel(assembly, "AgentExecutionTargetContext");
         foreach (var name in new[] { "ApprovedResourceCapabilities", "ResourceOperation", "CapturePostMutationResource", "ExpectedConfigurationGeneration" })
-            Assert.Equal(JsonIgnoreCondition.Always, context.GetProperty(name)!.GetCustomAttribute<JsonIgnoreAttribute>()?.Condition);
-        Assert.Equal(JsonIgnoreCondition.Always, assembly.GetType("Sunder.Package.Agent.Contracts.Models.AgentResourceOperationContext", true)!
+        {
+            // The authored durable model excludes authority, while the reviewed
+            // imported service DTO explicitly carries those invocation-only fields.
+            Assert.Equal(JsonIgnoreCondition.Always, typeof(Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetContext)
+                .GetProperty(name)!.GetCustomAttribute<JsonIgnoreAttribute>()?.Condition);
+            Assert.Equal(char.ToLowerInvariant(name[0]) + name[1..],
+                context.GetProperty(name)!.GetCustomAttribute<JsonPropertyNameAttribute>()?.Name);
+        }
+        Assert.Equal(JsonIgnoreCondition.Always, typeof(Sunder.Package.Agent.Contracts.Models.AgentResourceOperationContext)
             .GetProperty("AuthorityActivationId")!.GetCustomAttribute<JsonIgnoreAttribute>()?.Condition);
+        Assert.Equal("authorityActivationId", AssertImportedRoleModel(assembly, "AgentResourceOperationContext")
+            .GetProperty("AuthorityActivationId")!.GetCustomAttribute<JsonPropertyNameAttribute>()?.Name);
         Assert.Null(assembly.GetType("Sunder.Package.Agent.Protocol.AgentRpcCatalog"));
         Assert.Null(assembly.GetType("Sunder.Package.Agent.Protocol.AgentRpcProviderHandle"));
-        Assert.Equal(app, assembly.GetType("Sunder.Package.Agent.Contracts.Contracts.IAgentProcessExecutionTarget") is not null);
+        Assert.Null(assembly.GetType("Sunder.Package.Agent.Contracts.Contracts.IAgentProcessExecutionTarget"));
+        Assert.Same(assembly, assembly.GetType(ImportedServices + "IExecutionTargetService", true)!.Assembly);
         if (app)
         {
-            Assert.Same(assembly, assembly.GetType("Sunder.Package.Agent.Contracts.Models.AgentModelDescriptor", true)!.Assembly);
+            AssertImportedRoleModel(assembly, "AgentModelDescriptor");
             Assert.DoesNotContain(assembly.GetReferencedAssemblies(), reference => reference.Name is "Sunder.Sdk.Worker" or "Microsoft.Extensions.AI.Abstractions");
         }
         else

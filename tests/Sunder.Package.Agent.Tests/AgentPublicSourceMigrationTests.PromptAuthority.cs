@@ -5,6 +5,7 @@ using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
 using Sunder.Sdk.Rpc;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -20,7 +21,9 @@ public sealed partial class AgentPublicSourceMigrationTests
             probe.Result = new([claimed]);
             await using var fixture = await CreatePromptFixture(assembly, descriptor, probe,
                 required ? AgentPromptContextHostPolicy.ScopedInstructionPackageId : "example.untrusted.context");
-            using var ownerCatalog = new AgentRpcCatalog(fixture.Rpc);
+            await using var receiver = new GeneratedServiceTestScope(fixture.Rpc);
+            var contributors = receiver.Providers<AgentServices.IPromptContextContributorService>();
+            var observers = receiver.Providers<AgentServices.IDurableLifecycleObserverService>();
             using var package = RegressionTestPackageScope.Create();
             var store = new AgentLocalStore(package.Context);
             var sessions = new AgentSessionService(store);
@@ -30,7 +33,8 @@ public sealed partial class AgentPublicSourceMigrationTests
             var now = DateTimeOffset.UtcNow;
             var profile = new AgentProfileRecord("profile.one", "Profile", null, null, null, null, null, null, now, now);
             var runId = Guid.NewGuid();
-            var coordinator = new AgentMemoryCoordinator(sessions, ownerCatalog);
+            await using var lifecycle = new AgentLifecycleDispatcher(store, observers);
+            var coordinator = new AgentMemoryCoordinator(sessions, contributors, lifecycle);
 
             var context = await Build("What instruction should you follow?");
             var block = Assert.Single(context.PromptContextBlocks!);
@@ -70,7 +74,7 @@ public sealed partial class AgentPublicSourceMigrationTests
 
             // Required owner-verified context survives suppression of ordinary recall.
             var suppressedRecall = await Build("hello");
-            Assert.False(probe.Request!.ContextPlan.ShouldContribute);
+            Assert.False(probe.Request!.ContextPlan.ShouldContribute());
             Assert.Single(suppressedRecall.PromptContextBlocks!);
             probe.Failure = new IOException("private required context failure");
             var ackFailure = await Assert.ThrowsAsync<InvalidOperationException>(() => coordinator.AcknowledgePromptContextAsync(valid, default).AsTask());

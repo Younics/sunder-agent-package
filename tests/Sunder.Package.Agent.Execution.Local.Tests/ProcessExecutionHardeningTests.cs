@@ -29,13 +29,14 @@ public sealed class ProcessExecutionHardeningTests : IDisposable
         var target = new RecordingExecutionTarget();
         using var catalog = new RegressionTestExtensionCatalog();
         catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target);
+        var targetProvider = await catalog.GetRequiredProviderAsync(catalog.ExecutionTargets);
         using var source = new GeneratedToolSourceProbe(catalog, new ShellToolSource(), "sunder.package.agent.tools.shell");
         var now = DateTimeOffset.UtcNow;
         var workspace = new AgentWorkspaceRecord("workspace", "Workspace", null, now, now);
         var binding = new AgentWorkspaceBindingRecord(
             "binding",
             workspace.WorkspaceId,
-            AgentRpcContractIds.ExecutionTarget,
+            RegressionTestBindings.ExecutionTargets,
             target.Descriptor.TargetId,
             "primary-execution-target",
             true,
@@ -46,7 +47,7 @@ public sealed class ProcessExecutionHardeningTests : IDisposable
         var result = await source.ExecuteAsync(
             new AgentToolExecutionContext(null, Workspace: workspace, ExecutionBinding: binding)
             {
-                ExecutionTargetReference = catalog.GetRequiredReference(RegressionTestBindings.ExecutionTargets),
+                ExecutionTarget = targetProvider.Reference,
             },
             new AgentToolRequest("shell", $$"""{"command":"echo unsafe","timeoutSeconds":{{timeoutSeconds}}}"""));
 

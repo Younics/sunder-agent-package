@@ -5,19 +5,15 @@ using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Stacks;
+using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Services;
 
-public sealed class AgentProfileStackContributor(
+[SunderServiceProvider(typeof(IPackageStackContributor), ProviderId = "agent.stack.profiles")]
+public sealed partial class AgentProfileStackContributor(
     AgentProfileService profileService,
-    IPackageContext packageContext,
-    AgentRpcCatalog rpcCatalog,
-    AgentRpcProviderService<IAgentBehaviorLoop> behaviorLoops) : IPackageStackExporter, IPackageStackImporter, IPackageStackImportAppliedHandler
+    IPackageContext packageContext) : IPackageStackExporter, IPackageStackImporter, IPackageStackImportAppliedHandler
 {
-    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
-    internal AgentProfileStackContributor(AgentProfileService profiles, IPackageContext context, AgentRpcCatalog catalog, Runtime.Rpc.AgentBehaviorServices behaviors)
-        : this(profiles, context, catalog, behaviors.Service) { }
-
     private const string PackageId = "sunder.package.agent";
     private const string SchemaId = "sunder.package.agent/profile";
     private const string DetailDescription = "description";
@@ -48,7 +44,7 @@ public sealed class AgentProfileStackContributor(
         return ValueTask.FromResult<IReadOnlyList<StackExportItemDescriptor>>(profiles);
     }
 
-    public ValueTask<StackExportContribution> ExportAsync(
+    public async ValueTask<StackExportContribution> ExportAsync(
         StackExportRequest request,
         CancellationToken cancellationToken = default)
     {
@@ -72,10 +68,10 @@ public sealed class AgentProfileStackContributor(
                 DefaultSelected: true,
                 SourceItemId: profile.ProfileId))
             .ToArray();
-        return ValueTask.FromResult(new StackExportContribution(
+        return new StackExportContribution(
             fragments,
-            fragments.Length == 0 ? [] : BuildPackageRequirements(payloads),
-            []));
+            fragments.Length == 0 ? [] : await BuildPackageRequirementsAsync(payloads, cancellationToken).ConfigureAwait(false),
+            []);
     }
 
     public ValueTask<StackImportPreview> PreviewImportAsync(
@@ -186,7 +182,8 @@ public sealed class AgentProfileStackContributor(
     private static string BuildActionId(string fragmentId, string profileId)
         => $"agent-profile:{fragmentId}:{profileId}";
 
-    private IReadOnlyList<StackPackageRequirement> BuildPackageRequirements(IReadOnlyList<AgentProfileStackPayload> payloads)
+    private async Task<IReadOnlyList<StackPackageRequirement>> BuildPackageRequirementsAsync(
+        IReadOnlyList<AgentProfileStackPayload> payloads, CancellationToken cancellationToken)
     {
         var packageIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { PackageId };
         var providerIds = payloads
@@ -198,7 +195,7 @@ public sealed class AgentProfileStackContributor(
             .Where(value => !string.IsNullOrWhiteSpace(value))
             .Select(value => value!)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        AddProviderPackages(packageIds, providerIds);
+        await AddProviderPackagesAsync(packageIds, providerIds, cancellationToken).ConfigureAwait(false);
 
         var behaviorLoopIds = payloads
             .Select(payload => payload.BehaviorLoopId)
@@ -210,20 +207,17 @@ public sealed class AgentProfileStackContributor(
             .Where(value => !string.IsNullOrWhiteSpace(value))
             .Select(value => value!)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var contribution in AgentRpcInvocation.Snapshot(
-                     rpcCatalog,
-                     behaviorLoops,
-                     static loop => loop.Descriptor))
+        foreach (var contribution in await profileService.ListBehaviorProvidersAsync(cancellationToken).ConfigureAwait(false))
         {
-            var descriptor = contribution.Metadata;
+            var descriptor = contribution.Descriptor;
             if (behaviorLoopIds.Contains(descriptor.LoopId)
                 || (!string.IsNullOrWhiteSpace(descriptor.SourceId) && behaviorLoopSourceIds.Contains(descriptor.SourceId)))
             {
-                AddPackageId(packageIds, contribution.PackageId);
+                AddPackageId(packageIds, contribution.Provider.PackageId);
             }
         }
 
-        AddSelectableCapabilityPackages(packageIds, payloads.SelectMany(payload => payload.SelectableCapabilityAssignments ?? []));
+        await AddSelectableCapabilityPackagesAsync(packageIds, payloads.SelectMany(payload => payload.SelectableCapabilityAssignments ?? []), cancellationToken).ConfigureAwait(false);
 
         return packageIds
             .OrderBy(packageId => string.Equals(packageId, PackageId, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
@@ -235,39 +229,35 @@ public sealed class AgentProfileStackContributor(
             .ToArray();
     }
 
-    private void AddProviderPackages(ISet<string> packageIds, ISet<string> providerIds)
+    private async Task AddProviderPackagesAsync(
+        ISet<string> packageIds, ISet<string> providerIds, CancellationToken cancellationToken)
     {
         if (providerIds.Count == 0)
         {
             return;
         }
 
-        foreach (var contribution in AgentRpcInvocation.Snapshot(
-                     rpcCatalog,
-                     Sunder.Package.Agent.Runtime.Rpc.AgentChatBindings.Service,
-                     static provider => provider.Descriptor.ProviderId))
+        foreach (var contribution in await profileService.ListChatProvidersAsync(cancellationToken).ConfigureAwait(false))
         {
-            if (providerIds.Contains(contribution.Metadata))
+            if (providerIds.Contains(contribution.Descriptor.ProviderId))
             {
-                AddPackageId(packageIds, contribution.PackageId);
+                AddPackageId(packageIds, contribution.Provider.PackageId);
             }
         }
 
-        foreach (var contribution in AgentRpcInvocation.Snapshot(
-                     rpcCatalog,
-                     Sunder.Package.Agent.Runtime.Rpc.AgentEmbeddingBindings.Service,
-                     static provider => provider.Descriptor.ProviderId))
+        foreach (var contribution in await profileService.ListEmbeddingProvidersAsync(cancellationToken).ConfigureAwait(false))
         {
-            if (providerIds.Contains(contribution.Metadata))
+            if (providerIds.Contains(contribution.Descriptor.ProviderId))
             {
-                AddPackageId(packageIds, contribution.PackageId);
+                AddPackageId(packageIds, contribution.Provider.PackageId);
             }
         }
     }
 
-    private void AddSelectableCapabilityPackages(
+    private async Task AddSelectableCapabilityPackagesAsync(
         ISet<string> packageIds,
-        IEnumerable<AgentProfileSelectableCapabilityAssignmentRecord> assignments)
+        IEnumerable<AgentProfileSelectableCapabilityAssignmentRecord> assignments,
+        CancellationToken cancellationToken)
     {
         var sourceIds = assignments
             .Select(assignment => assignment.SourceId)
@@ -279,14 +269,11 @@ public sealed class AgentProfileStackContributor(
             return;
         }
 
-        foreach (var contribution in AgentRpcInvocation.Snapshot(
-                     rpcCatalog,
-                     Sunder.Package.Agent.Runtime.Rpc.AgentSelectableBindings.Service,
-                     static provider => provider.ProviderId))
+        foreach (var contribution in await profileService.ListSelectableProvidersAsync(cancellationToken).ConfigureAwait(false))
         {
-            if (sourceIds.Contains(contribution.Metadata))
+            if (sourceIds.Contains(contribution.Descriptor.Id))
             {
-                AddPackageId(packageIds, contribution.PackageId);
+                AddPackageId(packageIds, contribution.Provider.PackageId);
             }
         }
     }

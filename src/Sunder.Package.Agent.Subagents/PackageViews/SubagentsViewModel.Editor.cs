@@ -18,10 +18,8 @@ public sealed partial class SubagentsViewModel
             {
                 var aliases = descriptor.Aliases?
                     .Where(alias => !string.IsNullOrWhiteSpace(alias))
-                    .Select(alias => new AgentProfileSelectableCapabilityAssignmentRecord(
-                        AgentProfileSelectableCapabilityKinds.Tool,
-                        alias,
-                        descriptor.SourceId))
+                    .Select(alias => new AgentProfileSelectableCapabilityAssignmentRecord
+                    { Kind = AgentProfileSelectableCapabilityKinds.Tool, CapabilityId = alias, SourceId = descriptor.SourceId })
                     .ToArray();
                 return new CapabilityOptionDefinition(
                     "capability",

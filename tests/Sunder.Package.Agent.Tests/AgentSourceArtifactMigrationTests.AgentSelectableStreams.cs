@@ -2,89 +2,108 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Sunder.Package.Agent.Contracts.Contracts;
+using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Rpc;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
 
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+
 public sealed partial class AgentSourceArtifactMigrationTests
 {
-    private static async Task VerifySelectableStreamEdges(Assembly owner, Assembly skills, Assembly probes)
+    private static async Task VerifySelectableStreamEdges(Assembly owner)
     {
         foreach (var mode in new[] { "normal", "finite", "fault", "invalid", "cancel", "stop" })
         {
             using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
             var peer = new SelectablePeer();
-            var registered = AddSelectableProvider(skills, probes, state, peer, mode);
+            var registered = AddSelectableProvider(state, peer, mode);
             var rpc = new FilesRpcObserver(new RegressionTestRpcClient(state, "sunder.package.agent"), "list");
-            var snapshot = Assert.Single((await rpc.DiscoverAsync(AgentRpcContractIds.SelectableCapabilityProvider)).Providers);
-            var client = CreateAgentSelectableClient(owner, rpc, snapshot);
-            await using var lifetime = (IAsyncDisposable)client;
-            var changed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            var notifications = 0;
-            ((IAgentProfileSelectableCapabilityChangeNotifier)client).SelectableCapabilitiesChanged += () =>
-            { Interlocked.Increment(ref notifications); changed.TrySetResult(); };
+            await using var receiver = new GeneratedServiceTestScope(rpc);
+            var selected = Assert.Single(await ProjectedProviders(receiver, owner, "ISelectableCapabilityProviderService"));
+            using var client = selected.Service;
+            await using var watch = new ProjectedArtifactWatch(client.Value);
+            Task<AgentProfileSelectableCapabilityDescriptor[]> List(CancellationToken token = default)
+                => client.InvokeAsync<AgentProfileSelectableCapabilityDescriptor[]>("ListAsync", null, token).AsTask();
+            var next = watch.Next();
             await registered.Probe.Subscribed.Task.WaitAsync(TimeSpan.FromSeconds(5));
             if (mode is "finite" or "fault" or "invalid")
             {
                 registered.Probe.Release.TrySetResult();
-                await Observation(client).WaitAsync(TimeSpan.FromSeconds(5));
-                Assert.Equal(mode == "finite" ? 1 : 0, Volatile.Read(ref notifications));
+                if (mode == "finite")
+                {
+                    Assert.True(await next);
+                    Assert.Equal(1, watch.Current.GetProperty("revision").GetInt64());
+                    Assert.False(await watch.Next());
+                }
+                else
+                {
+                    var failure = await Assert.ThrowsAsync<SunderRpcException>(() => next);
+                    Assert.Equal(SunderRpcErrorKind.ProviderFaulted, failure.Error.Kind);
+                    Assert.DoesNotContain("private-watch-failure", failure.Message, StringComparison.Ordinal);
+                }
                 Assert.Equal(0, registered.Probe.ActiveStreams);
                 Assert.All(rpc.Scopes, scope => Assert.True(scope.Disposed));
                 continue;
             }
+            Assert.True(await next);
             Assert.Equal(1, peer.Subscribers);
-            Assert.Equal(peer.ProviderId, client.ProviderId); Assert.Equal(peer.DisplayName, client.DisplayName);
-            Assert.Equal(peer.Values, await client.ListCapabilitiesAsync(new(null)));
+            var identity = await client.InvokeAsync<AgentServiceIdentity>("DescribeAsync", CancellationToken.None);
+            Assert.Equal(peer.ProviderId, identity.Id); Assert.Equal(peer.DisplayName, identity.DisplayName);
+            Assert.Equal(peer.Values, await List());
             if (mode == "normal")
             {
-                peer.Notify(); await changed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                var changed = watch.Next(); peer.Notify(); Assert.True(await changed);
                 var before = peer.ListCalls;
                 rpc.Transform = value => value with { AbiSha256 = new string('a', 64) };
-                Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => client.ListCapabilitiesAsync(new(null)).AsTask())).Error.Kind);
+                Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => List())).Error.Kind);
                 Assert.Equal(before, peer.ListCalls);
                 rpc.Transform = null;
                 rpc.LookupFailure = SunderRpcErrorKind.PermissionDenied;
-                Assert.Equal(SunderRpcErrorKind.PermissionDenied, (await Assert.ThrowsAsync<SunderRpcException>(() => client.ListCapabilitiesAsync(new(null)).AsTask())).Error.Kind);
+                Assert.Equal(SunderRpcErrorKind.PermissionDenied, (await Assert.ThrowsAsync<SunderRpcException>(() => List())).Error.Kind);
                 rpc.LookupFailure = null;
                 rpc.InvalidateAfterInvoke = true;
-                Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => client.ListCapabilitiesAsync(new(null)).AsTask())).Error.Kind);
+                Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => List())).Error.Kind);
                 rpc.InvalidateAfterInvoke = false;
-                var eventsBefore = Volatile.Read(ref notifications);
                 // The same mismatch is now observed before forwarding a stream event.
+                var rejected = watch.Next();
                 peer.Notify();
-                await Observation(client).WaitAsync(TimeSpan.FromSeconds(5));
-                Assert.Equal(eventsBefore, Volatile.Read(ref notifications));
+                Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => rejected)).Error.Kind);
                 Assert.Equal(0, peer.Subscribers);
             }
             else
             {
                 peer.ListGate = new();
                 using var cancellation = new CancellationTokenSource();
-                var pending = client.ListCapabilitiesAsync(new(null), cancellation.Token).AsTask();
+                var pending = List(cancellation.Token);
                 await peer.ListGate.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
                 if (mode == "cancel")
                 {
                     cancellation.Cancel();
                     await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
                     Assert.Equal(1, peer.Subscribers);
-                    peer.Notify(); await changed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                    var changed = watch.Next(); peer.Notify(); Assert.True(await changed);
                 }
                 else
                 {
-                    var stopping = lifetime.DisposeAsync().AsTask();
-                    Assert.Same(stopping, lifetime.DisposeAsync().AsTask());
-                    await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+                    var stoppedWatch = watch.Next();
+                    var stopping = receiver.DisposeAsync().AsTask();
+                    Assert.Same(stopping, receiver.DisposeAsync().AsTask());
+                    var failure = await Assert.ThrowsAsync<SunderRpcException>(() => pending);
+                    Assert.Equal(SunderRpcErrorKind.Unavailable, failure.Error.Kind);
+                    Assert.Equal("rpc.binding.retired", failure.Error.Code);
+                    Assert.Equal(SunderRpcErrorKind.Unavailable, (await Assert.ThrowsAsync<SunderRpcException>(() => stoppedWatch)).Error.Kind);
                     await stopping.WaitAsync(TimeSpan.FromSeconds(5));
                 }
             }
-            await lifetime.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
-            Assert.True(Observation(client).IsCompletedSuccessfully);
+            await watch.DisposeAsync();
+            await receiver.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal(0, peer.Subscribers); Assert.Equal(0, registered.Probe.ActiveStreams);
-            Assert.Equal(0, rpc.UnscopedLookups); Assert.All(rpc.Scopes, scope => Assert.True(scope.Disposed));
-            Assert.Equal(SunderRpcErrorKind.StaleEndpoint, Assert.Throws<SunderRpcException>(() => client.ProviderId).Error.Kind);
+            rpc.AssertScopedOperations(); Assert.All(rpc.Scopes, scope => Assert.True(scope.Disposed));
+            var disposed = Assert.Throws<TargetInvocationException>(() => selected.Reference.GetType().GetProperty("Service")!.GetValue(selected.Reference));
+            Assert.Equal(SunderRpcErrorKind.Unavailable, Assert.IsType<SunderRpcException>(disposed.InnerException).Error.Kind);
         }
     }
 
@@ -107,7 +126,11 @@ public sealed partial class AgentSourceArtifactMigrationTests
                     Subscribed.TrySetResult();
                     await Release.Task.WaitAsync(token);
                     if (mode == "fault") throw new IOException("private-watch-failure");
-                    yield return JsonSerializer.SerializeToElement(new { revision = mode == "invalid" ? -1 : 1 });
+                    // Revision is a signed safe integer in the current contract;
+                    // use an actual schema violation rather than a valid negative value.
+                    yield return mode == "invalid"
+                        ? JsonSerializer.SerializeToElement(new { revision = "invalid" })
+                        : JsonSerializer.SerializeToElement(new { revision = 1 });
                     yield break;
                 }
                 await using var events = inner.InvokeServerStreamAsync(context, serviceId, methodId, request, token).GetAsyncEnumerator(token);

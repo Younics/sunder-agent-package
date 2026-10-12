@@ -3,13 +3,17 @@ extern alias SubagentsWorker;
 
 using Sunder.Package.Agent.Tests;
 using Sunder.Sdk.Abstractions;
-using SubagentsApp::Sunder.Package.Agent.Contracts.Models;
+using SubagentManagementServices = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Subagents_Services;
 using SubagentsApp::Sunder.Package.Agent.Subagents.Models;
 using SubagentsApp::Sunder.Package.Agent.Subagents.Runtime;
 using SubagentsApp::Sunder.Package.Agent.Shared.Presentation;
-using WorkerRuntime = SubagentsWorker::Sunder.Package.Agent.Subagents.Runtime;
-using WorkerRpc = SubagentsWorker::Sunder.Package.Agent.Subagents.Rpc;
 using WorkerService = SubagentsWorker::Sunder.Package.Agent.Subagents.Services.SubagentService;
+using AgentProfileSelectableCapabilityDescriptor = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentProfileSelectableCapabilityDescriptor;
+using AgentRunCheckpointRecord = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentRunCheckpointRecord;
+using AgentToolDescriptor = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentToolDescriptor;
+using AgentTranscriptToolDetailRecord = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTranscriptToolDetailRecord;
+using AgentTranscriptToolDetailRequest = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTranscriptToolDetailRequest;
+using AgentTurnRecord = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnRecord;
 
 namespace Sunder.Package.Agent.TestSupport.Avalonia;
 
@@ -21,9 +25,7 @@ internal sealed class WorkerBackedSubagentManagementGateway : ISubagentManagemen
 {
     private const string PackageId = "sunder.package.agent.subagents";
     private readonly RegressionTestExtensionCatalog _catalog;
-    private readonly WorkerRpc.SubagentRuntimeBindings _bindings;
-    private readonly WorkerRuntime.SubagentRuntimeHandler _handler;
-    private readonly WorkerRuntime.SubagentRuntimeChangeStream _changes;
+    private readonly RegressionSubagentManagement _management;
     private readonly SubagentAppRuntimeGateway _app;
     private readonly Task _initialization;
     private Task? _disposal;
@@ -35,15 +37,17 @@ internal sealed class WorkerBackedSubagentManagementGateway : ISubagentManagemen
     internal WorkerBackedSubagentManagementGateway(WorkerService service, RegressionTestExtensionCatalog catalog)
     {
         _catalog = catalog;
-        var rpc = catalog.RpcForCaller(PackageId);
-        _bindings = new WorkerRpc.SubagentRuntimeBindings(rpc);
-        _bindings.StartAsync().GetAwaiter().GetResult();
-        _handler = new WorkerRuntime.SubagentRuntimeHandler(service, _bindings);
-        _changes = new WorkerRuntime.SubagentRuntimeChangeStream(service, _bindings);
-        var operations = new WorkerRuntime.SubagentRuntimeOwnerClient(_handler, _changes);
-        var provider = new WorkerRpc.ManagementService(operations);
-        catalog.AddGeneratedProvider(PackageId, this, provider.CreateSunderRpcProviderRegistration());
-        _app = new SubagentAppRuntimeGateway(rpc);
+        _management = catalog.CreateSubagentRuntimeManagementAsync(service).AsTask().GetAwaiter().GetResult();
+        var receiver = catalog.Receiver(PackageId);
+        var registration = receiver.Register(_management.Service, "sunder.package.agent.subagents.owner");
+        catalog.AddGeneratedProvider(PackageId, _management.Service, registration);
+        var providers = receiver
+            .Providers<SubagentManagementServices.ISubagentsManagementService>()
+            .ListAsync()
+            .AsTask()
+            .GetAwaiter()
+            .GetResult();
+        _app = new SubagentAppRuntimeGateway(providers.Providers.Single().Service);
         // Avoid capturing an Avalonia dispatcher for the transport observation loop.
         _initialization = Task.Run(() => _app.InitializeAsync());
     }
@@ -119,12 +123,10 @@ internal sealed class WorkerBackedSubagentManagementGateway : ISubagentManagemen
         }
         finally
         {
-            try { await _catalog.RetireProviderAsync(this).ConfigureAwait(false); }
+            try { await _catalog.RetireProviderAsync(_management.Service).ConfigureAwait(false); }
             finally
             {
-                _changes.Dispose();
-                _handler.Dispose();
-                await _bindings.DisposeAsync().ConfigureAwait(false);
+                await _management.DisposeAsync().ConfigureAwait(false);
             }
         }
     }

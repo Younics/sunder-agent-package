@@ -464,7 +464,7 @@ public partial class SubsessionsView : UserControl,
             if (!toolRow.TryMaterializeDetails(request, detail, out var details)
                 || details is null)
             {
-                if (detail is not null && detail.Revision != request.Revision)
+                if (detail is not null && detail.Detail.Revision != request.Revision)
                 {
                     toolRow.CollapseDetails();
                 }

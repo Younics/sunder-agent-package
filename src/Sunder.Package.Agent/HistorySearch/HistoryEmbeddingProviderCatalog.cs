@@ -1,17 +1,19 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
-using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Protocol;
-using Sunder.Package.Agent.Runtime.Rpc;
+using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.HistorySearch;
 
-internal sealed class HistoryEmbeddingProviderCatalog(AgentRpcCatalog rpcCatalog)
+internal sealed class HistoryEmbeddingProviderCatalog(
+    IServiceProviders<AgentServices.IEmbeddingProviderService> embeddingProviders)
 {
-    internal IReadOnlyList<HistoryEmbeddingProviderOption> ListOptions()
-        => SnapshotProviders()
+    internal async Task<IReadOnlyList<HistoryEmbeddingProviderOption>> ListOptionsAsync(
+        CancellationToken cancellationToken = default)
+        => (await SnapshotProvidersAsync(cancellationToken).ConfigureAwait(false))
             .Select(static item => new HistoryEmbeddingProviderOption(
                 item.PackageId,
                 item.ProviderId,
@@ -24,11 +26,12 @@ internal sealed class HistoryEmbeddingProviderCatalog(AgentRpcCatalog rpcCatalog
             .ThenBy(static item => item.ProviderId, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-    internal OwnedEmbeddingProvider Resolve(string? packageId, string? providerId)
+    internal async Task<OwnedEmbeddingProvider> ResolveAsync(
+        string? packageId, string? providerId, CancellationToken cancellationToken = default)
     {
         var normalizedProviderId = NormalizeRequired(providerId, "An embedding provider id is required.");
         var normalizedPackageId = NormalizeOptional(packageId);
-        var matches = SnapshotProviders()
+        var matches = (await SnapshotProvidersAsync(cancellationToken).ConfigureAwait(false))
             .Where(item => string.Equals(
                 item.ProviderId.Trim(),
                 normalizedProviderId,
@@ -57,12 +60,9 @@ internal sealed class HistoryEmbeddingProviderCatalog(AgentRpcCatalog rpcCatalog
         string? modelId,
         CancellationToken cancellationToken)
     {
-        var owned = Resolve(packageId, providerId);
+        var owned = await ResolveAsync(packageId, providerId, cancellationToken).ConfigureAwait(false);
         var requestedModelId = NormalizeModelId(modelId);
-        var models = await InvokeAsync(
-            owned,
-            cancellationToken,
-            static (provider, token) => provider.GetAvailableModelsAsync(token)).ConfigureAwait(false);
+        var models = await owned.Provider.Service.ListModelsAsync(cancellationToken).ConfigureAwait(false);
         var matches = models
             .Where(model => string.Equals(model.ModelId?.Trim(), requestedModelId, StringComparison.Ordinal))
             .ToArray();
@@ -95,12 +95,8 @@ internal sealed class HistoryEmbeddingProviderCatalog(AgentRpcCatalog rpcCatalog
         ResolvedEmbeddingSelection selection,
         CancellationToken cancellationToken)
     {
-        var providerSpaceIdentity = await InvokeAsync(
-            selection.OwnedProvider,
-            cancellationToken,
-            (provider, token) => provider is IAgentEmbeddingSpaceIdentityProvider identityProvider
-                ? identityProvider.GetEmbeddingSpaceIdentityAsync(selection.ModelId, token)
-                : ValueTask.FromResult(string.Empty)).ConfigureAwait(false);
+        var providerSpaceIdentity = await selection.OwnedProvider.Provider.Service
+            .SpaceIdentityAsync(selection.ModelId, cancellationToken).ConfigureAwait(false);
         return CreateSpaceFingerprint(
             selection.OwnedProvider,
             selection.ModelId,
@@ -108,104 +104,60 @@ internal sealed class HistoryEmbeddingProviderCatalog(AgentRpcCatalog rpcCatalog
             providerSpaceIdentity);
     }
 
-    internal ValueTask<AgentEmbeddingProviderReadiness> GetReadinessAsync(
-        ResolvedEmbeddingSelection selection,
+    private async Task<IReadOnlyList<OwnedEmbeddingProvider>> SnapshotProvidersAsync(
         CancellationToken cancellationToken)
-        => InvokeAsync(
-            selection.OwnedProvider,
-            cancellationToken,
-            static (provider, token) => provider.GetReadinessAsync(token));
-
-    internal ValueTask<AgentEmbeddingGenerationResult?> GenerateEmbeddingAsync(
-        ResolvedEmbeddingSelection selection,
-        string text,
-        CancellationToken cancellationToken)
-        => InvokeAsync(
-            selection.OwnedProvider,
-            cancellationToken,
-            (provider, token) => provider.GenerateEmbeddingAsync(selection.ModelId, text, token));
-
-    internal ValueTask<IReadOnlyList<AgentEmbeddingGenerationResult?>> GenerateEmbeddingsAsync(
-        ResolvedEmbeddingSelection selection,
-        IReadOnlyList<string> texts,
-        CancellationToken cancellationToken)
-        => InvokeAsync(
-            selection.OwnedProvider,
-            cancellationToken,
-            (provider, token) => provider.GenerateEmbeddingsAsync(selection.ModelId, texts, token));
-
-    private IReadOnlyList<OwnedEmbeddingProvider> SnapshotProviders()
     {
-        var providers = new List<OwnedEmbeddingProvider>();
-        foreach (var reference in rpcCatalog.GetServiceReferences(AgentEmbeddingBindings.Service))
+        ServiceProviderCatalog<AgentServices.IEmbeddingProviderService> snapshot;
+        try
         {
-            if (!reference.TryAcquire(out var lease))
+            snapshot = await embeddingProviders.ListAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (SunderRpcException exception) when (
+            !cancellationToken.IsCancellationRequested
+            && exception.Error.Kind == SunderRpcErrorKind.Unavailable)
+        {
+            return [];
+        }
+
+        var providers = new List<OwnedEmbeddingProvider>();
+        foreach (var provider in snapshot.Providers)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (provider.State != ServiceProviderState.Active)
             {
                 continue;
             }
-            using (lease)
-            {
-                var descriptor = lease.Service.Descriptor;
-                if (lease.RetirementToken.IsCancellationRequested
-                    || string.IsNullOrWhiteSpace(descriptor.ProviderId))
-                {
-                    continue;
-                }
 
-                var handle = reference.ToHandle();
-                providers.Add(new OwnedEmbeddingProvider(
-                    lease.PackageId,
-                    descriptor.ProviderId,
-                    descriptor.DisplayName,
-                    string.Join('\n',
-                        handle.PackageVersion,
-                        handle.ContractVersion,
-                        handle.DescriptorSha256,
-                        handle.AbiSha256,
-                        handle.ProviderId),
-                    reference));
+            AgentEmbeddingProviderDescriptor descriptor;
+            try
+            {
+                descriptor = await provider.Service.DescribeAsync(cancellationToken).ConfigureAwait(false);
             }
+            catch (SunderRpcException exception) when (
+                !cancellationToken.IsCancellationRequested
+                && exception.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable)
+            {
+                continue;
+            }
+            if (string.IsNullOrWhiteSpace(descriptor.ProviderId))
+            {
+                continue;
+            }
+
+            providers.Add(new OwnedEmbeddingProvider(
+                provider.PackageId,
+                descriptor.ProviderId,
+                descriptor.DisplayName,
+                string.Join('\n',
+                    provider.PackageVersion,
+                    provider.ContractVersion,
+                    provider.DescriptorSha256,
+                    provider.AbiSha256,
+                    provider.ProviderId),
+                provider));
         }
 
         return providers;
-    }
-
-    private static async ValueTask<TResult> InvokeAsync<TResult>(
-        OwnedEmbeddingProvider owned,
-        CancellationToken cancellationToken,
-        Func<IAgentEmbeddingProvider, CancellationToken, ValueTask<TResult>> callback)
-    {
-        if (!owned.Reference.TryAcquire(out var lease))
-        {
-            throw new OperationCanceledException(
-                $"Embedding provider package '{owned.PackageId}' is unavailable.");
-        }
-
-        using (lease)
-        {
-            var retirementToken = lease.RetirementToken;
-            using var invocation = CancellationTokenSource.CreateLinkedTokenSource(
-                cancellationToken,
-                retirementToken);
-            try
-            {
-                var result = await callback(lease.Service, invocation.Token).ConfigureAwait(false);
-                if (retirementToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
-                {
-                    throw new OperationCanceledException(
-                        $"Embedding provider package '{owned.PackageId}' became unavailable while the callback was running.");
-                }
-                return result;
-            }
-            catch (OperationCanceledException exception) when (
-                retirementToken.IsCancellationRequested
-                && !cancellationToken.IsCancellationRequested)
-            {
-                throw new OperationCanceledException(
-                    $"Embedding provider package '{owned.PackageId}' became unavailable while the callback was running.",
-                    exception);
-            }
-        }
     }
 
     private static string NormalizeRequired(string? value, string message)
@@ -268,7 +220,7 @@ internal sealed record OwnedEmbeddingProvider(
     string ProviderId,
     string DisplayName,
     string ImplementationIdentity,
-    AgentRpcReference<IAgentEmbeddingProvider> Reference);
+    ServiceProvider<AgentServices.IEmbeddingProviderService> Provider);
 
 internal sealed record ResolvedEmbeddingSelection(
     OwnedEmbeddingProvider OwnedProvider,

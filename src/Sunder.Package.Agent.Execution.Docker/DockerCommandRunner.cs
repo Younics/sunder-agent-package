@@ -29,9 +29,10 @@ internal sealed class DockerCommandRunner(IPackageContext packageContext, Docker
         var workingDirectory = DockerPathResolver.ResolveWorkingDirectory(config, request.WorkingDirectory, context.AllowOutsideConfiguredScope);
         var result = await RunAsync(
             ["exec", "-w", workingDirectory, containerName, ResolveShellPath(config), "-c", ApplyPathEntries(request.Command, config.PathEntries)],
-            request.TimeoutSeconds ?? await ResolveDefaultTimeoutSecondsAsync(cancellationToken),
+            checked((int?)request.TimeoutSeconds) ?? await ResolveDefaultTimeoutSecondsAsync(cancellationToken),
             cancellationToken);
-        return new AgentShellCommandResult(result.ExitCode, result.Output, result.TimedOut, workingDirectory, result.WasTruncated);
+        return new AgentShellCommandResult { ExitCode = result.ExitCode, Output = result.Output, TimedOut = result.TimedOut,
+            WorkingDirectory = workingDirectory, WasTruncated = result.WasTruncated };
     }
 
     public async ValueTask<AgentShellCommandResult> ExecuteProcessAsync(
@@ -43,13 +44,14 @@ internal sealed class DockerCommandRunner(IPackageContext packageContext, Docker
     {
         if (string.IsNullOrWhiteSpace(request.FileName))
         {
-            return new AgentShellCommandResult(1, "Command file name cannot be empty.");
+            return new AgentShellCommandResult { ExitCode = 1, Output = "Command file name cannot be empty.", TimedOut = false, WorkingDirectory = null, WasTruncated = false };
         }
 
         var workingDirectory = DockerPathResolver.ResolveWorkingDirectory(config, request.WorkingDirectory, context.AllowOutsideConfiguredScope);
         var dockerArgs = new List<string> { "exec", "-w", workingDirectory, containerName, ResolveShellPath(config), "-c", ApplyPathEntries(BuildProcessCommand(request), config.PathEntries) };
-        var result = await RunAsync(dockerArgs, request.TimeoutSeconds ?? await ResolveDefaultTimeoutSecondsAsync(cancellationToken), cancellationToken);
-        return new AgentShellCommandResult(result.ExitCode, result.Output, result.TimedOut, workingDirectory, result.WasTruncated);
+        var result = await RunAsync(dockerArgs, checked((int?)request.TimeoutSeconds) ?? await ResolveDefaultTimeoutSecondsAsync(cancellationToken), cancellationToken);
+        return new AgentShellCommandResult { ExitCode = result.ExitCode, Output = result.Output, TimedOut = result.TimedOut,
+            WorkingDirectory = workingDirectory, WasTruncated = result.WasTruncated };
     }
 
     public async Task<DockerCliRunResult> RunAsync(
@@ -69,12 +71,12 @@ internal sealed class DockerCommandRunner(IPackageContext packageContext, Docker
     {
         var shellPath = ResolveShellPath(config);
         var displayName = ResolveShellDisplayName(shellPath);
-        return new AgentExecutionShellDescriptor(
-            displayName.ToLowerInvariant().Replace(' ', '-'),
-            displayName,
-            shellPath,
-            AgentShellSyntaxKinds.PosixSh,
-            $"Run POSIX commands with {shellPath} inside the selected Docker container. Use Linux/POSIX shell syntax.");
+        return new AgentExecutionShellDescriptor
+        {
+            ShellId = displayName.ToLowerInvariant().Replace(' ', '-'), DisplayName = displayName, ExecutablePath = shellPath,
+            SyntaxKind = AgentShellSyntaxKinds.PosixSh,
+            Description = $"Run POSIX commands with {shellPath} inside the selected Docker container. Use Linux/POSIX shell syntax.",
+        };
     }
 
     public static string ResolveShellPath(DockerExecutionWorkspaceConfig config)

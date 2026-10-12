@@ -2,10 +2,13 @@ extern alias DockerWorker;
 
 using System.Collections.Concurrent;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using DockerWorker::Sunder.Package.Agent.Execution.Docker;
 using Sunder.Package.Agent.Tests;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Logging;
+using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
@@ -13,6 +16,10 @@ namespace Sunder.Package.Agent.Execution.Local.Tests;
 public sealed class DockerCatalogConsistencyTests : IDisposable
 {
     private static readonly JsonSerializerOptions CatalogJsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly JsonSerializerOptions PresentationJsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.KebabCaseLower) },
+    };
     private readonly string _root = Path.Combine(
         Path.GetTempPath(),
         "sunder-docker-catalog-tests",
@@ -275,10 +282,11 @@ public sealed class DockerCatalogConsistencyTests : IDisposable
                 DockerImageCatalogService.ImagesKey,
                 JsonSerializer.Serialize(interleaved, CatalogJsonOptions));
         });
-        var handler = new DockerExecutionPresentationRpcHandler(context, runner, catalog);
-
-        var response = await handler.ExecuteAsync(new DockerExecutionOperationRequest(
-            DockerExecutionOperationKind.RefreshImages));
+        await using var content = await new DockerExecutionPresentationService(context, runner, catalog)
+            .RefreshImagesAsync();
+        var response = JsonSerializer.Deserialize<DockerExecutionOperationResponse>(
+            await ReadContentAsync(content),
+            PresentationJsonOptions) ?? throw new InvalidDataException("Docker presentation response was empty.");
 
         Assert.True(response.Success);
         Assert.Equal(3, response.CatalogRevision);
@@ -416,6 +424,14 @@ public sealed class DockerCatalogConsistencyTests : IDisposable
         {
             Directory.Delete(_root, recursive: true);
         }
+    }
+
+    private static async Task<byte[]> ReadContentAsync(SunderContent content)
+    {
+        await using var stream = await content.OpenReadAsync();
+        using var buffer = new MemoryStream();
+        await stream.CopyToAsync(buffer);
+        return buffer.ToArray();
     }
 
     private sealed class CountingPackageContext

@@ -3,7 +3,8 @@
   "authorityKind": "package",
   "authorityId": "sunder.package.agent.provider.gemini",
   "packageId": "sunder.package.agent.provider.gemini",
-  "contracts": {
+  "contracts": {},
+  "retiredPrivateContracts": {
     "credential-settings": {
       "contractId": "sunder.package.agent.provider.gemini.credentials",
       "current": {

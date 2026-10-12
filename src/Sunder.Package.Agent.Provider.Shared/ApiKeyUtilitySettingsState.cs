@@ -6,14 +6,18 @@ internal sealed class ApiKeyUtilitySettingsState : IDisposable
 {
     public ApiKeyUtilitySettingsState(
         IPackageContext packageContext,
-        IProviderCredentialOwnerClient credentials,
+        Func<CancellationToken, ValueTask<bool>> getStatus,
+        Func<string, CancellationToken, ValueTask<bool>> setCredential,
+        Func<CancellationToken, ValueTask<bool>> clearCredential,
         string credentialDescription,
         string credentialPlaceholder,
         Func<bool, ApiKeyStatus> resolveCredentialStatus,
         ProviderUtilityModelSelection utilityModelSelection)
     {
         ApiKey = new ApiKeySettingsState(
-            credentials,
+            getStatus,
+            setCredential,
+            clearCredential,
             credentialDescription,
             credentialPlaceholder,
             resolveCredentialStatus);

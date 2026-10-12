@@ -430,7 +430,7 @@ public sealed class AgentLocalStoreDurableRunTests
     }
 
     [Fact]
-    public void RollbackRunStart_NotifiesResetBeforeReplacementTurn()
+    public async Task RollbackRunStart_NotifiesResetBeforeReplacementTurn()
     {
         using var scope = DurableRunTestScope.Create();
         var store = new AgentLocalStore(scope.Context);
@@ -456,7 +456,7 @@ public sealed class AgentLocalStoreDurableRunTests
             }
         };
 
-        var result = service.TryStartRun(
+        var result = await service.TryStartRunAsync(
             lease,
             "replacement request",
             [],

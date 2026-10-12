@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Sunder.Sdk.Rpc;
+using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -55,13 +56,25 @@ public sealed partial class AgentSourceArtifactMigrationTests
         internal bool InvalidateAfterInvoke;
         private string MethodToInvalidate => methodToInvalidate;
         internal int UnscopedLookups;
+        private int _unscopedInvocations;
         internal int ActiveWatches;
+        internal void AssertScopedOperations()
+        {
+            // Shared DI metadata observation may query outside an invocation.
+            // Actual invocation/stream dispatch must always use an owned scope.
+            Assert.Equal(0, Volatile.Read(ref _unscopedInvocations));
+        }
         public async ValueTask<ISunderRpcCallScope> CreateCallScopeAsync(SunderRpcCallOptions? options = null, CancellationToken cancellationToken = default)
         {
             var scope = new Scope(this, await inner.CreateCallScopeAsync(options, cancellationToken)); Scopes.Add(scope); return scope;
         }
-        public ValueTask<SunderRpcProviderSnapshot?> GetProviderAsync(SunderRpcEndpointReference endpoint, CancellationToken cancellationToken = default)
-        { Interlocked.Increment(ref UnscopedLookups); return inner.GetProviderAsync(endpoint, cancellationToken); }
+        public async ValueTask<SunderRpcProviderSnapshot?> GetProviderAsync(SunderRpcEndpointReference endpoint, CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref UnscopedLookups);
+            var value = await inner.GetProviderAsync(endpoint, cancellationToken);
+            if (value is not null) Assert.Equal(endpoint, value.Endpoint);
+            return value;
+        }
         public ValueTask<bool> TryReportInvariantViolationAsync(SunderRpcEndpointReference endpoint, Exception exception, CancellationToken cancellationToken = default)
             => inner.TryReportInvariantViolationAsync(endpoint, exception, cancellationToken);
         public ValueTask<SunderRpcCatalogSnapshot> DiscoverAsync(string contractId, CancellationToken cancellationToken = default) => inner.DiscoverAsync(contractId, cancellationToken);
@@ -72,12 +85,19 @@ public sealed partial class AgentSourceArtifactMigrationTests
             finally { Interlocked.Decrement(ref ActiveWatches); }
         }
         public ValueTask<JsonElement> InvokeAsync(SunderRpcEndpointReference endpoint, string serviceId, string methodId, JsonElement request, SunderRpcCallOptions? options = null, CancellationToken cancellationToken = default)
-            => throw new InvalidOperationException("Files execution calls must use an owned scope.");
+        {
+            Interlocked.Increment(ref _unscopedInvocations);
+            throw new InvalidOperationException("Service invocations must use an owned scope.");
+        }
         public IAsyncEnumerable<JsonElement> SubscribeAsync(SunderRpcEndpointReference endpoint, string serviceId, string methodId, JsonElement request, SunderRpcCallOptions? options = null, CancellationToken cancellationToken = default)
-            => throw new InvalidOperationException("Files execution has no contract streams.");
+        {
+            Interlocked.Increment(ref _unscopedInvocations);
+            throw new InvalidOperationException("Service streams must use an owned scope.");
+        }
 
         internal sealed class Scope(FilesRpcObserver owner, ISunderRpcCallScope innerScope) : ISunderRpcCallScope
         {
+            internal DateTimeOffset CreatedAtUtc { get; } = DateTimeOffset.UtcNow;
             internal bool Disposed;
             public DateTimeOffset DeadlineUtc => innerScope.DeadlineUtc;
             public async ValueTask DisposeAsync() { await innerScope.DisposeAsync(); Disposed = true; }
@@ -95,17 +115,31 @@ public sealed partial class AgentSourceArtifactMigrationTests
             public IAsyncEnumerable<SunderRpcCatalogEvent> WatchAsync(long afterRevision, long afterSequence, CancellationToken cancellationToken = default) => innerScope.WatchAsync(afterRevision, afterSequence, cancellationToken);
             public async ValueTask<JsonElement> InvokeAsync(SunderRpcEndpointReference endpoint, string serviceId, string methodId, JsonElement request, SunderRpcCallOptions? options = null, CancellationToken cancellationToken = default)
             {
+                ObjectDisposedException.ThrowIf(Disposed, this);
                 var value = await innerScope.InvokeAsync(endpoint, serviceId, methodId, request, options, cancellationToken);
                 if (methodId == owner.MethodToInvalidate && owner.InvalidateAfterInvoke) owner.Transform = provider => provider with { SessionGeneration = provider.SessionGeneration + 1 };
                 return value;
             }
             public IAsyncEnumerable<JsonElement> SubscribeAsync(SunderRpcEndpointReference endpoint, string serviceId, string methodId, JsonElement request, SunderRpcCallOptions? options = null, CancellationToken cancellationToken = default)
-                => innerScope.SubscribeAsync(endpoint, serviceId, methodId, request, options, cancellationToken);
+            {
+                ObjectDisposedException.ThrowIf(Disposed, this);
+                return innerScope.SubscribeAsync(endpoint, serviceId, methodId, request, options, cancellationToken);
+            }
             public ValueTask<SunderRpcContentReference> RegisterContentAsync(SunderRpcEndpointReference endpoint, Stream source, SunderRpcContentRegistrationOptions options, CancellationToken cancellationToken = default)
-                => innerScope.RegisterContentAsync(endpoint, source, options, cancellationToken);
+            {
+                ObjectDisposedException.ThrowIf(Disposed, this);
+                return innerScope.RegisterContentAsync(endpoint, source, options, cancellationToken);
+            }
             public ValueTask<SunderRpcContentReference> RegisterContentFileAsync(SunderRpcEndpointReference endpoint, string path, SunderRpcContentRegistrationOptions options, CancellationToken cancellationToken = default)
-                => innerScope.RegisterContentFileAsync(endpoint, path, options, cancellationToken);
-            public ValueTask<Stream> OpenContentAsync(SunderRpcContentReference reference, CancellationToken cancellationToken = default) => innerScope.OpenContentAsync(reference, cancellationToken);
+            {
+                ObjectDisposedException.ThrowIf(Disposed, this);
+                return innerScope.RegisterContentFileAsync(endpoint, path, options, cancellationToken);
+            }
+            public ValueTask<Stream> OpenContentAsync(SunderRpcContentReference reference, CancellationToken cancellationToken = default)
+            {
+                ObjectDisposedException.ThrowIf(Disposed, this);
+                return innerScope.OpenContentAsync(reference, cancellationToken);
+            }
         }
     }
 }

@@ -52,10 +52,12 @@ internal sealed class SubagentBatchResultRenderer(
         if (string.Equals(request.ToolId, SubagentConstants.DelegateTasksToolId, StringComparison.OrdinalIgnoreCase))
         {
             var parsed = _requestParser.TryParseBatch(request.ArgumentsJson, out var batch, out var error);
-            return new AgentToolPresentation(
-                HeaderText: parsed ? $"Delegated {batch.Tasks.Count} task(s)" : request.ResultSummary,
-                DetailMarkdown: parsed ? BuildDelegateTasksDetailMarkdown(batch) : BuildRawArgumentsMarkdown(request.ArgumentsJson, error),
-                OutputText: request.TextContent?.Trim());
+            return new AgentToolPresentation
+            {
+                HeaderText = parsed ? $"Delegated {batch.Tasks.Count} task(s)" : request.ResultSummary,
+                DetailMarkdown = parsed ? BuildDelegateTasksDetailMarkdown(batch) : BuildRawArgumentsMarkdown(request.ArgumentsJson, error),
+                OutputText = request.TextContent?.Trim(),
+            };
         }
 
         if (!string.Equals(request.ToolId, SubagentConstants.TaskToolId, StringComparison.OrdinalIgnoreCase))
@@ -68,12 +70,14 @@ internal sealed class SubagentBatchResultRenderer(
         var argumentSubagentName = parsedTask ? ResolveSubagentDisplayName(task.SubagentType) : null;
         var subagentName = FirstNonBlank(payload.SubagentName, argumentSubagentName, task.SubagentType, "subagent")!;
         var sessionTitle = FirstNonBlank(payload.ChildSessionTitle, task.Description, "Subagent session")!;
-        return new AgentToolPresentation(
-            HeaderText: $"{FormatSubagentLabel(subagentName)} · {sessionTitle}",
-            DetailMarkdown: parsedTask
+        return new AgentToolPresentation
+        {
+            HeaderText = $"{FormatSubagentLabel(subagentName)} · {sessionTitle}",
+            DetailMarkdown = parsedTask
                 ? BuildTaskDetailMarkdown(task, payload, argumentSubagentName)
                 : BuildRawArgumentsMarkdown(request.ArgumentsJson, taskError),
-            OutputText: request.TextContent?.Trim());
+            OutputText = request.TextContent?.Trim(),
+        };
     }
 
     internal static string BuildDelegateTasksResultContent(IReadOnlyList<SubagentTaskResult> results)

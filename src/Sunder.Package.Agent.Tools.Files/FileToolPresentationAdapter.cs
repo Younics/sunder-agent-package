@@ -114,11 +114,11 @@ internal static class FileToolPresentationAdapter
         var detail = parsed
             ? AgentToolPresentationMarkdown.BuildFencedMarkdown("Patch", "diff", args.PatchText)
             : AgentToolPresentationMarkdown.BuildRawRequestMarkdown(request.ArgumentsJson, error);
-        return new AgentToolPresentation(header, detail, request.TextContent);
+        return new AgentToolPresentation { HeaderText = header, DetailMarkdown = detail, OutputText = request.TextContent };
     }
 
     private static AgentToolPresentation Create(AgentToolPresentationRequest request, string? fallbackHeader, string detail)
-        => new(request.ResultSummary ?? fallbackHeader, detail, request.TextContent);
+        => new() { HeaderText = request.ResultSummary ?? fallbackHeader, DetailMarkdown = detail, OutputText = request.TextContent };
 
     private static string FormatTextStats(string text)
     {

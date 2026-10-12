@@ -18,7 +18,7 @@ import tempfile
 
 from agent_release import (Invalid, archive_metadata, authoring_origin, canonical, closed,
                            decode, digest, file_sha, inventory, load, locks, positive,
-                           regular, require, safe_relative, sha, source_file, version)
+                           package_imports, regular, require, safe_relative, sha, source_file, version)
 
 RIDS = ("win-x64", "win-arm64", "linux-x64", "linux-arm64", "osx-x64", "osx-arm64")
 MANIFEST = "cold-inputs.json"
@@ -92,8 +92,11 @@ def download(selected, output, maximum=268435456):
 
 
 def lock_documents(source):
-    return [(p, load(source_file(source, str(PurePosixPath(p["projectPath"]).parent / "sunder-contracts.lock.json"))))
-            for p in inventory(source)["packages"]]
+    documents = [(p, load(source_file(source, str(PurePosixPath(p["projectPath"]).parent / "sunder-contracts.lock.json"))))
+                 for p in inventory(source)["packages"]]
+    for _, lock in documents:
+        package_imports(lock)
+    return documents
 
 
 def catalog_requirements(lock):
@@ -209,7 +212,13 @@ def source_snapshot(source):
     for package in inventory(source)["packages"]:
         parent = PurePosixPath(package["projectPath"]).parent
         names.update(str(parent / name) for name in ("sunder-contracts.lock.json", "sunder-contracts.owned.json", "packages.release.lock.json"))
-    return {name: file_sha(source_file(source, name)) for name in sorted(names)}
+    result = {}
+    for name in sorted(names):
+        path = source_file(source, name, optional=name.endswith("/sunder-contracts.owned.json"))
+        # Missing private-only baselines are inputs too: adding one must trip the
+        # same cold-source fence as editing/removing a retained public baseline.
+        result[name if path else "baseline-absent:" + name] = file_sha(path) if path else sha(b"")
+    return result
 
 
 def clean_source(source, source_sha):

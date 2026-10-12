@@ -5,6 +5,7 @@ using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Rpc;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 namespace Sunder.Package.Agent.Runtime;
 
 internal enum AgentRuntimeConnectionState
@@ -48,7 +49,6 @@ internal sealed partial class AgentAppRuntimeGateway :
     IAgentCorrelatedRunGateway,
     IAgentRunCommandStatusGateway,
     IAgentPresentationInitialization,
-    IAgentExecutionTargetLoader,
     IAgentDashboardLoader,
     IAgentCatalogLoader,
     IAgentProfileCommandGateway,
@@ -61,7 +61,8 @@ internal sealed partial class AgentAppRuntimeGateway :
 {
     private static readonly TimeSpan InitialReconnectDelay = TimeSpan.FromMilliseconds(100);
     private static readonly TimeSpan MaximumReconnectDelay = TimeSpan.FromSeconds(2);
-    private readonly IAgentOwnerClient _ownerClient;
+    private readonly AgentServices.IAgentRuntimeService _owner;
+    private readonly IAgentOwnerResources _resources;
     private readonly CancellationTokenSource _lifetime = new();
     private readonly object _cacheLock = new();
     private readonly object _observationLock = new();
@@ -86,14 +87,11 @@ internal sealed partial class AgentAppRuntimeGateway :
     private int _observationGeneration;
     private int _chatSnapshotLoadGeneration;
 
-    public AgentAppRuntimeGateway(ISunderRpcClient client)
-        : this(new AgentOwnerRpcClient(client))
+    internal AgentAppRuntimeGateway(AgentServices.IAgentRuntimeService owner, IAgentOwnerResources? resources = null)
     {
-    }
-
-    internal AgentAppRuntimeGateway(IAgentOwnerClient ownerClient)
-    {
-        _ownerClient = ownerClient;
+        _owner = owner;
+        _resources = resources ?? owner as IAgentOwnerResources
+            ?? throw new ArgumentException("An owner resource session is required.", nameof(resources));
         _connectionState = AgentRuntimeConnectionState.Connecting;
     }
 
@@ -136,15 +134,16 @@ internal sealed partial class AgentAppRuntimeGateway :
     public void DeleteProfile(string profileId)
         => throw AsyncOperationRequired(nameof(DeleteProfileAsync));
 
-    public IReadOnlyList<AgentBehaviorLoopDescriptor> ListBehaviorLoopDescriptors()
-        => ReadCatalogSnapshot().BehaviorLoops;
-    public IReadOnlyList<AgentProviderDescriptor> ListChatProviderDescriptors()
-        => ReadCatalogSnapshot().ChatProviders;
-    public IReadOnlyList<AgentEmbeddingProviderDescriptor> ListEmbeddingProviderDescriptors()
-        => ReadCatalogSnapshot().EmbeddingProviders;
-    public bool HasProfileCapabilityConsumers(string capabilityKind)
+    public async Task<IReadOnlyList<AgentBehaviorLoopDescriptor>> ListBehaviorLoopDescriptorsAsync(CancellationToken cancellationToken = default)
+        => (await LoadCatalogAsync(new AgentCatalogRequest(), cancellationToken).ConfigureAwait(false)).BehaviorLoops;
+    public async Task<IReadOnlyList<AgentProviderDescriptor>> ListChatProviderDescriptorsAsync(CancellationToken cancellationToken = default)
+        => (await LoadCatalogAsync(new AgentCatalogRequest(), cancellationToken).ConfigureAwait(false)).ChatProviders;
+    public async Task<IReadOnlyList<AgentEmbeddingProviderDescriptor>> ListEmbeddingProviderDescriptorsAsync(
+        CancellationToken cancellationToken = default)
+        => (await LoadCatalogAsync(new AgentCatalogRequest(), cancellationToken).ConfigureAwait(false)).EmbeddingProviders;
+    public async Task<bool> HasProfileCapabilityConsumersAsync(string capabilityKind, CancellationToken cancellationToken = default)
         => string.Equals(capabilityKind, AgentModelCapabilityKinds.Embedding, StringComparison.OrdinalIgnoreCase)
-           && ReadCatalogSnapshot().HasEmbeddingConsumers;
+            && (await LoadCatalogAsync(new AgentCatalogRequest(), cancellationToken).ConfigureAwait(false)).HasEmbeddingConsumers;
 
     public async Task<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>> ListSelectableProfileCapabilitiesAsync(
         AgentProfileRecord? profile = null, CancellationToken cancellationToken = default)
@@ -183,9 +182,6 @@ internal sealed partial class AgentAppRuntimeGateway :
         string? executionTargetId)
         => throw AsyncOperationRequired(nameof(SaveWorkspaceAggregateAsync));
 
-    public void DeleteWorkspace(string workspaceId)
-        => throw AsyncOperationRequired(nameof(DeleteWorkspaceAsync));
-
     public IReadOnlyList<AgentWorkspaceBindingRecord> ListBindings(string workspaceId)
         => ReadDashboardSnapshot().WorkspaceBindings.Where(binding => string.Equals(
             binding.WorkspaceId, workspaceId, StringComparison.OrdinalIgnoreCase)).ToArray();
@@ -196,7 +192,7 @@ internal sealed partial class AgentAppRuntimeGateway :
         SaveWorkspaceAggregate(workspaceId, workspace.DisplayName, workspace.Description,
             workspace.Paths, workspace.Documents, contributionId);
         return new AgentWorkspaceBindingRecord(AgentWorkspaceDefaults.BuildPrimaryBindingId(workspaceId, displayRole),
-            workspaceId, AgentRpcContractIds.ExecutionTarget, contributionId, displayRole,
+            workspaceId, AgentWorkspaceBindingRoles.ExecutionTargetExtensionPoint, contributionId, displayRole,
             true, 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
     }
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -250,8 +246,6 @@ internal sealed partial class AgentAppRuntimeGateway :
     }
     public void UpdateSession(AgentSessionRecord session)
         => throw AsyncOperationRequired(nameof(UpdateSessionAsync));
-    public void DeleteSession(Guid sessionId)
-        => throw AsyncOperationRequired(nameof(DeleteSessionAsync));
     public async Task<AgentSessionSnapshot> CreateRootSessionAsync(
         string title,
         string profileId,
@@ -260,7 +254,7 @@ internal sealed partial class AgentAppRuntimeGateway :
         CancellationToken cancellationToken = default)
     {
         var result = await InvokeAsync(
-            AgentRuntimeOperations.SessionCommands,
+            _owner.ExecuteSessionCommandAsync,
             new AgentSessionCommand(
                 AgentSessionCommandKind.Create,
                 Title: title,
@@ -278,7 +272,7 @@ internal sealed partial class AgentAppRuntimeGateway :
         CancellationToken cancellationToken = default)
     {
         var result = await InvokeAsync(
-            AgentRuntimeOperations.SessionCommands,
+            _owner.ExecuteSessionCommandAsync,
             new AgentSessionCommand(AgentSessionCommandKind.Update, Session: session),
             cancellationToken).ConfigureAwait(false);
         var updated = result.Session
@@ -297,7 +291,7 @@ internal sealed partial class AgentAppRuntimeGateway :
             default,
             default);
         _ = await InvokeAsync(
-            AgentRuntimeOperations.SessionCommands,
+            _owner.ExecuteSessionCommandAsync,
             new AgentSessionCommand(AgentSessionCommandKind.Delete, Session: session),
             cancellationToken).ConfigureAwait(false);
         RemoveCachedSession(sessionId);
@@ -344,8 +338,9 @@ internal sealed partial class AgentAppRuntimeGateway :
         => throw AsyncOperationRequired(nameof(LoadSessionPermissionsAsync));
     public void SetSessionUnrestrictedMode(Guid sessionId, bool isEnabled)
         => throw AsyncOperationRequired(nameof(SetSessionUnrestrictedModeAsync));
-    public IReadOnlyList<AgentPermissionActionDescriptor> ListActions()
-        => ReadGlobalPermissionsSnapshot().Actions;
+    public async Task<IReadOnlyList<AgentPermissionActionDescriptor>> ListActionsAsync(
+        CancellationToken cancellationToken = default)
+        => (await LoadGlobalPermissionsAsync(cancellationToken).ConfigureAwait(false)).Actions;
     public IReadOnlyList<AgentPermissionOverride> ListOverrides()
         => ReadGlobalPermissionsSnapshot().Overrides;
     public void SaveOverride(string actionId, string boundaryId, AgentPermissionDecision decision)
@@ -362,7 +357,7 @@ internal sealed partial class AgentAppRuntimeGateway :
         CancellationToken cancellationToken = default)
     {
         var projection = await InvokeAsync(
-            AgentRuntimeOperations.Permissions,
+            _owner.ExecutePermissionCommandAsync,
             new AgentPermissionCommand(AgentPermissionCommandKind.Read, sessionId),
             cancellationToken).ConfigureAwait(false);
         return new AgentChatPermissionProjection(
@@ -376,7 +371,7 @@ internal sealed partial class AgentAppRuntimeGateway :
         CancellationToken cancellationToken = default)
     {
         var projection = await InvokeAsync(
-            AgentRuntimeOperations.Permissions,
+            _owner.ExecutePermissionCommandAsync,
             new AgentPermissionCommand(
                 AgentPermissionCommandKind.SetUnrestricted,
                 sessionId,
@@ -438,15 +433,15 @@ internal sealed partial class AgentAppRuntimeGateway :
         Guid userTurnId,
         CancellationToken cancellationToken = default)
         => (await InvokeAsync(
-            AgentRuntimeOperations.RunStatus,
+            _owner.GetRunStatusAsync,
             new AgentRunCommandStatusRequest(sessionId, userTurnId),
             cancellationToken).ConfigureAwait(false)).Status;
     public async Task<AgentRunCheckpointRecord?> StopAsync(Guid sessionId, CancellationToken cancellationToken = default)
-        => (await InvokeAsync(AgentRuntimeOperations.Runs,
+        => (await InvokeAsync(_owner.ExecuteRunCommandAsync,
             new AgentRunCommand(AgentRunCommandKind.Stop, sessionId), cancellationToken).ConfigureAwait(false)).Checkpoint;
     public async Task<AgentRunCheckpointRecord?> ApprovePendingPermissionAsync(Guid sessionId, string requestId,
         CancellationToken cancellationToken = default)
-        => (await InvokeAsync(AgentRuntimeOperations.Runs, new AgentRunCommand(
+        => (await InvokeAsync(_owner.ExecuteRunCommandAsync, new AgentRunCommand(
             AgentRunCommandKind.ApprovePermission, sessionId, PermissionRequestId: requestId), cancellationToken)
             .ConfigureAwait(false)).Checkpoint;
     async Task<AgentRunCheckpointRecord?> IAgentChatRunGateway.ApprovePendingPermissionAsync(
@@ -454,14 +449,14 @@ internal sealed partial class AgentAppRuntimeGateway :
         string requestId,
         bool approveForSession,
         CancellationToken cancellationToken)
-        => (await InvokeAsync(AgentRuntimeOperations.Runs, new AgentRunCommand(
+        => (await InvokeAsync(_owner.ExecuteRunCommandAsync, new AgentRunCommand(
             AgentRunCommandKind.ApprovePermission,
             sessionId,
             PermissionRequestId: requestId,
             ApproveForSession: approveForSession), cancellationToken).ConfigureAwait(false)).Checkpoint;
     public async Task<AgentRunCheckpointRecord?> DenyPendingPermissionAsync(Guid sessionId, string requestId,
         CancellationToken cancellationToken = default)
-        => (await InvokeAsync(AgentRuntimeOperations.Runs, new AgentRunCommand(
+        => (await InvokeAsync(_owner.ExecuteRunCommandAsync, new AgentRunCommand(
             AgentRunCommandKind.DenyPermission, sessionId, PermissionRequestId: requestId), cancellationToken)
             .ConfigureAwait(false)).Checkpoint;
 
@@ -470,20 +465,19 @@ internal sealed partial class AgentAppRuntimeGateway :
         CancellationToken cancellationToken = default)
     {
         var page = await InvokeAsync(
-            AgentRuntimeOperations.Transcript,
+            _owner.GetTranscriptPageAsync,
             request,
             cancellationToken).ConfigureAwait(false);
         CacheTurns(page.Turns);
         return page;
     }
 
-    public IReadOnlyList<AgentExecutionTargetDescriptor> ListTargets() => ReadCatalogSnapshot().ExecutionTargets;
     public async Task<IReadOnlyList<AgentExecutionTargetDescriptor>> ListTargetsAsync(
         CancellationToken cancellationToken = default)
         => (await LoadCatalogAsync(new AgentCatalogRequest(), cancellationToken).ConfigureAwait(false)).ExecutionTargets;
     public async Task<AgentExecutionTargetWarmupResult> WarmWorkspaceAsync(
         AgentWorkspaceRecord workspace, CancellationToken cancellationToken = default)
-        => (await InvokeAsync(AgentRuntimeOperations.Workspaces,
+        => (await InvokeAsync(_owner.ExecuteWorkspaceCommandAsync,
             new AgentWorkspaceCommand(AgentWorkspaceCommandKind.Warmup, WorkspaceId: workspace.WorkspaceId),
             cancellationToken).ConfigureAwait(false)).Warmup
            ?? AgentExecutionTargetWarmupResult.Skipped("Workspace has no execution target.");
@@ -524,13 +518,14 @@ internal sealed partial class AgentAppRuntimeGateway :
         => new($"App Runtime operation '{operation}' must be invoked asynchronously.");
 
     private async ValueTask<TResponse> InvokeAsync<TRequest, TResponse>(
-        AgentOwnerRpcOperation<TRequest, TResponse> operation, TRequest request, CancellationToken cancellationToken)
+        Func<TRequest, CancellationToken, ValueTask<TResponse>> operation, TRequest request, CancellationToken cancellationToken)
         where TRequest : class where TResponse : class
     {
         ThrowIfUnavailable();
         try
         {
-            var response = await _ownerClient.InvokeAsync(operation, request, cancellationToken).ConfigureAwait(false);
+            await _resources.PrepareAsync(request, cancellationToken).ConfigureAwait(false);
+            var response = await operation(request, cancellationToken).ConfigureAwait(false);
             if (!IsObservationEstablishingConnection())
             {
                 SetConnectionState(AgentRuntimeConnectionState.Connected);
@@ -557,6 +552,16 @@ internal sealed partial class AgentAppRuntimeGateway :
             catch { /* Projection listeners cannot break replay state. */ }
         }
     }
+
+    private static bool IsRuntimeAvailabilityFailure(Exception exception, CancellationToken cancellationToken)
+    {
+        if (exception is AgentPackageUnavailableException || exception is OperationCanceledException && cancellationToken.IsCancellationRequested) return false;
+        if (exception is SunderRpcException rpcException)
+            return rpcException.Error.Kind is SunderRpcErrorKind.Unavailable or SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.NotFound;
+        return exception is HttpRequestException or System.Net.Sockets.SocketException or TimeoutException or OperationCanceledException;
+    }
+
+    private void ThrowIfUnavailable() => ObjectDisposedException.ThrowIf(_disposed, this);
 
     private static void Raise<T>(Action<T>? handlers, T value)
     {

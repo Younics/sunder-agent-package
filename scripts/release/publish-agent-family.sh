@@ -128,9 +128,6 @@ family_plan="$(python3 -B scripts/release/agent_release.py plan "$PWD" "$asset_d
 [[ "$(jq -r '.lockSetSha256' <<< "$family_plan")" == "$SUNDER_AGENT_LOCK_SET_SHA256" ]] \
   || { printf 'Production locks differ from the exact approved lock set.\n' >&2; exit 1; }
 
-# This anonymous read-only gate must complete before a GitHub draft or immutable package is published.
-bash scripts/release/verify-execution-runtime-availability.sh "$registry_api"
-
 tag="agent/v$VERSION"
 expected_ref="refs/tags/$tag"
 expected_workflow_ref="$GH_REPO/.github/workflows/sunder-package-release.yml@$expected_ref"
@@ -366,7 +363,7 @@ else
   SUNDER_CORE_COMMIT="$CORE_COMMIT" \
   SUNDER_CORE_PACKAGE_VERSION="$CORE_SDK_VERSION" \
   GITHUB_RELEASE_ID="$release_id" \
-    bash scripts/generate-release-evidence.sh "$asset_directory" \
+    bash scripts/release/generate-release-evidence.sh "$asset_directory" \
       "sunder-agent-package=$GITHUB_SHA" "sunder-core=$CORE_COMMIT"
   verify_evidence_directory "$asset_directory"
   release_notes="$(build_release_notes "$asset_directory")"

@@ -2,9 +2,20 @@ extern alias LocalWorker;
 
 using Microsoft.Win32.SafeHandles;
 using System.Runtime.InteropServices;
-using LocalWorker::Sunder.Package.Agent.Contracts.Models;
 using LocalWorker::Sunder.Package.Agent.Execution.Local;
 using Xunit;
+using AgentFileDeleteRequest = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileDeleteRequest;
+using AgentFileMutationResult = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileMutationResult;
+using AgentFileReadErrorCodes = Sunder.Package.Agent.Contracts.Models.AgentFileReadErrorCodes;
+using AgentFileReadRequest = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileReadRequest;
+using AgentFileSearchErrorCodes = Sunder.Package.Agent.Contracts.Models.AgentFileSearchErrorCodes;
+using AgentFileSearchKind = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileSearchKind;
+using AgentFileSearchRequest = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileSearchRequest;
+using AgentFileWriteRequest = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileWriteRequest;
+using AgentResourceOperationContext = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentResourceOperationContext;
+using AgentResolvedResource = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentResolvedResource;
+using AgentScopedInstructionDiscoveryRequest = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentScopedInstructionDiscoveryRequest;
+using AgentScopedInstructionProbe = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentScopedInstructionProbe;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
 
@@ -109,7 +120,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         var readHook = fixture.CreateSwapHook(LocalSecureFileSystemCheckpoint.BeforeOpen, "safe.txt");
         var read = await LocalFileSystemExecutor.ReadFileAsync(
             fixture.Config,
-            new AgentFileReadRequest("pinned/safe.txt"),
+            new AgentFileReadRequest { Path = "pinned/safe.txt" },
             false,
             CancellationToken.None,
             hooks: readHook);
@@ -118,7 +129,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         var listHook = fixture.CreateSwapHook(LocalSecureFileSystemCheckpoint.BeforeOpen, "dir");
         var listing = await LocalFileSystemExecutor.ReadFileAsync(
             fixture.Config,
-            new AgentFileReadRequest("pinned/dir"),
+            new AgentFileReadRequest { Path = "pinned/dir" },
             false,
             CancellationToken.None,
             hooks: listHook);
@@ -149,7 +160,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
 
         var result = await LocalFileSystemExecutor.WriteFileAsync(
             fixture.Config,
-            new AgentFileWriteRequest(Path.Combine("pinned", targetName), "new", Overwrite: overwrite),
+            new AgentFileWriteRequest { Path = Path.Combine("pinned", targetName), Content = "new", Overwrite = overwrite },
             false,
             CancellationToken.None,
             hooks: hook);
@@ -183,7 +194,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         {
             result = await LocalFileSystemExecutor.WriteFileAsync(
                 fixture.Config,
-                new AgentFileWriteRequest(targetName, "new", Overwrite: overwrite),
+                new AgentFileWriteRequest { Path = targetName, Content = "new", Overwrite = overwrite },
                 false,
                 CancellationToken.None);
         }
@@ -217,7 +228,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         {
             result = await LocalFileSystemExecutor.WriteFileAsync(
                 fixture.Config,
-                new AgentFileWriteRequest("named-fallback.txt", "content", Overwrite: overwrite),
+                new AgentFileWriteRequest { Path = "named-fallback.txt", Content = "content", Overwrite = overwrite },
                 false,
                 CancellationToken.None);
         }
@@ -250,7 +261,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
             {
                 result = await LocalFileSystemExecutor.WriteFileAsync(
                     fixture.Config,
-                    new AgentFileWriteRequest("named-attack.txt", "replacement"),
+                    new AgentFileWriteRequest { Path = "named-attack.txt", Content = "replacement", Overwrite = true },
                     false,
                     CancellationToken.None,
                     hooks: hook);
@@ -281,7 +292,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         {
             result = await LocalFileSystemExecutor.WriteFileAsync(
                 fixture.Config,
-                new AgentFileWriteRequest("named-race.txt", "new", Overwrite: false),
+                new AgentFileWriteRequest { Path = "named-race.txt", Content = "new", Overwrite = false },
                 false,
                 CancellationToken.None,
                 hooks: hook);
@@ -310,7 +321,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         {
             var result = await LocalFileSystemExecutor.WriteFileAsync(
                 fixture.Config,
-                new AgentFileWriteRequest("pinned/target.txt", "new"),
+                new AgentFileWriteRequest { Path = "pinned/target.txt", Content = "new", Overwrite = true },
                 false,
                 CancellationToken.None,
                 hooks: hook);
@@ -351,7 +362,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
 
         var result = await LocalFileSystemExecutor.DeleteFileAsync(
             fixture.Config,
-            new AgentFileDeleteRequest(Path.Combine("pinned", targetName), Recursive: recursive),
+            new AgentFileDeleteRequest { Path = Path.Combine("pinned", targetName), Recursive = recursive },
             false,
             CancellationToken.None,
             hooks: hook);
@@ -385,7 +396,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
 
         var deletion = await LocalFileSystemExecutor.DeleteFileAsync(
             fixture.Config,
-            new AgentFileDeleteRequest("receipt-race.txt"),
+            new AgentFileDeleteRequest { Path = "receipt-race.txt", Recursive = false },
             allowOutsideConfiguredScope: false,
             CancellationToken.None,
             approvedResourceReferences: executionContext.ApprovedResourceReferences,
@@ -408,7 +419,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         };
         var compensation = await LocalFileSystemExecutor.WriteFileAsync(
             fixture.Config,
-            new AgentFileWriteRequest("receipt-race.txt", "original", Overwrite: false),
+            new AgentFileWriteRequest { Path = "receipt-race.txt", Content = "original", Overwrite = false },
             allowOutsideConfiguredScope: false,
             CancellationToken.None,
             approvedResourceReferences: compensationContext.ApprovedResourceReferences,
@@ -428,7 +439,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         await File.WriteAllTextAsync(Path.Combine(fixture.Outside, "empty", "sentinel.txt"), "OUTSIDE");
         var result = await LocalFileSystemExecutor.DeleteFileAsync(
             fixture.Config,
-            new AgentFileDeleteRequest("pinned/empty"),
+            new AgentFileDeleteRequest { Path = "pinned/empty", Recursive = false },
             false,
             CancellationToken.None);
 
@@ -449,14 +460,14 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         await File.WriteAllTextAsync(Path.Combine(fixture.Outside, "search", "secret.txt"), "needle OUTSIDE");
         var listing = await LocalFileSystemExecutor.ReadFileAsync(
             fixture.Config,
-            new AgentFileReadRequest("pinned/search"),
+            new AgentFileReadRequest { Path = "pinned/search" },
             false,
             CancellationToken.None);
         var hook = fixture.CreateSwapHook(LocalSecureFileSystemCheckpoint.BeforeOpen, "search");
 
         var result = await LocalSecureFileSearch.ExecuteAsync(
             fixture.Config,
-            new AgentFileSearchRequest("pinned/search", AgentFileSearchKind.Grep, "needle", "*.txt"),
+            new AgentFileSearchRequest { Path = "pinned/search", Kind = AgentFileSearchKind.Grep, Pattern = "needle", Include = "*.txt" },
             false,
             approvedResourceReferences: null,
             CancellationToken.None,
@@ -481,8 +492,10 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
 
         var result = await LocalScopedInstructionDiscovery.DiscoverAsync(
             fixture.Config,
-            new AgentScopedInstructionDiscoveryRequest(
-                [new AgentScopedInstructionProbe("pinned", IsDirectory: true)]),
+            new AgentScopedInstructionDiscoveryRequest
+            {
+                Probes = [new AgentScopedInstructionProbe { Path = "pinned", IsDirectory = true, FollowFinalSymbolicLink = true }],
+            },
             CancellationToken.None,
             hook);
         hook.Restore();
@@ -501,14 +514,14 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         Directory.CreateSymbolicLink(rootLink, fixture.Workspace);
         var rootResult = await LocalFileSystemExecutor.ReadFileAsync(
             new LocalExecutionRuntimeConfig([rootLink], rootLink),
-            new AgentFileReadRequest("."),
+            new AgentFileReadRequest { Path = "." },
             false,
             CancellationToken.None);
 
         Directory.CreateSymbolicLink(Path.Combine(fixture.Workspace, "child-link"), fixture.Outside);
         var childResult = await LocalFileSystemExecutor.ReadFileAsync(
             fixture.Config,
-            new AgentFileReadRequest("child-link"),
+            new AgentFileReadRequest { Path = "child-link" },
             false,
             CancellationToken.None);
 
@@ -588,7 +601,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
             await LocalSecureFileSearch.ExecuteAsync(
                 fixture.Config,
-                new AgentFileSearchRequest(".", AgentFileSearchKind.Glob, "**/*"),
+                new AgentFileSearchRequest { Path = ".", Kind = AgentFileSearchKind.Glob, Pattern = "**/*" },
                 false,
                 approvedResourceReferences: null,
                 cancellation.Token));
@@ -601,7 +614,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
 
         var result = await LocalSecureFileSearch.ExecuteAsync(
             fixture.Config,
-            new AgentFileSearchRequest(fixture.Outside, AgentFileSearchKind.Glob, "**/*"),
+            new AgentFileSearchRequest { Path = fixture.Outside, Kind = AgentFileSearchKind.Glob, Pattern = "**/*" },
             allowOutsideConfiguredScope: true,
             approvedResourceReferences: null,
             CancellationToken.None);
@@ -623,7 +636,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
 
         var result = await LocalSecureFileSearch.ExecuteAsync(
             fixture.Config,
-            new AgentFileSearchRequest(".", AgentFileSearchKind.Glob, pattern),
+            new AgentFileSearchRequest { Path = ".", Kind = AgentFileSearchKind.Glob, Pattern = pattern },
             false,
             approvedResourceReferences: null,
             CancellationToken.None);
@@ -646,7 +659,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
 
         var result = await LocalSecureFileSearch.ExecuteAsync(
             fixture.Config,
-            new AgentFileSearchRequest("binary-late.dat", AgentFileSearchKind.Grep, "needle"),
+            new AgentFileSearchRequest { Path = "binary-late.dat", Kind = AgentFileSearchKind.Grep, Pattern = "needle" },
             false,
             approvedResourceReferences: null,
             CancellationToken.None);
@@ -664,16 +677,21 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
 
         var write = await LocalFileSystemExecutor.WriteFileAsync(
             fixture.Config,
-            new AgentFileWriteRequest("cas.txt", "replacement")
+            new AgentFileWriteRequest
             {
+                Path = "cas.txt",
+                Content = "replacement",
+                Overwrite = true,
                 ExpectedContentHash = ContentHash("original"),
             },
             false,
             CancellationToken.None);
         var delete = await LocalFileSystemExecutor.DeleteFileAsync(
             fixture.Config,
-            new AgentFileDeleteRequest("cas.txt")
+            new AgentFileDeleteRequest
             {
+                Path = "cas.txt",
+                Recursive = false,
                 ExpectedContentHash = ContentHash("replacement"),
             },
             false,
@@ -700,8 +718,10 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         var result = delete
             ? await LocalFileSystemExecutor.DeleteFileAsync(
                 fixture.Config,
-                new AgentFileDeleteRequest("cas-race.txt")
+                new AgentFileDeleteRequest
                 {
+                    Path = "cas-race.txt",
+                    Recursive = false,
                     ExpectedContentHash = ContentHash("original"),
                 },
                 false,
@@ -709,8 +729,11 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
                 hooks: hook)
             : await LocalFileSystemExecutor.WriteFileAsync(
                 fixture.Config,
-                new AgentFileWriteRequest("cas-race.txt", "replacement")
+                new AgentFileWriteRequest
                 {
+                    Path = "cas-race.txt",
+                    Content = "replacement",
+                    Overwrite = true,
                     ExpectedContentHash = ContentHash("original"),
                 },
                 false,
@@ -748,13 +771,13 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         var result = delete
             ? await LocalFileSystemExecutor.DeleteFileAsync(
                 fixture.Config,
-                new AgentFileDeleteRequest("final-race.txt"),
+                new AgentFileDeleteRequest { Path = "final-race.txt", Recursive = false },
                 false,
                 CancellationToken.None,
                 hooks: hook)
             : await LocalFileSystemExecutor.WriteFileAsync(
                 fixture.Config,
-                new AgentFileWriteRequest("final-race.txt", "new"),
+                new AgentFileWriteRequest { Path = "final-race.txt", Content = "new", Overwrite = true },
                 false,
                 CancellationToken.None,
                 hooks: hook);
@@ -779,7 +802,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
 
         var result = await LocalFileSystemExecutor.WriteFileAsync(
             fixture.Config,
-            new AgentFileWriteRequest("created-at-final.txt", "new", Overwrite: false),
+            new AgentFileWriteRequest { Path = "created-at-final.txt", Content = "new", Overwrite = false },
             false,
             CancellationToken.None,
             hooks: hook);
@@ -804,7 +827,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
 
         var write = await LocalFileSystemExecutor.WriteFileAsync(
             fixture.Config,
-            new AgentFileWriteRequest("windows-write.txt", "new"),
+            new AgentFileWriteRequest { Path = "windows-write.txt", Content = "new", Overwrite = true },
             false,
             CancellationToken.None,
             hooks: writeHook);
@@ -817,7 +840,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
             outside);
         var delete = await LocalFileSystemExecutor.DeleteFileAsync(
             fixture.Config,
-            new AgentFileDeleteRequest("windows-delete.txt"),
+            new AgentFileDeleteRequest { Path = "windows-delete.txt", Recursive = false },
             false,
             CancellationToken.None,
             hooks: deleteHook);
@@ -843,22 +866,22 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
 
         var read = await LocalFileSystemExecutor.ReadFileAsync(
             fixture.Config,
-            new AgentFileReadRequest("linked.txt"),
+            new AgentFileReadRequest { Path = "linked.txt" },
             false,
             CancellationToken.None);
         var write = await LocalFileSystemExecutor.WriteFileAsync(
             fixture.Config,
-            new AgentFileWriteRequest("linked.txt", "replacement"),
+            new AgentFileWriteRequest { Path = "linked.txt", Content = "replacement", Overwrite = true },
             false,
             CancellationToken.None);
         var delete = await LocalFileSystemExecutor.DeleteFileAsync(
             fixture.Config,
-            new AgentFileDeleteRequest("linked.txt"),
+            new AgentFileDeleteRequest { Path = "linked.txt", Recursive = false },
             false,
             CancellationToken.None);
         var search = await LocalSecureFileSearch.ExecuteAsync(
             fixture.Config,
-            new AgentFileSearchRequest("linked.txt", AgentFileSearchKind.Grep, "content"),
+            new AgentFileSearchRequest { Path = "linked.txt", Kind = AgentFileSearchKind.Grep, Pattern = "content" },
             false,
             approvedResourceReferences: null,
             CancellationToken.None);
@@ -868,8 +891,10 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         var discovery = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await LocalScopedInstructionDiscovery.DiscoverAsync(
                 fixture.Config,
-                new AgentScopedInstructionDiscoveryRequest(
-                    [new AgentScopedInstructionProbe(".", IsDirectory: true)]),
+                new AgentScopedInstructionDiscoveryRequest
+                {
+                    Probes = [new AgentScopedInstructionProbe { Path = ".", IsDirectory = true, FollowFinalSymbolicLink = true }],
+                },
                 CancellationToken.None));
 
         Assert.Equal(AgentFileReadErrorCodes.PathCanonicalizationFailed, read.ErrorCode);
@@ -894,7 +919,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
 
         var result = await LocalFileSystemExecutor.DeleteFileAsync(
             fixture.Config,
-            new AgentFileDeleteRequest(approvedDirectory, Recursive: true),
+            new AgentFileDeleteRequest { Path = approvedDirectory, Recursive = true },
             allowOutsideConfiguredScope: true,
             CancellationToken.None,
             approvedResourceReferences: approved.Context.ApprovedResourceReferences,
@@ -917,7 +942,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
 
         var result = await LocalFileSystemExecutor.DeleteFileAsync(
             config,
-            new AgentFileDeleteRequest("parent", Recursive: true),
+            new AgentFileDeleteRequest { Path = "parent", Recursive = true },
             false,
             CancellationToken.None);
 
@@ -938,7 +963,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
 
         var result = await LocalFileSystemExecutor.DeleteFileAsync(
             config,
-            new AgentFileDeleteRequest("Parent", Recursive: true),
+            new AgentFileDeleteRequest { Path = "Parent", Recursive = true },
             false,
             CancellationToken.None);
 
@@ -960,7 +985,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
             await LocalFileSystemExecutor.DeleteFileAsync(
                 fixture.Config,
-                new AgentFileDeleteRequest("pinned/tree", Recursive: true),
+                new AgentFileDeleteRequest { Path = "pinned/tree", Recursive = true },
                 false,
                 cancellation.Token));
 

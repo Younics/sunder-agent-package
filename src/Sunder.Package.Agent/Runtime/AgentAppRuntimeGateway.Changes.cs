@@ -84,11 +84,10 @@ internal sealed partial class AgentAppRuntimeGateway
                     SetConnectionStateIfCurrent(generation, AgentRuntimeConnectionState.Reconnecting);
                 }
                 nextSubscriptionReason = ChangeObservationStartReason.Recovery;
-                await foreach (var change in _ownerClient.SubscribeAsync(
-                                   AgentRuntimeOperations.Changes,
-                                   new AgentChangeSubscription(
-                                       _revision,
-                                       SupportsTurnMutations: true),
+                var subscription = new AgentChangeSubscription(_revision, SupportsTurnMutations: true);
+                await _resources.PrepareAsync(subscription, cancellationToken).ConfigureAwait(false);
+                await foreach (var change in _owner.WatchChangesAsync(
+                                   subscription,
                                    cancellationToken))
                 {
                     if (!IsCurrentObservation(generation)) return;
@@ -298,7 +297,7 @@ internal sealed partial class AgentAppRuntimeGateway
             if (chatRequest is not null)
             {
                 var snapshot = await InvokeAsync(
-                    AgentRuntimeOperations.ChatSnapshot,
+                    _owner.GetChatSnapshotAsync,
                     chatRequest,
                     cancellationToken).ConfigureAwait(false);
                 if (!IsCurrentObservation(generation))

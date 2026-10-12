@@ -10,12 +10,31 @@ using Sunder.Package.Agent.Contracts.Models;
 using LocalWorker::Sunder.Package.Agent.Execution.Local;
 using Sunder.Package.Agent.Tests;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Worker;
 using Xunit;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
 
 public sealed class LocalPackageActivationUnloadTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void GeneratedActivation_RetiresAfterOptionalDescription(bool describe)
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        AssertCollectible(CreateAndRetireUnusedActivation(scope.Context, describe));
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.NoOptimization)]
+    private static WeakReference CreateAndRetireUnusedActivation(IPackageContext context, bool describe)
+    {
+        var activation = CreateActivation(context);
+        if (describe) _ = activation.Target.DescribeAsync().AsTask().GetAwaiter().GetResult();
+        return activation.RetireAsync().AsTask().GetAwaiter().GetResult();
+    }
+
     [Fact]
     public async Task WorkerUpdate_RetiredActivationWithOutsideCapabilityCollectsAndReplacementOwnsOneUseCapability()
     {
@@ -26,28 +45,23 @@ public sealed class LocalPackageActivationUnloadTests
         Directory.CreateDirectory(outsideRoot);
         var outsidePath = Path.Combine(outsideRoot, "secret.txt");
         await File.WriteAllTextAsync(outsidePath, "outside-content");
-        using var replacement = CreateActivation(scope.Context);
+
+        await using var replacement = CreateActivation(scope.Context);
         var replacementContext = IssueOutsideCapability(
             replacement.Target,
             workspaceRoot,
             outsidePath,
             "replacement-activation");
+        var retired = CreateAndRetireActivation(scope.Context, workspaceRoot, outsidePath);
 
-        var retired = CreateAndRetireActivation(
-            scope.Context,
-            workspaceRoot,
-            outsidePath);
+        Assert.False((await replacement.Target.ValidateResourceAuthorityAsync(retired.Context)).IsValid);
+        Assert.True((await replacement.Target.ValidateResourceAuthorityAsync(replacementContext)).IsValid);
 
-        Assert.False((await replacement.Authority.ValidateResourceAuthorityAsync(retired.Context)).IsValid);
-        Assert.True((await replacement.Authority.ValidateResourceAuthorityAsync(replacementContext)).IsValid);
-
-        var read = await replacement.Target.ReadFileAsync(
-            replacementContext,
-            new AgentFileReadRequest(outsidePath));
+        var read = await replacement.Target.ReadFileAsync(replacementContext, new AgentFileReadRequest(outsidePath));
 
         Assert.False(read.IsError, read.ErrorMessage);
         Assert.Contains("outside-content", read.Content, StringComparison.Ordinal);
-        Assert.False((await replacement.Authority.ValidateResourceAuthorityAsync(replacementContext)).IsValid);
+        Assert.False((await replacement.Target.ValidateResourceAuthorityAsync(replacementContext)).IsValid);
         AssertCollectible(retired.LoadContext);
     }
 
@@ -57,18 +71,28 @@ public sealed class LocalPackageActivationUnloadTests
         string workspaceRoot,
         string outsidePath)
     {
+        // Keep collectible assemblies out of completed async state-machine boxes
+        // retained by the asserting caller. All real asynchronous work is drained
+        // inside this non-inlined lifetime boundary before checking collection.
         var activation = CreateActivation(packageContext);
-        var context = IssueOutsideCapability(
-            activation.Target,
-            workspaceRoot,
-            outsidePath,
-            "retired-activation");
-        Assert.True(activation.Authority.ValidateResourceAuthorityAsync(context).AsTask().GetAwaiter().GetResult().IsValid);
-        return new RetiredActivation(activation.Retire(), context);
+        try
+        {
+            var context = IssueOutsideCapability(
+                activation.Target,
+                workspaceRoot,
+                outsidePath,
+                "retired-activation");
+            Assert.True(activation.Target.ValidateResourceAuthorityAsync(context).AsTask().GetAwaiter().GetResult().IsValid);
+            return new RetiredActivation(activation.RetireAsync().AsTask().GetAwaiter().GetResult(), context);
+        }
+        finally
+        {
+            activation.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
     }
 
     private static AgentExecutionTargetContext IssueOutsideCapability(
-        IAgentExecutionTarget target,
+        AgentServices.IExecutionTargetService target,
         string workspaceRoot,
         string outsidePath,
         string activationId)
@@ -81,16 +105,7 @@ public sealed class LocalPackageActivationUnloadTests
             null,
             now,
             now,
-            [
-                new AgentWorkspacePathRecord(
-                    Guid.NewGuid().ToString("N"),
-                    workspaceId,
-                    workspaceRoot,
-                    true,
-                    0,
-                    now,
-                    now),
-            ]);
+            [new AgentWorkspacePathRecord(Guid.NewGuid().ToString("N"), workspaceId, workspaceRoot, true, 0, now, now)]);
         var binding = new AgentWorkspaceBindingRecord(
             Guid.NewGuid().ToString("N"),
             workspace.WorkspaceId,
@@ -123,7 +138,7 @@ public sealed class LocalPackageActivationUnloadTests
         {
             ResourceOperation = operation,
         };
-        var resource = target.ResolveFileResourceAsync(planningContext, outsidePath)
+        var resource = target.ResolveFileAsync(planningContext, outsidePath)
             .AsTask()
             .GetAwaiter()
             .GetResult();
@@ -153,6 +168,7 @@ public sealed class LocalPackageActivationUnloadTests
         {
             services.AddSingleton(assembly.GetType(serviceTypeName, throwOnError: true)!);
         }
+
         var provider = services.BuildServiceProvider();
         var targetType = Assert.Single(
             services.Select(static descriptor => descriptor.ServiceType),
@@ -161,9 +177,16 @@ public sealed class LocalPackageActivationUnloadTests
                 "Sunder.Package.Agent.Execution.Local.LocalExecutionTarget",
                 StringComparison.Ordinal));
         var implementation = provider.GetRequiredService(targetType);
-        var target = AgentRoleBoundary.As<IAgentExecutionTarget>(implementation);
-        var authority = AgentRoleBoundary.As<IAgentResourceAuthorityExecutionTarget>(implementation);
-        return new CollectibleLocalActivation(loadContext, provider, target, authority);
+        var registration = (SunderWorkerProviderRegistration)(implementation.GetType()
+            .GetMethod("CreateSunderRpcProviderRegistration", BindingFlags.Instance | BindingFlags.Public)!
+            .Invoke(implementation, null)
+            ?? throw new InvalidOperationException("The Local execution target did not create its generated provider registration."));
+        var catalog = new RegressionTestExtensionCatalog();
+        catalog.AddGeneratedProvider("sunder.package.agent.execution.local", implementation, registration);
+        var target = catalog.GetRequiredProviderAsync(
+            catalog.Receiver("sunder.package.agent").Providers<AgentServices.IExecutionTargetService>())
+            .AsTask().GetAwaiter().GetResult().Service;
+        return new CollectibleLocalActivation(loadContext, provider, catalog, target, implementation, registration.Handler);
     }
 
     private static void AssertCollectible(WeakReference loadContext)
@@ -175,53 +198,71 @@ public sealed class LocalPackageActivationUnloadTests
             GC.Collect();
             Thread.Sleep(20);
         }
-        Assert.False(loadContext.IsAlive);
+
+        Assert.False(loadContext.IsAlive, loadContext is TrackedLoadContext tracked ? tracked.Diagnostics : null);
     }
 
-    private sealed record RetiredActivation(
-        WeakReference LoadContext,
-        AgentExecutionTargetContext Context);
+    private sealed record RetiredActivation(WeakReference LoadContext, AgentExecutionTargetContext Context);
 
-    private sealed class CollectibleLocalActivation : IDisposable
+    private sealed class TrackedLoadContext(object context, IReadOnlyDictionary<string, WeakReference> objects)
+        : WeakReference(context, trackResurrection: true)
+    {
+        internal string Diagnostics => string.Join(", ", objects.Select(pair => $"{pair.Key} alive={pair.Value.IsAlive}"));
+    }
+
+    private sealed class CollectibleLocalActivation : IAsyncDisposable
     {
         private LocalPackageLoadContext? _loadContext;
         private ServiceProvider? _provider;
+        private RegressionTestExtensionCatalog? _catalog;
+        private readonly IReadOnlyDictionary<string, WeakReference> _diagnostics;
 
         public CollectibleLocalActivation(
             LocalPackageLoadContext loadContext,
             ServiceProvider provider,
-            IAgentExecutionTarget target,
-            IAgentResourceAuthorityExecutionTarget authority)
+            RegressionTestExtensionCatalog catalog,
+            AgentServices.IExecutionTargetService target,
+            object implementation,
+            object handler)
         {
             _loadContext = loadContext;
             _provider = provider;
+            _catalog = catalog;
             Target = target;
-            Authority = authority;
+            _diagnostics = new Dictionary<string, WeakReference>
+            {
+                ["provider"] = new(provider), ["catalog"] = new(catalog),
+                ["client"] = new(target), ["implementation"] = new(implementation), ["handler"] = new(handler),
+            };
         }
 
-        public IAgentExecutionTarget Target { get; private set; }
+        public AgentServices.IExecutionTargetService Target { get; private set; }
 
-        public IAgentResourceAuthorityExecutionTarget Authority { get; private set; }
-
-        public WeakReference Retire()
+        public async ValueTask<WeakReference> RetireAsync()
         {
             var loadContext = _loadContext
                 ?? throw new ObjectDisposedException(nameof(CollectibleLocalActivation));
-            var weakReference = new WeakReference(loadContext, trackResurrection: true);
-            _provider!.Dispose();
+            var weakReference = new TrackedLoadContext(loadContext, _diagnostics);
             Target = null!;
-            Authority = null!;
+            var catalog = _catalog;
+            _catalog = null;
+            if (catalog is not null)
+            {
+                await catalog.DisposeAsync();
+            }
+
+            _provider!.Dispose();
             _provider = null;
             _loadContext = null;
             loadContext.Unload();
             return weakReference;
         }
 
-        public void Dispose()
+        public async ValueTask DisposeAsync()
         {
             if (_loadContext is not null)
             {
-                _ = Retire();
+                _ = await RetireAsync();
             }
         }
     }
@@ -234,6 +275,7 @@ public sealed class LocalPackageActivationUnloadTests
             typeof(IAgentExecutionTarget).Assembly.GetName().Name!,
             typeof(IServiceCollection).Assembly.GetName().Name!,
             typeof(ILoggerFactory).Assembly.GetName().Name!,
+            typeof(SunderWorkerProviderRegistration).Assembly.GetName().Name!,
         ];
         private readonly string _assemblyDirectory;
 

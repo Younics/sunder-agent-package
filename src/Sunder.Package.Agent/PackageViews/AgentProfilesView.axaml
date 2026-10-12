@@ -11,6 +11,7 @@
 
   <UserControl.Styles>
     <StyleInclude Source="/Presentation/PresentationStyles.axaml" />
+    <StyleInclude Source="/Presentation/ModelBindingStyles.axaml" />
 
     <Style Selector="Border.profile-shell">
       <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Raised}" />

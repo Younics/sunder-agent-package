@@ -2,19 +2,17 @@ using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Shared.Presentation;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.PackageViews;
 
 internal static class AgentProfileProviderModelCatalog
 {
-    public static IProviderModelCatalog CreateChat(IAgentProfileGateway service)
+    public static IProviderModelCatalog CreateChat(AgentServices.IAgentProfileService service)
         => new ProviderModelCatalogAdapter(
             async cancellationToken =>
             {
-                var providers = service is IAgentCatalogLoader loader
-                    ? (await loader.LoadCatalogAsync(new AgentCatalogRequest(), cancellationToken)
-                        .ConfigureAwait(false)).ChatProviders
-                    : service.ListChatProviderDescriptors();
+                var providers = await service.ListChatProviderDescriptorsAsync(cancellationToken).ConfigureAwait(false);
                 return providers
                     .Select(provider => new ProviderCatalogOption(
                         provider.ProviderId,
@@ -38,14 +36,11 @@ internal static class AgentProfileProviderModelCatalog
                         : readiness.Message);
             });
 
-    public static IProviderModelCatalog CreateEmbedding(IAgentProfileGateway service)
+    public static IProviderModelCatalog CreateEmbedding(AgentServices.IAgentProfileService service)
         => new ProviderModelCatalogAdapter(
             async cancellationToken =>
             {
-                var providers = service is IAgentCatalogLoader loader
-                    ? (await loader.LoadCatalogAsync(new AgentCatalogRequest(), cancellationToken)
-                        .ConfigureAwait(false)).EmbeddingProviders
-                    : service.ListEmbeddingProviderDescriptors();
+                var providers = await service.ListEmbeddingProviderDescriptorsAsync(cancellationToken).ConfigureAwait(false);
                 return providers
                     .Select(provider => new ProviderCatalogOption(
                         provider.ProviderId,

@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Contracts.Contracts;
@@ -16,6 +17,7 @@ using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
 
+extern alias AgentApp;
 extern alias DockerWorker;
 extern alias LocalWorker;
 using DockerWorker::Sunder.Package.Agent.Execution.Docker;
@@ -30,14 +32,14 @@ public sealed class AgentRpcProviderConformanceTests
     {
         using var scope = RegressionTestPackageScope.Create();
         using var rpcCatalog = new RegressionTestExtensionCatalog();
-        var generated = AgentSourceArtifactMigrationTests.CreateGeneratedWorker(typeof(Rpc.Public.RunControlService).Assembly,
+        var generated = AgentSourceArtifactMigrationTests.CreateGeneratedWorker(typeof(Services.AgentRunControlService).Assembly,
             scope.Context, rpcCatalog.RpcForCaller("sunder.package.agent"));
         await using var lifetime = generated.Lifetime;
         var serviceProvider = generated.Services;
         var registrations = generated.Options.Providers;
         var manifestProviders = ReadManifestProviders("Sunder.Package.Agent");
 
-        Assert.Equal(11, registrations.Count);
+        Assert.Equal(12, registrations.Count);
         Assert.Empty(Directory.EnumerateFiles(scope.RootPath, "*", SearchOption.AllDirectories));
         Assert.Equal(
             manifestProviders.Keys.Order(StringComparer.Ordinal),
@@ -47,7 +49,7 @@ public sealed class AgentRpcProviderConformanceTests
         {
             var descriptor = registration.ContractId == "sunder.stack.contributor"
                 ? ReadBundledDescriptor("Sunder.Package.Agent", registration.ContractId)
-                : RegressionTestRpcDescriptors.Get(registration.ContractId);
+                : CurrentPrivateRpcDescriptors.Get(registration.ContractId);
             AssertRegistrationConforms(registration, descriptor);
             AssertManifestIdentity(registration, manifestProviders[registration.ProviderId]);
         }
@@ -78,140 +80,69 @@ public sealed class AgentRpcProviderConformanceTests
     }
 
     [Fact]
-    public async Task LocalAndDockerCustomHandlers_ConformToManifestAndProductionSchemas()
+    public async Task LocalAndDockerCurrentPresentationProviders_ConformToManifestAndDescriptors()
     {
-        using var roles = new RegressionTestProviderRoles();
-        using var scope = RegressionTestPackageScope.Create();
-        using var localTarget = new LocalExecutionTarget(scope.Context, new LocalExecutionWorkspaceConfigService(scope.Context),
-            new LocalShellCatalogService(scope.Context));
-        using var dockerLifecycle = new DockerContainerLifecycleService();
-        var dockerTarget = new DockerExecutionTarget(scope.Context, new DockerExecutionWorkspaceConfigService(scope.Context), dockerLifecycle);
-        var executionDescriptor = RegressionTestRpcDescriptors.Get(AgentRpcContractIds.ExecutionTarget);
-        var migratorDescriptor = RegressionTestRpcDescriptors.Get(AgentRpcContractIds.WorkspacePathMigrator);
-        var editorDescriptor = RegressionTestRpcDescriptors.Get(AgentRpcContractIds.WorkspaceEditor);
-        var localDescriptor = RegressionTestRpcDescriptors.Get("sunder.package.agent.execution.local.presentation");
-        var dockerDescriptor = RegressionTestRpcDescriptors.Get("sunder.package.agent.execution.docker.presentation");
-        var localRegistration = new LocalWorker::Sunder.Package.Agent.Execution.Local.Rpc.ManagementService(new LocalPresentationProbe())
-            .CreateSunderRpcProviderRegistration();
-        var localHandler = localRegistration.Handler;
-        var localRegistrations = new[]
-        {
-            localRegistration,
-            new LocalWorker::Sunder.Package.Agent.Execution.Local.Rpc.ExecutionTargetProvider(localTarget).CreateSunderRpcProviderRegistration(),
-            roles.Create("Execution.Local", "Rpc.WorkspacePathMigratorProvider", new WorkspacePathMigratorProbe()),
-            roles.Create("Execution.Local", "Rpc.WorkspaceEditorProvider", new WorkspaceEditorProbe()),
-        };
+        using var package = RegressionTestPackageScope.Create();
+        using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
+        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent.tests");
+        await using var generated = new GeneratedServiceTestScope(rpc);
+        var localDescriptor = CurrentPrivateRpcDescriptors.Get("sunder.package.agent.execution.local.presentation");
+        var dockerDescriptor = CurrentPrivateRpcDescriptors.Get("sunder.package.agent.execution.docker.presentation");
+        var localService = new LocalExecutionPresentationService(package.Context, new LocalShellCatalogService(package.Context));
+        var runner = new ConformanceDockerCli(package.Context);
+        var dockerService = new DockerExecutionPresentationService(package.Context, runner,
+            new DockerImageCatalogService(package.Context, runner));
+        var localRegistration = generated.Register(localService, localDescriptor.ContractId);
+        var dockerRegistration = generated.Register(dockerService, dockerDescriptor.ContractId);
         var localManifest = ReadManifestProviders("Sunder.Package.Agent.Execution.Local");
-        Assert.Equal(
-            localManifest.Keys.Order(StringComparer.Ordinal),
-            localRegistrations.Select(static registration => registration.ProviderId).Order(StringComparer.Ordinal));
-        foreach (var registration in localRegistrations)
-        {
-            var descriptor = registration.ProviderId switch
-            {
-                "local.execution.target" => executionDescriptor,
-                "local.workspace.path.migrator" => migratorDescriptor,
-                "local.workspace.editor" => editorDescriptor,
-                _ => localDescriptor,
-            };
-            AssertRegistrationConforms(registration, descriptor);
-            AssertManifestIdentity(registration, localManifest[registration.ProviderId]);
-        }
-        var localResponse = await localHandler.InvokeUnaryAsync(
-            null!,
-            "presentation",
-            "execute",
-            Parse("{\"kind\":\"get-settings\"}"));
-        AssertMethodOutputSchemaValid(
-            localDescriptor,
-            "presentation",
-            "execute",
-            localResponse);
-
-        var dockerRegistration = new DockerWorker::Sunder.Package.Agent.Execution.Docker.Rpc.ManagementService(new DockerPresentationProbe())
-            .CreateSunderRpcProviderRegistration();
-        var dockerHandler = dockerRegistration.Handler;
-        var dockerRegistrations = new[]
-        {
-            dockerRegistration,
-            new DockerWorker::Sunder.Package.Agent.Execution.Docker.Rpc.ExecutionTargetProvider(dockerTarget).CreateSunderRpcProviderRegistration(),
-            roles.Create("Execution.Docker", "Rpc.WorkspacePathMigratorProvider", new WorkspacePathMigratorProbe()),
-            roles.Create("Execution.Docker", "Rpc.WorkspaceEditorProvider", new WorkspaceEditorProbe()),
-        };
         var dockerManifest = ReadManifestProviders("Sunder.Package.Agent.Execution.Docker");
-        Assert.Equal(
-            dockerManifest.Keys.Where(static providerId => providerId != "docker.stack").Order(StringComparer.Ordinal),
-            dockerRegistrations.Select(static registration => registration.ProviderId).Order(StringComparer.Ordinal));
-        foreach (var registration in dockerRegistrations)
-        {
-            var descriptor = registration.ProviderId switch
-            {
-                "docker.execution.target" => executionDescriptor,
-                "docker.workspace.path.migrator" => migratorDescriptor,
-                "docker.workspace.editor" => editorDescriptor,
-                _ => dockerDescriptor,
-            };
-            AssertRegistrationConforms(registration, descriptor);
-            AssertManifestIdentity(registration, dockerManifest[registration.ProviderId]);
-        }
-        var dockerResponse = await dockerHandler.InvokeUnaryAsync(
-            null!,
-            "presentation",
-            "execute",
-            Parse("{\"kind\":\"get-settings\"}"));
-        AssertMethodOutputSchemaValid(
-            dockerDescriptor,
-            "presentation",
-            "execute",
-            dockerResponse);
+
+        AssertRegistrationConforms(localRegistration, localDescriptor);
+        AssertManifestIdentity(localRegistration, localManifest[localRegistration.ProviderId]);
+        AssertRegistrationConforms(dockerRegistration, dockerDescriptor);
+        AssertManifestIdentity(dockerRegistration, dockerManifest[dockerRegistration.ProviderId]);
+        Assert.Contains("local.presentation", localManifest.Keys);
+        Assert.Contains("docker.presentation", dockerManifest.Keys);
     }
 
     [Fact]
     public async Task GeneratedHandler_RejectsWrongMethodRouteKind()
     {
-        using var roles = new RegressionTestProviderRoles();
-        var registration = roles.Create("Mcp", "Rpc.ObservedExecutionProvider", new ToolSourceProbe());
-        var descriptor = RegressionTestRpcDescriptors.Get(registration.ContractId);
+        using var providers = new RegressionTestSourceProviders();
+        using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
+        await using var receiver = new GeneratedServiceTestScope(new RegressionTestRpcClient(state, "sunder.package.agent.tests"));
+        var registration = providers.Create(RegressionTestBindings.ObservedToolExecutions, new ToolSourceProbe(), receiver);
+        var descriptor = CurrentPublicRpcDescriptors.Get(registration.ContractId);
         Assert.Equal(SunderRpcMethodKind.ServerStream, descriptor.FindService("tool-execution-observed")!.FindMethod("execute")!.Kind);
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => registration.Handler.InvokeUnaryAsync(null!,
-            "tool-execution-observed", "execute", RegressionTestRpcValues.ToolInvocation(new(Guid.NewGuid()), new("read_file", "{}"))).AsTask());
-        Assert.Contains("does not implement unary method 'tool-execution-observed/execute'", exception.Message, StringComparison.Ordinal);
+            "tool-execution-observed", "execute", JsonSerializer.SerializeToElement(new { context = new AgentToolExecutionContext(Guid.NewGuid()), request = new AgentToolRequest("read_file", "{}") })).AsTask());
+        Assert.Contains("Unknown service method.", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void RemainingGeneratedStyleFactories_ConformToExactDescriptorRoutesAndErrors()
+    public void CurrentPublicDescriptors_DeclareExactRoutesAndErrors()
     {
-        using var sources = new RegressionTestSourceProviders();
-        using var catalog = new RegressionTestExtensionCatalog();
-        var providers = new (string ContractId, object Implementation)[]
+        var contractIds = new[]
         {
-            (AgentRpcContractIds.EmbeddingProvider,
-                InterfaceProbe.Create<IAgentEmbeddingProvider>()),
-            (AgentRpcContractIds.SystemPromptContributor,
-                InterfaceProbe.Create<IAgentSystemPromptContributor>()),
-            (AgentRpcContractIds.PermissionSurface,
-                InterfaceProbe.Create<IAgentPermissionSurface>()),
-            (AgentRpcContractIds.DurableLifecycleObserver,
-                InterfaceProbe.Create<IAgentDurableLifecycleObserver>()),
-            (AgentRpcContractIds.ProfileCapabilityConsumer,
-                InterfaceProbe.Create<IAgentProfileCapabilityConsumer>()),
-            (AgentRpcContractIds.SelectableCapabilityProvider,
-                InterfaceProbe.Create<IAgentProfileSelectableCapabilityProvider>()),
+            RegressionTestBindings.EmbeddingProviders,
+            RegressionTestBindings.SystemPromptContributors,
+            RegressionTestBindings.PermissionSurfaces,
+            RegressionTestBindings.DurableLifecycleObservers,
+            RegressionTestBindings.ProfileCapabilityConsumers,
+            RegressionTestBindings.SelectableCapabilityProviders,
         };
 
-        foreach (var (contractId, implementation) in providers)
+        foreach (var contractId in contractIds)
         {
-            var generated = sources.Create(contractId, implementation, catalog, catalog.RpcForCaller("test.package"));
-            using var lifetime = generated.Lifetime;
-            var handler = generated.Registration.Handler;
-            var descriptor = RegressionTestRpcDescriptors.Get(contractId);
-            var metadata = Assert.IsAssignableFrom<ISunderRpcDeclaredErrorMetadata>(handler);
-            AssertDeclaredErrors(descriptor, metadata.DeclaredErrors);
+            var descriptor = CurrentPublicRpcDescriptors.Get(contractId);
+            CurrentPublicRpcDescriptors.AssertCurrent(descriptor);
+            Assert.NotEmpty(descriptor.Services);
+            Assert.All(descriptor.Services, service => Assert.NotEmpty(service.Methods));
         }
     }
 
     [Fact]
-    public async Task OwnerHandler_ProductionSerializerEmitsSchemaValidToolDetailAndTurnMutation()
+    public void OwnerCodec_ProductionSerializerEmitsSchemaValidToolDetailAndTurnMutation()
     {
         var sessionId = Guid.NewGuid();
         var turnId = Guid.NewGuid();
@@ -259,27 +190,16 @@ public sealed class AgentRpcProviderConformanceTests
                     updatedAt,
                     RuntimeRevision: 12),
                 RuntimeInstanceId: "runtime-1"));
-        var handler = new Rpc.Owner.OwnerRuntimeService(provider).CreateSunderRpcProviderRegistration().Handler;
-
-        var toolDetail = await handler.InvokeUnaryAsync(
-            null!,
-            "agent-runtime",
-            "transcript-tool-detail",
-            JsonSerializer.SerializeToElement(new AgentTranscriptToolDetailRequest(sessionId), RegressionTestRpcValues.Json));
+        var toolDetail = JsonSerializer.SerializeToElement(provider.ToolDetail, CurrentPrivateRpcDescriptors.OwnerJson);
         AssertMethodOutputSchemaValid(
-            RegressionTestRpcDescriptors.Get("sunder.agent.owner.runtime"),
+            CurrentPrivateRpcDescriptors.Get("sunder.agent.owner.runtime"),
             "agent-runtime",
             "transcript-tool-detail",
             toolDetail);
         Assert.Equal("read_file", toolDetail.GetProperty("detail").GetProperty("toolId").GetString());
 
-        var changes = await ReadStreamAsync(
-            handler,
-            "agent-runtime",
-            "changes",
-            JsonSerializer.SerializeToElement(new AgentChangeSubscription(11, SupportsTurnMutations: true), RegressionTestRpcValues.Json));
-        var change = Assert.Single(changes);
-        AssertMethodOutputSchemaValid(RegressionTestRpcDescriptors.Get("sunder.agent.owner.runtime"), "agent-runtime", "changes", change);
+        var change = JsonSerializer.SerializeToElement(provider.Change, CurrentPrivateRpcDescriptors.OwnerJson);
+        AssertMethodOutputSchemaValid(CurrentPrivateRpcDescriptors.Get("sunder.agent.owner.runtime"), "agent-runtime", "changes", change);
         Assert.Equal(" world", change.GetProperty("turnMutation").GetProperty("text").GetString());
         Assert.Equal("2026-08-20T12:34:56Z", change.GetProperty("turnMutation").GetProperty("updatedAtUtc").GetString());
     }
@@ -287,20 +207,27 @@ public sealed class AgentRpcProviderConformanceTests
     [Fact]
     public async Task ProviderHandlers_ProductionSerializerEmitsSchemaValidChatAndToolEvents()
     {
-        using var roles = new RegressionTestProviderRoles();
-        var chatHandler = roles.Create("Provider.Gemini", "Rpc.ChatProvider", new ChatProviderProbe()).Handler;
+        var requestJsonOptions = new JsonSerializerOptions(RegressionTestRpcValues.Json)
+        { DefaultIgnoreCondition = JsonIgnoreCondition.Never };
+        using var providers = new RegressionTestSourceProviders();
+        using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
+        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent.tests");
+        await using var receiver = new GeneratedServiceTestScope(rpc);
+        var chatRegistration = providers.Create(RegressionTestBindings.ChatProviders, new ChatProviderProbe(), receiver);
+        var chatProvider = state.AddGenerated("schema.chat", chatRegistration, chatRegistration, providers, chatRegistration.ProviderId);
         var chatRequest = new
         {
             providerId = "schema.chat", modelId = "schema-model", messages = Array.Empty<object>(), options = EmptyChatOptions(),
         };
         var chatEvents = await ReadStreamAsync(
-            chatHandler,
+            rpc,
+            chatProvider.Endpoint,
             "chat-provider",
             "stream-chat",
-            JsonSerializer.SerializeToElement(chatRequest, RegressionTestRpcValues.Json));
+            JsonSerializer.SerializeToElement(chatRequest, requestJsonOptions));
         Assert.Equal(2, chatEvents.Count);
         Assert.All(chatEvents, item => AssertMethodOutputSchemaValid(
-            RegressionTestRpcDescriptors.Get(AgentRpcContractIds.ChatProvider),
+            CurrentPublicRpcDescriptors.Get(RegressionTestBindings.ChatProviders),
             "chat-provider",
             "stream-chat",
             item));
@@ -308,33 +235,44 @@ public sealed class AgentRpcProviderConformanceTests
         Assert.Equal("tool-result", chatEvents[1].GetProperty("contentItems")[0].GetProperty("kind").GetString());
 
         var source = new ToolSourceProbe();
-        var requestJson = RegressionTestRpcValues.ToolInvocation(new AgentToolExecutionContext(Guid.NewGuid()),
-            new AgentToolRequest("read_file", "{\"path\":\"README.md\"}"));
-        using var sources = new RegressionTestSourceProviders();
-        using var catalog = new RegressionTestExtensionCatalog();
-        var generated = sources.Create(AgentRpcContractIds.ToolSource, source, catalog, catalog.RpcForCaller("test.package"));
-        using var lifetime = generated.Lifetime;
-        var toolHandler = generated.Registration.Handler;
-        var toolResult = await toolHandler.InvokeUnaryAsync(
-            null!,
+        var requestJson = JsonSerializer.SerializeToElement(new
+        {
+            context = new
+            {
+                sessionId = Guid.NewGuid(), profileId = (string?)null, workspace = (object?)null,
+                executionBinding = (object?)null, allowOutsideConfiguredScope = false,
+                runId = (Guid?)null, runRevision = (long?)null, userTurnId = (Guid?)null, toolCallId = (string?)null,
+                transcriptEpoch = 0L, approvedResourceCapabilities = Array.Empty<string>(),
+                approvedResourceClaims = Array.Empty<object>(), approvedResourceReferences = Array.Empty<string>(),
+                resourceOperation = (object?)null, executionTarget = (object?)null,
+                executionTargetConfigurationGeneration = (string?)null,
+            },
+            request = new AgentToolRequest("read_file", "{\"path\":\"README.md\"}"),
+        }, requestJsonOptions);
+        var toolRegistration = providers.Create(RegressionTestBindings.ToolSources, source, receiver);
+        var toolProvider = state.AddGenerated("schema.tools", toolRegistration, toolRegistration, providers, toolRegistration.ProviderId);
+        var toolResult = await rpc.InvokeAsync(
+            toolProvider.Endpoint,
             "tool-source",
             "execute",
             requestJson);
         AssertMethodOutputSchemaValid(
-            RegressionTestRpcDescriptors.Get(AgentRpcContractIds.ToolSource),
+            CurrentPublicRpcDescriptors.Get(RegressionTestBindings.ToolSources),
             "tool-source",
             "execute",
             toolResult);
 
-        var observedHandler = roles.Create("Mcp", "Rpc.ObservedExecutionProvider", source).Handler;
+        var observedRegistration = providers.Create(RegressionTestBindings.ObservedToolExecutions, source, receiver);
+        var observedProvider = state.AddGenerated("schema.tools", observedRegistration, observedRegistration, providers, observedRegistration.ProviderId);
         var observedEvents = await ReadStreamAsync(
-            observedHandler,
+            rpc,
+            observedProvider.Endpoint,
             "tool-execution-observed",
             "execute",
             requestJson);
         Assert.Equal(["dispatched", "result"], observedEvents.Select(static item => item.GetProperty("kind").GetString()));
         Assert.All(observedEvents, item => AssertMethodOutputSchemaValid(
-            RegressionTestRpcDescriptors.Get(AgentRpcContractIds.ObservedToolExecution),
+            CurrentPublicRpcDescriptors.Get(RegressionTestBindings.ObservedToolExecutions),
             "tool-execution-observed",
             "execute",
             item));
@@ -362,10 +300,9 @@ public sealed class AgentRpcProviderConformanceTests
         Assert.Equal(descriptor.Sha256, registration.DescriptorSha256);
         Assert.Equal(descriptor.AbiSha256, registration.AbiSha256);
         Assert.NotNull(descriptor.AbiSha256);
-        if (descriptor.ContractId.StartsWith("sunder.agent.", StringComparison.Ordinal)
-            || descriptor.ContractId.StartsWith("sunder.package.agent.execution.", StringComparison.Ordinal))
+        if (CurrentPublicRpcDescriptors.IsAgentPublicContract(descriptor.ContractId))
         {
-            Assert.Equal("1.0.0", registration.ContractVersion);
+            CurrentPublicRpcDescriptors.AssertCurrent(descriptor);
         }
         AssertDeclaredErrors(descriptor, registration.DeclaredErrors);
     }
@@ -453,13 +390,14 @@ public sealed class AgentRpcProviderConformanceTests
     }
 
     private static async Task<IReadOnlyList<JsonElement>> ReadStreamAsync(
-        ISunderRpcServiceHandler handler,
+        RegressionTestRpcClient rpc,
+        SunderRpcEndpointReference endpoint,
         string serviceId,
         string methodId,
         JsonElement request)
     {
         var items = new List<JsonElement>();
-        await foreach (var item in handler.InvokeServerStreamAsync(null!, serviceId, methodId, request))
+        await foreach (var item in rpc.SubscribeAsync(endpoint, serviceId, methodId, request))
         {
             items.Add(item.Clone());
         }
@@ -499,30 +437,14 @@ public sealed class AgentRpcProviderConformanceTests
             => throw new NotSupportedException("The conformance probe must not invoke provider behavior.");
     }
 
-    private sealed class LocalPresentationProbe : ILocalExecutionPresentationClient
+    private sealed class ConformanceDockerCli(IPackageContext context) : DockerCliRunner(context)
     {
-        public ValueTask<LocalExecutionOperationResponse> ExecuteAsync(
-            LocalExecutionOperationRequest request,
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromResult(new LocalExecutionOperationResponse(
-                TimeoutSeconds: "300",
-                DetectedShells: [],
-                CustomShells: [],
-                ShellCatalogRevision: 4,
-                Message: "Ready."));
-    }
+        protected override Task<string> ResolveEndpointAsync(CancellationToken cancellationToken)
+            => Task.FromResult("unix:///var/run/docker.sock");
 
-    private sealed class DockerPresentationProbe : IDockerExecutionPresentationClient
-    {
-        public ValueTask<DockerExecutionOperationResponse> ExecuteAsync(
-            DockerExecutionOperationRequest request,
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromResult(new DockerExecutionOperationResponse(
-                TimeoutSeconds: "300",
-                DockerCliPath: "/usr/bin/docker",
-                Success: true,
-                Message: "Ready.",
-                CatalogRevision: 5));
+        protected override Task<DockerCliRunResult> RunCoreAsync(IReadOnlyList<string> args, int timeoutSeconds,
+            CancellationToken cancellationToken, string? standardInput = null, IProgress<string>? progress = null)
+            => Task.FromResult(new DockerCliRunResult(0, string.Empty, TimedOut: false, WasTruncated: false));
     }
 
     private sealed class ExecutionTargetProbe : IAgentExecutionTarget
@@ -598,6 +520,12 @@ public sealed class AgentRpcProviderConformanceTests
         public string ContributorId => "test.workspace.editor";
 
         public bool CanEdit(AgentWorkspaceEditorContext context) => false;
+
+        public ValueTask<AgentApp::Sunder.Package.Agent.Contracts.Models.AgentServiceIdentity> DescribeAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new AgentApp::Sunder.Package.Agent.Contracts.Models.AgentServiceIdentity(ContributorId, "Test workspace editor"));
+
+        public ValueTask<bool> CanEditAsync(AgentWorkspaceEditorContext context, CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(CanEdit(context));
 
         public ValueTask<IReadOnlyList<AgentEditorSection>> GetSectionsAsync(
             AgentWorkspaceEditorContext context,
@@ -709,119 +637,5 @@ public sealed class AgentRpcProviderConformanceTests
         }
     }
 
-    private sealed class OwnerProviderProbe(
-        AgentTranscriptToolDetailResult toolDetail,
-        AgentRuntimeChange change) : IAgentOwnerRuntimeProvider
-    {
-        public ValueTask<AgentTransportProfile> NegotiateTransportProfileAsync(
-            AgentTransportProfileRequest request,
-            CancellationToken cancellationToken)
-            => throw new NotSupportedException();
-
-        public ValueTask<AgentChatSnapshotProjection> GetChatSnapshotAsync(
-            AgentChatSnapshotRequest request,
-            CancellationToken cancellationToken)
-            => throw new NotSupportedException();
-
-        public ValueTask<AgentDashboardProjection> GetDashboardAsync(
-            AgentDashboardRequest request,
-            CancellationToken cancellationToken)
-            => throw new NotSupportedException();
-
-        public ValueTask<AgentTranscriptPage> GetTranscriptPageAsync(
-            AgentTranscriptPageRequest request,
-            CancellationToken cancellationToken)
-            => throw new NotSupportedException();
-
-        public ValueTask<AgentCatalogProjection> GetCatalogAsync(
-            AgentCatalogRequest request,
-            CancellationToken cancellationToken)
-            => throw new NotSupportedException();
-
-        public ValueTask<AgentProfileCommandResult> ExecuteProfileCommandAsync(
-            AgentProfileCommand request,
-            CancellationToken cancellationToken)
-            => throw new NotSupportedException();
-
-        public ValueTask<AgentWorkspaceCommandResult> ExecuteWorkspaceCommandAsync(
-            AgentWorkspaceCommand request,
-            CancellationToken cancellationToken)
-            => throw new NotSupportedException();
-
-        public ValueTask<AgentSessionCommandResult> ExecuteSessionCommandAsync(
-            AgentSessionCommand request,
-            CancellationToken cancellationToken)
-            => throw new NotSupportedException();
-
-        public ValueTask<AgentRunCommandResult> ExecuteRunCommandAsync(
-            AgentRunCommand request,
-            CancellationToken cancellationToken)
-            => throw new NotSupportedException();
-
-        public ValueTask<AgentRunCommandStatusResult> GetRunStatusAsync(
-            AgentRunCommandStatusRequest request,
-            CancellationToken cancellationToken)
-            => throw new NotSupportedException();
-
-        public ValueTask<AgentPermissionProjection> ExecutePermissionCommandAsync(
-            AgentPermissionCommand request,
-            CancellationToken cancellationToken)
-            => throw new NotSupportedException();
-
-        public ValueTask<AgentAttachmentContentUploadResult> UploadAttachmentAsync(
-            SunderRpcInvocationContext context,
-            AgentAttachmentContentUploadRequest request,
-            CancellationToken cancellationToken)
-            => throw new NotSupportedException();
-
-        public ValueTask<AgentAttachmentContentDownloadResult> DownloadAttachmentAsync(
-            SunderRpcInvocationContext context,
-            AgentAttachmentContentDownloadRequest request,
-            CancellationToken cancellationToken)
-            => throw new NotSupportedException();
-
-        public ValueTask<AgentAttachmentContentDiscardResult> DiscardAttachmentAsync(
-            AgentAttachmentContentDiscardRequest request,
-            CancellationToken cancellationToken)
-            => throw new NotSupportedException();
-
-        public ValueTask<HistorySearchResponse> SearchHistoryAsync(
-            HistorySearchRequest request,
-            CancellationToken cancellationToken)
-            => throw new NotSupportedException();
-
-        public ValueTask<HistorySearchState> GetHistoryStateAsync(
-            HistorySearchStateRequest request,
-            CancellationToken cancellationToken)
-            => throw new NotSupportedException();
-
-        public ValueTask<HistorySearchCommandResult> ExecuteHistoryCommandAsync(
-            HistorySearchCommand request,
-            CancellationToken cancellationToken)
-            => throw new NotSupportedException();
-
-        public ValueTask<AgentTranscriptAroundTurnPage> GetTranscriptAroundAsync(
-            AgentTranscriptAroundTurnRequest request,
-            CancellationToken cancellationToken)
-            => throw new NotSupportedException();
-
-        public ValueTask<AgentTranscriptToolDetailResult> GetTranscriptToolDetailAsync(
-            AgentTranscriptToolDetailRequest request,
-            CancellationToken cancellationToken)
-            => ValueTask.FromResult(toolDetail);
-
-        public async IAsyncEnumerable<AgentRuntimeChange> WatchChangesAsync(
-            AgentChangeSubscription request,
-            [EnumeratorCancellation] CancellationToken cancellationToken)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            yield return change;
-            await Task.CompletedTask;
-        }
-
-        public IAsyncEnumerable<HistorySearchStatus> WatchHistoryStatusAsync(
-            HistorySearchStatusSubscription request,
-            CancellationToken cancellationToken)
-            => throw new NotSupportedException();
-    }
+    private sealed record OwnerProviderProbe(AgentTranscriptToolDetailResult ToolDetail, AgentRuntimeChange Change);
 }

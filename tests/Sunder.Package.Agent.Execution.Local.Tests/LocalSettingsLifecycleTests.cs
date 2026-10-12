@@ -4,6 +4,7 @@ using LocalApp::Sunder.Package.Agent.Execution.Local;
 using Sunder.Package.Agent.TestSupport.Avalonia;
 using Sunder.Sdk.Abstractions;
 using Xunit;
+using LocalPresentationService = LocalApp::Sunder.Generated.Packages.Sunder_Package_Agent_Execution_Local_Services.IPresentationService;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
 
@@ -57,8 +58,8 @@ public sealed class LocalSettingsLifecycleTests
         Assert.True(added.ApplySelectedExecutablePath("/tmp/new-shell"));
         var save = viewModel.SaveShellsCommand.ExecuteAsync(null);
         await runtime.Requests[1].Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        Assert.Equal(7, runtime.Requests[1].Request?.ExpectedShellCatalogRevision);
-        Assert.Equal(2, runtime.Requests[1].Request?.Shells?.Count);
+        Assert.Equal(7, runtime.Requests[1].ExpectedShellCatalogRevision);
+        Assert.Equal(2, runtime.Requests[1].Shells?.Count);
         added.DisplayName = "Newer draft name";
         runtime.Requests[1].Response.TrySetResult(SettingsResponse(
             revision: 8,
@@ -82,9 +83,9 @@ public sealed class LocalSettingsLifecycleTests
 
         var delete = viewModel.DeleteSelectedShellCommand.ExecuteAsync(null);
         await runtime.Requests[2].Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        Assert.Equal(8, runtime.Requests[2].Request?.ExpectedShellCatalogRevision);
+        Assert.Equal(8, runtime.Requests[2].ExpectedShellCatalogRevision);
         Assert.DoesNotContain(
-            runtime.Requests[2].Request?.Shells ?? [],
+            runtime.Requests[2].Shells ?? [],
             shell => shell.ShellId == added.ShellId);
         runtime.Requests[2].Response.TrySetResult(SettingsResponse(
             revision: 9,
@@ -230,27 +231,46 @@ public sealed class LocalSettingsLifecycleTests
     private static LocalShellDefinition Shell(string id, string name, string path)
         => new(id, name, path, "custom", IsDetected: false);
 
-    private sealed class BlockingLocalRuntimeClient : ILocalExecutionPresentationClient
+    private sealed class BlockingLocalRuntimeClient : LocalPresentationService
     {
         private int _requestIndex;
 
         public PendingRequest[] Requests { get; } =
             Enumerable.Range(0, 12).Select(_ => new PendingRequest()).ToArray();
 
-        public async ValueTask<LocalExecutionOperationResponse> ExecuteAsync(
-            LocalExecutionOperationRequest request,
+        public ValueTask<LocalExecutionOperationResponse> GetSettingsAsync(CancellationToken cancellationToken = default)
+            => ExecuteAsync(cancellationToken);
+
+        public ValueTask<LocalExecutionOperationResponse> SaveSettingsAsync(
+            string? timeoutSeconds,
+            CancellationToken cancellationToken = default)
+            => ExecuteAsync(cancellationToken);
+
+        public async ValueTask<LocalExecutionOperationResponse> SaveShellsAsync(
+            IReadOnlyList<LocalShellDefinition>? shells,
+            long? expectedShellCatalogRevision,
             CancellationToken cancellationToken = default)
         {
             var pending = Requests[Interlocked.Increment(ref _requestIndex) - 1];
-            pending.Request = request;
+            pending.Shells = shells;
+            pending.ExpectedShellCatalogRevision = expectedShellCatalogRevision;
             pending.Started.TrySetResult();
-            return await pending.Response.Task;
+            return await pending.Response.Task.WaitAsync(cancellationToken);
+        }
+
+        private async ValueTask<LocalExecutionOperationResponse> ExecuteAsync(CancellationToken cancellationToken)
+        {
+            var pending = Requests[Interlocked.Increment(ref _requestIndex) - 1];
+            pending.Started.TrySetResult();
+            return await pending.Response.Task.WaitAsync(cancellationToken);
         }
     }
 
     private sealed class PendingRequest
     {
-        public LocalExecutionOperationRequest? Request { get; set; }
+        public IReadOnlyList<LocalShellDefinition>? Shells { get; set; }
+
+        public long? ExpectedShellCatalogRevision { get; set; }
 
         public TaskCompletionSource Started { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);

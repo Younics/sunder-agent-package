@@ -1,0 +1,71 @@
+using System.Text.Json;
+using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Protocol;
+using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
+
+namespace Sunder.Package.Agent.Rpc.Public;
+
+[SunderService(SunderServiceExposure.Public, ContractId = "sunder.agent.run.control", ServiceId = "run-control", IncludeSchemaDialect = true)]
+[SunderServiceError("agent.run-control.capability-unavailable", Description = "The active behavior loop does not implement the requested run-control capability.")]
+[SunderServiceError("agent.run-control.prompt-context-acknowledgment-unavailable", Description = "The active behavior loop cannot acknowledge prompt context.")]
+[SunderServiceError("agent.run-control.default-loop-unavailable", Description = "The active behavior loop cannot delegate to the default loop.")]
+[SunderRuntimeUse(Required = true, Actions = ["discover", "invoke", "subscribe"])]
+public interface RunControlService
+{
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
+    ValueTask<bool> IsCurrentAsync(Guid invocationId, SunderRpcInvocationContext context, CancellationToken cancellationToken = default);
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
+    ValueTask<IReadOnlyList<AgentTurnRecord>> ListTurnsAsync(Guid invocationId, SunderRpcInvocationContext context, CancellationToken cancellationToken = default);
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
+    ValueTask<IReadOnlyList<AgentTurnRecord>> ListRecentTurnsAsync(Guid invocationId,
+        [SunderValueConstraints(Minimum = "1", Maximum = "100")] int limit, SunderRpcInvocationContext context,
+        CancellationToken cancellationToken = default);
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
+    ValueTask<AgentBehaviorInstructionContext> BuildInstructionContextAsync(Guid invocationId, SunderRpcInvocationContext context,
+        CancellationToken cancellationToken = default);
+    [SunderMethod(Errors = ["agent.run-control.capability-unavailable"])]
+    ValueTask SelectSessionContextAsync(Guid invocationId, AgentSessionPromptProjection projection, SunderRpcInvocationContext context,
+        CancellationToken cancellationToken = default);
+    [SunderMethod(Errors = ["agent.run-control.capability-unavailable"])]
+    ValueTask ReportActivityAsync(Guid invocationId, AgentRunActivityKind kind, string text, SunderRpcInvocationContext context,
+        CancellationToken cancellationToken = default);
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent, Errors = ["agent.run-control.capability-unavailable"])]
+    ValueTask<AgentRunBudgetState> GetRunBudgetAsync(Guid invocationId, SunderRpcInvocationContext context, CancellationToken cancellationToken = default);
+    [SunderMethod(Errors = ["agent.run-control.capability-unavailable"])]
+    ValueTask<AgentRunBudgetState> ChargeRunBudgetAsync(Guid invocationId, AgentRunBudgetCharge charge, SunderRpcInvocationContext context,
+        CancellationToken cancellationToken = default);
+    [SunderMethod(Errors = ["agent.run-control.prompt-context-acknowledgment-unavailable"])]
+    ValueTask AcknowledgePromptContextAsync(Guid invocationId, IReadOnlyList<AgentPromptContextReceiptBlock> blocks,
+        SunderRpcInvocationContext context, CancellationToken cancellationToken = default);
+    ValueTask DiscardPromptContextAsync(Guid invocationId, SunderRpcInvocationContext context, CancellationToken cancellationToken = default);
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
+    ValueTask<IReadOnlyList<AgentToolDescriptor>> ListReadyToolsAsync(Guid invocationId, SunderRpcInvocationContext context,
+        CancellationToken cancellationToken = default);
+    ValueTask<AgentRunCheckpointRecord> SaveCheckpointAsync(Guid invocationId, AgentRunStatus status, string? summary,
+        SunderRpcInvocationContext context, CancellationToken cancellationToken = default);
+    ValueTask LogEventAsync(Guid invocationId,
+        [SunderValueConstraints(AllowedStrings = ["trace", "debug", "information", "warning", "error", "critical"])] string level,
+        string eventName, string message, [SunderValueConstraints(Minimum = "0")] long? elapsedMilliseconds,
+        IReadOnlyDictionary<string, JsonElement>? attributes,
+        SunderRpcInvocationContext context, CancellationToken cancellationToken = default);
+    ValueTask<AgentTurnRecord> UpsertAssistantTurnAsync(Guid invocationId, AgentTurnRecord? assistantTurn, string content,
+        SunderRpcInvocationContext context, CancellationToken cancellationToken = default);
+    ValueTask<AgentTurnRecord> CompleteAssistantTurnAsync(Guid invocationId, AgentTurnRecord assistantTurn, SunderRpcInvocationContext context,
+        CancellationToken cancellationToken = default);
+    ValueTask PublishLifecycleAsync(Guid invocationId, AgentLifecycleEventKind kind, AgentRunStatus status,
+        AgentTurnRecord? triggerTurn, AgentRunCheckpointRecord? checkpoint, bool isInterrupted,
+        SunderRpcInvocationContext context, CancellationToken cancellationToken = default);
+    [SunderMethod(TimeoutSeconds = 2100)]
+    ValueTask<AgentToolCallOutcome> InvokeToolAsync(Guid invocationId, AgentToolCallRequest toolCall, AgentTurnRecord? assistantTurn,
+        SunderRpcInvocationContext context, CancellationToken cancellationToken = default);
+    [SunderMethod(TimeoutSeconds = 2100)]
+    ValueTask<IReadOnlyList<AgentToolCallOutcome>> InvokeToolsAsync(Guid invocationId, IReadOnlyList<AgentToolCallRequest> toolCalls,
+        AgentTurnRecord? assistantTurn, SunderRpcInvocationContext context, CancellationToken cancellationToken = default);
+    [SunderMethod(Errors = ["agent.run-control.default-loop-unavailable"], TimeoutSeconds = 2100)]
+    ValueTask<AgentBehaviorLoopResult> RunDefaultAsync(Guid invocationId, AgentBehaviorLoopContext loopContext,
+        SunderRpcInvocationContext context, CancellationToken cancellationToken = default);
+    IAsyncEnumerable<AgentChatStreamEvent> StreamChatAsync(Guid invocationId, AgentChatStreamRequest request,
+        IReadOnlyDictionary<string, JsonElement>? correlationAttributes, SunderRpcInvocationContext context,
+        CancellationToken cancellationToken = default);
+}

@@ -1,4 +1,3 @@
-using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Shared.PackageViews;
 using Sunder.Package.Agent.Subagents.Models;
@@ -69,20 +68,6 @@ internal interface ISubagentPresentationInitialization
 }
 
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
-internal interface ISubagentOwnerClient
-{
-    ValueTask<SubagentProjection> QueryAsync(
-        SubagentQuery request,
-        CancellationToken cancellationToken = default);
-    ValueTask<SubagentProjection> CommandAsync(
-        SubagentCommand request,
-        CancellationToken cancellationToken = default);
-    IAsyncEnumerable<SubagentChanged> SubscribeChangesAsync(
-        SubagentChangeSubscription request,
-        CancellationToken cancellationToken = default);
-}
-
-[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record SubsessionSessionCatalog(
     IReadOnlyList<AgentSessionRecord> Sessions,
     IReadOnlyList<AgentProfileRecord> Profiles);
@@ -112,43 +97,12 @@ internal sealed record SubagentSaveRequest(
     string? ChatModelSettingsJson);
 
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
-internal enum SubagentQueryKind
+internal enum SubsessionPageDirection
 {
-    Management,
-    ProviderModels,
-    RuntimeCatalog,
-    RecentTurns,
-    TurnsBefore,
-    TurnsAfter,
-    AroundTurn,
-    ToolDetail,
+    Recent,
+    Before,
+    After,
 }
-
-[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
-internal sealed record SubagentQuery(
-    SubagentQueryKind Kind,
-    string? ProviderId = null,
-    Guid? SessionId = null,
-    int Limit = 100,
-    DateTimeOffset? AnchorCreatedAtUtc = null,
-    Guid? AnchorTurnId = null,
-    Guid? ItemId = null,
-    int AfterLimit = 0,
-    AgentTranscriptToolDetailRequest? ToolDetailRequest = null);
-
-[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
-internal enum SubagentCommandKind
-{
-    Create,
-    Save,
-    Delete,
-}
-
-[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
-internal sealed record SubagentCommand(
-    SubagentCommandKind Kind,
-    string? Value = null,
-    SubagentSaveRequest? Save = null);
 
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record SubagentProviderProjection(
@@ -171,9 +125,6 @@ internal sealed record SubagentProjection(
     SubsessionTranscriptPage? TranscriptPage = null,
     SubsessionAroundTurnPage? AroundTurn = null,
     AgentTranscriptToolDetailRecord? ToolDetail = null);
-
-[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
-internal sealed record SubagentChangeSubscription(long AfterRevision = 0);
 
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal enum SubagentChangeKind

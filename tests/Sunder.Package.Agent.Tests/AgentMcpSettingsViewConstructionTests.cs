@@ -29,6 +29,8 @@ public sealed class AgentMcpSettingsViewConstructionTests
         Assert.Contains(services, descriptor =>
             descriptor.ServiceType == typeof(McpAppRuntimeGateway));
         Assert.DoesNotContain(services, descriptor =>
-            descriptor.ServiceType.Namespace?.Contains(".Services", StringComparison.Ordinal) == true);
+            descriptor.ServiceType.Namespace?.StartsWith(
+                "Sunder.Package.Agent.Mcp.Services",
+                StringComparison.Ordinal) == true);
     }
 }

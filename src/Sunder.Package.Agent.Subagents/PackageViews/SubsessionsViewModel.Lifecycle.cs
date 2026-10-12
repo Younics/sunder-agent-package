@@ -117,10 +117,15 @@ public sealed partial class SubsessionsViewModel
             }
         }
 
-        await ReloadSubsessionsAsync(
-            selectedSessionId,
-            cancellationToken,
-            suppressTranscriptLoad);
+        // A reset can supersede the initial read. Initialization is a publication
+        // barrier, so a canceled/stale read must not complete warmup prematurely.
+        while (!await ReloadSubsessionsAsync(
+                   selectedSessionId,
+                   cancellationToken,
+                   suppressTranscriptLoad))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+        }
     }
 
     public void Dispose()
@@ -179,5 +184,23 @@ public sealed partial class SubsessionsViewModel
         {
             _ownerAvailability.OwnerStreamAvailabilityChanged += OnOwnerStreamAvailabilityChanged;
         }
+    }
+
+    private void SetRuntimePorts(
+        ISubsessionSessionReader sessionReader,
+        ISubsessionCheckpointReader checkpointReader,
+        ISubsessionTranscriptPageReader transcriptReader,
+        ISubsessionChangeNotifications changeNotifications,
+        bool ownsChangeNotifications = false)
+    {
+        _sessionReader = sessionReader;
+        _checkpointReader = checkpointReader;
+        _transcriptReader = transcriptReader;
+        _changeNotifications = changeNotifications;
+        SetOwnerAvailability(changeNotifications);
+        _ownsChangeNotifications = ownsChangeNotifications;
+        changeNotifications.SessionChanged += OnSessionChanged;
+        changeNotifications.TurnChanged += OnTurnChanged;
+        changeNotifications.ResnapshotRequired += OnRuntimeResnapshotRequired;
     }
 }

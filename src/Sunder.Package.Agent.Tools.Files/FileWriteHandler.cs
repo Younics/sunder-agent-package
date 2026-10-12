@@ -1,5 +1,4 @@
 using Sunder.Agent.Execution.Common;
-using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 
 namespace Sunder.Package.Agent.Tools.Files;
@@ -7,7 +6,7 @@ namespace Sunder.Package.Agent.Tools.Files;
 internal static class FileWriteHandler
 {
     public static async Task<AgentToolResult> ExecuteWriteAsync(
-        IAgentExecutionTarget target,
+        FileExecutionTarget target,
         AgentExecutionTargetContext context,
         AgentToolRequest request,
         CancellationToken cancellationToken)
@@ -22,7 +21,7 @@ internal static class FileWriteHandler
     }
 
     public static async Task<AgentToolResult> ExecuteEditAsync(
-        IAgentExecutionTarget target,
+        FileExecutionTarget target,
         AgentExecutionTargetContext context,
         AgentToolRequest request,
         CancellationToken cancellationToken)
@@ -32,7 +31,7 @@ internal static class FileWriteHandler
             return FileToolResult.Error(request.ToolId, error!, "files-arguments-invalid");
         }
 
-        var current = await target.ReadFileAsync(context, new AgentFileReadRequest(args.Path), cancellationToken);
+        var current = await target.Service.ReadFileAsync(new() { Context = context, Request = new() { Path = args.Path, Offset = null, Limit = null } }, cancellationToken);
         if (current.IsError)
         {
             return FileToolResult.ReadError(request.ToolId, current);
@@ -51,7 +50,7 @@ internal static class FileWriteHandler
             return FileToolResult.Error(request.ToolId, "oldString was not found.", "edit-old-string-not-found");
         }
 
-        var mutationResource = await target.ResolveFileResourceAsync(context, args.Path, cancellationToken);
+        var mutationResource = await target.Service.ResolveFileAsync(new() { Context = context, Path = args.Path }, cancellationToken);
         var mutationContext = context with
         {
             ApprovedResourceReferences = [mutationResource.CanonicalReference],
@@ -64,37 +63,24 @@ internal static class FileWriteHandler
             overwrite: true,
             cancellationToken,
             FileOperation.ComputeContentHash(current.Content));
-        return new AgentToolResult(
-            request.ToolId,
-            result.Summary,
-            Content: result.Summary,
-            IsError: result.IsError,
-            ErrorCode: result.ErrorCode,
-            BackendId: FileToolResult.BackendId(target),
-            PresentationPayloadJson: result.IsError ? null : FileDiffPresentation.BuildEditPayload(args, current.Content));
+        return ToToolResult(request.ToolId, target, result) with
+        { PresentationPayloadJson = result.IsError ? null : FileDiffPresentation.BuildEditPayload(args, current.Content) };
     }
 
     public static ValueTask<AgentFileMutationResult> WriteAsync(
-        IAgentExecutionTarget target,
+        FileExecutionTarget target,
         AgentExecutionTargetContext context,
         string path,
         string content,
         bool overwrite,
         CancellationToken cancellationToken,
         string? expectedContentHash = null)
-        => target.WriteFileAsync(
-            context,
-            new AgentFileWriteRequest(path, content, overwrite) { ExpectedContentHash = expectedContentHash },
-            cancellationToken);
+        => target.Service.WriteFileAsync(new()
+        { Context = context, Request = new() { Path = path, Content = content, Overwrite = overwrite, ExpectedContentHash = expectedContentHash } }, cancellationToken);
 
-    private static AgentToolResult ToToolResult(string toolId, IAgentExecutionTarget target, AgentFileMutationResult result)
-        => new(
-            toolId,
-            result.Summary,
-            Content: result.Summary,
-            IsError: result.IsError,
-            ErrorCode: result.ErrorCode,
-            BackendId: FileToolResult.BackendId(target));
+    private static AgentToolResult ToToolResult(string toolId, FileExecutionTarget target, AgentFileMutationResult result)
+        => FileToolResult.Success(toolId, result.Summary, result.Summary, FileToolResult.BackendId(target)) with
+        { IsError = result.IsError, ErrorCode = result.ErrorCode };
 
     private static string ReplaceOnce(string current, string oldString, string newString)
     {

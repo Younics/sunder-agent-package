@@ -8,5 +8,6 @@ internal readonly record struct TranscriptPageCursor(
     Guid TurnId)
 {
     internal static TranscriptPageCursor FromTurn(AgentTurnRecord turn)
-        => new(turn.CreatedAtUtc, turn.TurnId);
+        => turn.CreatedAtUtc.TryGetDateTimeOffset(out var timestamp) ? new(timestamp, turn.TurnId)
+            : throw new InvalidDataException("The transcript timestamp is not exactly representable.");
 }

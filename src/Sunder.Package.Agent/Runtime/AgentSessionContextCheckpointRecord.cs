@@ -22,7 +22,7 @@ public sealed record AgentSessionContextCheckpointRecord(
     Guid SessionId,
     Guid? FirstOmittedTurnId,
     Guid? LastOmittedTurnId,
-    int OmittedTurnCount,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] int OmittedTurnCount,
     string SummaryText,
     string? DetailsJson,
     DateTimeOffset CreatedAtUtc);

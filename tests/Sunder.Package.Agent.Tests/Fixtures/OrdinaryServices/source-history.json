@@ -1,0 +1,149 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Exact reviewed inverse of ordinary-service changes for the authenticated pre-canonical source reader; never compiler input.",
+  "sources": [
+    {
+      "path": "src/Sunder.Package.Agent.Provider.Anthropic/App/AnthropicSettingsViewModel.cs",
+      "beforeSha256": "d5cce4b8eb83d8792238d6688939fe160d0c7bfb707e28946409326ace101712",
+      "currentSha256": "64c3f36f85cf23ecb454e103db6663879eb76f04a3a186c18374986b6dfea0f2",
+      "edits": [
+        { "startLine": 3, "removeLineCount": 1, "beforeLines": [] },
+        { "startLine": 5, "removeLineCount": 0, "beforeLines": ["using Sunder.Sdk.Rpc;\n"] },
+        { "startLine": 21, "removeLineCount": 0, "beforeLines": [
+          "    public AnthropicSettingsViewModel(\n", "        IPackageContext packageContext,\n", "        ISunderRpcClient rpcClient)\n",
+          "        : this(\n", "            packageContext,\n", "            new ProviderCredentialOwnerRpcClient(rpcClient))\n", "    {\n", "    }\n", "\n"
+        ] },
+        { "startLine": 24, "removeLineCount": 1, "beforeLines": ["        IProviderCredentialOwnerClient credentials)\n"] },
+        { "startLine": 28, "removeLineCount": 3, "beforeLines": ["            credentials,\n"] }
+      ]
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.Gemini/App/GeminiSettingsViewModel.cs",
+      "beforeSha256": "1b15bdac9459ff59564a921097785c30d7f3e7ccef0f9d6c3b430c80afe58390",
+      "currentSha256": "1938b7b858fd484351c233db6e4be8bbfe77d1dc8a1794dab6a5ce1d7f7ddcc2",
+      "edits": [
+        { "startLine": 3, "removeLineCount": 1, "beforeLines": [] },
+        { "startLine": 5, "removeLineCount": 0, "beforeLines": ["using Sunder.Sdk.Rpc;\n"] },
+        { "startLine": 21, "removeLineCount": 0, "beforeLines": [
+          "    public GeminiSettingsViewModel(\n", "        IPackageContext packageContext,\n", "        ISunderRpcClient rpcClient)\n",
+          "        : this(\n", "            packageContext,\n", "            new ProviderCredentialOwnerRpcClient(rpcClient))\n", "    {\n", "    }\n", "\n"
+        ] },
+        { "startLine": 24, "removeLineCount": 1, "beforeLines": ["        IProviderCredentialOwnerClient credentials)\n"] },
+        { "startLine": 28, "removeLineCount": 3, "beforeLines": ["            credentials,\n"] }
+      ]
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Provider.LMStudio/App/LMStudioSettingsViewModel.cs",
+      "beforeSha256": "d5d7cc8f4474c58614098add38137efa5ab1910ae30fc7365d4ef251d0c8aa2a",
+      "currentSha256": "bd1c97cf6f10a5e36c8d98ae4c27cd9e758a3b3686a173be4bc1c68e19a0d392",
+      "edits": [
+        { "startLine": 4, "removeLineCount": 1, "beforeLines": [] },
+        { "startLine": 15, "removeLineCount": 1, "beforeLines": ["    private readonly IProviderCredentialOwnerClient _credentials;\n"] },
+        { "startLine": 31, "removeLineCount": 0, "beforeLines": [
+          "    public LMStudioSettingsViewModel(\n", "        IPackageContext packageContext,\n", "        ISunderRpcClient rpcClient)\n",
+          "        : this(\n", "            packageContext,\n", "            new ProviderCredentialOwnerRpcClient(rpcClient))\n", "    {\n", "    }\n", "\n"
+        ] },
+        { "startLine": 34, "removeLineCount": 1, "beforeLines": ["        IProviderCredentialOwnerClient credentials)\n"] },
+        { "startLine": 40, "removeLineCount": 3, "beforeLines": ["            credentials,\n"] },
+        { "startLine": 139, "removeLineCount": 1, "beforeLines": ["            ApiKeySettings.ApplyCredentialStatus(credentialStatus.HasStoredCredential);\n"] }
+      ]
+    },
+    {
+      "path": "src/Sunder.Package.Agent/Runtime/AgentAppRuntimeGateway.cs",
+      "beforeSha256": "2ff3565a945482e7046c5b6a749217509c59c897e590a543e7983071f6b0c8b2",
+      "currentSha256": "fa58c74b222580a735501b7fef347fe63c787241c8b3ff5ae87eda0c5b5b0933",
+      "edits": [
+        { "startLine": 63, "removeLineCount": 2, "beforeLines": ["    private readonly IAgentOwnerClient _ownerClient;\n"] },
+        { "startLine": 89, "removeLineCount": 1, "beforeLines": ["    public AgentAppRuntimeGateway(ISunderRpcClient client)\n", "        : this(new AgentOwnerRpcClient(client))\n"] },
+        { "startLine": 91, "removeLineCount": 3, "beforeLines": ["    }\n", "\n", "    internal AgentAppRuntimeGateway(IAgentOwnerClient ownerClient)\n", "    {\n", "        _ownerClient = ownerClient;\n"] },
+        { "startLine": 260, "removeLineCount": 1, "beforeLines": ["            AgentRuntimeOperations.SessionCommands,\n"] },
+        { "startLine": 278, "removeLineCount": 1, "beforeLines": ["            AgentRuntimeOperations.SessionCommands,\n"] },
+        { "startLine": 297, "removeLineCount": 1, "beforeLines": ["            AgentRuntimeOperations.SessionCommands,\n"] },
+        { "startLine": 362, "removeLineCount": 1, "beforeLines": ["            AgentRuntimeOperations.Permissions,\n"] },
+        { "startLine": 376, "removeLineCount": 1, "beforeLines": ["            AgentRuntimeOperations.Permissions,\n"] },
+        { "startLine": 438, "removeLineCount": 1, "beforeLines": ["            AgentRuntimeOperations.RunStatus,\n"] },
+        { "startLine": 442, "removeLineCount": 1, "beforeLines": ["        => (await InvokeAsync(AgentRuntimeOperations.Runs,\n"] },
+        { "startLine": 446, "removeLineCount": 1, "beforeLines": ["        => (await InvokeAsync(AgentRuntimeOperations.Runs, new AgentRunCommand(\n"] },
+        { "startLine": 454, "removeLineCount": 1, "beforeLines": ["        => (await InvokeAsync(AgentRuntimeOperations.Runs, new AgentRunCommand(\n"] },
+        { "startLine": 461, "removeLineCount": 1, "beforeLines": ["        => (await InvokeAsync(AgentRuntimeOperations.Runs, new AgentRunCommand(\n"] },
+        { "startLine": 470, "removeLineCount": 1, "beforeLines": ["            AgentRuntimeOperations.Transcript,\n"] },
+        { "startLine": 483, "removeLineCount": 1, "beforeLines": ["        => (await InvokeAsync(AgentRuntimeOperations.Workspaces,\n"] },
+        { "startLine": 524, "removeLineCount": 1, "beforeLines": ["        AgentOwnerRpcOperation<TRequest, TResponse> operation, TRequest request, CancellationToken cancellationToken)\n"] },
+        { "startLine": 530, "removeLineCount": 2, "beforeLines": ["            var response = await _ownerClient.InvokeAsync(operation, request, cancellationToken).ConfigureAwait(false);\n"] },
+        { "startLine": 558, "removeLineCount": 10, "beforeLines": [] }
+      ]
+    },
+    {
+      "path": "src/Sunder.Package.Agent/Runtime/AgentOwnerRuntimeProvider.cs",
+      "beforeSha256": "dc8246e2b8f8ae960d59ee53bbe13427f113c1c772f8fe2e9913a6d4d2794154",
+      "currentSha256": "caf00941ac4d13df0ab2ec00ae033cc20ddc380d6f707a2f154d0c2c8edce4c8",
+      "edits": [
+        { "startLine": 3, "removeLineCount": 2, "beforeLines": [] },
+        { "startLine": 8, "removeLineCount": 4, "beforeLines": ["internal sealed class AgentOwnerRuntimeProvider(\n"] },
+        { "startLine": 29, "removeLineCount": 1, "beforeLines": ["    AgentRuntimeTransportBudgetState transportBudgets) : IAgentOwnerRuntimeProvider\n"] },
+        { "startLine": 31, "removeLineCount": 3, "beforeLines": [] },
+        { "startLine": 39, "removeLineCount": 2, "beforeLines": ["        return ValueTask.FromResult(transportBudgets.Negotiate(request));\n"] },
+        { "startLine": 43, "removeLineCount": 1, "beforeLines": [] },
+        { "startLine": 47, "removeLineCount": 1, "beforeLines": ["        => FitAsync(chatSnapshot.HandleAsync(request, cancellationToken));\n"] },
+        { "startLine": 49, "removeLineCount": 1, "beforeLines": [] },
+        { "startLine": 53, "removeLineCount": 1, "beforeLines": ["        => FitAsync(dashboard.HandleAsync(request, cancellationToken));\n"] },
+        { "startLine": 55, "removeLineCount": 1, "beforeLines": [] },
+        { "startLine": 59, "removeLineCount": 1, "beforeLines": ["        => FitAsync(transcript.HandleAsync(request, cancellationToken));\n"] },
+        { "startLine": 61, "removeLineCount": 1, "beforeLines": [] },
+        { "startLine": 65, "removeLineCount": 1, "beforeLines": ["        => FitAsync(catalog.HandleAsync(request, cancellationToken));\n"] },
+        { "startLine": 67, "removeLineCount": 1, "beforeLines": [] },
+        { "startLine": 71, "removeLineCount": 1, "beforeLines": ["        => FitAsync(profiles.HandleAsync(request, cancellationToken));\n"] },
+        { "startLine": 73, "removeLineCount": 1, "beforeLines": [] },
+        { "startLine": 77, "removeLineCount": 1, "beforeLines": ["        => FitAsync(workspaces.HandleAsync(request, cancellationToken));\n"] },
+        { "startLine": 79, "removeLineCount": 1, "beforeLines": [] },
+        { "startLine": 83, "removeLineCount": 1, "beforeLines": ["        => FitAsync(sessions.HandleAsync(request, cancellationToken));\n"] },
+        { "startLine": 85, "removeLineCount": 1, "beforeLines": [] },
+        { "startLine": 89, "removeLineCount": 1, "beforeLines": ["        => FitAsync(runs.HandleAsync(request, cancellationToken));\n"] },
+        { "startLine": 91, "removeLineCount": 1, "beforeLines": [] },
+        { "startLine": 95, "removeLineCount": 1, "beforeLines": ["        => FitAsync(runs.HandleAsync(request, cancellationToken));\n"] },
+        { "startLine": 97, "removeLineCount": 1, "beforeLines": [] },
+        { "startLine": 101, "removeLineCount": 1, "beforeLines": ["        => FitAsync(permissions.HandleAsync(request, cancellationToken));\n"] },
+        { "startLine": 103, "removeLineCount": 1, "beforeLines": [] },
+        { "startLine": 108, "removeLineCount": 1, "beforeLines": ["        => FitAsync(attachments.UploadAsync(context, request, cancellationToken));\n"] },
+        { "startLine": 110, "removeLineCount": 1, "beforeLines": [] },
+        { "startLine": 115, "removeLineCount": 1, "beforeLines": ["        => FitAsync(attachments.DownloadAsync(context, request, cancellationToken));\n"] },
+        { "startLine": 117, "removeLineCount": 1, "beforeLines": [] },
+        { "startLine": 121, "removeLineCount": 1, "beforeLines": ["        => FitAsync(attachments.DiscardAsync(request, cancellationToken));\n"] },
+        { "startLine": 123, "removeLineCount": 1, "beforeLines": [] },
+        { "startLine": 127, "removeLineCount": 1, "beforeLines": ["        => FitAsync(historySearch.HandleAsync(request, cancellationToken));\n"] },
+        { "startLine": 129, "removeLineCount": 1, "beforeLines": [] },
+        { "startLine": 133, "removeLineCount": 1, "beforeLines": ["        => FitAsync(historyState.HandleAsync(request, cancellationToken));\n"] },
+        { "startLine": 135, "removeLineCount": 1, "beforeLines": [] },
+        { "startLine": 139, "removeLineCount": 1, "beforeLines": ["        => FitAsync(historyCommands.HandleAsync(request, cancellationToken));\n"] },
+        { "startLine": 141, "removeLineCount": 1, "beforeLines": [] },
+        { "startLine": 145, "removeLineCount": 1, "beforeLines": ["        => FitAsync(transcriptAround.HandleAsync(request, cancellationToken));\n"] },
+        { "startLine": 147, "removeLineCount": 1, "beforeLines": [] },
+        { "startLine": 151, "removeLineCount": 1, "beforeLines": ["        => FitAsync(transcriptToolDetail.HandleAsync(request, cancellationToken));\n"] },
+        { "startLine": 153, "removeLineCount": 1, "beforeLines": [] },
+        { "startLine": 157, "removeLineCount": 1, "beforeLines": ["        => changes.SubscribeAsync(request, cancellationToken);\n"] },
+        { "startLine": 159, "removeLineCount": 1, "beforeLines": [] },
+        { "startLine": 163, "removeLineCount": 1, "beforeLines": ["        => historyStatus.SubscribeAsync(request, cancellationToken);\n"] },
+        { "startLine": 165, "removeLineCount": 1, "beforeLines": [
+          "    private static async ValueTask<T> AwaitAsync<T>(ValueTask<T> pending)\n", "        where T : class\n", "        => await pending.ConfigureAwait(false);\n", "\n", "    private async ValueTask<T> FitAsync<T>(ValueTask<T> pending)\n"
+        ] },
+        { "startLine": 168, "removeLineCount": 26, "beforeLines": [
+          "        var response = await AwaitAsync(pending).ConfigureAwait(false);\n", "        AgentRuntimePayloadLimits.EnsureResponseFits(response, transportBudgets.Current);\n", "        return response;\n"
+        ] }
+      ]
+    },
+    {
+      "path": "src/Sunder.Package.Agent/Services/AgentProfileService.cs",
+      "beforeSha256": "31ddf58ea82fff28cf088216f6eaed250a816371e0a76a799cfb2f883981c8a7",
+      "currentSha256": "a3c4eac16eaec34f726bf7c6a2bd89699160c5b44787bd0dc442c932ef8d6016",
+      "edits": [
+        { "startLine": 9, "removeLineCount": 1, "beforeLines": [] },
+        { "startLine": 13, "removeLineCount": 3, "beforeLines": ["public sealed class AgentProfileService : IDisposable, IAgentProfileGateway\n"] },
+        { "startLine": 63, "removeLineCount": 14, "beforeLines": [] },
+        { "startLine": 79, "removeLineCount": 1, "beforeLines": [] },
+        { "startLine": 123, "removeLineCount": 42, "beforeLines": [] },
+        { "startLine": 231, "removeLineCount": 7, "beforeLines": [] },
+        { "startLine": 281, "removeLineCount": 21, "beforeLines": [] }
+      ]
+    }
+  ]
+}

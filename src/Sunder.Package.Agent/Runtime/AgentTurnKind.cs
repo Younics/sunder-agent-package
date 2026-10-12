@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Sunder.Package.Agent.Contracts.Models;
 
 /// <summary>
@@ -7,11 +9,11 @@ namespace Sunder.Package.Agent.Contracts.Models;
 public enum AgentTurnKind
 {
     /// <summary>A conversational message whose items can include text and attachments.</summary>
-    Message = 0,
+    [JsonStringEnumMemberName("message")] Message = 0,
 
     /// <summary>A request by an assistant/provider to invoke a tool.</summary>
-    ToolCall = 1,
+    [JsonStringEnumMemberName("tool-call")] ToolCall = 1,
 
     /// <summary>The persisted outcome correlated to an earlier tool call.</summary>
-    ToolResult = 2,
+    [JsonStringEnumMemberName("tool-result")] ToolResult = 2,
 }

@@ -1,0 +1,31 @@
+using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using Sunder.Sdk.Services;
+
+namespace RegressionTestGeneratedProviders;
+
+[SunderServiceProvider(typeof(IExecutionTargetService), ProviderId = "fixture.regression.execution.target")]
+public sealed partial class ExecutionTargetProvider(Func<string, Type, object?[], CancellationToken, object> invoke) : IExecutionTargetService
+{
+    private ValueTask<T> Reply<T>(string operation, object?[] arguments, CancellationToken token) => (ValueTask<T>)invoke(operation, typeof(T), arguments, token);
+    private ValueTask ReplyVoid(string operation, object?[] arguments, CancellationToken token) => (ValueTask)invoke(operation, typeof(void), arguments, token);
+    public ValueTask<AgentExecutionTargetDescriptor> DescribeAsync(CancellationToken token = default) => Reply<AgentExecutionTargetDescriptor>(nameof(DescribeAsync), [], token);
+    public ValueTask<string?> ConfigurationGenerationAsync(AgentExecutionTargetContext context, CancellationToken token = default) => Reply<string?>(nameof(ConfigurationGenerationAsync), [context], token);
+    public ValueTask<AgentExecutionTargetReadiness> ReadinessAsync(AgentExecutionTargetContext context, CancellationToken token = default) => Reply<AgentExecutionTargetReadiness>(nameof(ReadinessAsync), [context], token);
+    public ValueTask<AgentExecutionShellDescriptor> ShellAsync(AgentExecutionTargetContext context, CancellationToken token = default) => Reply<AgentExecutionShellDescriptor>(nameof(ShellAsync), [context], token);
+    public ValueTask<AgentResolvedResource> ResolveFileAsync(CSunder_Agent_Execution_Target_ExecutionTargetResolveFileRequest request, CancellationToken token = default) => Reply<AgentResolvedResource>(nameof(ResolveFileAsync), [request], token);
+    public ValueTask<AgentShellCommandResult> ExecuteShellAsync(CSunder_Agent_Execution_Target_ExecutionTargetExecuteShellRequest request, CancellationToken token = default) => Reply<AgentShellCommandResult>(nameof(ExecuteShellAsync), [request], token);
+    public ValueTask<AgentFileReadResult> ReadFileAsync(CSunder_Agent_Execution_Target_ExecutionTargetReadFileRequest request, CancellationToken token = default) => Reply<AgentFileReadResult>(nameof(ReadFileAsync), [request], token);
+    public ValueTask<AgentFileMutationResult> WriteFileAsync(CSunder_Agent_Execution_Target_ExecutionTargetWriteFileRequest request, CancellationToken token = default) => Reply<AgentFileMutationResult>(nameof(WriteFileAsync), [request], token);
+    public ValueTask<AgentFileMutationResult> DeleteFileAsync(CSunder_Agent_Execution_Target_ExecutionTargetDeleteFileRequest request, CancellationToken token = default) => Reply<AgentFileMutationResult>(nameof(DeleteFileAsync), [request], token);
+    public ValueTask<AgentShellCommandResult> ExecuteProcessAsync(CSunder_Agent_Execution_Target_ExecutionTargetExecuteProcessRequest request, CancellationToken token = default) => Reply<AgentShellCommandResult>(nameof(ExecuteProcessAsync), [request], token);
+    public ValueTask<IReadOnlyList<AgentResolvedExecutionResource>> ResolveResourcesAsync(CSunder_Agent_Execution_Target_ExecutionTargetResolveResourcesRequest request, CancellationToken token = default) => Reply<IReadOnlyList<AgentResolvedExecutionResource>>(nameof(ResolveResourcesAsync), [request], token);
+    public ValueTask<AgentResourceAuthorityValidation> ValidateResourceAuthorityAsync(AgentExecutionTargetContext context, CancellationToken token = default) => Reply<AgentResourceAuthorityValidation>(nameof(ValidateResourceAuthorityAsync), [context], token);
+    public ValueTask ReleaseResourceAuthorityAsync(IReadOnlyList<string> capabilities, CancellationToken token = default) => ReplyVoid(nameof(ReleaseResourceAuthorityAsync), [capabilities], token);
+    public ValueTask<AgentExecutionScopeDescriptor> ExecutionScopeAsync(AgentExecutionTargetContext context, CancellationToken token = default) => Reply<AgentExecutionScopeDescriptor>(nameof(ExecutionScopeAsync), [context], token);
+    public ValueTask<AgentExecutionPathMapping> MapPathAsync(CSunder_Agent_Execution_Target_ExecutionTargetMapPathRequest request, CancellationToken token = default) => Reply<AgentExecutionPathMapping>(nameof(MapPathAsync), [request], token);
+    public ValueTask<IReadOnlyList<string>> ListPathAsync(AgentExecutionTargetContext context, CancellationToken token = default) => Reply<IReadOnlyList<string>>(nameof(ListPathAsync), [context], token);
+    public ValueTask AddPathAsync(CSunder_Agent_Execution_Target_ExecutionTargetAddPathRequest request, CancellationToken token = default) => ReplyVoid(nameof(AddPathAsync), [request], token);
+    public ValueTask<AgentFileSearchResult> StructuredFileSearchAsync(CSunder_Agent_Execution_Target_ExecutionTargetStructuredFileSearchRequest request, CancellationToken token = default) => Reply<AgentFileSearchResult>(nameof(StructuredFileSearchAsync), [request], token);
+    public ValueTask<AgentScopedInstructionDiscoveryResult> DiscoverInstructionsAsync(CSunder_Agent_Execution_Target_ExecutionTargetDiscoverInstructionsRequest request, CancellationToken token = default) => Reply<AgentScopedInstructionDiscoveryResult>(nameof(DiscoverInstructionsAsync), [request], token);
+}

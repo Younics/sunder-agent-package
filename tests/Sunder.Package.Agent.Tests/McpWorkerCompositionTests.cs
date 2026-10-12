@@ -11,6 +11,8 @@ using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Worker;
 using Xunit;
+using McpAppManagementService = McpApp::Sunder.Generated.Packages.Sunder_Package_Agent_Mcp_Services.IManagementService;
+using McpServices = McpWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -45,14 +47,14 @@ public sealed class McpWorkerCompositionTests
         Assert.NotNull(composition.Services.GetService<McpClientConnectionManager>());
         Assert.NotNull(composition.Services.GetService<McpToolSource>());
         Assert.NotNull(composition.Services.GetService<McpServerStackContributor>());
-        Assert.NotNull(composition.Services.GetService<McpWorker::Sunder.Package.Agent.Mcp.Rpc.ManagementService>());
+        Assert.NotNull(composition.Services.GetService<McpManagementService>());
         Assert.Null(composition.Services.GetService<McpApp::Sunder.Package.Agent.Mcp.AgentMcpSettingsViewModel>());
         await composition.Services.GetRequiredService<McpWorker::Sunder.Package.Agent.Mcp.Worker.McpActivation>()
             .ActivateAsync(null!, CancellationToken.None);
 
         var appServices = new ServiceCollection();
         new McpApp::Sunder.Generated.Package.AppModule().ConfigureAppServices(appServices, scope.Context);
-        Assert.Contains(appServices, descriptor => descriptor.ServiceType == typeof(McpApp::Sunder.Package.Agent.Mcp.Runtime.McpOwnerManagementRpcClient));
+        Assert.Contains(appServices, descriptor => descriptor.ServiceType == typeof(McpAppManagementService));
         Assert.Contains(appServices, descriptor => descriptor.ServiceType == typeof(McpApp::Sunder.Package.Agent.Mcp.Runtime.McpAppRuntimeGateway));
         Assert.Contains(appServices, descriptor => descriptor.ServiceType == typeof(McpApp::Sunder.Package.Agent.Mcp.AgentMcpSettingsViewModel));
         Assert.DoesNotContain(appServices, descriptor => descriptor.ServiceType == typeof(McpServerCatalogService));
@@ -66,21 +68,22 @@ public sealed class McpWorkerCompositionTests
     {
         using var scope = RegressionTestPackageScope.Create();
         var rpc = new BlockingDiscoverRpcClient();
-        await using var rpcCatalog = new McpWorker::Sunder.Package.Agent.Mcp.Rpc.RuntimeWorkspaceCatalog(rpc);
-        await rpcCatalog.StartAsync();
+        await using var receiver = new GeneratedServiceTestScope(rpc);
         var importer = new McpEcosystemConfigurationImporter(new McpServerCatalogService(scope.Context));
         var sync = new McpSunderConfigurationSyncService(
             importer,
-            rpcCatalog,
+            receiver.Providers<McpServices.IRuntimeCatalogService>(),
             userProfilePath: scope.RootPath);
         await using var coordinator = new McpConfigurationCoordinator(importer, sync);
 
         await Task.Run(coordinator.Start).WaitAsync(TimeSpan.FromSeconds(2));
         await rpc.DiscoverStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(RegressionTestBindings.RuntimeCatalog, rpc.DiscoveredContractId);
+        Assert.False(rpc.CancellationObserved.Task.IsCompleted);
 
-        await coordinator.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
-
+        await receiver.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
         await rpc.CancellationObserved.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await coordinator.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
     }
 
     private sealed class IdleRpcClient : ISunderRpcClient
@@ -154,6 +157,8 @@ public sealed class McpWorkerCompositionTests
         public TaskCompletionSource CancellationObserved { get; } = new(
             TaskCreationOptions.RunContinuationsAsynchronously);
 
+        public string? DiscoveredContractId { get; private set; }
+
         public ValueTask<SunderRpcProviderSnapshot?> GetProviderAsync(
             SunderRpcEndpointReference endpoint,
             CancellationToken cancellationToken = default)
@@ -169,6 +174,7 @@ public sealed class McpWorkerCompositionTests
             string contractId,
             CancellationToken cancellationToken = default)
         {
+            DiscoveredContractId = contractId;
             DiscoverStarted.TrySetResult();
             cancellationToken.Register(() =>
             {

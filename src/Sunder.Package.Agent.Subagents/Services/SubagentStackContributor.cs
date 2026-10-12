@@ -4,13 +4,17 @@ using Sunder.Package.Agent.Subagents.Runtime;
 using Sunder.Package.Agent.Subagents.Models;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Stacks;
+using Sunder.Sdk.Services;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.Subagents.Services;
 
+[SunderServiceProvider(typeof(IPackageStackContributor), ProviderId = "subagents.stack")]
 internal sealed partial class SubagentStackContributor(
     SubagentService subagentService,
     IPackageContext packageContext,
-    ISubagentRuntimeBindings runtimeBindings) : IPackageStackExporter, IPackageStackImporter, IPackageStackImportAppliedHandler
+    IServiceProviders<IChatProviderService> chats,
+    IServiceProviders<ISelectableCapabilityProviderService> capabilities) : IPackageStackExporter, IPackageStackImporter, IPackageStackImportAppliedHandler
 {
     private const string SchemaId = "sunder.package.agent.subagents/subagent";
     private const string DetailDescription = "description";
@@ -36,7 +40,7 @@ internal sealed partial class SubagentStackContributor(
                 Details: BuildExportDetails(subagent)))
             .ToArray());
 
-    public ValueTask<StackExportContribution> ExportAsync(
+    public async ValueTask<StackExportContribution> ExportAsync(
         StackExportRequest request,
         CancellationToken cancellationToken = default)
     {
@@ -61,10 +65,10 @@ internal sealed partial class SubagentStackContributor(
                 SourceItemId: subagent.SubagentId))
             .ToArray();
 
-        return ValueTask.FromResult(new StackExportContribution(
+        return new StackExportContribution(
             fragments,
-            fragments.Length == 0 ? [] : BuildPackageRequirements(payloads),
-            []));
+            fragments.Length == 0 ? [] : await BuildPackageRequirementsAsync(payloads, cancellationToken).ConfigureAwait(false),
+            []);
     }
 
     public ValueTask<StackImportPreview> PreviewImportAsync(
@@ -168,7 +172,7 @@ internal sealed partial class SubagentStackContributor(
     private StackPackageRequirement CreatePackageRequirement()
         => new(SubagentConstants.PackageId, CreatedWithVersion: packageContext.Version.ToString(), MinimumVersion: "1.1.0");
 
-    private IReadOnlyList<StackPackageRequirement> BuildPackageRequirements(IReadOnlyList<SubagentStackPayload> payloads)
+    private async ValueTask<IReadOnlyList<StackPackageRequirement>> BuildPackageRequirementsAsync(IReadOnlyList<SubagentStackPayload> payloads, CancellationToken token)
     {
         var packageIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { SubagentConstants.PackageId };
         var providerIds = payloads
@@ -178,11 +182,10 @@ internal sealed partial class SubagentStackContributor(
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (providerIds.Count > 0)
         {
-            foreach (var contribution in SnapshotOwnedIdentities(
-                         runtimeBindings.GetChatProviders(),
-                         static provider => provider.Descriptor.ProviderId))
+            foreach (var contribution in await SubagentCatalogSelection.SnapshotAsync(chats, token,
+                         static (provider, cancellation) => provider.DescribeAsync(cancellation)).ConfigureAwait(false))
             {
-                if (providerIds.Contains(contribution.Identity))
+                if (providerIds.Contains(contribution.Metadata.ProviderId))
                 {
                     AddPackageId(packageIds, contribution.PackageId);
                 }
@@ -197,11 +200,10 @@ internal sealed partial class SubagentStackContributor(
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (sourceIds.Count > 0)
         {
-            foreach (var contribution in SnapshotOwnedIdentities(
-                         runtimeBindings.GetSelectableCapabilityProviders(),
-                         static provider => provider.ProviderId))
+            foreach (var contribution in await SubagentCatalogSelection.SnapshotAsync(capabilities, token,
+                         static (provider, cancellation) => provider.DescribeAsync(cancellation)).ConfigureAwait(false))
             {
-                if (sourceIds.Contains(contribution.Identity))
+                if (sourceIds.Contains(contribution.Metadata.Id))
                 {
                     AddPackageId(packageIds, contribution.PackageId);
                 }
@@ -219,31 +221,6 @@ internal sealed partial class SubagentStackContributor(
             .ToArray();
     }
 
-    private IReadOnlyList<OwnedIdentity> SnapshotOwnedIdentities<TContract>(
-        IReadOnlyList<SubagentProviderReference<TContract>> references,
-        Func<TContract, string> selectIdentity)
-        where TContract : class
-    {
-        var identities = new List<OwnedIdentity>();
-        foreach (var reference in references)
-        {
-            if (!reference.TryAcquire(out var lease))
-            {
-                continue;
-            }
-            using (lease)
-            {
-                var identity = selectIdentity(lease.Service);
-                if (!lease.RetirementToken.IsCancellationRequested)
-                {
-                    identities.Add(new OwnedIdentity(lease.PackageId, identity));
-                }
-            }
-        }
-
-        return identities;
-    }
-
     private static void AddPackageId(ISet<string> packageIds, string? packageId)
     {
         if (!string.IsNullOrWhiteSpace(packageId))
@@ -255,8 +232,6 @@ internal sealed partial class SubagentStackContributor(
     private static bool IsCoordinatedFamilyPackage(string packageId)
         => string.Equals(packageId, "sunder.package.agent", StringComparison.OrdinalIgnoreCase)
            || packageId.StartsWith("sunder.package.agent.", StringComparison.OrdinalIgnoreCase);
-
-    private sealed record OwnedIdentity(string PackageId, string Identity);
 
     private static IReadOnlyList<StackExportItemDetail> BuildExportDetails(SubagentRecord subagent)
     {
@@ -374,7 +349,7 @@ internal sealed partial class SubagentStackContributor(
         string? Instructions,
         string? ChatProviderId,
         string? ChatModelId,
-        IReadOnlyList<Sunder.Package.Agent.Contracts.Models.AgentProfileSelectableCapabilityAssignmentRecord>? SelectableCapabilityAssignments,
+        IReadOnlyList<AgentProfileSelectableCapabilityAssignmentRecord>? SelectableCapabilityAssignments,
         string? ChatModelSettingsJson)
     {
         public static SubagentStackPayload FromSubagent(SubagentRecord subagent, StackExportRequest request)

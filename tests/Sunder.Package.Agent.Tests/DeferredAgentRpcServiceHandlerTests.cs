@@ -1,322 +1,101 @@
-using System.Runtime.CompilerServices;
-using System.Runtime.Loader;
-using System.Security;
-using System.Text.Json;
-using Microsoft.Extensions.DependencyInjection;
-using Sunder.Package.Agent.Protocol;
-using Sunder.Package.Agent.Runtime;
+using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Services;
 using Sunder.Sdk.Rpc;
-using Sunder.Sdk.Worker;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
 
 public sealed class DeferredAgentRpcServiceHandlerTests
 {
-    private static readonly TimeSpan TestTimeout = TimeSpan.FromSeconds(5);
-    private static readonly SunderRpcContractDescriptor TestDescriptor =
-        RegressionTestRpcDescriptors.Get(AgentRpcContractIds.SessionCleaner);
-    private static readonly IReadOnlyDictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>> TestDeclaredErrors =
-        RegressionTestRpcDescriptors.ErrorMap(TestDescriptor);
-
     [Fact]
-    public async Task ActivationBridge_CompilesWithOnlySdkAndWorkerContracts()
+    public void RetiredDeferredHandler_IsNotPartOfTheCurrentProviderComposition()
     {
-        var root = Directory.CreateTempSubdirectory("sunder-deferred-sdk-boundary-").FullName;
-        var context = new AssemblyLoadContext("deferred-sdk-boundary", isCollectible: true);
-        try
-        {
-            var repository = BuilderSourceMigrationTests.FindRepository();
-            File.Copy(Path.Combine(repository, "src/Sunder.Package.Agent/Runtime/DeferredAgentRpcServiceHandler.cs"), Path.Combine(root, "Bridge.cs"));
-            var references = new[] { typeof(SunderRpcContractDescriptor).Assembly.Location, typeof(SunderWorkerProviderRegistration).Assembly.Location };
-            File.WriteAllText(Path.Combine(root, "SdkBoundary.csproj"), $$"""
-                <Project Sdk="Microsoft.NET.Sdk">
-                  <PropertyGroup><TargetFramework>net10.0</TargetFramework><Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings><LangVersion>14</LangVersion><TreatWarningsAsErrors>true</TreatWarningsAsErrors></PropertyGroup>
-                  <ItemGroup>{{string.Join("", references.Select(path => $"<Reference Include=\"{SecurityElement.Escape(Path.GetFileNameWithoutExtension(path))}\" HintPath=\"{SecurityElement.Escape(path)}\" />"))}}</ItemGroup>
-                </Project>
-                """);
-            await BuilderSourceMigrationTests.Run(root, "restore", "SdkBoundary.csproj", "--disable-parallel");
-            await BuilderSourceMigrationTests.Run(root, "build", "SdkBoundary.csproj", "--no-restore");
-            using var bytes = File.OpenRead(Path.Combine(root, "bin/Debug/net10.0/SdkBoundary.dll"));
-            var assembly = context.LoadFromStream(bytes);
-            Assert.All(assembly.GetReferencedAssemblies(), reference => Assert.True(reference.Name!.StartsWith("System.", StringComparison.Ordinal)
-                || reference.Name is "Sunder.Sdk" or "Sunder.Sdk.Worker", reference.FullName));
-        }
-        finally { context.Unload(); Directory.Delete(root, recursive: true); }
+        var repository = BuilderSourceMigrationTests.FindRepository();
+
+        Assert.False(File.Exists(Path.Combine(repository,
+            "src/Sunder.Package.Agent/Runtime/DeferredAgentRpcServiceHandler.cs")));
+        Assert.DoesNotContain(typeof(SunderRpcContractDescriptor).Assembly.GetTypes(),
+            type => type.Name == "DeferredAgentRpcServiceHandler");
     }
 
     [Fact]
-    public void DeclaredErrors_AreAvailableBeforeActivationAndMismatchedHandlerIsRejected()
+    public async Task GeneratedSessionCleaner_DeclaresRoutesBeforeActivationAndDispatchesAfterRegistration()
     {
-        using var services = new ServiceCollection().BuildServiceProvider();
-        var deferred = new DeferredAgentRpcServiceHandler(
-            "test.service",
-            TestDescriptor,
-            static _ => new UndeclaredHandler());
+        using var package = RegressionTestPackageScope.Create();
+        var cleaner = new AgentAttachmentService(package.Context);
+        using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
+        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
+        await using var receiver = new GeneratedServiceTestScope(rpc);
+        var descriptor = CurrentPublicRpcDescriptors.Get(RegressionTestBindings.SessionCleaners);
+        var registration = receiver.Register(cleaner, descriptor.ContractId);
 
+        Assert.Equal("agent.attachment.cleaner", registration.ProviderId);
+        Assert.Equal(descriptor.ContractId, registration.ContractId);
+        Assert.Equal(descriptor.Version, registration.ContractVersion);
+        Assert.Equal(descriptor.Sha256, registration.DescriptorSha256);
+        Assert.Equal(descriptor.AbiSha256, registration.AbiSha256);
         Assert.Equal(
-            FlattenDeclaredErrors(TestDeclaredErrors),
-            FlattenDeclaredErrors(deferred.DeclaredErrors));
-        var exception = Assert.Throws<InvalidOperationException>(() => deferred.Activate(services));
-        Assert.Contains("does not implement the declared domain errors", exception.Message, StringComparison.Ordinal);
-        Assert.False(deferred.IsActive);
-    }
+            descriptor.Services.SelectMany(service => service.Methods.Select(method =>
+                $"{service.ServiceId}/{method.MethodId}:{string.Join(',', method.Errors)}")).Order(StringComparer.Ordinal),
+            registration.DeclaredErrors.SelectMany(service => service.Value.Select(method =>
+                $"{service.Key}/{method.Key}:{string.Join(',', method.Value)}")).Order(StringComparer.Ordinal));
 
-    private static IReadOnlyList<string> FlattenDeclaredErrors(
-        IReadOnlyDictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>> declaredErrors)
-        => declaredErrors
-            .SelectMany(static service => service.Value.Select(method =>
-                $"{service.Key}/{method.Key}:{string.Join(',', method.Value)}"))
-            .Order(StringComparer.Ordinal)
-            .ToArray();
+        state.Add("sunder.package.agent", descriptor, cleaner, registration.Handler,
+            EmptyDisposable.Instance, registration.ProviderId, "2.0.0");
+        var client = Assert.Single((await receiver.Providers<AgentServices.ISessionCleanerService>().ListAsync()).Providers).Service;
+        var identity = await client.DescribeAsync();
 
-    [Theory]
-    [InlineData("provider")]
-    [InlineData("contract")]
-    [InlineData("version")]
-    [InlineData("descriptor")]
-    [InlineData("abi")]
-    [InlineData("errors")]
-    public void GeneratedDeclaration_RejectsMismatchedActivationIdentity(string mutation)
-    {
-        using var services = new ServiceCollection().BuildServiceProvider();
-        var calls = 0;
-        var deferred = new DeferredAgentRpcServiceHandler(
-            handler => Registration("test.service", TestDescriptor.ContractId, TestDescriptor.Version, TestDescriptor.Sha256, TestDescriptor.AbiSha256!, new DeclarationHandler(handler)),
-            _ =>
-            {
-                calls++;
-                return Registration(mutation == "provider" ? "test.other" : "test.service",
-                    mutation == "contract" ? "test.other" : TestDescriptor.ContractId,
-                    mutation == "version" ? "9.0.0" : TestDescriptor.Version,
-                    mutation == "descriptor" ? new string('f', 64) : TestDescriptor.Sha256,
-                    mutation == "abi" ? new string('f', 64) : TestDescriptor.AbiSha256!,
-                    mutation == "errors" ? new UndeclaredHandler() : new EchoHandler());
-            });
-        Assert.Equal(0, calls);
-        Assert.Equal(FlattenDeclaredErrors(TestDeclaredErrors), FlattenDeclaredErrors(deferred.Registration.DeclaredErrors));
-        Assert.Contains("does not match its generated declaration", Assert.Throws<InvalidOperationException>(() => deferred.Activate(services)).Message, StringComparison.Ordinal);
-        Assert.Equal(1, calls);
-        Assert.False(deferred.IsActive);
-        deferred.Deactivate();
-
-        static SunderWorkerProviderRegistration Registration(string provider, string contract, string version, string descriptor, string abi, ISunderRpcServiceHandler handler)
-            => new(provider, contract, version, descriptor, abi, handler);
-    }
-
-    private sealed class DeclarationHandler(ISunderRpcServiceHandler inner) : ISunderRpcServiceHandler, ISunderRpcDeclaredErrorMetadata
-    {
-        public IReadOnlyDictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>> DeclaredErrors => TestDeclaredErrors;
-        public ValueTask<JsonElement> InvokeUnaryAsync(SunderRpcInvocationContext context, string serviceId, string methodId, JsonElement request, CancellationToken token = default)
-            => inner.InvokeUnaryAsync(context, serviceId, methodId, request, token);
-        public IAsyncEnumerable<JsonElement> InvokeServerStreamAsync(SunderRpcInvocationContext context, string serviceId, string methodId, JsonElement request, CancellationToken token = default)
-            => inner.InvokeServerStreamAsync(context, serviceId, methodId, request, token);
-    }
-
-    private sealed class UndeclaredHandler : ISunderRpcServiceHandler
-    {
-        public ValueTask<JsonElement> InvokeUnaryAsync(SunderRpcInvocationContext context, string serviceId, string methodId, JsonElement request, CancellationToken token = default)
-            => throw new NotSupportedException("A metadata-mismatched handler must never be activated.");
-        public IAsyncEnumerable<JsonElement> InvokeServerStreamAsync(SunderRpcInvocationContext context, string serviceId, string methodId, JsonElement request, CancellationToken token = default)
-            => throw new NotSupportedException("A metadata-mismatched handler must never be activated.");
+        Assert.Equal(cleaner.CleanerId, identity.Id);
+        Assert.Equal(cleaner.CleanerId, identity.DisplayName);
     }
 
     [Fact]
-    public async Task InvokeUnaryAsync_WaitsForProviderActivation()
+    public async Task GeneratedSessionCleaner_HonorsCancellationAndRetirementWithoutDeletingSessionData()
     {
-        using var services = new ServiceCollection().BuildServiceProvider();
-        var deferred = new DeferredAgentRpcServiceHandler(
-            "test.service",
-            TestDescriptor,
-            static _ => new EchoHandler());
-        var request = JsonSerializer.SerializeToElement(new { value = "ready" });
+        using var package = RegressionTestPackageScope.Create();
+        var cleaner = new AgentAttachmentService(package.Context);
+        var sessionId = Guid.NewGuid();
+        await cleaner.StoreAttachmentAsync(sessionId, new AgentAttachmentUploadRequest("keep.txt", "text/plain", [1]));
+        var attachmentDirectory = package.Context.Storage.RoleLocalWorkspace.GetLocalPath(
+            Path.Combine("agent", "attachments", sessionId.ToString("N")));
+        Assert.True(Directory.Exists(attachmentDirectory));
 
-        var invocation = deferred.InvokeUnaryAsync(
-            null!,
-            "test.service",
-            "echo",
-            request,
-            CancellationToken.None).AsTask();
-        await Task.Yield();
-        Assert.False(invocation.IsCompleted);
+        using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
+        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
+        await using var receiver = new GeneratedServiceTestScope(rpc);
+        var descriptor = CurrentPublicRpcDescriptors.Get(RegressionTestBindings.SessionCleaners);
+        var registration = receiver.Register(cleaner, descriptor.ContractId);
+        state.Add("sunder.package.agent", descriptor, cleaner, registration.Handler,
+            EmptyDisposable.Instance, registration.ProviderId, "2.0.0");
+        var entry = Assert.Single((await receiver.Providers<AgentServices.ISessionCleanerService>().ListAsync()).Providers);
+        var client = entry.Service;
 
-        deferred.Activate(services);
-
-        Assert.Equal(request, await invocation.WaitAsync(TestTimeout));
-    }
-
-    [Fact]
-    public async Task Deactivate_CancelsPendingInvocation()
-    {
-        var deferred = new DeferredAgentRpcServiceHandler(
-            "test.service",
-            TestDescriptor,
-            static _ => new EchoHandler());
-        var invocation = deferred.InvokeUnaryAsync(
-            null!,
-            "test.service",
-            "echo",
-            default,
-            CancellationToken.None).AsTask();
-
-        deferred.Deactivate();
-
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => invocation.WaitAsync(TestTimeout));
-    }
-
-    [Fact]
-    public async Task Deactivate_AfterActivationPreventsUnaryDispatchThroughCompletedActivation()
-    {
-        using var services = new ServiceCollection().BuildServiceProvider();
-        var handler = new RetirementAwareHandler();
-        var deferred = new DeferredAgentRpcServiceHandler("test.service", TestDescriptor, _ => handler);
-        deferred.Activate(services);
-
-        deferred.Deactivate();
-
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => deferred.InvokeUnaryAsync(
-            null!,
-            "test.service",
-            "blocked",
-            default).AsTask());
-        Assert.Equal(0, handler.UnaryInvocations);
-    }
-
-    [Fact]
-    public async Task Deactivate_AfterActivationPreventsStreamDispatchThroughCompletedActivation()
-    {
-        using var services = new ServiceCollection().BuildServiceProvider();
-        var handler = new RetirementAwareHandler();
-        var deferred = new DeferredAgentRpcServiceHandler("test.service", TestDescriptor, _ => handler);
-        deferred.Activate(services);
-
-        deferred.Deactivate();
-
-        await using var stream = deferred.InvokeServerStreamAsync(
-                null!,
-                "test.service",
-                "blocked",
-                default)
-            .GetAsyncEnumerator();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => stream.MoveNextAsync().AsTask());
-        Assert.Equal(0, handler.StreamInvocations);
-    }
-
-    [Fact]
-    public async Task Deactivate_CancelsActiveUnaryInvocation()
-    {
-        using var services = new ServiceCollection().BuildServiceProvider();
-        var handler = new RetirementAwareHandler();
-        var deferred = new DeferredAgentRpcServiceHandler("test.service", TestDescriptor, _ => handler);
-        deferred.Activate(services);
-        var invocation = deferred.InvokeUnaryAsync(
-            null!,
-            "test.service",
-            "blocked",
-            default).AsTask();
-        await handler.UnaryStarted.Task.WaitAsync(TestTimeout);
-
-        deferred.Deactivate();
-
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => invocation.WaitAsync(TestTimeout));
-    }
-
-    [Fact]
-    public async Task Deactivate_CancelsActiveStreamInvocation()
-    {
-        using var services = new ServiceCollection().BuildServiceProvider();
-        var handler = new RetirementAwareHandler();
-        var deferred = new DeferredAgentRpcServiceHandler("test.service", TestDescriptor, _ => handler);
-        deferred.Activate(services);
-        await using var stream = deferred.InvokeServerStreamAsync(
-                null!,
-                "test.service",
-                "blocked",
-                default)
-            .GetAsyncEnumerator();
-        var moveNext = stream.MoveNextAsync().AsTask();
-        await handler.StreamStarted.Task.WaitAsync(TestTimeout);
-
-        deferred.Deactivate();
-
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => moveNext.WaitAsync(TestTimeout));
-    }
-
-    private sealed class EchoHandler : ISunderRpcServiceHandler, ISunderRpcDeclaredErrorMetadata
-    {
-        public IReadOnlyDictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>> DeclaredErrors
-            => TestDeclaredErrors;
-
-        public ValueTask<JsonElement> InvokeUnaryAsync(
-            SunderRpcInvocationContext context,
-            string serviceId,
-            string methodId,
-            JsonElement request,
-            CancellationToken cancellationToken)
+        using (var cancellation = new CancellationTokenSource())
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            return ValueTask.FromResult(request);
+            cancellation.Cancel();
+            var cancelled = await Assert.ThrowsAsync<OperationCanceledException>(
+                () => client.DeleteSessionAsync(sessionId, cancellation.Token).AsTask());
+            Assert.Equal(cancellation.Token, cancelled.CancellationToken);
         }
+        Assert.True(Directory.Exists(attachmentDirectory));
 
-        public async IAsyncEnumerable<JsonElement> InvokeServerStreamAsync(
-            SunderRpcInvocationContext context,
-            string serviceId,
-            string methodId,
-            JsonElement request,
-            [EnumeratorCancellation] CancellationToken cancellationToken)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            yield return request;
-            await Task.CompletedTask;
-        }
+        await state.RetireAsync(cleaner);
+
+        var stale = await Assert.ThrowsAsync<SunderRpcException>(() => entry.EnsureCurrentAsync().AsTask());
+        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, stale.Error.Kind);
+        Assert.True(entry.RetirementToken.IsCancellationRequested);
+        var retired = await Assert.ThrowsAsync<SunderRpcException>(() => client.DeleteSessionAsync(sessionId).AsTask());
+        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, retired.Error.Kind);
+        Assert.Equal("rpc.stale-endpoint", retired.Error.Code);
+        Assert.Null(state.LastInvocationFailure);
+        Assert.True(Directory.Exists(attachmentDirectory));
     }
 
-    private sealed class RetirementAwareHandler : ISunderRpcServiceHandler, ISunderRpcDeclaredErrorMetadata
+    private sealed class EmptyDisposable : IDisposable
     {
-        private int _streamInvocations;
-        private int _unaryInvocations;
+        internal static EmptyDisposable Instance { get; } = new();
 
-        internal int StreamInvocations => Volatile.Read(ref _streamInvocations);
-
-        internal int UnaryInvocations => Volatile.Read(ref _unaryInvocations);
-
-        internal TaskCompletionSource StreamStarted { get; } = new(
-            TaskCreationOptions.RunContinuationsAsynchronously);
-
-        internal TaskCompletionSource UnaryStarted { get; } = new(
-            TaskCreationOptions.RunContinuationsAsynchronously);
-
-        public IReadOnlyDictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>> DeclaredErrors
-            => TestDeclaredErrors;
-
-        public async ValueTask<JsonElement> InvokeUnaryAsync(
-            SunderRpcInvocationContext context,
-            string serviceId,
-            string methodId,
-            JsonElement request,
-            CancellationToken cancellationToken)
-        {
-            Interlocked.Increment(ref _unaryInvocations);
-            UnaryStarted.TrySetResult();
-            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
-            return request;
-        }
-
-        public async IAsyncEnumerable<JsonElement> InvokeServerStreamAsync(
-            SunderRpcInvocationContext context,
-            string serviceId,
-            string methodId,
-            JsonElement request,
-            [EnumeratorCancellation] CancellationToken cancellationToken)
-        {
-            Interlocked.Increment(ref _streamInvocations);
-            StreamStarted.TrySetResult();
-            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
-            yield return request;
-        }
+        public void Dispose() { }
     }
 }

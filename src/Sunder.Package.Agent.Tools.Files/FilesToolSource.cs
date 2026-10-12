@@ -1,13 +1,19 @@
 using Sunder.Agent.Execution.Common;
-using Sunder.Package.Agent.Contracts.Contracts;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
+using Sunder.Sdk.Worker;
 
 namespace Sunder.Package.Agent.Tools.Files;
 
-public sealed partial class FilesToolSource
+[SunderServiceProvider(typeof(IToolSourceService), ProviderId = "files.tools")]
+[SunderServiceProvider(typeof(IPermissionSurfaceService), ProviderId = "files.permissions")]
+[SunderServiceProvider(typeof(IPromptContextContributorService), ProviderId = "files.prompt.context")]
+[SunderServiceProvider(typeof(ISessionCleanerService), ProviderId = "files.session.cleaner")]
+public sealed partial class FilesToolSource : IToolSourceService, IPermissionSurfaceService, IPromptContextContributorService, ISessionCleanerService, ISunderWorkerActivationService
 {
     private const int MaxPostAccessScopePaths = 64;
     private readonly Lazy<ScopedInstructionContextService> _scopedInstructions;
@@ -21,7 +27,8 @@ public sealed partial class FilesToolSource
             LazyThreadSafetyMode.ExecutionAndPublication);
     }
 
-    internal void Activate() => _ = ScopedInstructions;
+    public ValueTask ActivateAsync(SunderWorkerContext context, CancellationToken token = default)
+    { token.ThrowIfCancellationRequested(); _ = ScopedInstructions; return ValueTask.CompletedTask; }
 
     public string SourceId => FileToolDescriptorRegistry.SourceId;
 
@@ -37,8 +44,20 @@ public sealed partial class FilesToolSource
 
     public string AcknowledgmentSinkId => "agent.files.scoped-instruction-acknowledgment";
 
-    public AgentToolPresentation? ResolveToolPresentation(AgentToolPresentationRequest request)
-        => FileToolPresentationAdapter.Resolve(request);
+    public ValueTask<AgentToolSourceDescriptor> DescribeAsync(CancellationToken token = default)
+    { token.ThrowIfCancellationRequested(); return ValueTask.FromResult(new AgentToolSourceDescriptor { SourceId = SourceId, DisplayName = DisplayName, SourceKind = SourceKind }); }
+
+    ValueTask<AgentPermissionSurfaceDescriptor> IPermissionSurfaceService.DescribeAsync(CancellationToken token)
+    { token.ThrowIfCancellationRequested(); return ValueTask.FromResult(new AgentPermissionSurfaceDescriptor { SurfaceId = SurfaceId, DisplayName = DisplayName, Actions = ListActions() }); }
+
+    ValueTask<AgentPromptContextContributorDescriptor> IPromptContextContributorService.DescribeAsync(CancellationToken token)
+    { token.ThrowIfCancellationRequested(); return ValueTask.FromResult(new AgentPromptContextContributorDescriptor { ContributorId = ContributorId, DisplayName = DisplayName, AcknowledgmentSinkId = AcknowledgmentSinkId }); }
+
+    ValueTask<AgentServiceIdentity> ISessionCleanerService.DescribeAsync(CancellationToken token)
+    { token.ThrowIfCancellationRequested(); return ValueTask.FromResult(new AgentServiceIdentity { Id = CleanerId, DisplayName = CleanerId }); }
+
+    public ValueTask<AgentToolPresentation?> PresentationAsync(AgentToolPresentationRequest request, CancellationToken token = default)
+    { token.ThrowIfCancellationRequested(); return ValueTask.FromResult(FileToolPresentationAdapter.Resolve(request)); }
 
     public ValueTask<IReadOnlyList<AgentToolDescriptor>> ListToolsAsync(
         AgentToolSourceContext context,
@@ -48,12 +67,11 @@ public sealed partial class FilesToolSource
         return ValueTask.FromResult(FileToolDescriptorRegistry.Descriptors);
     }
 
-    internal async ValueTask<AgentToolReadiness?> GetReadinessAsync(
-        string toolId,
-        AgentToolSourceContext context,
-        FileExecutionReference? selectedTarget,
+    public async ValueTask<AgentToolReadiness?> GetReadinessAsync(
+        CSunder_Agent_Tool_Source_ToolSourceGetReadinessRequest request,
         CancellationToken cancellationToken = default)
     {
+        var (toolId, context) = (request.ToolId, request.Context);
         if (!FileToolDescriptorRegistry.Contains(toolId))
         {
             return null;
@@ -61,21 +79,21 @@ public sealed partial class FilesToolSource
 
         if (context.Workspace is null)
         {
-            return new AgentToolReadiness(toolId, AgentToolReadinessStatus.Failed, "File tools require a selected workspace.");
+            return new() { ToolId = toolId, Status = AgentToolReadinessStatus.Failed, Message = "File tools require a selected workspace." };
         }
 
         if (context.ExecutionBinding is null)
         {
-            return new AgentToolReadiness(toolId, AgentToolReadinessStatus.Failed, "The selected workspace is not bound to an installed execution target.");
+            return new() { ToolId = toolId, Status = AgentToolReadinessStatus.Failed, Message = "The selected workspace is not bound to an installed execution target." };
         }
         var targetLease = await AcquireTargetAsync(
-                selectedTarget,
+                context.ExecutionTarget,
                 context.ExecutionBinding,
                 cancellationToken)
             .ConfigureAwait(false);
         if (targetLease is null)
         {
-            return new AgentToolReadiness(toolId, AgentToolReadinessStatus.Failed, "The selected workspace is not bound to an installed execution target.");
+            return new() { ToolId = toolId, Status = AgentToolReadinessStatus.Failed, Message = "The selected workspace is not bound to an installed execution target." };
         }
 
         return await InvokeTargetAsync(
@@ -87,46 +105,36 @@ public sealed partial class FilesToolSource
                      || toolId.Equals("glob", StringComparison.OrdinalIgnoreCase))
                     && !FilesExecutionFacets.SupportsFacet(target, AgentExecutionFacetIds.StructuredFileSearch))
                 {
-                    return new AgentToolReadiness(
-                        toolId,
-                        AgentToolReadinessStatus.Failed,
-                        "The selected target does not support governed structured file search.");
+                    return new AgentToolReadiness { ToolId = toolId, Status = AgentToolReadinessStatus.Failed,
+                        Message = "The selected target does not support governed structured file search." };
                 }
 
                 if (!FilesExecutionFacets.SupportsFacet(target, AgentExecutionFacetIds.ScopedInstructionDiscovery)
                     || !FilesExecutionFacets.SupportsFacet(target, AgentExecutionFacetIds.ExecutionScope))
                 {
-                    return new AgentToolReadiness(
-                        toolId,
-                        AgentToolReadinessStatus.Failed,
-                        "The selected target does not support scoped-instruction discovery required by first-party Files enforcement.");
+                    return new AgentToolReadiness { ToolId = toolId, Status = AgentToolReadinessStatus.Failed,
+                        Message = "The selected target does not support scoped-instruction discovery required by first-party Files enforcement." };
                 }
 
-                var readiness = await target.GetReadinessAsync(
-                    new AgentExecutionTargetContext(context.SessionId, context.Profile?.ProfileId, context.Workspace, context.ExecutionBinding)
+                var readiness = await target.Service.ReadinessAsync(
+                    FileExecutionTarget.Context(context.SessionId, context.Profile?.ProfileId, context.Workspace, context.ExecutionBinding) with
                     {
                         ExpectedConfigurationGeneration = context.ExecutionTargetConfigurationGeneration,
                     },
                     invocationToken);
-                return readiness.Status == AgentExecutionTargetReadinessStatus.Ready && target.Descriptor.SupportsFiles
-                    ? new AgentToolReadiness(
-                        toolId,
-                        AgentToolReadinessStatus.Ready,
-                        "Workspace file tools are ready with scoped AGENTS.md enforcement.")
-                    : new AgentToolReadiness(toolId, AgentToolReadinessStatus.Failed, readiness.Message);
+                var ready = readiness.Status == AgentExecutionTargetReadinessStatus.Ready && target.Descriptor.SupportsFiles;
+                return new AgentToolReadiness { ToolId = toolId, Status = ready ? AgentToolReadinessStatus.Ready : AgentToolReadinessStatus.Failed,
+                    Message = ready ? "Workspace file tools are ready with scoped AGENTS.md enforcement." : readiness.Message };
             },
-            () => new AgentToolReadiness(
-                toolId,
-                AgentToolReadinessStatus.Failed,
-                "The selected execution target became unavailable while readiness was being checked."));
+            () => new AgentToolReadiness { ToolId = toolId, Status = AgentToolReadinessStatus.Failed,
+                Message = "The selected execution target became unavailable while readiness was being checked." });
     }
 
-    internal async ValueTask<AgentToolResult> ExecuteAsync(
-        AgentToolExecutionContext context,
-        AgentToolRequest request,
-        FileExecutionReference? selectedTarget,
+    public async ValueTask<AgentToolResult> ExecuteAsync(
+        CSunder_Agent_Tool_Source_ToolSourceExecuteRequest invocation,
         CancellationToken cancellationToken = default)
     {
+        var (context, request) = (invocation.Context, invocation.Request);
         if (context.Workspace is null)
         {
             return FileToolResult.Error(request.ToolId, "File tools require a selected workspace.", "files-workspace-required");
@@ -137,7 +145,7 @@ public sealed partial class FilesToolSource
             return FileToolResult.Error(request.ToolId, "The selected workspace is not bound to an installed execution target.", "files-target-required");
         }
         var targetLease = await AcquireTargetAsync(
-                selectedTarget,
+                context.ExecutionTarget,
                 context.ExecutionBinding,
                 cancellationToken)
             .ConfigureAwait(false);
@@ -151,13 +159,9 @@ public sealed partial class FilesToolSource
             cancellationToken,
             async (target, invocationToken) =>
             {
-                var targetContext = new AgentExecutionTargetContext(
-                    context.SessionId,
-                    context.ProfileId,
-                    context.Workspace,
-                    context.ExecutionBinding,
-                    context.AllowOutsideConfiguredScope)
+                var targetContext = FileExecutionTarget.Context(context.SessionId, context.ProfileId, context.Workspace, context.ExecutionBinding) with
                 {
+                    AllowOutsideConfiguredScope = context.AllowOutsideConfiguredScope,
                     ApprovedResourceReferences = context.ApprovedResourceReferences,
                     ApprovedResourceClaims = context.ApprovedResourceClaims,
                     ApprovedResourceCapabilities = context.ApprovedResourceCapabilities,
@@ -167,7 +171,7 @@ public sealed partial class FilesToolSource
                 try
                 {
                     if (IsMutation(request.ToolId)
-                        && await PreflightExecutionAsync(context, request, selectedTarget, invocationToken) is { } deferred)
+                        && await PreflightAsync(new() { Context = context, Request = request }, invocationToken) is { } deferred)
                     {
                         return deferred;
                     }
@@ -181,7 +185,7 @@ public sealed partial class FilesToolSource
                         if (!result.IsError
                             && FileToolArguments.TryParseRead(request.ArgumentsJson, out var read, out _))
                         {
-                            accessProbes = [new AgentScopedInstructionProbe(read.Path, IsDirectory: readResult.IsDirectory)];
+                            accessProbes = [new() { Path = read.Path, IsDirectory = readResult.IsDirectory, FollowFinalSymbolicLink = true }];
                         }
                     }
                     else
@@ -202,7 +206,7 @@ public sealed partial class FilesToolSource
                                     var search = await FileSearchHandler.ExecuteGrepAsync(target, targetContext, request, invocationToken);
                                     result = search.Result;
                                     accessProbes = search.MatchedPaths
-                                        .Select(path => new AgentScopedInstructionProbe(path))
+                                        .Select(path => new AgentScopedInstructionProbe { Path = path, IsDirectory = false, FollowFinalSymbolicLink = true })
                                         .ToArray();
                                     break;
                                 }
@@ -211,7 +215,7 @@ public sealed partial class FilesToolSource
                                     var search = await FileSearchHandler.ExecuteGlobAsync(target, targetContext, request, invocationToken);
                                     result = search.Result;
                                     accessProbes = search.MatchedPaths
-                                        .Select(path => new AgentScopedInstructionProbe(path))
+                                        .Select(path => new AgentScopedInstructionProbe { Path = path, IsDirectory = false, FollowFinalSymbolicLink = true })
                                         .ToArray();
                                     break;
                                 }
@@ -281,30 +285,41 @@ public sealed partial class FilesToolSource
                 finally
                 {
                     if (FilesExecutionFacets.SupportsFacet(target, AgentExecutionFacetIds.ResourceAuthority)
-                        && target is IAgentResourceAuthorityExecutionTarget authorityTarget)
+                        && !target.Reference.RetirementToken.IsCancellationRequested)
                     {
-                        authorityTarget.ReleaseResourceAuthority(targetContext.ApprovedResourceCapabilities);
+                        try
+                        {
+                            await target.Service.ReleaseResourceAuthorityAsync(targetContext.ApprovedResourceCapabilities, CancellationToken.None).ConfigureAwait(false);
+                        }
+                        catch (SunderRpcException exception) when (exception.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable)
+                        {
+                            // Retirement revoked authority; cleanup must not replace an unsafe operation failure.
+                        }
+                        catch (OperationCanceledException) when (target.Reference.RetirementToken.IsCancellationRequested)
+                        {
+                            // The exact activation's authority is already revoked.
+                        }
                     }
                 }
             },
             () => FileToolResult.Error(
                 request.ToolId,
                 "The selected execution target became unavailable while the file operation was running.",
-                AgentToolResultErrorCodes.PackageUnavailable));
+                AgentToolResultErrorCodes.PackageUnavailable),
+            preserveDispatchFailure: IsMutation(request.ToolId));
     }
 
-    internal async ValueTask<AgentPermissionRequest?> BuildPermissionRequestAsync(
-        AgentToolExecutionContext context,
-        AgentToolRequest request,
-        FileExecutionReference? selectedTarget,
+    public async ValueTask<AgentPermissionRequest?> PermissionAsync(
+        CSunder_Agent_Tool_Source_ToolSourcePermissionRequest invocation,
         CancellationToken cancellationToken = default)
     {
+        var (context, request) = (invocation.Context, invocation.Request);
         if (context.ExecutionBinding is null)
         {
             return await FilePermissionPlanner.BuildAsync(null, context, request, cancellationToken);
         }
         var targetLease = await AcquireTargetAsync(
-                selectedTarget,
+                context.ExecutionTarget,
                 context.ExecutionBinding,
                 cancellationToken)
             .ConfigureAwait(false);
@@ -323,9 +338,8 @@ public sealed partial class FilesToolSource
     public IReadOnlyList<AgentPermissionActionDescriptor> ListActions()
         => FilePermissionPlanner.Actions;
 
-    internal async ValueTask<AgentPromptContextContribution?> ContributeContextAsync(
+    public async ValueTask<AgentPromptContextContribution?> ContributeAsync(
         AgentPromptContextRequest request,
-        FileExecutionReference? selectedTarget,
         CancellationToken cancellationToken = default)
     {
         if (request.ExecutionBinding is null)
@@ -333,7 +347,7 @@ public sealed partial class FilesToolSource
             return null;
         }
         var targetLease = await AcquireTargetAsync(
-                selectedTarget,
+                request.ExecutionTarget,
                 request.ExecutionBinding,
                 cancellationToken)
             .ConfigureAwait(false);
@@ -351,17 +365,16 @@ public sealed partial class FilesToolSource
                 var blocks = scopeContribution?.Blocks.ToList() ?? [];
                 blocks.AddRange(await ScopedInstructions.BuildPromptContextAsync(target, request, invocationToken));
 
-                return blocks.Count == 0 ? null : new AgentPromptContextContribution(blocks);
+                return blocks.Count == 0 ? null : new AgentPromptContextContribution { Blocks = blocks };
             },
             static () => null);
     }
 
-    internal async ValueTask<AgentToolResult?> PreflightExecutionAsync(
-        AgentToolExecutionContext context,
-        AgentToolRequest request,
-        FileExecutionReference? selectedTarget,
+    public async ValueTask<AgentToolResult?> PreflightAsync(
+        CSunder_Agent_Tool_Source_ToolSourcePreflightRequest invocation,
         CancellationToken cancellationToken = default)
     {
+        var (context, request) = (invocation.Context, invocation.Request);
         if (!TryValidateArguments(request, out var validationError))
         {
             return FileToolResult.Error(request.ToolId, validationError!, "files-arguments-invalid");
@@ -372,7 +385,7 @@ public sealed partial class FilesToolSource
             return null;
         }
         var targetLease = await AcquireTargetAsync(
-                selectedTarget,
+                context.ExecutionTarget,
                 context.ExecutionBinding,
                 cancellationToken)
             .ConfigureAwait(false);
@@ -386,23 +399,18 @@ public sealed partial class FilesToolSource
             cancellationToken,
             async (target, invocationToken) =>
             {
-                var targetContext = new AgentExecutionTargetContext(
-                    context.SessionId,
-                    context.ProfileId,
-                    context.Workspace,
-                    context.ExecutionBinding,
-                    context.AllowOutsideConfiguredScope)
+                var targetContext = FileExecutionTarget.Context(context.SessionId, context.ProfileId, context.Workspace, context.ExecutionBinding) with
                 {
+                    AllowOutsideConfiguredScope = context.AllowOutsideConfiguredScope,
                     ApprovedResourceReferences = context.ApprovedResourceReferences,
                     ApprovedResourceClaims = context.ApprovedResourceClaims,
                     ApprovedResourceCapabilities = context.ApprovedResourceCapabilities,
                     ResourceOperation = context.ResourceOperation,
                     ExpectedConfigurationGeneration = context.ExecutionTargetConfigurationGeneration,
                 };
-                if (FilesExecutionFacets.SupportsFacet(target, AgentExecutionFacetIds.ResourceAuthority)
-                    && target is IAgentResourceAuthorityExecutionTarget authorityTarget)
+                if (FilesExecutionFacets.SupportsFacet(target, AgentExecutionFacetIds.ResourceAuthority))
                 {
-                    var validation = await authorityTarget.ValidateResourceAuthorityAsync(
+                    var validation = await target.Service.ValidateResourceAuthorityAsync(
                         targetContext,
                         invocationToken);
                     if (!validation.IsValid)
@@ -439,18 +447,18 @@ public sealed partial class FilesToolSource
                 AgentToolResultErrorCodes.PackageUnavailable));
     }
 
-    public void DeleteSessionData(Guid sessionId)
-        => ScopedInstructions.DeleteSessionData(sessionId);
+    public ValueTask DeleteSessionAsync(Guid sessionId, CancellationToken token = default)
+    { token.ThrowIfCancellationRequested(); ScopedInstructions.DeleteSessionData(sessionId); return ValueTask.CompletedTask; }
 
-    public ValueTask AcknowledgePromptContextAsync(
+    public ValueTask AcknowledgeAsync(
         AgentPromptContextReceipt receipt,
         CancellationToken cancellationToken = default)
         => ScopedInstructions.AcknowledgePromptContextAsync(receipt, cancellationToken);
 
     private ScopedInstructionContextService ScopedInstructions => _scopedInstructions.Value;
 
-    private static async ValueTask<FileExecutionLease?> AcquireTargetAsync(
-        FileExecutionReference? selectedReference,
+    private static async ValueTask<FileExecutionTarget?> AcquireTargetAsync(
+        ServiceReference<IExecutionTargetService>? selectedReference,
         AgentWorkspaceBindingRecord binding,
         CancellationToken cancellationToken)
     {
@@ -459,39 +467,27 @@ public sealed partial class FilesToolSource
             return null;
         }
 
-        var lease = await selectedReference.TryAcquireAsync(cancellationToken).ConfigureAwait(false);
-        if (lease is null)
-        {
-            return null;
-        }
-
-        var retirementToken = lease.RetirementToken;
+        var retirementToken = selectedReference.RetirementToken;
         using var invocation = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken,
             retirementToken);
         try
         {
-            var descriptor = await lease.DescribeAsync(invocation.Token).ConfigureAwait(false);
+            await selectedReference.EnsureCurrentAsync(invocation.Token).ConfigureAwait(false);
+            var descriptor = await selectedReference.Service.DescribeAsync(invocation.Token).ConfigureAwait(false);
             if (retirementToken.IsCancellationRequested || !IsBindingMatch(descriptor, binding))
             {
-                await lease.DisposeAsync().ConfigureAwait(false);
                 return null;
             }
 
-            return lease;
+            return new(selectedReference, descriptor);
         }
         catch (Exception exception) when (IsTargetUnavailable(
             exception,
             retirementToken,
             cancellationToken))
         {
-            await lease.DisposeAsync().ConfigureAwait(false);
             return null;
-        }
-        catch
-        {
-            await lease.DisposeAsync().ConfigureAwait(false);
-            throw;
         }
     }
 
@@ -502,24 +498,29 @@ public sealed partial class FilesToolSource
            || string.Equals(descriptor.TargetKind, binding.ContributionId, StringComparison.OrdinalIgnoreCase);
 
     private static async ValueTask<TResult> InvokeTargetAsync<TResult>(
-        FileExecutionLease lease,
+        FileExecutionTarget target,
         CancellationToken cancellationToken,
-        Func<IAgentExecutionTarget, CancellationToken, ValueTask<TResult>> callback,
-        Func<TResult> unavailableResult)
+        Func<FileExecutionTarget, CancellationToken, ValueTask<TResult>> callback,
+        Func<TResult> unavailableResult,
+        bool preserveDispatchFailure = false)
     {
-        await using (lease.ConfigureAwait(false))
-        {
-            var retirementToken = lease.RetirementToken;
+            var retirementToken = target.Reference.RetirementToken;
             using var invocation = CancellationTokenSource.CreateLinkedTokenSource(
                 cancellationToken,
                 retirementToken);
+            var callbackCompleted = false;
             try
             {
-                var result = await callback(lease.Service, invocation.Token).ConfigureAwait(false);
+                var result = await callback(target, invocation.Token).ConfigureAwait(false);
+                callbackCompleted = true;
                 cancellationToken.ThrowIfCancellationRequested();
-                if (!await lease.IsCurrentAsync(invocation.Token).ConfigureAwait(false)) return unavailableResult();
+                await target.Reference.EnsureCurrentAsync(invocation.Token).ConfigureAwait(false);
                 if (retirementToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
                 {
+                    if (preserveDispatchFailure)
+                    {
+                        retirementToken.ThrowIfCancellationRequested();
+                    }
                     return unavailableResult();
                 }
                 return result;
@@ -527,11 +528,16 @@ public sealed partial class FilesToolSource
             catch (Exception exception) when (IsTargetUnavailable(
                 exception,
                 retirementToken,
-                cancellationToken))
+                cancellationToken)
+                && (!preserveDispatchFailure || !callbackCompleted && exception is SunderRpcException
+                {
+                    Error.DispatchState: SunderRpcDispatchState.NotDispatched,
+                    Error.RetrySafety: SunderRpcRetrySafety.Safe,
+                }))
             {
+                // Mutating calls must preserve uncertain dispatch for Agent's ambiguity boundary.
                 return unavailableResult();
             }
-        }
     }
 
     private static bool IsTargetUnavailable(
@@ -559,18 +565,19 @@ public sealed partial class FilesToolSource
         switch (request.ToolId.ToLowerInvariant())
         {
             case "write" when FileToolArguments.TryParseWrite(request.ArgumentsJson, out var write, out _):
-                probes = [new AgentScopedInstructionProbe(write.Path)];
+                probes = [new() { Path = write.Path, IsDirectory = false, FollowFinalSymbolicLink = true }];
                 return true;
             case "edit" when FileToolArguments.TryParseEdit(request.ArgumentsJson, out var edit, out _):
-                probes = [new AgentScopedInstructionProbe(edit.Path)];
+                probes = [new() { Path = edit.Path, IsDirectory = false, FollowFinalSymbolicLink = true }];
                 return true;
             case "apply_patch" when FileToolArguments.TryParsePatch(request.ArgumentsJson, out var patch, out _):
                 try
                 {
                     probes = FilePatchParser.Parse(patch.PatchText)
                         .GroupBy(operation => operation.Path, StringComparer.Ordinal)
-                        .Select(group => new AgentScopedInstructionProbe(group.Key)
+                        .Select(group => new AgentScopedInstructionProbe
                         {
+                            Path = group.Key, IsDirectory = false,
                             FollowFinalSymbolicLink = group.All(operation => operation.Kind != FilePatchOperationKind.Delete),
                         })
                         .ToArray();
@@ -587,7 +594,7 @@ public sealed partial class FilesToolSource
     }
 
     private static async ValueTask<AgentToolResult?> TryRejectCompoundInstructionPatchAsync(
-        IAgentExecutionTarget target,
+        FileExecutionTarget target,
         AgentToolExecutionContext context,
         AgentToolRequest request,
         CancellationToken cancellationToken)
@@ -610,13 +617,9 @@ public sealed partial class FilesToolSource
                 return null;
             }
 
-            var targetContext = new AgentExecutionTargetContext(
-                context.SessionId,
-                context.ProfileId,
-                context.Workspace!,
-                context.ExecutionBinding!,
-                context.AllowOutsideConfiguredScope)
+            var targetContext = FileExecutionTarget.Context(context.SessionId, context.ProfileId, context.Workspace!, context.ExecutionBinding!) with
             {
+                AllowOutsideConfiguredScope = context.AllowOutsideConfiguredScope,
                 ApprovedResourceReferences = context.ApprovedResourceReferences,
                 ApprovedResourceClaims = context.ApprovedResourceClaims,
                 ApprovedResourceCapabilities = context.ApprovedResourceCapabilities,
@@ -626,7 +629,7 @@ public sealed partial class FilesToolSource
             var resources = new List<AgentResolvedResource>();
             foreach (var path in operations.Select(operation => operation.Path).Distinct(StringComparer.Ordinal))
             {
-                resources.Add(await target.ResolveFileResourceAsync(targetContext, path, cancellationToken));
+                resources.Add(await target.Service.ResolveFileAsync(new() { Context = targetContext, Path = path }, cancellationToken));
             }
             if (!resources.Any(resource => resource.IsScopedInstructionDocument
                                            || IsInstructionPath(resource.CanonicalReference))
@@ -635,21 +638,16 @@ public sealed partial class FilesToolSource
                 return null;
             }
 
-            return new AgentToolResult(
+            return FileToolResult.Error(
                 request.ToolId,
                 "A patch that changes AGENTS.md cannot mutate another path in the same dispatch.",
-                Content: "### Patch not dispatched\n\nSplit the AGENTS.md change into its own apply_patch call, refresh prompt context, and replan later governed mutations.",
-                IsError: true,
-                ErrorCode: "files-agents-compound-patch-rejected");
+                "files-agents-compound-patch-rejected") with
+            { Content = "### Patch not dispatched\n\nSplit the AGENTS.md change into its own apply_patch call, refresh prompt context, and replan later governed mutations." };
         }
         catch (FilePatchOperationLimitException ex)
         {
-            return new AgentToolResult(
-                request.ToolId,
-                ex.Message,
-                Content: $"### Patch not dispatched\n\n{ex.Message} No files were changed.",
-                IsError: true,
-                ErrorCode: "files-scoped-instruction-path-limit");
+            return FileToolResult.Error(request.ToolId, ex.Message, "files-scoped-instruction-path-limit") with
+            { Content = $"### Patch not dispatched\n\n{ex.Message} No files were changed." };
         }
         catch (SunderRpcException)
         {
@@ -657,29 +655,24 @@ public sealed partial class FilesToolSource
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            return new AgentToolResult(
+            return FileToolResult.Error(
                 request.ToolId,
                 "The patch targets could not be classified canonically. No files were changed.",
-                Content: "### Patch not dispatched\n\nCanonical target classification failed, so the patch was rejected before mutation.",
-                IsError: true,
-                ErrorCode: "files-agents-patch-classification-failed");
+                "files-agents-patch-classification-failed") with
+            { Content = "### Patch not dispatched\n\nCanonical target classification failed, so the patch was rejected before mutation." };
         }
     }
 
     private static AgentToolResult WithheldAccessResult(
-        IAgentExecutionTarget target,
+        FileExecutionTarget target,
         string toolId,
         string message,
         string errorCode,
         bool requiresRefresh)
-        => new(
-            toolId,
-            "File result withheld pending scoped instruction recovery.",
-            Content: $"### File result withheld\n\n{message}\n\nNo file content, directory entries, or search matches from the successful access were returned.",
-            IsError: true,
-            ErrorCode: errorCode,
-            BackendId: FileToolResult.BackendId(target))
+        => FileToolResult.Error(toolId, "File result withheld pending scoped instruction recovery.", errorCode) with
         {
+            Content = $"### File result withheld\n\n{message}\n\nNo file content, directory entries, or search matches from the successful access were returned.",
+            BackendId = FileToolResult.BackendId(target),
             RequiresPromptContextRefresh = requiresRefresh,
         };
 
@@ -707,11 +700,8 @@ public sealed partial class FilesToolSource
                     return false;
                 }
                 return FileSearchRequestValidation.TryValidateRequest(
-                    new AgentFileSearchRequest(
-                        string.IsNullOrWhiteSpace(grep.Path) ? "." : grep.Path,
-                        AgentFileSearchKind.Grep,
-                        grep.Pattern,
-                        grep.Include),
+                    new AgentFileSearchRequest { Path = string.IsNullOrWhiteSpace(grep.Path) ? "." : grep.Path,
+                        Kind = AgentFileSearchKind.Grep, Pattern = grep.Pattern, Include = grep.Include },
                     out error);
             case "glob":
                 if (!FileToolArguments.TryParseGlob(request.ArgumentsJson, out var glob, out error))
@@ -719,10 +709,8 @@ public sealed partial class FilesToolSource
                     return false;
                 }
                 return FileSearchRequestValidation.TryValidateRequest(
-                    new AgentFileSearchRequest(
-                        string.IsNullOrWhiteSpace(glob.Path) ? "." : glob.Path,
-                        AgentFileSearchKind.Glob,
-                        glob.Pattern),
+                    new AgentFileSearchRequest { Path = string.IsNullOrWhiteSpace(glob.Path) ? "." : glob.Path,
+                        Kind = AgentFileSearchKind.Glob, Pattern = glob.Pattern, Include = null },
                     out error);
             default:
                 error = $"Unknown file tool '{request.ToolId}'.";

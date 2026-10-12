@@ -4,11 +4,14 @@ using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.HistorySearch;
 
+[SunderServiceProvider(typeof(Rpc.Public.SessionCleanerService), ProviderId = "agent.history.cleaner")]
 internal sealed partial class HistorySearchIndexingService :
     IAgentSessionDataCleaner,
+    Rpc.Public.SessionCleanerService,
     IAsyncDisposable
 {
     private const int MaximumPendingKeys = 4_096;
@@ -81,6 +84,20 @@ internal sealed partial class HistorySearchIndexingService :
     }
 
     public string CleanerId => "agent.history-search";
+
+    public ValueTask<AgentServiceIdentity> DescribeAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(new AgentServiceIdentity(CleanerId, CleanerId));
+    }
+
+    public ValueTask DeleteSessionAsync(Guid sessionId, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        // Once deletion enters the durable projection fence, drain it even if
+        // the remote request is withdrawn. The ids-only cleanup job is retryable.
+        return new(DeleteSessionDataAsync(sessionId));
+    }
 
     internal void RequestRebuild()
     {

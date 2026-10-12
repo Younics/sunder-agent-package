@@ -1,62 +1,55 @@
 using System.Text;
-using Sunder.Package.Agent.Contracts.Contracts;
+using System.Runtime.CompilerServices;
+using System.Threading.Channels;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
-using Sunder.Package.Agent.Skills.Runtime;
 using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Skills.Services;
 
-public sealed partial class SkillsFeature(SkillStore store, ISkillsRuntimeBindings runtime)
-    : IAgentProfileSelectableCapabilityProvider,
-        IAgentProfileSelectableCapabilityChangeNotifier,
-        IAgentToolSource,
-        IAgentPromptContextContributor,
-        ISkillsExecutionFeature
+[SunderServiceProvider(typeof(IToolSourceService), ProviderId = "skills.tools")]
+[SunderServiceProvider(typeof(IPromptContextContributorService), ProviderId = "skills.prompt.context")]
+[SunderServiceProvider(typeof(ISelectableCapabilityProviderService), ProviderId = "skills.selectable.capabilities")]
+public sealed partial class SkillsFeature(SkillStore store, IServiceProviders<IRuntimeCatalogService> catalogs)
+    : IToolSourceService, IPromptContextContributorService, ISelectableCapabilityProviderService
 {
     private const int MaxSkillToolChars = 60000;
     private const int DefaultReadLimit = 2000;
     private const int MaxReadLimit = 5000;
-    private static readonly AgentToolActivationRequirement ActivationRequirement = new(
-        SkillConstants.CapabilityKind,
-        SkillConstants.PackageId);
+    private static readonly AgentToolActivationRequirement ActivationRequirement = new()
+    { CapabilityKind = SkillConstants.CapabilityKind, SourceId = SkillConstants.PackageId, CapabilityId = null };
 
     private static readonly AgentToolDescriptor[] ToolDescriptors =
     [
-        new(
-            SkillConstants.SkillToolId,
-            "Load Skill",
-            "Load full SKILL.md instructions for an enabled skill.",
-            IsReadOnly: true,
-            ArgumentsJsonSchema: """
+        new()
+        {
+            ToolId = SkillConstants.SkillToolId, DisplayName = "Load Skill", Description = "Load full SKILL.md instructions for an enabled skill.",
+            IsReadOnly = true, RequiresNetwork = false,
+            ArgumentsJsonSchema = """
             {"type":"object","properties":{"name":{"type":"string","description":"Enabled skill name or id."}},"required":["name"],"additionalProperties":false}
             """,
-            SourceKind: "skills",
-            SourceId: SkillConstants.PackageId,
-            SourceDisplayName: "Agent Skills",
-            SelectionScope: AgentToolSelectionScope.Group,
-            SelectionGroupId: SkillConstants.SkillToolGroupId,
-            SelectionGroupDisplayName: "Agent Skills",
-            SelectionGroupDescription: "Load enabled Agent Skills and read their bundled resources.",
-            RuntimeInstructions: "Use `skill` only after the current task matches an enabled skill from the Skills prompt block.",
-            ActivationRequirement: ActivationRequirement),
-        new(
-            SkillConstants.SkillResourceToolId,
-            "Read Skill Resource",
-            "Read or list files bundled inside an enabled skill folder.",
-            IsReadOnly: true,
-            ArgumentsJsonSchema: """
+            SourceKind = "skills", SourceId = SkillConstants.PackageId, SourceDisplayName = "Agent Skills",
+            SelectionScope = AgentToolSelectionScope.Group, SelectionGroupId = SkillConstants.SkillToolGroupId,
+            SelectionGroupDisplayName = "Agent Skills", SelectionGroupDescription = "Load enabled Agent Skills and read their bundled resources.",
+            RuntimeInstructions = "Use `skill` only after the current task matches an enabled skill from the Skills prompt block.",
+            ActivationRequirement = ActivationRequirement, Aliases = null, Priority = AgentToolPriority.Medium, ConcurrencyMode = AgentToolConcurrencyMode.Sequential,
+        },
+        new()
+        {
+            ToolId = SkillConstants.SkillResourceToolId, DisplayName = "Read Skill Resource", Description = "Read or list files bundled inside an enabled skill folder.",
+            IsReadOnly = true, RequiresNetwork = false,
+            ArgumentsJsonSchema = """
             {"type":"object","properties":{"skill":{"type":"string","description":"Enabled skill name or id."},"path":{"type":"string","description":"Relative path inside the skill folder. Omit or use empty string to list the root."},"offset":{"type":"integer","description":"1-indexed line offset for text files."},"limit":{"type":"integer","description":"Maximum lines to return for text files."}},"required":["skill"],"additionalProperties":false}
             """,
-            SourceKind: "skills",
-            SourceId: SkillConstants.PackageId,
-            SourceDisplayName: "Agent Skills",
-            SelectionScope: AgentToolSelectionScope.Group,
-            SelectionGroupId: SkillConstants.SkillToolGroupId,
-            SelectionGroupDisplayName: "Agent Skills",
-            SelectionGroupDescription: "Load enabled Agent Skills and read their bundled resources.",
-            RuntimeInstructions: "Use `skill_resource` for references/assets after loading a relevant skill. Paths are relative to that skill folder.",
-            ActivationRequirement: ActivationRequirement),
+            SourceKind = "skills", SourceId = SkillConstants.PackageId, SourceDisplayName = "Agent Skills",
+            SelectionScope = AgentToolSelectionScope.Group, SelectionGroupId = SkillConstants.SkillToolGroupId,
+            SelectionGroupDisplayName = "Agent Skills", SelectionGroupDescription = "Load enabled Agent Skills and read their bundled resources.",
+            RuntimeInstructions = "Use `skill_resource` for references/assets after loading a relevant skill. Paths are relative to that skill folder.",
+            ActivationRequirement = ActivationRequirement, Aliases = null, Priority = AgentToolPriority.Medium, ConcurrencyMode = AgentToolConcurrencyMode.Sequential,
+        },
     ];
 
     public string ProviderId => SkillConstants.PackageId;
@@ -75,24 +68,28 @@ public sealed partial class SkillsFeature(SkillStore store, ISkillsRuntimeBindin
         remove => store.SkillsChanged -= value;
     }
 
-    public ValueTask<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>> ListCapabilitiesAsync(
-        AgentProfileSelectableCapabilityRequest request,
+    public ValueTask<AgentToolSourceDescriptor> DescribeAsync(CancellationToken token = default)
+    { token.ThrowIfCancellationRequested(); return ValueTask.FromResult(new AgentToolSourceDescriptor { SourceId = SourceId, DisplayName = DisplayName, SourceKind = SourceKind }); }
+
+    ValueTask<AgentPromptContextContributorDescriptor> IPromptContextContributorService.DescribeAsync(CancellationToken token)
+    { token.ThrowIfCancellationRequested(); return ValueTask.FromResult(new AgentPromptContextContributorDescriptor { ContributorId = ContributorId, DisplayName = DisplayName, AcknowledgmentSinkId = null }); }
+
+    ValueTask<AgentServiceIdentity> ISelectableCapabilityProviderService.DescribeAsync(CancellationToken token)
+    { token.ThrowIfCancellationRequested(); return ValueTask.FromResult(new AgentServiceIdentity { Id = ProviderId, DisplayName = DisplayName }); }
+
+    public ValueTask<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>> ListAsync(
+        AgentProfileRecord? profile,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         return ValueTask.FromResult<IReadOnlyList<AgentProfileSelectableCapabilityDescriptor>>(store.ListSkills()
-            .Select(skill => new AgentProfileSelectableCapabilityDescriptor(
-                SkillConstants.CapabilityKind,
-                skill.SkillId,
-                SkillConstants.PackageId,
-                SkillStore.ResolveDisplayName(skill),
-                skill.Description,
-                BuildStatusText(skill),
-                SourceDisplayName: DisplayName,
-                GroupId: SkillConstants.SkillToolGroupId,
-                GroupDisplayName: DisplayName,
-                GroupDescription: "Reusable skills exposed to the agent.",
-                GroupSortOrder: 30))
+            .Select(skill => new AgentProfileSelectableCapabilityDescriptor
+            {
+                Kind = SkillConstants.CapabilityKind, CapabilityId = skill.SkillId, SourceId = SkillConstants.PackageId,
+                DisplayName = SkillStore.ResolveDisplayName(skill), Description = skill.Description, StatusText = BuildStatusText(skill),
+                IsSelectable = true, SourceDisplayName = DisplayName, GroupId = SkillConstants.SkillToolGroupId,
+                GroupDisplayName = DisplayName, GroupDescription = "Reusable skills exposed to the agent.", GroupSortOrder = 30,
+            })
             .ToArray());
     }
 
@@ -105,34 +102,28 @@ public sealed partial class SkillsFeature(SkillStore store, ISkillsRuntimeBindin
     }
 
     public ValueTask<AgentToolReadiness?> GetReadinessAsync(
-        string toolId,
-        AgentToolSourceContext context,
+        CSunder_Agent_Tool_Source_ToolSourceGetReadinessRequest request,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        var (toolId, context) = (request.ToolId, request.Context);
         if (!IsSkillTool(toolId))
         {
             return ValueTask.FromResult<AgentToolReadiness?>(null);
         }
 
-        return ValueTask.FromResult<AgentToolReadiness?>(HasEnabledSkills(context.Profile)
-            ? new AgentToolReadiness(toolId, AgentToolReadinessStatus.Ready, "Enabled skill resources are ready.")
-            : new AgentToolReadiness(toolId, AgentToolReadinessStatus.Failed, "Enable at least one skill on this profile."));
+        var enabled = HasEnabledSkills(context.Profile);
+        return ValueTask.FromResult<AgentToolReadiness?>(new AgentToolReadiness { ToolId = toolId,
+            Status = enabled ? AgentToolReadinessStatus.Ready : AgentToolReadinessStatus.Failed,
+            Message = enabled ? "Enabled skill resources are ready." : "Enable at least one skill on this profile." });
     }
 
-    public ValueTask<AgentToolResult> ExecuteAsync(AgentToolExecutionContext context, AgentToolRequest request, CancellationToken cancellationToken = default)
-        => ExecuteAsync(context, request, context.ExecutionTargetReference?.ToHandle(), cancellationToken);
-
-    public ValueTask<AgentPromptContextContribution?> ContributeContextAsync(AgentPromptContextRequest request, CancellationToken cancellationToken = default)
-        => ContributeContextAsync(request, request.ExecutionTargetReference?.ToHandle(), cancellationToken);
-
     public async ValueTask<AgentToolResult> ExecuteAsync(
-        AgentToolExecutionContext context,
-        AgentToolRequest request,
-        AgentRpcProviderHandle? selectedTarget,
+        CSunder_Agent_Tool_Source_ToolSourceExecuteRequest invocation,
         CancellationToken cancellationToken = default)
     {
-        var profile = await runtime.GetProfileAsync(context.ProfileId, cancellationToken).ConfigureAwait(false);
+        var (context, request) = (invocation.Context, invocation.Request);
+        var profile = await GetProfileAsync(context.ProfileId, cancellationToken).ConfigureAwait(false);
         if (profile is null)
         {
             return Error(request.ToolId, "Skill tools require an active profile.", "skills-profile-required");
@@ -142,8 +133,8 @@ public sealed partial class SkillsFeature(SkillStore store, ISkillsRuntimeBindin
         {
             return request.ToolId.ToLowerInvariant() switch
             {
-                SkillConstants.SkillToolId => await ExecuteSkillAsync(profile, context, request, selectedTarget, cancellationToken),
-                SkillConstants.SkillResourceToolId => await ExecuteSkillResourceAsync(profile, context, request, selectedTarget, cancellationToken),
+                SkillConstants.SkillToolId => await ExecuteSkillAsync(profile, context, request, context.ExecutionTarget, cancellationToken),
+                SkillConstants.SkillResourceToolId => await ExecuteSkillResourceAsync(profile, context, request, context.ExecutionTarget, cancellationToken),
                 _ => Error(request.ToolId, $"Unknown skill tool '{request.ToolId}'.", "skills-tool-unknown"),
             };
         }
@@ -157,13 +148,12 @@ public sealed partial class SkillsFeature(SkillStore store, ISkillsRuntimeBindin
         }
     }
 
-    public async ValueTask<AgentPromptContextContribution?> ContributeContextAsync(
+    public async ValueTask<AgentPromptContextContribution?> ContributeAsync(
         AgentPromptContextRequest request,
-        AgentRpcProviderHandle? selectedTarget,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var profile = request.Profile ?? await runtime.GetProfileAsync(request.Session.ProfileId, cancellationToken).ConfigureAwait(false);
+        var profile = request.Profile ?? await GetProfileAsync(request.Session.ProfileId, cancellationToken).ConfigureAwait(false);
         if (profile is null)
         {
             return null;
@@ -180,7 +170,7 @@ public sealed partial class SkillsFeature(SkillStore store, ISkillsRuntimeBindin
             request.Session.SessionId,
             request.Workspace,
             request.ExecutionBinding,
-            selectedTarget,
+            request.ExecutionTarget,
             cancellationToken);
         var pathsBySkillId = resolvedResources.ToDictionary(resource => resource.ResourceId, StringComparer.OrdinalIgnoreCase);
 
@@ -214,40 +204,38 @@ public sealed partial class SkillsFeature(SkillStore store, ISkillsRuntimeBindin
                 .AppendLine("Executor paths are read-only skill folders. They are useful when a loaded skill asks you to pass bundled scripts or assets to shell commands. Host paths are not valid inside Docker containers.");
         }
 
-        return new AgentPromptContextContribution(
-        [
-            new AgentPromptContextBlock(
-                "Skills",
-                content.ToString().Trim(),
-                Priority: 80,
-                SourceId: SkillConstants.PackageId,
-                Provenance: AgentContextProvenance.Extension,
-                Trust: AgentContextTrust.Untrusted)
-        ]);
+        return new AgentPromptContextContribution
+        {
+            Blocks = [new()
+            {
+                Title = "Skills", Content = content.ToString().Trim(), Priority = 80, SourceId = SkillConstants.PackageId,
+                Provenance = AgentContextProvenance.Extension, Trust = AgentContextTrust.Untrusted,
+                Usage = AgentPromptContextUsage.Reference, Scope = null, Authority = AgentPromptContextAuthority.Reference, HostIdentity = null,
+            }],
+        };
     }
 
     private IReadOnlyList<AgentExecutionResourceDescriptor> ListResources(AgentProfileRecord profile)
         => ListEnabledSkills(profile)
-            .Select(skill => new AgentExecutionResourceDescriptor(
-                skill.SkillId,
-                SkillConstants.CapabilityKind,
-                SkillConstants.PackageId,
-                SkillStore.ResolveDisplayName(skill),
-                store.GetSkillRootPath(skill),
-                SkillConstants.PreferredExecutionRoot + "/" + skill.SkillId,
-                AgentExecutionResourceAccessMode.ReadOnly,
-                new Dictionary<string, string>
+            .Select(skill => new AgentExecutionResourceDescriptor
+            {
+                ResourceId = skill.SkillId, ResourceKind = SkillConstants.CapabilityKind, SourceId = SkillConstants.PackageId,
+                DisplayName = SkillStore.ResolveDisplayName(skill), HostPath = store.GetSkillRootPath(skill),
+                PreferredExecutionPath = SkillConstants.PreferredExecutionRoot + "/" + skill.SkillId,
+                AccessMode = AgentExecutionResourceAccessMode.ReadOnly,
+                Metadata = new Dictionary<string, string>
                 {
                     ["skill_id"] = skill.SkillId,
                     ["name"] = skill.Name ?? string.Empty,
-                }))
+                },
+            })
             .ToArray();
 
     private async Task<AgentToolResult> ExecuteSkillAsync(
         AgentProfileRecord profile,
         AgentToolExecutionContext context,
         AgentToolRequest request,
-        AgentRpcProviderHandle? selectedTarget,
+        ServiceReference<IExecutionTargetService>? selectedTarget,
         CancellationToken cancellationToken)
     {
         if (!TryParseSkillArgs(request.ArgumentsJson, out var args, out var error))
@@ -271,19 +259,15 @@ public sealed partial class SkillsFeature(SkillStore store, ISkillsRuntimeBindin
             cancellationToken);
         var resource = resources.FirstOrDefault(item => string.Equals(item.ResourceId, skill.SkillId, StringComparison.OrdinalIgnoreCase));
         var content = BuildSkillContent(skill, parsed, resource);
-        return new AgentToolResult(
-            request.ToolId,
-            $"Loaded skill '{SkillStore.ResolveDisplayName(skill)}'.",
-            Content: Truncate(content, MaxSkillToolChars),
-            WasTruncated: content.Length > MaxSkillToolChars,
-            BackendId: SkillConstants.PackageId);
+        return Result(request.ToolId, $"Loaded skill '{SkillStore.ResolveDisplayName(skill)}'.",
+            Truncate(content, MaxSkillToolChars), content.Length > MaxSkillToolChars);
     }
 
     private async Task<AgentToolResult> ExecuteSkillResourceAsync(
         AgentProfileRecord profile,
         AgentToolExecutionContext context,
         AgentToolRequest request,
-        AgentRpcProviderHandle? selectedTarget,
+        ServiceReference<IExecutionTargetService>? selectedTarget,
         CancellationToken cancellationToken)
     {
         if (!TryParseSkillResourceArgs(request.ArgumentsJson, out var args, out var error))
@@ -304,11 +288,7 @@ public sealed partial class SkillsFeature(SkillStore store, ISkillsRuntimeBindin
             var entries = Directory.EnumerateFileSystemEntries(path)
                 .Select(entry => Directory.Exists(entry) ? Path.GetFileName(entry) + "/" : Path.GetFileName(entry))
                 .OrderBy(entry => entry, StringComparer.OrdinalIgnoreCase);
-            return new AgentToolResult(
-                request.ToolId,
-                $"Listed skill resource directory '{NormalizeDisplayPath(args.Path)}'.",
-                Content: string.Join(Environment.NewLine, entries),
-                BackendId: SkillConstants.PackageId);
+            return Result(request.ToolId, $"Listed skill resource directory '{NormalizeDisplayPath(args.Path)}'.", string.Join(Environment.NewLine, entries));
         }
 
         if (!File.Exists(path))
@@ -335,7 +315,7 @@ public sealed partial class SkillsFeature(SkillStore store, ISkillsRuntimeBindin
                 content.Append("Executor path: ").AppendLine(CombineExecutionPath(resource.ExecutionPath, args.Path));
             }
 
-            return new AgentToolResult(request.ToolId, "Skill resource is binary.", Content: content.ToString().Trim(), BackendId: SkillConstants.PackageId);
+            return Result(request.ToolId, "Skill resource is binary.", content.ToString().Trim());
         }
 
         var offset = args.Offset is > 0 ? args.Offset.Value : 1;
@@ -343,12 +323,8 @@ public sealed partial class SkillsFeature(SkillStore store, ISkillsRuntimeBindin
         var lines = await File.ReadAllLinesAsync(path, cancellationToken);
         var selected = lines.Skip(offset - 1).Take(limit).Select((line, index) => $"{offset + index}: {line}").ToArray();
         var wasTruncated = offset - 1 + selected.Length < lines.Length;
-        return new AgentToolResult(
-            request.ToolId,
-            $"Read skill resource '{NormalizeDisplayPath(args.Path)}'.",
-            Content: string.Join(Environment.NewLine, selected) + (wasTruncated ? Environment.NewLine + "[truncated]" : string.Empty),
-            WasTruncated: wasTruncated,
-            BackendId: SkillConstants.PackageId);
+        return Result(request.ToolId, $"Read skill resource '{NormalizeDisplayPath(args.Path)}'.",
+            string.Join(Environment.NewLine, selected) + (wasTruncated ? Environment.NewLine + "[truncated]" : string.Empty), wasTruncated);
     }
 
     private string BuildSkillContent(InstalledSkillRecord skill, ParsedSkillMarkdown parsed, AgentResolvedExecutionResource? resource)
@@ -390,10 +366,10 @@ public sealed partial class SkillsFeature(SkillStore store, ISkillsRuntimeBindin
         Guid? sessionId,
         AgentWorkspaceRecord? workspace,
         AgentWorkspaceBindingRecord? executionBinding,
-        AgentRpcProviderHandle? selectedTarget,
+        ServiceReference<IExecutionTargetService>? selectedTarget,
         CancellationToken cancellationToken)
     {
-        if (workspace is null || executionBinding is null)
+        if (workspace is null || executionBinding is null || selectedTarget is null)
         {
             return [];
         }
@@ -405,9 +381,78 @@ public sealed partial class SkillsFeature(SkillStore store, ISkillsRuntimeBindin
             return [];
         }
 
-        return await runtime.ResolveResourcesAsync(new AgentExecutionTargetContext(sessionId, profile.ProfileId, workspace, executionBinding),
-            descriptors, selectedTarget, cancellationToken).ConfigureAwait(false);
+        using var invocation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, selectedTarget.RetirementToken);
+        try
+        {
+            await selectedTarget.EnsureCurrentAsync(invocation.Token).ConfigureAwait(false);
+            var service = selectedTarget.Service;
+            var descriptor = await service.DescribeAsync(invocation.Token).ConfigureAwait(false);
+            if ((!string.Equals(descriptor.TargetId, executionBinding.ContributionId, StringComparison.OrdinalIgnoreCase)
+                 && !string.Equals(descriptor.TargetKind, executionBinding.ContributionId, StringComparison.OrdinalIgnoreCase))
+                || !descriptor.Facets.Contains(AgentExecutionFacetIds.ResourceResolution, StringComparer.Ordinal)) return [];
+            var result = await service.ResolveResourcesAsync(new()
+            {
+                Context = new()
+                {
+                    SessionId = sessionId, ProfileId = profile.ProfileId, Workspace = workspace, Binding = executionBinding,
+                    AllowOutsideConfiguredScope = false, ApprovedResourceReferences = [], ApprovedResourceClaims = [],
+                    ApprovedResourceCapabilities = [], ResourceOperation = null, CapturePostMutationResource = false, ExpectedConfigurationGeneration = null,
+                },
+                Resources = descriptors,
+            }, invocation.Token).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            await selectedTarget.EnsureCurrentAsync(invocation.Token).ConfigureAwait(false);
+            return result;
+        }
+        catch (Exception error) when (Unavailable(error, selectedTarget.RetirementToken, cancellationToken)) { return []; }
     }
+
+    private async ValueTask<AgentProfileRecord?> GetProfileAsync(string? profileId, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        if (string.IsNullOrWhiteSpace(profileId)) return null;
+        var catalog = await catalogs.ListAsync(token).ConfigureAwait(false);
+        var provider = catalog.Providers.SingleOrDefault(item => item.State == ServiceProviderState.Active);
+        if (provider is null) return null;
+        using var invocation = CancellationTokenSource.CreateLinkedTokenSource(token, provider.RetirementToken);
+        try
+        {
+            await provider.EnsureCurrentAsync(invocation.Token).ConfigureAwait(false);
+            var profile = await provider.Service.GetProfileAsync(profileId, invocation.Token).ConfigureAwait(false);
+            token.ThrowIfCancellationRequested();
+            await provider.EnsureCurrentAsync(invocation.Token).ConfigureAwait(false);
+            return profile;
+        }
+        catch (Exception error) when (Unavailable(error, provider.RetirementToken, token)) { return null; }
+    }
+
+    private static bool Unavailable(Exception error, CancellationToken retirement, CancellationToken caller)
+        => !caller.IsCancellationRequested && (error is SunderRpcException { Error.Kind: SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable }
+            || retirement.IsCancellationRequested && error is OperationCanceledException or SunderRpcException { Error.Kind: SunderRpcErrorKind.Cancelled });
+
+    public async IAsyncEnumerable<AgentCapabilityCatalogChange> WatchAsync([EnumeratorCancellation] CancellationToken token = default)
+    {
+        var channel = Channel.CreateBounded<AgentCapabilityCatalogChange>(new BoundedChannelOptions(1)
+        { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true, SingleWriter = false });
+        long revision = 0;
+        void Changed() => channel.Writer.TryWrite(new() { Revision = Interlocked.Increment(ref revision) });
+        store.SkillsChanged += Changed;
+        try
+        {
+            await foreach (var item in channel.Reader.ReadAllAsync(token).ConfigureAwait(false))
+            { token.ThrowIfCancellationRequested(); yield return item; }
+        }
+        finally { store.SkillsChanged -= Changed; channel.Writer.TryComplete(); }
+    }
+
+    public ValueTask<AgentToolResult?> PreflightAsync(CSunder_Agent_Tool_Source_ToolSourcePreflightRequest request, CancellationToken token = default)
+    { token.ThrowIfCancellationRequested(); return ValueTask.FromResult<AgentToolResult?>(null); }
+    public ValueTask<AgentPermissionRequest?> PermissionAsync(CSunder_Agent_Tool_Source_ToolSourcePermissionRequest request, CancellationToken token = default)
+    { token.ThrowIfCancellationRequested(); return ValueTask.FromResult<AgentPermissionRequest?>(null); }
+    public ValueTask<AgentToolPresentation?> PresentationAsync(AgentToolPresentationRequest request, CancellationToken token = default)
+    { token.ThrowIfCancellationRequested(); return ValueTask.FromResult<AgentToolPresentation?>(null); }
+    public ValueTask AcknowledgeAsync(AgentPromptContextReceipt request, CancellationToken token = default)
+    { token.ThrowIfCancellationRequested(); return ValueTask.CompletedTask; }
 
     private InstalledSkillRecord? ResolveEnabledSkill(AgentProfileRecord profile, string name)
     {
@@ -540,7 +585,13 @@ public sealed partial class SkillsFeature(SkillStore store, ISkillsRuntimeBindin
         => value.Length <= maxChars ? value : value[..maxChars].TrimEnd() + Environment.NewLine + "[truncated]";
 
     private static AgentToolResult Error(string toolId, string message, string code)
-        => new(toolId, message, Content: $"### Skill tool failed\n\n{message}", IsError: true, ErrorCode: code, BackendId: SkillConstants.PackageId);
+        => Result(toolId, message, $"### Skill tool failed\n\n{message}") with { IsError = true, ErrorCode = code };
+
+    private static AgentToolResult Result(string toolId, string summary, string content, bool truncated = false) => new()
+    {
+        ToolId = toolId, Summary = summary, Content = content, WasTruncated = truncated, BackendId = SkillConstants.PackageId,
+        IsError = false, ErrorCode = null, StructuredPayloadJson = null, Sources = null, PresentationPayloadJson = null, RequiresPromptContextRefresh = false,
+    };
 
     private sealed record SkillArgs(string Name);
 

@@ -1,24 +1,27 @@
 using Microsoft.Extensions.AI;
 using OpenAI;
-using Sunder.Package.Agent.Contracts.Contracts;
-using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 using Sunder.Package.Agent.Provider.OpenAI.Auth;
 using Sunder.Package.Agent.Provider.OpenAI.Transport;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Logging;
+using Sunder.Sdk.Services;
+using Sunder.Package.Agent.Contracts.Models;
 
 #pragma warning disable OPENAI001
 
 namespace Sunder.Package.Agent.Provider.OpenAI;
 
 [method: Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
-public sealed class OpenAiAgentProvider(
+[SunderServiceProvider(typeof(IChatProviderService), ProviderId = "openai.chat")]
+public sealed partial class OpenAiAgentProvider(
     ApiKeyAuthStrategy apiKeyAuthStrategy,
     CodexConnectedAuthStrategy codexConnectedAuthStrategy,
     CodexConnectedTransport codexConnectedTransport,
     CodexResponseContinuationStore codexResponseContinuationStore,
-    IPackageContext packageContext) : IAgentChatProvider, IAgentUtilityModelProvider
+    IPackageContext packageContext) : IChatProviderService
 {
     private readonly IPackageContext _packageContext = packageContext;
     private readonly Func<string, OpenAIClient> _clientFactory = static key => new OpenAIClient(key);
@@ -29,18 +32,23 @@ public sealed class OpenAiAgentProvider(
         : this(apiKeyAuthStrategy, codexConnectedAuthStrategy, codexConnectedTransport, codexResponseContinuationStore, packageContext)
         => _clientFactory = clientFactory;
 
-    public AgentProviderDescriptor Descriptor { get; } = new(
-        "openai",
-        "OpenAI",
-        [AgentAuthMode.ApiKey, AgentAuthMode.CodexConnected],
-        SupportsStreaming: true,
-        SupportsInterruptibleRuns: true
-    )
+    public AgentProviderDescriptor Descriptor { get; } = new()
     {
-        PackageId = packageContext.PackageId
+        ProviderId = "openai",
+        DisplayName = "OpenAI",
+        SupportedAuthModes = [AgentAuthMode.ApiKey, AgentAuthMode.CodexConnected],
+        SupportsStreaming = true,
+        SupportsInterruptibleRuns = true,
+        PackageId = packageContext.PackageId,
     };
 
-    public async ValueTask<IReadOnlyList<AgentModelDescriptor>> GetAvailableModelsAsync(CancellationToken cancellationToken = default)
+    public ValueTask<AgentProviderDescriptor> DescribeAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(Descriptor);
+    }
+
+    public async ValueTask<IReadOnlyList<AgentModelDescriptor>> ListModelsAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var authMode = await OpenAiAuthMode.GetSelectedAsync(_packageContext.Settings, cancellationToken);
@@ -49,7 +57,7 @@ public sealed class OpenAiAgentProvider(
             : OpenAiModelCatalog.Models;
     }
 
-    public async ValueTask<string?> ResolveUtilityModelIdAsync(CancellationToken cancellationToken = default)
+    public async ValueTask<string?> ResolveUtilityModelAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         return await OpenAiProviderConfiguration.UtilityModelSelection
@@ -63,40 +71,48 @@ public sealed class OpenAiAgentProvider(
         var authMode = await OpenAiAuthMode.GetSelectedAsync(_packageContext.Settings, cancellationToken);
         if (authMode == OpenAiAuthMode.ApiKey)
         {
-            return !string.IsNullOrWhiteSpace(await apiKeyAuthStrategy.GetApiKeyAsync(cancellationToken))
-                ? new AgentProviderReadiness(
-                    Descriptor.ProviderId,
-                    AgentProviderReadinessStatus.Ready,
-                    "API-key mode is active and an OpenAI API key is stored.")
-                : new AgentProviderReadiness(
-                    Descriptor.ProviderId,
-                    AgentProviderReadinessStatus.NeedsConfiguration,
-                    "API-key mode is active, but no OpenAI API key is stored. Open Settings -> Packages -> Sunder Agent Provider OpenAI and store an API key.");
+            var configured = !string.IsNullOrWhiteSpace(await apiKeyAuthStrategy.GetApiKeyAsync(cancellationToken));
+            return new()
+            {
+                ProviderId = Descriptor.ProviderId,
+                Status = configured ? AgentProviderReadinessStatus.Ready : AgentProviderReadinessStatus.NeedsConfiguration,
+                Message = configured
+                    ? "API-key mode is active and an OpenAI API key is stored."
+                    : "API-key mode is active, but no OpenAI API key is stored. Open Settings -> Packages -> Sunder Agent Provider OpenAI and store an API key.",
+            };
         }
 
         var session = await codexConnectedAuthStrategy.TryEnsureAuthenticatedSilentlyAsync(cancellationToken);
-        return session is not null
-            ? new AgentProviderReadiness(
-                Descriptor.ProviderId,
-                AgentProviderReadinessStatus.Ready,
-                $"Codex-connected mode is active and authenticated until {session.ExpiresAtUtc:O}.")
-            : new AgentProviderReadiness(
-                Descriptor.ProviderId,
-                AgentProviderReadinessStatus.NeedsConfiguration,
-                "Codex-connected mode is active, but ChatGPT Plus/Pro is not authorized. Open Settings -> Packages -> Sunder Agent Provider OpenAI and authorize.");
+        return new()
+        {
+            ProviderId = Descriptor.ProviderId,
+            Status = session is not null ? AgentProviderReadinessStatus.Ready : AgentProviderReadinessStatus.NeedsConfiguration,
+            Message = session is not null
+                ? $"Codex-connected mode is active and authenticated until {session.ExpiresAtUtc:O}."
+                : "Codex-connected mode is active, but ChatGPT Plus/Pro is not authorized. Open Settings -> Packages -> Sunder Agent Provider OpenAI and authorize.",
+        };
     }
 
-    public ValueTask<AgentProviderRunCapabilities> GetRunCapabilitiesAsync(string? modelId, CancellationToken cancellationToken = default)
+    public ValueTask<AgentProviderRunCapabilities> GetCapabilitiesAsync(string? modelId, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult(new AgentProviderRunCapabilities(
-            SupportsNativeToolCalling: true,
-            SupportsStreamingToolCalls: true,
-            SupportsMultipleToolCalls: true,
-            Summary: "OpenAI chat uses the selected auth mode and Sunder can run parallel-safe tools concurrently.",
-            SupportsImageInput: true,
-            SupportsPdfInput: true));
+        return ValueTask.FromResult(new AgentProviderRunCapabilities
+        {
+            SupportsNativeToolCalling = true,
+            SupportsStreamingToolCalls = true,
+            SupportsMultipleToolCalls = true,
+            Summary = "OpenAI chat uses the selected auth mode and Sunder can run parallel-safe tools concurrently.",
+            SupportsImageInput = true,
+            SupportsPdfInput = true,
+            SupportsAudioInput = false,
+            SupportsVideoInput = false,
+            ContextWindowTokens = null,
+            MaxOutputTokens = null,
+        });
     }
+
+    public IAsyncEnumerable<AgentChatStreamEvent> StreamChatAsync(AgentChatStreamRequest request, CancellationToken cancellationToken = default)
+        => ProviderChatStream.ReadAsync(CreateChatClientAsync, request, cancellationToken);
 
     public async ValueTask<IChatClient> CreateChatClientAsync(AgentChatClientContext context, CancellationToken cancellationToken = default)
     {

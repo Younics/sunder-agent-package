@@ -26,8 +26,8 @@ internal static partial class AgentSourceMigrationProjectChanges
         if (Path.GetFileName(path) == "LocalExecutionPresentationRpc.cs")
         {
             var root = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(path)!, ".."));
-            var models = File.ReadAllText(Path.Combine(root, "Models/LocalExecutionPresentationModels.cs")).Replace("\r\n", "\n", StringComparison.Ordinal);
-            var defaults = File.ReadAllText(Path.Combine(root, "Runtime/LocalExecutionPresentationDefaults.cs")).Replace("\r\n", "\n", StringComparison.Ordinal);
+            var models = ReadMigrationSourceText(Path.Combine(root, "Models/LocalExecutionPresentationModels.cs"));
+            var defaults = ReadMigrationSourceText(Path.Combine(root, "Runtime/LocalExecutionPresentationDefaults.cs"));
             models = BeforeExecutionAppComposition(Path.Combine(root, "Models/LocalExecutionPresentationModels.cs"), models);
             defaults = BeforeExecutionAppComposition(Path.Combine(root, "Runtime/LocalExecutionPresentationDefaults.cs"), defaults);
             const string prefix = "namespace Sunder.Package.Agent.Execution.Local;\n\n";
@@ -51,8 +51,8 @@ internal static partial class AgentSourceMigrationProjectChanges
         if (Path.GetFileName(path) == "DockerExecutionPresentationRpc.cs")
         {
             var root = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(path)!, ".."));
-            var models = File.ReadAllText(Path.Combine(root, "Models/DockerExecutionPresentationModels.cs")).Replace("\r\n", "\n", StringComparison.Ordinal);
-            var defaults = File.ReadAllText(Path.Combine(root, "Runtime/DockerExecutionPresentationDefaults.cs")).Replace("\r\n", "\n", StringComparison.Ordinal);
+            var models = ReadMigrationSourceText(Path.Combine(root, "Models/DockerExecutionPresentationModels.cs"));
+            var defaults = ReadMigrationSourceText(Path.Combine(root, "Runtime/DockerExecutionPresentationDefaults.cs"));
             models = BeforeExecutionAppComposition(Path.Combine(root, "Models/DockerExecutionPresentationModels.cs"), models);
             defaults = BeforeExecutionAppComposition(Path.Combine(root, "Runtime/DockerExecutionPresentationDefaults.cs"), defaults);
             const string prefix = "namespace Sunder.Package.Agent.Execution.Docker;\n\n";

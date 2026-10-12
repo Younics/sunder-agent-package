@@ -1,10 +1,12 @@
 extern alias LocalWorker;
 extern alias DockerWorker;
 
-using LocalWorker::Sunder.Package.Agent.Contracts.Models;
 using DockerWorker::Sunder.Package.Agent.Execution.Docker;
 using LocalWorker::Sunder.Package.Agent.Execution.Local;
-using DockerModels = DockerWorker::Sunder.Package.Agent.Contracts.Models;
+using AgentScopedInstructionDiscoveryRequest = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentScopedInstructionDiscoveryRequest;
+using AgentScopedInstructionDiscoveryResult = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentScopedInstructionDiscoveryResult;
+using AgentScopedInstructionProbe = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentScopedInstructionProbe;
+using DockerModels = DockerWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
 using Sunder.Package.Agent.Tests;
 using Xunit;
 
@@ -33,8 +35,8 @@ public sealed class ScopedInstructionDiscoveryTests : IDisposable
         await File.WriteAllTextAsync(Path.Combine(target, "agents.md"), "wrong case");
 
         var result = targetKind == "local"
-            ? await DiscoverLocalAsync([workspace], target)
-            : await DiscoverDockerAsync(workspace, target);
+            ? ToProjection(await DiscoverLocalAsync([workspace], target))
+            : ToProjection(await DiscoverDockerAsync(workspace, target));
 
         var scope = Assert.Single(result.Scopes);
         Assert.Equal(Physical(target), scope.TargetDirectory);
@@ -171,8 +173,8 @@ public sealed class ScopedInstructionDiscoveryTests : IDisposable
         var link = Path.Combine(workspace, "link.txt");
         File.CreateSymbolicLink(link, target);
 
-        var followedProbe = new AgentScopedInstructionProbe(link);
-        var deleteProbe = new AgentScopedInstructionProbe(link) { FollowFinalSymbolicLink = false };
+        var followedProbe = new AgentScopedInstructionProbe { Path = link, IsDirectory = false, FollowFinalSymbolicLink = true };
+        var deleteProbe = new AgentScopedInstructionProbe { Path = link, IsDirectory = false, FollowFinalSymbolicLink = false };
         if (targetKind == "local")
         {
             await Assert.ThrowsAsync<InvalidOperationException>(async () =>
@@ -210,7 +212,7 @@ public sealed class ScopedInstructionDiscoveryTests : IDisposable
         var workspace = Path.Combine(_root, "probe-limit", targetKind);
         Directory.CreateDirectory(workspace);
         var probes = Enumerable.Range(0, 65)
-            .Select(index => new AgentScopedInstructionProbe(Path.Combine(workspace, index.ToString()), IsDirectory: true))
+            .Select(index => new AgentScopedInstructionProbe { Path = Path.Combine(workspace, index.ToString()), IsDirectory = true, FollowFinalSymbolicLink = true })
             .ToArray();
 
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
@@ -237,7 +239,7 @@ public sealed class ScopedInstructionDiscoveryTests : IDisposable
         var exception = await Assert.ThrowsAsync<DockerStructuredBindRequiredException>(async () =>
             await DiscoverDockerProbesAsync(
                 workspace,
-                [new AgentScopedInstructionProbe(outside, IsDirectory: true)]));
+                [new AgentScopedInstructionProbe { Path = outside, IsDirectory = true, FollowFinalSymbolicLink = true }]));
 
         Assert.Equal(DockerPathResolver.StructuredBindRequiredErrorCode, exception.ErrorCode);
     }
@@ -264,8 +266,10 @@ public sealed class ScopedInstructionDiscoveryTests : IDisposable
 
         var result = await new DockerFileSystemExecutor().DiscoverScopedInstructionsAsync(
             config,
-            new DockerModels.AgentScopedInstructionDiscoveryRequest(
-                [new DockerModels.AgentScopedInstructionProbe("/workspace/outer/inner/target", IsDirectory: true)]),
+            new DockerModels.AgentScopedInstructionDiscoveryRequest
+            {
+                Probes = [new DockerModels.AgentScopedInstructionProbe { Path = "/workspace/outer/inner/target", IsDirectory = true, FollowFinalSymbolicLink = true }],
+            },
             "namespace",
             CancellationToken.None);
 
@@ -282,7 +286,7 @@ public sealed class ScopedInstructionDiscoveryTests : IDisposable
         params string[] directories)
         => await DiscoverLocalProbesAsync(
             roots,
-            directories.Select(path => new AgentScopedInstructionProbe(path, IsDirectory: true)).ToArray());
+            directories.Select(path => new AgentScopedInstructionProbe { Path = path, IsDirectory = true, FollowFinalSymbolicLink = true }).ToArray());
 
     private static async Task<AgentScopedInstructionDiscoveryResult> DiscoverLocalProbesAsync(
         IReadOnlyList<string> roots,
@@ -291,21 +295,21 @@ public sealed class ScopedInstructionDiscoveryTests : IDisposable
             new LocalExecutionRuntimeConfig(
                 roots.Select(Path.GetFullPath).ToArray(),
                 Path.GetFullPath(roots[0])),
-            new AgentScopedInstructionDiscoveryRequest(probes),
+            new AgentScopedInstructionDiscoveryRequest { Probes = probes },
             CancellationToken.None);
 
-    private static async Task<AgentScopedInstructionDiscoveryResult> DiscoverDockerAsync(
+    private static async Task<DockerModels.AgentScopedInstructionDiscoveryResult> DiscoverDockerAsync(
         string workspace,
         string target,
         string namespaceFingerprint = "test-container")
     {
         return await DiscoverDockerProbesAsync(
             workspace,
-            [new AgentScopedInstructionProbe(target, IsDirectory: true)],
+            [new AgentScopedInstructionProbe { Path = target, IsDirectory = true, FollowFinalSymbolicLink = true }],
             namespaceFingerprint);
     }
 
-    private static async Task<AgentScopedInstructionDiscoveryResult> DiscoverDockerProbesAsync(
+    private static async Task<DockerModels.AgentScopedInstructionDiscoveryResult> DiscoverDockerProbesAsync(
         string workspace,
         IReadOnlyList<AgentScopedInstructionProbe> probes,
         string namespaceFingerprint = "test-container")
@@ -317,13 +321,42 @@ public sealed class ScopedInstructionDiscoveryTests : IDisposable
             [],
             [new DockerExecutionMount(workspace, workspace)],
             workspace);
-        return AgentRoleBoundary.As<AgentScopedInstructionDiscoveryResult>(await new DockerFileSystemExecutor()
-            .DiscoverScopedInstructionsAsync(
-                config,
-                AgentRoleBoundary.As<DockerModels.AgentScopedInstructionDiscoveryRequest>(new AgentScopedInstructionDiscoveryRequest(probes)),
-                namespaceFingerprint,
-                CancellationToken.None));
+        return await new DockerFileSystemExecutor().DiscoverScopedInstructionsAsync(
+            config,
+            new DockerModels.AgentScopedInstructionDiscoveryRequest
+            {
+                Probes = probes.Select(probe => new DockerModels.AgentScopedInstructionProbe
+                {
+                    Path = probe.Path,
+                    IsDirectory = probe.IsDirectory,
+                    FollowFinalSymbolicLink = probe.FollowFinalSymbolicLink,
+                }).ToArray(),
+            },
+            namespaceFingerprint,
+            CancellationToken.None);
     }
+
+    private static DiscoveryProjection ToProjection(AgentScopedInstructionDiscoveryResult result)
+        => new(
+            result.Scopes.Select(scope => new DiscoveryScope(
+                scope.TargetDirectory,
+                scope.ScopeRoot,
+                scope.Documents.Select(document => new DiscoveryDocument(document.Content, document.WasTruncated)).ToArray())).ToArray(),
+            result.WasTruncated);
+
+    private static DiscoveryProjection ToProjection(DockerModels.AgentScopedInstructionDiscoveryResult result)
+        => new(
+            result.Scopes.Select(scope => new DiscoveryScope(
+                scope.TargetDirectory,
+                scope.ScopeRoot,
+                scope.Documents.Select(document => new DiscoveryDocument(document.Content, document.WasTruncated)).ToArray())).ToArray(),
+            result.WasTruncated);
+
+    private sealed record DiscoveryProjection(IReadOnlyList<DiscoveryScope> Scopes, bool WasTruncated);
+
+    private sealed record DiscoveryScope(string TargetDirectory, string ScopeRoot, IReadOnlyList<DiscoveryDocument> Documents);
+
+    private sealed record DiscoveryDocument(string Content, bool WasTruncated);
 
     private static string Physical(string path)
         => LocalPathResolver.ResolvePhysicalPath(path);

@@ -32,7 +32,7 @@ public sealed record AgentSessionRecord(
     Guid? ParentSessionId = null,
     Guid? RootSessionId = null,
     Guid? ParentRunId = null,
-    long? ParentRunRevision = null,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long? ParentRunRevision = null,
     string? ParentToolCallId = null,
     string? TaskId = null,
     string? ProfileId = null,

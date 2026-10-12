@@ -8,7 +8,6 @@ using System.Text.Json.Serialization;
 using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.TestSupport;
 using Sunder.Package.Agent.Contracts;
-using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Rpc;
@@ -51,7 +50,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var descriptors = receipt.RootElement.GetProperty("contracts").EnumerateArray().ToDictionary(
             contract => contract.GetProperty("contractId").GetString()!,
             contract => SunderRpcContractDescriptor.Parse(Encoding.UTF8.GetBytes(contract.GetProperty("canonicalDescriptor").GetString()!)));
-        Assert.Equal(RegressionTestRpcDescriptors.Get("sunder.agent.memory.semantic.inspector").GetCanonicalUtf8(), descriptors["sunder.agent.memory.semantic.inspector"].GetCanonicalUtf8());
+        Assert.Equal(CurrentPrivateRpcDescriptors.Get("sunder.agent.memory.semantic.inspector").GetCanonicalUtf8(), descriptors["sunder.agent.memory.semantic.inspector"].GetCanonicalUtf8());
         using var roles = new CanonicalPackageRoles();
         var providers = roles.Load("Memory.Semantic", "worker", directory);
         var app = roles.Load("Memory.Semantic", "app", directory);
@@ -73,28 +72,28 @@ public sealed partial class AgentSourceArtifactMigrationTests
 
     private static async Task ExerciseMemoryProviders(Assembly assembly, Assembly probes, Type consumer, IReadOnlyDictionary<string, SunderRpcContractDescriptor> descriptors, Assembly app)
     {
+        var inputJson = new JsonSerializerOptions(MemoryProviderJson) { DefaultIgnoreCondition = JsonIgnoreCondition.Never };
         using var package = RegressionTestPackageScope.Create();
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
         var context = new TestPackageContext("sunder.package.agent.memory.semantic", package.RootPath, version: "2.0.0", storage: package.Context.Storage);
         var ownerRpc = new RegressionTestRpcClient(state, context.PackageId);
         Type Type(string name) => assembly.GetType("Sunder.Package.Agent.Memory.Semantic." + name, true)!;
         Assert.Null(assembly.GetType("Sunder.Package.Agent.Memory.Semantic.Rpc.MemoryProviderCatalog"));
-        var generated = CreateControlledGeneratedWorker(probes, context, ownerRpc, services =>
-        {
-            services.AddSingleton(provider => new ObservedMemoryFeature(provider.GetRequiredService(Type("MemorySemanticFeature"))));
-            foreach (var name in new[] { "Rpc.DurableLifecycleProvider", "Rpc.PromptContextProvider" })
-                services.AddSingleton(Type(name), provider => AgentRoleBoundary.Create(Type(name), provider.GetRequiredService<ObservedMemoryFeature>()));
-        });
+        var generated = CreateControlledGeneratedWorker(probes, context, ownerRpc, _ => { });
         await using var lifetime = generated.Lifetime;
         await ActivateGeneratedComposition(generated.Options);
-        var observed = generated.Services.GetRequiredService<ObservedMemoryFeature>();
         var feature = generated.Services.GetRequiredService(Type("MemorySemanticFeature"));
         var store = new MemoryProviderStore(generated.Services.GetRequiredService(Type("MemoryLocalStore")));
         var registrations = generated.Options.Providers;
         Assert.Equal(new[] { "semantic.memory.inspector", "semantic.memory.lifecycle", "semantic.memory.profile.capabilities", "semantic.memory.prompt.context", "semantic.memory.session.cleaner" },
             registrations.Select(value => value.ProviderId).Order(StringComparer.Ordinal));
+        var transports = registrations.ToDictionary(registration => registration.ProviderId,
+            registration => new SurfaceHandler(registration.Handler), StringComparer.Ordinal);
         foreach (var registration in registrations)
-            state.Add("sunder.package.agent.memory.semantic", descriptors[registration.ContractId], registration.Handler, registration.Handler, Noop.Instance, registration.ProviderId, "2.0.0");
+        {
+            var transport = transports[registration.ProviderId];
+            state.Add("sunder.package.agent.memory.semantic", descriptors[registration.ContractId], transport, transport, Noop.Instance, registration.ProviderId, "2.0.0");
+        }
         var rpc = new RegressionTestRpcClient(state, "example.agent.consumer");
         await using var appServices = CreateGeneratedApp(app, context, ownerRpc);
         var appGateway = appServices.GetRequiredService(app.GetType("Sunder.Package.Agent.Memory.Semantic.MemoryAppRuntimeGateway", true)!);
@@ -123,7 +122,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Session = session, Run = run, SessionId = sessionId, RootSessionId = sessionId, WorkspaceId = "workspace.memory",
             UserMessage = "Remember that I prefer cobalt summaries.", TriggerTurn = turn, Turns = [turn], RecentLiveBufferTurns = [turn],
         });
-        var json = JsonSerializer.Serialize(delivery, MemoryProviderJson);
+        var json = JsonSerializer.Serialize(delivery, inputJson);
         using (var cancelled = new CancellationTokenSource())
         {
             cancelled.Cancel();
@@ -132,25 +131,25 @@ public sealed partial class AgentSourceArtifactMigrationTests
         }
         await handle(rpc, json, default);
         Assert.NotEmpty(store.ListMemories(sessionId));
-        Assert.Equal(delivery.PayloadJson, observed.LastEvent!.PayloadJson);
-        Assert.Equal(delivery.PayloadHash, observed.LastEvent.PayloadHash);
-        Assert.Equal(delivery.Payload.TriggerTurn!.Items[0].TextContent, observed.LastEvent.Payload.TriggerTurn!.Items[0].TextContent);
+        var lifecycleRequest = transports["semantic.memory.lifecycle"].Calls.Last(call => call.Method == "handle").Request;
+        Assert.Equal(delivery.PayloadJson, lifecycleRequest.GetProperty("payloadJson").GetString());
+        Assert.Equal(delivery.PayloadHash, lifecycleRequest.GetProperty("payloadHash").GetString());
+        Assert.Equal(delivery.Payload.TriggerTurn!.Items[0].TextContent, lifecycleRequest.GetProperty("payload").GetProperty("triggerTurn")
+            .GetProperty("items")[0].GetProperty("textContent").GetString());
         var count = store.ListMemories(sessionId).Count;
         Assert.Equal(count, (await AppMemories(sessionId)).Count);
         await handle(rpc, json, default);
         Assert.Equal(count, store.ListMemories(sessionId).Count);
         Assert.All(store.ListMemories(sessionId), memory => Assert.Single(store.ListEvidence(memory.MemoryId)));
 
-        var executionDescriptor = RegressionTestRpcDescriptors.Get(AgentRpcContractIds.ExecutionTarget);
         var prompt = JsonSerializer.SerializeToNode(new
         {
-            session, run, turn = new { userMessage = "cobalt summaries", workingSummary = (string?)null }, turns = new[] { turn }, recentLiveBufferTurns = Array.Empty<AgentTurnRecord>(),
-            contextPlan = new { intent = "Preference", queryText = "cobalt summaries", maxEntryCount = 2, maxChars = 1000, shouldContribute = true },
+            session, run, turn = new AgentTurnContextRecord(session, run, "cobalt summaries", null), turns = new[] { turn }, recentLiveBufferTurns = Array.Empty<AgentTurnRecord>(),
+            contextPlan = new { intent = "Preference", queryText = "cobalt summaries", reason = (string?)null, preferredCategories = (string[]?)null, maxEntryCount = 2, maxChars = 1000, shouldContribute = true },
+            profile = (object?)null, workspace = (object?)null, executionBinding = (object?)null, executionTarget = (object?)null,
             availableTools = Array.Empty<AgentToolDescriptor>(), transcriptEpoch = 3,
             memoryConsistencyBarrier = new AgentMemoryConsistencyBarrier(delivery.EventId, delivery.PayloadHash),
-            executionTarget = new AgentRpcProviderHandle("example.unused.executor", "2.0.0", "unused.target", executionDescriptor.ContractId,
-                executionDescriptor.Version, executionDescriptor.Sha256, executionDescriptor.AbiSha256, Guid.NewGuid(), 1, 1, "unused-endpoint"),
-        }, MemoryProviderJson)!;
+        }, inputJson)!;
         using (var response = JsonDocument.Parse(await contribute(rpc, prompt.ToJsonString(), default)))
         {
             var block = Assert.Single(response.RootElement.GetProperty("blocks").EnumerateArray());
@@ -158,39 +157,43 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.Equal("durable-memory", block.GetProperty("provenance").GetString());
             Assert.Equal("untrusted", block.GetProperty("trust").GetString());
         }
-        Assert.Equal(3, observed.LastPrompt!.TranscriptEpoch);
-        Assert.Equal(delivery.EventId, observed.LastPrompt.MemoryConsistencyBarrier!.EventId);
-        Assert.Null(observed.LastPrompt.ExecutionTargetReference);
+        var promptRequest = transports["semantic.memory.prompt.context"].Calls.Last(call => call.Method == "contribute").Request;
+        Assert.Equal(3, promptRequest.GetProperty("transcriptEpoch").GetInt32());
+        Assert.Equal(delivery.EventId, promptRequest.GetProperty("memoryConsistencyBarrier").GetProperty("eventId").GetString());
+        // No execution target was selected for this memory-only request, so the
+        // generated boundary must preserve the absence of transient authority.
+        Assert.Equal(JsonValueKind.Null, promptRequest.GetProperty("executionTarget").ValueKind);
         prompt["memoryConsistencyBarrier"]!["eventId"] = "missing-receipt";
         Assert.Equal("null", await contribute(rpc, prompt.ToJsonString(), default));
         prompt["memoryConsistencyBarrier"]!["eventId"] = delivery.EventId;
         prompt["contextPlan"]!["intent"] = "none";
         prompt["contextPlan"]!["shouldContribute"] = true;
         Assert.Equal("null", await contribute(rpc, prompt.ToJsonString(), default));
-        Assert.False(observed.LastPrompt!.ContextPlan.ShouldContribute);
+        promptRequest = transports["semantic.memory.prompt.context"].Calls.Last(call => call.Method == "contribute").Request;
+        Assert.Equal("none", promptRequest.GetProperty("contextPlan").GetProperty("intent").GetString());
         await acknowledge(rpc, JsonSerializer.Serialize(new { sessionId, runId = run.RunId, transcriptEpoch = 3, blocks = Array.Empty<object>() }), default);
 
         var mismatch = delivery with { PayloadHash = new string('a', 64) };
-        var fault = await Assert.ThrowsAsync<SunderRpcException>(() => handle(rpc, JsonSerializer.Serialize(mismatch, MemoryProviderJson), default));
+        var fault = await Assert.ThrowsAsync<SunderRpcException>(() => handle(rpc, JsonSerializer.Serialize(mismatch, inputJson), default));
         Assert.Equal(SunderRpcErrorKind.ProviderFaulted, fault.Error.Kind);
         Assert.Equal(count, store.ListMemories(sessionId).Count);
         var rollback = MemoryEnvelope("artifact-memory-rollback", AgentLifecycleEventKind.TranscriptRolledBack,
             new() { SessionId = sessionId, RootSessionId = sessionId, WorkspaceId = "workspace.memory", DeletedTurnIds = [turnId], DeletedTurnCount = 1 });
-        await handle(rpc, JsonSerializer.Serialize(rollback, MemoryProviderJson), default);
+        await handle(rpc, JsonSerializer.Serialize(rollback, inputJson), default);
         var pinned = Assert.Single(store.ListMemories(sessionId, includeInactive: true));
         Assert.True(pinned.IsPinned);
         Assert.Null(pinned.SourceTurnId);
         Assert.Empty(store.ListEvidence(pinned.MemoryId));
         var erased = MemoryEnvelope(delivery.EventId, delivery.Kind, new() { ContentErased = true }) with
         { OriginalPayloadHash = delivery.PayloadHash, SourceKey = delivery.SourceKey, OrderingKey = delivery.OrderingKey, Sequence = delivery.Sequence };
-        await handle(rpc, JsonSerializer.Serialize(erased, MemoryProviderJson), default);
+        await handle(rpc, JsonSerializer.Serialize(erased, inputJson), default);
         Assert.Equal(pinned.MemoryId, Assert.Single(store.ListMemories(sessionId, includeInactive: true)).MemoryId);
         var deletion = MemoryEnvelope("artifact-memory-deletion", AgentLifecycleEventKind.SessionDeleted,
             new() { SessionId = sessionId, RootSessionId = sessionId, WorkspaceId = "workspace.memory", DeletedSessionIds = [sessionId], DeletedSessionCount = 1 });
-        await handle(rpc, JsonSerializer.Serialize(deletion, MemoryProviderJson), default);
+        await handle(rpc, JsonSerializer.Serialize(deletion, inputJson), default);
         Assert.Empty(store.ListMemories(sessionId, includeInactive: true));
         Assert.Empty(await AppMemories(sessionId, includeInactive: true));
-        await state.RetireAsync(registrations.Single(value => value.ProviderId == "semantic.memory.lifecycle").Handler);
+        await state.RetireAsync(transports["semantic.memory.lifecycle"]);
         await Assert.ThrowsAsync<InvalidOperationException>(() => handle(rpc, json, default));
     }
 
@@ -213,24 +216,4 @@ public sealed partial class AgentSourceArtifactMigrationTests
             => AgentRoleBoundary.As<IReadOnlyList<StoredMemoryEvidenceRecord>>(AgentRoleBoundary.Call(store, "ListEvidence", memoryId)!);
     }
 
-    private sealed class ObservedMemoryFeature(object feature) : IAgentDurableLifecycleObserver, IAgentPromptContextContributor
-    {
-        private readonly IAgentDurableLifecycleObserver _observer = AgentRoleBoundary.As<IAgentDurableLifecycleObserver>(feature);
-        private readonly IAgentPromptContextContributor _contributor = AgentRoleBoundary.As<IAgentPromptContextContributor>(feature);
-        public string ObserverId => _observer.ObserverId;
-        public string ContributorId => _contributor.ContributorId;
-        public string DisplayName => _contributor.DisplayName;
-        internal AgentDurableLifecycleEventEnvelope? LastEvent { get; private set; }
-        internal AgentPromptContextRequest? LastPrompt { get; private set; }
-        public ValueTask HandleDurableLifecycleEventAsync(AgentDurableLifecycleEventEnvelope value, CancellationToken cancellationToken = default)
-        {
-            LastEvent = value;
-            return _observer.HandleDurableLifecycleEventAsync(value, cancellationToken);
-        }
-        public ValueTask<AgentPromptContextContribution?> ContributeContextAsync(AgentPromptContextRequest value, CancellationToken cancellationToken = default)
-        {
-            LastPrompt = value;
-            return _contributor.ContributeContextAsync(value, cancellationToken);
-        }
-    }
 }

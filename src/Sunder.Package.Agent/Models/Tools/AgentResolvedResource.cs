@@ -1,49 +1,32 @@
 using System.Text.Json.Serialization;
+using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Contracts.Models;
-
-/// <summary>
-/// Defines conventional resource boundary identifiers shared by permission planners and execution targets.
-/// </summary>
-public static class AgentPermissionBoundaryIds
-{
-    /// <summary>The resource resolves within paths explicitly configured for the selected workspace.</summary>
-    public const string ConfiguredScope = "configured-scope";
-
-    /// <summary>The resource resolves outside the selected workspace's configured paths and requires explicit authorization.</summary>
-    public const string OutsideConfiguredScope = "outside-configured-scope";
-
-    /// <summary>The operation runs inside the explicitly selected execution target rather than against a classified path.</summary>
-    public const string SelectedExecutionTarget = "selected-execution-target";
-
-    /// <summary>The planner could not securely classify the resource and policy must fail closed or ask.</summary>
-    public const string Unknown = "unknown";
-}
 
 /// <summary>Identifies how an execution target established a resource's permission scope.</summary>
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 public enum AgentPermissionScopeClassificationBasis
 {
     /// <summary>The target did not provide structured scope provenance.</summary>
-    Unspecified = 0,
+    [JsonStringEnumMemberName("unspecified")] Unspecified = 0,
 
     /// <summary>The configured root's opened ancestor identity chain matched the retained resource chain.</summary>
-    OpenedAncestorIdentity = 1,
+    [JsonStringEnumMemberName("opened-ancestor-identity")] OpenedAncestorIdentity = 1,
 
     /// <summary>Lexical containment was verified against opened filesystem identities.</summary>
-    LexicalAndOpenedIdentity = 2,
+    [JsonStringEnumMemberName("lexical-and-opened-identity")] LexicalAndOpenedIdentity = 2,
 
     /// <summary>The target verified scope through its own immutable path mapping.</summary>
-    VerifiedTargetMapping = 3,
+    [JsonStringEnumMemberName("verified-target-mapping")] VerifiedTargetMapping = 3,
 
     /// <summary>The target could not securely establish scope.</summary>
-    Unresolved = 4,
+    [JsonStringEnumMemberName("unresolved")] Unresolved = 4,
 
     /// <summary>A multi-resource request used more than one classification basis.</summary>
-    Mixed = 5,
+    [JsonStringEnumMemberName("mixed")] Mixed = 5,
 
     /// <summary>The target established outside scope because the normalized path had no lexical configured-root match.</summary>
-    LexicalExclusion = 6,
+    [JsonStringEnumMemberName("lexical-exclusion")] LexicalExclusion = 6,
 }
 
 /// <summary>
@@ -75,6 +58,7 @@ public sealed record AgentResolvedResource(
     /// <summary>Gets transient, process-local, single-use authority references for this resource.</summary>
     /// <remarks>These values must not be fingerprinted or persisted.</remarks>
     [JsonIgnore]
+    [SunderServiceMember]
     public IReadOnlyList<string> AuthorityReferences { get; init; } = [];
 
     /// <summary>Gets the canonical identity of the directory entry removed by delete-link semantics.</summary>
@@ -86,6 +70,7 @@ public sealed record AgentResolvedResource(
 
     /// <summary>Gets transient authority references for delete-link semantics.</summary>
     [JsonIgnore]
+    [SunderServiceMember]
     public IReadOnlyList<string> DeleteAuthorityReferences { get; init; } = [];
 
     /// <summary>Gets the boundary of the directory entry affected by delete-link semantics.</summary>

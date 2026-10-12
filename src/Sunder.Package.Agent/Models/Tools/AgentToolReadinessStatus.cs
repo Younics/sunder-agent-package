@@ -8,8 +8,8 @@ namespace Sunder.Package.Agent.Contracts.Models;
 public enum AgentToolReadinessStatus
 {
     /// <summary>The tool may be included in the executable catalog for the current context.</summary>
-    Ready = 0,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("ready")] Ready = 0,
 
     /// <summary>The tool must be omitted; its message explains missing configuration, unavailable resources, or an operational failure.</summary>
-    Failed = 3,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("failed")] Failed = 3,
 }

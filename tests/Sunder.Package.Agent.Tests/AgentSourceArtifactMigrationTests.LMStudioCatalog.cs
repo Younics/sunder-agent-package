@@ -73,12 +73,13 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var result = await rpc("embedding", "generate-batch", request, default);
         Assert.Equal(3, result.GetArrayLength()); Assert.Equal(JsonValueKind.Null, result[1].ValueKind);
         Assert.Equal(0.25, result[0].GetProperty("values")[0].GetDouble()); Assert.Equal(1.25, result[2].GetProperty("values")[0].GetDouble());
-        Assert.Equal(3, result[0].GetProperty("dimensions").GetInt32());
+        Assert.Equal(3, result[0].GetProperty("values").GetArrayLength());
+        Assert.False(result[0].TryGetProperty("dimensions", out _));
         Assert.Equal("lmstudio/embedding-model", result[2].GetProperty("modelId").GetString());
         var body = handler.Requests.Last().Body!.Value;
         Assert.Equal("embedding-model", body.GetProperty("model").GetString());
         Assert.Equal(new[] { "first", "second" }, body.GetProperty("input").EnumerateArray().Select(value => value.GetString()));
-        Assert.Equal(3, (await rpc("embedding", "generate", new { modelId = "lmstudio/embedding-model", text = "single" }, default)).GetProperty("dimensions").GetInt32());
+        Assert.Equal(3, (await rpc("embedding", "generate", new { modelId = "lmstudio/embedding-model", text = "single" }, default)).GetProperty("values").GetArrayLength());
         foreach (var mode in new[] { "duplicate", "missing", "out-of-range" })
         {
             handler.EmbeddingMode = mode;

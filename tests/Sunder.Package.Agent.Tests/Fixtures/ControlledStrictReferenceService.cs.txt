@@ -1,0 +1,58 @@
+using System.Runtime.CompilerServices;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using Sunder.Sdk.Services;
+
+namespace ControlledNaturalProviders;
+
+public sealed record StrictReferenceRequest
+{
+    public required ServiceReference<IExecutionTargetService> Target { get; init; }
+    public required string ConfigurationGeneration { get; init; }
+    public required IReadOnlyList<string> ResourceCapabilities { get; init; }
+}
+
+[SunderService(SunderServiceExposure.Public, ContractId = "example.agent.controlled.strict.reference", ServiceId = "strict-reference")]
+[SunderRuntimeUse(Actions = ["discover", "invoke", "subscribe"])]
+public sealed partial class ControlledStrictReferenceService
+{
+    private readonly TaskCompletionSource _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _cancelled = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _exited = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public Task Started => _started.Task;
+    public Task Cancelled => _cancelled.Task;
+    public Task Exited => _exited.Task;
+    public string? ConfigurationGeneration { get; private set; }
+    public IReadOnlyList<string> ResourceCapabilities { get; private set; } = [];
+    public void Release() => _release.TrySetResult();
+
+    public async ValueTask<string> ExecuteAsync(StrictReferenceRequest request, CancellationToken token = default)
+    {
+        ConfigurationGeneration = request.ConfigurationGeneration;
+        ResourceCapabilities = request.ResourceCapabilities;
+        _started.TrySetResult();
+        try
+        {
+            await _release.Task.WaitAsync(token).ConfigureAwait(false);
+            return (await request.Target.Service.DescribeAsync(token).ConfigureAwait(false)).TargetId;
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        { _cancelled.TrySetResult(); throw; }
+        finally { _exited.TrySetResult(); }
+    }
+
+    public async IAsyncEnumerable<string> ObserveAsync(StrictReferenceRequest request,
+        [EnumeratorCancellation] CancellationToken token = default)
+    {
+        try
+        {
+            yield return "dispatched";
+            _started.TrySetResult();
+            try { await _release.Task.WaitAsync(token).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            { _cancelled.TrySetResult(); throw; }
+            yield return (await request.Target.Service.DescribeAsync(token).ConfigureAwait(false)).TargetId;
+        }
+        finally { _exited.TrySetResult(); }
+    }
+}

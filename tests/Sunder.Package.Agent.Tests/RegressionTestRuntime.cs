@@ -1,5 +1,5 @@
 using System.Reflection;
-using Sunder.Package.Agent.Protocol;
+using Sunder.Package.Agent.Services;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Worker;
@@ -16,10 +16,16 @@ internal sealed class RegressionTestRuntime : IServiceProvider, IDisposable, IAs
 
     private RegressionTestRuntime(IPackageContext context, ISunderRpcClient rpc)
     {
-        var generated = AgentSourceArtifactMigrationTests.CreateGeneratedWorker(typeof(Rpc.Public.RunControlService).Assembly, context, rpc);
-        Options = generated.Options;
-        _services = generated.Services;
-        _lifetime = generated.Lifetime;
+        var worker = typeof(AgentRunControlService).Assembly;
+        var entry = worker.GetType("Sunder.Generated.Package.WorkerEntryPoint", throwOnError: true)!;
+        var create = entry.GetMethod("Create", BindingFlags.Static | BindingFlags.NonPublic,
+            [typeof(IPackageContext), typeof(ISunderRpcClient)])
+            ?? throw new InvalidOperationException("The canonical Worker entry point must expose generated composition.");
+        Options = (SunderWorkerOptions)create.Invoke(null, [context, rpc])!;
+        var composition = Options.Composition
+            ?? throw new InvalidOperationException("The current Agent Worker must use staged generated composition.");
+        _services = composition.Services;
+        _lifetime = composition;
     }
 
     internal SunderWorkerOptions Options { get; }
@@ -33,8 +39,8 @@ internal sealed class RegressionTestRuntime : IServiceProvider, IDisposable, IAs
 
     internal static RegressionTestRuntime Create(IPackageContext context, ISunderRpcClient rpc) => new(context, rpc);
 
-    internal static RegressionTestRuntime Create(IPackageContext context, AgentRpcCatalog catalog)
-        => new(context, (ISunderRpcClient)typeof(AgentRpcCatalog).GetField("_client", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(catalog)!);
+    internal static RegressionTestRuntime Create(IPackageContext context, RegressionTestExtensionCatalog catalog)
+        => new(context, catalog.RpcForCaller("sunder.package.agent"));
 
     public object? GetService(Type serviceType) => _services.GetService(serviceType);
     public async ValueTask DisposeAsync()

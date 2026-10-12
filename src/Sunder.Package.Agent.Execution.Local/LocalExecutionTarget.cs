@@ -1,13 +1,14 @@
 using Sunder.Agent.Execution.Common;
-using Sunder.Package.Agent.Contracts.Contracts;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Execution.Local;
 
-public sealed class LocalExecutionTarget
-    : IAgentProcessExecutionTarget, IAgentStructuredFileSearchExecutionTarget, IAgentRangedFileExecutionTarget, IAgentExecutionScopeProvider, IAgentExecutionResourceResolver, IAgentExecutionPathMapper, IAgentExecutionPathEnvironment, IAgentScopedInstructionDiscoveryTarget, IAgentResourceAuthorityExecutionTarget, IDisposable, Sunder.Sdk.Worker.ISunderWorkerSettingsSchemaProvider
+[SunderServiceProvider(typeof(IExecutionTargetService), ProviderId = "local.execution.target")]
+public sealed partial class LocalExecutionTarget : IExecutionTargetService, IDisposable, Sunder.Sdk.Worker.ISunderWorkerSettingsSchemaProvider
 {
     private readonly LocalExecutionWorkspaceConfigService _configService;
     private readonly IPackageContext _packageContext;
@@ -38,14 +39,11 @@ public sealed class LocalExecutionTarget
 
     public Sunder.Sdk.Settings.PackageSettingsSchema SettingsSchema => LocalExecutionConfiguration.Schema;
 
-    public AgentExecutionTargetDescriptor Descriptor { get; } = new(
-        "local",
-        "local",
-        "Local Machine",
-        "Executes commands and file operations on this machine within configured workspace paths.",
-        SupportsShell: true,
-        SupportsFiles: true)
+    public AgentExecutionTargetDescriptor Descriptor { get; } = new()
     {
+        TargetKind = "local", TargetId = "local", DisplayName = "Local Machine",
+        Description = "Executes commands and file operations on this machine within configured workspace paths.",
+        SupportsShell = true, SupportsFiles = true,
         Facets =
         [
             AgentExecutionFacetIds.ProcessExecution,
@@ -60,13 +58,16 @@ public sealed class LocalExecutionTarget
         ],
     };
 
-    public async ValueTask<string?> GetConfigurationGenerationAsync(
+    public ValueTask<AgentExecutionTargetDescriptor> DescribeAsync(CancellationToken token = default)
+    { token.ThrowIfCancellationRequested(); return ValueTask.FromResult(Descriptor); }
+
+    public async ValueTask<string?> ConfigurationGenerationAsync(
         AgentExecutionTargetContext context,
         CancellationToken cancellationToken = default)
         => LocalExecutionWorkspaceConfigService.CreateGeneration(
             await CaptureCurrentConfigurationAsync(context.Binding.BindingId, cancellationToken));
 
-    public async ValueTask<AgentExecutionTargetReadiness> GetReadinessAsync(
+    public async ValueTask<AgentExecutionTargetReadiness> ReadinessAsync(
         AgentExecutionTargetContext context,
         CancellationToken cancellationToken = default)
     {
@@ -77,15 +78,11 @@ public sealed class LocalExecutionTarget
         }
         catch (LocalExecutionDomainException exception)
         {
-            return new AgentExecutionTargetReadiness(
-                Descriptor.TargetKind,
-                Descriptor.TargetId,
-                AgentExecutionTargetReadinessStatus.Failed,
-                $"{exception.Message} (code: {exception.Code})");
+            return Readiness(AgentExecutionTargetReadinessStatus.Failed, $"{exception.Message} (code: {exception.Code})");
         }
     }
 
-    public async ValueTask<AgentExecutionShellDescriptor> GetShellAsync(
+    public async ValueTask<AgentExecutionShellDescriptor> ShellAsync(
         AgentExecutionTargetContext context,
         CancellationToken cancellationToken = default)
     {
@@ -94,34 +91,33 @@ public sealed class LocalExecutionTarget
             (await GetCurrentConfigurationAsync(context, cancellationToken)).SelectedShell);
     }
 
-    public async ValueTask<AgentExecutionScopeDescriptor> GetExecutionScopeAsync(
+    public async ValueTask<AgentExecutionScopeDescriptor> ExecutionScopeAsync(
         AgentExecutionTargetContext context,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var config = await BuildRuntimeConfigAsync(context, cancellationToken);
-        return new AgentExecutionScopeDescriptor(
-            Descriptor.DisplayName,
-            config.WorkspacePaths,
-            config.DefaultWorkingDirectory,
-            "Local filesystem paths for this machine. On Windows, use the exact configured drive and user profile paths shown here.");
+        return new AgentExecutionScopeDescriptor
+        {
+            DisplayName = Descriptor.DisplayName, WorkspacePaths = config.WorkspacePaths, DefaultWorkingDirectory = config.DefaultWorkingDirectory,
+            PathStyleDescription = "Local filesystem paths for this machine. On Windows, use the exact configured drive and user profile paths shown here.",
+        };
     }
 
     public ValueTask<IReadOnlyList<AgentResolvedExecutionResource>> ResolveResourcesAsync(
-        AgentExecutionTargetContext context,
-        IReadOnlyList<AgentExecutionResourceDescriptor> resources,
+        CSunder_Agent_Execution_Target_ExecutionTargetResolveResourcesRequest request,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult(LocalResourceResolver.ResolveResources(resources));
+        return ValueTask.FromResult(LocalResourceResolver.ResolveResources(request.Resources));
     }
 
-    public async ValueTask<AgentResolvedResource> ResolveFileResourceAsync(
-        AgentExecutionTargetContext context,
-        string path,
+    public async ValueTask<AgentResolvedResource> ResolveFileAsync(
+        CSunder_Agent_Execution_Target_ExecutionTargetResolveFileRequest request,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        var (context, path) = (request.Context, request.Path);
         var config = await BuildRuntimeConfigAsync(context, cancellationToken);
         return LocalResourceResolver.ResolveFileResource(
             config,
@@ -138,45 +134,45 @@ public sealed class LocalExecutionTarget
         cancellationToken.ThrowIfCancellationRequested();
         var config = await BuildRuntimeConfigAsync(context, cancellationToken);
         return LocalSecurePathEngine.HasCurrentOutsideCapabilities(config, context, _resourceReferences)
-            ? new AgentResourceAuthorityValidation(true)
-            : new AgentResourceAuthorityValidation(
-                false,
-                LocalResourceReference.ReapprovalRequiredErrorCode,
-                "Outside Local resource authority expired or is unavailable; explicit reapproval is required.");
+            ? new() { IsValid = true, ErrorCode = null, ErrorMessage = null }
+            : new() { IsValid = false, ErrorCode = LocalResourceReference.ReapprovalRequiredErrorCode,
+                ErrorMessage = "Outside Local resource authority expired or is unavailable; explicit reapproval is required." };
     }
 
-    public void ReleaseResourceAuthority(IReadOnlyList<string> resourceCapabilities)
+    public ValueTask ReleaseResourceAuthorityAsync(IReadOnlyList<string> resourceCapabilities, CancellationToken token = default)
     {
+        token.ThrowIfCancellationRequested();
         foreach (var capability in resourceCapabilities)
         {
             _resourceReferences.Revoke(capability);
         }
+        return ValueTask.CompletedTask;
     }
 
     public async ValueTask<AgentShellCommandResult> ExecuteShellAsync(
-        AgentExecutionTargetContext context,
-        AgentShellCommandRequest request,
+        CSunder_Agent_Execution_Target_ExecutionTargetExecuteShellRequest invocation,
         CancellationToken cancellationToken = default)
     {
+        var (context, request) = (invocation.Context, invocation.Request);
         var config = await BuildRuntimeConfigAsync(context, cancellationToken);
         return await _shellExecutor.ExecuteShellAsync(config, context, request, cancellationToken);
     }
 
     public async ValueTask<AgentShellCommandResult> ExecuteProcessAsync(
-        AgentExecutionTargetContext context,
-        AgentProcessCommandRequest request,
+        CSunder_Agent_Execution_Target_ExecutionTargetExecuteProcessRequest invocation,
         CancellationToken cancellationToken = default)
     {
+        var (context, request) = (invocation.Context, invocation.Request);
         var config = await BuildRuntimeConfigAsync(context, cancellationToken);
         return await _processExecutor.ExecuteProcessAsync(config, context, request, cancellationToken);
     }
 
-    public async ValueTask<AgentFileSearchResult> ExecuteFileSearchAsync(
-        AgentExecutionTargetContext context,
-        AgentFileSearchRequest request,
+    public async ValueTask<AgentFileSearchResult> StructuredFileSearchAsync(
+        CSunder_Agent_Execution_Target_ExecutionTargetStructuredFileSearchRequest invocation,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        var (context, request) = (invocation.Context, invocation.Request);
         var config = await BuildRuntimeConfigAsync(context, cancellationToken);
         return await LocalSecureFileSearch.ExecuteAsync(
             config,
@@ -188,17 +184,16 @@ public sealed class LocalExecutionTarget
             resourceReferences: _resourceReferences);
     }
 
-    public async ValueTask<AgentExecutionPathMapping> MapToHostPathAsync(
-        AgentExecutionTargetContext context,
-        string executionPath,
+    public async ValueTask<AgentExecutionPathMapping> MapPathAsync(
+        CSunder_Agent_Execution_Target_ExecutionTargetMapPathRequest request,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var config = await BuildRuntimeConfigAsync(context, cancellationToken);
-        return LocalResourceResolver.MapToHostPath(config, executionPath);
+        var config = await BuildRuntimeConfigAsync(request.Context, cancellationToken);
+        return LocalResourceResolver.MapToHostPath(config, request.Path);
     }
 
-    public async ValueTask<IReadOnlyList<string>> ListPathEntriesAsync(
+    public async ValueTask<IReadOnlyList<string>> ListPathAsync(
         AgentExecutionTargetContext context,
         CancellationToken cancellationToken = default)
     {
@@ -206,12 +201,12 @@ public sealed class LocalExecutionTarget
         return (await GetCurrentConfigurationAsync(context, cancellationToken)).WorkspaceConfig.PathEntries ?? [];
     }
 
-    public async ValueTask AddPathEntryAsync(
-        AgentExecutionTargetContext context,
-        string executionPath,
+    public async ValueTask AddPathAsync(
+        CSunder_Agent_Execution_Target_ExecutionTargetAddPathRequest request,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        var (context, executionPath) = (request.Context, request.Path);
         if (string.IsNullOrWhiteSpace(executionPath))
         {
             return;
@@ -248,10 +243,10 @@ public sealed class LocalExecutionTarget
     }
 
     public async ValueTask<AgentFileReadResult> ReadFileAsync(
-        AgentExecutionTargetContext context,
-        AgentFileReadRequest request,
+        CSunder_Agent_Execution_Target_ExecutionTargetReadFileRequest invocation,
         CancellationToken cancellationToken = default)
     {
+        var (context, request) = (invocation.Context, invocation.Request);
         var config = await BuildRuntimeConfigAsync(context, cancellationToken);
         return await LocalFileSystemExecutor.ReadFileAsync(
             config,
@@ -264,10 +259,10 @@ public sealed class LocalExecutionTarget
     }
 
     public async ValueTask<AgentFileMutationResult> WriteFileAsync(
-        AgentExecutionTargetContext context,
-        AgentFileWriteRequest request,
+        CSunder_Agent_Execution_Target_ExecutionTargetWriteFileRequest invocation,
         CancellationToken cancellationToken = default)
     {
+        var (context, request) = (invocation.Context, invocation.Request);
         var config = await BuildRuntimeConfigAsync(context, cancellationToken);
         return await LocalFileSystemExecutor.WriteFileAsync(
             config,
@@ -280,10 +275,10 @@ public sealed class LocalExecutionTarget
     }
 
     public async ValueTask<AgentFileMutationResult> DeleteFileAsync(
-        AgentExecutionTargetContext context,
-        AgentFileDeleteRequest request,
+        CSunder_Agent_Execution_Target_ExecutionTargetDeleteFileRequest invocation,
         CancellationToken cancellationToken = default)
     {
+        var (context, request) = (invocation.Context, invocation.Request);
         var config = await BuildRuntimeConfigAsync(context, cancellationToken);
         return await LocalFileSystemExecutor.DeleteFileAsync(
             config,
@@ -295,15 +290,14 @@ public sealed class LocalExecutionTarget
             resourceReferences: _resourceReferences);
     }
 
-    public async ValueTask<AgentScopedInstructionDiscoveryResult> DiscoverScopedInstructionsAsync(
-        AgentExecutionTargetContext context,
-        AgentScopedInstructionDiscoveryRequest request,
+    public async ValueTask<AgentScopedInstructionDiscoveryResult> DiscoverInstructionsAsync(
+        CSunder_Agent_Execution_Target_ExecutionTargetDiscoverInstructionsRequest request,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         return await LocalScopedInstructionDiscovery.DiscoverAsync(
-            await BuildRuntimeConfigAsync(context, cancellationToken),
-            request,
+            await BuildRuntimeConfigAsync(request.Context, cancellationToken),
+            request.Request,
             cancellationToken);
     }
 
@@ -321,7 +315,7 @@ public sealed class LocalExecutionTarget
         var config = await BuildRuntimeConfigAsync(context, cancellationToken);
         if (config.WorkspacePaths.Count == 0)
         {
-            return new AgentExecutionTargetReadiness(Descriptor.TargetKind, Descriptor.TargetId, AgentExecutionTargetReadinessStatus.NeedsConfiguration, "Configure at least one workspace path before using local execution.");
+            return Readiness(AgentExecutionTargetReadinessStatus.NeedsConfiguration, "Configure at least one workspace path before using local execution.");
         }
 
         foreach (var rootPath in config.WorkspacePaths)
@@ -333,18 +327,11 @@ public sealed class LocalExecutionTarget
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
             {
-                return new AgentExecutionTargetReadiness(
-                    Descriptor.TargetKind,
-                    Descriptor.TargetId,
-                    AgentExecutionTargetReadinessStatus.Failed,
-                    $"Workspace path cannot be opened with strict no-follow security: {rootPath}. {ex.Message}");
+                return Readiness(AgentExecutionTargetReadinessStatus.Failed, $"Workspace path cannot be opened with strict no-follow security: {rootPath}. {ex.Message}");
             }
         }
 
-        return new AgentExecutionTargetReadiness(
-            Descriptor.TargetKind,
-            Descriptor.TargetId,
-            AgentExecutionTargetReadinessStatus.Ready,
+        return Readiness(AgentExecutionTargetReadinessStatus.Ready,
             LocalSecureNative.StrictMutationsAvailable
                 ? "Local execution is ready."
                 : "Local reads, search, and scoped-instruction discovery are ready; strict structured writes and deletes are unavailable on Windows.");
@@ -381,6 +368,9 @@ public sealed class LocalExecutionTarget
             DefaultTimeoutSeconds = snapshot.DefaultTimeoutSeconds,
         };
     }
+
+    private AgentExecutionTargetReadiness Readiness(AgentExecutionTargetReadinessStatus status, string message) => new()
+    { TargetKind = Descriptor.TargetKind, TargetId = Descriptor.TargetId, Status = status, Message = message };
 
     private async Task<LocalExecutionConfigurationSnapshot> GetCurrentConfigurationAsync(
         AgentExecutionTargetContext context,

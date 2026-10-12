@@ -4,6 +4,7 @@ using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
+using Sunder.Sdk.Rpc;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -14,42 +15,52 @@ public sealed partial class AgentSourceArtifactMigrationTests
     {
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
         var peers = AddCatalogPeers(state);
-        var rpc = new MemoryConsumerRpc(new RegressionTestRpcClient(state, "sunder.package.agent.subagents"));
-        var type = worker.GetType("Sunder.Package.Agent.Subagents.Rpc.SubagentRuntimeBindings", true)!;
-        var instance = Activator.CreateInstance(type, rpc)!;
-        await using var owned = (IAsyncDisposable)instance;
-        Assert.Empty(References("GetChatProviders"));
-        Assert.Empty(References("GetToolSources"));
-        Assert.Empty(References("GetSelectableCapabilityProviders"));
+        var scoped = new FilesRpcObserver(new RegressionTestRpcClient(state, "sunder.package.agent.subagents"));
+        var rpc = new MemoryConsumerRpc(scoped);
+        Assert.Null(worker.GetType("Sunder.Package.Agent.Subagents.Rpc.SubagentRuntimeBindings"));
+        await using var owned = new GeneratedServiceTestScope(rpc);
         Assert.Equal(0, rpc.DiscoveryCount);
-        await type.GetMethod("StartAsync")!.CreateDelegate<Func<CancellationToken, ValueTask>>(instance)(default);
-        var chatReference = Assert.Single(References("GetChatProviders"));
-        using var chat = AcquireSubagent(chatReference);
-        Assert.Same(worker, chat.Service.Value.GetType().Assembly);
-        Assert.Equal(peers.Chat.Descriptor.ProviderId, chat.Service.Property<AgentProviderDescriptor>("Descriptor").ProviderId);
-        Func<CancellationToken, ValueTask<IReadOnlyList<AgentModelDescriptor>>> models = token => chat.Service.InvokeAsync<IReadOnlyList<AgentModelDescriptor>>("GetAvailableModelsAsync", token);
-        Func<CancellationToken, ValueTask<AgentProviderReadiness>> readiness = token => chat.Service.InvokeAsync<AgentProviderReadiness>("GetReadinessAsync", token);
+        var chatReference = Assert.Single(await ProjectedProviders(owned, worker, "IChatProviderService"));
+        using var chat = chatReference.Service;
+        Assert.Same(worker, chat.Value.GetType().Assembly);
+        Assert.Equal(peers.Chat.Descriptor.ProviderId, (await chat.InvokeAsync<AgentProviderDescriptor>("DescribeAsync", CancellationToken.None)).ProviderId);
+        Func<CancellationToken, ValueTask<IReadOnlyList<AgentModelDescriptor>>> models = token => chat.InvokeAsync<IReadOnlyList<AgentModelDescriptor>>("ListModelsAsync", token);
+        Func<CancellationToken, ValueTask<AgentProviderReadiness>> readiness = token => chat.InvokeAsync<AgentProviderReadiness>("GetReadinessAsync", token);
         var values = await models(default);
         Assert.Equal(2, values.Count);
         Assert.Equal(AgentReasoningEffort.ExtraHigh, values[1].Variants![0].ReasoningEffort);
         Assert.Equal(new DateOnly(2026, 9, 20), values[1].ReleaseDate);
         Assert.True(values[1].ModeOptions![0].DisablesReasoning);
         Assert.Equal(AgentProviderReadinessStatus.Ready, (await readiness(default)).Status);
-        using var tools = AcquireSubagent(Assert.Single(References("GetToolSources")));
-        Func<AgentToolSourceContext, CancellationToken, ValueTask<IReadOnlyList<AgentToolDescriptor>>> listTools = (context, token) => tools.Service.InvokeAsync<IReadOnlyList<AgentToolDescriptor>>("ListToolsAsync", context, token);
-        Assert.Equal(3, (await listTools(new(null, null, null, null), default)).Count);
-        Assert.True((await listTools(new(null, null, null, null), default))[0].IsReadOnly);
+        using var tools = Assert.Single(await ProjectedProviders(owned, worker, "IToolSourceService")).Service;
+        var contextType = tools.Value.GetType().GetMethod("ListToolsAsync")!.GetParameters()[0].ParameterType;
+        var contextFree = Activator.CreateInstance(contextType)!;
+        foreach (var member in new[] { "SessionId", "Profile", "Workspace", "ExecutionBinding", "ExecutionTarget", "ExecutionTargetConfigurationGeneration" })
+            contextType.GetProperty(member)!.SetValue(contextFree, null);
+        ValueTask<IReadOnlyList<AgentToolDescriptor>> ListTools() => tools.InvokeAsync<IReadOnlyList<AgentToolDescriptor>>("ListToolsAsync", contextFree, CancellationToken.None);
+        Assert.Equal(3, (await ListTools()).Count);
+        Assert.True((await ListTools())[0].IsReadOnly);
         peers.Tools.ReadOnly = false;
-        Assert.False((await listTools(new(null, null, null, null), default))[0].IsReadOnly);
-        var capabilityReference = Assert.Single(References("GetSelectableCapabilityProviders"));
-        using var capabilities = AcquireSubagent(capabilityReference);
-        var changed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        Assert.True(worker.GetType("Sunder.Package.Agent.Contracts.Contracts.IAgentProfileSelectableCapabilityChangeNotifier", true)!.IsInstanceOfType(capabilities.Service.Value));
-        capabilities.Service.On("SelectableCapabilitiesChanged", (Action)(() => changed.TrySetResult()));
+        Assert.False((await ListTools())[0].IsReadOnly);
+        var capabilityReference = Assert.Single(await ProjectedProviders(owned, worker, "ISelectableCapabilityProviderService"));
+        using var capabilities = capabilityReference.Service;
+        Assert.Same(worker, capabilities.Value.GetType().Assembly);
+        using var watchCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var watch = ProjectedCatalogEvents(capabilities.Value, watchCancellation.Token).GetAsyncEnumerator();
+        Task<bool>? pendingWatch = null;
+        Task<bool> MoveNext() => pendingWatch = watch.MoveNextAsync().AsTask();
+        try
+        {
+        var first = MoveNext();
         await peers.Capabilities.Subscribed.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Equal(2, (await capabilities.Service.InvokeAsync<AgentProfileSelectableCapabilityDescriptor[]>("ListCapabilitiesAsync", new AgentProfileSelectableCapabilityRequest(null), CancellationToken.None)).Length);
+        Assert.True(await first.WaitAsync(TimeSpan.FromSeconds(5)));
+        var revision = watch.Current.GetProperty("revision").GetInt64();
+        Assert.Equal(2, (await capabilities.InvokeAsync<AgentProfileSelectableCapabilityDescriptor[]>("ListAsync", null, CancellationToken.None)).Length);
+        var changed = MoveNext();
         peers.Capabilities.Notify();
-        await changed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(await changed.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.True(watch.Current.GetProperty("revision").GetInt64() > revision);
+        var nextEvent = MoveNext();
         using (var cancelled = new CancellationTokenSource())
         {
             cancelled.Cancel();
@@ -57,10 +68,10 @@ public sealed partial class AgentSourceArtifactMigrationTests
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() => models(cancelled.Token).AsTask());
             Assert.Equal(calls, peers.Chat.ModelCalls);
         }
-        rpc.LookupFailure = Sunder.Sdk.Rpc.SunderRpcErrorKind.PermissionDenied;
+        scoped.LookupFailure = Sunder.Sdk.Rpc.SunderRpcErrorKind.PermissionDenied;
         Assert.Equal(Sunder.Sdk.Rpc.SunderRpcErrorKind.PermissionDenied,
             (await Assert.ThrowsAsync<Sunder.Sdk.Rpc.SunderRpcException>(() => models(default).AsTask())).Error.Kind);
-        rpc.LookupFailure = null;
+        scoped.LookupFailure = null;
         peers.Chat.Block = true;
         using (var cancelled = new CancellationTokenSource())
         {
@@ -73,32 +84,39 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var retiring = models(default).AsTask();
         await peers.Chat.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await state.RetireAsync(peers.Chat).WaitAsync(TimeSpan.FromSeconds(5));
-        var failure = await Record.ExceptionAsync(() => retiring.WaitAsync(TimeSpan.FromSeconds(5)));
-        Assert.True(failure is OperationCanceledException || failure is Sunder.Sdk.Rpc.SunderRpcException { Error.Kind: Sunder.Sdk.Rpc.SunderRpcErrorKind.StaleEndpoint });
-        Assert.Null(TryAcquireSubagent(chatReference));
+        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => retiring.WaitAsync(TimeSpan.FromSeconds(5)))).Error.Kind);
+        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => chatReference.EnsureCurrentAsync())).Error.Kind);
         chat.Dispose();
         var replacement = new CatalogChat();
-        AddGeneratedPeer(state, "example.catalog", AgentRpcContractIds.ChatProvider, replacement, "fixture.chat");
-        Assert.Null(TryAcquireSubagent(chatReference));
-        using (var current = AcquireSubagent(Assert.Single(References("GetChatProviders"))))
-            Assert.NotNull(current.Service.Property<AgentProviderDescriptor>("Descriptor"));
+        AddGeneratedPeer(state, "example.catalog", RegressionTestBindings.ChatProviders, replacement, "fixture.chat");
+        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => chatReference.EnsureCurrentAsync())).Error.Kind);
+        Assert.Equal(0, replacement.ModelCalls);
+        using (var current = Assert.Single(await ProjectedProviders(owned, worker, "IChatProviderService")).Service)
+            Assert.NotNull(await current.InvokeAsync<AgentProviderDescriptor>("DescribeAsync", CancellationToken.None));
         await state.RetireAsync(peers.Capabilities).WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Null(TryAcquireSubagent(capabilityReference));
+        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => capabilityReference.EnsureCurrentAsync())).Error.Kind);
+        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => nextEvent.WaitAsync(TimeSpan.FromSeconds(5)))).Error.Kind);
         capabilities.Dispose(); tools.Dispose();
         await owned.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(0, peers.Capabilities.Subscribers);
         Assert.Equal(0, rpc.ActiveWatches);
         foreach (var scope in rpc.Scopes)
-            await Assert.ThrowsAsync<ObjectDisposedException>(() => scope.DiscoverAsync(AgentRpcContractIds.ChatProvider).AsTask());
-        object[] References(string name) => ((IEnumerable)type.GetMethod(name)!.Invoke(instance, null)!).Cast<object>().ToArray();
+            await Assert.ThrowsAsync<ObjectDisposedException>(() => scope.DiscoverAsync(RegressionTestBindings.ChatProviders).AsTask());
+        }
+        finally
+        {
+            await watchCancellation.CancelAsync();
+            if (pendingWatch is not null) await Record.ExceptionAsync(() => pendingWatch.WaitAsync(TimeSpan.FromSeconds(5)));
+            await watch.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        }
     }
 
     private static (CatalogChat Chat, CatalogTools Tools, CatalogCapabilities Capabilities) AddCatalogPeers(RegressionTestRpcState state)
     {
         var chat = new CatalogChat(); var tools = new CatalogTools(); var capabilities = new CatalogCapabilities();
-        AddGeneratedPeer(state, "example.catalog", AgentRpcContractIds.ChatProvider, chat, "fixture.chat");
-        AddGeneratedPeer(state, "example.catalog", AgentRpcContractIds.ToolSource, tools, "fixture.tools");
-        AddGeneratedPeer(state, "example.catalog", AgentRpcContractIds.SelectableCapabilityProvider, capabilities, "fixture.capabilities");
+        AddGeneratedPeer(state, "example.catalog", RegressionTestBindings.ChatProviders, chat, "fixture.chat");
+        AddGeneratedPeer(state, "example.catalog", RegressionTestBindings.ToolSources, tools, "fixture.tools");
+        AddGeneratedPeer(state, "example.catalog", RegressionTestBindings.SelectableCapabilityProviders, capabilities, "fixture.capabilities");
         return (chat, tools, capabilities);
     }
     private sealed class CatalogChat : IAgentChatProvider

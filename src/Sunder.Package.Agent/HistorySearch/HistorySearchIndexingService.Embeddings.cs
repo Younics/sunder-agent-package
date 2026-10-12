@@ -45,8 +45,8 @@ internal sealed partial class HistorySearchIndexingService
                     "The selected embedding implementation changed and must be reconfigured before vectors can be reused.");
                 return;
             }
-            var readiness = await _embeddingProviders
-                .GetReadinessAsync(resolved, lease.CancellationToken).ConfigureAwait(false);
+            var readiness = await resolved.OwnedProvider.Provider.Service
+                .GetReadinessAsync(lease.CancellationToken).ConfigureAwait(false);
             lease.ThrowIfCurrent();
             if (readiness.Status != AgentProviderReadinessStatus.Ready)
             {
@@ -92,8 +92,8 @@ internal sealed partial class HistorySearchIndexingService
                 foreach (var batch in page.Chunk(EmbeddingBatchSize))
                 {
                     lease.ThrowIfCurrent();
-                    var results = await _embeddingProviders.GenerateEmbeddingsAsync(
-                        resolved,
+                    var results = await resolved.OwnedProvider.Provider.Service.GenerateBatchAsync(
+                        resolved.ModelId,
                         batch.Select(static item => item.BodyText).ToArray(),
                         lease.CancellationToken).ConfigureAwait(false);
                     lease.ThrowIfCurrent();
@@ -217,7 +217,7 @@ internal sealed partial class HistorySearchIndexingService
                     "The selected embedding implementation changed. Existing vectors remain fenced off.");
                 return;
             }
-            var readiness = await _embeddingProviders.GetReadinessAsync(resolved, lease.CancellationToken)
+            var readiness = await resolved.OwnedProvider.Provider.Service.GetReadinessAsync(lease.CancellationToken)
                 .ConfigureAwait(false);
             lease.ThrowIfCurrent();
             if (readiness.Status != AgentProviderReadinessStatus.Ready)
@@ -253,8 +253,8 @@ internal sealed partial class HistorySearchIndexingService
             while (page.Count > 0)
             {
                 lease.ThrowIfCurrent();
-                var results = await _embeddingProviders.GenerateEmbeddingsAsync(
-                    resolved,
+                var results = await resolved.OwnedProvider.Provider.Service.GenerateBatchAsync(
+                    resolved.ModelId,
                     page.Select(static item => item.BodyText).ToArray(),
                     lease.CancellationToken).ConfigureAwait(false);
                 lease.ThrowIfCurrent();

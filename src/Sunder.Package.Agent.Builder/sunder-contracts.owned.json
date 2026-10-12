@@ -3,7 +3,8 @@
   "authorityKind": "package",
   "authorityId": "sunder.package.agent.builder",
   "packageId": "sunder.package.agent.builder",
-  "contracts": {
+  "contracts": {},
+  "retiredPrivateContracts": {
     "builder-runtime": {
       "contractId": "sunder.package.agent.builder.runtime",
       "current": {

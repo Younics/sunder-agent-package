@@ -1,4 +1,3 @@
-using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 
@@ -7,7 +6,7 @@ namespace Sunder.Package.Agent.Tools.Files;
 internal static class FileReadHandler
 {
     public static async Task<FileReadToolResult> ExecuteAsync(
-        IAgentExecutionTarget target,
+        FileExecutionTarget target,
         AgentExecutionTargetContext context,
         AgentToolRequest request,
         CancellationToken cancellationToken)
@@ -19,10 +18,8 @@ internal static class FileReadHandler
                 IsDirectory: false);
         }
 
-        var result = await target.ReadFileAsync(
-            context,
-            new AgentFileReadRequest(args.Path, args.EffectiveOffset, args.EffectiveLimit),
-            cancellationToken);
+        var result = await target.Service.ReadFileAsync(new()
+        { Context = context, Request = new() { Path = args.Path, Offset = args.EffectiveOffset, Limit = args.EffectiveLimit } }, cancellationToken);
         if (result.IsError)
         {
             return new FileReadToolResult(FileToolResult.ReadError(request.ToolId, result), IsDirectory: false);
@@ -31,12 +28,7 @@ internal static class FileReadHandler
         if (result.IsDirectory)
         {
             return new FileReadToolResult(
-                new AgentToolResult(
-                    request.ToolId,
-                    $"Read {result.Path}",
-                    Content: result.Content,
-                    WasTruncated: result.WasTruncated,
-                    BackendId: FileToolResult.BackendId(target)),
+                FileToolResult.Success(request.ToolId, $"Read {result.Path}", result.Content, FileToolResult.BackendId(target), result.WasTruncated),
                 IsDirectory: true);
         }
 
@@ -48,12 +40,8 @@ internal static class FileReadHandler
             ? NumberLines(result.Content, args.EffectiveOffset)
             : SliceAndNumberLegacyResult(result.Content, args.EffectiveOffset, args.EffectiveLimit, out legacyTruncated);
         return new FileReadToolResult(
-            new AgentToolResult(
-                request.ToolId,
-                $"Read {result.Path}",
-                Content: content,
-                WasTruncated: result.WasTruncated || (!supportsRangedRead && legacyTruncated),
-                BackendId: FileToolResult.BackendId(target)),
+            FileToolResult.Success(request.ToolId, $"Read {result.Path}", content, FileToolResult.BackendId(target),
+                result.WasTruncated || (!supportsRangedRead && legacyTruncated)),
             IsDirectory: false);
     }
 

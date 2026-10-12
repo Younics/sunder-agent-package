@@ -7,6 +7,12 @@ namespace Sunder.Package.Agent.Subagents.PackageViews;
 
 public sealed partial class SubsessionsViewModel
 {
+    private (LatestRequestTicket Request, TranscriptNavigationTarget Target)? _preparingAnchoredNavigation;
+    private TranscriptNavigationTarget? _anchoredNavigationTarget;
+
+    private bool IsPreparingAnchoredNavigation
+        => _preparingAnchoredNavigation is { } pending && _requests.IsCurrent(pending.Request);
+
     internal static TranscriptNavigationTarget? TryGetNavigationAnchor(
         IReadOnlyDictionary<string, string?> parameters)
         => TranscriptAnchorNavigation.Parse(parameters, requireWorkspace: false);
@@ -46,6 +52,7 @@ public sealed partial class SubsessionsViewModel
         }
         finally
         {
+            await CompleteNavigationPreparationAsync(request).ConfigureAwait(false);
             _requests.Complete(request);
         }
     }
@@ -56,13 +63,6 @@ public sealed partial class SubsessionsViewModel
     {
         var cancellationToken = navigation.CancellationToken;
         EnsureCurrentNavigation(navigation);
-        await RunOnUiThreadAsync(() =>
-        {
-            EnsureCurrentNavigation(navigation);
-            ClearNavigationHighlightForPreparation();
-            NavigationAnchorKey = null;
-            NavigationSelectionAuthorityRevision = null;
-        }, cancellationToken).ConfigureAwait(false);
         var sessionId = TryGetSessionId(context.Parameters);
         var navigationAnchor = TryGetNavigationAnchor(context.Parameters);
         if (navigationAnchor is not null
@@ -71,8 +71,20 @@ public sealed partial class SubsessionsViewModel
         {
             throw new InvalidOperationException("The navigation anchor does not match the selected child session.");
         }
+        await RunOnUiThreadAsync(() =>
+        {
+            EnsureCurrentNavigation(navigation);
+            // Publish pending intent before initialization can publish its first reset.
+            _preparingAnchoredNavigation = navigationAnchor is null ? null : (navigation, navigationAnchor);
+            if (navigationAnchor is null) _anchoredNavigationTarget = null;
+            ClearNavigationHighlightForPreparation();
+            NavigationAnchorKey = null;
+            NavigationSelectionAuthorityRevision = null;
+        }, cancellationToken).ConfigureAwait(false);
+        // AsyncOnce initialization can outlive this caller; let only the current
+        // navigation below select an anchored session after metadata is ready.
         await EnsureInitializedAsync(
-            sessionId,
+            navigationAnchor is null ? sessionId : null,
             cancellationToken,
             suppressTranscriptLoad: navigationAnchor is not null);
         EnsureCurrentNavigation(navigation);
@@ -192,19 +204,7 @@ public sealed partial class SubsessionsViewModel
         EnsureCurrentNavigation(navigation);
         var reader = _transcriptReader
             ?? throw new InvalidOperationException("The Agent runtime is not available.");
-        var page = await reader.LoadAroundTurnAsync(
-            target.SessionId,
-            target.TurnId,
-            target.CreatedAtUtc,
-            target.ItemId,
-            beforeLimit: 20,
-            afterLimit: 20,
-            cancellationToken).ConfigureAwait(false);
-        if (page.AnchorTurnId != target.TurnId
-            || !TryResolveAnchorKey(target, page.Turns, out var anchorKey))
-        {
-            throw new SubsessionHistoryTargetUnavailableException(target.AnchorKind);
-        }
+        TranscriptLoadTicket? load = null;
         await RunOnUiThreadAsync(() =>
         {
             EnsureCurrentAnchorSelection(
@@ -212,23 +212,106 @@ public sealed partial class SubsessionsViewModel
                 navigation,
                 selectionAuthorityRevision,
                 cancellationToken);
-            var ticket = _timeline.BeginAnchoredInitialLoad(target.SessionId);
-            if (!_timeline.TryCompleteAnchoredInitialLoad(
-                    ticket,
-                    page.Turns,
-                    page.HasOlder,
-                    page.HasNewer,
-                    anchorKey))
-            {
-                throw new InvalidOperationException("The transcript navigation was superseded.");
-            }
-            NavigationAnchorKey = anchorKey;
-            NavigationSelectionAuthorityRevision = selectionAuthorityRevision;
-            _knownCheckpoints.TryGetValue(target.SessionId, out var checkpoint);
-            _runActivity.TrackCheckpoint(checkpoint);
-            ApplyRunActivityState();
+            load = _timeline.BeginAnchoredInitialLoad(target.SessionId);
         }, cancellationToken).ConfigureAwait(false);
+        var ticket = load ?? throw new OperationCanceledException("The subsession navigation was disposed.");
+        try
+        {
+            while (true)
+            {
+                EnsureCurrentNavigation(navigation);
+                // A fresh anchored read satisfies earlier resets. A reset during this
+                // read requires a new page, never publication of the superseded page.
+                Interlocked.Exchange(ref _forceRuntimeTranscriptRefresh, 0);
+                var page = await reader.LoadAroundTurnAsync(
+                    target.SessionId, target.TurnId, target.CreatedAtUtc, target.ItemId,
+                    beforeLimit: 20, afterLimit: 20, cancellationToken).ConfigureAwait(false);
+                var applied = false;
+                var retry = false;
+                await RunOnUiThreadAsync(() =>
+                {
+                    EnsureCurrentAnchorSelection(target.SessionId, navigation, selectionAuthorityRevision, cancellationToken);
+                    if (Volatile.Read(ref _forceRuntimeTranscriptRefresh) != 0)
+                    {
+                        retry = true;
+                        return;
+                    }
+                    if (page.AnchorTurnId != target.TurnId
+                        || !TryResolveAnchorKey(target, page.Turns, out var anchorKey))
+                    {
+                        throw new SubsessionHistoryTargetUnavailableException(target.AnchorKind);
+                    }
+                    if (!_timeline.TryCompleteAnchoredInitialLoad(ticket, page.Turns, page.HasOlder, page.HasNewer, anchorKey))
+                    {
+                        throw new OperationCanceledException("The transcript navigation was superseded.");
+                    }
+                    _anchoredNavigationTarget = target;
+                    NavigationAnchorKey = anchorKey;
+                    NavigationSelectionAuthorityRevision = selectionAuthorityRevision;
+                    _knownCheckpoints.TryGetValue(target.SessionId, out var checkpoint);
+                    _runActivity.TrackCheckpoint(checkpoint);
+                    ApplyRunActivityState();
+                    applied = true;
+                }, cancellationToken).ConfigureAwait(false);
+                if (applied) return;
+                if (!retry) throw new OperationCanceledException("The subsession navigation was disposed.");
+            }
+        }
+        catch
+        {
+            await RunOnUiThreadAsync(() =>
+            {
+                if (_requests.IsLatest(navigation)) _timeline.TryFailInitialLoad(ticket);
+            }, CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
     }
+
+    private Task RefreshTranscriptAfterRuntimeResetAsync(CancellationToken cancellationToken)
+    {
+        // Metadata refresh proceeds independently while navigation owns transcript
+        // preparation. Its anchored read consumes the reset or retries if it races.
+        if (IsPreparingAnchoredNavigation) return Task.CompletedTask;
+        if (_anchoredNavigationTarget is { } target
+            && target.SessionId == SelectedSubsession?.SessionId
+            && NavigationSelectionAuthorityRevision == IntentRevision
+            && !_timeline.IsFollowingLatest)
+        {
+            var request = _requests.Begin(NavigationChannel, cancellationToken);
+            _preparingAnchoredNavigation = (request, target);
+            return RefreshAnchoredTranscriptAsync(target, request, IntentRevision);
+        }
+        Interlocked.Exchange(ref _forceRuntimeTranscriptRefresh, 0);
+        LoadTranscript(SelectedSubsession?.SessionId, forceReplacement: true);
+        return Volatile.Read(ref _transcriptLoadOperation);
+    }
+
+    private async Task RefreshAnchoredTranscriptAsync(
+        TranscriptNavigationTarget target, LatestRequestTicket navigation, long selectionAuthorityRevision)
+    {
+        try
+        {
+            await NavigateToAnchorAsync(target, navigation, selectionAuthorityRevision, navigation.CancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (navigation.CancellationToken.IsCancellationRequested || !_requests.IsCurrent(navigation))
+        {
+            // A newer navigation/latest/session intent owns the replacement.
+        }
+        finally
+        {
+            await CompleteNavigationPreparationAsync(navigation).ConfigureAwait(false);
+            _requests.Complete(navigation);
+        }
+    }
+
+    private Task CompleteNavigationPreparationAsync(LatestRequestTicket navigation)
+        => RunOnUiThreadAsync(() =>
+        {
+            if (_preparingAnchoredNavigation is not { } pending || pending.Request != navigation) return;
+            _preparingAnchoredNavigation = null;
+            if (Volatile.Read(ref _forceRuntimeTranscriptRefresh) != 0)
+                _tasks.Run(_ => _runtimeRefresh.MarkDirty());
+        }, CancellationToken.None);
 
     private void EnsureCurrentAnchorSelection(
         Guid targetSessionId,
@@ -253,7 +336,7 @@ public sealed partial class SubsessionsViewModel
 
     private static bool TryResolveAnchorKey(
         TranscriptNavigationTarget target,
-        IReadOnlyList<Sunder.Package.Agent.Contracts.Models.AgentTurnRecord> turns,
+        IReadOnlyList<AgentTurnRecord> turns,
         out object anchorKey)
     {
         anchorKey = default!;
@@ -264,7 +347,7 @@ public sealed partial class SubsessionsViewModel
         }
         if (target.AnchorKind == TranscriptNavigationAnchorKind.Text
             && !turn.Items.Any(item => item.ItemId == target.ItemId
-                                       && item.Kind == Sunder.Package.Agent.Contracts.Models.AgentTurnItemKind.Text))
+                                        && item.Kind == AgentTurnItemKind.Text))
         {
             return false;
         }

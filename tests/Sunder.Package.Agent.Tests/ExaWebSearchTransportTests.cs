@@ -272,9 +272,9 @@ public sealed class ExaWebSearchTransportTests
             backend.SearchAsync("bounded pages", 5));
 
         Assert.Contains("page limit", exception.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(ExaMcpClient.MaximumToolPages, listPage);
-        Assert.Equal(2 + ExaMcpClient.MaximumToolPages, requestCount);
-        Assert.True(requestCount < ExaMcpClient.MaximumHttpCalls);
+        Assert.Equal(WebSearchMcpClient.MaximumToolPages, listPage);
+        Assert.Equal(2 + WebSearchMcpClient.MaximumToolPages, requestCount);
+        Assert.True(requestCount < WebSearchMcpClient.MaximumHttpCalls);
     }
 
     [Theory]
@@ -306,7 +306,9 @@ public sealed class ExaWebSearchTransportTests
     {
         using var scope = RegressionTestPackageScope.Create();
         var backend = new ExaWebSearchBackend(new WebToolsSettingsService(scope.Context));
-        var tool = new WebSearchTool(backend, new WebToolsSettingsService(scope.Context));
+        var settings = new WebToolsSettingsService(scope.Context);
+        using var parallel = new ParallelWebSearchBackend(settings);
+        var tool = new WebSearchTool(new WebSearchService(backend, parallel, settings), settings);
         using var schema = JsonDocument.Parse(tool.Descriptor.ArgumentsJsonSchema!);
 
         Assert.Equal(
@@ -340,7 +342,7 @@ public sealed class ExaWebSearchTransportTests
     {
         var response = RpcResult(request, new
         {
-            protocolVersion = ExaMcpClient.RequestedProtocolVersion,
+            protocolVersion = WebSearchMcpClient.RequestedProtocolVersion,
             capabilities = new { tools = new { } },
             serverInfo = new { name = "exa", version = "test" },
         });

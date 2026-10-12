@@ -1,18 +1,232 @@
-using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Models;
-using Sunder.Package.Agent.Protocol;
+using Sunder.Package.Agent.Shared.Presentation;
+using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.Services;
 
 public sealed partial class AgentToolService
 {
+    public async Task<IReadOnlyList<AgentToolCatalogEntry>> ListToolCatalogAsync(
+        AgentProfileRecord? profile = null,
+        Guid? sessionId = null,
+        AgentWorkspaceRecord? workspace = null,
+        bool includeUnavailable = true,
+        CancellationToken cancellationToken = default)
+    {
+        var effectiveProfile = profile;
+        var (context, executionTarget) = await CreateSourceContextAsync(
+                sessionId,
+                effectiveProfile,
+                workspace,
+                cancellationToken)
+            .ConfigureAwait(false);
+        var catalog = new List<AgentToolCatalogEntry>();
+        foreach (var candidate in await ListOwnedRuntimeToolCandidatesAsync(
+                         context,
+                         executionTarget,
+                         cancellationToken,
+                         omitUnavailableSources: true)
+                     .ConfigureAwait(false))
+        {
+            var descriptor = candidate.RuntimeTool.Descriptor;
+            AgentToolReadiness? readiness;
+            try
+            {
+                readiness = await GetReadinessAsync(candidate, context, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (SunderRpcException exception) when (!cancellationToken.IsCancellationRequested
+                && exception.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable)
+            {
+                continue;
+            }
+            readiness ??= new AgentToolReadiness(
+                descriptor.ToolId,
+                AgentToolReadinessStatus.Ready,
+                "Ready.");
+
+            if (!includeUnavailable && readiness.Status != AgentToolReadinessStatus.Ready)
+            {
+                continue;
+            }
+
+            catalog.Add(new AgentToolCatalogEntry(descriptor, readiness));
+        }
+
+        return catalog
+            .OrderByDescending(item => item.Descriptor.Priority)
+            .ThenBy(item => item.Descriptor.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(item => item.Descriptor.ToolId, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    public async Task<IReadOnlyList<AgentToolCatalogEntry>> ListInstalledLocalToolsAsync(CancellationToken cancellationToken = default)
+    {
+        var (context, executionTarget) = await CreateSourceContextAsync(
+                sessionId: null,
+                profile: null,
+                workspace: null,
+                cancellationToken)
+            .ConfigureAwait(false);
+        var catalog = new List<AgentToolCatalogEntry>();
+        foreach (var candidate in await ListOwnedRuntimeToolCandidatesAsync(
+                         context,
+                         executionTarget,
+                         cancellationToken,
+                         omitUnavailableSources: true)
+                     .ConfigureAwait(false))
+        {
+            catalog.AddRange(new[] { candidate.RuntimeTool.Descriptor }
+                .Where(descriptor => descriptor.SelectionScope == AgentToolSelectionScope.Tool)
+                .Select(descriptor => new AgentToolCatalogEntry(
+                descriptor,
+                new AgentToolReadiness(
+                    descriptor.ToolId,
+                    AgentToolReadinessStatus.Ready,
+                    "Installed capability. Runtime readiness depends on the selected session workspace."))));
+        }
+
+        return catalog
+            .GroupBy(item => item.Descriptor.ToolId, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .OrderByDescending(item => item.Descriptor.Priority)
+            .ThenBy(item => item.Descriptor.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(item => item.Descriptor.ToolId, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    public async Task<IReadOnlyList<AgentToolReadiness>> ListToolReadinessAsync(CancellationToken cancellationToken = default)
+        => (await ListToolCatalogAsync(includeUnavailable: true, cancellationToken: cancellationToken))
+            .Select(item => item.Readiness)
+            .ToArray();
+
+    public async Task<IReadOnlyList<AgentToolDescriptor>> ListReadyToolDescriptorsAsync(
+        AgentProfileRecord? profile = null,
+        Guid? sessionId = null,
+        AgentWorkspaceRecord? workspace = null,
+        CancellationToken cancellationToken = default)
+    {
+        var effectiveProfile = profile;
+        return (await ListToolCatalogAsync(profile, sessionId, workspace, includeUnavailable: false, cancellationToken))
+            .Where(item => IsAllowedForProfile(effectiveProfile, item.Descriptor))
+            .Select(item => item.Descriptor)
+            .ToArray();
+    }
+
+    public async Task<IReadOnlyList<AgentRuntimeTool>> ListReadyRuntimeToolsAsync(
+        AgentProfileRecord? profile = null,
+        Guid? sessionId = null,
+        AgentWorkspaceRecord? workspace = null,
+        CancellationToken cancellationToken = default)
+        => (await ListReadyOwnedRuntimeToolsAsync(
+                profile,
+                sessionId,
+                workspace,
+                cancellationToken)
+            .ConfigureAwait(false))
+            .Select(static tool => tool.RuntimeTool)
+            .ToArray();
+
+    internal async Task<IReadOnlyList<AgentOwnedRuntimeTool>> ListReadyOwnedRuntimeToolsAsync(
+        AgentProfileRecord? profile = null,
+        Guid? sessionId = null,
+        AgentWorkspaceRecord? workspace = null,
+        CancellationToken cancellationToken = default)
+    {
+        var effectiveProfile = profile;
+        var (context, executionTarget) = await CreateSourceContextAsync(
+                sessionId,
+                effectiveProfile,
+                workspace,
+                cancellationToken)
+            .ConfigureAwait(false);
+        var candidates = await ListOwnedRuntimeToolCandidatesAsync(
+                context, executionTarget, cancellationToken, mapUnavailableSources: true)
+            .ConfigureAwait(false);
+        var tools = new List<AgentOwnedRuntimeTool>();
+        foreach (var candidate in candidates
+                     .GroupBy(static item => item.RuntimeTool.Descriptor.ToolId, StringComparer.OrdinalIgnoreCase)
+                     .Where(static group => group.Count() == 1)
+                     .Select(static group => group.Single()))
+        {
+            var descriptor = candidate.RuntimeTool.Descriptor;
+            AgentToolReadiness? readiness;
+            try
+            {
+                readiness = await GetReadinessAsync(candidate, context, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (SunderRpcException exception) when (!cancellationToken.IsCancellationRequested
+                && exception.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable)
+            {
+                throw new AgentPackageUnavailableException(candidate.Invocation.OwnerPackageId, exception);
+            }
+            readiness ??= new AgentToolReadiness(
+                descriptor.ToolId,
+                AgentToolReadinessStatus.Ready,
+                "Ready.");
+            if (readiness.Status != AgentToolReadinessStatus.Ready
+                || !IsAllowedForProfile(effectiveProfile, descriptor))
+            {
+                continue;
+            }
+
+            tools.Add(new AgentOwnedRuntimeTool(
+                candidate.RuntimeTool,
+                candidate.Invocation.OwnerPackageId,
+                candidate.Invocation));
+        }
+
+        return tools
+            .OrderByDescending(item => item.RuntimeTool.Descriptor.Priority)
+            .ThenBy(item => item.RuntimeTool.Descriptor.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(item => item.RuntimeTool.Descriptor.ToolId, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    internal async ValueTask<AgentToolPresentation?> ResolvePresentationAsync(
+        AgentToolPresentationRequest request,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        try
+        {
+            var catalog = await _sources.ListAsync(cancellationToken).ConfigureAwait(false);
+            foreach (var provider in catalog.Providers)
+            {
+                if (provider.State != ServiceProviderState.Active) continue;
+                try
+                {
+                    var presentation = await provider.Service.PresentationAsync(request, cancellationToken).ConfigureAwait(false);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (presentation is not null) return presentation;
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+                catch (Exception exception) when (!PresentationExceptionPolicy.IsFatal(exception))
+                {
+                    // One optional presentation must not hide another source's result.
+                }
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception exception) when (!PresentationExceptionPolicy.IsFatal(exception))
+        {
+            // App retains its local transcript presentation when the catalog is unavailable.
+        }
+        cancellationToken.ThrowIfCancellationRequested();
+        return null;
+    }
+
     private async Task<ResolvedTool?> ResolveAdvertisedToolAsync(
         string toolId,
         AgentToolExecutionContext context,
         AgentToolDescriptor? advertisedDescriptor,
         string? advertisedOwnerPackageId,
         AgentToolInvocationReference? advertisedInvocation,
+        ServiceProvider<AgentServices.IExecutionTargetService>? executionTarget,
         CancellationToken cancellationToken,
         bool requireReadiness = true)
     {
@@ -29,11 +243,11 @@ public sealed partial class AgentToolService
 
         var sourceContext = new AgentToolSourceContext(context.SessionId, profile, context.Workspace, context.ExecutionBinding)
         {
-            ExecutionTargetReference = context.ExecutionTargetReference,
+            ExecutionTarget = context.ExecutionTarget,
             ExecutionTargetConfigurationGeneration = context.ExecutionTargetConfigurationGeneration,
         };
         var matching = advertisedInvocation is null
-            ? (await ListOwnedRuntimeToolCandidatesAsync(sourceContext, cancellationToken)
+            ? (await ListOwnedRuntimeToolCandidatesAsync(sourceContext, executionTarget, cancellationToken)
                     .ConfigureAwait(false))
                 .Where(candidate => string.Equals(
                     candidate.RuntimeTool.Descriptor.ToolId,
@@ -81,75 +295,95 @@ public sealed partial class AgentToolService
 
     private async Task<IReadOnlyList<OwnedRuntimeToolCandidate>> ListOwnedRuntimeToolCandidatesAsync(
         AgentToolSourceContext context,
+        ServiceProvider<AgentServices.IExecutionTargetService>? executionTarget,
         CancellationToken cancellationToken,
-        bool omitUnavailableSources = false)
+        bool omitUnavailableSources = false,
+        bool mapUnavailableSources = false)
     {
         var candidates = new List<OwnedRuntimeToolCandidate>();
         var descriptorContext = context with
         {
-            ExecutionTargetReference = null,
+            ExecutionTarget = null,
             ExecutionTargetConfigurationGeneration = null,
         };
-        var sourceReferences = await AgentRpcInvocation.SnapshotAsync(
-                _rpcCatalog,
-                Sunder.Package.Agent.Runtime.Rpc.AgentToolBindings.Service,
-                static (source, token) => DescribeToolSourceAsync(source, token),
-                cancellationToken,
-                omitUnavailableSources)
-            .ConfigureAwait(false);
-        var observedExecutionReferences = await AgentRpcInvocation.SnapshotAsync(
-                _rpcCatalog,
-                Sunder.Package.Agent.Runtime.Rpc.AgentObservedToolBindings.Service,
-                static (execution, _) => ValueTask.FromResult(execution.SourceId),
-                cancellationToken,
-                omitUnavailable: true)
-            .ConfigureAwait(false);
-        foreach (var sourceReference in sourceReferences
-                     .OrderBy(source => source.Metadata.DisplayName, StringComparer.OrdinalIgnoreCase))
+        var sourceCatalog = await _sources.ListAsync(cancellationToken).ConfigureAwait(false);
+        var sources = new List<(ServiceProvider<AgentServices.IToolSourceService> Provider, AgentToolSourceDescriptor Descriptor)>();
+        foreach (var source in sourceCatalog.Providers)
         {
-            IReadOnlyList<AgentRuntimeTool> runtimeTools;
+            cancellationToken.ThrowIfCancellationRequested();
+            if (source.State != ServiceProviderState.Active) continue;
             try
             {
-                runtimeTools = await AgentRpcInvocation.InvokeAsync(
-                    sourceReference,
-                    cancellationToken,
-                    (source, invocationToken) => new ValueTask<IReadOnlyList<AgentRuntimeTool>>(
-                        ListRuntimeToolsAsync(source, descriptorContext, invocationToken))).ConfigureAwait(false);
+                sources.Add((source, await source.Service.DescribeAsync(cancellationToken).ConfigureAwait(false)));
             }
-            catch (AgentPackageUnavailableException) when (omitUnavailableSources)
+            catch (SunderRpcException exception) when ((omitUnavailableSources || mapUnavailableSources) && !cancellationToken.IsCancellationRequested
+                && exception.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable)
             {
+                if (mapUnavailableSources)
+                {
+                    throw new AgentPackageUnavailableException(source.PackageId, exception);
+                }
+                // Optional catalog presentation omits withdrawn tool sources.
+            }
+        }
+        var observedCatalog = await _observedExecutions.ListAsync(cancellationToken).ConfigureAwait(false);
+        var observedExecutions = new List<(ServiceProvider<AgentServices.IToolExecutionObservedService> Provider, string SourceId)>();
+        foreach (var execution in observedCatalog.Providers)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (execution.State != ServiceProviderState.Active) continue;
+            try
+            {
+                observedExecutions.Add((execution, await execution.Service.DescribeAsync(cancellationToken).ConfigureAwait(false)));
+            }
+            catch (SunderRpcException exception) when (!cancellationToken.IsCancellationRequested
+                && exception.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable)
+            {
+                // Observation is optional; exact owner/source matching below decides its use.
+            }
+        }
+        var targetSnapshot = await SnapshotExecutionTargetAsync(executionTarget, cancellationToken).ConfigureAwait(false);
+        foreach (var (provider, source) in sources
+                     .OrderBy(source => source.Descriptor.DisplayName, StringComparer.OrdinalIgnoreCase))
+        {
+            IReadOnlyList<AgentToolDescriptor> tools;
+            try
+            {
+                tools = await provider.Service.ListToolsAsync(descriptorContext, cancellationToken).ConfigureAwait(false);
+            }
+            catch (SunderRpcException exception) when ((omitUnavailableSources || mapUnavailableSources) && !cancellationToken.IsCancellationRequested
+                && exception.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable)
+            {
+                if (mapUnavailableSources)
+                {
+                    throw new AgentPackageUnavailableException(provider.PackageId, exception);
+                }
                 continue;
             }
 
-            var targetSnapshot = await SnapshotExecutionTargetAsync(
-                    context.ExecutionTargetReference,
-                    cancellationToken)
-                .ConfigureAwait(false);
-            foreach (var runtimeTool in runtimeTools)
+            foreach (var tool in tools)
             {
-                var descriptor = WithSourceIdentity(sourceReference.Metadata, runtimeTool.Descriptor);
-                var observedExecutionReference = observedExecutionReferences
+                var descriptor = WithSourceIdentity(source, tool);
+                var observed = observedExecutions
                     .Where(reference => string.Equals(
-                                            reference.PackageId,
-                                            sourceReference.PackageId,
+                                            reference.Provider.PackageId,
+                                            provider.PackageId,
                                             StringComparison.Ordinal)
                                         && string.Equals(
-                                            reference.Metadata,
-                                            sourceReference.Metadata.SourceId,
+                                            reference.SourceId,
+                                            source.SourceId,
                                             StringComparison.Ordinal))
-                    .Select(reference => reference.Reference)
+                    .Select(reference => reference.Provider)
                     .Take(2)
                     .ToArray();
                 var invocation = new AgentToolInvocationReference(
-                    sourceReference.PackageId,
+                    provider.PackageId,
                     descriptor,
-                    sourceReference.Reference,
-                    observedExecutionReference.Length == 1
-                        ? observedExecutionReference[0]
+                    provider,
+                    observed.Length == 1
+                        ? observed[0]
                         : null,
-                    sourceReference.Metadata.SupportsPermission,
-                    sourceReference.Metadata.SupportsPreflight,
-                    context.ExecutionTargetReference,
+                    executionTarget,
                     targetSnapshot?.Descriptor,
                     targetSnapshot?.OwnerPackageId,
                     Guid.NewGuid().ToString("N"));
@@ -165,24 +399,8 @@ public sealed partial class AgentToolService
         OwnedRuntimeToolCandidate candidate,
         AgentToolSourceContext context,
         CancellationToken cancellationToken)
-        => InvokeToolAsync<AgentToolReadiness?>(
-            candidate.Invocation,
-            cancellationToken,
-            (source, token) => source.GetReadinessAsync(
+        => candidate.Invocation.SourceProvider.Service.GetReadinessAsync(
                 candidate.RuntimeTool.Descriptor.ToolId,
                 context,
-                token));
-
-    private static async ValueTask<AgentToolSourceMetadata> DescribeToolSourceAsync(
-        IAgentToolSource source,
-        CancellationToken cancellationToken)
-    {
-        var description = await Sunder.Package.Agent.Runtime.Rpc.AgentToolBindings.DescribeAsync(source, cancellationToken).ConfigureAwait(false);
-        return new AgentToolSourceMetadata(
-            description.SourceId,
-            description.DisplayName,
-            description.SourceKind,
-            SupportsPermission: true,
-            SupportsPreflight: true);
-    }
+                cancellationToken);
 }

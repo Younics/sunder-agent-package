@@ -1,5 +1,4 @@
 using System.Text.Json;
-using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 
@@ -11,7 +10,7 @@ internal static class FileSearchHandler
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
     public static async Task<FileSearchToolResult> ExecuteGrepAsync(
-        IAgentExecutionTarget target,
+        FileExecutionTarget target,
         AgentExecutionTargetContext context,
         AgentToolRequest request,
         CancellationToken cancellationToken)
@@ -24,16 +23,15 @@ internal static class FileSearchHandler
         }
 
         var path = string.IsNullOrWhiteSpace(args.Path) ? "." : args.Path;
-        if (FilesExecutionFacets.SupportsFacet(target, AgentExecutionFacetIds.StructuredFileSearch)
-            && target is IAgentStructuredFileSearchExecutionTarget structuredTarget)
+        if (FilesExecutionFacets.SupportsFacet(target, AgentExecutionFacetIds.StructuredFileSearch))
         {
-            return await ExecuteStructuredGrepAsync(structuredTarget, context, request.ToolId, path, args, cancellationToken);
+            return await ExecuteStructuredGrepAsync(target, context, request.ToolId, path, args, cancellationToken);
         }
         return SearchBindingUnavailable(request.ToolId, target);
     }
 
     public static async Task<FileSearchToolResult> ExecuteGlobAsync(
-        IAgentExecutionTarget target,
+        FileExecutionTarget target,
         AgentExecutionTargetContext context,
         AgentToolRequest request,
         CancellationToken cancellationToken)
@@ -46,26 +44,23 @@ internal static class FileSearchHandler
         }
 
         var path = string.IsNullOrWhiteSpace(args.Path) ? "." : args.Path;
-        if (FilesExecutionFacets.SupportsFacet(target, AgentExecutionFacetIds.StructuredFileSearch)
-            && target is IAgentStructuredFileSearchExecutionTarget structuredTarget)
+        if (FilesExecutionFacets.SupportsFacet(target, AgentExecutionFacetIds.StructuredFileSearch))
         {
-            return await ExecuteStructuredGlobAsync(structuredTarget, context, request.ToolId, path, args, cancellationToken);
+            return await ExecuteStructuredGlobAsync(target, context, request.ToolId, path, args, cancellationToken);
         }
         return SearchBindingUnavailable(request.ToolId, target);
     }
 
     private static async Task<FileSearchToolResult> ExecuteStructuredGrepAsync(
-        IAgentStructuredFileSearchExecutionTarget target,
+        FileExecutionTarget target,
         AgentExecutionTargetContext context,
         string toolId,
         string path,
         FileGrepArgs args,
         CancellationToken cancellationToken)
     {
-        var result = await target.ExecuteFileSearchAsync(
-            context,
-            new AgentFileSearchRequest(path, AgentFileSearchKind.Grep, args.Pattern, args.Include),
-            cancellationToken);
+        var result = await target.Service.StructuredFileSearchAsync(new()
+        { Context = context, Request = new() { Path = path, Kind = AgentFileSearchKind.Grep, Pattern = args.Pattern, Include = args.Include } }, cancellationToken);
         if (result.IsError)
         {
             return StructuredFailure(toolId, target, result);
@@ -81,31 +76,27 @@ internal static class FileSearchHandler
         var wasTruncated = result.WasTruncated || bounded.Length > MaxResults;
         var selected = bounded.Take(MaxResults).ToArray();
         var matches = selected
-            .Select(match => new FileGrepMatch(match.Path, match.LineNumber!.Value, match.Text!))
+            .Select(match => new FileGrepMatch(match.Path, checked((int)match.LineNumber!.Value), match.Text!))
             .ToArray();
         return new FileSearchToolResult(
-            new AgentToolResult(
+            FileToolResult.Success(
                 toolId,
                 $"Found {FileToolResult.FormatCount(matches.Length, "match", "matches")}" + (wasTruncated ? " (truncated)" : string.Empty),
-                Content: FormatGrepResults(matches, string.Empty, wasTruncated),
-                StructuredPayloadJson: JsonSerializer.Serialize(matches, JsonOptions),
-                WasTruncated: wasTruncated,
-                BackendId: FileToolResult.BackendId(target)),
+                FormatGrepResults(matches, string.Empty, wasTruncated), FileToolResult.BackendId(target), wasTruncated,
+                JsonSerializer.Serialize(matches, JsonOptions)),
             selected.Select(match => match.Path).Distinct(StringComparer.Ordinal).ToArray());
     }
 
     private static async Task<FileSearchToolResult> ExecuteStructuredGlobAsync(
-        IAgentStructuredFileSearchExecutionTarget target,
+        FileExecutionTarget target,
         AgentExecutionTargetContext context,
         string toolId,
         string path,
         FileGlobArgs args,
         CancellationToken cancellationToken)
     {
-        var result = await target.ExecuteFileSearchAsync(
-            context,
-            new AgentFileSearchRequest(path, AgentFileSearchKind.Glob, args.Pattern),
-            cancellationToken);
+        var result = await target.Service.StructuredFileSearchAsync(new()
+        { Context = context, Request = new() { Path = path, Kind = AgentFileSearchKind.Glob, Pattern = args.Pattern, Include = null } }, cancellationToken);
         if (result.IsError)
         {
             return StructuredFailure(toolId, target, result);
@@ -122,54 +113,46 @@ internal static class FileSearchHandler
         var selected = bounded.Take(MaxResults).ToArray();
         var matches = selected.Select(match => new FileGlobMatch(match.Path)).ToArray();
         return new FileSearchToolResult(
-            new AgentToolResult(
+            FileToolResult.Success(
                 toolId,
                 $"Found {FileToolResult.FormatCount(matches.Length, "match", "matches")}" + (wasTruncated ? " (truncated)" : string.Empty),
-                Content: string.Join(Environment.NewLine, matches.Select(match => EscapeDisplayPath(match.Path))),
-                StructuredPayloadJson: JsonSerializer.Serialize(matches, JsonOptions),
-                WasTruncated: wasTruncated,
-                BackendId: FileToolResult.BackendId(target)),
+                string.Join(Environment.NewLine, matches.Select(match => EscapeDisplayPath(match.Path))), FileToolResult.BackendId(target), wasTruncated,
+                JsonSerializer.Serialize(matches, JsonOptions)),
             selected.Select(match => match.Path).Distinct(StringComparer.Ordinal).ToArray());
     }
 
     private static FileSearchToolResult StructuredFailure(
         string toolId,
-        IAgentExecutionTarget target,
+        FileExecutionTarget target,
         AgentFileSearchResult result)
         => new(
-            new AgentToolResult(
+            FileToolResult.Error(
                 toolId,
                 "Search failed before a governed result could be returned.",
-                Content: result.ErrorMessage ?? "The execution target rejected the structured search.",
-                IsError: true,
-                ErrorCode: result.ErrorCode ?? "files-search-backend-failed",
-                BackendId: FileToolResult.BackendId(target)),
+                result.ErrorCode ?? "files-search-backend-failed") with
+            { Content = result.ErrorMessage ?? "The execution target rejected the structured search.", BackendId = FileToolResult.BackendId(target) },
             []);
 
     private static FileSearchToolResult SearchBindingUnavailable(
         string toolId,
-        IAgentExecutionTarget target)
+        FileExecutionTarget target)
         => new(
-            new AgentToolResult(
+            FileToolResult.Error(
                 toolId,
                 "The selected target does not support structured file search.",
-                Content: "The search was not started because Files does not fall back to process or shell execution.",
-                IsError: true,
-                ErrorCode: "files-search-binding-unavailable",
-                BackendId: FileToolResult.BackendId(target)),
+                "files-search-binding-unavailable") with
+            { Content = "The search was not started because Files does not fall back to process or shell execution.", BackendId = FileToolResult.BackendId(target) },
             []);
 
     private static FileSearchToolResult InvalidSearchResult(
         string toolId,
-        IAgentExecutionTarget target)
+        FileExecutionTarget target)
         => new(
-            new AgentToolResult(
+            FileToolResult.Error(
                 toolId,
                 "Search results could not be parsed safely.",
-                Content: "The search backend returned incomplete, ambiguous, or out-of-scope structured output, so no matches were returned.",
-                IsError: true,
-                ErrorCode: "files-search-result-invalid",
-                BackendId: FileToolResult.BackendId(target)),
+                "files-search-result-invalid") with
+            { Content = "The search backend returned incomplete, ambiguous, or out-of-scope structured output, so no matches were returned.", BackendId = FileToolResult.BackendId(target) },
             []);
 
     private static string FormatGrepResults(IReadOnlyList<FileGrepMatch> matches, string fallbackOutput, bool wasTruncated)

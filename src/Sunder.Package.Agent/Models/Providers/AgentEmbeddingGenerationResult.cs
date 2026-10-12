@@ -11,8 +11,4 @@ namespace Sunder.Package.Agent.Contracts.Models;
 /// <param name="Values">The ordered floating-point components of the embedding vector.</param>
 public sealed record AgentEmbeddingGenerationResult(
     string ModelId,
-    IReadOnlyList<double> Values)
-{
-    /// <summary>Gets the vector length reported by <see cref="Values" />.</summary>
-    public int Dimensions => Values.Count;
-}
+    IReadOnlyList<double> Values);

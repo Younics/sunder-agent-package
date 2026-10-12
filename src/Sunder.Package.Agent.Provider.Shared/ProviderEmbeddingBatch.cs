@@ -1,20 +1,18 @@
-using Sunder.Package.Agent.Contracts.Models;
-
 namespace Sunder.Package.Agent.Provider.Shared;
 
 internal readonly record struct ProviderEmbeddingInput(int Index, string Text);
 
-internal readonly record struct ProviderIndexedEmbedding(
+internal readonly record struct ProviderIndexedEmbedding<TResult>(
     int VendorIndex,
-    AgentEmbeddingGenerationResult Embedding);
+    TResult Embedding) where TResult : class;
 
 internal static class ProviderEmbeddingBatch
 {
-    public static AgentEmbeddingGenerationResult?[] CreateResultBuffer(
+    public static TResult?[] CreateResultBuffer<TResult>(
         IReadOnlyList<string> texts,
-        out IReadOnlyList<ProviderEmbeddingInput> validInputs)
+        out IReadOnlyList<ProviderEmbeddingInput> validInputs) where TResult : class
     {
-        var results = new AgentEmbeddingGenerationResult?[texts.Count];
+        var results = new TResult?[texts.Count];
         if (texts.Count == 0)
         {
             validInputs = [];
@@ -34,10 +32,10 @@ internal static class ProviderEmbeddingBatch
         return results;
     }
 
-    public static void ApplyIndexedResults(
-        AgentEmbeddingGenerationResult?[] results,
+    public static void ApplyIndexedResults<TResult>(
+        TResult?[] results,
         IReadOnlyList<ProviderEmbeddingInput> validInputs,
-        IReadOnlyList<ProviderIndexedEmbedding> generatedEmbeddings)
+        IReadOnlyList<ProviderIndexedEmbedding<TResult>> generatedEmbeddings) where TResult : class
     {
         var seenIndices = new bool[validInputs.Count];
         foreach (var generated in generatedEmbeddings)

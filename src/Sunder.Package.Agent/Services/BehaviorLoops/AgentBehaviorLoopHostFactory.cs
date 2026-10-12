@@ -21,7 +21,7 @@ public sealed class AgentBehaviorLoopHostFactory(
     private readonly DefaultAgentBehaviorLoop _defaultBehaviorLoop = defaultBehaviorLoop;
 
     internal AgentBehaviorLoopHost Create(
-        IAgentChatProvider provider,
+        AgentRunProviderSelection provider,
         AgentSessionRecord session,
         AgentProfileRecord profile,
         AgentWorkspaceRecord workspace,

@@ -431,7 +431,7 @@ internal sealed partial class TranscriptRowProjector<TRow> where TRow : class
     }
 
     public static AgentTurnRecord[] OrderTurns(IEnumerable<AgentTurnRecord> turns)
-        => turns.OrderBy(turn => turn.CreatedAtUtc).ThenBy(turn => turn.TurnId).ToArray();
+        => turns.OrderBy(turn => AgentTranscriptTime.Read(turn.CreatedAtUtc)).ThenBy(turn => turn.TurnId).ToArray();
 
     public static TranscriptMessageProjection DescribeMessage(AgentTurnRecord turn)
         => new(
@@ -479,8 +479,8 @@ internal sealed partial class TranscriptRowProjector<TRow> where TRow : class
             return previousTurn.ContentRevision > turn.ContentRevision;
         }
 
-        return previousTurn.UpdatedAtUtc > turn.UpdatedAtUtc
-               || !replaceOnEqualTimestamp && previousTurn.UpdatedAtUtc == turn.UpdatedAtUtc;
+        return AgentTranscriptTime.Read(previousTurn.UpdatedAtUtc) > AgentTranscriptTime.Read(turn.UpdatedAtUtc)
+               || !replaceOnEqualTimestamp && AgentTranscriptTime.Read(previousTurn.UpdatedAtUtc) == AgentTranscriptTime.Read(turn.UpdatedAtUtc);
     }
 
     private void InsertRow(TRow row, TranscriptInsertMode insertMode, int prependIndex)

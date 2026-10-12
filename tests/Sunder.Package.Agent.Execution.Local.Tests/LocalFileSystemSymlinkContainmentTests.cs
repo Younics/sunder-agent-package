@@ -3,10 +3,16 @@ extern alias DockerWorker;
 
 using System.Security.Cryptography;
 using System.Text;
-using LocalWorker::Sunder.Package.Agent.Contracts.Models;
 using DockerWorker::Sunder.Package.Agent.Execution.Docker;
 using LocalWorker::Sunder.Package.Agent.Execution.Local;
 using Xunit;
+using AgentFileDeleteRequest = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileDeleteRequest;
+using AgentFileReadRequest = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileReadRequest;
+using AgentFileWriteRequest = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileWriteRequest;
+using AgentPermissionScopeClassificationBasis = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentPermissionScopeClassificationBasis;
+using AgentResourceClaim = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentResourceClaim;
+using AgentFileReadErrorCodes = Sunder.Package.Agent.Contracts.Models.AgentFileReadErrorCodes;
+using AgentPermissionBoundaryIds = Sunder.Package.Agent.Contracts.Models.AgentPermissionBoundaryIds;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
 
@@ -28,7 +34,7 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
 
         var result = await LocalFileSystemExecutor.ReadFileAsync(
             config,
-            new AgentFileReadRequest(Path.Combine("escape", "secret.txt")),
+            new AgentFileReadRequest { Path = Path.Combine("escape", "secret.txt") },
             allowOutsideConfiguredScope: false,
             CancellationToken.None);
 
@@ -259,7 +265,7 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
 
         var result = await LocalFileSystemExecutor.WriteFileAsync(
             config,
-            new AgentFileWriteRequest(Path.Combine("escape", "new", "file.txt"), "outside"),
+            new AgentFileWriteRequest { Path = Path.Combine("escape", "new", "file.txt"), Content = "outside", Overwrite = false },
             allowOutsideConfiguredScope: false,
             CancellationToken.None);
 
@@ -277,7 +283,7 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
 
         var result = await LocalFileSystemExecutor.WriteFileAsync(
             config,
-            new AgentFileWriteRequest("escape.txt", "outside"),
+            new AgentFileWriteRequest { Path = "escape.txt", Content = "outside", Overwrite = false },
             allowOutsideConfiguredScope: false,
             CancellationToken.None);
 
@@ -296,7 +302,7 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
 
         var result = await LocalFileSystemExecutor.DeleteFileAsync(
             config,
-            new AgentFileDeleteRequest(Path.Combine("escape", "keep.txt")),
+            new AgentFileDeleteRequest { Path = Path.Combine("escape", "keep.txt"), Recursive = false },
             allowOutsideConfiguredScope: false);
 
         Assert.Equal(AgentFileReadErrorCodes.PathCanonicalizationFailed, result.ErrorCode);
@@ -314,17 +320,17 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
 
         var writeResult = await LocalFileSystemExecutor.WriteFileAsync(
             config,
-            new AgentFileWriteRequest(Path.Combine("link", "file.txt"), "inside"),
+            new AgentFileWriteRequest { Path = Path.Combine("link", "file.txt"), Content = "inside", Overwrite = false },
             allowOutsideConfiguredScope: false,
             CancellationToken.None);
         var readResult = await LocalFileSystemExecutor.ReadFileAsync(
             config,
-            new AgentFileReadRequest(Path.Combine("link", "file.txt")),
+            new AgentFileReadRequest { Path = Path.Combine("link", "file.txt") },
             allowOutsideConfiguredScope: false,
             CancellationToken.None);
         var deleteResult = await LocalFileSystemExecutor.DeleteFileAsync(
             config,
-            new AgentFileDeleteRequest(Path.Combine("link", "file.txt")),
+            new AgentFileDeleteRequest { Path = Path.Combine("link", "file.txt"), Recursive = false },
             allowOutsideConfiguredScope: false);
 
         Assert.Equal(AgentFileReadErrorCodes.PathCanonicalizationFailed, writeResult.ErrorCode);
@@ -342,12 +348,12 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
 
         var writeResult = await LocalFileSystemExecutor.WriteFileAsync(
             config,
-            new AgentFileWriteRequest(relativePath, "content"),
+            new AgentFileWriteRequest { Path = relativePath, Content = "content", Overwrite = false },
             allowOutsideConfiguredScope: false,
             CancellationToken.None);
         var readResult = await LocalFileSystemExecutor.ReadFileAsync(
             config,
-            new AgentFileReadRequest(relativePath),
+            new AgentFileReadRequest { Path = relativePath },
             allowOutsideConfiguredScope: false,
             CancellationToken.None);
 
@@ -371,7 +377,7 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
         await Assert.ThrowsAsync<IOException>(async () =>
             await LocalFileSystemExecutor.WriteFileAsync(
                 CreateConfig(workspace),
-                new AgentFileWriteRequest("important.txt", "replacement"),
+                new AgentFileWriteRequest { Path = "important.txt", Content = "replacement", Overwrite = true },
                 allowOutsideConfiguredScope: false,
                 CancellationToken.None,
                 faultInjector: injector));
@@ -391,12 +397,12 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
 
         var write = await LocalFileSystemExecutor.WriteFileAsync(
             config,
-            new AgentFileWriteRequest("concurrent.txt", "replacement") { ExpectedContentHash = staleHash },
+            new AgentFileWriteRequest { Path = "concurrent.txt", Content = "replacement", Overwrite = true, ExpectedContentHash = staleHash },
             allowOutsideConfiguredScope: false,
             CancellationToken.None);
         var delete = await LocalFileSystemExecutor.DeleteFileAsync(
             config,
-            new AgentFileDeleteRequest("concurrent.txt") { ExpectedContentHash = staleHash },
+            new AgentFileDeleteRequest { Path = "concurrent.txt", Recursive = false, ExpectedContentHash = staleHash },
             allowOutsideConfiguredScope: false,
             CancellationToken.None);
 
@@ -424,7 +430,7 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
 
         var read = await LocalFileSystemExecutor.ReadFileAsync(
             config,
-            new AgentFileReadRequest(first),
+            new AgentFileReadRequest { Path = first },
             allowOutsideConfiguredScope: true,
             CancellationToken.None,
             approvedResourceReferences: approved.Context.ApprovedResourceReferences,
@@ -432,7 +438,7 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
             resourceReferences: approved.ResourceReferences);
         var write = await LocalFileSystemExecutor.WriteFileAsync(
             config,
-            new AgentFileWriteRequest(first, "replacement"),
+            new AgentFileWriteRequest { Path = first, Content = "replacement", Overwrite = true },
             allowOutsideConfiguredScope: true,
             CancellationToken.None,
             approvedResourceReferences: approved.Context.ApprovedResourceReferences,
@@ -466,7 +472,7 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
         Directory.Move(secondDirectory, firstDirectory);
         var result = await LocalFileSystemExecutor.DeleteFileAsync(
             config,
-            new AgentFileDeleteRequest(requestedPath),
+            new AgentFileDeleteRequest { Path = requestedPath, Recursive = false },
             allowOutsideConfiguredScope: true,
             CancellationToken.None,
             approvedResourceReferences: approved.Context.ApprovedResourceReferences,
@@ -493,7 +499,7 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
 
         var result = await LocalFileSystemExecutor.WriteFileAsync(
             config,
-            new AgentFileWriteRequest(first, "replacement"),
+            new AgentFileWriteRequest { Path = first, Content = "replacement", Overwrite = true },
             allowOutsideConfiguredScope: true,
             CancellationToken.None,
             approvedResourceReferences: approved.Context.ApprovedResourceReferences,

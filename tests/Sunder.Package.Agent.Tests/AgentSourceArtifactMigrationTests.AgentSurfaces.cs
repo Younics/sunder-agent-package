@@ -48,7 +48,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
     private static SurfaceHandler AddSurfaceProvider(RegressionTestRpcState state, string packageId, SunderWorkerProviderRegistration registration)
     {
         var probe = new SurfaceHandler(registration.Handler);
-        state.Add(packageId, RegressionTestRpcDescriptors.Get(registration.ContractId), probe, probe, Noop.Instance, registration.ProviderId, "2.0.0");
+        state.Add(packageId, CurrentPublicRpcDescriptors.Get(registration.ContractId), probe, probe, Noop.Instance, registration.ProviderId, "2.0.0");
         return probe;
     }
 

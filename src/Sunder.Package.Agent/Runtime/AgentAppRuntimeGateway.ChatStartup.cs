@@ -23,7 +23,7 @@ internal sealed partial class AgentAppRuntimeGateway
         try
         {
             var snapshot = await InvokeAsync(
-                AgentRuntimeOperations.ChatSnapshot,
+                _owner.GetChatSnapshotAsync,
                 request,
                 cancellationToken).ConfigureAwait(false);
             lock (_observationLock)

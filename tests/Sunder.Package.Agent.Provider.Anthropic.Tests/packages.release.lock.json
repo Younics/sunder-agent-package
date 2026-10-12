@@ -202,7 +202,7 @@
         "type": "CentralTransitive",
         "requested": "[1.1.0, 1.2.0)",
         "resolved": "1.1.0",
-        "contentHash": "J23vCBbnsxgImNKeJ4SmCo1SuYT88TmHN/u+wpLA7jRlgHtNeyO81fDsqST4YUHR6yCLteHOryJWbgOhkJsm8g==",
+        "contentHash": "K+MrJIKZ/tuG3F/AfGVFy3Gxgmt+IFyA3V3Me3jUOREXZWviXlzeZTK+cvft3DJk2IFIvl68OuGi+to5LWgtgA==",
         "dependencies": {
           "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.8",
           "Microsoft.Extensions.Logging.Abstractions": "10.0.8"
@@ -212,7 +212,7 @@
         "type": "CentralTransitive",
         "requested": "[1.1.0, 1.2.0)",
         "resolved": "1.1.0",
-        "contentHash": "Nx/7cdhheWK8bqFePfs9KzLfm94TT8Xdn7Dz9NtepUqNdZrlG0YQ2zAHLWqCj7JMr/UL1tHcdqpOrp5w9kbSKg==",
+        "contentHash": "33tYe8dxyFpWHQLeXLEZX8FHk2HUBfHkpo+z8x+oaX+PgLAnBDevuKtHvQ1WuzAcoyBsgGkKE/bGBID31WlS5A==",
         "dependencies": {
           "Avalonia": "12.0.3",
           "Sunder.Sdk": "[1.1.0, 1.2.0)"
@@ -222,7 +222,7 @@
         "type": "CentralTransitive",
         "requested": "[1.1.0, 1.1.0]",
         "resolved": "1.1.0",
-        "contentHash": "0xUXgkMLi2u03IaUFmkdeGMm+Gik4PMEA28XbgaCX0mUNZd2lD837rTsPGbxzkBGhVaqDZoZ2FdcOAG9+nykew==",
+        "contentHash": "TldLGL2h14rb4Aft01PyXcIfgOYb1JpvXb+0Sg/w53evsTeVzVvimspU3lqIidE0sYVpNbH4LcwsHZJnD6uh9A==",
         "dependencies": {
           "Microsoft.Extensions.DependencyInjection": "10.0.8",
           "Sunder.Sdk": "[1.1.0]"

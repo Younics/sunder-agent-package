@@ -8,6 +8,7 @@ using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Package.Agent.Provider.TestSupport;
 using Sunder.Sdk.Logging;
 using Xunit;
+using AgentReasoningEffort = Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentReasoningEffort;
 
 namespace Sunder.Package.Agent.Provider.Anthropic.Tests;
 
@@ -753,7 +754,7 @@ public sealed class AnthropicProviderTests
         var context = new ProviderTestPackageContext("sunder.package.agent.provider.anthropic");
         var provider = new AnthropicAgentProvider(context);
 
-        var models = await provider.GetAvailableModelsAsync();
+        var models = await provider.ListModelsAsync();
 
         var opus = models.Single(model => model.ModelId == ModelId);
         Assert.Contains(opus.Variants ?? [], variant => variant.ReasoningEffort == AgentReasoningEffort.ExtraHigh);

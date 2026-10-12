@@ -9,11 +9,10 @@ using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
 using SubagentsWorker::Sunder.Package.Agent.Subagents.Models;
+using SubagentsWorker::Sunder.Package.Agent.Subagents.Runtime;
 using SubagentsWorker::Sunder.Package.Agent.Subagents.Services;
 using Sunder.Sdk.Rpc;
 using Xunit;
-using SubagentQuery = SubagentsWorker::Sunder.Package.Agent.Subagents.Runtime.SubagentQuery;
-using SubagentQueryKind = SubagentsWorker::Sunder.Package.Agent.Subagents.Runtime.SubagentQueryKind;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -128,12 +127,12 @@ public sealed class CatalogFaultContainmentTests
             "package.unavailable.chat");
         var service = new SubagentService(new SubagentStore(scope.Context));
         service.CreateSubagent("Existing Subagent");
-        var handler = new SubagentRuntimeHandler(service, catalog.Subagents());
+        await using var managementFixture = await catalog.CreateSubagentRuntimeManagementAsync(service);
 
-        var management = await handler.HandleAsync(new SubagentQuery(SubagentQueryKind.Management));
-        var providerModels = await handler.HandleAsync(new SubagentQuery(
-            SubagentQueryKind.ProviderModels,
-            ProviderId: "unavailable-chat"));
+        var management = await SubagentProjectionContent.ReadAsync<SubagentProjection>(
+            managementFixture.Service.ManagementAsync(), CancellationToken.None);
+        var providerModels = await SubagentProjectionContent.ReadAsync<SubagentProjection>(
+            managementFixture.Service.ProviderModelsAsync("unavailable-chat"), CancellationToken.None);
 
         Assert.Single(management.Subagents ?? []);
         Assert.Equal(
@@ -143,7 +142,7 @@ public sealed class CatalogFaultContainmentTests
         Assert.Equal("healthy-capabilities-capability", Assert.Single(management.Capabilities ?? []).CapabilityId);
         var unavailable = Assert.Single(providerModels.Providers ?? []);
         Assert.Empty(unavailable.Models ?? []);
-        Assert.Equal(SubagentsWorker::Sunder.Package.Agent.Contracts.Models.AgentProviderReadinessStatus.Failed, unavailable.Readiness?.Status);
+        Assert.Equal(AgentProviderReadinessStatus.Failed.ToString(), unavailable.Readiness?.Status.ToString());
     }
 
     [Theory]
@@ -175,14 +174,12 @@ public sealed class CatalogFaultContainmentTests
             RegressionTestBindings.ChatProviders,
             new CatalogChatProvider("strict-chat", modelsFailure: errorKind),
             "package.strict.chat");
-        var handler = new SubagentRuntimeHandler(
-            new SubagentService(new SubagentStore(scope.Context)),
-            catalog.Subagents());
+        await using var managementFixture = await catalog.CreateSubagentRuntimeManagementAsync(
+            new SubagentService(new SubagentStore(scope.Context)));
 
         var exception = await Assert.ThrowsAsync<SunderRpcException>(async () =>
-            await handler.HandleAsync(new SubagentQuery(
-                SubagentQueryKind.ProviderModels,
-                ProviderId: "strict-chat")));
+            await SubagentProjectionContent.ReadAsync<SubagentProjection>(
+                managementFixture.Service.ProviderModelsAsync("strict-chat"), CancellationToken.None));
 
         Assert.Equal(errorKind, exception.Error.Kind);
     }
@@ -193,15 +190,9 @@ public sealed class CatalogFaultContainmentTests
         using var catalog = new RegressionTestExtensionCatalog();
         var provider = new BlockingCancelledChatProvider("caller-cancelled");
         catalog.AddProvider(RegressionTestBindings.ChatProviders, provider, "package.caller.cancelled");
-        var reference = Assert.Single(AgentRpcInvocation.Snapshot(
-            catalog,
-            RegressionTestBindings.ChatProviders,
-            static instance => instance.Descriptor));
+        var reference = await catalog.GetRequiredProviderAsync(catalog.ChatProviders);
         using var cancellation = new CancellationTokenSource();
-        var invocation = AgentRpcInvocation.InvokeAsync(
-            reference,
-            cancellation.Token,
-            static (instance, token) => instance.GetAvailableModelsAsync(token)).AsTask();
+        var invocation = reference.Service.ListModelsAsync(cancellation.Token).AsTask();
         await provider.Started.Task;
 
         cancellation.Cancel();
@@ -220,29 +211,42 @@ public sealed class CatalogFaultContainmentTests
     public async Task AgentInvocation_RemoteCancelledByRetirementBecomesPackageUnavailable()
     {
         using var catalog = new RegressionTestExtensionCatalog();
-        var provider = new BlockingCancelledChatProvider("retired");
+        var failure = new SunderRpcException(new(SunderRpcErrorKind.Cancelled,
+            "test.catalog.rpc-failure", "Retired in-flight provider call.",
+            SunderRpcDispatchState.PossiblyDispatched, SunderRpcRetrySafety.Unsafe));
+        var provider = new BlockingCancelledChatProvider("retired", failure);
         catalog.AddProvider(RegressionTestBindings.ChatProviders, provider, "package.retired");
-        var reference = Assert.Single(AgentRpcInvocation.Snapshot(
-            catalog,
-            RegressionTestBindings.ChatProviders,
-            static instance => instance.Descriptor));
-        var invocation = AgentRpcInvocation.InvokeAsync(
-            reference,
-            CancellationToken.None,
-            static (instance, token) => instance.GetAvailableModelsAsync(token)).AsTask();
+        var reference = await catalog.GetRequiredProviderAsync(catalog.ChatProviders);
+        var invocation = reference.Service.ListModelsAsync().AsTask();
         await provider.Started.Task;
 
+        var bindingRetired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var retirementObserved = reference.RetirementToken.Register(() => bindingRetired.TrySetResult());
         var retirement = catalog.RetireProviderAsync(RegressionTestBindings.ChatProviders, provider);
         await provider.CancellationObserved.Task;
-        Assert.False(reference.Reference.TryAcquire(out _));
-        provider.ReleaseCancellation.TrySetResult();
+        // Host-side cancellation and the generated binding observer are separate
+        // signals. Exercise the classified retirement after that binding sees it.
+        try { await bindingRetired.Task.WaitAsync(TimeSpan.FromSeconds(5)); }
+        finally { provider.ReleaseCancellation.TrySetResult(); }
 
-        var exception = await Assert.ThrowsAsync<AgentPackageUnavailableException>(() => invocation);
+        // This is a direct generated SDK call. Agent-domain unavailable mapping
+        // is covered through the operational tool-catalog business consumer.
+        var exception = await Assert.ThrowsAsync<SunderRpcException>(() => invocation);
         await retirement;
-        Assert.Equal("package.retired", exception.PackageId);
-        Assert.Equal(
-            SunderRpcErrorKind.Cancelled,
-            Assert.IsType<SunderRpcException>(exception.InnerException).Error.Kind);
+        Assert.Equal(SunderRpcErrorKind.Unavailable, exception.Error.Kind);
+        Assert.Equal("rpc.binding.retired", exception.Error.Code);
+        Assert.Equal(SunderRpcDispatchState.PossiblyDispatched, exception.Error.DispatchState);
+        Assert.Equal(SunderRpcRetrySafety.Unsafe, exception.Error.RetrySafety);
+        var stale = await Assert.ThrowsAsync<SunderRpcException>(() => reference.EnsureCurrentAsync().AsTask());
+        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, stale.Error.Kind);
+        Assert.True(reference.RetirementToken.IsCancellationRequested);
+        var replacement = new BlockingCancelledChatProvider("retired");
+        catalog.AddProvider(RegressionTestBindings.ChatProviders, replacement, "package.retired");
+        var current = await catalog.GetRequiredProviderAsync(catalog.ChatProviders);
+        Assert.NotEqual(reference.ActivationId, current.ActivationId);
+        Assert.Equal(SunderRpcErrorKind.StaleEndpoint,
+            Assert.Throws<SunderRpcException>(() => reference.Service).Error.Kind);
+        Assert.False(replacement.Started.Task.IsCompleted);
     }
 
     [Fact]
@@ -250,15 +254,16 @@ public sealed class CatalogFaultContainmentTests
     {
         using var scope = RegressionTestPackageScope.Create();
         using var catalog = new RegressionTestExtensionCatalog();
-        var provider = new BlockingCancelledChatProvider("caller-cancelled");
+        var failure = new SunderRpcException(new(SunderRpcErrorKind.Cancelled,
+            "test.catalog.rpc-failure", "Caller cancelled the in-flight provider call.",
+            SunderRpcDispatchState.PossiblyDispatched, SunderRpcRetrySafety.Unsafe));
+        var provider = new BlockingCancelledChatProvider("caller-cancelled", failure);
         catalog.AddProvider(RegressionTestBindings.ChatProviders, provider, "package.caller.cancelled");
-        var handler = new SubagentRuntimeHandler(
-            new SubagentService(new SubagentStore(scope.Context)),
-            catalog.Subagents());
+        await using var managementFixture = await catalog.CreateSubagentRuntimeManagementAsync(
+            new SubagentService(new SubagentStore(scope.Context)));
         using var cancellation = new CancellationTokenSource();
-        var invocation = handler.HandleAsync(
-            new SubagentQuery(SubagentQueryKind.ProviderModels, ProviderId: provider.ProviderId),
-            cancellation.Token).AsTask();
+        var invocation = SubagentProjectionContent.ReadAsync<SubagentProjection>(
+            managementFixture.Service.ProviderModelsAsync(provider.ProviderId, cancellation.Token), cancellation.Token).AsTask();
         await provider.Started.Task;
 
         cancellation.Cancel();
@@ -270,6 +275,10 @@ public sealed class CatalogFaultContainmentTests
         Assert.Equal(
             SunderRpcErrorKind.Cancelled,
             Assert.IsType<SunderRpcException>(exception.InnerException).Error.Kind);
+        var cause = Assert.IsType<SunderRpcException>(exception.InnerException);
+        Assert.Equal(failure.Error.Code, cause.Error.Code);
+        Assert.Equal(SunderRpcDispatchState.PossiblyDispatched, cause.Error.DispatchState);
+        Assert.Equal(SunderRpcRetrySafety.Unsafe, cause.Error.RetrySafety);
     }
 
     [Fact]
@@ -279,24 +288,23 @@ public sealed class CatalogFaultContainmentTests
         using var catalog = new RegressionTestExtensionCatalog();
         var provider = new BlockingCancelledChatProvider("retired");
         catalog.AddProvider(RegressionTestBindings.ChatProviders, provider, "package.retired");
-        var reference = Assert.Single(catalog.GetServiceReferences(RegressionTestBindings.ChatProviders));
-        var handler = new SubagentRuntimeHandler(
-            new SubagentService(new SubagentStore(scope.Context)),
-            catalog.Subagents());
-        var invocation = handler.HandleAsync(
-            new SubagentQuery(SubagentQueryKind.ProviderModels, ProviderId: provider.ProviderId)).AsTask();
+        var reference = await catalog.GetRequiredProviderAsync(catalog.ChatProviders);
+        await using var managementFixture = await catalog.CreateSubagentRuntimeManagementAsync(
+            new SubagentService(new SubagentStore(scope.Context)));
+        var invocation = SubagentProjectionContent.ReadAsync<SubagentProjection>(
+            managementFixture.Service.ProviderModelsAsync(provider.ProviderId), CancellationToken.None).AsTask();
         await provider.Started.Task;
 
         var retirement = catalog.RetireProviderAsync(RegressionTestBindings.ChatProviders, provider);
         await provider.CancellationObserved.Task;
-        Assert.False(reference.TryAcquire(out _));
+        Assert.True(reference.RetirementToken.IsCancellationRequested);
         provider.ReleaseCancellation.TrySetResult();
 
         var projection = await invocation;
         await retirement;
         var unavailable = Assert.Single(projection.Providers ?? []);
         Assert.Empty(unavailable.Models ?? []);
-        Assert.Equal(SubagentsWorker::Sunder.Package.Agent.Contracts.Models.AgentProviderReadinessStatus.Failed, unavailable.Readiness?.Status);
+        Assert.Equal(AgentProviderReadinessStatus.Failed.ToString(), unavailable.Readiness?.Status.ToString());
     }
 
     [Fact]
@@ -334,12 +342,12 @@ public sealed class CatalogFaultContainmentTests
             "subagents/subagents.json");
         Directory.CreateDirectory(Path.GetDirectoryName(storePath)!);
         File.WriteAllText(storePath, "{broken");
-        var handler = new SubagentRuntimeHandler(
-            new SubagentService(new SubagentStore(scope.Context)),
-            catalog.Subagents());
+        await using var managementFixture = await catalog.CreateSubagentRuntimeManagementAsync(
+            new SubagentService(new SubagentStore(scope.Context)));
 
         await Assert.ThrowsAsync<InvalidDataException>(async () =>
-            await handler.HandleAsync(new SubagentQuery(SubagentQueryKind.Management)));
+            await SubagentProjectionContent.ReadAsync<SubagentProjection>(
+                managementFixture.Service.ManagementAsync(), CancellationToken.None));
     }
 
     private static SunderRpcException RpcFailure(SunderRpcErrorKind kind)
@@ -360,11 +368,11 @@ public sealed class CatalogFaultContainmentTests
             _catalog = new RegressionTestExtensionCatalog();
             configure(_catalog);
             var store = new AgentLocalStore(_scope.Context);
-            var sessions = new AgentSessionService(store, _catalog);
-            var workspaces = new AgentWorkspaceService(store, _catalog, sessions);
-            var targets = new AgentExecutionTargetService(_catalog);
-            Tools = new AgentToolService(sessions, workspaces, targets, _catalog);
-            Profiles = new AgentProfileService(store, Tools, _catalog, _catalog.BehaviorLoops);
+            var sessions = new AgentSessionService(store, _catalog.SessionCleaners);
+            var workspaces = new AgentWorkspaceService(store, _catalog.SessionCleaners, sessions, _catalog.WorkspacePathMigrators);
+            var targets = new AgentExecutionTargetService(_catalog.ExecutionTargets);
+            Tools = new AgentToolService(sessions, workspaces, targets, _catalog.ToolSources, _catalog.ObservedToolExecutions);
+            Profiles = _catalog.CreateProfileService(store, Tools);
             _changes = new AgentRuntimeChangeHub(Profiles, workspaces, sessions);
             Handler = new AgentCatalogHandler(Profiles, targets, _changes);
         }
@@ -426,7 +434,7 @@ public sealed class CatalogFaultContainmentTests
             => throw new NotSupportedException();
     }
 
-    private sealed class BlockingCancelledChatProvider(string providerId) : IAgentChatProvider
+    private sealed class BlockingCancelledChatProvider(string providerId, SunderRpcException? failure = null) : IAgentChatProvider
     {
         public string ProviderId => providerId;
         public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -453,7 +461,7 @@ public sealed class CatalogFaultContainmentTests
             {
                 CancellationObserved.TrySetResult();
                 await ReleaseCancellation.Task;
-                throw RpcFailure(SunderRpcErrorKind.Cancelled);
+                throw failure ?? RpcFailure(SunderRpcErrorKind.Cancelled);
             }
         }
 

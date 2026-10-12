@@ -56,14 +56,19 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.Equal(4, value.GetProperty("providerImports").GetArrayLength());
         Assert.Equal("required", Assert.Single(value.GetProperty("dependsOn").EnumerateArray()).GetProperty("presence").GetString());
         await ProjectCanonicalWorker(worker, driver);
+        await ExerciseMcpWorkerProcess(root, Path.Combine(worker, "bin/worker-projection"), value);
+    }
+
+    private static async Task ExerciseMcpWorkerProcess(string root, string runtimeRoot, JsonElement value)
+    {
         var workspace = Directory.CreateDirectory(Path.Combine(root, "McpProcessWorkspace")).FullName;
-        await using (var candidate = new PackageWorkerPeer(root, Path.Combine(worker, "bin/worker-projection"), workspace, value))
+        await using (var candidate = new PackageWorkerPeer(root, runtimeRoot, workspace, value))
         { await candidate.Prepare(); await candidate.Shutdown(); }
-        await using (var active = new PackageWorkerPeer(root, Path.Combine(worker, "bin/worker-projection"), workspace, value))
+        await using (var active = new PackageWorkerPeer(root, runtimeRoot, workspace, value))
         {
             await active.Prepare(); await active.Activate();
             Assert.Equal("mcp", (await active.Invoke("mcp.tools", "tool-source", "describe", new { })).GetProperty("sourceId").GetString());
-            Assert.Equal("mcp", (await active.Invoke("mcp.tools.observed", "tool-execution-observed", "describe", new { })).GetProperty("sourceId").GetString());
+            Assert.Equal("mcp", (await active.Invoke("mcp.tools.observed", "tool-execution-observed", "describe", new { })).GetString());
             Assert.True((await active.Invoke("mcp.stack", "stack-contributor", "metadata", new { })).GetProperty("supportsImport").GetBoolean());
             await active.Shutdown();
         }

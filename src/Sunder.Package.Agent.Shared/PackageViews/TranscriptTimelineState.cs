@@ -285,8 +285,8 @@ internal sealed partial class TranscriptTimelineState<TRow> : INotifyPropertyCha
                         replaceOnEqualTimestamp: false);
                 }
                 else if (newestLoadedAt is null
-                         || turn.CreatedAtUtc > newestLoadedAt
-                         || turn.CreatedAtUtc == newestLoadedAt
+                         || AgentTranscriptTime.Read(turn.CreatedAtUtc) > newestLoadedAt
+                         || AgentTranscriptTime.Read(turn.CreatedAtUtc) == newestLoadedAt
                          && newestLoadedTurnId is { } newestId
                          && turn.TurnId.CompareTo(newestId) > 0)
                 {
@@ -440,7 +440,7 @@ internal sealed partial class TranscriptTimelineState<TRow> : INotifyPropertyCha
     {
         if (_authoritativeTurnVersions.Remove(turn.TurnId, out var authoritativeVersion)
             && authoritativeVersion.ContentRevision == turn.ContentRevision
-            && authoritativeVersion.UpdatedAtUtc == turn.UpdatedAtUtc)
+            && authoritativeVersion.UpdatedAtUtc == AgentTranscriptTime.Read(turn.UpdatedAtUtc))
         {
             return TranscriptLiveTurnResult.Ignored;
         }
@@ -468,7 +468,7 @@ internal sealed partial class TranscriptTimelineState<TRow> : INotifyPropertyCha
         var result = ApplyLiveTurn(turn, notifyVisualChange: true);
         if (result == TranscriptLiveTurnResult.Applied)
         {
-            _authoritativeTurnVersions[turn.TurnId] = (turn.ContentRevision, turn.UpdatedAtUtc);
+            _authoritativeTurnVersions[turn.TurnId] = (turn.ContentRevision, AgentTranscriptTime.Read(turn.UpdatedAtUtc));
         }
         return result;
     }

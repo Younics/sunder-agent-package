@@ -1,24 +1,17 @@
 using System.Text.Json;
-using System.Text.Json.Serialization;
-using Sunder.Generated.Rpc;
-using Sunder.Generated.Rpc.Imports.CSunder_Agent_System_Prompt_Contributor;
-using Sunder.Sdk.Rpc;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using Sunder.Sdk.Services;
 
-[SunderRpcProvider(typeof(ISystemPromptService), ProviderId = "fixture.system.prompt")]
-public sealed partial class PromptProvider(string name, Func<JsonElement, CancellationToken, ValueTask<JsonElement>> contribute) : ISystemPromptService
+[SunderServiceProvider(typeof(ISystemPromptContributorService), ProviderId = "fixture.system.prompt")]
+public sealed partial class PromptProvider(string name, Func<JsonElement, CancellationToken, ValueTask<JsonElement>> contribute) : ISystemPromptContributorService
 {
-    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
-    {
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-        Converters = { new SunderRpcJsonConverterFactory() },
-    };
-
-    public ValueTask<AgentRpcIdentity> DescribeAsync(SunderRpcInvocationContext context, Unit request, CancellationToken cancellationToken)
+    public ValueTask<AgentServiceIdentity> DescribeAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult(new AgentRpcIdentity { Id = "fixture.prompt", DisplayName = name });
+        return ValueTask.FromResult(new AgentServiceIdentity { Id = "fixture.prompt", DisplayName = name });
     }
 
-    public async ValueTask<IReadOnlyList<AgentSystemPromptBlock>> ContributeAsync(SunderRpcInvocationContext context, AgentSystemPromptRequest request, CancellationToken cancellationToken)
-        => JsonSerializer.Deserialize<AgentSystemPromptBlock[]>((await contribute(JsonSerializer.SerializeToElement(request, Json), cancellationToken)).GetRawText(), Json)!;
+    public async ValueTask<IReadOnlyList<AgentSystemPromptBlock>> ContributeAsync(AgentSystemPromptRequest request, CancellationToken cancellationToken = default)
+        => JsonSerializer.Deserialize<AgentSystemPromptBlock[]>((await contribute(JsonSerializer.SerializeToElement(request), cancellationToken)).GetRawText())!;
 }

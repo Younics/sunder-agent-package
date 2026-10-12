@@ -5,37 +5,30 @@ using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Rpc;
-using Sunder.Sdk.Worker;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
 
 public sealed partial class AgentSourceArtifactMigrationTests
 {
-    private static IAgentSessionDataCleaner CreateAgentCleaner(Assembly owner, ISunderRpcClient rpc, SunderRpcProviderSnapshot provider)
-        => AgentRoleBoundary.As<IAgentSessionDataCleaner>(Activator.CreateInstance(owner.GetType("Sunder.Package.Agent.Runtime.Rpc.GeneratedSessionCleanerClient", true)!, rpc, provider)!);
-
-    private static IAgentDurableLifecycleObserver CreateAgentLifecycle(Assembly owner, ISunderRpcClient rpc, SunderRpcProviderSnapshot provider)
-        => AgentRoleBoundary.As<IAgentDurableLifecycleObserver>(Activator.CreateInstance(owner.GetType("Sunder.Package.Agent.Runtime.Rpc.GeneratedDurableLifecycleClient", true)!, rpc, provider)!);
-
     internal static async Task VerifyAgentCleanupConsumers(Assembly owner, Assembly memory, Assembly probes)
     {
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
         var peer = new CleanupObserver();
         var cleaned = new ConcurrentQueue<Guid>();
-        var cleanerHandler = AddCleanupProvider(memory, state, "SessionCleanerProvider", ["fixture.cleaner", (Action<Guid>)cleaned.Enqueue]);
-        var lifecycleHandler = AddCleanupLifecycleProvider(memory, probes, state, peer);
+        var cleanerHandler = AddCleanupCleaner(state, "fixture.cleaner", cleaned.Enqueue);
+        var lifecycleHandler = AddCleanupLifecycleProvider(state, peer);
         var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
-        var cleanerSnapshot = Assert.Single((await rpc.DiscoverAsync(AgentRpcContractIds.SessionCleaner)).Providers);
-        var lifecycleSnapshot = Assert.Single((await rpc.DiscoverAsync(AgentRpcContractIds.DurableLifecycleObserver)).Providers);
         var observed = new FilesRpcObserver(rpc, "handle");
-        var cleaner = CreateAgentCleaner(owner, observed, cleanerSnapshot);
-        var observer = CreateAgentLifecycle(owner, observed, lifecycleSnapshot);
-        await using var cleanerLifetime = (IAsyncDisposable)cleaner;
-        await using var observerLifetime = (IAsyncDisposable)observer;
-        Assert.Equal("fixture.cleaner", cleaner.CleanerId);
-        Assert.Equal(peer.ObserverId, observer.ObserverId); Assert.Equal(peer.DisplayName, observer.DisplayName);
-        var session = Guid.NewGuid(); cleaner.DeleteSessionData(session); Assert.Equal(session, Assert.Single(cleaned));
+        var primary = await SelectAsync(observed);
+        await using var primaryScope = primary.Scope;
+        var cleaner = primary.Cleaner;
+        var observer = primary.Observer;
+        Assert.Equal("fixture.cleaner", (await cleaner.DescribeAsync()).Id);
+        var identity = await observer.DescribeAsync();
+        Assert.Equal(peer.ObserverId, identity.Id); Assert.Equal(peer.DisplayName, identity.DisplayName);
+        var session = Guid.NewGuid(); await cleaner.DeleteSessionAsync(session); Assert.Equal(session, Assert.Single(cleaned));
         var envelope = MemoryEnvelope("cleanup.mapping", AgentLifecycleEventKind.TranscriptRolledBack, new()
         {
             SessionId = session, RootSessionId = session, WorkspaceId = "workspace.cleanup", WorkspaceIncarnationId = "incarnation.one",
@@ -43,7 +36,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             DeletionBatchId = "batch.one", DeletionChunkIndex = 0, DeletionChunkCount = 1,
             DeletionChunkReceipts = [new("receipt.one", new string('a', 64))],
         }) with { OriginalPayloadHash = new string('b', 64) };
-        await observer.HandleDurableLifecycleEventAsync(envelope);
+        await observer.HandleAsync(envelope);
         var received = Assert.Single(peer.Events);
         Assert.Equal(envelope.PayloadJson, received.PayloadJson); Assert.Equal(envelope.PayloadHash, received.PayloadHash);
         Assert.Equal(envelope.OriginalPayloadHash, received.OriginalPayloadHash); Assert.Equal(envelope.Kind, received.Kind);
@@ -61,89 +54,147 @@ public sealed partial class AgentSourceArtifactMigrationTests
         })
         {
             observed.Transform = change;
-            Assert.Equal(SunderRpcErrorKind.StaleEndpoint, Assert.Throws<SunderRpcException>(() => cleaner.DeleteSessionData(session)).Error.Kind);
-            Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => observer.HandleDurableLifecycleEventAsync(envelope).AsTask())).Error.Kind);
+            var fresh = await SelectAsync(observed);
+            try
+            {
+                Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => fresh.Cleaner.DeleteSessionAsync(session).AsTask())).Error.Kind);
+                Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => fresh.Observer.HandleAsync(envelope).AsTask())).Error.Kind);
+            }
+            finally { await fresh.Scope.DisposeAsync(); }
             Assert.Single(cleaned); Assert.Single(peer.Events);
         }
         observed.Transform = null;
         observed.InvalidateAfterInvoke = true;
-        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => observer.HandleDurableLifecycleEventAsync(envelope).AsTask())).Error.Kind);
+        var invalidated = await SelectAsync(observed);
+        try
+        {
+            Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => invalidated.Observer.HandleAsync(envelope).AsTask())).Error.Kind);
+        }
+        finally { await invalidated.Scope.DisposeAsync(); }
         observed.Transform = null; observed.InvalidateAfterInvoke = false;
         using (var cancelled = new CancellationTokenSource())
         {
             cancelled.Cancel(); var count = peer.Events.Count;
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => observer.HandleDurableLifecycleEventAsync(envelope, cancelled.Token).AsTask());
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => observer.HandleAsync(envelope, cancelled.Token).AsTask());
             Assert.Equal(count, peer.Events.Count);
         }
         lifecycleHandler.Gate = new();
-        var pending = observer.HandleDurableLifecycleEventAsync(envelope).AsTask();
+        var pending = observer.HandleAsync(envelope).AsTask();
         await lifecycleHandler.Gate.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await state.RetireAsync(lifecycleHandler).WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => pending)).Error.Kind);
         await lifecycleHandler.Gate.Cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        var replacement = new CleanupObserver(); AddCleanupLifecycleProvider(memory, probes, state, replacement);
-        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => observer.HandleDurableLifecycleEventAsync(envelope).AsTask())).Error.Kind);
-        var next = CreateAgentLifecycle(owner, observed, Assert.Single((await rpc.DiscoverAsync(AgentRpcContractIds.DurableLifecycleObserver)).Providers));
-        await using var nextLifetime = (IAsyncDisposable)next;
-        await next.HandleDurableLifecycleEventAsync(envelope); Assert.Single(replacement.Events);
+        var replacement = new CleanupObserver(); var replacementHandler = AddCleanupLifecycleProvider(state, replacement);
+        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => observer.HandleAsync(envelope).AsTask())).Error.Kind);
+        var next = await SelectAsync(observed);
+        await using var nextScope = next.Scope;
+        await next.Observer.HandleAsync(envelope); Assert.Single(replacement.Events);
 
         cleanerHandler.Gate = new();
-        var delete = Task.Run(() => cleaner.DeleteSessionData(session));
+        var delete = cleaner.DeleteSessionAsync(session).AsTask();
         await cleanerHandler.Gate.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        var stop = cleanerLifetime.DisposeAsync().AsTask();
-        Assert.Same(stop, cleanerLifetime.DisposeAsync().AsTask());
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => delete);
+        var stop = primary.Scope.DisposeAsync().AsTask();
+        Assert.Same(stop, primary.Scope.DisposeAsync().AsTask());
+        AssertCleanupRetired((await Assert.ThrowsAsync<SunderRpcException>(() => delete)).Error);
         await stop.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Single(cleaned);
-        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, Assert.Throws<SunderRpcException>(() => cleaner.CleanerId).Error.Kind);
-        Assert.Equal(0, observed.UnscopedLookups); Assert.All(observed.Scopes, scope => Assert.True(scope.Disposed));
-        await VerifyEnteredCleanupDrain(owner, memory);
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => cleaner.DescribeAsync().AsTask());
+        replacementHandler.Gate = new();
+        var stopping = next.Observer.HandleAsync(envelope).AsTask();
+        await replacementHandler.Gate.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var stopped = next.Scope.DisposeAsync().AsTask();
+        var retired = await Assert.ThrowsAsync<SunderRpcException>(() => stopping);
+        AssertCleanupRetired(retired.Error);
+        await stopped.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => next.Observer.DescribeAsync().AsTask());
+        observed.AssertScopedOperations(); Assert.All(observed.Scopes, scope => Assert.True(scope.Disposed));
+        await VerifyEnteredCleanupDrain();
     }
 
-    private static async Task VerifyEnteredCleanupDrain(Assembly owner, Assembly memory)
+    private static async Task VerifyEnteredCleanupDrain()
     {
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
         using var entered = new ManualResetEventSlim(); using var release = new ManualResetEventSlim();
         var completed = 0;
-        var handler = AddCleanupProvider(memory, state, "SessionCleanerProvider", ["drained.cleaner", (Action<Guid>)(_ =>
-        { entered.Set(); if (!release.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException("Cleanup release was not signalled."); Interlocked.Increment(ref completed); })]);
+        var handler = AddCleanupCleaner(state, "drained.cleaner", _ =>
+        { entered.Set(); if (!release.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException("Cleanup release was not signalled."); Interlocked.Increment(ref completed); });
         var rpc = new FilesRpcObserver(new RegressionTestRpcClient(state, "sunder.package.agent"));
-        var cleaner = CreateAgentCleaner(owner, rpc, Assert.Single((await rpc.DiscoverAsync(AgentRpcContractIds.SessionCleaner)).Providers));
-        await using var lifetime = (IAsyncDisposable)cleaner;
-        var call = Task.Run(() => cleaner.DeleteSessionData(Guid.NewGuid()));
+        var receiver = await SelectCleanerAsync(rpc);
+        await using var lifetime = receiver.Scope;
+        var cleaner = receiver.Cleaner;
+        var call = Task.Run(() => cleaner.DeleteSessionAsync(Guid.NewGuid()).AsTask());
         try
         {
             Assert.True(entered.Wait(TimeSpan.FromSeconds(5)));
-            var stop = lifetime.DisposeAsync().AsTask();
+            var stop = receiver.Scope.DisposeAsync().AsTask();
             Assert.False(stop.IsCompleted); Assert.Equal(0, completed);
             // Retirement uses CancelAsync: observe cancellation at the entered
             // call before releasing its non-cooperative synchronous cleanup.
             await handler.CancellationObserved.Task.WaitAsync(TimeSpan.FromSeconds(5));
             Assert.False(stop.IsCompleted); Assert.Equal(0, completed);
             release.Set();
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => call);
+            AssertCleanupRetired((await Assert.ThrowsAsync<SunderRpcException>(() => call)).Error);
             await stop.WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal(1, completed); Assert.All(rpc.Scopes, scope => Assert.True(scope.Disposed));
+            await Assert.ThrowsAsync<ObjectDisposedException>(() => cleaner.DescribeAsync().AsTask());
         }
         finally { release.Set(); await call.ContinueWith(_ => { }, TaskScheduler.Default); }
     }
 
-    private static CleanupHandlerProbe AddCleanupProvider(Assembly memory, RegressionTestRpcState state, string name, object[] arguments)
+    private static void AssertCleanupRetired(SunderRpcError error)
     {
-        var type = memory.GetType("Sunder.Package.Agent.Memory.Semantic.Rpc." + name, true)!;
-        var service = Activator.CreateInstance(type, arguments)!;
-        var registration = (SunderWorkerProviderRegistration)type.GetMethod("CreateSunderRpcProviderRegistration")!.Invoke(service, null)!;
-        var probe = new CleanupHandlerProbe(registration.Handler);
-        state.Add("sunder.package.agent.memory.semantic", RegressionTestRpcDescriptors.Get(registration.ContractId), probe, probe, Noop.Instance, registration.ProviderId, "2.0.0");
-        return probe;
+        Assert.Equal(SunderRpcErrorKind.Unavailable, error.Kind);
+        Assert.Equal("rpc.binding.retired", error.Code);
+        Assert.Equal(SunderRpcDispatchState.PossiblyDispatched, error.DispatchState);
+        Assert.Equal(SunderRpcRetrySafety.Unsafe, error.RetrySafety);
     }
 
-    private static CleanupHandlerProbe AddCleanupLifecycleProvider(Assembly memory, Assembly probes, RegressionTestRpcState state, CleanupObserver observer)
+    private static CleanupHandlerProbe AddCleanupCleaner(RegressionTestRpcState state, string cleanerId, Action<Guid> delete)
+        => (CleanupHandlerProbe)AddGeneratedPeer(state, "sunder.package.agent.memory.semantic",
+            RegressionTestBindings.SessionCleaners, new RegressionTestSessionCleanerProvider(new CleanupCleaner(cleanerId, delete)),
+            cleanerId, inner => new CleanupHandlerProbe(inner));
+
+    private static CleanupHandlerProbe AddCleanupLifecycleProvider(RegressionTestRpcState state, CleanupObserver observer)
+        => (CleanupHandlerProbe)AddGeneratedPeer(state, "sunder.package.agent.memory.semantic",
+            RegressionTestBindings.DurableLifecycleObservers, new RegressionTestDurableLifecycleProvider(observer),
+            "semantic.memory.lifecycle", inner => new CleanupHandlerProbe(inner));
+
+    private static async Task<(GeneratedServiceTestScope Scope, AgentServices.ISessionCleanerService Cleaner,
+        AgentServices.IDurableLifecycleObserverService Observer)> SelectAsync(ISunderRpcClient rpc)
     {
-        Func<string, CancellationToken, ValueTask> handle = (value, token) => observer.HandleDurableLifecycleEventAsync(
-            JsonSerializer.Deserialize<AgentDurableLifecycleEventEnvelope>(value, MemoryProviderJson)!, token);
-        var local = Activator.CreateInstance(probes.GetType("RoleLocalLifecycleProbe", true)!, observer.ObserverId, observer.DisplayName, handle)!;
-        return AddCleanupProvider(memory, state, "DurableLifecycleProvider", [local]);
+        var scope = new GeneratedServiceTestScope(rpc);
+        try
+        {
+            var cleaner = Assert.Single((await scope.Providers<AgentServices.ISessionCleanerService>().ListAsync()).Providers).Service;
+            var observer = Assert.Single((await scope.Providers<AgentServices.IDurableLifecycleObserverService>().ListAsync()).Providers).Service;
+            return (scope, cleaner, observer);
+        }
+        catch
+        {
+            await scope.DisposeAsync();
+            throw;
+        }
+    }
+
+    private static async Task<(GeneratedServiceTestScope Scope, AgentServices.ISessionCleanerService Cleaner)> SelectCleanerAsync(ISunderRpcClient rpc)
+    {
+        var scope = new GeneratedServiceTestScope(rpc);
+        try
+        {
+            var cleaner = Assert.Single((await scope.Providers<AgentServices.ISessionCleanerService>().ListAsync()).Providers).Service;
+            return (scope, cleaner);
+        }
+        catch
+        {
+            await scope.DisposeAsync();
+            throw;
+        }
+    }
+
+    private sealed class CleanupCleaner(string cleanerId, Action<Guid> delete) : IAgentSessionDataCleaner
+    {
+        public string CleanerId => cleanerId;
+        public void DeleteSessionData(Guid sessionId) => delete(sessionId);
     }
 
     private sealed class CleanupObserver : IAgentDurableLifecycleObserver

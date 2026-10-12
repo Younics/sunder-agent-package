@@ -4,11 +4,11 @@ using System.Reflection;
 using System.Collections;
 using System.Runtime.Loader;
 using System.Text.Json;
-using AgentApp::Sunder.Package.Agent.Contracts.Contracts;
 using AgentApp::Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Rpc;
 using Xunit;
+using AppServices = AgentApp::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -19,8 +19,26 @@ public sealed partial class AgentSourceArtifactMigrationTests
         using var source = File.OpenRead(Path.Combine(SingleProjectRoleOutput(Path.Combine(Path.GetDirectoryName(worker)!, "Worker"), "app"), "Sunder.Package.Agent.App.dll"));
         return load.LoadFromStream(source);
     }
-    private static IAgentWorkspaceEditorContributor CreateAgentWorkspaceEditor(Assembly app, ISunderRpcClient rpc, SunderRpcProviderSnapshot selected)
-        => new AppWorkspaceEditorProbe(Activator.CreateInstance(app.GetType("Sunder.Package.Agent.Runtime.Rpc.GeneratedWorkspaceEditorClient", true)!, rpc, selected)!);
+    private static AppWorkspaceEditorProbe CreateAgentWorkspaceEditor(Assembly app, ISunderRpcClient rpc, SunderRpcProviderSnapshot selected)
+    {
+        var receiver = new GeneratedServiceTestScope(rpc);
+        try
+        {
+            var catalog = receiver.Providers(app.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Services.IWorkspaceEditorService", true)!);
+            var snapshot = AgentRoleBoundary.Await(AgentRoleBoundary.Call(catalog, "ListAsync", CancellationToken.None)!).GetAwaiter().GetResult()!;
+            var providers = (IEnumerable)snapshot.GetType().GetProperty("Providers")!.GetValue(snapshot)!;
+            var entry = Assert.Single(providers.Cast<object>(), provider =>
+                Equals(provider.GetType().GetProperty("ActivationId")!.GetValue(provider), selected.ActivationId)
+                && Equals(provider.GetType().GetProperty("ProviderId")!.GetValue(provider), selected.ProviderId));
+            return new AppWorkspaceEditorProbe(AgentRoleBoundary.As<AppServices.IWorkspaceEditorService>(
+                entry.GetType().GetProperty("Service")!.GetValue(entry)!), receiver);
+        }
+        catch
+        {
+            receiver.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            throw;
+        }
+    }
 
     internal static async Task VerifyAgentWorkspaceEditorConsumer(Assembly app)
     {
@@ -28,15 +46,15 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
         var peer = new WorkspaceEditorPeer();
         var handler = Add();
+        Assert.Empty(handler.Calls);
         var context = new AgentWorkspaceEditorContext(AgentRoleBoundary.As<AgentWorkspaceRecord>(AgentPublicSourceMigrationTests.CreatePromptRequest().Workspace!), "local", "configuration.one");
         var observed = new FilesRpcObserver(rpc, "save-section");
-        var selected = Assert.Single(state.Discover(AgentRpcContractIds.WorkspaceEditor).Providers);
+        var selected = Assert.Single(state.Discover(RegressionTestBindings.WorkspaceEditors).Providers);
         var client = CreateAgentWorkspaceEditor(app, observed, selected);
         await using var lifetime = (IAsyncDisposable)client;
-        var bindings = app.GetType("Sunder.Package.Agent.Runtime.Rpc.AgentWorkspaceEditorBindings", true)!;
-        Func<IAgentWorkspaceEditorContributor, AgentWorkspaceEditorContext, CancellationToken, ValueTask<bool>> canEdit =
-            (editor, value, token) => ((AppWorkspaceEditorProbe)editor).CanEditAsync(value, token);
-        Assert.Equal(peer.ContributorId, client.ContributorId);
+        Func<AppWorkspaceEditorProbe, AgentWorkspaceEditorContext, CancellationToken, ValueTask<bool>> canEdit =
+            static (editor, value, token) => editor.CanEditAsync(value, token);
+        Assert.Equal(peer.ContributorId, (await client.DescribeAsync()).Id);
         Assert.True(await canEdit(client, context, default));
         peer.Applicable = false; Assert.False(await canEdit(client, context, default)); peer.Applicable = true;
         var field = Assert.Single(Assert.Single(await client.GetSectionsAsync(context)).Fields);
@@ -64,41 +82,48 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var before = handler.Calls.Count;
         Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => client.SaveSectionAsync(context, request).AsTask())).Error.Kind);
         Assert.Equal(before, handler.Calls.Count); observed.Transform = null;
+        await using var invalidatedClient = CreateAgentWorkspaceEditor(app, observed, selected);
         observed.InvalidateAfterInvoke = true;
-        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => client.SaveSectionAsync(context, request).AsTask())).Error.Kind);
+        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => invalidatedClient.SaveSectionAsync(context, request).AsTask())).Error.Kind);
+        Assert.Equal(before + 1, handler.Calls.Count);
         observed.InvalidateAfterInvoke = false; observed.Transform = null;
+        await invalidatedClient.DisposeAsync();
+        var peerCount = handler.Calls.Count;
         await state.RetireAsync(handler);
-        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => client.GetSectionsAsync(context).AsTask())).Error.Kind);
+        var retired = await Assert.ThrowsAsync<SunderRpcException>(() => client.GetSectionsAsync(context).AsTask());
+        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, retired.Error.Kind);
+        Assert.Equal(peerCount, handler.Calls.Count);
         handler = Add();
-        var next = CreateAgentWorkspaceEditor(app, observed, Assert.Single(state.Discover(AgentRpcContractIds.WorkspaceEditor).Providers));
+        var next = CreateAgentWorkspaceEditor(app, observed, Assert.Single(state.Discover(RegressionTestBindings.WorkspaceEditors).Providers));
         await using var nextLifetime = (IAsyncDisposable)next;
         Assert.Single(await next.GetSectionsAsync(context));
         handler.BlockMethod = "get-sections"; handler.Gate = new();
         var stopping = next.GetSectionsAsync(context).AsTask();
         await handler.Gate.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
         var stopped = nextLifetime.DisposeAsync().AsTask();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => stopping); await stopped.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, Assert.Throws<SunderRpcException>(() => next.ContributorId).Error.Kind);
+        var inFlightRetired = await Assert.ThrowsAsync<SunderRpcException>(() => stopping);
+        Assert.Equal(SunderRpcErrorKind.Unavailable, inFlightRetired.Error.Kind);
+        Assert.Equal("rpc.binding.retired", inFlightRetired.Error.Code);
+        Assert.Equal(SunderRpcDispatchState.PossiblyDispatched, inFlightRetired.Error.DispatchState);
+        Assert.Equal(SunderRpcRetrySafety.Unsafe, inFlightRetired.Error.RetrySafety);
+        await stopped.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => next.DescribeAsync().AsTask());
         handler.BlockMethod = null;
-        Assert.Equal(0, observed.UnscopedLookups); Assert.All(observed.Scopes, scope => Assert.True(scope.Disposed));
+        await lifetime.DisposeAsync();
 
         // The complete artifact includes the actual UI containment/snapshot layer;
         // the smaller owner-client fixture intentionally has no Avalonia view models.
         if (app.GetType("Sunder.Package.Agent.PackageViews.AgentWorkspaceEditorInvocation") is { } invocation)
         {
-            var catalogType = app.GetType("Sunder.Package.Agent.Protocol.AgentRpcCatalog", true)!;
-            using var catalog = (IDisposable)Activator.CreateInstance(catalogType, rpc)!;
-            var service = bindings.GetProperty("Service", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
-            var contributor = app.GetType("Sunder.Package.Agent.Contracts.Contracts.IAgentWorkspaceEditorContributor", true)!;
-            var sections = app.GetType("Sunder.Package.Agent.Contracts.Models.AgentEditorSection", true)!;
-            var discover = catalogType.GetMethods().Single(method => method.Name == "GetServiceReferences"
-                && method.GetParameters()[0].ParameterType.GetGenericTypeDefinition() == service.GetType().GetGenericTypeDefinition()).MakeGenericMethod(contributor);
-            var reference = Assert.Single(((IEnumerable)discover.Invoke(catalog, [service])!).Cast<object>());
-            var snapshot = invocation.GetMethod("GetSectionsSnapshotAsync")!;
-            var localContext = JsonSerializer.SerializeToElement(context, MemoryProviderJson).Deserialize(snapshot.GetParameters()[1].ParameterType, MemoryProviderJson)!;
-            var read = typeof(AgentSourceArtifactMigrationTests).GetMethod(nameof(CreateRoleEditorRead), BindingFlags.Static | BindingFlags.NonPublic)!
-                .MakeGenericMethod(contributor, sections).Invoke(null, [snapshot, localContext])!;
-            var invoke = invocation.GetMethod("InvokeAsync")!.MakeGenericMethod(typeof(IReadOnlyList<>).MakeGenericType(sections));
+            await using var receiver = new GeneratedServiceTestScope(observed);
+            var catalog = receiver.Providers(app.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Services.IWorkspaceEditorService", true)!);
+            var snapshot = await AgentRoleBoundary.Await(AgentRoleBoundary.Call(catalog, "ListAsync", CancellationToken.None)!);
+            var reference = Assert.Single(((IEnumerable)snapshot!.GetType().GetProperty("Providers")!.GetValue(snapshot)!).Cast<object>(),
+                provider => Equals(provider.GetType().GetProperty("ProviderId")!.GetValue(provider), peer.ContributorId));
+            var service = AgentRoleBoundary.As<AppServices.IWorkspaceEditorService>(reference.GetType().GetProperty("Service")!.GetValue(reference)!);
+            Assert.Equal(peer.ContributorId, (await service.DescribeAsync()).Id);
+            var invoke = invocation.GetMethod("ReadSectionsAsync")!;
+            var localContext = JsonSerializer.SerializeToElement(context, MemoryProviderJson).Deserialize(invoke.GetParameters()[1].ParameterType, MemoryProviderJson)!;
             var operation = Enum.Parse(invoke.GetParameters()[2].ParameterType, "Discovery");
             var successful = await Read();
             Assert.True((bool)successful.GetType().GetProperty("Success")!.GetValue(successful)!);
@@ -113,36 +138,29 @@ public sealed partial class AgentSourceArtifactMigrationTests
 
             async Task<object> Read()
             {
-                var pending = invoke.Invoke(null, [reference, catalog, operation, CancellationToken.None, read])!;
+                var pending = invoke.Invoke(null, [reference, localContext, operation, CancellationToken.None])!;
                 var task = (Task)pending.GetType().GetMethod("AsTask")!.Invoke(pending, null)!;
                 await task.WaitAsync(TimeSpan.FromSeconds(5)); return task.GetType().GetProperty("Result")!.GetValue(task)!;
             }
         }
+        observed.AssertScopedOperations(); Assert.All(observed.Scopes, scope => Assert.True(scope.Disposed));
         SurfaceHandler Add()
         {
-            return (SurfaceHandler)AddGeneratedPeer(state, "example.editor", AgentRpcContractIds.WorkspaceEditor,
+            return (SurfaceHandler)AddGeneratedPeer(state, "example.editor", RegressionTestBindings.WorkspaceEditors,
                 peer, "fixture.editor", static handler => new SurfaceHandler(handler));
         }
     }
 
-    private static Func<TEditor, CancellationToken, ValueTask<IReadOnlyList<TSection>>> CreateRoleEditorRead<TEditor, TSection>(MethodInfo snapshot, object context)
-        => (editor, token) => (ValueTask<IReadOnlyList<TSection>>)snapshot.Invoke(null, [editor, context, token])!;
-
-    private sealed class AppWorkspaceEditorProbe(object client) : IAgentWorkspaceEditorContributor, IAsyncDisposable
+    private sealed class AppWorkspaceEditorProbe(AppServices.IWorkspaceEditorService service, GeneratedServiceTestScope receiver) : IAsyncDisposable
     {
-        private readonly RoleLocalValue _values = new(client);
-        public string ContributorId => _values.Property<string>("ContributorId");
-        public bool CanEdit(AgentWorkspaceEditorContext context) => _values.Invoke<bool>("CanEdit", context);
-        internal ValueTask<bool> CanEditAsync(AgentWorkspaceEditorContext context, CancellationToken token)
-            => _values.InvokeAsync<bool>("CanEditAsync", context, token);
-        public ValueTask<IReadOnlyList<AgentEditorSection>> GetSectionsAsync(AgentWorkspaceEditorContext context, CancellationToken cancellationToken = default)
-            => _values.InvokeAsync<IReadOnlyList<AgentEditorSection>>("GetSectionsAsync", context, cancellationToken);
-        public ValueTask<AgentEditorSaveResult> SaveSectionAsync(AgentWorkspaceEditorContext context, AgentEditorSaveRequest request, CancellationToken cancellationToken = default)
-            => _values.InvokeAsync<AgentEditorSaveResult>("SaveSectionAsync", context, request, cancellationToken);
-        public ValueTask DisposeAsync() { _values.Dispose(); return ((IAsyncDisposable)client).DisposeAsync(); }
+        public ValueTask<AgentServiceIdentity> DescribeAsync(CancellationToken token = default) => service.DescribeAsync(token);
+        public ValueTask<bool> CanEditAsync(AgentWorkspaceEditorContext context, CancellationToken token = default) => service.CanEditAsync(context, token);
+        public ValueTask<IReadOnlyList<AgentEditorSection>> GetSectionsAsync(AgentWorkspaceEditorContext context, CancellationToken cancellationToken = default) => service.GetSectionsAsync(context, cancellationToken);
+        public ValueTask<AgentEditorSaveResult> SaveSectionAsync(AgentWorkspaceEditorContext context, AgentEditorSaveRequest request, CancellationToken cancellationToken = default) => service.SaveSectionAsync(context, request, cancellationToken);
+        public ValueTask DisposeAsync() => receiver.DisposeAsync();
     }
 
-    private sealed class WorkspaceEditorPeer : IAgentWorkspaceEditorContributor
+    private sealed class WorkspaceEditorPeer : AppServices.IWorkspaceEditorService
     {
         internal bool Applicable = true;
         internal AgentWorkspaceEditorContext? Context;
@@ -152,6 +170,10 @@ public sealed partial class AgentSourceArtifactMigrationTests
             { UseSecondaryFolderPicker = true, Actions = [new("refresh", "Refresh", AgentEditorActionKind.RefreshField, Parameters: new Dictionary<string, string?> { ["reset"] = null, ["field"] = "paths" })] }])];
         public string ContributorId => "fixture.editor";
         public bool CanEdit(AgentWorkspaceEditorContext context) { Context = context; return Applicable; }
+        public ValueTask<AgentServiceIdentity> DescribeAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new AgentServiceIdentity(ContributorId, "Fixture workspace editor"));
+        public ValueTask<bool> CanEditAsync(AgentWorkspaceEditorContext context, CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(CanEdit(context));
         public ValueTask<IReadOnlyList<AgentEditorSection>> GetSectionsAsync(AgentWorkspaceEditorContext context, CancellationToken cancellationToken = default)
         { cancellationToken.ThrowIfCancellationRequested(); Context = context; return ValueTask.FromResult(Sections); }
         public ValueTask<AgentEditorSaveResult> SaveSectionAsync(AgentWorkspaceEditorContext context, AgentEditorSaveRequest request, CancellationToken cancellationToken = default)

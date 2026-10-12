@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Security.Cryptography;
 using System.Text.Json;
 using Xunit;
 
@@ -15,6 +16,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var driver = Path.Combine(core, "languages/csharp/dotnet/tests/Sunder.Package.Build.Tests/bin", configuration, "net10.0/Sunder.Package.Build.Tests.dll");
         Assert.True(File.Exists(driver), "Build Core Package.Build.Tests before the required artifact source lane.");
         var root = Directory.CreateTempSubdirectory("sunder-agent-source-artifact-").FullName;
+        var completed = false;
         try
         {
             var cache = Path.Combine(root, "fixture-cache");
@@ -40,8 +42,39 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.Equal(selected, File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.lock.json")));
             Assert.Equal(owned, File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.owned.json")));
             Assert.True(Directory.Exists(Path.Combine(worker, "bin/Debug/net10.0/sunder-dev")));
+            RetainArtifactEvidence(root);
+            completed = true;
         }
-        finally { Directory.Delete(root, recursive: true); }
+        finally
+        {
+            try { RetainArtifactAttempt(root, completed); }
+            finally { Directory.Delete(root, recursive: true); }
+        }
+    }
+
+    private static void RetainArtifactEvidence(string root)
+    {
+        var destination = Environment.GetEnvironmentVariable("SUNDER_AGENT_SOURCE_ARTIFACT_EVIDENCE");
+        if (string.IsNullOrWhiteSpace(destination)) return;
+        Directory.CreateDirectory(destination);
+        var records = new List<object>();
+        foreach (var path in Directory.EnumerateFiles(root, "agent-source.sunderpkg", SearchOption.AllDirectories).Order(StringComparer.Ordinal))
+        {
+            using var archive = ZipFile.OpenRead(path);
+            using var stream = archive.GetEntry("manifest/sunder-package.json")!.Open();
+            using var manifest = JsonDocument.Parse(stream);
+            var package = manifest.RootElement;
+            var id = package.GetProperty("id").GetString()!;
+            var name = id + "." + package.GetProperty("version").GetString() + ".sunderpkg";
+            File.Copy(path, Path.Combine(destination, name), overwrite: false);
+            using var bytes = File.OpenRead(path);
+            records.Add(new { packageId = id, archive = name, size = bytes.Length,
+                sha256 = Convert.ToHexStringLower(SHA256.HashData(bytes)),
+                bundles = package.GetProperty("contractBundles").Clone(), targets = package.GetProperty("targets").Clone() });
+        }
+        Assert.Equal(15, records.Count);
+        File.WriteAllText(Path.Combine(destination, "source-artifact-evidence.json"),
+            JsonSerializer.Serialize(new { schemaVersion = 1, packages = records }, new JsonSerializerOptions { WriteIndented = true }));
     }
 
     private static void VerifyArchive(string path)
@@ -51,9 +84,24 @@ public sealed partial class AgentSourceArtifactMigrationTests
         using var manifest = JsonDocument.Parse(manifestStream);
         var root = manifest.RootElement;
         Assert.Equal("sunder.package.agent", root.GetProperty("id").GetString());
-        Assert.Equal(21, root.GetProperty("contractBundles").GetArrayLength());
-        Assert.Equal(11, root.GetProperty("provides").GetArrayLength());
-        Assert.Equal(19, root.GetProperty("usesContracts").GetArrayLength());
+        Assert.Equal(22, root.GetProperty("contractBundles").GetArrayLength());
+        Assert.Equal(12, root.GetProperty("provides").GetArrayLength());
+        Assert.Equal(new[]
+        {
+            "app:sunder.agent.child.run.executor", "app:sunder.agent.owner.runtime",
+            "app:sunder.agent.runtime.catalog", "app:sunder.agent.workspace.editor",
+            "app:sunder.package.agent.agent.profile",
+            "runtime:sunder.agent.behavior.loop", "runtime:sunder.agent.chat.provider",
+            "runtime:sunder.agent.durable.lifecycle.observer", "runtime:sunder.agent.embedding.provider",
+            "runtime:sunder.agent.execution.target", "runtime:sunder.agent.permission.surface",
+            "runtime:sunder.agent.profile.capability.consumer", "runtime:sunder.agent.prompt.context.contributor",
+            "runtime:sunder.agent.run.control", "runtime:sunder.agent.runtime.catalog",
+            "runtime:sunder.agent.selectable.capability.provider", "runtime:sunder.agent.session.cleaner",
+            "runtime:sunder.agent.system.prompt.contributor", "runtime:sunder.agent.tool.execution.observed",
+            "runtime:sunder.agent.tool.source", "runtime:sunder.agent.workspace.path.migrator"
+        }, root.GetProperty("usesContracts").EnumerateArray()
+            .Select(use => use.GetProperty("role").GetString() + ":" + use.GetProperty("contractId").GetString())
+            .Order(StringComparer.Ordinal).ToArray());
         Assert.Equal(2, root.GetProperty("targets").GetArrayLength());
         Assert.Contains(archive.Entries, entry => entry.FullName.EndsWith("/Sunder.Package.Agent.dll", StringComparison.Ordinal));
         Assert.Contains(archive.Entries, entry => entry.FullName.EndsWith("/Sunder.Package.Agent.App.dll", StringComparison.Ordinal));

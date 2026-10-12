@@ -9,6 +9,7 @@ using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Worker;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -60,44 +61,63 @@ public sealed partial class AgentSourceArtifactMigrationTests
         await using var owned = packageLifetime;
         var profileType = owner.GetType("Sunder.Package.Agent.Services.AgentProfileService", true)!;
         var profile = provider.GetRequiredService(profileType);
-        var has = profileType.GetMethod("HasProfileCapabilityConsumers")!.CreateDelegate<Func<string, bool>>(profile);
-        Assert.False(has("embedding")); Assert.False(has(" "));
+        var has = profileType.GetMethod("HasProfileCapabilityConsumersAsync")!
+            .CreateDelegate<Func<string, CancellationToken, Task<bool>>>(profile);
+        Assert.False(await has("embedding", default)); Assert.False(await has(" ", default));
         var capability = new CapabilityProbe("Embedding", [new("embedding", "Embeddings", "Index semantic memory")]);
-        var serviceType = memory.GetType("Sunder.Package.Agent.Memory.Semantic.Rpc.ProfileCapabilityProvider", true)!;
-        var service = Activator.CreateInstance(serviceType, RoleLocal(capability))!;
-        var registration = (SunderWorkerProviderRegistration)serviceType.GetMethod("CreateSunderRpcProviderRegistration")!.Invoke(service, null)!;
-        state.Add("sunder.package.agent.memory.semantic", RegressionTestRpcDescriptors.Get(registration.ContractId), registration.Handler,
-            registration.Handler, Noop.Instance, registration.ProviderId, "2.0.0");
-        Assert.True(has("EMBEDDING")); Assert.False(has("chat"));
-        var snapshot = Assert.Single((await rpc.DiscoverAsync(AgentRpcContractIds.ProfileCapabilityConsumer)).Providers);
+        var handler = Add(capability);
+        Assert.True(await has("EMBEDDING", default)); Assert.False(await has("chat", default));
         var observed = new FilesRpcObserver(rpc, "describe");
-        var clientType = owner.GetType("Sunder.Package.Agent.Runtime.Rpc.GeneratedProfileCapabilityClient", true)!;
-        IAgentProfileCapabilityConsumer Create() => AgentRoleBoundary.As<IAgentProfileCapabilityConsumer>(Activator.CreateInstance(clientType, observed, snapshot)!);
-        var client = Create(); await using var lifetime = (IAsyncDisposable)client;
-        Assert.Equal(capability.ConsumerId, client.ConsumerId); Assert.Equal(capability.DisplayName, client.DisplayName);
-        Assert.Equal(capability.Capabilities, client.ListConsumedCapabilities());
+        await using var primaryReceiver = new GeneratedServiceTestScope(observed);
+        var client = await SelectAsync(primaryReceiver);
+        var snapshot = await client.DescribeAsync();
+        Assert.Equal(capability.ConsumerId, snapshot.ConsumerId); Assert.Equal(capability.DisplayName, snapshot.DisplayName);
+        Assert.Equal(capability.Capabilities, snapshot.Capabilities);
         observed.Transform = value => value with { DescriptorSha256 = new string('d', 64) };
-        var stale = Create(); await using var staleLifetime = (IAsyncDisposable)stale;
-        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, Assert.Throws<SunderRpcException>(() => stale.ListConsumedCapabilities()).Error.Kind);
+        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await DescribeWithFreshSelectionAsync()).Error.Kind);
         observed.Transform = null;
         observed.InvalidateAfterInvoke = true;
-        var late = Create(); await using var lateLifetime = (IAsyncDisposable)late;
-        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, Assert.Throws<SunderRpcException>(() => late.ListConsumedCapabilities()).Error.Kind);
+        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await DescribeWithFreshSelectionAsync()).Error.Kind);
         observed.Transform = null; observed.InvalidateAfterInvoke = false;
-        await state.RetireAsync(registration.Handler);
-        Assert.False(has("embedding"));
-        await lifetime.DisposeAsync();
-        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, Assert.Throws<SunderRpcException>(() => client.ConsumerId).Error.Kind);
+        await state.RetireAsync(handler);
+        Assert.False(await has("embedding", default));
+        await primaryReceiver.DisposeAsync();
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => client.DescribeAsync().AsTask());
         var replacement = new CapabilityProbe("Replacement", [new("chat", "Chat", "New activation")]);
-        var replacementService = Activator.CreateInstance(serviceType, RoleLocal(replacement))!;
-        var next = (SunderWorkerProviderRegistration)serviceType.GetMethod("CreateSunderRpcProviderRegistration")!.Invoke(replacementService, null)!;
-        state.Add("sunder.package.agent.memory.semantic", RegressionTestRpcDescriptors.Get(next.ContractId), next.Handler,
-            next.Handler, Noop.Instance, next.ProviderId, "2.0.0");
-        Assert.True(has("chat")); Assert.False(has("embedding"));
-        Assert.Equal(0, observed.UnscopedLookups); Assert.All(observed.Scopes, scope => Assert.True(scope.Disposed));
+        handler = Add(replacement);
+        Assert.True(await has("chat", default)); Assert.False(await has("embedding", default));
+        await using var replacementReceiver = new GeneratedServiceTestScope(observed);
+        var next = await SelectAsync(replacementReceiver);
+        var replacementSnapshot = await next.DescribeAsync();
+        Assert.Equal(replacement.ConsumerId, replacementSnapshot.ConsumerId);
+        Assert.Equal(replacement.Capabilities, replacementSnapshot.Capabilities);
+        handler.BlockMethod = "describe"; handler.Gate = new();
+        var stopping = next.DescribeAsync().AsTask();
+        await handler.Gate.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var stopped = replacementReceiver.DisposeAsync().AsTask();
+        var retired = await Assert.ThrowsAsync<SunderRpcException>(() => stopping);
+        Assert.Equal(SunderRpcErrorKind.Unavailable, retired.Error.Kind);
+        Assert.Equal("rpc.binding.retired", retired.Error.Code);
+        Assert.Equal(SunderRpcDispatchState.PossiblyDispatched, retired.Error.DispatchState);
+        Assert.Equal(SunderRpcRetrySafety.Unsafe, retired.Error.RetrySafety);
+        await stopped.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => next.DescribeAsync().AsTask());
+        observed.AssertScopedOperations(); Assert.All(observed.Scopes, scope => Assert.True(scope.Disposed));
 
-        object RoleLocal(CapabilityProbe value) => Activator.CreateInstance(probes.GetType("RoleLocalProfileCapabilityProbe", true)!,
-            value.ConsumerId, value.DisplayName, JsonSerializer.Serialize(value.Capabilities, MemoryProviderJson))!;
+        SurfaceHandler Add(CapabilityProbe value)
+            => (SurfaceHandler)AddGeneratedPeer(state, "sunder.package.agent.memory.semantic",
+                RegressionTestBindings.ProfileCapabilityConsumers, new RegressionTestProfileCapabilityProvider(value),
+                "semantic.memory.profile.capabilities", inner => new SurfaceHandler(inner));
+
+        async Task<AgentServices.IProfileCapabilityConsumerService> SelectAsync(GeneratedServiceTestScope receiver)
+            => Assert.Single((await receiver.Providers<AgentServices.IProfileCapabilityConsumerService>().ListAsync()).Providers).Service;
+
+        async Task<SunderRpcException> DescribeWithFreshSelectionAsync()
+        {
+            await using var receiver = new GeneratedServiceTestScope(observed);
+            var selected = await SelectAsync(receiver);
+            return await Assert.ThrowsAsync<SunderRpcException>(() => selected.DescribeAsync().AsTask());
+        }
     }
 
     private sealed class CapabilityProbe(string name, IReadOnlyList<AgentProfileCapabilityConsumerDescriptor> capabilities) : IAgentProfileCapabilityConsumer

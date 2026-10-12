@@ -4,6 +4,7 @@ using System.Text.Json;
 using Sunder.Package.Agent.Runtime;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Worker;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -24,12 +25,12 @@ public sealed class AgentCanonicalSourceMigrationTests
     internal const string LegacyExecutionBindings = "src/Sunder.Package.Agent/Runtime/Rpc/AgentExecutionBindings.Legacy.cs";
     internal const string LegacyToolBindings = "src/Sunder.Package.Agent/Runtime/Rpc/AgentToolBindings.Legacy.cs";
     internal const string LegacyObservedToolBindings = "src/Sunder.Package.Agent/Runtime/Rpc/AgentObservedToolBindings.Legacy.cs";
-    internal static readonly string[] EmbeddingSources = Consumers("AgentEmbeddingBindings.cs", "GeneratedEmbeddingProviderClient.cs", "GeneratedProviderCallLifetime.cs");
+    internal static readonly string[] EmbeddingSources = Consumers("GeneratedProviderCallLifetime.cs");
     internal static readonly string[] CleanupSources = Consumers("AgentCleanupBindings.cs", "GeneratedSessionCleanerClient.cs", "GeneratedDurableLifecycleClient.cs");
     internal static readonly string[] ChatSources = Consumers("AgentChatBindings.cs", "GeneratedChatProviderClient.cs");
     internal static readonly string[] SourcePaths =
     [
-        LegacyCatalog, "src/Sunder.Package.Agent/Runtime/AgentWorkerComposition.cs", OwnerProviderPort,
+        LegacyCatalog, "src/Sunder.Package.Agent/Runtime/AgentWorkerComposition.cs",
         "src/Sunder.Package.Agent/Runtime/Rpc/AgentBehaviorServices.cs", "src/Sunder.Package.Agent/Rpc/Owner/ProviderComposition.cs",
     ];
     internal static readonly string[] BehaviorSources = Consumers("AgentBehaviorBindings.cs", "GeneratedBehaviorLoopClient.cs",
@@ -38,8 +39,6 @@ public sealed class AgentCanonicalSourceMigrationTests
         "GeneratedProfileCapabilityClient.cs", "GeneratedSystemPromptClient.cs", "GeneratedPermissionSurfaceClient.cs");
     internal static readonly string[] SelectableSources = Consumers("AgentSelectableBindings.cs", "GeneratedSelectableCapabilityClient.cs");
     internal static readonly string[] WorkspacePathSources = Consumers("AgentWorkspacePathBindings.cs", "GeneratedWorkspacePathMigratorClient.cs");
-    internal static readonly string[] ToolProfileSources = ["src/Sunder.Package.Agent/Runtime/IAgentToolProfileCatalog.cs",
-        .. Consumers("AgentToolProfileBindings.cs", "GeneratedToolProfileCatalogClient.cs")];
     internal static readonly string[] PromptContextSources = Consumers("AgentPromptContextBindings.cs", "GeneratedPromptContextClient.cs");
     internal static readonly string[] ExecutionSources = Consumers("AgentExecutionBindings.cs", "AgentExecutionValues.cs",
         "GeneratedExecutionTargetClient.cs", "GeneratedExecutionTargetClient.Facets.cs");
@@ -64,8 +63,8 @@ public sealed class AgentCanonicalSourceMigrationTests
         Assert.True(plan.RootElement.GetProperty("hasApp").GetBoolean());
         Assert.NotEmpty(plan.RootElement.GetProperty("workerCompile").EnumerateArray());
         Assert.NotEmpty(plan.RootElement.GetProperty("appCompile").EnumerateArray());
-        Assert.Equal(21, receipt.RootElement.GetProperty("bundles").GetArrayLength());
-        Assert.Equal(11, receipt.RootElement.GetProperty("providers").GetArrayLength());
+        Assert.Equal(22, receipt.RootElement.GetProperty("bundles").GetArrayLength());
+        Assert.Equal(12, receipt.RootElement.GetProperty("providers").GetArrayLength());
         AgentRuntimeUsePolicyAssertions.AssertWorkerReceipt(repository, receipt.RootElement);
         var baselinePath = Path.Combine(CanonicalAgentRoles.SourceRoot, "sunder-contracts.owned.json");
         var baseline = File.ReadAllBytes(baselinePath);
@@ -74,11 +73,16 @@ public sealed class AgentCanonicalSourceMigrationTests
             contract => SunderRpcContractDescriptor.Parse(System.Text.Encoding.UTF8.GetBytes(contract.GetProperty("canonicalDescriptor").GetString()!)));
         foreach (var descriptor in descriptors.Values.Where(value => value.ContractId != "sunder.stack.contributor"))
         {
-            var original = RegressionTestRpcDescriptors.Get(descriptor.ContractId);
-            Assert.Equal(original.GetCanonicalUtf8(), descriptor.GetCanonicalUtf8());
-            Assert.Equal(original.GetCanonicalAbiProjectionUtf8(), descriptor.GetCanonicalAbiProjectionUtf8());
-            Assert.Equal(original.Sha256, descriptor.Sha256);
-            Assert.Equal(original.AbiSha256, descriptor.AbiSha256);
+            if (descriptor.ContractId is "sunder.agent.owner.runtime" or "sunder.package.agent.agent.profile")
+            {
+                CurrentPrivateRpcDescriptors.AssertCurrent(descriptor);
+                continue;
+            }
+            var reviewed = CurrentPublicRpcDescriptors.Get(descriptor.ContractId);
+            Assert.Equal(reviewed.GetCanonicalUtf8(), descriptor.GetCanonicalUtf8());
+            Assert.Equal(reviewed.GetCanonicalAbiProjectionUtf8(), descriptor.GetCanonicalAbiProjectionUtf8());
+            Assert.Equal(reviewed.Sha256, descriptor.Sha256);
+            Assert.Equal(reviewed.AbiSha256, descriptor.AbiSha256);
         }
         await ExerciseComposition(roles.Worker, roles.App, descriptors);
         await AgentSourceArtifactMigrationTests.VerifyAgentChatConsumer(roles.Worker);
@@ -102,7 +106,7 @@ public sealed class AgentCanonicalSourceMigrationTests
         Assert.Null(assembly.GetType("Sunder.Package.Agent.PackageModule"));
         var (options, _, _) = AgentSourceArtifactMigrationTests.CreateGeneratedWorker(assembly, scope.Context, rpc);
         await using var composition = options.Composition!;
-        Assert.Equal(11, options.Providers.Count);
+        Assert.Equal(12, options.Providers.Count);
         Assert.Empty(Directory.GetFiles(scope.RootPath, "*", SearchOption.AllDirectories));
         var lifecycleType = assembly.GetType("Sunder.Package.Agent.Runtime.AgentWorkerLifecycle", true)!;
         var lifecycle = composition.Services.GetService(lifecycleType)!;
@@ -120,10 +124,10 @@ public sealed class AgentCanonicalSourceMigrationTests
             await activate(static (_, _, _) => ValueTask.CompletedTask, default).AsTask().WaitAsync(TimeSpan.FromSeconds(15));
             foreach (var provider in options.Providers)
                 state.Add("sunder.package.agent", descriptors[provider.ContractId], provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, "2.0.0");
-            var owner = options.Providers.Single(provider => provider.ProviderId == "agent.owner.runtime");
-            var profile = await owner.Handler.InvokeUnaryAsync(null!, "agent-runtime", "profile-command",
-                JsonSerializer.SerializeToElement(new { kind = 0, displayName = "Canonical source profile" }));
-            Assert.Equal("Canonical source profile", profile.GetProperty("profile").GetProperty("displayName").GetString());
+            var profiles = options.Providers.Single(provider => provider.ContractId == "sunder.package.agent.agent.profile");
+            var profile = await profiles.Handler.InvokeUnaryAsync(null!, "agent-profile", "create-profile",
+                JsonSerializer.SerializeToElement("Canonical source profile"));
+            Assert.Equal("Canonical source profile", profile.GetProperty("displayName").GetString());
             var stack = options.Providers.Single(provider => provider.ProviderId == "agent.stack.profiles");
             var items = await stack.Handler.InvokeUnaryAsync(null!, "stack-contributor", "list-export-items",
                 JsonSerializer.SerializeToElement(new { packageId = "sunder.package.agent" }));
@@ -139,7 +143,7 @@ public sealed class AgentCanonicalSourceMigrationTests
     {
         AgentSourceArtifactMigrationTests.AssertAgentWorkerSemanticOwnership(assembly);
         Assert.DoesNotContain(assembly.GetReferencedAssemblies(), reference => reference.Name is "Sunder.Package.Agent.OwnerProtocol" or "Sunder.Package.Agent.App");
-        foreach (var type in new[] { typeof(IAgentOwnerRuntimeProvider), typeof(AgentDashboardProjection), typeof(AgentTransportProfile),
+        foreach (var type in new[] { typeof(AgentServices.IAgentRuntimeService), typeof(AgentDashboardProjection), typeof(AgentTransportProfile),
             typeof(AgentSessionCommand), typeof(AgentAttachmentUploadHandle), typeof(AgentOwnerOperationException) })
         {
             var local = assembly.GetType(type.FullName!, true)!;

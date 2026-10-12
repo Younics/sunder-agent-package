@@ -16,7 +16,7 @@ internal static partial class AgentSourceMigrationProjectChanges
         }
         if (normalized.EndsWith("/src/Sunder.Package.Agent.Shared/PackageViews/TranscriptToolPresentationService.cs", StringComparison.Ordinal))
         {
-            var source = File.ReadAllText(Path.Combine(AgentPackageRepositoryInventory.RepositoryRoot.FullName, owner)).Replace("\r\n", "\n", StringComparison.Ordinal);
+            var source = ReadMigrationSourceText(Path.Combine(AgentPackageRepositoryInventory.RepositoryRoot.FullName, owner));
             Assert.Equal(2, source.Split(marker, StringSplitOptions.None).Length);
             Assert.DoesNotContain(marker, text, StringComparison.Ordinal);
             const string before = "using Sunder.Package.Agent.Shared.Presentation;\n";

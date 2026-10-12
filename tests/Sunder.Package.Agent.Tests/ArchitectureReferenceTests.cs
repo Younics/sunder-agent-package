@@ -23,7 +23,6 @@ public sealed class ArchitectureReferenceTests
         var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
         services.AddSingleton(packageScope.Context);
         services.AddSingleton<IPackageContext>(packageScope.Context);
-        services.AddSingleton<Sunder.Package.Agent.Protocol.AgentRpcCatalog>(new RegressionTestExtensionCatalog());
         using var rpcState = new RegressionTestRpcState();
         services.AddSingleton<Sunder.Sdk.Rpc.ISunderRpcClient>(
             new RegressionTestRpcClient(rpcState, "sunder.package.agent"));
@@ -44,7 +43,7 @@ public sealed class ArchitectureReferenceTests
     [Fact]
     public void HistorySearch_RemainsAnInternalRuntimeProjection()
     {
-        var contractsAssembly = typeof(Sunder.Package.Agent.Contracts.Contracts.IAgentChatProvider).Assembly;
+        var contractsAssembly = Assembly.Load("Sunder.Package.Agent");
         Assert.DoesNotContain(
             contractsAssembly.ExportedTypes,
             type => type.Name.Contains("HistorySearch", StringComparison.Ordinal));
@@ -88,19 +87,26 @@ public sealed class ArchitectureReferenceTests
 
         foreach (var contributorType in contributorTypes)
         {
-            var parameter = Assert.Single(
-                Assert.Single(contributorType.GetConstructors()).GetParameters(),
-                candidate => candidate.ParameterType == typeof(Sunder.Package.Agent.Protocol.AgentRpcCatalog));
-            Assert.False(parameter.IsOptional);
-            Assert.False(parameter.HasDefaultValue);
+            var parameters = Assert.Single(contributorType.GetConstructors()).GetParameters();
+            Assert.DoesNotContain(parameters, candidate => candidate.ParameterType.Namespace == "Sunder.Package.Agent.Protocol");
+            Assert.All(parameters, candidate =>
+            {
+                Assert.False(candidate.IsOptional);
+                Assert.False(candidate.HasDefaultValue);
+            });
         }
 
-        var subagentConstructors = typeof(SubagentStackContributor).GetConstructors();
-        var bindingsType = typeof(SubagentStackContributor).Assembly.GetType(
-            "Sunder.Package.Agent.Subagents.Runtime.ISubagentRuntimeBindings", throwOnError: true)!;
-        var binding = Assert.Single(Assert.Single(subagentConstructors).GetParameters(), parameter => parameter.ParameterType == bindingsType);
-        Assert.False(binding.IsOptional);
-        Assert.False(binding.HasDefaultValue);
+        var subagentParameters = Assert.Single(typeof(SubagentStackContributor).GetConstructors()).GetParameters();
+        Assert.Equal(4, subagentParameters.Length);
+        Assert.DoesNotContain(subagentParameters, parameter => parameter.ParameterType.Name == "ISubagentRuntimeBindings");
+        Assert.Contains(subagentParameters, parameter => parameter.ParameterType.Name == "SubagentService");
+        Assert.Contains(subagentParameters, parameter => parameter.ParameterType.Name == "IPackageContext");
+        Assert.Equal(2, subagentParameters.Count(parameter => parameter.ParameterType.Name == "IServiceProviders`1"));
+        Assert.All(subagentParameters, parameter =>
+        {
+            Assert.False(parameter.IsOptional);
+            Assert.False(parameter.HasDefaultValue);
+        });
     }
 
     [Fact]
@@ -156,10 +162,6 @@ public sealed class ArchitectureReferenceTests
     public void ProductionAssemblies_DoNotReferenceRetiredContractsAssemblyIdentity()
     {
         const string retiredAssemblyName = "Sunder.Package.Agent.Contracts";
-        Assert.Equal(
-            "Sunder.Package.Agent",
-            typeof(Sunder.Package.Agent.Contracts.Contracts.IAgentChatProvider).Assembly.GetName().Name);
-
         var assemblyNames = AgentPackageRepositoryInventory.GetRuntimePackageProjects()
             .SelectMany(static package => package.HasAppRole ? new[] { package.Name, package.AppAssemblyName! } : [package.Name])
             .Distinct(StringComparer.Ordinal);
@@ -273,7 +275,8 @@ public sealed class ArchitectureReferenceTests
                 compiledBindings = defaultBindings;
             }
 
-            if (NarrowProviderAppProjects.Contains(Path.GetFileNameWithoutExtension(projectPath)))
+            var projectName = Path.GetFileNameWithoutExtension(projectPath);
+            if (NarrowProviderAppProjects.Contains(projectName))
             {
                 Assert.Empty(sharedImports);
                 Assert.Single(project.Descendants("Import"), item => item.Attribute("Project")?.Value.Replace('\\', '/')
@@ -282,7 +285,17 @@ public sealed class ArchitectureReferenceTests
             else
             {
                 Assert.Single(sharedImports);
-                Assert.Empty(directSharedItems);
+                if (projectName is "Sunder.Package.Agent" or "Sunder.Package.Agent.Subagents")
+                {
+                    Assert.All(directSharedItems, include => Assert.EndsWith(
+                        "Sunder.Package.Agent.Shared/Presentation/ModelBindingStyles.axaml",
+                        include!.Replace('\\', '/'),
+                        StringComparison.Ordinal));
+                }
+                else
+                {
+                    Assert.Empty(directSharedItems);
+                }
             }
             Assert.Equal("true", compiledBindings, ignoreCase: true);
         }
@@ -413,7 +426,11 @@ public sealed class ArchitectureReferenceTests
     }
 
     private static string[] CurrentDomainSources() => AgentSourceMigrationProjectChanges.ReviewedCentralRelocations
-        .Select(pair => Path.Combine(AgentPackageRepositoryInventory.RepositoryRoot.FullName, pair.Value)).Distinct(StringComparer.Ordinal).ToArray();
+        .Where(pair => pair.Value.StartsWith("src/", StringComparison.Ordinal))
+        .Select(pair => Path.Combine(AgentPackageRepositoryInventory.RepositoryRoot.FullName, pair.Value))
+        .Where(File.Exists)
+        .Distinct(StringComparer.Ordinal)
+        .ToArray();
 
     private static readonly Regex PublicTypeDeclarationPattern = new(
         @"^\s*public\s+(?:(?:abstract|sealed|static|partial|readonly|ref)\s+)*(?:class|record|struct|interface|enum|delegate)\b",

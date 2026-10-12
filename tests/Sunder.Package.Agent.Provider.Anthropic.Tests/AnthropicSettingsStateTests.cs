@@ -9,8 +9,7 @@ using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Storage;
 using Xunit;
 using AnthropicSettingsViewModel = AnthropicApp::Sunder.Package.Agent.Provider.Anthropic.AnthropicSettingsViewModel;
-using IProviderCredentialOwnerClient = AnthropicApp::Sunder.Package.Agent.Provider.Shared.IProviderCredentialOwnerClient;
-using ProviderCredentialSnapshot = AnthropicApp::Sunder.Package.Agent.Provider.Shared.ProviderCredentialSnapshot;
+using ICredentialSettingsService = AnthropicApp::Sunder.Generated.Packages.Sunder_Package_Agent_Provider_Anthropic_Services.ICredentialSettingsService;
 
 namespace Sunder.Package.Agent.Provider.Anthropic.Tests;
 
@@ -47,12 +46,12 @@ public sealed class AnthropicSettingsStateTests
         Assert.Equal(replacementCanary, await context.Secrets.GetSecretAsync(AnthropicProviderConfiguration.ApiKeySecretKey));
         Assert.Null(viewModel.ApiKeySettings.EnteredCredential);
         var setCommand = Assert.Single(ownerClient.Invocations, invocation =>
-            invocation.MethodId == "command"
+            invocation.MethodId == "set"
             && invocation.RequestJson.Contains(replacementCanary, StringComparison.Ordinal));
         Assert.DoesNotContain(replacementCanary, setCommand.ResponseJson, StringComparison.Ordinal);
         Assert.DoesNotContain(
             ownerClient.Invocations,
-            invocation => invocation.MethodId == "query"
+            invocation => invocation.MethodId == "get-status"
                 && invocation.RequestJson.Contains(replacementCanary, StringComparison.Ordinal));
 
         viewModel.ApiKeySettings.RequestClearCredentialCommand.Execute(null);
@@ -108,7 +107,7 @@ public sealed class AnthropicSettingsStateTests
         string RequestJson,
         string ResponseJson);
 
-    private sealed class CredentialOwnerClientFake : IProviderCredentialOwnerClient
+    private sealed class CredentialOwnerClientFake : ICredentialSettingsService
     {
         private readonly ISunderRpcServiceHandler _provider;
         private readonly List<CredentialOwnerInvocation> _invocations = [];
@@ -122,24 +121,24 @@ public sealed class AnthropicSettingsStateTests
 
         internal IReadOnlyList<CredentialOwnerInvocation> Invocations => _invocations;
 
-        public ValueTask<ProviderCredentialSnapshot> GetStatusAsync(
+        public ValueTask<bool> GetStatusAsync(
             CancellationToken cancellationToken = default)
-            => InvokeAsync("query", JsonSerializer.SerializeToElement(new { }), cancellationToken);
+            => InvokeAsync("get-status", JsonSerializer.SerializeToElement(new { }), cancellationToken);
 
-        public ValueTask<ProviderCredentialSnapshot> SetAsync(
+        public ValueTask<bool> SetAsync(
             string credential,
             CancellationToken cancellationToken = default)
-            => InvokeAsync("command", JsonSerializer.SerializeToElement(new { kind = "set", credential }), cancellationToken);
+            => InvokeAsync("set", JsonSerializer.SerializeToElement(credential), cancellationToken);
 
-        public ValueTask<ProviderCredentialSnapshot> ClearAsync(
+        public ValueTask<bool> ClearAsync(
             CancellationToken cancellationToken = default)
-            => InvokeAsync("command", JsonSerializer.SerializeToElement(new { kind = "clear" }), cancellationToken);
+            => InvokeAsync("clear", JsonSerializer.SerializeToElement(new { }), cancellationToken);
 
-        private async ValueTask<ProviderCredentialSnapshot> InvokeAsync(string methodId, JsonElement request, CancellationToken cancellationToken)
+        private async ValueTask<bool> InvokeAsync(string methodId, JsonElement request, CancellationToken cancellationToken)
         {
             var response = await _provider.InvokeUnaryAsync(null!, "credential-settings", methodId, request, cancellationToken);
             _invocations.Add(new CredentialOwnerInvocation(methodId, request.GetRawText(), response.GetRawText()));
-            return new ProviderCredentialSnapshot(response.GetProperty("hasStoredCredential").GetBoolean());
+            return response.GetBoolean();
         }
     }
 

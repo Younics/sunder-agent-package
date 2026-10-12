@@ -1,5 +1,7 @@
 using Sunder.Package.Agent.Execution.Docker;
 using Sunder.Sdk.Abstractions;
+using System.Reflection;
+using System.Text.Json;
 
 public sealed class ArtifactDockerCli(IPackageContext context,
     Func<string[], int, CancellationToken, string?, Task<(int ExitCode, string Output, bool TimedOut, bool WasTruncated)>> run) : DockerCliRunner(context)
@@ -17,13 +19,57 @@ public sealed class ArtifactDockerCli(IPackageContext context,
     }
 }
 
-public sealed class ArtifactImageCatalog : IDockerExecutionPresentationClient
+public sealed class ArtifactImageCatalog
 {
     public int Count { get; set; } = 2500;
-    public ValueTask<DockerExecutionOperationResponse> ExecuteAsync(DockerExecutionOperationRequest request, CancellationToken cancellationToken = default)
+    public Task<object> CreateAsync(IPackageContext context, DockerCliRunner runner, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult(new DockerExecutionOperationResponse(Images: Enumerable.Range(0, Count)
-            .Select(index => new DockerImageDefinition($"example.com/artifact/image:{index}", DockerImageStatus.Ready, null, new string('x', 1024))).ToArray(), CatalogRevision: 90));
+        // Isolate transport content limits from the smaller Host state-write limit.
+        // Individual values stay within catalog normalization bounds; no oversized
+        // write is admitted or claimed to work in production storage.
+        var repository = string.Join('/', Enumerable.Repeat(new string('a', 140), 3));
+        var document = JsonSerializer.Serialize(new { schemaVersion = 3, revision = 1,
+            images = Enumerable.Range(0, Count).Select(index => new DockerImageDefinition(
+                $"example.com/{repository}/image:{index}", DockerImageStatus.Ready, null, new string('x', 512))) },
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var state = DispatchProxy.Create<IPackageKeyValueStore, CatalogProjectionState>();
+        ((CatalogProjectionState)state).Inner = context.Storage.State;
+        ((CatalogProjectionState)state).Document = document;
+        var host = DispatchProxy.Create<IPackageContext, CatalogProjectionContext>();
+        ((CatalogProjectionContext)host).Inner = context;
+        ((CatalogProjectionContext)host).Storage = new CatalogProjectionStorage(context.Storage, state);
+        return Task.FromResult<object>(new DockerImageCatalogService(host, runner));
     }
+}
+
+public class CatalogProjectionState : DispatchProxy
+{
+    public IPackageKeyValueStore Inner { get; set; } = null!;
+    public string Document { get; set; } = "";
+    protected override object? Invoke(MethodInfo? method, object?[]? arguments)
+    {
+        if (Equals(arguments?[0], "docker.images.v1"))
+        {
+            if (method!.Name != "GetValueAsync") throw new InvalidOperationException("The projection fixture must not write its synthetic catalog.");
+            ((CancellationToken)arguments![1]!).ThrowIfCancellationRequested();
+            return Task.FromResult<string?>(Document);
+        }
+        return method!.Invoke(Inner, arguments);
+    }
+}
+
+public sealed class CatalogProjectionStorage(IPackageStorageContext inner, IPackageKeyValueStore state) : IPackageStorageContext
+{
+    public IPackageKeyValueStore State => state;
+    public IPackageFileStore Files => inner.Files;
+    public IPackageRoleLocalWorkspace RoleLocalWorkspace => inner.RoleLocalWorkspace;
+}
+
+public class CatalogProjectionContext : DispatchProxy
+{
+    public IPackageContext Inner { get; set; } = null!;
+    public IPackageStorageContext Storage { get; set; } = null!;
+    protected override object? Invoke(MethodInfo? method, object?[]? arguments)
+        => method!.Name == "get_Storage" ? Storage : method.Invoke(Inner, arguments);
 }

@@ -47,7 +47,7 @@ internal static class DockerPathResolver
     {
         var binding = ResolveHostBinding(config, executionPath);
         _ = HostSecurePathEngine.Probe([binding.Mount.HostPath], binding.HostPath);
-        return new AgentExecutionPathMapping(binding.ContainerPath, binding.HostPath, IsInsideAllowedRoot: true);
+        return new AgentExecutionPathMapping { ExecutionPath = binding.ContainerPath, HostPath = binding.HostPath, IsInsideAllowedRoot = true };
     }
 
     public static DockerHostPathBinding ResolveHostBinding(

@@ -1,6 +1,5 @@
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Memory.Semantic.Services;
-using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Memory.Semantic.Runtime;
 
@@ -32,24 +31,6 @@ public interface IMemoryInspectorGateway
     Task<SemanticMemoryReindexResult> ReindexSessionAsync(Guid sessionId, string? profileId = null, CancellationToken cancellationToken = default);
     Task<SemanticMemoryWorkerStatusRecord> GetSemanticWorkerStatusAsync(CancellationToken cancellationToken = default);
     Task<SemanticMemoryMetricsSnapshot> GetMetricsSnapshotAsync(CancellationToken cancellationToken = default);
-}
-
-public interface IMemoryInspectorRpcService
-{
-    ValueTask<MemoryProjection> QueryAsync(
-        SunderRpcInvocationContext context,
-        MemoryQuery request,
-        CancellationToken cancellationToken = default);
-
-    ValueTask<MemoryProjection> CommandAsync(
-        SunderRpcInvocationContext context,
-        MemoryCommand request,
-        CancellationToken cancellationToken = default);
-
-    IAsyncEnumerable<MemoryChanged> ChangesAsync(
-        SunderRpcInvocationContext context,
-        MemoryChangeSubscription request,
-        CancellationToken cancellationToken = default);
 }
 
 internal sealed class MemoryInspectorOperationException(

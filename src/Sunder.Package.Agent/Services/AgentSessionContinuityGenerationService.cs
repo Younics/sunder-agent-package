@@ -3,8 +3,8 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Unicode;
 using Microsoft.Extensions.AI;
-using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.Services;
 
@@ -40,53 +40,48 @@ internal sealed class AgentSessionContinuityGenerationService(AgentRunProviderRe
         IReadOnlyList<AgentTurnRecord> newlyCoveredTurns,
         CancellationToken cancellationToken)
     {
-        using var selection = _providerResolver.ResolveChatProvider(profile);
+        var selection = await _providerResolver.ResolveChatProviderAsync(profile, cancellationToken).ConfigureAwait(false);
         if (!selection.IsAvailable)
         {
             return null;
         }
 
-        var modelId = await selection.InvokeAsync(
-            cancellationToken,
-            ResolveUtilityModelIdAsync).ConfigureAwait(false);
+        using var refinementLifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, selection.RetirementToken);
+        cancellationToken = refinementLifetime.Token;
+        var provider = selection.Provider!.Service;
+        var modelId = await ResolveUtilityModelIdAsync(provider, cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(modelId))
         {
             return null;
         }
 
-        var readiness = await selection.InvokeAsync(
-            cancellationToken,
-            static (provider, token) => provider.GetReadinessAsync(token)).ConfigureAwait(false);
+        var readiness = await provider.GetReadinessAsync(cancellationToken).ConfigureAwait(false);
         if (readiness.Status != AgentProviderReadinessStatus.Ready)
         {
             return null;
         }
 
         var payload = BuildModelPayload(priorSummary, deterministicSummary, newlyCoveredTurns);
-        var response = await selection.InvokeAsync(
-            cancellationToken,
-            async (provider, invocationToken) =>
+        using var chatClient = new AgentModelChatClient(
+            new AgentChatClientContext(
+                selection.Descriptor!.ProviderId,
+                modelId,
+                CorrelationAttributes: new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["utility.task"] = "anchored-session-context",
+                }),
+            provider.StreamChatAsync);
+        var response = await chatClient.GetResponseAsync(
+            [new ChatMessage(ChatRole.User, payload)],
+            new ChatOptions
             {
-                using var chatClient = await provider.CreateChatClientAsync(
-                    new AgentChatClientContext(
-                        selection.Descriptor!.ProviderId,
-                        modelId,
-                        CorrelationAttributes: new Dictionary<string, object?>(StringComparer.Ordinal)
-                        {
-                            ["utility.task"] = "anchored-session-context",
-                        }),
-                    invocationToken).ConfigureAwait(false);
-                return await chatClient.GetResponseAsync(
-                    [new ChatMessage(ChatRole.User, payload)],
-                    new ChatOptions
-                    {
-                        Instructions = RefinementInstructions,
-                        MaxOutputTokens = MaxModelOutputTokens,
-                        ModelId = modelId,
-                        ToolMode = ChatToolMode.None,
-                    },
-                    invocationToken).ConfigureAwait(false);
-            }).ConfigureAwait(false);
+                Instructions = RefinementInstructions,
+                MaxOutputTokens = MaxModelOutputTokens,
+                ModelId = modelId,
+                ToolMode = ChatToolMode.None,
+            },
+            cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
         var summary = AgentSessionContinuitySummaryBuilder.TryParse(response.Text);
         return summary is null
             ? null
@@ -97,19 +92,12 @@ internal sealed class AgentSessionContinuityGenerationService(AgentRunProviderRe
     }
 
     private static async ValueTask<string?> ResolveUtilityModelIdAsync(
-        IAgentChatProvider provider,
+        AgentServices.IChatProviderService provider,
         CancellationToken cancellationToken)
     {
-        if (provider is IAgentUtilityModelProvider utilityModelProvider)
-        {
-            var utilityModelId = await utilityModelProvider.ResolveUtilityModelIdAsync(cancellationToken).ConfigureAwait(false);
-            if (!string.IsNullOrWhiteSpace(utilityModelId))
-            {
-                return utilityModelId.Trim();
-            }
-        }
-
-        var models = await provider.GetAvailableModelsAsync(cancellationToken).ConfigureAwait(false);
+        var utilityModelId = await provider.ResolveUtilityModelAsync(cancellationToken).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(utilityModelId)) return utilityModelId.Trim();
+        var models = await provider.ListModelsAsync(cancellationToken).ConfigureAwait(false);
         return models.FirstOrDefault(model => model.IsRecommended)?.ModelId
             ?? models.FirstOrDefault()?.ModelId;
     }

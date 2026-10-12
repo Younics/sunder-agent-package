@@ -1,4 +1,3 @@
-using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Models;
 
@@ -20,12 +19,7 @@ internal sealed record AgentRunPlan(
     IReadOnlyList<AgentStoredAttachment> Attachments,
     string UserMessage,
     Guid? RollbackAnchorTurnId,
-    bool ShouldGenerateSessionTitle) : IDisposable
-{
-    internal IAgentChatProvider Provider => ProviderSelection.Provider;
-
-    public void Dispose() => ProviderSelection.Dispose();
-}
+    bool ShouldGenerateSessionTitle);
 
 internal abstract record AgentRunPreparationResult;
 

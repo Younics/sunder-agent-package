@@ -1,0 +1,168 @@
+{
+  "schemaVersion": 1,
+  "sources": [
+    {
+      "path": "src/Sunder.Package.Agent/HistorySearch/HistoryEmbeddingProviderCatalog.cs",
+      "beforeSha256": "963b0234578ee10d973a0d5cb9ab08e80ef1a3c881ae1e3dfc89bacb7c2014f6",
+      "currentSha256": "3d306ae5c43af0e869a987aa3136763964d6a58d6d5e5017a47d110ddb80d781",
+      "edits": [
+        { "startLine": 3, "removeLineCount": 0, "beforeLines": ["using Sunder.Package.Agent.Contracts.Contracts;\n"] },
+        { "startLine": 4, "removeLineCount": 3, "beforeLines": ["using Sunder.Package.Agent.Protocol;\n", "using Sunder.Package.Agent.Runtime.Rpc;\n"] },
+        { "startLine": 10, "removeLineCount": 2, "beforeLines": ["internal sealed class HistoryEmbeddingProviderCatalog(AgentRpcCatalog rpcCatalog)\n"] },
+        { "startLine": 13, "removeLineCount": 3, "beforeLines": ["    internal IReadOnlyList<HistoryEmbeddingProviderOption> ListOptions()\n", "        => SnapshotProviders()\n"] },
+        { "startLine": 28, "removeLineCount": 2, "beforeLines": ["    internal OwnedEmbeddingProvider Resolve(string? packageId, string? providerId)\n"] },
+        { "startLine": 33, "removeLineCount": 1, "beforeLines": ["        var matches = SnapshotProviders()\n"] },
+        { "startLine": 62, "removeLineCount": 1, "beforeLines": ["        var owned = Resolve(packageId, providerId);\n"] },
+        { "startLine": 64, "removeLineCount": 1, "beforeLines": ["        var models = await InvokeAsync(\n", "            owned,\n", "            cancellationToken,\n", "            static (provider, token) => provider.GetAvailableModelsAsync(token)).ConfigureAwait(false);\n"] },
+        { "startLine": 97, "removeLineCount": 2, "beforeLines": ["        var providerSpaceIdentity = await InvokeAsync(\n", "            selection.OwnedProvider,\n", "            cancellationToken,\n", "            (provider, token) => provider is IAgentEmbeddingSpaceIdentityProvider identityProvider\n", "                ? identityProvider.GetEmbeddingSpaceIdentityAsync(selection.ModelId, token)\n", "                : ValueTask.FromResult(string.Empty)).ConfigureAwait(false);\n"] },
+        { "startLine": 106, "removeLineCount": 1, "beforeLines": ["    internal ValueTask<AgentEmbeddingProviderReadiness> GetReadinessAsync(\n", "        ResolvedEmbeddingSelection selection,\n", "        CancellationToken cancellationToken)\n", "        => InvokeAsync(\n", "            selection.OwnedProvider,\n", "            cancellationToken,\n", "            static (provider, token) => provider.GetReadinessAsync(token));\n", "\n", "    internal ValueTask<AgentEmbeddingGenerationResult?> GenerateEmbeddingAsync(\n", "        ResolvedEmbeddingSelection selection,\n", "        string text,\n"] },
+        { "startLine": 108, "removeLineCount": 0, "beforeLines": ["        => InvokeAsync(\n", "            selection.OwnedProvider,\n", "            cancellationToken,\n", "            (provider, token) => provider.GenerateEmbeddingAsync(selection.ModelId, text, token));\n", "\n", "    internal ValueTask<IReadOnlyList<AgentEmbeddingGenerationResult?>> GenerateEmbeddingsAsync(\n", "        ResolvedEmbeddingSelection selection,\n", "        IReadOnlyList<string> texts,\n", "        CancellationToken cancellationToken)\n", "        => InvokeAsync(\n", "            selection.OwnedProvider,\n", "            cancellationToken,\n", "            (provider, token) => provider.GenerateEmbeddingsAsync(selection.ModelId, texts, token));\n", "\n", "    private IReadOnlyList<OwnedEmbeddingProvider> SnapshotProviders()\n"] },
+        { "startLine": 109, "removeLineCount": 2, "beforeLines": ["        var providers = new List<OwnedEmbeddingProvider>();\n", "        foreach (var reference in rpcCatalog.GetServiceReferences(AgentEmbeddingBindings.Service))\n"] },
+        { "startLine": 112, "removeLineCount": 1, "beforeLines": ["            if (!reference.TryAcquire(out var lease))\n", "            {\n", "                continue;\n", "            }\n", "            using (lease)\n", "            {\n", "                var descriptor = lease.Service.Descriptor;\n", "                if (lease.RetirementToken.IsCancellationRequested\n", "                    || string.IsNullOrWhiteSpace(descriptor.ProviderId))\n", "                {\n", "                    continue;\n", "                }\n", "\n", "                var handle = reference.ToHandle();\n", "                providers.Add(new OwnedEmbeddingProvider(\n", "                    lease.PackageId,\n", "                    descriptor.ProviderId,\n", "                    descriptor.DisplayName,\n", "                    string.Join('\\n',\n", "                        handle.PackageVersion,\n", "                        handle.ContractVersion,\n", "                        handle.DescriptorSha256,\n", "                        handle.AbiSha256,\n", "                        handle.ProviderId),\n", "                    reference));\n", "            }\n"] },
+        { "startLine": 114, "removeLineCount": 3, "beforeLines": ["\n", "        return providers;\n", "    }\n", "\n", "    private static async ValueTask<TResult> InvokeAsync<TResult>(\n", "        OwnedEmbeddingProvider owned,\n", "        CancellationToken cancellationToken,\n", "        Func<IAgentEmbeddingProvider, CancellationToken, ValueTask<TResult>> callback)\n", "    {\n", "        if (!owned.Reference.TryAcquire(out var lease))\n"] },
+        { "startLine": 118, "removeLineCount": 1, "beforeLines": ["            throw new OperationCanceledException(\n", "                $\"Embedding provider package '{owned.PackageId}' is unavailable.\");\n"] },
+        { "startLine": 121, "removeLineCount": 2, "beforeLines": ["        using (lease)\n"] },
+        { "startLine": 124, "removeLineCount": 7, "beforeLines": ["            var retirementToken = lease.RetirementToken;\n", "            using var invocation = CancellationTokenSource.CreateLinkedTokenSource(\n", "                cancellationToken,\n", "                retirementToken);\n"] },
+        { "startLine": 133, "removeLineCount": 1, "beforeLines": ["                var result = await callback(lease.Service, invocation.Token).ConfigureAwait(false);\n", "                if (retirementToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested)\n", "                {\n", "                    throw new OperationCanceledException(\n", "                        $\"Embedding provider package '{owned.PackageId}' became unavailable while the callback was running.\");\n", "                }\n", "                return result;\n"] },
+        { "startLine": 135, "removeLineCount": 3, "beforeLines": ["            catch (OperationCanceledException exception) when (\n", "                retirementToken.IsCancellationRequested\n", "                && !cancellationToken.IsCancellationRequested)\n"] },
+        { "startLine": 139, "removeLineCount": 1, "beforeLines": ["                throw new OperationCanceledException(\n", "                    $\"Embedding provider package '{owned.PackageId}' became unavailable while the callback was running.\",\n", "                    exception);\n"] },
+        { "startLine": 141, "removeLineCount": 16, "beforeLines": [] },
+        { "startLine": 158, "removeLineCount": 2, "beforeLines": [] },
+        { "startLine": 222, "removeLineCount": 1, "beforeLines": ["    AgentRpcReference<IAgentEmbeddingProvider> Reference);\n"] }
+      ]
+    },
+    {
+      "path": "src/Sunder.Package.Agent/HistorySearch/HistorySearchIndexingService.Embeddings.cs",
+      "beforeSha256": "eed038c476714b3ed15dd8ce6edd9434a8dd98fe5972fa6ad873a79260f4f18d",
+      "currentSha256": "a24a2e85e12536f6e2c254c23ae8f77c61728f32b78f44c2151008aeaf438a80",
+      "edits": [
+        { "startLine": 47, "removeLineCount": 2, "beforeLines": ["            var readiness = await _embeddingProviders\n", "                .GetReadinessAsync(resolved, lease.CancellationToken).ConfigureAwait(false);\n"] },
+        { "startLine": 94, "removeLineCount": 2, "beforeLines": ["                    var results = await _embeddingProviders.GenerateEmbeddingsAsync(\n", "                        resolved,\n"] },
+        { "startLine": 219, "removeLineCount": 1, "beforeLines": ["            var readiness = await _embeddingProviders.GetReadinessAsync(resolved, lease.CancellationToken)\n"] },
+        { "startLine": 255, "removeLineCount": 2, "beforeLines": ["                var results = await _embeddingProviders.GenerateEmbeddingsAsync(\n", "                    resolved,\n"] }
+      ]
+    },
+    {
+      "path": "src/Sunder.Package.Agent/HistorySearch/HistorySearchService.cs",
+      "beforeSha256": "e744809727127f3b8c0c7b67ea63ca3ff81006803273aca1ff69574a8dbd292a",
+      "currentSha256": "8f107806810caaf2517491dc8d4ff8d19eb163b5f4b072ff8d0dbcaa746a4c23",
+      "edits": [
+        { "startLine": 381, "removeLineCount": 2, "beforeLines": ["            var readiness = await embeddingProviders\n", "                .GetReadinessAsync(resolved, lease.CancellationToken).ConfigureAwait(false);\n"] },
+        { "startLine": 391, "removeLineCount": 2, "beforeLines": ["            var generated = await embeddingProviders.GenerateEmbeddingAsync(\n", "                resolved,\n"] }
+      ]
+    },
+    {
+      "path": "src/Sunder.Package.Agent/PackageViews/AgentProfileProviderModelCatalog.cs",
+      "beforeSha256": "a6df124eadcafe3c7f11b95d45619d7d82ad2e5808bf13c2dab91f32717d3ed9",
+      "currentSha256": "59f4abe7bb02e698ec39817ca822070e75416daa44c01e325d785baf975593a6",
+      "edits": [
+        { "startLine": 4, "removeLineCount": 1, "beforeLines": [] },
+        { "startLine": 10, "removeLineCount": 1, "beforeLines": ["    public static IProviderModelCatalog CreateChat(IAgentProfileService service)\n"] },
+        { "startLine": 38, "removeLineCount": 1, "beforeLines": ["    public static IProviderModelCatalog CreateEmbedding(IAgentProfileService service)\n"] }
+      ]
+    },
+    {
+      "path": "src/Sunder.Package.Agent/PackageViews/AgentProfilesView.axaml.cs",
+      "beforeSha256": "fa9119d65ef1d8799cd8e8557cf0c0f7b37b71b2d72e51519d43e85a5e053dcb",
+      "currentSha256": "6e5d9f714d09e088688784024b8685596738049e8b85e9e602a87ba4942f4543",
+      "edits": [
+        { "startLine": 9, "removeLineCount": 1, "beforeLines": [] },
+        { "startLine": 42, "removeLineCount": 1, "beforeLines": ["        IAgentProfileService profileService,\n"] }
+      ]
+    },
+    {
+      "path": "src/Sunder.Package.Agent/PackageViews/AgentProfilesViewModel.cs",
+      "beforeSha256": "b6a0359698494be380c47430a771cc3dd980ab7cc6189058ef96be064ff077bd",
+      "currentSha256": "7e29156392015293c1168aa890eaf7111d08ca30f34645bc35550e9954dce61a",
+      "edits": [
+        { "startLine": 9, "removeLineCount": 1, "beforeLines": [] },
+        { "startLine": 21, "removeLineCount": 1, "beforeLines": ["    private readonly IAgentProfileService _profileService;\n"] },
+        { "startLine": 49, "removeLineCount": 1, "beforeLines": ["        IAgentProfileService profileService,\n"] },
+        { "startLine": 57, "removeLineCount": 1, "beforeLines": ["        IAgentProfileService profileService,\n"] }
+      ]
+    },
+    {
+      "path": "src/Sunder.Package.Agent/Rpc/Owner/AppComposition.cs",
+      "beforeSha256": "f21da8fb40efabd8e85c27b324c98da9fcc1b8b86a7cd2a304ec0c8ffaf2fa8e",
+      "currentSha256": "ebc98ea98214cf6cda823c8f5a524b11ea220f1efe86f2146a2422b0c8746342",
+      "edits": [
+        { "startLine": 8, "removeLineCount": 1, "beforeLines": [] },
+        { "startLine": 31, "removeLineCount": 1, "beforeLines": ["        internal AgentProfilesView(IAgentProfileService profiles, AgentAppRuntimeGateway gateway, IPackageSettingsNavigationService navigation)\n"] },
+        { "startLine": 55, "removeLineCount": 1, "beforeLines": ["        internal AgentAppRuntimeGateway(IAgentOwnerRuntimeProvider owner, AgentOwnerResources resources)\n"] }
+      ]
+    },
+    {
+      "path": "src/Sunder.Package.Agent/Runtime/AgentAppRuntimeGateway.cs",
+      "beforeSha256": "fa58c74b222580a735501b7fef347fe63c787241c8b3ff5ae87eda0c5b5b0933",
+      "currentSha256": "45711cc8dddeac4418567150f3a65374dfc62314833634ab25f788af41301838",
+      "edits": [
+        { "startLine": 7, "removeLineCount": 1, "beforeLines": [] },
+        { "startLine": 64, "removeLineCount": 1, "beforeLines": ["    private readonly IAgentOwnerRuntimeProvider _owner;\n"] },
+        { "startLine": 90, "removeLineCount": 1, "beforeLines": ["    internal AgentAppRuntimeGateway(IAgentOwnerRuntimeProvider owner, IAgentOwnerResources? resources = null)\n"] },
+        { "startLine": 141, "removeLineCount": 3, "beforeLines": ["    public IReadOnlyList<AgentEmbeddingProviderDescriptor> ListEmbeddingProviderDescriptors()\n", "        => ReadCatalogSnapshot().EmbeddingProviders;\n"] }
+      ]
+    },
+    {
+      "path": "src/Sunder.Package.Agent/Runtime/AgentPresentationGateways.cs",
+      "beforeSha256": "b772edd8853b26804fd394076e2ab1b00b6163bed9e87fcac664178aba7eaac5",
+      "currentSha256": "13efa189d399a8ceebd7136a2ed2385febc410b952c89e5295af1dce387c2896",
+      "edits": [
+        { "startLine": 25, "removeLineCount": 1, "beforeLines": ["    IReadOnlyList<AgentEmbeddingProviderDescriptor> ListEmbeddingProviderDescriptors();\n"] }
+      ]
+    },
+    {
+      "path": "src/Sunder.Package.Agent/Runtime/AgentRuntimeHandlers.cs",
+      "beforeSha256": "852afad1be039891182db51ed012ab5f18d2c1625f22f4e4490d6dba56d327aa",
+      "currentSha256": "f7c1e5eb197cc824a9d4b35adf7067fa824f0b6ca467ca435633c0147aaff930",
+      "edits": [
+        { "startLine": 435, "removeLineCount": 1, "beforeLines": [] },
+        { "startLine": 437, "removeLineCount": 1, "beforeLines": ["            chatReadinessTask, embeddingReadinessTask).ConfigureAwait(false);\n"] },
+        { "startLine": 441, "removeLineCount": 1, "beforeLines": ["            profiles.ListEmbeddingProviderDescriptors(),\n"] }
+      ]
+    },
+    {
+      "path": "src/Sunder.Package.Agent/Services/AgentProfileService.cs",
+      "beforeSha256": "a3c4eac16eaec34f726bf7c6a2bd89699160c5b44787bd0dc442c932ef8d6016",
+      "currentSha256": "f515e34e215be80e009b12be017cd4a040dbff127be887d5e3eec4b47e078fb8",
+      "edits": [
+        { "startLine": 10, "removeLineCount": 1, "beforeLines": [] },
+        { "startLine": 18, "removeLineCount": 2, "beforeLines": [] },
+        { "startLine": 24, "removeLineCount": 1, "beforeLines": [] },
+        { "startLine": 29, "removeLineCount": 3, "beforeLines": ["    internal AgentProfileService(AgentLocalStore store, AgentToolService tools, AgentRpcCatalog catalog, Runtime.Rpc.AgentBehaviorServices behaviors)\n", "        : this(store, tools, catalog, behaviors.Service, refreshProviderSubscriptions: false) { }\n"] },
+        { "startLine": 37, "removeLineCount": 3, "beforeLines": ["        AgentRpcProviderService<IAgentBehaviorLoop> behaviorLoops)\n", "        : this(store, toolService, rpcCatalog, behaviorLoops, refreshProviderSubscriptions: true)\n"] },
+        { "startLine": 48, "removeLineCount": 1, "beforeLines": [] },
+        { "startLine": 55, "removeLineCount": 1, "beforeLines": [] },
+        { "startLine": 284, "removeLineCount": 0, "beforeLines": ["    public IReadOnlyList<AgentEmbeddingProviderDescriptor> ListEmbeddingProviderDescriptors()\n", "        => GetEmbeddingProviderReferences(omitUnavailable: true)\n", "            .Select(static provider => provider.Metadata)\n", "            .OrderBy(provider => provider.DisplayName, StringComparer.OrdinalIgnoreCase)\n", "            .ToArray();\n", "\n"] },
+        { "startLine": 292, "removeLineCount": 5, "beforeLines": ["    public Task<IReadOnlyList<AgentEmbeddingProviderDescriptor>> ListEmbeddingProviderDescriptorsAsync(CancellationToken cancellationToken = default)\n", "    {\n", "        cancellationToken.ThrowIfCancellationRequested();\n", "        return Task.FromResult(ListEmbeddingProviderDescriptors());\n", "    }\n"] },
+        { "startLine": 476, "removeLineCount": 2, "beforeLines": ["        var provider = GetEmbeddingProviderReferences(cancellationToken, omitUnavailable: true).FirstOrDefault(x => string.Equals(\n", "            x.Metadata.ProviderId,\n"] },
+        { "startLine": 480, "removeLineCount": 1, "beforeLines": ["        if (provider is null)\n"] },
+        { "startLine": 487, "removeLineCount": 1, "beforeLines": ["            return (await AgentRpcInvocation.InvokeAsync(\n", "                    provider,\n", "                    cancellationToken,\n", "                    static (instance, token) => instance.GetAvailableModelsAsync(token))\n", "                .ConfigureAwait(false))\n"] },
+        { "startLine": 491, "removeLineCount": 3, "beforeLines": ["        catch (AgentPackageUnavailableException)\n"] },
+        { "startLine": 527, "removeLineCount": 1, "beforeLines": ["                AgentRpcInvocation.PackageUnavailableMessage);\n"] },
+        { "startLine": 538, "removeLineCount": 2, "beforeLines": ["        var provider = GetEmbeddingProviderReferences(cancellationToken, omitUnavailable: true).FirstOrDefault(x => string.Equals(\n", "            x.Metadata.ProviderId,\n"] },
+        { "startLine": 542, "removeLineCount": 1, "beforeLines": ["        if (provider is null)\n"] },
+        { "startLine": 549, "removeLineCount": 1, "beforeLines": ["            return await AgentRpcInvocation.InvokeAsync(\n", "                provider,\n", "                cancellationToken,\n", "                static (instance, token) => instance.GetReadinessAsync(token)).ConfigureAwait(false);\n"] },
+        { "startLine": 551, "removeLineCount": 3, "beforeLines": ["        catch (AgentPackageUnavailableException)\n"] },
+        { "startLine": 556, "removeLineCount": 1, "beforeLines": ["                provider.Metadata.ProviderId,\n"] },
+        { "startLine": 558, "removeLineCount": 1, "beforeLines": ["                AgentRpcInvocation.PackageUnavailableMessage);\n"] },
+        { "startLine": 576, "removeLineCount": 34, "beforeLines": ["    private IReadOnlyList<AgentRpcOwnedReference<IAgentEmbeddingProvider, AgentEmbeddingProviderDescriptor>>\n", "        GetEmbeddingProviderReferences(\n", "            CancellationToken cancellationToken = default,\n", "            bool omitUnavailable = false)\n", "        => AgentRpcInvocation.Snapshot(\n", "            _rpcCatalog,\n", "            Sunder.Package.Agent.Runtime.Rpc.AgentEmbeddingBindings.Service,\n", "            static provider => provider.Descriptor,\n", "            cancellationToken,\n", "            omitUnavailable);\n"] }
+      ]
+    },
+    {
+      "path": "src/Sunder.Package.Agent/Services/AgentProfileStackContributor.cs",
+      "beforeSha256": "61418c51d8befdccaec114b3d85af1a78a41c88b5d1e8b644655fa52523d557e",
+      "currentSha256": "5f8adc6ae75b6ffe849fb934866b348f849480fb08a405ad2abe314bc3a96111",
+      "edits": [
+        { "startLine": 50, "removeLineCount": 1, "beforeLines": ["    public ValueTask<StackExportContribution> ExportAsync(\n"] },
+        { "startLine": 74, "removeLineCount": 1, "beforeLines": ["        return ValueTask.FromResult(new StackExportContribution(\n"] },
+        { "startLine": 76, "removeLineCount": 2, "beforeLines": ["            fragments.Length == 0 ? [] : BuildPackageRequirements(payloads),\n", "            []));\n"] },
+        { "startLine": 188, "removeLineCount": 2, "beforeLines": ["    private IReadOnlyList<StackPackageRequirement> BuildPackageRequirements(IReadOnlyList<AgentProfileStackPayload> payloads)\n"] },
+        { "startLine": 201, "removeLineCount": 1, "beforeLines": ["        AddProviderPackages(packageIds, providerIds);\n"] },
+        { "startLine": 238, "removeLineCount": 2, "beforeLines": ["    private void AddProviderPackages(ISet<string> packageIds, ISet<string> providerIds)\n"] },
+        { "startLine": 257, "removeLineCount": 1, "beforeLines": ["        foreach (var contribution in AgentRpcInvocation.Snapshot(\n", "                     rpcCatalog,\n", "                     Sunder.Package.Agent.Runtime.Rpc.AgentEmbeddingBindings.Service,\n", "                     static provider => provider.Descriptor.ProviderId))\n"] },
+        { "startLine": 259, "removeLineCount": 1, "beforeLines": ["            if (providerIds.Contains(contribution.Metadata))\n"] },
+        { "startLine": 261, "removeLineCount": 1, "beforeLines": ["                AddPackageId(packageIds, contribution.PackageId);\n"] }
+      ]
+    }
+  ]
+}

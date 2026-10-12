@@ -1,10 +1,12 @@
 using System.Text.Json;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Stacks;
+using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Skills.Services;
 
-internal sealed class SkillStackContributor(
+[SunderServiceProvider(typeof(IPackageStackContributor), ProviderId = "skills.stack")]
+internal sealed partial class SkillStackContributor(
     SkillStore store,
     SkillImportService importService,
     IPackageContext packageContext) : IPackageStackExporter, IPackageStackImporter, IPackageStackImportAppliedHandler

@@ -82,7 +82,6 @@ public sealed class PackageModuleCompositionTests
         using var extensionCatalog = new RegressionTestExtensionCatalog();
         var services = new ServiceCollection();
         services.AddSingleton<IPackageContext>(packageScope.Context);
-        services.AddSingleton<Sunder.Package.Agent.Protocol.AgentRpcCatalog>(extensionCatalog);
         services.AddSingleton<Sunder.Sdk.Rpc.ISunderRpcClient>(
             new RegressionTestRpcClient(rpcState, packageName));
         services.AddSingleton<IBackgroundProcessQueue, CompositionBackgroundProcessQueue>();

@@ -3,7 +3,8 @@
   "authorityKind": "package",
   "authorityId": "sunder.package.agent.execution.docker",
   "packageId": "sunder.package.agent.execution.docker",
-  "contracts": {
+  "contracts": {},
+  "retiredPrivateContracts": {
     "management": {
       "contractId": "sunder.package.agent.execution.docker.presentation",
       "current": {

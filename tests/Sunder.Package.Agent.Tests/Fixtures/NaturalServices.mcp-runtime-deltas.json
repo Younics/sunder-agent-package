@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Authenticated pre-natural MCP owner ports, envelopes and content boundary; historical data only.",
+  "sources": [
+    {
+      "path": "src/Sunder.Package.Agent.Mcp/Runtime/McpManagementModels.cs",
+      "currentSha256": "8a7a7ddd8c62dbcf7b83609544c3057c7edde1cda46bba3c00c37dec05b81d2b",
+      "beforeSha256": "db3c25e9e48fb17c540360a521de9aaffaa3622dd07b1140c7d6f338b1acf61c",
+      "indexBlob": "d556dd0fac442df82a5d88a36f91ce2d78f914df",
+      "provenance": "git-index-blob",
+      "textChunks": [
+        "H4sIAAAAAAAC/8VXS3PaMBC+8yv2CDMMf4DUHsZpMkybhEKmPXR6UOzFuAiJSnJSmsl/7+phsAdIGPIgB+KVVvv4dle7KnUhcpiUIkPVG7F0znLsDXIUpneV",
+        "LnsTVPdFirrfagm2QL1kKe7nHpfCFAsk5p+BZ5LNAx+p6fnFcC6RGY4lx/bhrL3JjCnMOr9ahTCoBOPgPqbWqiFZcMUEsS/Inktm8IGtWo8toD+8pyUYpKaQ",
+        "IgbrFCqdzJjIMevv4jDMlE2G4RhZdiP46muhzRnpSphhXObnBcuF1KZII9h8a3iEHE0fntzhW6bnZ00JiRTTIi/JHZLlLRpjKlUWRWAZBnol0nbCRIqcM2vW",
+        "rZyjgHRr5RNkOGUlN53+Rpk2imCMSZZk2blMSwuKl+m3QDudw6wLxygJQq6lWjBe/MNryo4gOQabKoFvxJSuuVh57ST7zW17woKVsiay4AJZuw+4GPAvAUfc",
+        "TRsvrI3m/dTU8I5gwu7Rw/ys50u3eRz0Vh+cI0eDbxhQ54VN67qdw8VSKjNGTXwRDEVhChftVybnC2oclcjFQooPUHRR8CaOU1oYMTN7BY7NUg+5Ye8HnUqK",
+        "UfBqX4aFSHbhTkoOitaEwNQcZE8jR6w6d/R98sRKJr6RQk0l485EcImmvnCoq0cXwqA0M6k2OfkWmuryE45MVUre2iVS9HSyZnnzIFBtOmbCC/oNDfM74yVW",
+        "oR4p+duHOoJvJaqVR4B2HAV/7O9xIdyrx5Y/E9laU6Ah9f+P0zZ04j4LuuIVu+Po8tg3+Qh+MJPOPKWPu3Y+MpRITkAVgS+FyELgwlTSdUTV9z1VL8vuhxqr",
+        "kXHM3E1G9VFZ3a6bD/anasPViDbMCF9Rct7pnwDakHI1cDcN0CNqm31A2rVj/13vX/WVZjSqXuCp8fqS32zW6O1L6MQBDNi0nXVNrHwkawPYVjS7L06GMTTH",
+        "pfq5SmgF585N29TtSHqK/NkCa3OvtXc8JfY/BNYvlYaLBzxE4sZL5GDw9nb1uHF37Dize8KKoU4940QYkGK4pYHHhk2ftO5dD6iVfYhCqHn3NDx1+fmm1W5Y",
+        "6wqPEPsPisRqdNMPAAA="
+      ]
+    },
+    {
+      "path": "src/Sunder.Package.Agent.Mcp/Runtime/McpManagementContent.cs",
+      "currentSha256": "95c186164cbea8789957bef4e7a38220f1a8714c22919fafafae3cd89f7bf8da",
+      "beforeSha256": "b7c5cbfc418b14e76af05aaa83c267d5cfb66027919350dcb5c9850a75b822fe",
+      "indexBlob": "3d6c32fdf69d6942138bd89e6487b116f70fb880",
+      "provenance": "git-index-blob",
+      "textChunks": [
+        "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",
+        "2/3gfvA3d2DhEJ8UAAA="
+      ]
+    }
+  ]
+}

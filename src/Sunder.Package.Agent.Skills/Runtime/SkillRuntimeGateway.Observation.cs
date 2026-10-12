@@ -10,7 +10,7 @@ internal sealed partial class SkillAppRuntimeGateway
         CancellationToken cancellationToken)
     {
         var connected = false;
-        await foreach (var _ in _client.SubscribeChangesAsync(cancellationToken))
+        await foreach (var _ in _client.ChangesAsync(cancellationToken))
         {
             if (!connected)
             {

@@ -5,6 +5,7 @@ using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
 using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -15,6 +16,7 @@ extern alias ShellWorker;
 using SkillsWorker::Sunder.Package.Agent.Skills.Services;
 using FilesWorker::Sunder.Package.Agent.Tools.Files;
 using ShellWorker::Sunder.Package.Agent.Tools.Shell;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 public sealed class ExecutionTargetDependencyRetirementTests
 {
@@ -29,28 +31,24 @@ public sealed class ExecutionTargetDependencyRetirementTests
         catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target, "test.package.target");
         catalog.AddProvider(RegressionTestBindings.ToolSources, source, ToolSourcePackageId);
         catalog.AddProvider(RegressionTestBindings.PromptContextContributors, source, ToolSourcePackageId);
-        var targetReference = catalog.GetRequiredReference(RegressionTestBindings.ExecutionTargets);
-        var toolReference = catalog.GetRequiredReference(RegressionTestBindings.ToolSources);
-        var promptReference = catalog.GetRequiredReference(RegressionTestBindings.PromptContextContributors);
+        var targetProvider = await catalog.GetRequiredProviderAsync(catalog.ExecutionTargets);
+        var toolProvider = await catalog.GetRequiredProviderAsync(catalog.ToolSources);
+        var promptProvider = await catalog.GetRequiredProviderAsync(catalog.PromptContextContributors);
         var (workspace, binding) = CreateWorkspace();
 
         await catalog.RetireProviderAsync(target);
 
-        Assert.True(toolReference.TryAcquire(out var toolLease));
-        Assert.True(promptReference.TryAcquire(out var promptLease));
-        using (toolLease)
-        using (promptLease)
         {
-            var descriptors = await toolLease.Service.ListToolsAsync(
-                CreateSourceContext(workspace, binding, targetReference));
-            var readiness = await toolLease.Service.GetReadinessAsync(
+            var descriptors = await toolProvider.Service.ListToolsAsync(
+                CreateSourceContext(workspace, binding, targetProvider.Reference));
+            var readiness = await toolProvider.Service.GetReadinessAsync(
                 CapturingTargetConsumer.Descriptor.ToolId,
-                CreateSourceContext(workspace, binding, targetReference));
-            var result = await toolLease.Service.ExecuteAsync(
-                CreateExecutionContext(workspace, binding, targetReference),
+                CreateSourceContext(workspace, binding, targetProvider.Reference));
+            var result = await toolProvider.Service.ExecuteAsync(
+                CreateExecutionContext(workspace, binding, targetProvider.Reference),
                 new AgentToolRequest(CapturingTargetConsumer.Descriptor.ToolId, "{}"));
-            var contribution = await promptLease.Service.ContributeContextAsync(
-                CreatePromptRequest(workspace, binding, targetReference));
+            var contribution = await promptProvider.Service.ContributeAsync(
+                CreatePromptRequest(workspace, binding, targetProvider.Reference));
 
             Assert.Equal(CapturingTargetConsumer.Descriptor.ToolId, Assert.Single(descriptors).ToolId);
             Assert.Equal(AgentToolReadinessStatus.Failed, readiness?.Status);
@@ -63,8 +61,7 @@ public sealed class ExecutionTargetDependencyRetirementTests
         Assert.Equal(1, source.ExecuteCount);
         Assert.Equal(1, source.ContextCount);
         Assert.All(source.ObservedTargetReferences, Assert.Null);
-        Assert.True(toolReference.TryAcquire(out var survivingSourceLease));
-        survivingSourceLease.Dispose();
+        Assert.False(toolProvider.RetirementToken.IsCancellationRequested);
     }
 
     [Fact]
@@ -77,15 +74,16 @@ public sealed class ExecutionTargetDependencyRetirementTests
         catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target, "test.package.target");
         catalog.AddProvider(RegressionTestBindings.ToolSources, source, ToolSourcePackageId);
         var store = new AgentLocalStore(scope.Context);
-        var sessions = new AgentSessionService(store, catalog);
-        var workspaces = new AgentWorkspaceService(store, catalog, sessions);
+        var sessions = new AgentSessionService(store, catalog.SessionCleaners);
+        var workspaces = new AgentWorkspaceService(store, catalog.SessionCleaners, sessions, catalog.WorkspacePathMigrators);
         var workspace = workspaces.CreateWorkspace("Workspace");
         workspaces.SavePrimaryExecutionBinding(workspace.WorkspaceId, target.Descriptor.TargetId);
         var tools = new AgentToolService(
             sessions,
             workspaces,
-            new AgentExecutionTargetService(catalog),
-            catalog);
+            new AgentExecutionTargetService(catalog.ExecutionTargets),
+            catalog.ToolSources,
+            catalog.ObservedToolExecutions);
 
         var entries = await tools.ListToolCatalogAsync(workspace: workspace);
 
@@ -105,21 +103,17 @@ public sealed class ExecutionTargetDependencyRetirementTests
         catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target, "test.package.target");
         catalog.AddProvider(RegressionTestBindings.ToolSources, source, ToolSourcePackageId);
         catalog.AddProvider(RegressionTestBindings.PromptContextContributors, source, ToolSourcePackageId);
-        var targetReference = catalog.GetRequiredReference(RegressionTestBindings.ExecutionTargets);
-        var toolReference = catalog.GetRequiredReference(RegressionTestBindings.ToolSources);
-        var promptReference = catalog.GetRequiredReference(RegressionTestBindings.PromptContextContributors);
+        var targetProvider = await catalog.GetRequiredProviderAsync(catalog.ExecutionTargets);
+        var toolProvider = await catalog.GetRequiredProviderAsync(catalog.ToolSources);
+        var promptProvider = await catalog.GetRequiredProviderAsync(catalog.PromptContextContributors);
         var (workspace, binding) = CreateWorkspace();
-        Assert.True(toolReference.TryAcquire(out var toolLease));
-        Assert.True(promptReference.TryAcquire(out var promptLease));
         catalog.SetProviderLookupFailure(ToolSourcePackageId, SunderRpcErrorKind.Unavailable);
 
-        using (toolLease)
-        using (promptLease)
         {
-            Assert.Single(await toolLease.Service.ListToolsAsync(
-                CreateSourceContext(workspace, binding, targetReference)));
-            Assert.NotNull(await promptLease.Service.ContributeContextAsync(
-                CreatePromptRequest(workspace, binding, targetReference)));
+            Assert.Single(await toolProvider.Service.ListToolsAsync(
+                CreateSourceContext(workspace, binding, targetProvider.Reference)));
+            Assert.NotNull(await promptProvider.Service.ContributeAsync(
+                CreatePromptRequest(workspace, binding, targetProvider.Reference)));
         }
 
         Assert.Equal(1, source.ListCount);
@@ -140,23 +134,19 @@ public sealed class ExecutionTargetDependencyRetirementTests
         catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target, "test.package.target");
         catalog.AddProvider(RegressionTestBindings.ToolSources, source, ToolSourcePackageId);
         catalog.AddProvider(RegressionTestBindings.PromptContextContributors, source, ToolSourcePackageId);
-        var targetReference = catalog.GetRequiredReference(RegressionTestBindings.ExecutionTargets);
-        var toolReference = catalog.GetRequiredReference(RegressionTestBindings.ToolSources);
-        var promptReference = catalog.GetRequiredReference(RegressionTestBindings.PromptContextContributors);
+        var targetProvider = await catalog.GetRequiredProviderAsync(catalog.ExecutionTargets);
+        var toolProvider = await catalog.GetRequiredProviderAsync(catalog.ToolSources);
+        var promptProvider = await catalog.GetRequiredProviderAsync(catalog.PromptContextContributors);
         var (workspace, binding) = CreateWorkspace();
-        Assert.True(toolReference.TryAcquire(out var toolLease));
-        Assert.True(promptReference.TryAcquire(out var promptLease));
         catalog.SetProviderLookupFailure(ToolSourcePackageId, errorKind);
 
-        using (toolLease)
-        using (promptLease)
         {
             var toolFailure = await Assert.ThrowsAsync<SunderRpcException>(() =>
-                toolLease.Service.ListToolsAsync(
-                    CreateSourceContext(workspace, binding, targetReference)).AsTask());
+                toolProvider.Service.ListToolsAsync(
+                    CreateSourceContext(workspace, binding, targetProvider.Reference)).AsTask());
             var promptFailure = await Assert.ThrowsAsync<SunderRpcException>(() =>
-                promptLease.Service.ContributeContextAsync(
-                    CreatePromptRequest(workspace, binding, targetReference)).AsTask());
+                promptProvider.Service.ContributeAsync(
+                    CreatePromptRequest(workspace, binding, targetProvider.Reference)).AsTask());
 
             Assert.Equal(errorKind, toolFailure.Error.Kind);
             Assert.Equal(errorKind, promptFailure.Error.Kind);
@@ -172,7 +162,7 @@ public sealed class ExecutionTargetDependencyRetirementTests
         using var catalog = new RegressionTestExtensionCatalog();
         var target = new TestExecutionTarget();
         catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target);
-        var targetReference = catalog.GetRequiredReference(RegressionTestBindings.ExecutionTargets);
+        var targetReference = await GetTargetReferenceAsync(catalog);
         var (workspace, binding) = CreateWorkspace();
         using var source = new GeneratedToolSourceProbe(catalog, new ShellToolSource(), "sunder.package.agent.tools.shell", withPromptContext: true);
         await catalog.RetireProviderAsync(target);
@@ -208,7 +198,7 @@ public sealed class ExecutionTargetDependencyRetirementTests
         using var catalog = new RegressionTestExtensionCatalog();
         var target = new TestExecutionTarget();
         catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target);
-        var targetReference = catalog.GetRequiredReference(RegressionTestBindings.ExecutionTargets);
+        var targetReference = await GetTargetReferenceAsync(catalog);
         var (workspace, binding) = CreateWorkspace();
         using var source = new GeneratedToolSourceProbe(catalog, new FilesToolSource(scope.Context), "sunder.package.agent.tools.files", withPromptContext: true);
         await catalog.RetireProviderAsync(target);
@@ -243,7 +233,7 @@ public sealed class ExecutionTargetDependencyRetirementTests
         using var feature = CreateSkillsFeature(scope, catalog, profile);
         var target = new TestExecutionTarget();
         catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target);
-        var targetReference = catalog.GetRequiredReference(RegressionTestBindings.ExecutionTargets);
+        var targetReference = await GetTargetReferenceAsync(catalog);
         var (workspace, binding) = CreateWorkspace();
         await catalog.RetireProviderAsync(target);
 
@@ -265,7 +255,7 @@ public sealed class ExecutionTargetDependencyRetirementTests
         using var catalog = new RegressionTestExtensionCatalog();
         var target = new BlockingExecutionTarget();
         catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target, "test.package.target");
-        var targetReference = catalog.GetRequiredReference(RegressionTestBindings.ExecutionTargets);
+        var targetReference = await GetTargetReferenceAsync(catalog);
         var (workspace, binding) = CreateWorkspace();
         using var source = new GeneratedToolSourceProbe(catalog, new ShellToolSource(), "sunder.package.agent.tools.shell");
         var execution = source.ExecuteAsync(
@@ -288,7 +278,7 @@ public sealed class ExecutionTargetDependencyRetirementTests
         using var catalog = new RegressionTestExtensionCatalog();
         var target = new BlockingExecutionTarget();
         catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target, "test.package.target");
-        var targetReference = catalog.GetRequiredReference(RegressionTestBindings.ExecutionTargets);
+        var targetReference = await GetTargetReferenceAsync(catalog);
         var (workspace, binding) = CreateWorkspace();
         using var source = new GeneratedToolSourceProbe(catalog, new FilesToolSource(scope.Context), "sunder.package.agent.tools.files");
         var execution = source.ExecuteAsync(
@@ -313,7 +303,7 @@ public sealed class ExecutionTargetDependencyRetirementTests
         using var feature = CreateSkillsFeature(scope, catalog, profile);
         var target = new BlockingExecutionTarget();
         catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target, "test.package.target");
-        var targetReference = catalog.GetRequiredReference(RegressionTestBindings.ExecutionTargets);
+        var targetReference = await GetTargetReferenceAsync(catalog);
         var (workspace, binding) = CreateWorkspace();
         var contributionTask = feature.ContributeContextAsync(
             CreatePromptRequest(workspace, binding, targetReference, profile)).AsTask();
@@ -342,7 +332,7 @@ public sealed class ExecutionTargetDependencyRetirementTests
         using var files = new GeneratedToolSourceProbe(catalog, new FilesToolSource(scope.Context), "sunder.package.agent.tools.files");
         var target = new FailingExecutionTarget(errorKind);
         catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target);
-        var targetReference = catalog.GetRequiredReference(RegressionTestBindings.ExecutionTargets);
+        var targetReference = await GetTargetReferenceAsync(catalog);
         var (workspace, binding) = CreateWorkspace();
 
         var shellFailure = await Assert.ThrowsAsync<SunderRpcException>(() =>
@@ -376,7 +366,7 @@ public sealed class ExecutionTargetDependencyRetirementTests
         using var files = new GeneratedToolSourceProbe(catalog, new FilesToolSource(scope.Context), "sunder.package.agent.tools.files");
         var target = new FailingExecutionTarget(errorKind);
         catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target);
-        var targetReference = catalog.GetRequiredReference(RegressionTestBindings.ExecutionTargets);
+        var targetReference = await GetTargetReferenceAsync(catalog);
         var (workspace, binding) = CreateWorkspace();
 
         var shellFailure = await Assert.ThrowsAsync<SunderRpcException>(() =>
@@ -413,7 +403,7 @@ public sealed class ExecutionTargetDependencyRetirementTests
         using var files = new GeneratedToolSourceProbe(catalog, new FilesToolSource(scope.Context), "sunder.package.agent.tools.files");
         var target = new FailingExecutionTarget(errorKind: null);
         catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target);
-        var targetReference = catalog.GetRequiredReference(RegressionTestBindings.ExecutionTargets);
+        var targetReference = await GetTargetReferenceAsync(catalog);
         var (workspace, binding) = CreateWorkspace();
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -497,7 +487,7 @@ public sealed class ExecutionTargetDependencyRetirementTests
             new AgentWorkspaceBindingRecord(
                 "binding",
                 workspace.WorkspaceId,
-                AgentRpcContractIds.ExecutionTarget,
+                RegressionTestBindings.ExecutionTargets,
                 "test-target",
                 "primary-execution-target",
                 true,
@@ -506,29 +496,33 @@ public sealed class ExecutionTargetDependencyRetirementTests
                 now));
     }
 
+    private static async ValueTask<ServiceReference<AgentServices.IExecutionTargetService>> GetTargetReferenceAsync(
+        RegressionTestExtensionCatalog catalog)
+        => (await catalog.GetRequiredProviderAsync(catalog.ExecutionTargets)).Reference;
+
     private static AgentToolSourceContext CreateSourceContext(
         AgentWorkspaceRecord workspace,
         AgentWorkspaceBindingRecord binding,
-        AgentRpcReference<IAgentExecutionTarget> targetReference)
+        ServiceReference<AgentServices.IExecutionTargetService> targetReference)
         => new(Guid.NewGuid(), Profile: null, workspace, binding)
         {
-            ExecutionTargetReference = targetReference,
+            ExecutionTarget = targetReference,
         };
 
     private static AgentToolExecutionContext CreateExecutionContext(
         AgentWorkspaceRecord workspace,
         AgentWorkspaceBindingRecord binding,
-        AgentRpcReference<IAgentExecutionTarget> targetReference,
+        ServiceReference<AgentServices.IExecutionTargetService> targetReference,
         string? profileId = null)
         => new(Guid.NewGuid(), profileId, workspace, binding)
         {
-            ExecutionTargetReference = targetReference,
+            ExecutionTarget = targetReference,
         };
 
     private static AgentPromptContextRequest CreatePromptRequest(
         AgentWorkspaceRecord workspace,
         AgentWorkspaceBindingRecord binding,
-        AgentRpcReference<IAgentExecutionTarget> targetReference,
+        ServiceReference<AgentServices.IExecutionTargetService> targetReference,
         AgentProfileRecord? profile = null,
         IReadOnlyList<AgentToolDescriptor>? availableTools = null)
     {
@@ -557,7 +551,7 @@ public sealed class ExecutionTargetDependencyRetirementTests
             Workspace = workspace,
             ExecutionBinding = binding,
             AvailableTools = availableTools ?? [],
-            ExecutionTargetReference = targetReference,
+            ExecutionTarget = targetReference,
         };
     }
 
@@ -763,14 +757,14 @@ public sealed class ExecutionTargetDependencyRetirementTests
         public int ReadinessCount { get; private set; }
         public int ExecuteCount { get; private set; }
         public int ContextCount { get; private set; }
-        public List<AgentRpcReference<IAgentExecutionTarget>?> ObservedTargetReferences { get; } = [];
+        public List<ServiceReference<AgentServices.IExecutionTargetService>?> ObservedTargetReferences { get; } = [];
 
         public ValueTask<IReadOnlyList<AgentToolDescriptor>> ListToolsAsync(
             AgentToolSourceContext context,
             CancellationToken cancellationToken = default)
         {
             ListCount++;
-            ObservedTargetReferences.Add(context.ExecutionTargetReference);
+            ObservedTargetReferences.Add(context.ExecutionTarget);
             return ValueTask.FromResult<IReadOnlyList<AgentToolDescriptor>>([Descriptor]);
         }
 
@@ -780,10 +774,10 @@ public sealed class ExecutionTargetDependencyRetirementTests
             CancellationToken cancellationToken = default)
         {
             ReadinessCount++;
-            ObservedTargetReferences.Add(context.ExecutionTargetReference);
+            ObservedTargetReferences.Add(context.ExecutionTarget);
             return ValueTask.FromResult<AgentToolReadiness?>(new AgentToolReadiness(
                 toolId,
-                context.ExecutionTargetReference is null
+                context.ExecutionTarget is null
                     ? AgentToolReadinessStatus.Failed
                     : AgentToolReadinessStatus.Ready,
                 "Observed."));
@@ -795,8 +789,8 @@ public sealed class ExecutionTargetDependencyRetirementTests
             CancellationToken cancellationToken = default)
         {
             ExecuteCount++;
-            ObservedTargetReferences.Add(context.ExecutionTargetReference);
-            return ValueTask.FromResult(context.ExecutionTargetReference is null
+            ObservedTargetReferences.Add(context.ExecutionTarget);
+            return ValueTask.FromResult(context.ExecutionTarget is null
                 ? new AgentToolResult(
                     request.ToolId,
                     "Target unavailable.",
@@ -810,7 +804,7 @@ public sealed class ExecutionTargetDependencyRetirementTests
             CancellationToken cancellationToken = default)
         {
             ContextCount++;
-            ObservedTargetReferences.Add(request.ExecutionTargetReference);
+            ObservedTargetReferences.Add(request.ExecutionTarget);
             return ValueTask.FromResult<AgentPromptContextContribution?>(new AgentPromptContextContribution(
             [
                 new AgentPromptContextBlock("Captured", "Captured.", SourceId: ContributorId),

@@ -8,6 +8,9 @@ using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.Services;
 
@@ -54,7 +57,7 @@ public sealed partial class AgentToolService
             return expectedGeneration is null && expectedOwnerPackageId is null;
         }
 
-        var target = _executionTargetService.ResolveTargetReference(executionBinding);
+        var target = await _executionTargetService.ResolveTargetAsync(executionBinding, cancellationToken).ConfigureAwait(false);
         if (target is null
             || !string.Equals(target.PackageId, expectedOwnerPackageId, StringComparison.Ordinal))
         {
@@ -63,16 +66,13 @@ public sealed partial class AgentToolService
 
         try
         {
-            var current = await InvokeExecutionTargetAsync(
-                target,
-                cancellationToken,
-                (executionTarget, token) => executionTarget.GetConfigurationGenerationAsync(
+            var current = await target.Service.ConfigurationGenerationAsync(
                     new AgentExecutionTargetContext(
                         sessionId,
                         profileId,
                         workspace,
                         executionBinding!),
-                    token)).ConfigureAwait(false);
+                    cancellationToken).ConfigureAwait(false);
             return string.Equals(expectedGeneration, current?.Trim(), StringComparison.Ordinal);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -114,20 +114,6 @@ public sealed partial class AgentToolService
             IsError: true,
             ErrorCode: AgentToolSecurityErrorCodes.PermissionContextChanged);
 
-    private static async Task<IReadOnlyList<AgentRuntimeTool>> ListRuntimeToolsAsync(
-        IAgentToolSource source,
-        AgentToolSourceContext context,
-        CancellationToken cancellationToken)
-    {
-        if (source is IAgentNativeToolSource nativeToolSource)
-        {
-            return await nativeToolSource.ListRuntimeToolsAsync(context, cancellationToken);
-        }
-
-        var descriptors = await source.ListToolsAsync(context, cancellationToken);
-        return descriptors.Select(CreateRuntimeTool).ToArray();
-    }
-
     private static AgentRuntimeTool CreateRuntimeTool(AgentToolDescriptor descriptor)
         => new(
             descriptor,
@@ -154,7 +140,7 @@ public sealed partial class AgentToolService
     }
 
     private static AgentToolDescriptor WithSourceIdentity(
-        AgentToolSourceMetadata source,
+        AgentToolSourceDescriptor source,
         AgentToolDescriptor descriptor)
         => descriptor with
         {
@@ -237,10 +223,9 @@ public sealed partial class AgentToolService
             ? null
             : _workspaceService.ListBindings(workspace.WorkspaceId)
                 .FirstOrDefault(binding => binding.IsEnabled
-                                            && string.Equals(binding.Role, AgentWorkspaceBindingRoles.PrimaryExecutionTarget, StringComparison.OrdinalIgnoreCase)
-                                            && _executionTargetService.ResolveTargetReference(binding) is not null);
+                                            && string.Equals(binding.Role, AgentWorkspaceBindingRoles.PrimaryExecutionTarget, StringComparison.OrdinalIgnoreCase));
 
-    private async Task<AgentToolSourceContext> CreateSourceContextAsync(
+    private async Task<(AgentToolSourceContext Context, ServiceProvider<AgentServices.IExecutionTargetService>? Target)> CreateSourceContextAsync(
         Guid? sessionId,
         AgentProfileRecord? profile,
         AgentWorkspaceRecord? workspace,
@@ -248,7 +233,7 @@ public sealed partial class AgentToolService
     {
         if (workspace is null)
         {
-            return new AgentToolSourceContext(sessionId, profile, workspace, null);
+            return (new AgentToolSourceContext(sessionId, profile, workspace, null), null);
         }
 
         foreach (var binding in _workspaceService.ListBindings(workspace.WorkspaceId)
@@ -258,106 +243,54 @@ public sealed partial class AgentToolService
                                            AgentWorkspaceBindingRoles.PrimaryExecutionTarget,
                                            StringComparison.OrdinalIgnoreCase)))
         {
-            var target = await _executionTargetService.ResolveTargetReferenceAsync(
+            var target = await _executionTargetService.ResolveTargetAsync(
                     binding,
                     cancellationToken)
                 .ConfigureAwait(false);
             if (target is not null)
             {
-                return new AgentToolSourceContext(sessionId, profile, workspace, binding)
+                return (new AgentToolSourceContext(sessionId, profile, workspace, binding)
                 {
-                    ExecutionTargetReference = target,
-                };
+                    ExecutionTarget = target.Reference,
+                }, target);
             }
         }
 
-        return new AgentToolSourceContext(sessionId, profile, workspace, null);
+        return (new AgentToolSourceContext(sessionId, profile, workspace, null), null);
     }
 
-    private AgentRpcReference<IAgentExecutionTarget>? ResolveExecutionTargetReference(
+    private ValueTask<ServiceProvider<AgentServices.IExecutionTargetService>?> ResolveExecutionTargetAsync(
         AgentWorkspaceBindingRecord? executionBinding,
-        AgentToolInvocationReference? advertisedInvocation)
+        AgentToolInvocationReference? advertisedInvocation,
+        CancellationToken cancellationToken)
         => advertisedInvocation is null
-            ? _executionTargetService.ResolveTargetReference(executionBinding)
-            : advertisedInvocation.ExecutionTargetReference;
-
-    private static ExecutionTargetSnapshot? SnapshotExecutionTarget(
-        AgentRpcReference<IAgentExecutionTarget>? reference)
-    {
-        if (reference is null || !reference.TryAcquire(out var lease))
-        {
-            return null;
-        }
-
-        using (lease)
-        {
-            return lease.RetirementToken.IsCancellationRequested
-                ? null
-                : new ExecutionTargetSnapshot(lease.Service.Descriptor, lease.PackageId);
-        }
-    }
+            ? _executionTargetService.ResolveTargetAsync(executionBinding, cancellationToken)
+            : ValueTask.FromResult(advertisedInvocation.ExecutionTargetProvider);
 
     private static async Task<ExecutionTargetSnapshot?> SnapshotExecutionTargetAsync(
-        AgentRpcReference<IAgentExecutionTarget>? reference,
+        ServiceProvider<AgentServices.IExecutionTargetService>? provider,
         CancellationToken cancellationToken)
     {
-        if (reference is null)
+        if (provider is null)
         {
             return null;
         }
-
-        var lease = await reference.TryAcquireAsync(cancellationToken).ConfigureAwait(false);
-        if (lease is null)
-        {
-            return null;
-        }
-
-        using (lease)
-        using (var invocation = CancellationTokenSource.CreateLinkedTokenSource(
-                   cancellationToken,
-                   lease.RetirementToken))
-        {
-            var descriptor = await Sunder.Package.Agent.Runtime.Rpc.AgentExecutionBindings.DescribeAsync(lease.Service, invocation.Token).ConfigureAwait(false);
-            return lease.RetirementToken.IsCancellationRequested
-                ? null
-                : new ExecutionTargetSnapshot(descriptor, lease.PackageId);
-        }
+        var descriptor = await provider.Service.DescribeAsync(cancellationToken).ConfigureAwait(false);
+        return new ExecutionTargetSnapshot(descriptor, provider.PackageId);
     }
 
     private long ResolveTranscriptEpoch(Guid? sessionId)
         => sessionId is { } id ? _sessionService.GetTranscriptEpoch(id) : 0;
 
     private AgentProfileRecord? ResolveProfile(string? profileId)
-    {
-        if (string.IsNullOrWhiteSpace(profileId))
-        {
-            return null;
-        }
-
-        foreach (var reference in _rpcCatalog.GetServiceReferences(Sunder.Package.Agent.Runtime.Rpc.AgentToolProfileBindings.Service))
-        {
-            if (!reference.TryAcquire(out var lease))
-            {
-                continue;
-            }
-
-            using (lease)
-            {
-                var profile = lease.Service.GetProfile(profileId);
-                if (!lease.RetirementToken.IsCancellationRequested)
-                {
-                    return profile;
-                }
-            }
-        }
-
-        return null;
-    }
+        => string.IsNullOrWhiteSpace(profileId)
+            ? null
+            : _sessionService.Store.GetProfile(profileId);
 
     internal void BindPreparedInvocation(Guid executionId, AgentToolInvocationReference invocation)
         => _preparedInvocations[executionId] = invocation;
 
-    internal void BindPreparedResourceCapabilities(
+    internal async ValueTask BindPreparedResourceCapabilitiesAsync(
         Guid executionId,
         AgentPermissionRequest? permissionRequest,
         AgentToolInvocationReference invocation)
@@ -368,15 +301,16 @@ public sealed partial class AgentToolService
             .ToArray() ?? [];
         if (capabilities.Length == 0)
         {
-            ReleasePreparedResourceAuthority(executionId);
+            await ReleasePreparedResourceAuthorityAsync(executionId).ConfigureAwait(false);
             return;
         }
         var authority = new PreparedResourceAuthority(
             capabilities,
-            invocation.ExecutionTargetReference);
+            invocation.ExecutionTargetProvider,
+            invocation.ExecutionTarget?.SupportsFacet(AgentExecutionFacetIds.ResourceAuthority) == true);
         if (_preparedResourceCapabilities.TryGetValue(executionId, out var previous))
         {
-            ReleaseResourceAuthority(previous);
+            await ReleaseResourceAuthorityAsync(previous).ConfigureAwait(false);
         }
         _preparedResourceCapabilities[executionId] = authority;
     }
@@ -388,69 +322,45 @@ public sealed partial class AgentToolService
         => _preparedInvocations.GetValueOrDefault(executionId);
 
     internal static bool IsInvocationAvailable(AgentToolInvocationReference invocation)
-    {
-        if (invocation.ExecutionTargetReference is { } targetReference)
-        {
-            if (!targetReference.TryAcquire(out var targetLease))
-            {
-                return false;
-            }
-            using (targetLease)
-            {
-                if (targetLease.RetirementToken.IsCancellationRequested)
-                {
-                    return false;
-                }
-            }
-        }
+        => !invocation.SourceProvider.RetirementToken.IsCancellationRequested
+           && invocation.ExecutionTargetProvider?.RetirementToken.IsCancellationRequested != true
+           && invocation.ObservedExecutionProvider?.RetirementToken.IsCancellationRequested != true;
 
-        if (invocation.SourceReference is not { } sourceReference
-            || !sourceReference.TryAcquire(out var sourceLease))
-        {
-            return false;
-        }
-        using (sourceLease)
-        {
-            return !sourceLease.RetirementToken.IsCancellationRequested;
-        }
-    }
-
-    internal void ReleasePreparedInvocation(Guid executionId)
+    internal async ValueTask ReleasePreparedInvocationAsync(Guid executionId)
     {
         _preparedInvocations.TryRemove(executionId, out _);
-        ReleasePreparedResourceAuthority(executionId);
+        await ReleasePreparedResourceAuthorityAsync(executionId).ConfigureAwait(false);
     }
 
-    private void ReleasePreparedResourceAuthority(Guid executionId)
+    private async ValueTask ReleasePreparedResourceAuthorityAsync(Guid executionId)
     {
         if (_preparedResourceCapabilities.TryRemove(executionId, out var authority))
         {
-            ReleaseResourceAuthority(authority);
+            await ReleaseResourceAuthorityAsync(authority).ConfigureAwait(false);
         }
     }
 
-    private static void ReleaseResourceAuthority(PreparedResourceAuthority authority)
+    private static async ValueTask ReleaseResourceAuthorityAsync(PreparedResourceAuthority authority)
     {
-        if (authority.ExecutionTargetReference is not { } targetReference
-            || !targetReference.TryAcquire(out var targetLease))
+        if (!authority.SupportsResourceAuthority
+            || authority.ExecutionTargetProvider is not { } target
+            || target.RetirementToken.IsCancellationRequested)
         {
             return;
         }
 
-        using (targetLease)
+        try
         {
-            if (!targetLease.RetirementToken.IsCancellationRequested
-                && Sunder.Package.Agent.Runtime.Rpc.AgentExecutionBindings.SupportsFacet(
-                    targetLease.Service,
-                    AgentExecutionFacetIds.ResourceAuthority)
-                && targetLease.Service is IAgentResourceAuthorityExecutionTarget authorityTarget)
-            {
-                authorityTarget.ReleaseResourceAuthority(authority.Capabilities);
-            }
+            // Cleanup drains even after the initiating tool operation is canceled.
+            await target.Service.ReleaseResourceAuthorityAsync(authority.Capabilities, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (SunderRpcException exception) when (exception.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable)
+        {
+            // Authority issued by a retired activation is already revoked.
         }
     }
 
-    private static void ReleasePermissionRequestAuthority(
+    private static async ValueTask ReleasePermissionRequestAuthorityAsync(
         AgentPermissionRequest? permissionRequest,
         AgentToolInvocationReference invocation)
     {
@@ -460,9 +370,10 @@ public sealed partial class AgentToolService
             .ToArray() ?? [];
         if (capabilities.Length > 0)
         {
-            ReleaseResourceAuthority(new PreparedResourceAuthority(
+            await ReleaseResourceAuthorityAsync(new PreparedResourceAuthority(
                 capabilities,
-                invocation.ExecutionTargetReference));
+                invocation.ExecutionTargetProvider,
+                invocation.ExecutionTarget?.SupportsFacet(AgentExecutionFacetIds.ResourceAuthority) == true)).ConfigureAwait(false);
         }
     }
 
@@ -504,21 +415,18 @@ public sealed partial class AgentToolService
     {
         if (context.Workspace is null
             || context.ExecutionBinding is null
-            || invocation.ExecutionTargetReference is not { } targetReference)
+            || invocation.ExecutionTargetProvider is not { } target)
         {
             return null;
         }
 
-        var generation = await InvokeExecutionTargetAsync(
-            targetReference,
-            cancellationToken,
-            (target, token) => target.GetConfigurationGenerationAsync(
+        var generation = await target.Service.ConfigurationGenerationAsync(
                 new AgentExecutionTargetContext(
                     context.SessionId,
                     context.ProfileId,
                     context.Workspace,
                     context.ExecutionBinding),
-                token)).ConfigureAwait(false);
+                cancellationToken).ConfigureAwait(false);
         if (generation is not null && string.IsNullOrWhiteSpace(generation))
         {
             throw new InvalidOperationException(
@@ -557,113 +465,36 @@ public sealed partial class AgentToolService
             _ => string.Empty,
         };
 
-    private static ValueTask<TResult> InvokeToolAsync<TResult>(
-        AgentToolInvocationReference invocation,
-        CancellationToken cancellationToken,
-        Func<IAgentToolSource, CancellationToken, ValueTask<TResult>> sourceCallback)
-        => InvokeSourceAsync(invocation, cancellationToken, sourceCallback);
-
-    private static ValueTask<AgentToolResult> ExecuteToolAsync(
+    private static async ValueTask<AgentToolResult> ExecuteToolAsync(
         AgentToolInvocationReference invocation,
         AgentToolExecutionContext context,
         AgentToolRequest request,
         CancellationToken cancellationToken)
     {
-        if (invocation.ObservedExecutionReference is null)
+        cancellationToken.ThrowIfCancellationRequested();
+        if (invocation.ObservedExecutionProvider is null)
         {
-            return InvokeToolAsync(
-                invocation,
-                cancellationToken,
-                (source, token) =>
-                {
-                    if (source is not IAgentToolDispatchAwareSource)
-                    {
-                        context.DispatchStarted?.Invoke();
-                    }
-                    return source.ExecuteAsync(context, request, token);
-                });
+            context.DispatchStarted?.Invoke();
+            return await invocation.SourceProvider.Service.ExecuteAsync(context, request, cancellationToken).ConfigureAwait(false);
         }
 
-        return InvokeTargetBoundAsync(
-            invocation.ExecutionTargetReference,
-            cancellationToken,
-            token => AgentRpcInvocation.InvokeAsync(
-                new AgentRpcOwnedReference<IAgentObservedToolExecution, string>(
-                    invocation.ObservedExecutionReference,
-                    invocation.OwnerPackageId,
-                    invocation.Descriptor.SourceId ?? string.Empty),
-                token,
-                (execution, invocationToken) => execution.ExecuteAsync(
-                    context,
-                    request,
-                    invocationToken)));
-    }
-
-    private static ValueTask<TResult> InvokeSourceAsync<TResult>(
-        AgentToolInvocationReference invocation,
-        CancellationToken cancellationToken,
-        Func<IAgentToolSource, CancellationToken, ValueTask<TResult>> callback)
-        => InvokeTargetBoundAsync(
-            invocation.ExecutionTargetReference,
-            cancellationToken,
-            token => AgentRpcInvocation.InvokeAsync(
-                new AgentRpcOwnedReference<IAgentToolSource, AgentToolDescriptor>(
-                    invocation.SourceReference
-                    ?? throw new InvalidOperationException("Tool-source invocation reference is unavailable."),
-                    invocation.OwnerPackageId,
-                    invocation.Descriptor),
-                token,
-                callback));
-
-    private static ValueTask<TResult> InvokeTargetBoundAsync<TResult>(
-        AgentRpcReference<IAgentExecutionTarget>? targetReference,
-        CancellationToken cancellationToken,
-        Func<CancellationToken, ValueTask<TResult>> callback)
-        => targetReference is null
-            ? callback(cancellationToken)
-            : InvokeExecutionTargetAsync(
-                targetReference,
-                cancellationToken,
-                (_, token) => callback(token));
-
-    private static async ValueTask<TResult> InvokeExecutionTargetAsync<TResult>(
-        AgentRpcReference<IAgentExecutionTarget> targetReference,
-        CancellationToken cancellationToken,
-        Func<IAgentExecutionTarget, CancellationToken, ValueTask<TResult>> callback)
-    {
-        var targetLease = await targetReference.TryAcquireAsync(cancellationToken).ConfigureAwait(false);
-        if (targetLease is null)
+        await foreach (var item in invocation.ObservedExecutionProvider.Service.ExecuteAsync(context, request, cancellationToken)
+                           .WithCancellation(cancellationToken).ConfigureAwait(false))
         {
-            throw AgentRpcInvocation.Unavailable("execution-target");
-        }
-
-        using (targetLease)
-        {
-            var packageId = targetLease.PackageId;
-            var retirementToken = targetLease.RetirementToken;
-            using var invocation = CancellationTokenSource.CreateLinkedTokenSource(
-                cancellationToken,
-                retirementToken);
-            try
+            switch (item)
             {
-                var result = await callback(targetLease.Service, invocation.Token).ConfigureAwait(false);
-                if (retirementToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
-                {
-                    throw AgentRpcInvocation.Unavailable(packageId);
-                }
-                return result;
-            }
-            catch (AgentPackageUnavailableException)
-            {
-                throw;
-            }
-            catch (Exception exception) when (
-                retirementToken.IsCancellationRequested
-                || AgentRpcInvocation.IsUnavailableFailure(exception, cancellationToken))
-            {
-                throw AgentRpcInvocation.Unavailable(packageId, exception);
+                case AgentToolDispatchedEvent:
+                    context.DispatchStarted?.Invoke();
+                    break;
+                case AgentToolExecutionCompletedEvent { Result: { } result }:
+                    return result;
+                case AgentToolExecutionCompletedEvent:
+                    throw new InvalidOperationException("The observed tool execution returned an empty result event.");
+                default:
+                    throw new InvalidOperationException("The observed tool execution returned an unknown event.");
             }
         }
+        throw new InvalidOperationException("The observed tool execution ended without a result event.");
     }
 
     private static AgentToolResult PackageUnavailableResult(string toolId, string message)
@@ -680,7 +511,8 @@ public sealed partial class AgentToolService
 
     private sealed record PreparedResourceAuthority(
         IReadOnlyList<string> Capabilities,
-        AgentRpcReference<IAgentExecutionTarget>? ExecutionTargetReference);
+        ServiceProvider<AgentServices.IExecutionTargetService>? ExecutionTargetProvider,
+        bool SupportsResourceAuthority);
 
     private sealed record OwnedRuntimeToolCandidate(
         AgentRuntimeTool RuntimeTool,
@@ -697,11 +529,9 @@ internal sealed record AgentOwnedRuntimeTool(
 internal sealed record AgentToolInvocationReference(
     string OwnerPackageId,
     AgentToolDescriptor Descriptor,
-    AgentRpcReference<IAgentToolSource>? SourceReference,
-    AgentRpcReference<IAgentObservedToolExecution>? ObservedExecutionReference,
-    bool SupportsSourcePermission,
-    bool SupportsPreflight,
-    AgentRpcReference<IAgentExecutionTarget>? ExecutionTargetReference,
+    ServiceProvider<AgentServices.IToolSourceService> SourceProvider,
+    ServiceProvider<AgentServices.IToolExecutionObservedService>? ObservedExecutionProvider,
+    ServiceProvider<AgentServices.IExecutionTargetService>? ExecutionTargetProvider,
     AgentExecutionTargetDescriptor? ExecutionTarget,
     string? ExecutionTargetOwnerPackageId,
     string AuthorityActivationId);
@@ -709,10 +539,3 @@ internal sealed record AgentToolInvocationReference(
 internal sealed record ExecutionTargetSnapshot(
     AgentExecutionTargetDescriptor Descriptor,
     string OwnerPackageId);
-
-internal sealed record AgentToolSourceMetadata(
-    string SourceId,
-    string DisplayName,
-    string SourceKind,
-    bool SupportsPermission,
-    bool SupportsPreflight);

@@ -49,8 +49,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
         {
             await restarted.Prepare();
             await restarted.Activate();
-            await restarted.Invoke("semantic.memory.session.cleaner", "session-cleaner", "delete-session", new { sessionId = removedSession });
-            await restarted.Invoke("semantic.memory.session.cleaner", "session-cleaner", "delete-session", new { sessionId = removedSession });
+            await restarted.Invoke("semantic.memory.session.cleaner", "session-cleaner", "delete-session", removedSession);
+            await restarted.Invoke("semantic.memory.session.cleaner", "session-cleaner", "delete-session", removedSession);
             await restarted.Shutdown();
         }
         await using var reopened = new MemoryLocalStore(context);

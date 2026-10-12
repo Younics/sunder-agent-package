@@ -365,7 +365,7 @@ internal static partial class AgentSourceMigrationProjectChanges
         };
         if (activation is not null)
         {
-            Assert.Equal(2, text.Split(activation, StringSplitOptions.None).Length);
+            RequireOccurrences(activation, 1);
             text = text.Replace(activation, "", StringComparison.Ordinal);
         }
         text = BeforeSubagentCatalogBindings(path, text);
@@ -415,28 +415,28 @@ internal static partial class AgentSourceMigrationProjectChanges
                 ("\n    private void OnRuntimeCatalogChanged()\n    {\n        if (RefreshRuntime()) Publish(new(0, SubagentChangeKind.ResnapshotRequired));\n    }\n", "", 1),
                 ("_runtimeBindings.GetRuntimeCatalogs()", "_rpcCatalog.GetServiceReferences(AgentRpcServices.RuntimeCatalogs)", 1),
             ],
-            "SubsessionLocalRuntimeAdapter.cs" =>
-            [
-                ("using Sunder.Package.Agent.Contracts.Models;\n", "using Sunder.Package.Agent.Contracts.Models;\nusing Sunder.Package.Agent.Protocol;\n", 1),
-                ("internal sealed partial class SubsessionLocalRuntimeAdapter", "internal sealed class SubsessionLocalRuntimeAdapter", 1),
-                ("SubagentProviderReference<IAgentRuntimeCatalog>", "AgentRpcReference<IAgentRuntimeCatalog>", 2),
-                ("SubagentProviderLease<IAgentRuntimeCatalog>", "AgentRpcLease<IAgentRuntimeCatalog>", 1),
-            ],
             _ => [],
         };
         foreach (var (after, before, count) in replacements)
         {
-            Assert.Equal(count + 1, text.Split(after, StringSplitOptions.None).Length);
+            RequireOccurrences(after, count);
             text = text.Replace(after, before, StringComparison.Ordinal);
         }
         return text;
+
+        void RequireOccurrences(string marker, int expected)
+        {
+            var actual = text.Split(marker, StringSplitOptions.None).Length - 1;
+            Assert.True(expected == actual,
+                $"{path}: expected {expected} pre-natural Subagent occurrences of '{marker}', found {actual}.");
+        }
     }
 
     internal static string ReconstructMemoryInspectorContracts(string path)
     {
-        var ports = BeforeMemoryComposition(path, File.ReadAllText(path).Replace("\r\n", "\n", StringComparison.Ordinal));
+        var ports = BeforeMemoryComposition(path, ReadMigrationSourceText(path));
         var modelsPath = Path.Combine(Path.GetDirectoryName(path)!, "../Models/MemoryInspectorModels.cs");
-        var models = BeforeMemoryComposition(modelsPath, File.ReadAllText(modelsPath).Replace("\r\n", "\n", StringComparison.Ordinal));
+        var models = BeforeMemoryComposition(modelsPath, ReadMigrationSourceText(modelsPath));
         const string prefix = "using Sunder.Package.Agent.Contracts.Models;\nusing Sunder.Package.Agent.Memory.Semantic.Services;\n\nnamespace Sunder.Package.Agent.Memory.Semantic.Runtime;\n\n";
         Assert.StartsWith(prefix, models, StringComparison.Ordinal);
         Assert.DoesNotContain("public enum MemoryQueryKind", ports, StringComparison.Ordinal);
@@ -445,7 +445,7 @@ internal static partial class AgentSourceMigrationProjectChanges
 
     internal static string ReconstructSkillsGateway(string path)
     {
-        var text = BeforeSkillsComposition(path, File.ReadAllText(path).Replace("\r\n", "\n", StringComparison.Ordinal));
+        var text = BeforeSkillsComposition(path, ReadMigrationSourceText(path));
         var legacy = ReadMigrationSourceText(Path.Combine(Path.GetDirectoryName(path)!, "SkillOwnerRpc.Legacy.cs"));
         const string services = "using Sunder.Package.Agent.Skills.Services;";
         const string ownerJson = "internal static class OwnerJson";
@@ -464,7 +464,7 @@ internal static partial class AgentSourceMigrationProjectChanges
 
     internal static string ReconstructSubagentsOwnerRpc(string path)
     {
-        var text = File.ReadAllText(path).Replace("\r\n", "\n", StringComparison.Ordinal);
+        var text = ReadMigrationSourceText(path);
         var legacy = ReadMigrationSourceText(Path.Combine(Path.GetDirectoryName(path)!, "SubagentOwnerRpc.Legacy.cs"));
         const string marker = "internal static class SubagentOwnerJson";
         Assert.DoesNotContain(marker, legacy, StringComparison.Ordinal);

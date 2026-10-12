@@ -9,7 +9,7 @@ internal sealed partial class AgentAppRuntimeGateway
         CancellationToken cancellationToken = default)
     {
         var result = await InvokeAsync(
-                AgentRuntimeOperations.Profiles,
+                _owner.ExecuteProfileCommandAsync,
                 new AgentProfileCommand(AgentProfileCommandKind.Create, DisplayName: displayName),
                 cancellationToken)
             .ConfigureAwait(false);
@@ -26,7 +26,7 @@ internal sealed partial class AgentAppRuntimeGateway
         string? behaviorLoopSettingsJson = null, string? chatModelSettingsJson = null,
         CancellationToken cancellationToken = default)
     {
-        _ = await InvokeAsync(AgentRuntimeOperations.Profiles, new AgentProfileCommand(
+        _ = await InvokeAsync(_owner.ExecuteProfileCommandAsync, new AgentProfileCommand(
                 AgentProfileCommandKind.Save, profileId, displayName, description, instructions,
                 chatProviderId, chatModelId, embeddingProviderId, embeddingModelId,
                 selectableCapabilityAssignments, behaviorLoopId, behaviorLoopSourceId,
@@ -40,7 +40,7 @@ internal sealed partial class AgentAppRuntimeGateway
         CancellationToken cancellationToken = default)
     {
         _ = await InvokeAsync(
-                AgentRuntimeOperations.Profiles,
+                _owner.ExecuteProfileCommandAsync,
                 new AgentProfileCommand(AgentProfileCommandKind.Delete, ProfileId: profileId),
                 cancellationToken)
             .ConfigureAwait(false);
@@ -52,7 +52,7 @@ internal sealed partial class AgentAppRuntimeGateway
         CancellationToken cancellationToken = default)
     {
         var result = await InvokeAsync(
-                AgentRuntimeOperations.Workspaces,
+                _owner.ExecuteWorkspaceCommandAsync,
                 new AgentWorkspaceCommand(AgentWorkspaceCommandKind.Create, DisplayName: displayName),
                 cancellationToken)
             .ConfigureAwait(false);
@@ -68,7 +68,7 @@ internal sealed partial class AgentAppRuntimeGateway
         string? executionTargetId,
         CancellationToken cancellationToken = default)
     {
-        _ = await InvokeAsync(AgentRuntimeOperations.Workspaces, new AgentWorkspaceCommand(
+        _ = await InvokeAsync(_owner.ExecuteWorkspaceCommandAsync, new AgentWorkspaceCommand(
                 AgentWorkspaceCommandKind.Save, workspaceId, displayName, description, paths, documents,
                 executionTargetId), cancellationToken)
             .ConfigureAwait(false);
@@ -80,7 +80,7 @@ internal sealed partial class AgentAppRuntimeGateway
         CancellationToken cancellationToken = default)
     {
         _ = await InvokeAsync(
-                AgentRuntimeOperations.Workspaces,
+                _owner.ExecuteWorkspaceCommandAsync,
                 new AgentWorkspaceCommand(AgentWorkspaceCommandKind.Delete, WorkspaceId: workspaceId),
                 cancellationToken)
             .ConfigureAwait(false);
@@ -95,7 +95,7 @@ internal sealed partial class AgentAppRuntimeGateway
         {
             var generation = CaptureGlobalPermissionGeneration();
             var projection = await InvokeAsync(
-                    AgentRuntimeOperations.Permissions,
+                    _owner.ExecutePermissionCommandAsync,
                     new AgentPermissionCommand(AgentPermissionCommandKind.Read),
                     cancellationToken)
                 .ConfigureAwait(false);
@@ -114,7 +114,7 @@ internal sealed partial class AgentAppRuntimeGateway
         CancellationToken cancellationToken = default)
     {
         var generation = CaptureGlobalPermissionGeneration();
-        var projection = await InvokeAsync(AgentRuntimeOperations.Permissions, new AgentPermissionCommand(
+        var projection = await InvokeAsync(_owner.ExecutePermissionCommandAsync, new AgentPermissionCommand(
                 AgentPermissionCommandKind.SaveOverride,
                 ActionId: actionId,
                 BoundaryId: boundaryId,
@@ -129,7 +129,7 @@ internal sealed partial class AgentAppRuntimeGateway
         CancellationToken cancellationToken = default)
     {
         var generation = CaptureGlobalPermissionGeneration();
-        var projection = await InvokeAsync(AgentRuntimeOperations.Permissions, new AgentPermissionCommand(
+        var projection = await InvokeAsync(_owner.ExecutePermissionCommandAsync, new AgentPermissionCommand(
                 AgentPermissionCommandKind.DeleteOverride,
                 ActionId: actionId,
                 BoundaryId: boundaryId), cancellationToken)

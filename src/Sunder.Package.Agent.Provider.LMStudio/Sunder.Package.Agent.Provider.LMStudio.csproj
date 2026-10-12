@@ -14,12 +14,12 @@
     <PackageReference Include="Microsoft.Extensions.AI.Abstractions" />
     <PackageReference Include="Avalonia" />
     <PackageReference Include="CommunityToolkit.Mvvm" />
-    <_ProviderDomainSource Include="@(SunderAgentProviderRuntimeSource);@(SunderAgentProviderAppSource)" />
-    <Compile Include="@(_ProviderDomainSource->Distinct())" LinkBase="Domain" />
+    <Compile Include="@(SunderAgentProviderSupportSource)" LinkBase="Domain" />
   </ItemGroup>
 
   <ItemGroup>
     <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderChatResponseAggregator.cs" Link="Provider.Shared\ProviderChatResponseAggregator.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderChatStream.cs;..\Sunder.Package.Agent.Provider.Shared\ProviderChatValues.cs" LinkBase="Provider.Shared" />
     <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderConfigurationSections.cs" Link="Provider.Shared\ProviderConfigurationSections.cs" />
     <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderContextWindowFailureClassifier.cs" Link="Provider.Shared\ProviderContextWindowFailureClassifier.cs" />
     <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderCredentialAccessor.cs" Link="Provider.Shared\ProviderCredentialAccessor.cs" />

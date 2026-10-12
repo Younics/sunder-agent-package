@@ -7,6 +7,27 @@ namespace Sunder.Package.Agent.Tests;
 
 public sealed partial class AgentCompatibilityCandidateTestsRpcMigrationBaseline
 {
+    [Theory]
+    [InlineData("src/Sunder.Package.Agent/Runtime/AgentAppRuntimeGateway.cs")]
+    [InlineData("src/Sunder.Package.Agent/Runtime/AgentOwnerRuntimeProvider.cs")]
+    [InlineData("src/Sunder.Package.Agent/Services/AgentProfileService.cs")]
+    [InlineData("src/Sunder.Package.Agent/Services/AgentRuntimeCatalog.cs")]
+    [InlineData("src/Sunder.Package.Agent/Services/AgentRunControlService.cs")]
+    [InlineData("src/Sunder.Package.Agent/Services/AgentWorkspaceExecutionResolver.cs")]
+    [InlineData("src/Sunder.Package.Agent/Services/AgentRunCoordinator.cs")]
+    [InlineData("src/Sunder.Package.Agent.Provider.Anthropic/App/AnthropicSettingsViewModel.cs")]
+    [InlineData("src/Sunder.Package.Agent.Provider.Gemini/App/GeminiSettingsViewModel.cs")]
+    [InlineData("src/Sunder.Package.Agent.Provider.LMStudio/App/LMStudioSettingsViewModel.cs")]
+    public void OrdinarySourceHistory_RejectsUnreviewedChangesBeforeReconstructingHistory(string relative)
+    {
+        var root = AgentPackageRepositoryInventory.RepositoryRoot.FullName;
+        var path = Path.Combine(root, relative);
+        var current = AgentSourceMigrationProjectChanges.ReadNormalizedProjectText(path);
+        Assert.NotEqual(current, AgentSourceMigrationProjectChanges.BeforeOrdinaryServices(root, path, current));
+        Assert.ThrowsAny<XunitException>(() => AgentSourceMigrationProjectChanges.BeforeOrdinaryServices(root, path,
+            current + "\n// Unreviewed source drift must not disappear behind historical reconstruction.\n"));
+    }
+
     [Fact]
     public void RetirementHistory_ReconcilesAll57ProjectsWithCurrentRoleTopology()
     {

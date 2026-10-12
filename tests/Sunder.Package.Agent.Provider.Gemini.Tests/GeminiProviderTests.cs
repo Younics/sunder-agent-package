@@ -1,14 +1,13 @@
 extern alias GeminiApp;
 
-using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
 using Sunder.Package.Agent.Provider.Gemini;
 using Sunder.Package.Agent.Provider.Gemini.Rpc;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Package.Agent.Provider.TestSupport;
 using Xunit;
 using GeminiSettingsViewModel = GeminiApp::Sunder.Package.Agent.Provider.Gemini.GeminiSettingsViewModel;
-using IProviderCredentialOwnerClient = GeminiApp::Sunder.Package.Agent.Provider.Shared.IProviderCredentialOwnerClient;
-using ProviderCredentialSnapshot = GeminiApp::Sunder.Package.Agent.Provider.Shared.ProviderCredentialSnapshot;
+using ICredentialSettingsService = GeminiApp::Sunder.Generated.Packages.Sunder_Package_Agent_Provider_Gemini_Services.ICredentialSettingsService;
 
 namespace Sunder.Package.Agent.Provider.Gemini.Tests;
 
@@ -113,7 +112,7 @@ public sealed class GeminiProviderTests
             settings.UtilityModelSettings.SelectedUtilityModel?.ModelId);
         Assert.Equal(
             GeminiProviderConfiguration.DefaultUtilityModelId,
-            await new GeminiAgentProvider(context).ResolveUtilityModelIdAsync());
+            await new GeminiAgentProvider(context).ResolveUtilityModelAsync());
     }
 
     [Fact]
@@ -121,7 +120,7 @@ public sealed class GeminiProviderTests
     {
         var models = await new GeminiAgentProvider(
             new ProviderTestPackageContext("sunder.package.agent.provider.gemini"))
-            .GetAvailableModelsAsync();
+            .ListModelsAsync();
 
         Assert.NotEmpty(models.Single(model => model.ModelId == "gemini/gemini-2.5-pro").Variants ?? []);
         Assert.NotEmpty(models.Single(model => model.ModelId == "gemini/gemini-3-flash-preview").Variants ?? []);
@@ -130,31 +129,22 @@ public sealed class GeminiProviderTests
     }
 
     private sealed class CredentialOwnerClientFake(ProviderCredentialAccessor credentials)
-        : IProviderCredentialOwnerClient
+        : ICredentialSettingsService
     {
         private readonly CredentialSettingsService _provider = new(credentials);
 
-        public async ValueTask<ProviderCredentialSnapshot> GetStatusAsync(
+        public ValueTask<bool> GetStatusAsync(
             CancellationToken cancellationToken = default)
-            => ToSnapshot(await _provider.QueryAsync(
-                new CredentialQuery(),
-                cancellationToken));
+            => _provider.GetStatusAsync(cancellationToken);
 
-        public async ValueTask<ProviderCredentialSnapshot> SetAsync(
+        public ValueTask<bool> SetAsync(
             string credential,
             CancellationToken cancellationToken = default)
-            => ToSnapshot(await _provider.CommandAsync(
-                new CredentialCommand { Kind = CredentialOperation.Set, Credential = new(new() { Value = credential }) },
-                cancellationToken));
+            => _provider.SetAsync(credential, cancellationToken);
 
-        public async ValueTask<ProviderCredentialSnapshot> ClearAsync(
+        public ValueTask<bool> ClearAsync(
             CancellationToken cancellationToken = default)
-            => ToSnapshot(await _provider.CommandAsync(
-                new CredentialCommand { Kind = CredentialOperation.Clear },
-                cancellationToken));
-
-        private static ProviderCredentialSnapshot ToSnapshot(CredentialSnapshot snapshot)
-            => new(snapshot.HasStoredCredential);
+            => _provider.ClearAsync(cancellationToken);
     }
 
 }

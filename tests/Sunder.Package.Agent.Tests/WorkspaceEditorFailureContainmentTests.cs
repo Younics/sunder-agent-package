@@ -4,6 +4,7 @@ using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using AgentApp::Sunder.Package.Agent.PackageViews;
+using AgentAppServiceIdentity = AgentApp::Sunder.Package.Agent.Contracts.Models.AgentServiceIdentity;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
@@ -30,7 +31,7 @@ public sealed class WorkspaceEditorFailureContainmentTests
         Assert.Equal("Healthy settings", Assert.Single(host.ViewModel.EditorSections, static section => !section.IsError).Title);
         Assert.Contains("runtime.editor.discovery", error.DiagnosticText, StringComparison.Ordinal);
         Assert.DoesNotContain("sensitive runtime detail", error.ErrorMessage, StringComparison.Ordinal);
-        Assert.Equal(2, host.Catalog.AppCatalog.GetServiceReferences(RegressionTestAppBindings.WorkspaceEditors).Count);
+        Assert.Equal(2, (await host.Catalog.WorkspaceEditors.ListAsync()).Providers.Count);
 
         error.RetryCommand!.Execute(null);
         await host.ViewModel.CurrentEditorSectionRetry.WaitAsync(TimeSpan.FromSeconds(2));
@@ -169,7 +170,7 @@ public sealed class WorkspaceEditorFailureContainmentTests
         Assert.Equal(1, host.Catalog.InvariantViolationReportCount);
         Assert.Equal(
             "healthy.package",
-            Assert.Single(host.Catalog.AppCatalog.GetServiceReferences(RegressionTestAppBindings.WorkspaceEditors)).PackageId);
+            Assert.Single((await host.Catalog.WorkspaceEditors.ListAsync()).Providers).PackageId);
     }
 
     [Fact]
@@ -217,22 +218,18 @@ public sealed class WorkspaceEditorFailureContainmentTests
         using var catalog = new RegressionTestExtensionCatalog();
         var contributor = new ScriptedWorkspaceEditorContributor("local", "leased", "Leased");
         catalog.AddProvider(RegressionTestAppBindings.WorkspaceEditors, contributor, "leased.package");
-        var reference = catalog.GetRequiredReference(RegressionTestAppBindings.WorkspaceEditors);
+        var provider = await catalog.GetRequiredProviderAsync(catalog.WorkspaceEditors);
         var now = DateTimeOffset.UtcNow;
         var context = new AgentWorkspaceEditorContext(
             new AgentApp::Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord("workspace", "Workspace", null, now, now),
             "local",
             "binding");
 
-        var result = await AgentWorkspaceEditorInvocation.InvokeAsync(
-            reference,
-            catalog.AppCatalog,
+        var result = await AgentWorkspaceEditorInvocation.ReadSectionsAsync(
+            provider,
+            context,
             AgentEditorInvocationOperation.Discovery,
-            CancellationToken.None,
-            (leasedContributor, token) => AgentWorkspaceEditorInvocation.GetSectionsSnapshotAsync(
-                leasedContributor,
-                context,
-                token));
+            CancellationToken.None);
 
         Assert.True(result.Success);
         Assert.Equal("leased", Assert.Single(result.Result).SectionId);
@@ -403,11 +400,11 @@ public sealed class WorkspaceEditorFailureContainmentTests
                 var secondWorkspace = createSecondWorkspace
                     ? workspaceService.CreateWorkspace("Second workspace")
                     : null;
-                var targetService = new AgentExecutionTargetService(catalog);
+                var targetService = new AgentExecutionTargetService(catalog.ExecutionTargets);
                 var viewModel = new AgentWorkspacesViewModel(
                     AgentRoleBoundary.As<AgentApp::Sunder.Package.Agent.Runtime.IAgentWorkspaceGateway>(workspaceService),
                     AgentRoleBoundary.As<AgentApp::Sunder.Package.Agent.Runtime.IAgentExecutionGateway>(targetService),
-                    catalog.AppCatalog);
+                    catalog.WorkspaceEditors);
                 await viewModel.InitializeAsync();
                 if (waitForEditor)
                 {
@@ -440,12 +437,24 @@ public sealed class WorkspaceEditorFailureContainmentTests
 
         public string ContributorId => sectionId + "-contributor";
 
+        public ValueTask<AgentAppServiceIdentity> DescribeAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult<AgentAppServiceIdentity>(new AgentAppServiceIdentity(ContributorId, ContributorId));
+        }
+
         public int DiscoveryCount { get; private set; }
 
         public int SaveCount { get; private set; }
 
         public bool CanEdit(AgentWorkspaceEditorContext context)
             => string.Equals(context.TargetId, targetId, StringComparison.OrdinalIgnoreCase);
+
+        public ValueTask<bool> CanEditAsync(AgentWorkspaceEditorContext context, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult(CanEdit(context));
+        }
 
         public void EnqueueDiscovery(
             Func<CancellationToken, ValueTask<IReadOnlyList<AgentEditorSection>>> discovery)
@@ -482,11 +491,23 @@ public sealed class WorkspaceEditorFailureContainmentTests
     {
         public string ContributorId => "retiring-contributor";
 
+        public ValueTask<AgentAppServiceIdentity> DescribeAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult<AgentAppServiceIdentity>(new AgentAppServiceIdentity(ContributorId, ContributorId));
+        }
+
         public TaskCompletionSource Started { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public bool CanEdit(AgentWorkspaceEditorContext context)
             => string.Equals(context.TargetId, targetId, StringComparison.OrdinalIgnoreCase);
+
+        public ValueTask<bool> CanEditAsync(AgentWorkspaceEditorContext context, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult(CanEdit(context));
+        }
 
         public async ValueTask<IReadOnlyList<AgentEditorSection>> GetSectionsAsync(
             AgentWorkspaceEditorContext context,

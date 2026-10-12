@@ -5,17 +5,19 @@ using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
 using Xunit;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.Tests;
 
 public sealed partial class AgentSourceArtifactMigrationTests
 {
-    private sealed class BuilderArtifactResolver(AgentWorkspaceRecord workspace, AgentWorkspaceBindingRecord binding, AgentExecutionTargetDescriptor target, AgentExecutionScopeDescriptor scope)
+    private sealed class BuilderArtifactResolver(AgentWorkspaceRecord workspace, AgentWorkspaceBindingRecord binding, AgentExecutionTargetDescriptor target,
+        AgentExecutionScopeDescriptor scope, ServiceReference<AgentServices.IExecutionTargetService> executionTarget)
         : IAgentWorkspaceExecutionResolver
     {
-        internal AgentRpcProviderHandle Handle = null!;
-        internal Func<AgentRpcProviderHandle, AgentRpcProviderHandle>? Transform;
+        internal ServiceReference<AgentServices.IExecutionTargetService> ExecutionTarget = executionTarget;
         internal int CatalogCount = 1;
         internal FilesCallGate? BlockList;
         public async ValueTask<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesAsync(CancellationToken token = default)
@@ -32,8 +34,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         public ValueTask<AgentWorkspaceExecutionResolution> ResolveAsync(string workspaceId, CancellationToken token = default)
         {
             token.ThrowIfCancellationRequested(); Assert.Equal(workspace.WorkspaceId, workspaceId);
-            return ValueTask.FromResult(new AgentWorkspaceExecutionResolution(workspace, binding, target, scope, null!)
-            { ExecutionTargetHandle = Transform?.Invoke(Handle) ?? Handle });
+            return ValueTask.FromResult(new AgentWorkspaceExecutionResolution(workspace, binding, target, scope, ExecutionTarget));
         }
     }
 
@@ -79,12 +80,11 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 if (FailBuild && args[0] == "build") { exit = 1; output = "Controlled build failed."; }
                 else output = args[0] == "build" ? "Build succeeded." : "Restore completed.";
             }
-            else if (args.SequenceEqual(new[] { "msbuild", "-t:AcceptSunderContracts", "-p:SunderContractKey=sample", "-p:SunderContractNextVersion=2.0.0" }))
-            { Assert.True(Directory.Exists(process.WorkingDirectory)); output = "Initial contract accepted."; }
             else if (args.SequenceEqual(new[] { "msbuild", "-t:CheckSunderContracts;FreezeSunderContracts;PackSunderPackage", "-p:Configuration=Release" }))
             { Assert.True(Directory.Exists(process.WorkingDirectory)); output = "Package archive created."; }
             else throw new InvalidOperationException("Unexpected Builder process: " + string.Join(" ", args));
-            return JsonSerializer.SerializeToElement(new AgentShellCommandResult(exit, output), MemoryProviderJson);
+            return JsonSerializer.SerializeToElement(new AgentShellCommandResult(exit, output),
+                new JsonSerializerOptions(MemoryProviderJson) { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.Never });
         }
         public IAsyncEnumerable<JsonElement> InvokeServerStreamAsync(SunderRpcInvocationContext context, string serviceId, string methodId, JsonElement request, CancellationToken token = default)
             => inner.InvokeServerStreamAsync(context, serviceId, methodId, request, token);

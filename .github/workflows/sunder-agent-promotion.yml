@@ -161,7 +161,9 @@ jobs:
           test "$GITHUB_REF" = refs/heads/main
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test "$(git -C ../release-source rev-parse HEAD)" = "$SOURCE_SHA"
-          bash -n scripts/*.sh scripts/release/*.sh scripts/compatibility/*.sh
+          for script in scripts/dev/*.sh scripts/release/*.sh scripts/test/*.sh scripts/test/release/*.sh scripts/compatibility/*.sh; do
+            bash -n "$script"
+          done
 
           acceptance="$RUNNER_TEMP/agent-acceptance/agent-family-acceptance.json"
           test -f "$acceptance"

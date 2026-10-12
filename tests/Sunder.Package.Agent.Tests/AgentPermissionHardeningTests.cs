@@ -9,12 +9,82 @@ using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Services.BehaviorLoops;
 using Sunder.Package.Agent.Storage;
+using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
 
 public sealed class AgentPermissionHardeningTests
 {
+    [Fact]
+    public async Task PermissionDefaults_DoNotBlockPolicyEditsAndUseTheLatestOverride()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        await using var store = new AgentLocalStore(scope.Context);
+        var surface = new DeferredPermissionSurface();
+        await using var surfaces = new FakeServiceCatalog<AgentServices.IPermissionSurfaceService>(
+            CurrentPublicRpcDescriptors.Get(RegressionTestBindings.PermissionSurfaces));
+        surfaces.Add(surface);
+        var permissions = new AgentPermissionService(store, surfaces);
+        var evaluation = Task.Run(() => permissions.EvaluateAsync(
+            null,
+            new AgentPermissionRequest("test.mutate", "test.boundary", "Mutation")));
+        try
+        {
+            await surface.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Task.Run(() => permissions.SaveOverride(
+                "test.mutate", "test.boundary", AgentPermissionDecision.Deny))
+                .WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.False(evaluation.IsCompleted);
+        }
+        finally
+        {
+            surface.Release.TrySetResult();
+            await evaluation.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+
+        var result = await evaluation.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(AgentPermissionDecision.Deny, result.Decision);
+        Assert.Equal(AgentPermissionDecisionSource.ConfiguredOverride, result.Source);
+    }
+
+    [Fact]
+    public async Task PermissionDefaults_CancellationDoesNotBecomeAnUnknownBoundaryDecision()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        await using var store = new AgentLocalStore(scope.Context);
+        using var cancellation = new CancellationTokenSource();
+        var surface = new DeferredPermissionSurface();
+        await using var surfaces = new FakeServiceCatalog<AgentServices.IPermissionSurfaceService>(
+            CurrentPublicRpcDescriptors.Get(RegressionTestBindings.PermissionSurfaces));
+        surfaces.Add(surface);
+        var permissions = new AgentPermissionService(store, surfaces);
+        var evaluation = Task.Run(() => permissions.EvaluateAsync(
+            null,
+            new AgentPermissionRequest("test.mutate", "test.boundary", "Mutation"),
+            cancellation.Token));
+        try
+        {
+            await surface.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await cancellation.CancelAsync();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                () => evaluation.WaitAsync(TimeSpan.FromSeconds(5)));
+        }
+        finally
+        {
+            surface.Release.TrySetResult();
+            try
+            {
+                await evaluation.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+            {
+            }
+        }
+    }
+
     [Theory]
     [InlineData("{\"path\":\"one\",\"path\":\"two\"}")]
     [InlineData("{\"path\":\"one\",\"PATH\":\"two\"}")]
@@ -405,7 +475,7 @@ public sealed class AgentPermissionHardeningTests
         await using var runtime = await PermissionHardeningRuntime.CreateAsync(source);
         var pending = await runtime.CreatePendingRequestAsync();
         Assert.Single(pending.ResourceClaims);
-        runtime.ForgetPreparedInvocation(pending);
+        await runtime.ForgetPreparedInvocation(pending);
 
         var checkpoint = await runtime.ResumeCoordinator.ApproveAsync(
             runtime.Session.SessionId,
@@ -428,7 +498,7 @@ public sealed class AgentPermissionHardeningTests
         await using var runtime = await PermissionHardeningRuntime.CreateAsync(source);
         var pending = await runtime.CreatePendingRequestAsync();
         Assert.Single(pending.ResourceClaims);
-        runtime.ForgetPreparedInvocation(pending);
+        await runtime.ForgetPreparedInvocation(pending);
 
         await runtime.ResumeCoordinator.ApproveAsync(
             runtime.Session.SessionId,
@@ -640,13 +710,31 @@ public sealed class AgentPermissionHardeningTests
         await using var runtime = await PermissionHardeningRuntime.CreateAsync(
             new MutationToolSource("mutate"));
 
-        var evaluation = runtime.PermissionService.Evaluate(
+        var evaluation = await runtime.PermissionService.EvaluateAsync(
             runtime.Session.SessionId,
             new AgentPermissionRequest(string.Empty, AgentPermissionBoundaryIds.Unknown, "Malformed request"));
 
         Assert.Equal(AgentPermissionDecision.Deny, evaluation.Decision);
         Assert.Equal(AgentPermissionDecisionSource.UnknownBoundary, evaluation.Source);
     }
+
+    private sealed class DeferredPermissionSurface : AgentServices.IPermissionSurfaceService
+    {
+        internal TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async ValueTask<AgentPermissionSurfaceDescriptor> DescribeAsync(CancellationToken cancellationToken = default)
+        {
+            Started.TrySetResult();
+            await Release.Task.WaitAsync(cancellationToken);
+            return new AgentPermissionSurfaceDescriptor("test.permissions", "Test permissions",
+            [
+                new("test.mutate", "Mutate", "Controlled default",
+                    [new("test.boundary", "Boundary", "Controlled boundary", AgentPermissionDecision.Allow)]),
+            ]);
+        }
+    }
+
 }
 
 internal sealed class PermissionHardeningRuntime : IAsyncDisposable
@@ -734,16 +822,17 @@ internal sealed class PermissionHardeningRuntime : IAsyncDisposable
                     PermissionHardeningExecutionTarget.SecondaryTargetId));
 
             var store = new AgentLocalStore(scope.Context);
-            var sessionService = new AgentSessionService(store, catalog);
-            var workspaceService = new AgentWorkspaceService(store, catalog, sessionService);
-            var permissionService = new AgentPermissionService(store, catalog);
-            var executionTargetService = new AgentExecutionTargetService(catalog);
+            var sessionService = new AgentSessionService(store, catalog.SessionCleaners);
+            var workspaceService = new AgentWorkspaceService(store, catalog.SessionCleaners, sessionService, catalog.WorkspacePathMigrators);
+            var permissionService = new AgentPermissionService(store, catalog.PermissionSurfaces);
+            var executionTargetService = new AgentExecutionTargetService(catalog.ExecutionTargets);
             var toolService = new AgentToolService(
                 sessionService,
                 workspaceService,
                 executionTargetService,
-                catalog);
-            var profileService = new AgentProfileService(store, toolService, catalog, catalog.BehaviorLoops);
+                catalog.ToolSources,
+                catalog.ObservedToolExecutions);
+            var profileService = catalog.CreateProfileService(store, toolService);
             catalog.AddRuntimeCatalog(new AgentRuntimeCatalog(sessionService, profileService, workspaceService));
 
             var profile = await profileService.CreateProfileAsync("Permission hardening profile");
@@ -787,10 +876,11 @@ internal sealed class PermissionHardeningRuntime : IAsyncDisposable
                 AgentMessageRole.User,
                 "Run the tool");
 
-            var memoryCoordinator = new AgentMemoryCoordinator(sessionService, catalog);
+            var memoryCoordinator = new AgentMemoryCoordinator(sessionService, catalog.PromptContextContributors,
+                new AgentLifecycleDispatcher(store, catalog.DurableLifecycleObservers));
             var runEventLogger = new AgentRunEventLogger(scope.Context);
-            var activeRunRegistry = new AgentActiveRunRegistry();
-            var promptComposer = new AgentSystemPromptComposer(catalog);
+            var activeRunRegistry = catalog.ActiveRuns;
+            var promptComposer = new AgentSystemPromptComposer(catalog.SystemPromptContributors);
             var defaultBehaviorLoop = new DefaultAgentBehaviorLoop(promptComposer);
             var hostFactory = new AgentBehaviorLoopHostFactory(
                 sessionService,
@@ -800,12 +890,12 @@ internal sealed class PermissionHardeningRuntime : IAsyncDisposable
                 runEventLogger,
                 activeRunRegistry,
                 defaultBehaviorLoop);
-            catalog.AddBehaviorLoop(defaultBehaviorLoop);
             var behaviorLoopResolver = new AgentBehaviorLoopResolver(
-                catalog,
                 catalog.BehaviorLoops,
+                catalog.RunControls,
+                activeRunRegistry,
                 defaultBehaviorLoop);
-            var providerResolver = new AgentRunProviderResolver(profileService, catalog);
+            var providerResolver = new AgentRunProviderResolver(profileService, catalog.ChatProviders);
             var childRunSessionService = new AgentChildRunSessionService(sessionService, profileService);
             var parentRunContinuationService = new AgentParentRunContinuationService(
                 sessionService,
@@ -834,7 +924,7 @@ internal sealed class PermissionHardeningRuntime : IAsyncDisposable
                 activeRunRegistry,
                 profileService);
             var host = hostFactory.Create(
-                provider,
+                await providerResolver.ResolveChatProviderAsync(profile),
                 session,
                 profile,
                 workspace,
@@ -876,8 +966,8 @@ internal sealed class PermissionHardeningRuntime : IAsyncDisposable
         return Assert.Single(PermissionService.ListPendingRequests(Session.SessionId));
     }
 
-    public void ForgetPreparedInvocation(AgentPendingPermissionRequestRecord pending)
-        => ToolService.ReleasePreparedInvocation(
+    public ValueTask ForgetPreparedInvocation(AgentPendingPermissionRequestRecord pending)
+        => ToolService.ReleasePreparedInvocationAsync(
             pending.ToolExecutionId
             ?? throw new InvalidOperationException("The pending request has no tool execution."));
 

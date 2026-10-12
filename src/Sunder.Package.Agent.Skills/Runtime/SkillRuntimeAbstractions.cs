@@ -17,14 +17,3 @@ internal interface ISkillManagementGateway
         CancellationToken cancellationToken = default);
     Task DeleteAsync(string skillId, CancellationToken cancellationToken = default);
 }
-
-[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
-internal interface ISkillOwnerClient
-{
-    ValueTask<SkillProjection> QueryAsync(CancellationToken cancellationToken = default);
-    ValueTask<SkillProjection> CommandAsync(
-        SkillCommand command,
-        CancellationToken cancellationToken = default);
-    IAsyncEnumerable<SkillChanged> SubscribeChangesAsync(
-        CancellationToken cancellationToken = default);
-}

@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Sunder.Package.Agent.Contracts.Models;
 
 /// <summary>
@@ -12,23 +14,23 @@ namespace Sunder.Package.Agent.Contracts.Models;
 public enum AgentRunStatus
 {
     /// <summary>No provider execution is active for the run revision, typically before its running transition.</summary>
-    Idle = 0,
+    [JsonStringEnumMemberName("idle")] Idle = 0,
 
     /// <summary>The run may prepare prompts, call a provider, stream transcript content, and invoke tools.</summary>
-    Running = 1,
+    [JsonStringEnumMemberName("running")] Running = 1,
 
     /// <summary>Execution ended without normal completion because it was canceled, superseded, recovered, or transiently disrupted.</summary>
-    Interrupted = 2,
+    [JsonStringEnumMemberName("interrupted")] Interrupted = 2,
 
     /// <summary>Execution ended in response to an explicit stop or deletion operation.</summary>
-    Stopped = 3,
+    [JsonStringEnumMemberName("stopped")] Stopped = 3,
 
     /// <summary>Execution reached its intended successful terminal result.</summary>
-    Completed = 4,
+    [JsonStringEnumMemberName("completed")] Completed = 4,
 
     /// <summary>Execution reached a terminal error; the checkpoint summary may contain diagnostic detail.</summary>
-    Failed = 5,
+    [JsonStringEnumMemberName("failed")] Failed = 5,
 
     /// <summary>Execution is durably suspended pending a user permission decision and may resume within the same run revision.</summary>
-    WaitingForApproval = 6,
+    [JsonStringEnumMemberName("waiting-for-approval")] WaitingForApproval = 6,
 }

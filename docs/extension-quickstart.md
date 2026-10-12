@@ -1,107 +1,123 @@
 # Extension Quickstart
 
-> **Pre-cutover guide:** this currently exercises the descriptor-first migration
-> tree. Do not use the Protocol package/project shape as a final V1 template;
-> implementation-first generation replaces it before public release. See
-> [`../compatibility/README.md`](../compatibility/README.md).
+Create one headless package that cleans up its own session notes when Agent deletes
+a session. The example uses the current generated service/model surface; select a
+matching reviewed Agent candidate. The natural-service surface is implemented and
+qualified in multiple local checkpoints, including completed coherent Main/artifact
+integration. Release qualification remains separate. See [ordinary services](ordinary-service-refactor.md).
 
-This quickstart creates a headless Runtime package with one fixed, read-only Agent tool.
+## 1. Create One Package Project
 
-## 1. Create The Project
-
-Start with `dotnet new sunder-package`. The template creates a root, unsuffixed canonical Worker/package project with `SunderPackagePrimaryProject=true`, a non-packable package-local Protocol project, and an optional App project. The App is selected through `SunderPackageAppProject` as a build-only input. Add the Agent Protocol reference and provider declaration to the canonical Worker project:
-
-```xml
-<ItemGroup>
-  <PackageReference Include="Sunder.Sdk.Worker" Version="[1.1.0,1.2.0)" />
-  <PackageReference Include="Sunder.Package.Build" Version="[1.1.0,1.2.0)" PrivateAssets="all" />
-  <PackageReference Include="Sunder.Package.Agent.Protocol" Version="[2.0.0,3.0.0)" />
-</ItemGroup>
-
-<ItemGroup>
-  <SunderPackageTarget Include="runtime/$(RuntimeIdentifier)"
-                       Role="runtime"
-                       Rid="$(RuntimeIdentifier)"
-                       Kind="worker" />
-  <SunderRpcProvider Include="acme.tools"
-                     ContractId="sunder.agent.tool.source"
-                     ContractVersion="1.0.0"
-                     Role="runtime" />
-</ItemGroup>
+```sh
+dotnet new sunder-package --name Acme.SessionNotes --packageId com.acme.sessionnotes --packageName "Acme Session Notes" --output Acme.SessionNotes
+dotnet restore Acme.SessionNotes/Acme.SessionNotes.csproj
 ```
 
-`Sunder.Package.Agent.Protocol` supplies the local descriptors required by `Sunder.Package.Build`; descriptor validation never depends on another installed package.
+The template creates one authored Library project with `SunderPackageProject=true`.
+Keep its coordinated SDK references and package metadata. Sunder generates the
+Worker and any App role from this source. New owned services are private by default.
 
-The NuGet package and assembly identity are both `Sunder.Package.Agent.Protocol`. Inside this repository, the source project path and some stable public namespaces retain `Sunder.Package.Agent.Contracts`; those names organize package-local implementation interfaces and existing API types inside the Protocol artifact. They are not a separate NuGet package and do not create shared CLR identity between Sunder packages. Generated wire types use `Sunder.Package.Agent.Protocol.Generated.*`.
+## 2. Select The Extension Contract
 
-## 2. Declare Runtime Compatibility
+Before adding the provider source, select `sunder.agent.session.cleaner` from an
+explicit local Agent archive:
 
-```csharp
-using Sunder.Sdk.Packaging;
-
-[assembly: SunderPackage(
-    Id = "com.acme.sunder.agent.tools",
-    Name = "Acme Agent Tools",
-    Summary = "Adds Acme tools to Sunder Agent.")]
-
-[assembly: SunderPackageDependency(
-    PackageId = "sunder.package.agent",
-    VersionRange = ">=2.0.0 <3.0.0")]
+```sh
+dotnet msbuild Acme.SessionNotes/Acme.SessionNotes.csproj -t:ImplementSunderPackageApi -p:SunderPackageId=sunder.package.agent -p:SunderContractId=sunder.agent.session.cleaner -p:SunderPackageVersionRange=">=2.0.0 <3.0.0" -p:SunderPackageCandidatePath=/path/to/agent.sunderpkg
 ```
 
-Do not maintain a source `sunder-package.json`; the build generates it from compiled metadata and MSBuild RPC items.
+Retain the tool-written `sunder-contracts.lock.json`. It selects exact descriptors
+and model-projection metadata and derives the Agent runtime dependency. A published
+selection uses the explicitly chosen `SunderRegistryOrigin` instead of a candidate.
+Provider selection grants implementation intent, not consumer access to other APIs.
 
-## 3. Run The Provider Worker
+## 3. Implement The Business Operation
 
-Create the implementation and return its activation-owned RPC handler from the canonical worker entry point:
+Add `Services/SessionNotesCleaner.cs`:
 
 ```csharp
-using Sunder.Package.Agent.Contracts;
-using Sunder.Package.Agent.Protocol;
-using Sunder.Sdk.Rpc;
-using Sunder.Sdk.Worker;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Services;
 
-await SunderWorker.RunAsync(_ =>
+namespace Acme.SessionNotes;
+
+[SunderServiceProvider(typeof(ISessionCleanerService), ProviderId = "acme.session.notes.cleaner")]
+public sealed partial class SessionNotesCleaner(IPackageContext context) : ISessionCleanerService
 {
-    var source = new AgentStaticToolSourceAdapter(
-        "acme-tools",
-        "Acme tools",
-        "acme",
-        [new CurrentUtcTimeTool()]);
-    var descriptor = AgentRpcContractDescriptors.Get(AgentRpcContractIds.ToolSource);
-    return new SunderWorkerOptions(
-    [
-        new SunderWorkerProviderRegistration(
-            "acme.tools",
-            descriptor.ContractId,
-            descriptor.Version,
-            descriptor.Sha256,
-            descriptor.AbiSha256 ?? throw new InvalidDataException("Agent tool RPC is missing its ABI hash."),
-            AgentToolSourceRpc.CreateHandler(source)),
-    ]);
-});
+    public ValueTask<AgentServiceIdentity> DescribeAsync(CancellationToken token = default)
+    {
+        token.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(new AgentServiceIdentity
+        {
+            Id = "acme.session.notes.cleaner",
+            DisplayName = "Acme session notes",
+        });
+    }
+
+    public async ValueTask DeleteSessionAsync(Guid sessionId, CancellationToken token = default)
+    {
+        await context.Storage.State.DeleteValueAsync($"session.notes.{sessionId:N}", token);
+    }
+}
 ```
 
-The provider id must match the `SunderRpcProvider` item. The Host stamps ownership and caller identity, validates every request and response against `tool-source.rpc.json`, and retires the exact endpoint when the package activation ends. The local implementation interface and adapter never cross the package boundary.
+Use the same key when storing a session's notes. Deletion is package-local and
+idempotent, so a replay can safely repeat it. Core generates provider registration,
+dispatch and composition from the attribute and imported interface. The example's
+`AgentServiceIdentity` is a generated model, initialized through its properties.
+
+The exact namespaces derive from `sunder.package.agent`, not an import alias.
+Agent authors its business records once; extensions import Models rather than
+copying records, writing serializers or maintaining transport wrappers.
+
+One implementation may provide several contracts: repeat `SunderServiceProvider`
+with distinct provider IDs and implement each generated interface. Use explicit
+interface methods for colliding names, as in
+[SkillsFeature](../src/Sunder.Package.Agent.Skills/Services/SkillsFeature.cs).
 
 ## 4. Build And Inspect
 
-```powershell
-dotnet restore
-dotnet build
-dotnet msbuild path/to/Acme.Package.csproj -t:PackSunderPackage -p:Configuration=Release
+```sh
+dotnet build Acme.SessionNotes/Acme.SessionNotes.csproj --no-restore
+dotnet msbuild Acme.SessionNotes/Acme.SessionNotes.csproj -t:PackSunderPackage -p:Configuration=Release
 ```
 
-A normal build emits the exact current-RID Worker leaf and composes the canonical non-RID `bin/<configuration>/<tfm>/sunder-dev`. `PackSunderPackage` runs directly on the same primary Worker project, builds all configured RIDs, includes the optional App, and emits one universal versioned `.sunderpkg`. Confirm the generated manifest contains the Agent 2.x runtime dependency, the `sunder.agent.tool.source` contract bundle, and the `acme.tools` Runtime provider.
+Build composes the current-RID `bin/Debug/net10.0/sunder-dev`; Pack produces one
+universal `.sunderpkg` for the declared RIDs. Inspect the generated Agent dependency,
+session-cleaner bundle and `acme.session.notes.cleaner` Runtime provider. Private-only
+owned source needs no Accept/Freeze. Defining a new public API requires its own
+explicit review; implementing a selected Agent API does not take ownership of it.
 
-## 5. Choose Another Contract
+## 5. Consume Services And Resources
 
-- `sunder.agent.chat.provider` and `sunder.agent.embedding.provider`: model backends.
-- `sunder.agent.tool.source`: fixed or dynamic tools.
-- `sunder.agent.execution.target`: shell, file, and resource execution.
-- `sunder.agent.permission.surface`: user-configurable actions and boundaries.
-- `sunder.agent.system.prompt.contributor`: trusted package-owned instructions.
-- `sunder.agent.prompt.context.contributor`: recalled or external reference context.
-- `sunder.agent.durable.lifecycle.observer`: replayable package-local effects.
+`AddSunderPackageApi` selects the complete public API for ordinary consumption.
+Inject `Sunder.Generated.Packages.Sunder_Package_Agent_Services.IPackageApi` for
+selected-Agent calls. For multiple implementations, inject
+`IServiceProviders<TService>`, select an authorized entry and call `provider.Service`.
+Pass `provider.Reference` when a business value needs a typed exact-provider reference.
+Entries are borrowed; generated DI owns transport observation and cleanup.
 
-Read the [RPC contract catalog](extension-points.md) before publishing a base-Agent-owned service port.
+Use `SunderContent` for content and dispose it and its opened streams normally.
+Transient authority stays `[JsonIgnore]`; only an explicit `SunderServiceMember`
+opts a public property into service transfer. Neither a generated type nor a
+reference supplies a use grant. Server context belongs only on genuine
+authenticated-caller policy methods. Longer deadlines are declaration metadata,
+such as `SunderMethod(TimeoutSeconds = 2100)`, subject to Host limits.
+
+Optional reference availability is an explicit business choice: mark a transferred,
+direct nullable reference property with `SunderOptionalServiceReference` to receive
+null on safe exact-provider absence. Nullable syntax alone stays strict; permission,
+malformed metadata and unsafe failures propagate. For narrow imported discovery,
+declare `[SunderRuntimeUse(typeof(IExecutionTargetService), Actions = ["discover"])]`
+on the consuming class after selecting the contract. This grants no invocation.
+Replayable content watches can opt into provider-local
+`CompleteOnResponseContentRetirement = true`, with consumers resnapshotting/resuming.
+Compiled model JSON metadata and empty completion need no authored resolver or Unit.
+
+The Agent package remains 2.0.0; its 19 accepted public contract versions are mixed.
+Use the selected archive's reviewed tuples, not a blanket contract-version override.
+
+See the [contract catalog](extension-points.md), [chat/embedding providers](providers.md)
+and [Core ordinary-service guide](https://github.com/Younics/sunder-core/blob/main/docs/package-development/ORDINARY-SERVICES.md).

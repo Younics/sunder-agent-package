@@ -5,7 +5,8 @@ using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Services;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Notifications;
-using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.PackageViews
 {
@@ -21,15 +22,15 @@ namespace Sunder.Package.Agent.PackageViews
     public partial class AgentWorkspacesView
     {
         [ActivatorUtilitiesConstructor]
-        internal AgentWorkspacesView(AgentAppRuntimeGateway gateway, AgentAppRpcCatalog catalog, IPackageSettingsNavigationService navigation)
-            : this(gateway, gateway, catalog, navigation) { }
+        internal AgentWorkspacesView(AgentAppRuntimeGateway gateway, IServiceProviders<AgentServices.IWorkspaceEditorService> editors, IPackageSettingsNavigationService navigation)
+            : this(gateway, gateway, editors, navigation) { }
     }
 
     public partial class AgentProfilesView
     {
         [ActivatorUtilitiesConstructor]
-        internal AgentProfilesView(AgentAppRuntimeGateway gateway, IPackageSettingsNavigationService navigation)
-            : this((IAgentProfileGateway)gateway, navigation) { }
+        internal AgentProfilesView(AgentServices.IAgentProfileService profiles, AgentAppRuntimeGateway gateway, IPackageSettingsNavigationService navigation)
+            : this(profiles, (IAgentProfileGateway)gateway, navigation) { }
     }
 
     public partial class AgentHistorySearchView
@@ -52,18 +53,7 @@ namespace Sunder.Package.Agent.Runtime
     internal sealed partial class AgentAppRuntimeGateway
     {
         [ActivatorUtilitiesConstructor]
-        internal AgentAppRuntimeGateway(AgentOwnerRpcClient owner) : this((IAgentOwnerClient)owner) { }
-    }
-}
-
-namespace Sunder.Package.Agent.Services
-{
-    // App catalog observation starts with its first consumer, as in the canonical App.
-    internal sealed class AgentAppRpcCatalog(ISunderRpcClient rpc) : AgentRpcCatalog(rpc);
-
-    public sealed partial class AgentToolPresentationService
-    {
-        [ActivatorUtilitiesConstructor]
-        internal AgentToolPresentationService(AgentAppRpcCatalog catalog) : this((AgentRpcCatalog)catalog) { }
+        internal AgentAppRuntimeGateway(AgentServices.IAgentRuntimeService owner, AgentOwnerResources resources)
+            : this(owner, (IAgentOwnerResources)resources) { }
     }
 }

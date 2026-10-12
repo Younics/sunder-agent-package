@@ -5,10 +5,12 @@ using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Sdk.Abstractions;
 using Sunder.Package.Agent.Runtime;
+using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Services;
 
-public sealed class AgentAttachmentService : IAgentSessionDataCleaner, IAgentAttachmentGateway
+[SunderServiceProvider(typeof(Rpc.Public.SessionCleanerService), ProviderId = "agent.attachment.cleaner")]
+public sealed partial class AgentAttachmentService : IAgentSessionDataCleaner, IAgentAttachmentGateway, Rpc.Public.SessionCleanerService
 {
     public const int MaxAttachmentsPerMessage = 10;
     public const long MaxAttachmentBytes = 25 * 1024 * 1024;
@@ -83,6 +85,19 @@ public sealed class AgentAttachmentService : IAgentSessionDataCleaner, IAgentAtt
     }
 
     public string CleanerId => "agent.attachments";
+
+    public ValueTask<AgentServiceIdentity> DescribeAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(new AgentServiceIdentity(CleanerId, CleanerId));
+    }
+
+    public ValueTask DeleteSessionAsync(Guid sessionId, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        DeleteSessionData(sessionId);
+        return ValueTask.CompletedTask;
+    }
 
     public void DeleteSessionData(Guid sessionId)
     {

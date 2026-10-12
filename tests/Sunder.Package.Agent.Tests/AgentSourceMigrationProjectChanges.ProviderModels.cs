@@ -31,7 +31,7 @@ internal static partial class AgentSourceMigrationProjectChanges
     internal static string BeforeProviderChatModels(string path, string text)
     {
         if (!path.Replace('\\', '/').EndsWith("/src/Sunder.Package.Agent.Contracts/Rpc/AgentChatProviderRpcBinding.cs", StringComparison.Ordinal)) return text;
-        var models = File.ReadAllText(Path.Combine(AgentPackageRepositoryInventory.RepositoryRoot.FullName, ProviderChatModelsSource))
+        var models = ReadMigrationSourceText(Path.Combine(AgentPackageRepositoryInventory.RepositoryRoot.FullName, ProviderChatModelsSource))
             .Replace("\r\n", "\n", StringComparison.Ordinal);
         const string header = "using System.Text.Json;\nusing System.Text.Json.Serialization;\nusing Sunder.Package.Agent.Contracts.Models;\nusing Sunder.Sdk.Rpc;\n\nnamespace Sunder.Package.Agent.Protocol;\n\n"
             + "// Package-owned chat values, compiled independently by provider roles. The retained\n"

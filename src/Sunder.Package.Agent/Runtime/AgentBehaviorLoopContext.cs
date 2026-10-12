@@ -34,7 +34,7 @@ public sealed record AgentBehaviorLoopContext(
     AgentWorkspaceRecord? Workspace,
     AgentWorkspaceBindingRecord? ExecutionBinding,
     Guid RunId,
-    long RunRevision,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long RunRevision,
     AgentRunCheckpointRecord RunningCheckpoint,
     DateTimeOffset RunStartedAtUtc,
     string UserMessage,

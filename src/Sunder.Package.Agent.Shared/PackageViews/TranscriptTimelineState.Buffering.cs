@@ -33,15 +33,15 @@ internal sealed partial class TranscriptTimelineState<TRow> where TRow : class
             .GroupBy(turn => turn.TurnId)
             .Select(group => group
                 .OrderByDescending(turn => turn.ContentRevision)
-                .ThenByDescending(turn => turn.UpdatedAtUtc)
+                .ThenByDescending(turn => AgentTranscriptTime.Read(turn.UpdatedAtUtc))
                 .First())
-            .OrderBy(turn => turn.CreatedAtUtc)
+            .OrderBy(turn => AgentTranscriptTime.Read(turn.CreatedAtUtc))
             .ThenBy(turn => turn.TurnId)
             .ToArray();
 
     private static int CompareTurnPosition(AgentTurnRecord left, AgentTurnRecord right)
     {
-        var timestampComparison = left.CreatedAtUtc.CompareTo(right.CreatedAtUtc);
+        var timestampComparison = AgentTranscriptTime.Read(left.CreatedAtUtc).CompareTo(AgentTranscriptTime.Read(right.CreatedAtUtc));
         return timestampComparison != 0
             ? timestampComparison
             : left.TurnId.CompareTo(right.TurnId);
@@ -53,7 +53,7 @@ internal sealed partial class TranscriptTimelineState<TRow> where TRow : class
     {
         var turns = _pendingTurnsById.Values
             .Where(turn => turn.SessionId == sessionId)
-            .OrderBy(turn => turn.CreatedAtUtc)
+            .OrderBy(turn => AgentTranscriptTime.Read(turn.CreatedAtUtc))
             .ThenBy(turn => turn.TurnId)
             .ToArray();
         foreach (var turn in turns)
@@ -73,7 +73,7 @@ internal sealed partial class TranscriptTimelineState<TRow> where TRow : class
     {
         var turns = _pendingTurnsById.Values
             .Where(turn => turn.SessionId == sessionId && _projector.CanApplyHistoricalTurnUpdate(turn))
-            .OrderBy(turn => turn.CreatedAtUtc)
+            .OrderBy(turn => AgentTranscriptTime.Read(turn.CreatedAtUtc))
             .ThenBy(turn => turn.TurnId)
             .ToArray();
         foreach (var turn in turns)
@@ -106,8 +106,8 @@ internal sealed partial class TranscriptTimelineState<TRow> where TRow : class
         if (_pendingTurnsById.TryGetValue(turn.TurnId, out var existing)
             && (existing.ContentRevision > turn.ContentRevision
                 || existing.ContentRevision == turn.ContentRevision
-                && (existing.UpdatedAtUtc > turn.UpdatedAtUtc
-                    || !replaceOnEqualTimestamp && existing.UpdatedAtUtc == turn.UpdatedAtUtc)))
+                && (AgentTranscriptTime.Read(existing.UpdatedAtUtc) > AgentTranscriptTime.Read(turn.UpdatedAtUtc)
+                    || !replaceOnEqualTimestamp && AgentTranscriptTime.Read(existing.UpdatedAtUtc) == AgentTranscriptTime.Read(turn.UpdatedAtUtc))))
         {
             return;
         }
@@ -118,7 +118,7 @@ internal sealed partial class TranscriptTimelineState<TRow> where TRow : class
         {
             var evictedTurn = _pendingTurnsById.Values
                 .OrderBy(item => _projector.CanApplyHistoricalTurnUpdate(item) ? 1 : 0)
-                .ThenBy(item => item.CreatedAtUtc)
+                .ThenBy(item => AgentTranscriptTime.Read(item.CreatedAtUtc))
                 .ThenBy(item => item.TurnId)
                 .First();
             RemovePendingTurn(evictedTurn.TurnId);

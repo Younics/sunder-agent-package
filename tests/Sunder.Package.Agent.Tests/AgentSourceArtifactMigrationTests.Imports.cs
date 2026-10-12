@@ -3,6 +3,7 @@ using System.Runtime.Loader;
 using System.Text.Json;
 using System.Xml.Linq;
 using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
 using Sunder.Sdk.Worker;
 using Xunit;
 
@@ -49,6 +50,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.DoesNotContain(receipt.RootElement.GetProperty("contracts").EnumerateArray(), contract => contract.GetProperty("contractId").GetString() is "sunder.stack.contributor" or "sunder.agent.owner.runtime");
             if (!isProvider) Assert.Single(receipt.RootElement.GetProperty("uses").EnumerateArray(), use => use.GetProperty("required").GetBoolean());
         }
+        await VerifyControlledReferenceParticipantsAsync(root, core, driver, archive, cache);
+        await VerifyScriptedToolProvider(root, core, driver, archive, cache);
         await VerifyRejectedImports(root, consumer, archive, cache);
         await VerifyWebArtifact(root, core, driver, archive, cache);
         await VerifyLocalArtifact(root, core, driver, archive, cache);
@@ -74,7 +77,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         await Run(memoryProvider, "restore", "Imported.csproj", "--disable-parallel");
         await Run(memoryProvider, "msbuild", "Imported.csproj", "-t:FixtureOperation", "-p:Operation=Accept");
         await Run(memoryProvider, "msbuild", "Imported.csproj", "-t:FixtureOperation", "-p:Operation=Freeze");
-        File.Copy(Path.Combine(BuilderSourceMigrationTests.FindRepository(), MemoryCleanerSource), Path.Combine(memoryProvider, "Source.cs"), overwrite: true);
+        File.WriteAllText(Path.Combine(memoryProvider, "Source.cs"), MemoryCleanerProviderSource);
         await Run(memoryProvider, "msbuild", "Imported.csproj", "-t:FixtureOperation", "-p:Operation=Implement", "-p:ProviderKey=sessionCleaner");
         await Run(memoryProvider, "build", "Imported.csproj", "--no-restore");
         var load = new AssemblyLoadContext("agent-artifact-imports", isCollectible: true);
@@ -84,8 +87,12 @@ public sealed partial class AgentSourceArtifactMigrationTests
             var providerAssembly = Load(provider, "AgentProvider");
             Assert.All(new[] { consumerAssembly, providerAssembly }, assembly => Assert.DoesNotContain(assembly.GetReferencedAssemblies(),
                 reference => reference.Name!.StartsWith("Sunder.Package.Agent", StringComparison.Ordinal)));
-            var facade = consumerAssembly.GetType("Sunder.Generated.Rpc.AgentPackageApi", true)!;
-            Assert.Equal(19, facade.GetProperties(BindingFlags.Instance | BindingFlags.Public).Length);
+            var catalogs = consumerAssembly.GetTypes().Where(type => type.IsClass && !type.IsAbstract
+                && !type.ContainsGenericParameters && type.GetInterfaces().Any(contract => contract.IsGenericType
+                    && contract.GetGenericTypeDefinition() == typeof(IServiceProviders<>))).ToArray();
+            Assert.Equal(19, catalogs.Length);
+            Assert.All(catalogs, catalog => Assert.Single(catalog.GetInterfaces(), contract => contract.IsGenericType
+                && contract.GetGenericTypeDefinition() == typeof(IServiceProviders<>)));
             var instance = Activator.CreateInstance(providerAssembly.GetType("ExternalCleaner", true)!)!;
             var registration = Assert.IsType<SunderWorkerProviderRegistration>(instance.GetType().GetMethod("CreateSunderRpcProviderRegistration")!.Invoke(instance, null));
             using var receipt = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(provider, "obj/Debug/net10.0/sunder-rpc/authoring-receipt.v1.json")));
@@ -110,8 +117,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
             using var package = RegressionTestPackageScope.Create();
             await using var store = new MemoryLocalStore(package.Context);
             var feature = new MemorySemanticFeature(store, null!, null!);
-            var cleaner = Activator.CreateInstance(memoryAssembly.GetType("Sunder.Package.Agent.Memory.Semantic.Rpc.SessionCleanerProvider", true)!,
-                feature.CleanerId, (Action<Guid>)feature.DeleteSessionData)!;
+            var cleaner = Activator.CreateInstance(memoryAssembly.GetType("MemoryCleanerProvider", true)!,
+                feature.CleanerId, (Func<Guid, CancellationToken, ValueTask>)((sessionId, token) => feature.DeleteSessionAsync(sessionId, token)))!;
             var memoryRegistration = Assert.IsType<SunderWorkerProviderRegistration>(cleaner.GetType().GetMethod("CreateSunderRpcProviderRegistration")!.Invoke(cleaner, null));
             Assert.Equal("semantic.memory.session.cleaner", memoryRegistration.ProviderId);
             using var memoryState = new RegressionTestRpcState(workerStyleProviderBoundary: true);
@@ -149,7 +156,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
               <PropertyGroup><TargetFramework>net10.0</TargetFramework><AssemblyName>{{name}}</AssemblyName><Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings><LangVersion>14</LangVersion><TreatWarningsAsErrors>true</TreatWarningsAsErrors></PropertyGroup>
               <ItemGroup>
                 <Compile Remove="App/**" />
-                <Reference Include="Sunder.Sdk" HintPath="{{Escape(typeof(SunderRpcServiceAttribute).Assembly.Location)}}" />
+                <Reference Include="Sunder.Sdk" HintPath="{{Escape(typeof(SunderServiceAttribute).Assembly.Location)}}" />
                 {{(provider ? $"<Reference Include=\"Sunder.Sdk.Worker\" HintPath=\"{Escape(typeof(SunderWorker).Assembly.Location)}\" />" : "")}}
                 {{string.Join("", (domainReferences ?? []).Append(typeof(Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructorAttribute).Assembly.Location).Distinct(StringComparer.Ordinal)
                     .Select(path => $"<Reference Include=\"{Escape(Path.GetFileNameWithoutExtension(path))}\" HintPath=\"{Escape(path)}\" />"))}}
@@ -170,10 +177,12 @@ public sealed partial class AgentSourceArtifactMigrationTests
     }
 
     private const string ConsumerSource = """
-        using Sunder.Generated.Rpc;
         using Sunder.Sdk.Rpc;
+        using Sunder.Sdk.Services;
         using System.Text.Json;
         using System.Text.Json.Serialization;
+        using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+        using Models = Sunder.Generated.Packages.Sunder_Package_Agent_Models;
         public static class Consumer
         {
             private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
@@ -183,61 +192,117 @@ public sealed partial class AgentSourceArtifactMigrationTests
             };
             public static async Task<string> DeleteAsync(ISunderRpcClient rpc, Guid sessionId, CancellationToken token)
             {
-                var api = new AgentPackageApi(rpc).CSunder_Agent_Session_Cleaner;
+                await using var receiver = new ConsumerScope(rpc);
+                var api = receiver.Providers<ISessionCleanerService>();
                 var provider = (await api.ListAsync(token)).Providers.Single();
-                await using var scope = await rpc.CreateCallScopeAsync(cancellationToken: token);
-                var client = api.CreateClient(scope, provider).SSession_2dcleaner;
-                var identity = await client.DescribeAsync(new(), token);
-                await client.DeleteSessionAsync(new() { SessionId = sessionId }, token);
+                var identity = await provider.Service.DescribeAsync(token);
+                await provider.Service.DeleteSessionAsync(sessionId, token);
                 return identity.Id;
             }
             public static async Task<string> DescribeCapabilitiesAsync(ISunderRpcClient rpc, CancellationToken token)
             {
-                var api = new AgentPackageApi(rpc).CSunder_Agent_Profile_Capability_Consumer;
+                await using var receiver = new ConsumerScope(rpc);
+                var api = receiver.Providers<IProfileCapabilityConsumerService>();
                 var provider = (await api.ListAsync(token)).Providers.Single();
-                await using var scope = await rpc.CreateCallScopeAsync(cancellationToken: token);
-                return JsonSerializer.Serialize(await api.CreateClient(scope, provider).SProfile_2dcapability_2dconsumer.DescribeAsync(new(), token), Json);
+                return JsonSerializer.Serialize(await provider.Service.DescribeAsync(token), Json);
             }
             public static async Task HandleLifecycleAsync(ISunderRpcClient rpc, string json, CancellationToken token)
             {
-                var api = new AgentPackageApi(rpc).CSunder_Agent_Durable_Lifecycle_Observer;
+                await using var receiver = new ConsumerScope(rpc);
+                var api = receiver.Providers<IDurableLifecycleObserverService>();
                 var provider = (await api.ListAsync(token)).Providers.Single();
-                await using var scope = await rpc.CreateCallScopeAsync(cancellationToken: token);
-                await api.CreateClient(scope, provider).SDurable_2dlifecycle_2dobserver.HandleAsync(
-                    JsonSerializer.Deserialize<Sunder.Generated.Rpc.Imports.CSunder_Agent_Durable_Lifecycle_Observer.AgentDurableLifecycleEventEnvelope>(json, Json)!, token);
+                await provider.Service.HandleAsync(
+                    JsonSerializer.Deserialize<Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentDurableLifecycleEventEnvelope>(json, Json)!, token);
             }
             public static async Task<string> ContributeAsync(ISunderRpcClient rpc, string json, CancellationToken token)
             {
-                var api = new AgentPackageApi(rpc).CSunder_Agent_Prompt_Context_Contributor;
+                await using var receiver = new ConsumerScope(rpc);
+                var api = receiver.Providers<IPromptContextContributorService>();
                 var provider = (await api.ListAsync(token)).Providers.Single();
-                await using var scope = await rpc.CreateCallScopeAsync(cancellationToken: token);
-                var result = await api.CreateClient(scope, provider).SPrompt_2dcontext_2dcontributor.ContributeAsync(
-                    JsonSerializer.Deserialize<Sunder.Generated.Rpc.Imports.CSunder_Agent_Prompt_Context_Contributor.PromptContextRequestWire>(json, Json)!, token);
+                using var document = JsonDocument.Parse(json);
+                var value = document.RootElement;
+                // This memory-only fixture has no selected execution target. Reject
+                // supplied authority rather than dropping or JSON-rebinding it.
+                if (value.GetProperty("executionTarget").ValueKind != JsonValueKind.Null)
+                    throw new JsonException("This fixture requires explicit absence of an execution target.");
+                T Read<T>(string name) => value.GetProperty(name).Deserialize<T>(Json)!;
+                var request = new Models.AgentPromptContextRequest
+                {
+                    Session = Read<Models.AgentSessionContextRecord>("session"),
+                    Run = Read<Models.AgentRunContextRecord>("run"),
+                    Turn = Read<Models.AgentTurnContextRecord>("turn"),
+                    Turns = Read<IReadOnlyList<Models.AgentTurnRecord>>("turns"),
+                    RecentLiveBufferTurns = Read<IReadOnlyList<Models.AgentTurnRecord>>("recentLiveBufferTurns"),
+                    ContextPlan = Read<Models.AgentPromptContextPlan>("contextPlan"),
+                    Profile = Read<Models.AgentProfileRecord?>("profile"),
+                    Workspace = Read<Models.AgentWorkspaceRecord?>("workspace"),
+                    ExecutionBinding = Read<Models.AgentWorkspaceBindingRecord?>("executionBinding"),
+                    AvailableTools = Read<IReadOnlyList<Models.AgentToolDescriptor>>("availableTools"),
+                    MemoryConsistencyBarrier = Read<Models.AgentMemoryConsistencyBarrier?>("memoryConsistencyBarrier"),
+                    TranscriptEpoch = value.GetProperty("transcriptEpoch").GetInt64(),
+                    ExecutionTarget = null,
+                };
+                var result = await provider.Service.ContributeAsync(request, token);
                 return JsonSerializer.Serialize(result, Json);
             }
             public static async Task AcknowledgeAsync(ISunderRpcClient rpc, string json, CancellationToken token)
             {
-                var api = new AgentPackageApi(rpc).CSunder_Agent_Prompt_Context_Contributor;
+                await using var receiver = new ConsumerScope(rpc);
+                var api = receiver.Providers<IPromptContextContributorService>();
                 var provider = (await api.ListAsync(token)).Providers.Single();
-                await using var scope = await rpc.CreateCallScopeAsync(cancellationToken: token);
-                await api.CreateClient(scope, provider).SPrompt_2dcontext_2dcontributor.AcknowledgeAsync(
-                    JsonSerializer.Deserialize<Sunder.Generated.Rpc.Imports.CSunder_Agent_Prompt_Context_Contributor.AgentPromptContextReceipt>(json, Json)!, token);
+                await provider.Service.AcknowledgeAsync(
+                    JsonSerializer.Deserialize<Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentPromptContextReceipt>(json, Json)!, token);
+            }
+        }
+        internal sealed class ConsumerScope(ISunderRpcClient rpc) : IServiceProvider, IAsyncDisposable
+        {
+            private readonly SunderRpcServiceBindingLifetime lifetime = new(rpc);
+            private readonly List<IAsyncDisposable> catalogs = [];
+            public object? GetService(Type type) => type == typeof(SunderRpcServiceBindingLifetime) ? lifetime
+                : type == typeof(ISunderRpcClient) ? rpc : type == typeof(IServiceProvider) ? this : null;
+            public IServiceProviders<T> Providers<T>() where T : class
+            {
+                var implementation = typeof(T).Assembly.GetTypes().Single(type => type.IsClass && !type.IsAbstract
+                    && !type.ContainsGenericParameters && typeof(IServiceProviders<T>).IsAssignableFrom(type)
+                    && type.GetConstructor([typeof(ISunderRpcClient), typeof(IServiceProvider)]) is not null);
+                var catalog = (IServiceProviders<T>)Activator.CreateInstance(implementation, rpc, this)!;
+                if (catalog is IAsyncDisposable disposable) catalogs.Add(disposable);
+                return catalog;
+            }
+            public async ValueTask DisposeAsync()
+            {
+                try { foreach (var catalog in catalogs) await catalog.DisposeAsync(); }
+                finally { await lifetime.DisposeAsync(); }
             }
         }
         """;
 
     private const string ProviderSource = """
-        using Sunder.Generated.Rpc;
-        using Sunder.Generated.Rpc.Imports.CSunder_Agent_Session_Cleaner;
-        using Sunder.Sdk.Rpc;
-        [SunderRpcProvider(typeof(ICleanerService), ProviderId = "example.agent.cleaner")]
-        public sealed partial class ExternalCleaner : ICleanerService
+        using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+        using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+        using Sunder.Sdk.Services;
+        [SunderServiceProvider(typeof(ISessionCleanerService), ProviderId = "example.agent.cleaner")]
+        public sealed partial class ExternalCleaner : ISessionCleanerService
         {
             public Guid? Deleted { get; private set; }
-            public ValueTask<AgentRpcIdentity> DescribeAsync(SunderRpcInvocationContext context, Unit request, CancellationToken token)
-            { token.ThrowIfCancellationRequested(); return ValueTask.FromResult(new AgentRpcIdentity { Id = "external-cleaner", DisplayName = "External cleaner" }); }
-            public ValueTask<Unit> DeleteSessionAsync(SunderRpcInvocationContext context, SessionIdRequest request, CancellationToken token)
-            { token.ThrowIfCancellationRequested(); Deleted = request.SessionId; return ValueTask.FromResult(new Unit()); }
+            public ValueTask<AgentServiceIdentity> DescribeAsync(CancellationToken token = default)
+            { token.ThrowIfCancellationRequested(); return ValueTask.FromResult(new AgentServiceIdentity { Id = "external-cleaner", DisplayName = "External cleaner" }); }
+            public ValueTask DeleteSessionAsync(Guid sessionId, CancellationToken token = default)
+            { token.ThrowIfCancellationRequested(); Deleted = sessionId; return ValueTask.CompletedTask; }
+        }
+        """;
+
+    private const string MemoryCleanerProviderSource = """
+        using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+        using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+        using Sunder.Sdk.Services;
+        [SunderServiceProvider(typeof(ISessionCleanerService), ProviderId = "semantic.memory.session.cleaner")]
+        public sealed partial class MemoryCleanerProvider(string id, Func<Guid, CancellationToken, ValueTask> delete) : ISessionCleanerService
+        {
+            public ValueTask<AgentServiceIdentity> DescribeAsync(CancellationToken token = default)
+            { token.ThrowIfCancellationRequested(); return ValueTask.FromResult(new AgentServiceIdentity { Id = id, DisplayName = "Semantic memory" }); }
+            public ValueTask DeleteSessionAsync(Guid sessionId, CancellationToken token = default)
+            { token.ThrowIfCancellationRequested(); return delete(sessionId, token); }
         }
         """;
 

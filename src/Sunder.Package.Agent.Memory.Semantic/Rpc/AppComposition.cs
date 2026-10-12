@@ -3,7 +3,7 @@ using Sunder.Package.Agent.Memory.Semantic.Runtime;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Notifications;
-using Sunder.Sdk.Rpc;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Memory_Semantic_Services;
 
 namespace Sunder.Package.Agent.Memory.Semantic.PackageViews
 {
@@ -21,6 +21,6 @@ namespace Sunder.Package.Agent.Memory.Semantic
     internal sealed partial class MemoryAppRuntimeGateway
     {
         [ActivatorUtilitiesConstructor]
-        internal MemoryAppRuntimeGateway(ISunderRpcClient rpc, IPackageContext context) : this(rpc, context.Logging.LoggerFactory) { }
+        internal MemoryAppRuntimeGateway(IMemoryInspectorService service, IPackageContext context) : this(service, context.Logging.LoggerFactory) { }
     }
 }

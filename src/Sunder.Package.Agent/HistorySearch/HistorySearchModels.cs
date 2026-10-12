@@ -87,7 +87,7 @@ internal sealed record HistorySearchRequest(
     DateTimeOffset? FromUtc = null,
     DateTimeOffset? ToUtc = null,
     bool IncludeChildSessions = true,
-    int Limit = HistorySearchLimits.DefaultResults,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "1", Maximum = "100")] int Limit = HistorySearchLimits.DefaultResults,
     string? Continuation = null);
 
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
@@ -132,7 +132,7 @@ internal enum HistorySearchAvailability
 
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record HistorySearchStatus(
-    long Revision,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long Revision,
     HistorySearchAvailability Availability,
     bool LexicalEnabled,
     bool SemanticEnabled,
@@ -140,15 +140,15 @@ internal sealed record HistorySearchStatus(
     string? EmbeddingProviderPackageId,
     string? EmbeddingProviderId,
     string? EmbeddingModelId,
-    long SemanticConfigurationRevision,
-    long ProjectionRevision,
-    long? TextGeneration,
-    long? EmbeddingGeneration,
-    int IndexedDocuments,
-    int EmbeddedDocuments,
-    int PendingChanges,
-    int ProgressCompleted,
-    int? ProgressTotal,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long SemanticConfigurationRevision,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long ProjectionRevision,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long? TextGeneration,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long? EmbeddingGeneration,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] int IndexedDocuments,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] int EmbeddedDocuments,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] int PendingChanges,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] int ProgressCompleted,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] int? ProgressTotal,
     DateTimeOffset? LastReconciledAtUtc,
     string? FailureCode,
     string? FailureMessage,
@@ -156,7 +156,7 @@ internal sealed record HistorySearchStatus(
 
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record HistorySearchStatusSubscription(
-    long AfterRevision = 0,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long AfterRevision = 0,
     string? RuntimeInstanceId = null);
 
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
@@ -164,7 +164,7 @@ internal sealed record HistorySearchStateRequest(
     string? EmbeddingProviderId = null,
     string? EmbeddingProviderPackageId = null,
     string? Continuation = null,
-    int Limit = HistorySearchLimits.MaximumStateOptions,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "1", Maximum = "200")] int Limit = HistorySearchLimits.MaximumStateOptions,
     bool IncludeAdvancedFilters = true,
     string? WorkspaceId = null);
 
@@ -183,7 +183,7 @@ internal sealed record HistoryEmbeddingModelOption(
     string ProviderId,
     string ModelId,
     string DisplayName,
-    int? Dimensions,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "1")] int? Dimensions,
     bool IsRecommended);
 
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]

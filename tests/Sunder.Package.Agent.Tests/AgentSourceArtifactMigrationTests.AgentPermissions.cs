@@ -1,12 +1,14 @@
+using System.Collections;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using Sunder.Package.Agent.Contracts.Contracts;
+using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.TestSupport;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Worker;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -18,18 +20,23 @@ public sealed partial class AgentSourceArtifactMigrationTests
         using var package = RegressionTestPackageScope.Create();
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
         var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
-        using var catalog = AgentRpcCatalog.CreateDormant(rpc);
+        var (_, ownerLifetime, ownerServices) = CreateGeneratedWorker(owner, package.Context, rpc);
+        await using var ownedOwner = ownerLifetime;
+        var permissionServiceType = owner.GetType(typeof(AgentServices.IPermissionSurfaceService).FullName!, true)!;
+        await using var surfacesScope = new GeneratedServiceTestScope(rpc);
+        var surfaces = surfacesScope.Providers(permissionServiceType);
         var storeType = owner.GetType("Sunder.Package.Agent.Storage.AgentLocalStore", true)!;
         var store = Activator.CreateInstance(storeType, package.Context)!;
         await using var initialStore = (IAsyncDisposable)store;
         var serviceType = owner.GetType("Sunder.Package.Agent.Services.AgentPermissionService", true)!;
-        var permissions = AgentRoleBoundary.Create(serviceType, store, catalog);
-        var clientType = owner.GetType("Sunder.Package.Agent.Runtime.Rpc.GeneratedPermissionSurfaceClient", true)!;
-        var generic = Assert.Single(Actions());
+        var permissions = AgentRoleBoundary.Create(serviceType, store, surfaces);
+        Assert.Null(owner.GetType("Sunder.Package.Agent.Runtime.Rpc.GeneratedPermissionSurfaceClient"));
+        Assert.Null(owner.GetType("Sunder.Package.Agent.Runtime.Rpc.AgentMetadataBindings"));
+        var generic = Assert.Single(await ActionsAsync());
         Assert.Equal("agent.tool.mutate", generic.ActionId);
         Assert.Equal(AgentPermissionDecision.Ask, Assert.Single(generic.Boundaries).DefaultDecision);
-        Assert.Equal(AgentPermissionDecision.Deny, Evaluate("", "").Decision);
-        Assert.Equal(AgentPermissionDecisionSource.UnknownBoundary, Evaluate("files.read", AgentPermissionBoundaryIds.ConfiguredScope).Source);
+        Assert.Equal(AgentPermissionDecision.Deny, (await EvaluateAsync("", "")).Decision);
+        Assert.Equal(AgentPermissionDecisionSource.UnknownBoundary, (await EvaluateAsync("files.read", AgentPermissionBoundaryIds.ConfiguredScope)).Source);
 
         var filesContext = new TestPackageContext("sunder.package.agent.tools.files", package.RootPath, version: "2.0.0", storage: package.Context.Storage);
         var (filesOptions, filesLifetime, _) = CreateGeneratedWorker(files, filesContext, rpc);
@@ -41,7 +48,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         await using var ownedShell = shellLifetime;
         var shellRegistration = Assert.Single(shellOptions.Providers, value => value.ProviderId == "shell.permissions");
         var shellHandler = AddSurfaceProvider(state, "sunder.package.agent.tools.shell", shellRegistration);
-        var actions = Actions(); Assert.Equal(5, actions.Count);
+        var actions = await ActionsAsync(); Assert.Equal(5, actions.Count);
         Assert.Equal(actions.OrderBy(action => action.DisplayName, StringComparer.OrdinalIgnoreCase), actions);
         foreach (var action in actions.Where(action => action.ActionId.StartsWith("files.", StringComparison.Ordinal)))
         {
@@ -49,54 +56,53 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.Equal(AgentPermissionDecision.Allow, Assert.Single(action.Boundaries, value => value.BoundaryId == AgentPermissionBoundaryIds.ConfiguredScope).DefaultDecision);
             Assert.Equal(AgentPermissionDecision.Ask, Assert.Single(action.Boundaries, value => value.BoundaryId == AgentPermissionBoundaryIds.OutsideConfiguredScope).DefaultDecision);
         }
-        Assert.Equal(AgentPermissionDecision.Allow, Evaluate("FILES.READ", AgentPermissionBoundaryIds.ConfiguredScope).Decision);
-        Assert.Equal(AgentPermissionDecision.Ask, Evaluate("files.mutate", AgentPermissionBoundaryIds.OutsideConfiguredScope).Decision);
-        Assert.Equal(AgentPermissionDecision.Ask, Evaluate("shell.execute", AgentPermissionBoundaryIds.SelectedExecutionTarget).Decision);
-        Assert.Equal(AgentPermissionDecision.Ask, Evaluate(generic.ActionId, generic.Boundaries[0].BoundaryId).Decision);
-        Assert.Equal(AgentPermissionDecisionSource.UnknownBoundary, Evaluate("files.read", "new-boundary").Source);
+        Assert.Equal(AgentPermissionDecision.Allow, (await EvaluateAsync("FILES.READ", AgentPermissionBoundaryIds.ConfiguredScope)).Decision);
+        Assert.Equal(AgentPermissionDecision.Ask, (await EvaluateAsync("files.mutate", AgentPermissionBoundaryIds.OutsideConfiguredScope)).Decision);
+        Assert.Equal(AgentPermissionDecision.Ask, (await EvaluateAsync("shell.execute", AgentPermissionBoundaryIds.SelectedExecutionTarget)).Decision);
+        Assert.Equal(AgentPermissionDecision.Ask, (await EvaluateAsync(generic.ActionId, generic.Boundaries[0].BoundaryId)).Decision);
+        Assert.Equal(AgentPermissionDecisionSource.UnknownBoundary, (await EvaluateAsync("files.read", "new-boundary")).Source);
 
-        var workspaces = AgentRoleBoundary.Create(owner.GetType("Sunder.Package.Agent.Services.AgentWorkspaceService", true)!, store, catalog, null);
+        var workspaces = ownerServices.GetRequiredService(owner.GetType("Sunder.Package.Agent.Services.AgentWorkspaceService", true)!);
         var workspace = (AgentWorkspaceRecord)SurfaceCall(workspaces, "CreateWorkspace", "Permission fixture")!;
-        var sessions = AgentRoleBoundary.Create(owner.GetType("Sunder.Package.Agent.Services.AgentSessionService", true)!, store, catalog);
+        var sessions = ownerServices.GetRequiredService(owner.GetType("Sunder.Package.Agent.Services.AgentSessionService", true)!);
         var session = SurfaceCall(sessions, "CreateSession", "Permissions", null, null, null, null, null, null, null, null, null, workspace.WorkspaceId)!;
         var sessionId = (Guid)session.GetType().GetProperty("SessionId")!.GetValue(session)!;
         SurfaceCall(permissions, "SaveOverride", "files.mutate", AgentPermissionBoundaryIds.OutsideConfiguredScope, AgentPermissionDecision.Deny);
         SurfaceCall(permissions, "SetSessionUnrestrictedMode", sessionId, true);
-        var denied = Evaluate("files.mutate", AgentPermissionBoundaryIds.OutsideConfiguredScope, sessionId);
+        var denied = await EvaluateAsync("files.mutate", AgentPermissionBoundaryIds.OutsideConfiguredScope, sessionId);
         Assert.Equal(AgentPermissionDecision.Deny, denied.Decision); Assert.Equal(AgentPermissionDecisionSource.ConfiguredOverride, denied.Source);
-        Assert.Equal(AgentPermissionDecisionSource.UnrestrictedMode, Evaluate("shell.execute", AgentPermissionBoundaryIds.SelectedExecutionTarget, sessionId).Source);
+        Assert.Equal(AgentPermissionDecisionSource.UnrestrictedMode, (await EvaluateAsync("shell.execute", AgentPermissionBoundaryIds.SelectedExecutionTarget, sessionId)).Source);
         await initialStore.DisposeAsync(); store = Activator.CreateInstance(storeType, package.Context)!;
         await using var reopened = (IAsyncDisposable)store;
-        permissions = AgentRoleBoundary.Create(serviceType, store, catalog);
-        Assert.Equal(AgentPermissionDecision.Deny, Evaluate("files.mutate", AgentPermissionBoundaryIds.OutsideConfiguredScope, sessionId).Decision);
+        permissions = AgentRoleBoundary.Create(serviceType, store, surfaces);
+        Assert.Equal(AgentPermissionDecision.Deny, (await EvaluateAsync("files.mutate", AgentPermissionBoundaryIds.OutsideConfiguredScope, sessionId)).Decision);
         SurfaceCall(permissions, "DeleteOverride", "files.mutate", AgentPermissionBoundaryIds.OutsideConfiguredScope);
-        Assert.Equal(AgentPermissionDecisionSource.UnrestrictedMode, Evaluate("files.mutate", AgentPermissionBoundaryIds.OutsideConfiguredScope, sessionId).Source);
+        Assert.Equal(AgentPermissionDecisionSource.UnrestrictedMode, (await EvaluateAsync("files.mutate", AgentPermissionBoundaryIds.OutsideConfiguredScope, sessionId)).Source);
         SurfaceCall(permissions, "SetSessionUnrestrictedMode", sessionId, false);
-        Assert.Equal(AgentPermissionDecision.Ask, Evaluate("files.mutate", AgentPermissionBoundaryIds.OutsideConfiguredScope, sessionId).Decision);
+        Assert.Equal(AgentPermissionDecision.Ask, (await EvaluateAsync("files.mutate", AgentPermissionBoundaryIds.OutsideConfiguredScope, sessionId)).Decision);
 
         var observed = new FilesRpcObserver(rpc, "describe");
-        var snapshot = Assert.Single((await rpc.DiscoverAsync(AgentRpcContractIds.PermissionSurface)).Providers, value => value.ProviderId == "files.permissions");
-        IAgentPermissionSurface Create() => AgentRoleBoundary.As<IAgentPermissionSurface>(Activator.CreateInstance(clientType, observed, snapshot)!);
-        var client = Create(); await using var clientLifetime = (IAsyncDisposable)client;
-        Assert.NotEmpty(client.SurfaceId); Assert.NotEmpty(client.DisplayName);
-        var described = client.ListActions(); Assert.Equal(3, described.Count);
-        ((AgentPermissionActionDescriptor[])described)[0] = described[0] with { DisplayName = "Locally changed" };
-        Assert.DoesNotContain(client.ListActions(), action => action.DisplayName == "Locally changed");
+        await using var observedScope = new GeneratedServiceTestScope(observed);
+        var observedCatalog = observedScope.Providers(permissionServiceType);
+        var client = await FilesPermissionServiceAsync(observedCatalog);
+        var descriptor = await client.DescribeAsync();
+        Assert.NotEmpty(descriptor.SurfaceId); Assert.NotEmpty(descriptor.DisplayName);
+        var described = descriptor.Actions; Assert.Equal(3, described.Count);
+        Assert.IsAssignableFrom<IList<AgentPermissionActionDescriptor>>(described)[0] =
+            described[0] with { DisplayName = "Locally changed" };
+        Assert.DoesNotContain((await client.DescribeAsync()).Actions, action => action.DisplayName == "Locally changed");
         observed.Transform = value => value with { ActivationEpoch = value.ActivationEpoch + 1 };
-        var stale = Create(); await using var staleLifetime = (IAsyncDisposable)stale;
-        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, Assert.Throws<SunderRpcException>(() => stale.ListActions()).Error.Kind);
+        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => client.DescribeAsync().AsTask())).Error.Kind);
         observed.Transform = null; observed.InvalidateAfterInvoke = true;
-        var late = Create(); await using var lateLifetime = (IAsyncDisposable)late;
-        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, Assert.Throws<SunderRpcException>(() => late.ListActions()).Error.Kind);
+        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => client.DescribeAsync().AsTask())).Error.Kind);
         observed.InvalidateAfterInvoke = false; observed.Transform = null;
 
         await state.RetireAsync(filesHandler);
-        Assert.Equal(2, Actions().Count); Assert.Equal(AgentPermissionDecision.Ask, Evaluate("files.read", AgentPermissionBoundaryIds.ConfiguredScope).Decision);
+        Assert.Equal(2, (await ActionsAsync()).Count); Assert.Equal(AgentPermissionDecision.Ask, (await EvaluateAsync("files.read", AgentPermissionBoundaryIds.ConfiguredScope)).Decision);
         filesHandler = AddSurfaceProvider(state, filesContext.PackageId, filesRegistration);
-        Assert.Equal(5, Actions().Count); Assert.Equal(AgentPermissionDecision.Allow, Evaluate("files.read", AgentPermissionBoundaryIds.ConfiguredScope).Decision);
-        var old = Create(); await using var oldLifetime = (IAsyncDisposable)old;
-        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, Assert.Throws<SunderRpcException>(() => old.ListActions()).Error.Kind);
-        snapshot = Assert.Single((await rpc.DiscoverAsync(AgentRpcContractIds.PermissionSurface)).Providers, value => value.ProviderId == "files.permissions");
+        Assert.Equal(5, (await ActionsAsync()).Count); Assert.Equal(AgentPermissionDecision.Allow, (await EvaluateAsync("files.read", AgentPermissionBoundaryIds.ConfiguredScope)).Decision);
+        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => client.DescribeAsync().AsTask())).Error.Kind);
+        var current = await FilesPermissionServiceAsync(observedCatalog);
 
         // A valid deny default is mapped by its wire name; case-insensitive action
         // deduplication keeps the first provider's definition.
@@ -111,26 +117,40 @@ public sealed partial class AgentSourceArtifactMigrationTests
             ((JsonArray)node["actions"]!).Add(duplicate);
             return JsonSerializer.SerializeToElement(node);
         };
-        Assert.Equal(5, Actions().Count); Assert.DoesNotContain(Actions(), action => action.DisplayName == "Duplicate");
-        Assert.Equal(AgentPermissionDecision.Deny, Evaluate("shell.execute", AgentPermissionBoundaryIds.SelectedExecutionTarget).Decision);
+        Assert.Equal(5, (await ActionsAsync()).Count); Assert.DoesNotContain(await ActionsAsync(), action => action.DisplayName == "Duplicate");
+        Assert.Equal(AgentPermissionDecision.Deny, (await EvaluateAsync("shell.execute", AgentPermissionBoundaryIds.SelectedExecutionTarget)).Decision);
         filesHandler.Transform = (_, value) =>
         {
             var node = JsonNode.Parse(value.GetRawText())!; node["actions"]![0]!["boundaries"]![0]!["defaultDecision"] = "permit";
             return JsonSerializer.SerializeToElement(node);
         };
-        var malformed = Create(); await using var malformedLifetime = (IAsyncDisposable)malformed;
-        Assert.Equal(SunderRpcErrorKind.ProviderFaulted, Assert.Throws<SunderRpcException>(() => malformed.ListActions()).Error.Kind);
+        Assert.Equal(SunderRpcErrorKind.ProviderFaulted, (await Assert.ThrowsAsync<SunderRpcException>(() => current.DescribeAsync().AsTask())).Error.Kind);
         filesHandler.Transform = null; filesHandler.BlockMethod = "describe"; filesHandler.Gate = new();
-        var blocked = Create(); await using var blockedLifetime = (IAsyncDisposable)blocked;
-        var pending = Task.Run(() => blocked.ListActions());
+        var pending = current.DescribeAsync().AsTask();
         await filesHandler.Gate.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        var stopped = blockedLifetime.DisposeAsync().AsTask(); Assert.Same(stopped, blockedLifetime.DisposeAsync().AsTask());
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending); await stopped.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, Assert.Throws<SunderRpcException>(() => blocked.SurfaceId).Error.Kind);
-        Assert.Equal(0, observed.UnscopedLookups); Assert.All(observed.Scopes, scope => Assert.True(scope.Disposed));
+        var stopped = observedScope.DisposeAsync().AsTask(); Assert.Same(stopped, observedScope.DisposeAsync().AsTask());
+        var retiredCall = await Assert.ThrowsAsync<SunderRpcException>(() => pending.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(SunderRpcErrorKind.Unavailable, retiredCall.Error.Kind);
+        Assert.Equal("rpc.binding.retired", retiredCall.Error.Code);
+        await stopped.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => current.DescribeAsync().AsTask());
+        observed.AssertScopedOperations(); Assert.All(observed.Scopes, scope => Assert.True(scope.Disposed));
 
-        IReadOnlyList<AgentPermissionActionDescriptor> Actions() => (IReadOnlyList<AgentPermissionActionDescriptor>)SurfaceCall(permissions, "ListActions")!;
-        AgentPermissionEvaluation Evaluate(string action, string boundary, Guid? id = null)
-            => (AgentPermissionEvaluation)SurfaceCall(permissions, "Evaluate", id, new AgentPermissionRequest(action, boundary, "Fixture permission"))!;
+        async Task<IReadOnlyList<AgentPermissionActionDescriptor>> ActionsAsync()
+            => (IReadOnlyList<AgentPermissionActionDescriptor>)AgentRoleBoundary.AssertionValue(
+                await AgentRoleBoundary.Await(AgentRoleBoundary.Call(permissions, "ListActionsAsync", CancellationToken.None)!))!;
+
+        async Task<AgentPermissionEvaluation> EvaluateAsync(string action, string boundary, Guid? id = null)
+            => (AgentPermissionEvaluation)AgentRoleBoundary.AssertionValue(
+                await AgentRoleBoundary.Await(AgentRoleBoundary.Call(permissions, "EvaluateAsync", id,
+                    new AgentPermissionRequest(action, boundary, "Fixture permission"), CancellationToken.None)!))!;
+
+        static async Task<AgentServices.IPermissionSurfaceService> FilesPermissionServiceAsync(object providers)
+        {
+            var snapshot = (await AgentRoleBoundary.Await(AgentRoleBoundary.Call(providers, "ListAsync", CancellationToken.None)!))!;
+            var entries = ((IEnumerable)snapshot.GetType().GetProperty("Providers")!.GetValue(snapshot)!).Cast<object>();
+            var selected = Assert.Single(entries, entry => (string)entry.GetType().GetProperty("ProviderId")!.GetValue(entry)! == "files.permissions");
+            return AgentRoleBoundary.As<AgentServices.IPermissionSurfaceService>(selected.GetType().GetProperty("Service")!.GetValue(selected)!);
+        }
     }
 }

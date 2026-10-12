@@ -17,6 +17,7 @@ using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
 using Sunder.Package.Agent.TestSupport;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Rpc;
 using Xunit;
 using AgentRuntimePayloadLimits = AgentCore::Sunder.Package.Agent.Runtime.AgentRuntimePayloadLimits;
 using IAgentHistorySearchGateway = AgentCore::Sunder.Package.Agent.HistorySearch.IAgentHistorySearchGateway;
@@ -26,6 +27,7 @@ namespace Sunder.Package.Agent.Tests;
 
 extern alias SubagentsWorker;
 using SubagentsWorker::Sunder.Package.Agent.Subagents.Runtime;
+using SubagentServices = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 public sealed class HistorySearchHardeningTests
 {
@@ -613,19 +615,16 @@ public sealed class HistorySearchHardeningTests
         var second = new SecondFingerprintProvider("duplicate", "model");
         catalog.AddProvider(RegressionTestBindings.EmbeddingProviders, first, "package.one");
         catalog.AddProvider(RegressionTestBindings.EmbeddingProviders, second, "package.two");
-        var providers = new HistoryEmbeddingProviderCatalog(catalog);
+        var providers = new HistoryEmbeddingProviderCatalog(catalog.EmbeddingProviders);
 
-        Assert.Throws<InvalidOperationException>(() => providers.Resolve(null, "duplicate"));
-        var owned = providers.Resolve("PACKAGE.ONE", "duplicate");
-        Assert.True(owned.Reference.TryAcquire(out var providerLease));
-        using (providerLease)
-        {
-            Assert.Equal("package.one", providerLease.PackageId);
-            Assert.Equal(first.Descriptor.ProviderId, providerLease.Service.Descriptor.ProviderId);
-            Assert.Equal(first.Descriptor.DisplayName, providerLease.Service.Descriptor.DisplayName);
-            Assert.Equal(first.Descriptor.SupportedAuthModes, providerLease.Service.Descriptor.SupportedAuthModes);
-        }
-        Assert.Equal(2, providers.ListOptions().Count);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => providers.ResolveAsync(null, "duplicate"));
+        var owned = await providers.ResolveAsync("PACKAGE.ONE", "duplicate");
+        var descriptor = await owned.Provider.Service.DescribeAsync();
+        Assert.Equal("package.one", owned.Provider.PackageId);
+        Assert.Equal(first.Descriptor.ProviderId, descriptor.ProviderId);
+        Assert.Equal(first.Descriptor.DisplayName, descriptor.DisplayName);
+        Assert.Equal(first.Descriptor.SupportedAuthModes, descriptor.SupportedAuthModes);
+        Assert.Equal(2, (await providers.ListOptionsAsync()).Count);
 
         var firstSelection = await providers.ResolveSelectionAsync(
             "PACKAGE.ONE", "duplicate", "MODEL", CancellationToken.None);
@@ -635,6 +634,20 @@ public sealed class HistorySearchHardeningTests
         Assert.Equal("DUPLICATE", firstSelection.OwnedProvider.ProviderId);
         Assert.Equal("MODEL", firstSelection.ModelId);
         Assert.NotEqual(firstSelection.SpaceFingerprint, secondSelection.SpaceFingerprint);
+
+        await catalog.RetireProviderAsync(first);
+        catalog.AddProvider(RegressionTestBindings.EmbeddingProviders, first, "package.one",
+            providerId: owned.Provider.ProviderId);
+        var reactivated = await providers.ResolveSelectionAsync(
+            "package.one", "DUPLICATE", "MODEL", CancellationToken.None);
+        Assert.NotEqual(owned.Provider.ActivationId, reactivated.OwnedProvider.Provider.ActivationId);
+        Assert.Equal(firstSelection.SpaceFingerprint, reactivated.SpaceFingerprint);
+        Assert.Equal(SunderRpcErrorKind.StaleEndpoint,
+            (await Assert.ThrowsAsync<SunderRpcException>(() => owned.Provider.Service.GetReadinessAsync().AsTask())).Error.Kind);
+
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => providers.ListOptionsAsync(cancellation.Token));
     }
 
     [Fact]
@@ -649,10 +662,10 @@ public sealed class HistorySearchHardeningTests
             modelId,
             "Useful provider password=display-canary");
         catalog.AddProvider(RegressionTestBindings.EmbeddingProviders, provider, packageId);
-        var providers = new HistoryEmbeddingProviderCatalog(catalog);
+        var providers = new HistoryEmbeddingProviderCatalog(catalog.EmbeddingProviders);
 
-        var option = Assert.Single(providers.ListOptions());
-        var resolved = providers.Resolve(packageId, providerId);
+        var option = Assert.Single(await providers.ListOptionsAsync());
+        var resolved = await providers.ResolveAsync(packageId, providerId);
         var selection = await providers.ResolveSelectionAsync(
             packageId,
             providerId,
@@ -739,7 +752,7 @@ public sealed class HistorySearchHardeningTests
             SpaceIdentity = "https://first.example/v1",
         };
         catalog.AddProvider(RegressionTestBindings.EmbeddingProviders, provider, "package.configured");
-        var providers = new HistoryEmbeddingProviderCatalog(catalog);
+        var providers = new HistoryEmbeddingProviderCatalog(catalog.EmbeddingProviders);
 
         var first = await providers.ResolveSelectionAsync(
             "package.configured", "CONFIGURED", "Model-V1", CancellationToken.None);
@@ -1913,7 +1926,7 @@ public sealed class HistorySearchHardeningTests
             method => method.Name == nameof(IAgentTranscriptAnchorGateway.LoadTranscriptAroundTurnAsync));
 
         using var scope = RegressionTestPackageScope.Create();
-        var catalog = new RegressionTestExtensionCatalog();
+        await using var catalog = new RegressionTestExtensionCatalog();
         await using var services = CreateRuntime(scope, catalog);
         var workspace = services.GetRequiredService<AgentWorkspaceService>().CreateWorkspace("Navigation");
         var sessions = services.GetRequiredService<AgentSessionService>();
@@ -1926,14 +1939,18 @@ public sealed class HistorySearchHardeningTests
         await Assert.ThrowsAsync<AgentOwnerOperationException>(async () => await handler.HandleAsync(
             new AgentTranscriptAroundTurnRequest(child.SessionId, childTurn.TurnId)).AsTask());
         var runtime = services.GetRequiredService<AgentRuntimeCatalog>();
-        Assert.Throws<InvalidOperationException>(() => SubsessionLocalRuntimeAdapter.BuildAroundTurnPage(
-            AgentRoleBoundary.As<SubagentsWorker::Sunder.Package.Agent.Contracts.Contracts.IAgentRuntimeCatalog>(runtime),
+        catalog.AddRuntimeCatalog(runtime);
+        await using var receiver = new GeneratedServiceTestScope(catalog.RpcForCaller("sunder.package.agent.subagents"));
+        var runtimeClient = Assert.Single((await receiver.Providers<SubagentServices.IRuntimeCatalogService>().ListAsync()).Providers).Service;
+        await Assert.ThrowsAsync<InvalidOperationException>(() => SubsessionTranscriptReader.AroundAsync(
+            runtimeClient,
             root.SessionId,
             rootTurn.TurnId,
             rootTurn.CreatedAtUtc,
             rootTurn.Items[0].ItemId,
             10,
-            10));
+            10,
+            CancellationToken.None).AsTask());
     }
 
     [Fact]

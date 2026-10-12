@@ -1,11 +1,13 @@
 using System.Text.Json;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Stacks;
+using Sunder.Sdk.Services;
 using static Sunder.Package.Agent.Mcp.Services.McpServerStackPayloadCodec;
 
 namespace Sunder.Package.Agent.Mcp.Services;
 
-internal sealed class McpServerStackContributor(
+[SunderServiceProvider(typeof(IPackageStackContributor), ProviderId = "mcp.stack")]
+internal sealed partial class McpServerStackContributor(
     McpServerCatalogService serverCatalog,
     IPackageContext packageContext) : IPackageStackExporter, IPackageStackImporter, IPackageStackImportAppliedHandler
 {

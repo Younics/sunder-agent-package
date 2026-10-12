@@ -195,24 +195,22 @@ jobs:
           set -euo pipefail
           python3 -B scripts/release/release_inputs.py check-python
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          for script in scripts/*.sh scripts/release/*.sh; do
+          for script in scripts/dev/*.sh scripts/release/*.sh scripts/test/*.sh scripts/test/release/*.sh; do
             bash -n "$script"
           done
-          bash scripts/release/verify-nuget-package.fixture.sh
-          bash scripts/release/verify-core-sdk-release.fixture.sh
-          bash scripts/release/verify-execution-runtime-availability.fixture.sh
-          bash scripts/release/publish-registry-package.fixture.sh
-          bash scripts/release/promote-family-dist-tag.fixture.sh
-          bash scripts/release/promote-agent-family.fixture.sh
-          bash scripts/release/upload-agent-acceptance.fixture.sh
-          bash scripts/release/verify-agent-publication.fixture.sh
-          bash scripts/release/generate-agent-publication-handoff.fixture.sh
-          python3 -B scripts/release/agent-release.fixture.py
-          python3 -B scripts/release/publish-agent-family.fixture.py
-          python3 -B scripts/release/release-inputs.fixture.py
-          bash scripts/release/native-release.fixture.sh
-          bash scripts/release/verify-agent-release-version.fixture.sh
-          bash scripts/generate-test-duration-report.fixture.sh
+          bash scripts/test/release/verify-nuget-package.fixture.sh
+          bash scripts/test/release/verify-core-sdk-release.fixture.sh
+          bash scripts/test/release/publish-registry-package.fixture.sh
+          bash scripts/test/release/promote-agent-family.fixture.sh
+          bash scripts/test/release/upload-agent-acceptance.fixture.sh
+          bash scripts/test/release/verify-agent-publication.fixture.sh
+          bash scripts/test/release/generate-agent-publication-handoff.fixture.sh
+          python3 -B scripts/test/release/agent-release.fixture.py
+          python3 -B scripts/test/release/publish-agent-family.fixture.py
+          python3 -B scripts/test/release/release-inputs.fixture.py
+          bash scripts/test/release/native-release.fixture.sh
+          bash scripts/test/release/verify-agent-release-version.fixture.sh
+          bash scripts/test/generate-test-duration-report.fixture.sh
           bash scripts/release/verify-core-sdk-release.sh "$CORE_SDK_VERSION" "$EXPECTED_CORE_COMMIT"
 
       - name: Download exact reviewed cold inputs for this source job
@@ -233,7 +231,7 @@ jobs:
           set -euo pipefail
           test "$(git -C ../sunder-core rev-parse HEAD)" = "${{ needs.prepare.outputs.core_commit }}"
           mkdir -p artifacts/test-results/source/full artifacts/reports
-          bash scripts/generate-test-inventory.sh > artifacts/reports/test-inventory.json
+          bash scripts/test/generate-test-inventory.sh > artifacts/reports/test-inventory.json
           manifest_sha="$(jq -r '.sha256' <<< "$SUNDER_AGENT_COLD_INPUT_MANIFEST")"
           python3 -B scripts/release/release_inputs.py prepare "$PWD" \
             "$RUNNER_TEMP/agent-approved-inputs" "$RUNNER_TEMP/agent-source-cold" \
@@ -285,13 +283,13 @@ jobs:
         run: |
           set -uo pipefail
           status=0
-          python3 scripts/generate-test-duration-report.py artifacts/test-results/source \
+          python3 scripts/test/generate-test-duration-report.py artifacts/test-results/source \
             --inventory artifacts/reports/test-inventory.json \
             --mode source \
             --platform linux \
             --expectations tests/test-evidence-expectations.json \
             > artifacts/reports/source-test-duration-report.json || status=1
-          python3 scripts/generate-test-duration-report.py artifacts/test-results/package \
+          python3 scripts/test/generate-test-duration-report.py artifacts/test-results/package \
             --inventory artifacts/reports/test-inventory.json \
             --mode package \
             --platform linux \

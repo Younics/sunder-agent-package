@@ -2,28 +2,26 @@ extern alias AgentApp;
 
 using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Protocol;
-using Sunder.Package.Agent.Rpc.Owner;
 using AppRuntime = AgentApp::Sunder.Package.Agent.Runtime;
+using AgentServices = AgentApp::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.Tests;
 
 internal partial class RegressionTestExtensionCatalog
 {
-    public AppRuntime.IAgentOwnerClient AddOwnerRuntimeProvider(
-        IAgentOwnerRuntimeProvider implementation,
+    public AgentServices.IAgentRuntimeService AddOwnerRuntimeProvider(
+        AgentOwnerRuntimeProvider implementation,
         string packageId = "sunder.package.agent")
     {
-        var providerCatalog = new AgentRpcCatalog(_client.ForCaller(packageId));
-        var service = new OwnerRuntimeService(implementation);
-        var registration = service.CreateSunderRpcProviderRegistration();
+        var receiver = Receiver(packageId);
+        var registration = receiver.Register(implementation, "sunder.agent.owner.runtime");
         _client.State.AddGenerated(
             packageId,
             implementation,
             registration,
-            providerCatalog,
+            EmptyProviderLifetime.Instance,
             registration.ProviderId);
-        // The App owns both the operation tokens and response CLR identities. Its
-        // generated client crosses the real JSON/content boundary to the Worker.
-        return new AppRuntime.AgentOwnerRpcClient(_client.ForCaller(packageId));
+        // Exercise the actual generated App service across the real Worker boundary.
+        return new AgentApp::Sunder.Generated.Packages.Sunder_Package_Agent_Internal.CSunder_Agent_Owner_RuntimeClient(receiver.Client, receiver);
     }
 }

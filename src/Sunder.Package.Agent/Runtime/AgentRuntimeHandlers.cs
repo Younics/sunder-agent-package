@@ -433,17 +433,23 @@ internal sealed class AgentCatalogHandler(
         var embeddingModelsTask = profiles.ListEmbeddingModelsAsync(request.EmbeddingProviderId, cancellationToken);
         var chatReadinessTask = profiles.GetChatProviderReadinessAsync(request.ChatProviderId, cancellationToken);
         var embeddingReadinessTask = profiles.GetEmbeddingProviderReadinessAsync(request.EmbeddingProviderId, cancellationToken);
+        var embeddingProvidersTask = profiles.ListEmbeddingProviderDescriptorsAsync(cancellationToken);
+        var behaviorLoopsTask = profiles.ListBehaviorLoopDescriptorsAsync(cancellationToken);
+        var embeddingConsumersTask = profiles.HasProfileCapabilityConsumersAsync(AgentModelCapabilityKinds.Embedding, cancellationToken);
+        var executionTargetsTask = executionTargets.ListTargetsAsync(cancellationToken);
+        var chatProvidersTask = profiles.ListChatProviderDescriptorsAsync(cancellationToken);
         await Task.WhenAll(toolsTask, capabilitiesTask, chatModelsTask, embeddingModelsTask,
-            chatReadinessTask, embeddingReadinessTask).ConfigureAwait(false);
+            chatReadinessTask, embeddingReadinessTask, embeddingProvidersTask, behaviorLoopsTask, embeddingConsumersTask,
+            executionTargetsTask, chatProvidersTask).ConfigureAwait(false);
         return new AgentCatalogProjection(
             changes.Revision,
-            profiles.ListChatProviderDescriptors(),
-            profiles.ListEmbeddingProviderDescriptors(),
-            profiles.ListBehaviorLoopDescriptors(),
-            executionTargets.ListTargets(),
+            await chatProvidersTask.ConfigureAwait(false),
+            await embeddingProvidersTask.ConfigureAwait(false),
+            await behaviorLoopsTask.ConfigureAwait(false),
+            await executionTargetsTask.ConfigureAwait(false),
             await toolsTask.ConfigureAwait(false),
             await capabilitiesTask.ConfigureAwait(false),
-            profiles.HasProfileCapabilityConsumers(AgentModelCapabilityKinds.Embedding),
+            await embeddingConsumersTask.ConfigureAwait(false),
             await chatModelsTask.ConfigureAwait(false),
             await embeddingModelsTask.ConfigureAwait(false),
             await chatReadinessTask.ConfigureAwait(false),

@@ -1,0 +1,68 @@
+using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Sdk.Services;
+
+namespace Sunder.Package.Agent.Rpc.Public;
+
+[SunderService(SunderServiceExposure.Public, ContractId = "sunder.agent.runtime.catalog", ServiceId = "runtime-catalog", IncludeSchemaDialect = true)]
+[SunderAppUse(Actions = ["discover", "invoke", "subscribe"])]
+[SunderRuntimeUse(Required = true, Actions = ["discover", "invoke", "subscribe"])]
+public interface RuntimeCatalogService
+{
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
+    ValueTask<IReadOnlyList<AgentSessionRecord>> ListSessionsAsync(CancellationToken cancellationToken = default);
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
+    ValueTask<IReadOnlyList<AgentSessionRecord>> ListSessionsForProfileAsync(string profileId, CancellationToken cancellationToken = default);
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
+    ValueTask<IReadOnlyList<AgentSessionRecord>> ListSessionsForWorkspaceAsync(string workspaceId, CancellationToken cancellationToken = default);
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
+    ValueTask<AgentSessionRecord?> GetSessionAsync(Guid sessionId, CancellationToken cancellationToken = default);
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
+    ValueTask<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesAsync(CancellationToken cancellationToken = default);
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
+    ValueTask<AgentWorkspaceRecord?> GetWorkspaceAsync(string workspaceId, CancellationToken cancellationToken = default);
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
+    ValueTask<AgentProfileRecord?> GetSessionProfileAsync(Guid sessionId, CancellationToken cancellationToken = default);
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
+    ValueTask<AgentWorkingSummaryRecord?> GetWorkingSummaryAsync(Guid sessionId, CancellationToken cancellationToken = default);
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
+    ValueTask<AgentSessionContextCheckpointRecord?> GetSessionContextCheckpointAsync(Guid sessionId, CancellationToken cancellationToken = default);
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
+    ValueTask<AgentRunCheckpointRecord?> GetLatestCheckpointAsync(Guid sessionId, CancellationToken cancellationToken = default);
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
+    ValueTask<IReadOnlyList<AgentTurnRecord>> ListRecentTurnsAsync(Guid sessionId,
+        [SunderValueConstraints(Minimum = "1", Maximum = "1000")] int limit, CancellationToken cancellationToken = default);
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
+    ValueTask<IReadOnlyList<AgentTurnRecord>> ListTurnsBeforeAsync(Guid sessionId, DateTimeOffset createdAtUtc, Guid turnId,
+        [SunderValueConstraints(Minimum = "1", Maximum = "1000")] int limit,
+        CancellationToken cancellationToken = default);
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
+    ValueTask<IReadOnlyList<AgentTurnRecord>> ListTurnsAfterAsync(Guid sessionId, DateTimeOffset createdAtUtc, Guid turnId,
+        [SunderValueConstraints(Minimum = "1", Maximum = "1000")] int limit,
+        CancellationToken cancellationToken = default);
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
+    ValueTask<IReadOnlyList<AgentTurnRecord>> ListRecentTranscriptHeadersAsync(Guid sessionId,
+        [SunderValueConstraints(Minimum = "1", Maximum = "1000")] int limit, CancellationToken cancellationToken = default);
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
+    ValueTask<IReadOnlyList<AgentTurnRecord>> ListTranscriptHeadersBeforeAsync(Guid sessionId, DateTimeOffset createdAtUtc, Guid turnId,
+        [SunderValueConstraints(Minimum = "1", Maximum = "1000")] int limit,
+        CancellationToken cancellationToken = default);
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
+    ValueTask<IReadOnlyList<AgentTurnRecord>> ListTranscriptHeadersAfterAsync(Guid sessionId, DateTimeOffset createdAtUtc, Guid turnId,
+        [SunderValueConstraints(Minimum = "1", Maximum = "1000")] int limit,
+        CancellationToken cancellationToken = default);
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
+    ValueTask<AgentTranscriptToolDetailRecord?> GetTranscriptToolDetailAsync(AgentTranscriptToolDetailRequest request,
+        CancellationToken cancellationToken = default);
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
+    ValueTask<IReadOnlyList<AgentProfileRecord>> ListProfilesAsync(CancellationToken cancellationToken = default);
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
+    ValueTask<AgentProfileRecord?> GetProfileAsync(string profileId, CancellationToken cancellationToken = default);
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
+    ValueTask<AgentProfileModelBindingRecord?> GetSessionModelBindingAsync(Guid sessionId, string capabilityKind,
+        CancellationToken cancellationToken = default);
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
+    ValueTask<AgentProfileModelBindingRecord?> GetModelBindingAsync(string profileId, string capabilityKind,
+        CancellationToken cancellationToken = default);
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
+    IAsyncEnumerable<AgentRuntimeCatalogEvent> WatchAsync(CancellationToken cancellationToken = default);
+}

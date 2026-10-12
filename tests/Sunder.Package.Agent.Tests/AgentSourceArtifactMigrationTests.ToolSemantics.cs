@@ -9,8 +9,10 @@ public sealed partial class AgentSourceArtifactMigrationTests
     internal static void AssertExecutionToolSemanticOwnership(Assembly worker)
     {
         Assert.DoesNotContain(worker.GetReferencedAssemblies(), reference => reference.Name is "Sunder.Package.Agent.Protocol" or "Sunder.Agent.Execution.Common");
-        foreach (var type in new[] { "Sunder.Package.Agent.Contracts.Models.AgentToolExecutionContext", "Sunder.Package.Agent.Contracts.Models.AgentResourceOperationContext",
-            "Sunder.Package.Agent.Contracts.Models.AgentPromptContextReceipt", "Sunder.Package.Agent.Protocol.AgentRpcProviderHandle", "Sunder.Package.Agent.Protocol.AgentExecutionFacetIds" })
+        foreach (var name in new[] { "AgentToolExecutionContext", "AgentResourceOperationContext", "AgentPromptContextReceipt" })
+            AssertImportedRoleModel(worker, name);
+        foreach (var type in new[] { "Sunder.Generated.Packages.Sunder_Package_Agent_Services.IExecutionTargetService",
+            "Sunder.Package.Agent.Protocol.AgentExecutionFacetIds" })
             Assert.Same(worker, worker.GetType(type, true)!.Assembly);
         Assert.Null(worker.GetType("Sunder.Agent.Execution.Common.HostSecurePathEngine"));
         Assert.Null(worker.GetType("Sunder.Agent.Execution.Common.LocalGlobMatcher"));

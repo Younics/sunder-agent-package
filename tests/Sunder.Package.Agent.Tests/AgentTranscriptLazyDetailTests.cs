@@ -7,13 +7,17 @@ using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
+using Sunder.Sdk.Rpc;
 using Xunit;
 using CorePresentation = AgentCore::Sunder.Package.Agent.Shared.PackageViews;
 
 namespace Sunder.Package.Agent.Tests;
 
 extern alias SubagentsApp;
-using SubagentsApp::Sunder.Package.Agent.Subagents.Runtime;
+extern alias SubagentsWorker;
+using SubagentsWorker::Sunder.Package.Agent.Subagents.Runtime;
+using SubagentServices = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using SubagentModels = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
 
 public sealed class AgentTranscriptLazyDetailTests
 {
@@ -21,23 +25,25 @@ public sealed class AgentTranscriptLazyDetailTests
     public async Task RuntimeCatalogPagingPreservesPayloadsWhileSubsessionsReadHeaders()
     {
         using var scope = RegressionTestPackageScope.Create();
-        var extensions = new RegressionTestExtensionCatalog();
+        await using var extensions = new RegressionTestExtensionCatalog();
         var store = new AgentLocalStore(scope.Context);
-        var sessions = new AgentSessionService(store, extensions);
-        var workspaces = new AgentWorkspaceService(store, extensions, sessions);
+        var sessions = new AgentSessionService(store, extensions.SessionCleaners);
+        var workspaces = new AgentWorkspaceService(store, extensions.SessionCleaners, sessions, extensions.WorkspacePathMigrators);
         var toolService = new AgentToolService(
             sessions,
             workspaces,
-            new AgentExecutionTargetService(extensions),
-            extensions);
-        using var profiles = new AgentProfileService(store, toolService, extensions, extensions.BehaviorLoops);
+            new AgentExecutionTargetService(extensions.ExecutionTargets),
+            extensions.ToolSources,
+            extensions.ObservedToolExecutions);
+        using var profiles = extensions.CreateProfileService(store, toolService);
         var runtimeCatalog = new AgentRuntimeCatalog(sessions, profiles, workspaces);
         extensions.AddRuntimeCatalog(runtimeCatalog);
-        IAgentRuntimeCatalog runtime = runtimeCatalog;
         var workspace = workspaces.CreateWorkspace("Catalog payloads");
         var session = sessions.CreateSession("Catalog payloads", workspaceId: workspace.WorkspaceId);
-        AgentTurnRecord? catalogEventTurn = null;
-        runtime.TurnChanged += (_, turn) => catalogEventTurn = turn;
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await using var events = runtimeCatalog.WatchAsync(timeout.Token).GetAsyncEnumerator(timeout.Token);
+        Assert.True(await events.MoveNextAsync());
+        Assert.IsType<AgentRuntimeCatalogResetEvent>(events.Current);
         sessions.AppendToolResultTurn(
             session.SessionId,
             "payload-call",
@@ -53,36 +59,45 @@ public sealed class AgentTranscriptLazyDetailTests
             backendId: "private-backend-canary",
             presentationPayloadJson: "{\"privatePresentation\":true}");
 
-        AssertHydratedToolPayload(Assert.IsType<AgentTurnRecord>(catalogEventTurn));
-        AssertHydratedToolPayload(Assert.Single(runtime.ListRecentTurns(session.SessionId, 1)));
-        AssertHydratedToolPayload(Assert.Single(runtime.ListTurnsBefore(
+        while (await events.MoveNextAsync() && events.Current is not AgentTurnCatalogEvent) { }
+        var catalogEvent = Assert.IsType<AgentTurnCatalogEvent>(events.Current);
+        Assert.Equal(session.SessionId, catalogEvent.SessionId);
+        AssertHydratedToolPayload(catalogEvent.Turn);
+        AssertHydratedToolPayload(Assert.Single(await runtimeCatalog.ListRecentTurnsAsync(session.SessionId, 1)));
+        AssertHydratedToolPayload(Assert.Single(await runtimeCatalog.ListTurnsBeforeAsync(
             session.SessionId,
             DateTimeOffset.MaxValue,
             Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff"),
             1)));
-        AssertHydratedToolPayload(Assert.Single(runtime.ListTurnsAfter(
+        AssertHydratedToolPayload(Assert.Single(await runtimeCatalog.ListTurnsAfterAsync(
             session.SessionId,
             DateTimeOffset.MinValue,
             Guid.Empty,
             1)));
 
-        using var subsessions = new SubsessionLocalRuntimeAdapter(
-            Assert.Single(extensions.Subagents().GetRuntimeCatalogs()));
-        var recent = await subsessions.ListRecentTurnsAsync(session.SessionId, 1);
-        var before = await subsessions.ListTurnsBeforeAsync(
+        var subsessions = Assert.Single((await extensions.Subagents()
+            .Providers<SubagentServices.IRuntimeCatalogService>()
+            .ListAsync()).Providers).Service;
+        var recent = await SubsessionTranscriptReader.RecentAsync(
+            subsessions, session.SessionId, 1, CancellationToken.None);
+        var before = await SubsessionTranscriptReader.BeforeAsync(
+            subsessions,
             session.SessionId,
-            DateTimeOffset.MaxValue,
+            new SunderRpcOffsetDateTime(DateTimeOffset.MaxValue.ToString("O")),
             Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff"),
-            1);
-        var after = await subsessions.ListTurnsAfterAsync(
+            1,
+            CancellationToken.None);
+        var after = await SubsessionTranscriptReader.AfterAsync(
+            subsessions,
             session.SessionId,
-            DateTimeOffset.MinValue,
+            new SunderRpcOffsetDateTime(DateTimeOffset.MinValue.ToString("O")),
             Guid.Empty,
-            1);
+            1,
+            CancellationToken.None);
 
-        AssertHeaderOnly(AgentRoleBoundary.As<AgentTurnItemRecord>(Assert.Single(Assert.Single(recent.Turns).Items)));
-        AssertHeaderOnly(AgentRoleBoundary.As<AgentTurnItemRecord>(Assert.Single(Assert.Single(before.Turns).Items)));
-        AssertHeaderOnly(AgentRoleBoundary.As<AgentTurnItemRecord>(Assert.Single(Assert.Single(after.Turns).Items)));
+        AssertHeaderOnly(Assert.Single(Assert.Single(recent.Turns).Items));
+        AssertHeaderOnly(Assert.Single(Assert.Single(before.Turns).Items));
+        AssertHeaderOnly(Assert.Single(Assert.Single(after.Turns).Items));
     }
 
     [Fact]
@@ -298,16 +313,17 @@ public sealed class AgentTranscriptLazyDetailTests
     public async Task ChangeHub_TurnEventsUseBoundedSingleHeaderReadsWithoutHydratingToolPayloads()
     {
         using var scope = RegressionTestPackageScope.Create();
-        var extensions = new RegressionTestExtensionCatalog();
+        await using var extensions = new RegressionTestExtensionCatalog();
         var store = new AgentLocalStore(scope.Context);
-        var sessions = new AgentSessionService(store, extensions);
-        var workspaces = new AgentWorkspaceService(store, extensions, sessions);
+        var sessions = new AgentSessionService(store, extensions.SessionCleaners);
+        var workspaces = new AgentWorkspaceService(store, extensions.SessionCleaners, sessions, extensions.WorkspacePathMigrators);
         var toolService = new AgentToolService(
             sessions,
             workspaces,
-            new AgentExecutionTargetService(extensions),
-            extensions);
-        using var profiles = new AgentProfileService(store, toolService, extensions, extensions.BehaviorLoops);
+            new AgentExecutionTargetService(extensions.ExecutionTargets),
+            extensions.ToolSources,
+            extensions.ObservedToolExecutions);
+        using var profiles = extensions.CreateProfileService(store, toolService);
         using var changes = new AgentRuntimeChangeHub(profiles, workspaces, sessions);
         var workspace = workspaces.CreateWorkspace("Live header reads");
         var session = sessions.CreateSession("Live header reads", workspaceId: workspace.WorkspaceId);
@@ -456,19 +472,19 @@ public sealed class AgentTranscriptLazyDetailTests
     }
 
     private static void AssertHeaderOnly(AgentTurnItemRecord item)
+        => AssertHeaderOnly(item.IsToolHeaderProjection, item.TextContent, item.ArgumentsJson, item.ResultSummary,
+            item.StructuredPayloadJson, item.SourcesJson, item.ErrorCode, item.BackendId, item.PresentationPayloadJson,
+            item.ToolOwnerPackageId, item.ToolSchemaId, item.ToolSchemaVersion);
+
+    private static void AssertHeaderOnly(SubagentModels.AgentTurnItemRecord item)
+        => AssertHeaderOnly(item.IsToolHeaderProjection, item.TextContent, item.ArgumentsJson, item.ResultSummary,
+            item.StructuredPayloadJson, item.SourcesJson, item.ErrorCode, item.BackendId, item.PresentationPayloadJson,
+            item.ToolOwnerPackageId, item.ToolSchemaId, item.ToolSchemaVersion);
+
+    private static void AssertHeaderOnly(bool isHeader, params string?[] payloads)
     {
-        Assert.True(item.IsToolHeaderProjection);
-        Assert.Null(item.TextContent);
-        Assert.Null(item.ArgumentsJson);
-        Assert.Null(item.ResultSummary);
-        Assert.Null(item.StructuredPayloadJson);
-        Assert.Null(item.SourcesJson);
-        Assert.Null(item.ErrorCode);
-        Assert.Null(item.BackendId);
-        Assert.Null(item.PresentationPayloadJson);
-        Assert.Null(item.ToolOwnerPackageId);
-        Assert.Null(item.ToolSchemaId);
-        Assert.Null(item.ToolSchemaVersion);
+        Assert.True(isHeader);
+        Assert.All(payloads, Assert.Null);
     }
 
     private static SqliteConnection Open(string databasePath)

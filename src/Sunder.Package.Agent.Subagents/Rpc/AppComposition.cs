@@ -3,6 +3,7 @@ using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Package.Agent.Subagents.Runtime;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Notifications;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Subagents_Services;
 
 namespace Sunder.Package.Agent.Subagents.PackageViews
 {
@@ -27,6 +28,6 @@ namespace Sunder.Package.Agent.Subagents.Runtime
     internal sealed partial class SubagentAppRuntimeGateway
     {
         [ActivatorUtilitiesConstructor]
-        internal SubagentAppRuntimeGateway(SubagentOwnerClient client, IPackageContext context) : this(client, context.Logging.LoggerFactory) { }
+        internal SubagentAppRuntimeGateway(ISubagentsManagementService client, IPackageContext context) : this(client, context.Logging.LoggerFactory) { }
     }
 }

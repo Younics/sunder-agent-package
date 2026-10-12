@@ -1,27 +1,35 @@
 extern alias AgentApp;
-
-using System.Reflection;
-using AgentApp::Sunder.Package.Agent.Contracts.Contracts;
-using AppRpc = AgentApp::Sunder.Package.Agent.Protocol;
-using Xunit;
+using Microsoft.Extensions.DependencyInjection;
+using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Services;
+using AppServices = AgentApp::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.Tests;
 
 internal partial class RegressionTestExtensionCatalog
 {
-    internal AppRpc.AgentRpcCatalog AppCatalog => AgentRoleBoundary.As<AppRpc.AgentRpcCatalog>(this);
+    private AgentApp::Sunder.Package.Agent.Services.AgentToolPresentationService? _toolPresentation;
 
-    public void AddProvider<T>(AppRpc.AgentRpcService<T> service, object implementation, string packageId = "test.package") where T : class
-        => AddProvider(service.ContractId, implementation, packageId);
+    internal IServiceProviders<AppServices.IWorkspaceEditorService> WorkspaceEditors
+        => Receiver("sunder.package.agent").Providers<AppServices.IWorkspaceEditorService>();
 
-    public AppRpc.AgentRpcReference<T> GetRequiredReference<T>(AppRpc.AgentRpcService<T> service) where T : class
-        => Assert.Single(AppCatalog.GetServiceReferences(service));
+    internal AgentApp::Sunder.Package.Agent.Services.AgentToolPresentationService CreateToolPresentationService(IPackageContext context)
+    {
+        lock (_consumerGate)
+        {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _catalogDisposed) != 0, this);
+            if (_toolPresentation is not null) return _toolPresentation;
+            var runtime = OwnConsumer("sunder.package.agent", _ => RegressionTestRuntime.Create(context, this));
+            var owner = runtime.GetRequiredService<Sunder.Package.Agent.Runtime.AgentOwnerRuntimeProvider>();
+            // App presentation goes through its reviewed owner service. Tool-source
+            // discovery and invocation stay inside the actual Worker implementation.
+            _toolPresentation = new(AddOwnerRuntimeProvider(owner));
+            return _toolPresentation;
+        }
+    }
 }
 
 internal static class RegressionTestAppBindings
 {
-    internal static AppRpc.AgentRpcService<IAgentWorkspaceEditorContributor> WorkspaceEditors { get; } =
-        (AppRpc.AgentRpcService<IAgentWorkspaceEditorContributor>)typeof(AppRpc.AgentRpcCatalog).Assembly
-            .GetType("Sunder.Package.Agent.Runtime.Rpc.AgentWorkspaceEditorBindings", throwOnError: true)!
-            .GetProperty("Service", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
+    internal const string WorkspaceEditors = RegressionTestBindings.WorkspaceEditors;
 }

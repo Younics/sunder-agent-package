@@ -3,7 +3,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
               xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
               xmlns:vm="using:Sunder.Package.Agent.Builder"
-              xmlns:m="using:Sunder.Package.Agent.Contracts.Models"
+              xmlns:m="using:Sunder.Generated.Packages.Sunder_Package_Agent_Models"
               xmlns:shared="using:Sunder.Package.Agent.Shared.PackageViews"
               x:Class="Sunder.Package.Agent.Builder.BuilderView"
              x:DataType="vm:BuilderViewModel"
@@ -415,7 +415,7 @@
                                    FontWeight="SemiBold"
                                    Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}" />
                         <TextBlock Classes="builder-caption"
-                                   Text="Build validates the project and creates local output. Publish creates the distributable package archive." />
+                                    Text="Build validates the project and creates local output. Publish checks public APIs and creates the distributable package archive." />
                       </StackPanel>
 
                       <Border Classes="builder-runtime-log"

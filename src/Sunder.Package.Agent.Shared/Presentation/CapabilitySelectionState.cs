@@ -98,6 +98,12 @@ internal sealed class CapabilityOptionState : INotifyPropertyChanged
 internal sealed class CapabilitySelectionState : INotifyPropertyChanged
 {
     private static readonly CapabilityAssignmentComparer AssignmentComparer = new();
+    private static AgentProfileSelectableCapabilityAssignmentRecord CreateAssignment(string kind, string capabilityId, string? sourceId)
+#if SUNDER_SUBAGENTS_APP || SUNDER_SUBAGENTS_WORKER
+        => new() { Kind = kind, CapabilityId = capabilityId, SourceId = sourceId };
+#else
+        => new(kind, capabilityId, sourceId);
+#endif
     private IReadOnlyList<AgentProfileSelectableCapabilityAssignmentRecord> _unresolvedAssignments = [];
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -112,7 +118,7 @@ internal sealed class CapabilitySelectionState : INotifyPropertyChanged
         => _unresolvedAssignments
             .Concat(Options
                 .Where(option => option.IsEnabled && option.CanSelect)
-                .Select(option => new AgentProfileSelectableCapabilityAssignmentRecord(
+                .Select(option => CreateAssignment(
                     option.Kind,
                     option.CapabilityId,
                     option.SourceId)))
@@ -226,7 +232,7 @@ internal sealed class CapabilitySelectionState : INotifyPropertyChanged
     {
         var candidates = new[]
             {
-                new AgentProfileSelectableCapabilityAssignmentRecord(
+                CreateAssignment(
                     definition.Kind,
                     definition.CapabilityId,
                     definition.SourceId),
@@ -354,7 +360,7 @@ internal static class CapabilityGrouping
             "package:" + key,
             title,
             capability.GroupDescription,
-            capability.GroupSortOrder);
+            checked((int)capability.GroupSortOrder));
     }
 
     private static string? FirstNonEmpty(params string?[] values)

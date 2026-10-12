@@ -94,8 +94,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="..\Sunder.Package.Agent.Tests\AgentOwnerOperationTestExtensions.cs"
-             Link="TestSupport\AgentOwnerOperationTestExtensions.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Tests\OwnerServiceStub.cs"
+             Link="TestSupport\OwnerServiceStub.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Tests\ProfileServiceFixture.cs"
+             Link="TestSupport\ProfileServiceFixture.cs" />
     <Compile Include="..\Sunder.Package.Agent.Tests\RegressionTestPackageContext.cs"
              Link="TestSupport\RegressionTestPackageContext.cs" />
     <Compile Include="..\Sunder.Package.Agent.Tests\RegressionTestPackageScope.cs"
@@ -103,9 +105,15 @@
     <Compile Include="..\Sunder.Package.Agent.Tests\RegressionTestAppViews.cs"
              Link="TestSupport\RegressionTestAppViews.cs" />
     <Compile Include="..\Sunder.Package.Agent.Tests\RegressionTestAppInfrastructure.cs"
-             Link="TestSupport\RegressionTestAppInfrastructure.cs" />
+              Link="TestSupport\RegressionTestAppInfrastructure.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Tests\RegressionTestOwnerInfrastructure.cs"
+              Link="TestSupport\RegressionTestOwnerInfrastructure.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Tests\RegressionTestRuntime.cs"
+               Link="TestSupport\RegressionTestRuntime.cs" />
     <Compile Include="..\Sunder.Package.Agent.Tests\RegressionTestFamilyConsumers.Memory.cs"
-             Link="TestSupport\RegressionTestFamilyConsumers.Memory.cs" />
+              Link="TestSupport\RegressionTestFamilyConsumers.Memory.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Tests\RegressionTestFamilyConsumers.cs"
+              Link="TestSupport\RegressionTestFamilyConsumers.cs" />
     <Compile Include="..\Sunder.Package.Agent.Tests\TestPackageStorageFakes.cs"
              Link="TestSupport\TestPackageStorageFakes.cs" />
     <Compile Include="..\Sunder.Package.Agent.TestSupport.Avalonia\WorkerBackedSubagentManagementGateway.cs"

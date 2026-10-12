@@ -69,7 +69,11 @@ internal sealed partial class TranscriptRowProjector<TRow>
         updatedTurn = currentTurn with
         {
             Items = items,
+#if SUNDER_SUBAGENTS_APP || SUNDER_SUBAGENTS_WORKER
+            UpdatedAtUtc = AgentTranscriptTime.Write(mutation.UpdatedAtUtc),
+#else
             UpdatedAtUtc = mutation.UpdatedAtUtc,
+#endif
             ContentRevision = mutation.ContentRevision,
             IsStreaming = mutation.Kind != AgentTurnMutationKind.Complete,
         };

@@ -579,9 +579,9 @@ public sealed partial class AgentCompatibilityCandidateTestsRpcMigrationBaseline
         // New source-migration candidates are proven separately against this
         // immutable oracle; all 96 original adapter sources remain hash-checked.
         var candidates = BuilderSourceMigrationTests.SourcePaths.Concat(AgentPublicSourceMigrationTests.SourcePaths).Concat(AgentOwnerSourceMigrationTests.SourcePaths)
-            .Concat(AgentCanonicalSourceMigrationTests.SourcePaths).Append(AgentAppSourceMigrationTests.SourceClient)
+            .Concat(AgentCanonicalSourceMigrationTests.SourcePaths)
             .Append(AgentAppSourceMigrationTests.CompositionSource)
-            .Concat(AgentCanonicalSourceMigrationTests.EmbeddingSources).Append(AgentCanonicalSourceMigrationTests.LegacyEmbeddingBindings)
+            .Concat(AgentSourceMigrationProjectChanges.ReadHistoricalCandidateSources("AgentCanonicalSourceMigrationTests.EmbeddingSources")).Append(AgentCanonicalSourceMigrationTests.LegacyEmbeddingBindings)
             .Concat(AgentCanonicalSourceMigrationTests.ChatSources).Append(AgentCanonicalSourceMigrationTests.LegacyChatBindings)
             .Concat(AgentCanonicalSourceMigrationTests.BehaviorSources).Append(AgentCanonicalSourceMigrationTests.LegacyBehaviorBindings)
             .Append(AgentSourceMigrationProjectChanges.ProviderChatModelsSource)
@@ -593,16 +593,16 @@ public sealed partial class AgentCompatibilityCandidateTestsRpcMigrationBaseline
             .Concat(AgentCanonicalSourceMigrationTests.MetadataSources).Append(AgentCanonicalSourceMigrationTests.LegacyMetadataBindings)
             .Concat(AgentCanonicalSourceMigrationTests.SelectableSources).Append(AgentCanonicalSourceMigrationTests.LegacySelectableBindings)
             .Concat(AgentCanonicalSourceMigrationTests.WorkspacePathSources).Append(AgentCanonicalSourceMigrationTests.LegacyWorkspacePathBindings)
-            .Concat(AgentCanonicalSourceMigrationTests.ToolProfileSources).Append(AgentCanonicalSourceMigrationTests.LegacyToolProfileBindings)
+            .Concat(AgentSourceMigrationProjectChanges.ReadHistoricalCandidateSources("AgentCanonicalSourceMigrationTests.ToolProfileSources")).Append(AgentCanonicalSourceMigrationTests.LegacyToolProfileBindings)
             .Concat(AgentCanonicalSourceMigrationTests.PromptContextSources).Append(AgentCanonicalSourceMigrationTests.LegacyPromptContextBindings)
             .Concat(AgentCanonicalSourceMigrationTests.ExecutionSources).Append(AgentCanonicalSourceMigrationTests.LegacyExecutionBindings)
             .Concat(AgentCanonicalSourceMigrationTests.ToolSources).Append(AgentCanonicalSourceMigrationTests.LegacyToolBindings)
             .Concat(AgentCanonicalSourceMigrationTests.ObservedToolSources).Append(AgentCanonicalSourceMigrationTests.LegacyObservedToolBindings)
-            .Concat(CredentialSourceMigrationTests.SourcePaths).Concat(McpManagementSourceMigrationTests.SourcePaths)
-            .Concat(SkillsManagementSourceMigrationTests.SourcePaths)
+            .Concat(CredentialSourceMigrationTests.SourcePaths).Concat(AgentSourceMigrationProjectChanges.ReadHistoricalCandidateSources("McpManagementSourceMigrationTests.SourcePaths"))
+            .Concat(AgentSourceMigrationProjectChanges.ReadHistoricalCandidateSources("SkillsManagementSourceMigrationTests.SourcePaths"))
             .Concat(SubagentsManagementSourceMigrationTests.SourcePaths)
-            .Concat(LocalPresentationSourceMigrationTests.SourcePaths)
-            .Concat(DockerPresentationSourceMigrationTests.SourcePaths)
+            .Concat(AgentSourceMigrationProjectChanges.ReadHistoricalCandidateSources("LocalPresentationSourceMigrationTests.SourcePaths"))
+            .Concat(AgentSourceMigrationProjectChanges.ReadHistoricalCandidateSources("DockerPresentationSourceMigrationTests.SourcePaths"))
             .Concat(MemoryInspectorSourceMigrationTests.SourcePaths)
             .Append(AgentSourceArtifactMigrationTests.MemoryCleanerSource)
             .Concat(AgentSourceArtifactMigrationTests.MemoryProviderSources)
@@ -629,15 +629,16 @@ public sealed partial class AgentCompatibilityCandidateTestsRpcMigrationBaseline
             .Concat(AgentSourceArtifactMigrationTests.WebRelocationSources)
             .Concat(AgentSourceArtifactMigrationTests.BuilderRelocationSources)
             .Concat(AgentAppSourceMigrationTests.RelocatedModels)
-            .Append(AgentAppSourceMigrationTests.SourceOperations).Append(AgentAppSourceMigrationTests.LegacyOperations)
+            .Append(AgentAppSourceMigrationTests.LegacyOperations)
             .Append(AgentAppSourceMigrationTests.OperationErrorSource)
             .Concat(new[]
             {
                 "src/Sunder.Package.Agent.Provider.OpenAI/Rpc/ManagementService.cs",
                 "src/Sunder.Package.Agent.Provider.OpenAI/Rpc/ManagementClient.cs",
                 "src/Sunder.Package.Agent.Provider.OpenAI/Management/OpenAiRuntimeManagementClient.cs",
-            }).ToArray();
-        Assert.Equal(386, candidates.Length);
+            }).Where(path => !AgentSourceMigrationProjectChanges.HasOrdinarySourceHistory(path)
+                && path != "src/Sunder.Package.Agent/Runtime/AgentRuntimeContracts.cs").ToArray();
+        Assert.Equal(370, candidates.Length);
         // These ordinary business/mapping sources contain no RPC surface markers.
         var domainMappings = new[]
         {
@@ -738,7 +739,7 @@ public sealed partial class AgentCompatibilityCandidateTestsRpcMigrationBaseline
             "src/Sunder.Package.Agent/Services/AgentWorkspaceBindingRoles.cs",
             "src/Sunder.Package.Agent/Runtime/AgentTranscriptPageCursor.cs",
             "src/Sunder.Package.Agent/Runtime/AgentWorkspaceDefaults.cs",
-            "src/Sunder.Package.Agent/Rpc/Owner/AgentRuntimeOperations.cs",
+            "src/Sunder.Package.Agent/Runtime/IAgentOwnerResources.cs",
             "src/Sunder.Package.Agent/Runtime/AgentOwnerOperationException.cs",
             "src/Sunder.Package.Agent/Runtime/Rpc/AgentEmbeddingBindings.Legacy.cs",
             "src/Sunder.Package.Agent/Rpc/Consumers/AgentEmbeddingBindings.cs",
@@ -767,8 +768,12 @@ public sealed partial class AgentCompatibilityCandidateTestsRpcMigrationBaseline
             "src/Sunder.Package.Agent/Rpc/Consumers/AgentToolBindings.cs",
             "src/Sunder.Package.Agent/Rpc/Consumers/AgentObservedToolBindings.cs",
         };
-        Assert.Equal(candidates.Except(domainMappings, StringComparer.Ordinal).Order(StringComparer.Ordinal),
-            buildTopology.RpcAdapterSources.Where(source => candidates.Contains(source.Path, StringComparer.Ordinal)).Select(source => source.Path).Order(StringComparer.Ordinal));
+        var expectedCandidates = candidates.Except(domainMappings, StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+        var actualCandidates = buildTopology.RpcAdapterSources.Where(source => candidates.Contains(source.Path, StringComparer.Ordinal))
+            .Select(source => source.Path).Order(StringComparer.Ordinal).ToArray();
+        Assert.True(expectedCandidates.SequenceEqual(actualCandidates, StringComparer.Ordinal),
+            "Historical candidate closure changed. Missing: " + string.Join(", ", expectedCandidates.Except(actualCandidates))
+            + "; extra: " + string.Join(", ", actualCandidates.Except(expectedCandidates)));
         buildTopology = buildTopology with
         {
             RpcAdapterSources = buildTopology.RpcAdapterSources.Where(source =>
@@ -835,7 +840,15 @@ public sealed partial class AgentCompatibilityCandidateTestsRpcMigrationBaseline
         Assert.Equal(189, buildTopology.ProjectReferences.Count);
         Assert.Equal(252, buildTopology.LinkedSourceDeclarations.Count);
         Assert.Equal(31, buildTopology.GeneratedOutputs.Count);
-        Assert.Equal(96, buildTopology.RpcAdapterSources.Count);
+        using (var inventory = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(root, BaselineRelativePath))))
+        {
+            var expectedPaths = inventory.RootElement.GetProperty("buildTopology").GetProperty("rpcAdapterSources")
+                .EnumerateArray().Select(value => value.GetProperty("path").GetString()!).ToArray();
+            var actualPaths = buildTopology.RpcAdapterSources.Select(value => value.Path).ToArray();
+            Assert.True(buildTopology.RpcAdapterSources.Count == 96 && expectedPaths.ToHashSet(StringComparer.Ordinal).SetEquals(actualPaths),
+                "Historical source closure changed. Missing: " + string.Join(", ", expectedPaths.Except(actualPaths))
+                + "; extra: " + string.Join(", ", actualPaths.Except(expectedPaths)));
+        }
         Assert.DoesNotContain(
             buildTopology.RpcAdapterSources,
             static source => source.Disposition.Contains("-or-", StringComparison.Ordinal));
@@ -1341,6 +1354,7 @@ public sealed partial class AgentCompatibilityCandidateTestsRpcMigrationBaseline
 
     private static bool IsRpcAdapterSource(string source)
         => source.Contains("Sunder.Sdk.Rpc", StringComparison.Ordinal)
+           || source.Contains("Sunder.Sdk.Services", StringComparison.Ordinal)
            || source.Contains("Protocol.Generated", StringComparison.Ordinal)
            || source.Contains("AgentRpcCatalog", StringComparison.Ordinal)
            || source.Contains("ISunderRpc", StringComparison.Ordinal)
@@ -1504,8 +1518,11 @@ public sealed partial class AgentCompatibilityCandidateTestsRpcMigrationBaseline
         {
             // This exact interface moved into the App assembly. Reconstruct the
             // historical preimage so the frozen hash still checks every original byte.
-            var client = File.ReadAllText(Path.GetFullPath(Path.Combine(Path.GetDirectoryName(path)!, "../App/Runtime/IAgentOwnerClient.cs")))
+            var client = File.ReadAllText(Path.Combine(AgentPackageRepositoryInventory.RepositoryRoot.FullName,
+                    "tests/Sunder.Package.Agent.Tests/Fixtures/OrdinaryServices/IAgentOwnerClient.cs.txt"))
                 .Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
+            Assert.Equal("fde0397c933ffe1383d3bafbc2fad1b3cbca80b04daa68021cfcf9c69326ab6f",
+                Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(client))));
             var declaration = client[client.IndexOf("internal interface IAgentOwnerClient", StringComparison.Ordinal)..].TrimEnd();
             const string marker = "internal interface IAgentOwnerRuntimeProvider";
             Assert.Equal(2, normalized.Split(marker, StringSplitOptions.None).Length);

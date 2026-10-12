@@ -11,7 +11,7 @@ internal static partial class AgentSourceMigrationProjectChanges
         if (name is "FilesToolSource.cs" or "FilePermissionPlanner.cs")
         {
             const string validation = "FileSearchRequestValidation.TryValidateRequest";
-            Assert.Equal(3, text.Split(validation, StringSplitOptions.None).Length);
+            RequireOccurrences(validation, 2);
             text = text.Replace(validation, "HostSecureFileSearch.TryValidateRequest", StringComparison.Ordinal);
         }
         var facets = name switch
@@ -21,13 +21,14 @@ internal static partial class AgentSourceMigrationProjectChanges
         };
         if (facets > 0)
         {
-            Assert.Equal(facets + 1, text.Split("FilesExecutionFacets.SupportsFacet", StringSplitOptions.None).Length);
+            RequireOccurrences("FilesExecutionFacets.SupportsFacet", facets);
             text = text.Replace("FilesExecutionFacets.SupportsFacet", "AgentExecutionTargetRpc.SupportsFacet", StringComparison.Ordinal);
         }
         if (name != "FilesToolSource.cs") return text;
         const string start = "    private static async ValueTask<FileExecutionLease?> AcquireTargetAsync(";
         const string end = "    private static bool IsMutation(string toolId)";
-        Assert.Equal(2, text.Split(start, StringSplitOptions.None).Length); Assert.Equal(2, text.Split(end, StringSplitOptions.None).Length);
+        RequireOccurrences(start, 1);
+        RequireOccurrences(end, 1);
         var transport = File.ReadAllText(Path.Combine(AgentPackageRepositoryInventory.RepositoryRoot.FullName,
             "tests/Sunder.Package.Agent.Tests/Fixtures/FilesToolSource.transport-before-source.cs.txt")).Replace("\r\n", "\n", StringComparison.Ordinal);
         text = text[..text.IndexOf(start, StringComparison.Ordinal)] + transport.TrimEnd() + "\n\n" + text[text.IndexOf(end, StringComparison.Ordinal)..];
@@ -45,9 +46,16 @@ internal static partial class AgentSourceMigrationProjectChanges
         };
         foreach (var (after, before, count) in replacements)
         {
-            Assert.Equal(count + 1, text.Split(after, StringSplitOptions.None).Length);
+            RequireOccurrences(after, count);
             text = text.Replace(after, before, StringComparison.Ordinal);
         }
         return text;
+
+        void RequireOccurrences(string marker, int expected)
+        {
+            var actual = text.Split(marker, StringSplitOptions.None).Length - 1;
+            Assert.True(expected == actual,
+                $"{path}: expected {expected} pre-natural occurrences of '{marker}', found {actual}.");
+        }
     }
 }

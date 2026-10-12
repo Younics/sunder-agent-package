@@ -1,6 +1,8 @@
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Runtime.Loader;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
@@ -11,6 +13,7 @@ using Sunder.Package.Agent.Storage;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Worker;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -27,7 +30,7 @@ public sealed partial class AgentPublicSourceMigrationTests
         var sessions = services.GetRequiredService<AgentSessionService>();
         var profiles = services.GetRequiredService<AgentProfileService>();
         var workspaces = services.GetRequiredService<AgentWorkspaceService>();
-        var domain = services.GetRequiredService<AgentRuntimeCatalog>();
+        using var domain = new RuntimeCatalogProbe(services.GetRequiredService<AgentRuntimeCatalog>(), sessions, profiles);
         var workspace = workspaces.CreateWorkspace("Catalog workspace 漢字");
         var secondWorkspace = workspaces.CreateWorkspace("Other workspace");
         var profile = await profiles.CreateProfileAsync("Catalog profile");
@@ -45,7 +48,7 @@ public sealed partial class AgentPublicSourceMigrationTests
         var last = sessions.AppendTextTurn(session.SessionId, AgentMessageRole.Assistant, "Last message");
         sessions.SaveCheckpoint(session.SessionId, 7, AgentRunStatus.Completed, "Run completed");
         sessions.SaveSessionContextCheckpoint(session.SessionId, first.TurnId, call.TurnId, 2, "Working summary", "{opaque-details");
-        Assert.Null(domain.GetWorkingSummary(session.SessionId)); // Unanchored legacy snapshots are not active context.
+        Assert.Null(await domain.GetWorkingSummaryAsync(session.SessionId)); // Unanchored legacy snapshots are not active context.
         var store = services.GetRequiredService<AgentLocalStore>();
         var reserved = store.ReserveRun(session.SessionId, profile.ProfileId, "Active request");
         var started = store.TryStartRun(reserved.Key, reserved.Epoch, "Active request", [], null, "running")!;
@@ -54,8 +57,8 @@ public sealed partial class AgentPublicSourceMigrationTests
             snapshot.SessionId, snapshot.TranscriptEpoch, snapshot.ActiveContextCheckpointId, snapshot.ActiveContextGeneration,
             snapshot.SourceRun, snapshot.SourceRunEpoch, first.TurnId, call.TurnId, 2, call.CreatedAtUtc, call.ContentRevision,
             AgentSessionContextCheckpointKind.Deterministic, "Working summary", "{opaque-details", "test-catalog-v1")));
-        Assert.NotNull(domain.GetWorkingSummary(session.SessionId));
-        Assert.NotNull(((IAgentTranscriptCatalog)domain).GetTranscriptToolDetail(new(session.SessionId, ItemId: result.Items[0].ItemId)));
+        Assert.NotNull(await domain.GetWorkingSummaryAsync(session.SessionId));
+        Assert.NotNull(await domain.GetTranscriptToolDetailAsync(new(session.SessionId, ItemId: result.Items[0].ItemId)));
 
         await using var fixture = await CreateCatalogFixture(assembly, descriptor, domain);
         var covered = new HashSet<string>(StringComparer.Ordinal);
@@ -138,40 +141,68 @@ public sealed partial class AgentPublicSourceMigrationTests
             covered.Add(route);
             var json = JsonSerializer.SerializeToElement(request);
             var expected = await CatalogDomainResult(domain, route, json);
-            var actual = await InvokeGeneratedClient(fixture.Client, method, json);
+            var actual = await InvokeCatalogAsync(fixture.Client, method, json);
             Assert.True(JsonElement.DeepEquals(expected, actual), $"{route}: {expected} != {actual}");
             return actual;
         }
     }
 
     private static async Task VerifyCatalogBoundariesAsync(Assembly assembly, SunderRpcContractDescriptor descriptor,
-        IAgentRuntimeCatalog domain, AgentTurnRecord turn)
+        RuntimeCatalogProbe domain, AgentTurnRecord turn)
     {
-        // This wrapper intentionally has no internal transcript interface: retain the legacy fallback.
-        var probe = new RuntimeCatalogProbe(domain);
+        // A controlled provider can return full transcript values without header
+        // projections; retain the boundary assertions through its generated codec.
+        using var probe = new RuntimeCatalogProbe(domain);
         await using var fixture = await CreateCatalogFixture(assembly, descriptor, probe);
         var request = JsonSerializer.SerializeToElement(new { sessionId = turn.SessionId, limit = 1000 });
-        var full = await InvokeGeneratedClient(fixture.Client, "ListRecentTurnsAsync", request);
-        Assert.True(JsonElement.DeepEquals(full, await InvokeGeneratedClient(fixture.Client, "ListRecentTranscriptHeadersAsync", request)));
+        var full = await InvokeCatalogAsync(fixture.Client, "ListRecentTurnsAsync", request);
+        var validRecentTurns = fixture.State.LastInvocationRequest;
+        Assert.True(JsonElement.DeepEquals(full, await InvokeCatalogAsync(fixture.Client, "ListRecentTranscriptHeadersAsync", request)));
         foreach (var (fullMethod, headerMethod) in new[] { ("ListTurnsBeforeAsync", "ListTranscriptHeadersBeforeAsync"), ("ListTurnsAfterAsync", "ListTranscriptHeadersAfterAsync") })
         {
             var boundary = JsonSerializer.SerializeToElement(new { sessionId = turn.SessionId, limit = 1000, createdAtUtc = turn.CreatedAtUtc.ToString("O"), turnId = turn.TurnId });
-            Assert.True(JsonElement.DeepEquals(await InvokeGeneratedClient(fixture.Client, fullMethod, boundary), await InvokeGeneratedClient(fixture.Client, headerMethod, boundary)));
+            Assert.True(JsonElement.DeepEquals(await InvokeCatalogAsync(fixture.Client, fullMethod, boundary), await InvokeCatalogAsync(fixture.Client, headerMethod, boundary)));
         }
-        Assert.Equal(JsonValueKind.Null, (await InvokeGeneratedClient(fixture.Client, "GetTranscriptToolDetailAsync",
+        var validBoundary = fixture.State.LastInvocationRequest;
+        Assert.Equal(JsonValueKind.Null, (await InvokeCatalogAsync(fixture.Client, "GetTranscriptToolDetailAsync",
             JsonSerializer.SerializeToElement(new { sessionId = turn.SessionId, itemId = turn.Items[0].ItemId }))).ValueKind);
         foreach (var limit in new[] { 0, 1001 })
         {
-            var error = await Assert.ThrowsAsync<SunderRpcException>(() => InvokeGeneratedClient(fixture.Client, "ListRecentTurnsAsync",
+            var calls = probe.ProviderCalls;
+            var attempts = fixture.State.InvocationAttemptCount;
+            await Assert.ThrowsAsync<JsonException>(() => InvokeCatalogAsync(fixture.Client, "ListRecentTurnsAsync",
                 JsonSerializer.SerializeToElement(new { sessionId = turn.SessionId, limit })));
+            Assert.Equal(attempts, fixture.State.InvocationAttemptCount);
+            Assert.Equal(calls, probe.ProviderCalls);
+            var invalidWire = JsonNode.Parse(validRecentTurns.GetRawText())!.AsObject();
+            invalidWire["limit"] = limit;
+            var error = await Assert.ThrowsAsync<SunderRpcException>(() => fixture.Rpc.InvokeAsync(fixture.Source,
+                "runtime-catalog", "list-recent-turns", JsonSerializer.SerializeToElement(invalidWire)).AsTask());
             Assert.Equal(SunderRpcErrorKind.Validation, error.Error.Kind);
+            Assert.Equal(attempts + 1, fixture.State.InvocationAttemptCount);
+            Assert.Equal(calls, probe.ProviderCalls);
         }
-        var imprecise = JsonSerializer.SerializeToElement(new { sessionId = turn.SessionId, limit = 1, turnId = turn.TurnId, createdAtUtc = "2026-09-18T12:00:00.123456789Z" });
-        var precisionError = await Assert.ThrowsAsync<SunderRpcException>(() => InvokeGeneratedClient(fixture.Client, "ListTurnsBeforeAsync", imprecise));
-        Assert.Equal(SunderRpcErrorKind.ProviderFaulted, precisionError.Error.Kind);
-        Assert.Equal("agent.rpc.timestamp-not-representable", Assert.IsType<SunderRpcException>(fixture.State.LastInvocationFailure).Error.Code);
+        var imprecise = JsonNode.Parse(validBoundary.GetRawText())!.AsObject();
+        imprecise["createdAtUtc"] = "2026-09-18T12:00:00.123456789Z";
+        // The imported fixture carrier preserves arbitrary offset precision. Test
+        // representability at the actual canonical provider's DateTimeOffset
+        // decoder, not by rounding the input in this fixture's argument adapter.
+        using (var preciseState = new RegressionTestRpcState(workerStyleProviderBoundary: true))
+        {
+            var preciseRpc = new RegressionTestRpcClient(preciseState, "sunder.package.agent.memory.semantic");
+            await using var preciseReceiver = new GeneratedServiceTestScope(preciseRpc);
+            using var sources = new RegressionTestSourceProviders();
+            var registration = sources.Create(descriptor.ContractId, domain.CanonicalOwner, preciseReceiver);
+            var endpoint = preciseState.AddGenerated("sunder.package.agent", domain.CanonicalOwner, registration,
+                EmptyDisposable.Instance, registration.ProviderId).Endpoint;
+            var precisionError = await Assert.ThrowsAsync<SunderRpcException>(() => preciseRpc.InvokeAsync(endpoint,
+                "runtime-catalog", "list-turns-before", JsonSerializer.SerializeToElement(imprecise)).AsTask());
+            Assert.Equal(SunderRpcErrorKind.ProviderFaulted, precisionError.Error.Kind);
+            Assert.Equal("rpc.provider.handler-fault", precisionError.Error.Code);
+            Assert.IsType<JsonException>(preciseState.LastInvocationFailure);
+        }
         probe.Fail = true;
-        var failure = await Assert.ThrowsAsync<SunderRpcException>(() => InvokeGeneratedClient(fixture.Client, "ListSessionsAsync", EmptyRequest()));
+        var failure = await Assert.ThrowsAsync<SunderRpcException>(() => InvokeCatalogAsync(fixture.Client, "ListSessionsAsync", EmptyRequest()));
         Assert.Equal(SunderRpcErrorKind.ProviderFaulted, failure.Error.Kind);
         Assert.DoesNotContain("private catalog storage detail", failure.Message, StringComparison.Ordinal);
         probe.Fail = false;
@@ -180,7 +211,7 @@ public sealed partial class AgentPublicSourceMigrationTests
         {
             using var cancellation = new CancellationTokenSource();
             probe.Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
-            var pending = InvokeGeneratedClient(fixture.Client, method, value, cancellation.Token);
+            var pending = InvokeCatalogAsync(fixture.Client, method, value, cancellation.Token);
             await probe.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
             cancellation.Cancel();
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending.WaitAsync(TimeSpan.FromSeconds(5)));
@@ -248,46 +279,120 @@ public sealed partial class AgentPublicSourceMigrationTests
         Assert.Equal(0, probe.SubscriberCount);
     }
 
-    private static async Task<CatalogFixture> CreateCatalogFixture(Assembly assembly, SunderRpcContractDescriptor descriptor, IAgentRuntimeCatalog catalog)
+    private static async Task<JsonElement> InvokeCatalogAsync(AgentServices.IRuntimeCatalogService client, string method,
+        JsonElement request, CancellationToken cancellationToken = default)
     {
-        var serviceType = assembly.GetType("Sunder.Package.Agent.Rpc.Public.RuntimeCatalogService", true)!;
-        var implementation = Activator.CreateInstance(serviceType, catalog)!;
-        var registration = Assert.IsType<SunderWorkerProviderRegistration>(serviceType.GetMethod("CreateSunderRpcProviderRegistration")!.Invoke(implementation, null));
-        Assert.Equal("agent.runtime.catalog", registration.ProviderId);
-        Assert.Equal(descriptor.Sha256, registration.DescriptorSha256);
-        Assert.Equal(descriptor.AbiSha256, registration.AbiSha256);
-        var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent.memory.semantic");
-        state.Add("sunder.package.agent", descriptor, implementation, registration.Handler, EmptyDisposable.Instance, registration.ProviderId, "2.0.0");
-        var providers = (await rpc.DiscoverAsync(descriptor.ContractId)).Providers;
-        var scope = await rpc.CreateCallScopeAsync();
-        var client = Activator.CreateInstance(assembly.GetType("Sunder.Generated.Rpc.RuntimeCatalog.RuntimeCatalogClient", true)!, scope,
-            providers.Single(provider => provider.ProviderId == registration.ProviderId).Endpoint)!;
-        return new(state, rpc, scope, client, providers.Single(provider => provider.ProviderId == registration.ProviderId).Endpoint);
+        var sessionId = request.TryGetProperty("sessionId", out var session) ? session.GetGuid() : default;
+        var value = request.TryGetProperty("value", out var rawValue) ? rawValue.GetString()! : null!;
+        var limit = request.TryGetProperty("limit", out var rawLimit) ? rawLimit.GetInt32() : 0;
+        var capabilityKind = request.TryGetProperty("capabilityKind", out var rawCapability) ? rawCapability.GetString()! : null!;
+        var profileId = request.TryGetProperty("profileId", out var rawProfile) ? rawProfile.GetString()! : null!;
+        var createdAtUtc = request.TryGetProperty("createdAtUtc", out var rawCreatedAt) ? rawCreatedAt.GetDateTimeOffset() : default;
+        var turnId = request.TryGetProperty("turnId", out var rawTurnId) ? rawTurnId.GetGuid() : default;
+        object? result = method switch
+        {
+            "ListSessionsAsync" => await client.ListSessionsAsync(cancellationToken),
+            "ListSessionsForProfileAsync" => await client.ListSessionsForProfileAsync(value, cancellationToken),
+            "ListSessionsForWorkspaceAsync" => await client.ListSessionsForWorkspaceAsync(value, cancellationToken),
+            "GetSessionAsync" => await client.GetSessionAsync(sessionId, cancellationToken),
+            "ListWorkspacesAsync" => await client.ListWorkspacesAsync(cancellationToken),
+            "GetWorkspaceAsync" => await client.GetWorkspaceAsync(value, cancellationToken),
+            "GetSessionProfileAsync" => await client.GetSessionProfileAsync(sessionId, cancellationToken),
+            "GetWorkingSummaryAsync" => await client.GetWorkingSummaryAsync(sessionId, cancellationToken),
+            "GetSessionContextCheckpointAsync" => await client.GetSessionContextCheckpointAsync(sessionId, cancellationToken),
+            "GetLatestCheckpointAsync" => await client.GetLatestCheckpointAsync(sessionId, cancellationToken),
+            "ListRecentTurnsAsync" => await client.ListRecentTurnsAsync(sessionId, limit, cancellationToken),
+            "ListTurnsBeforeAsync" => await client.ListTurnsBeforeAsync(sessionId, createdAtUtc, turnId, limit, cancellationToken),
+            "ListTurnsAfterAsync" => await client.ListTurnsAfterAsync(sessionId, createdAtUtc, turnId, limit, cancellationToken),
+            "ListRecentTranscriptHeadersAsync" => await client.ListRecentTranscriptHeadersAsync(sessionId, limit, cancellationToken),
+            "ListTranscriptHeadersBeforeAsync" => await client.ListTranscriptHeadersBeforeAsync(sessionId, createdAtUtc, turnId, limit, cancellationToken),
+            "ListTranscriptHeadersAfterAsync" => await client.ListTranscriptHeadersAfterAsync(sessionId, createdAtUtc, turnId, limit, cancellationToken),
+            "GetTranscriptToolDetailAsync" => await client.GetTranscriptToolDetailAsync(
+                JsonSerializer.Deserialize<AgentTranscriptToolDetailRequest>(request.GetRawText(), ExecutionJson)!, cancellationToken),
+            "ListProfilesAsync" => await client.ListProfilesAsync(cancellationToken),
+            "GetProfileAsync" => await client.GetProfileAsync(value, cancellationToken),
+            "GetSessionModelBindingAsync" => await client.GetSessionModelBindingAsync(sessionId, capabilityKind, cancellationToken),
+            "GetModelBindingAsync" => await client.GetModelBindingAsync(profileId, capabilityKind, cancellationToken),
+            _ => throw new ArgumentOutOfRangeException(nameof(method), method, "Unknown runtime catalog method."),
+        };
+        return RunJson(result);
     }
 
-    private sealed class CatalogFixture(RegressionTestRpcState state, RegressionTestRpcClient rpc, ISunderRpcCallScope scope,
-        object client, SunderRpcEndpointReference source) : IAsyncDisposable
+    private static async Task<CatalogFixture> CreateCatalogFixture(Assembly assembly, SunderRpcContractDescriptor descriptor, RuntimeCatalogProbe catalog)
+    {
+        var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
+        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent.memory.semantic");
+        var receiver = new GeneratedServiceTestScope(rpc);
+        catalog.ProjectionReceiver = receiver;
+        var fixtureRoot = Directory.CreateTempSubdirectory("sunder-agent-runtime-catalog-").FullName;
+        var fixtureLoad = new AssemblyLoadContext("agent-runtime-catalog", isCollectible: true);
+        object implementation;
+        try
+        {
+            implementation = await CreateGeneratedExtensionProviderAsync(fixtureRoot, fixtureLoad, "RuntimeCatalog", catalog.Invoke);
+        }
+        catch
+        {
+            fixtureLoad.Unload();
+            Directory.Delete(fixtureRoot, recursive: true);
+            await receiver.DisposeAsync();
+            state.Dispose();
+            throw;
+        }
+        var registration = receiver.Register(implementation, descriptor.ContractId);
+        Assert.Equal("fixture.regression.runtime.catalog", registration.ProviderId);
+        Assert.Equal(descriptor.Sha256, registration.DescriptorSha256);
+        Assert.Equal(descriptor.AbiSha256, registration.AbiSha256);
+        state.Add("sunder.package.agent", descriptor, implementation, registration.Handler, EmptyDisposable.Instance, registration.ProviderId, "2.0.0");
+        var provider = Assert.Single((await receiver.Providers<AgentServices.IRuntimeCatalogService>().ListAsync()).Providers,
+            value => value.ProviderId == registration.ProviderId);
+        var endpoint = Assert.Single(state.Discover(descriptor.ContractId).Providers,
+            value => value.ProviderId == registration.ProviderId).Endpoint;
+        return new(state, rpc, receiver, fixtureLoad, fixtureRoot, provider.Service, endpoint);
+    }
+
+    private sealed class CatalogFixture(RegressionTestRpcState state, RegressionTestRpcClient rpc, GeneratedServiceTestScope receiver,
+        AssemblyLoadContext fixtureLoad, string fixtureRoot, AgentServices.IRuntimeCatalogService client, SunderRpcEndpointReference source) : IAsyncDisposable
     {
         public RegressionTestRpcState State { get; } = state;
         public RegressionTestRpcClient Rpc { get; } = rpc;
-        public object Client { get; } = client;
+        public AgentServices.IRuntimeCatalogService Client { get; } = client;
         public SunderRpcEndpointReference Source { get; } = source;
-        public async ValueTask DisposeAsync() { await scope.DisposeAsync(); State.Dispose(); }
+        public async ValueTask DisposeAsync()
+        {
+            await receiver.DisposeAsync();
+            State.Dispose();
+            fixtureLoad.Unload();
+            Directory.Delete(fixtureRoot, recursive: true);
+        }
     }
 
-    private static IAsyncEnumerable<JsonElement> CatalogEvents(object client, CancellationToken token)
+    private static async IAsyncEnumerable<JsonElement> CatalogEvents(AgentServices.IRuntimeCatalogService client,
+        [EnumeratorCancellation] CancellationToken token)
     {
-        var method = client.GetType().GetMethod("WatchAsync")!;
-        var request = JsonSerializer.Deserialize("{}", method.GetParameters()[0].ParameterType, ExecutionJson);
-        var stream = method.Invoke(client, [request, token])!;
-        return (IAsyncEnumerable<JsonElement>)typeof(AgentPublicSourceMigrationTests).GetMethod(nameof(ProjectGeneratedEvents), BindingFlags.Static | BindingFlags.NonPublic)!
-            .MakeGenericMethod(method.ReturnType.GetGenericArguments()[0]).Invoke(null, [stream, token])!;
-    }
-
-    private static async IAsyncEnumerable<JsonElement> ProjectGeneratedEvents<T>(object stream, [EnumeratorCancellation] CancellationToken token)
-    {
-        await foreach (var item in ((IAsyncEnumerable<T>)stream).WithCancellation(token))
-            yield return JsonSerializer.SerializeToElement(item, ExecutionJson);
+        await foreach (var item in client.WatchAsync(token).WithCancellation(token))
+        {
+            object snapshot = item switch
+            {
+                AgentRuntimeCatalogResetEvent reset => new { kind = "reset", reset.Sequence },
+                AgentSessionCatalogEvent session => new { kind = "session", session.Sequence, session.SessionId },
+                AgentTurnCatalogEvent turn => new { kind = "turn", turn.Sequence, turn.SessionId, turn.Turn },
+                AgentProfileCatalogEvent profile => new { kind = "profile", profile.Sequence, profile.ProfileId },
+                _ => throw new InvalidOperationException("Unknown catalog event."),
+            };
+            var value = JsonSerializer.SerializeToNode(snapshot, new JsonSerializerOptions(JsonSerializerDefaults.Web)
+            {
+                DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.Never,
+                Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter(JsonNamingPolicy.KebabCaseLower, allowIntegerValues: false) },
+            })!;
+            if (item is AgentTurnCatalogEvent turnEvent)
+            {
+                // Match the reviewed exact offset representation, including seven
+                // tick digits; the general JSON serializer trims trailing zeros.
+                value["turn"]!["createdAtUtc"] = turnEvent.Turn.CreatedAtUtc.ToString("O");
+                value["turn"]!["updatedAtUtc"] = turnEvent.Turn.UpdatedAtUtc.ToString("O");
+            }
+            yield return JsonSerializer.SerializeToElement(value);
+        }
     }
 }

@@ -3,11 +3,24 @@ extern alias MemoryWorker;
 using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging;
 using Microsoft.Data.Sqlite;
-using MemoryWorker::Sunder.Package.Agent.Contracts;
-using MemoryWorker::Sunder.Package.Agent.Contracts.Contracts;
-using MemoryWorker::Sunder.Package.Agent.Contracts.Models;
 using MemoryWorker::Sunder.Package.Agent.Memory.Semantic;
 using MemoryWorker::Sunder.Package.Agent.Memory.Semantic.Services;
+using PackageRuntimeGeneration = MemoryWorker::Sunder.Package.Agent.Contracts.PackageRuntimeGeneration;
+using AgentEmbeddingGenerationResult = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentEmbeddingGenerationResult;
+using AgentEmbeddingModelDescriptor = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentEmbeddingModelDescriptor;
+using AgentEmbeddingProviderDescriptor = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentEmbeddingProviderDescriptor;
+using AgentEmbeddingProviderReadiness = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentEmbeddingProviderReadiness;
+using AgentProfileModelBindingRecord = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentProfileModelBindingRecord;
+using AgentProfileRecord = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentProfileRecord;
+using AgentSessionRecord = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionRecord;
+using AgentSessionState = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionState;
+using AgentTurnRecord = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnRecord;
+using AgentWorkingSummaryRecord = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentWorkingSummaryRecord;
+using AgentSessionContextCheckpointRecord = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionContextCheckpointRecord;
+using AgentRunCheckpointRecord = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentRunCheckpointRecord;
+using AgentWorkspaceRecord = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentWorkspaceRecord;
+using MemoryServices = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using MemoryModels = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Logging;
@@ -17,6 +30,9 @@ namespace Sunder.Package.Agent.Tests;
 
 public sealed class SemanticMemoryIndexingReliabilityTests
 {
+    private static Sunder.Sdk.Rpc.SunderRpcOffsetDateTime RpcTimestamp(DateTimeOffset value)
+        => new(value.ToString("O", System.Globalization.CultureInfo.InvariantCulture));
+
     [Fact]
     public async Task Reindex_FailureAndCancellation_PreservePreviousCompleteGeneration()
     {
@@ -276,12 +292,21 @@ public sealed class SemanticMemoryIndexingReliabilityTests
                                    == harness.Store.GetMemory(memory.MemoryId)!.MemoryRevision);
 
         var beforeProjectionSettingChange = harness.Provider.BatchCallCount;
+        var beforeProjectionHash = harness.ActiveEmbeddings[memory.MemoryId].CanonicalTextHash;
         await harness.SetSettingAsync("semantic.maxCanonicalTextChars", "128");
-        await WaitUntilAsync(() => harness.Provider.BatchCallCount > beforeProjectionSettingChange);
+        await WaitUntilAsync(() => harness.Provider.BatchCallCount > beforeProjectionSettingChange
+                                   && harness.Worker.GetStatus().PendingItemCount == 0
+                                   && harness.ActiveEmbeddings[memory.MemoryId].CanonicalTextHash != beforeProjectionHash,
+            () => $"Worker={System.Text.Json.JsonSerializer.Serialize(harness.Worker.GetStatus())}; generations={System.Text.Json.JsonSerializer.Serialize(harness.Store.ListActiveEmbeddingGenerations(harness.Session.SessionId))}");
 
         var beforeBindingSettingChange = harness.Provider.BatchCallCount;
+        var beforeConfiguration = harness.Store.ListActiveEmbeddingGenerations(harness.Session.SessionId).Single().ConfigurationFingerprint;
         harness.RuntimeCatalog.SetEmbeddingSettings("{\"vectorSpace\":\"alternate\"}");
-        await WaitUntilAsync(() => harness.Provider.BatchCallCount > beforeBindingSettingChange);
+        await WaitUntilAsync(() => harness.Provider.BatchCallCount > beforeBindingSettingChange
+                                   && harness.Worker.GetStatus().PendingItemCount == 0
+                                   && harness.Store.ListActiveEmbeddingGenerations(harness.Session.SessionId)
+                                       .Any(generation => generation.ConfigurationFingerprint != beforeConfiguration),
+            () => $"Worker={System.Text.Json.JsonSerializer.Serialize(harness.Worker.GetStatus())}; generations={System.Text.Json.JsonSerializer.Serialize(harness.Store.ListActiveEmbeddingGenerations(harness.Session.SessionId))}");
 
         var beforeModelChange = harness.Provider.BatchCallCount;
         harness.RuntimeCatalog.SetEmbeddingModel("test-embedding-model-v2");
@@ -702,7 +727,7 @@ public sealed class SemanticMemoryIndexingReliabilityTests
             .Select(item => $"{item.MemoryId:N}:{string.Join(',', item.Values)}")
             .ToArray();
 
-    private static async Task WaitUntilAsync(Func<bool> condition)
+    private static async Task WaitUntilAsync(Func<bool> condition, Func<string>? diagnostic = null)
     {
         var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
         while (!condition() && DateTimeOffset.UtcNow < deadline)
@@ -710,14 +735,16 @@ public sealed class SemanticMemoryIndexingReliabilityTests
             await Task.Delay(25);
         }
 
-        Assert.True(condition(), "The semantic indexing condition was not reached before the timeout.");
+        Assert.True(condition(), "The semantic indexing condition was not reached before the timeout. " + diagnostic?.Invoke());
     }
 
     private sealed class IndexingHarness : IAsyncDisposable
     {
         private readonly string _rootPath = Path.Combine(Path.GetTempPath(), "sunder-memory-indexing-tests", Guid.NewGuid().ToString("N"));
         private readonly TestPackageContext _context;
-        private readonly RegressionTestExtensionCatalog _catalog;
+        private readonly FakeServiceCatalog<MemoryServices.IRuntimeCatalogService> _runtimeServices;
+        private readonly FakeServiceCatalog<MemoryServices.IEmbeddingProviderService> _embeddingServices;
+        private readonly Dictionary<ControlledEmbeddingProvider, Sunder.Sdk.Services.ServiceProvider<MemoryServices.IEmbeddingProviderService>> _embeddingProviders = [];
         private readonly int _queueCapacity;
         private readonly TimeSpan _monitorInterval;
         private long _runtimeGeneration;
@@ -726,26 +753,28 @@ public sealed class SemanticMemoryIndexingReliabilityTests
         {
             _queueCapacity = queueCapacity;
             _monitorInterval = monitorInterval ?? TimeSpan.FromMilliseconds(40);
-            Session = new AgentSessionRecord(Guid.NewGuid(), "Test Session", AgentSessionState.Active, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
-            var profile = new AgentProfileRecord(
-                "profile-memory-test",
-                "Memory Test",
-                null,
-                null,
-                null,
-                null,
-                "test-embedding-provider",
-                "test-embedding-model",
-                DateTimeOffset.UtcNow,
-                DateTimeOffset.UtcNow,
-                []);
+            var now = DateTimeOffset.UtcNow;
+            Session = new AgentSessionRecord
+            {
+                SessionId = Guid.NewGuid(), Title = "Test Session", State = AgentSessionState.Active,
+                CreatedAtUtc = RpcTimestamp(now), UpdatedAtUtc = RpcTimestamp(now),
+            };
+            var profile = new AgentProfileRecord
+            {
+                ProfileId = "profile-memory-test", DisplayName = "Memory Test", IsInternal = false,
+                EmbeddingProviderId = "test-embedding-provider", EmbeddingModelId = "test-embedding-model",
+                CreatedAtUtc = RpcTimestamp(now), UpdatedAtUtc = RpcTimestamp(now),
+            };
             _context = new TestPackageContext(_rootPath);
             _context.MutableSettings.SetValueAsync("semantic.reindex.mode", "eager").GetAwaiter().GetResult();
-            _catalog = new RegressionTestExtensionCatalog();
             RuntimeCatalog = new TestRuntimeCatalog(Session, profile);
-            _catalog.AddRuntimeCatalog(RuntimeCatalog);
+            _runtimeServices = new FakeServiceCatalog<MemoryServices.IRuntimeCatalogService>(
+                CurrentPublicRpcDescriptors.Get(RegressionTestBindings.RuntimeCatalog));
+            _runtimeServices.Add(RuntimeCatalog);
             Provider = new ControlledEmbeddingProvider("test-embedding-provider");
-            _catalog.AddProvider(RegressionTestBindings.EmbeddingProviders, Provider);
+            _embeddingServices = new FakeServiceCatalog<MemoryServices.IEmbeddingProviderService>(
+                CurrentPublicRpcDescriptors.Get(RegressionTestBindings.EmbeddingProviders));
+            _embeddingProviders.Add(Provider, _embeddingServices.Add(Provider));
             Store = new MemoryLocalStore(_context);
             (Backend, Worker) = CreateIndexingServices();
         }
@@ -765,10 +794,12 @@ public sealed class SemanticMemoryIndexingReliabilityTests
             => Store.ListEmbeddings(Session.SessionId, providerId, Profile.EmbeddingModelId!);
 
         public void AddProvider(ControlledEmbeddingProvider provider)
-            => _catalog.AddProvider(RegressionTestBindings.EmbeddingProviders, provider);
+            => _embeddingProviders.Add(provider, _embeddingServices.Add(provider));
 
         public void RemoveProvider(ControlledEmbeddingProvider provider)
-            => _catalog.RemoveProvider(provider);
+        {
+            if (_embeddingProviders.Remove(provider, out var entry)) _embeddingServices.Retire(entry);
+        }
 
         public StoredMemoryRecord AddMemory(string content)
             => Store.UpsertMemory(new MemoryUpsertRequest(
@@ -817,7 +848,8 @@ public sealed class SemanticMemoryIndexingReliabilityTests
         {
             var settings = new MemorySemanticSettingsService(_context);
             var resolver = new SemanticModelRuntimeResolver(
-                _catalog.Memory(),
+                _runtimeServices,
+                _embeddingServices,
                 settings,
                 configurationCacheDuration: TimeSpan.FromMilliseconds(500));
             var backend = new SemanticMemoryRetrievalBackend(Store, resolver, settings);
@@ -840,7 +872,8 @@ public sealed class SemanticMemoryIndexingReliabilityTests
             }
             finally
             {
-                _catalog.Dispose();
+                await _runtimeServices.DisposeAsync();
+                await _embeddingServices.DisposeAsync();
                 await Store.DisposeAsync();
                 if (Directory.Exists(_rootPath))
                 {
@@ -861,12 +894,13 @@ public sealed class SemanticMemoryIndexingReliabilityTests
         Fatal,
     }
 
-    private sealed class ControlledEmbeddingProvider(string providerId) :
-        IAgentEmbeddingProvider,
-        IAgentEmbeddingSpaceIdentityProvider
+    private sealed class ControlledEmbeddingProvider(string providerId) : MemoryServices.IEmbeddingProviderService
     {
         private readonly ConcurrentQueue<string> _requests = new();
-        private readonly AgentEmbeddingProviderDescriptor _descriptor = new(providerId, "Controlled Embeddings", []);
+        private readonly AgentEmbeddingProviderDescriptor _descriptor = new()
+        {
+            ProviderId = providerId, DisplayName = "Controlled Embeddings", SupportedAuthModes = [],
+        };
         private int _descriptorCallCount;
         private int _availableModelsCallCount;
         private int _identityCallCount;
@@ -875,7 +909,7 @@ public sealed class SemanticMemoryIndexingReliabilityTests
         private int _batchCallCount;
         private int _uploadedTextCount;
 
-        public AgentEmbeddingProviderDescriptor Descriptor
+        private AgentEmbeddingProviderDescriptor Descriptor
         {
             get
             {
@@ -902,17 +936,23 @@ public sealed class SemanticMemoryIndexingReliabilityTests
 
         public void ReleaseGeneration() => GenerationRelease.TrySetResult();
 
-        public ValueTask<IReadOnlyList<AgentEmbeddingModelDescriptor>> GetAvailableModelsAsync(CancellationToken cancellationToken = default)
+        public ValueTask<AgentEmbeddingProviderDescriptor> DescribeAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult(Descriptor);
+        }
+
+        public ValueTask<IReadOnlyList<AgentEmbeddingModelDescriptor>> ListModelsAsync(CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref _availableModelsCallCount);
             return ValueTask.FromResult<IReadOnlyList<AgentEmbeddingModelDescriptor>>(
             [
-                new AgentEmbeddingModelDescriptor("test-embedding-model", "Test Embedding Model", 2, true),
-                new AgentEmbeddingModelDescriptor("test-embedding-model-v2", "Test Embedding Model V2", 2),
+                new AgentEmbeddingModelDescriptor { ModelId = "test-embedding-model", DisplayName = "Test Embedding Model", Dimensions = 2, IsRecommended = true },
+                new AgentEmbeddingModelDescriptor { ModelId = "test-embedding-model-v2", DisplayName = "Test Embedding Model V2", Dimensions = 2, IsRecommended = false },
             ]);
         }
 
-        public ValueTask<string> GetEmbeddingSpaceIdentityAsync(
+        public ValueTask<string> SpaceIdentityAsync(
             string modelId,
             CancellationToken cancellationToken = default)
         {
@@ -924,22 +964,27 @@ public sealed class SemanticMemoryIndexingReliabilityTests
         public ValueTask<AgentEmbeddingProviderReadiness> GetReadinessAsync(CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref _readinessCallCount);
-            return ValueTask.FromResult(new AgentEmbeddingProviderReadiness(providerId, AgentProviderReadinessStatus.Ready, "Ready."));
+            return ValueTask.FromResult(new AgentEmbeddingProviderReadiness
+            {
+                ProviderId = providerId, Status = MemoryModels.AgentProviderReadinessStatus.Ready, Message = "Ready.",
+            });
         }
 
-        public async ValueTask<AgentEmbeddingGenerationResult?> GenerateEmbeddingAsync(
-            string modelId,
-            string text,
+        public async ValueTask<AgentEmbeddingGenerationResult?> GenerateAsync(
+            MemoryModels.CSunder_Agent_Embedding_Provider_EmbeddingProviderGenerateRequest request,
             CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref _singleCallCount);
-            return (await GenerateEmbeddingsAsync(modelId, [text], cancellationToken))[0];
+            return (await GenerateBatchCoreAsync(request.ModelId, [request.Text], cancellationToken))[0];
         }
 
-        public async ValueTask<IReadOnlyList<AgentEmbeddingGenerationResult?>> GenerateEmbeddingsAsync(
-            string modelId,
-            IReadOnlyList<string> texts,
+        public ValueTask<IReadOnlyList<AgentEmbeddingGenerationResult?>> GenerateBatchAsync(
+            MemoryModels.CSunder_Agent_Embedding_Provider_EmbeddingProviderGenerateBatchRequest request,
             CancellationToken cancellationToken = default)
+            => GenerateBatchCoreAsync(request.ModelId, request.Texts, cancellationToken);
+
+        private async ValueTask<IReadOnlyList<AgentEmbeddingGenerationResult?>> GenerateBatchCoreAsync(
+            string modelId, IReadOnlyList<string> texts, CancellationToken cancellationToken)
         {
             var callNumber = Interlocked.Increment(ref _batchCallCount);
             foreach (var text in texts)
@@ -994,16 +1039,17 @@ public sealed class SemanticMemoryIndexingReliabilityTests
             }
 
             Interlocked.Add(ref _uploadedTextCount, texts.Count);
-            return texts.Select(text => (AgentEmbeddingGenerationResult?)new AgentEmbeddingGenerationResult(
-                modelId,
-                [VectorVersion, text.Length])).ToArray();
+            return texts.Select(text => (AgentEmbeddingGenerationResult?)new AgentEmbeddingGenerationResult
+            {
+                ModelId = modelId, Values = [VectorVersion, text.Length],
+            }).ToArray();
         }
 
         public int CountRequestsContaining(string value)
             => _requests.Count(request => request.Contains(value, StringComparison.Ordinal));
     }
 
-    private sealed class TestRuntimeCatalog : IAgentRuntimeCatalog
+    private sealed class TestRuntimeCatalog : MemoryServices.IRuntimeCatalogService
     {
         private readonly AgentSessionRecord _session;
         private string? _embeddingSettings;
@@ -1045,23 +1091,23 @@ public sealed class SemanticMemoryIndexingReliabilityTests
             => sessionId == _session.SessionId ? GetModelBinding(Profile.ProfileId, capabilityKind) : null;
 
         public AgentProfileModelBindingRecord? GetModelBinding(string profileId, string capabilityKind)
-            => profileId == Profile.ProfileId
-               && capabilityKind == AgentModelCapabilityKinds.Embedding
+        {
+            return profileId == Profile.ProfileId
+               && capabilityKind == "model.embedding"
                && Profile.EmbeddingProviderId is { } providerId
                && Profile.EmbeddingModelId is { } modelId
-                ? new AgentProfileModelBindingRecord(
-                    Profile.ProfileId,
-                    capabilityKind,
-                    providerId,
-                    modelId,
-                    _embeddingSettings,
-                    Profile.UpdatedAtUtc)
-                : null;
+                ? new AgentProfileModelBindingRecord
+                {
+                    ProfileId = Profile.ProfileId, CapabilityKind = capabilityKind, ProviderId = providerId,
+                    ModelId = modelId, SettingsJson = _embeddingSettings, UpdatedAtUtc = Profile.UpdatedAtUtc,
+                 }
+                 : null;
+        }
 
         public void SetEmbeddingSettings(string? settings)
         {
             _embeddingSettings = settings;
-            Profile = Profile with { UpdatedAtUtc = DateTimeOffset.UtcNow };
+            Profile = Profile with { UpdatedAtUtc = RpcTimestamp(DateTimeOffset.UtcNow) };
             ProfileChanged?.Invoke(Profile.ProfileId);
         }
 
@@ -1070,7 +1116,7 @@ public sealed class SemanticMemoryIndexingReliabilityTests
             Profile = Profile with
             {
                 EmbeddingModelId = modelId,
-                UpdatedAtUtc = DateTimeOffset.UtcNow,
+                UpdatedAtUtc = RpcTimestamp(DateTimeOffset.UtcNow),
             };
             ProfileChanged?.Invoke(Profile.ProfileId);
         }
@@ -1080,9 +1126,57 @@ public sealed class SemanticMemoryIndexingReliabilityTests
             Profile = Profile with
             {
                 EmbeddingProviderId = providerId,
-                UpdatedAtUtc = DateTimeOffset.UtcNow,
+                UpdatedAtUtc = RpcTimestamp(DateTimeOffset.UtcNow),
             };
             ProfileChanged?.Invoke(Profile.ProfileId);
+        }
+
+        ValueTask<AgentRunCheckpointRecord?> MemoryServices.IRuntimeCatalogService.GetLatestCheckpointAsync(Guid request, CancellationToken token)
+            => ValueTask.FromResult<AgentRunCheckpointRecord?>(null);
+        ValueTask<AgentProfileModelBindingRecord?> MemoryServices.IRuntimeCatalogService.GetModelBindingAsync(MemoryModels.CSunder_Agent_Runtime_Catalog_RuntimeCatalogGetModelBindingRequest request, CancellationToken token)
+            => ValueTask.FromResult(GetModelBinding(request.ProfileId, request.CapabilityKind));
+        ValueTask<AgentProfileRecord?> MemoryServices.IRuntimeCatalogService.GetProfileAsync(string request, CancellationToken token)
+            => ValueTask.FromResult(GetProfile(request));
+        ValueTask<AgentSessionRecord?> MemoryServices.IRuntimeCatalogService.GetSessionAsync(Guid request, CancellationToken token)
+            => ValueTask.FromResult(GetSession(request));
+        ValueTask<AgentSessionContextCheckpointRecord?> MemoryServices.IRuntimeCatalogService.GetSessionContextCheckpointAsync(Guid request, CancellationToken token)
+            => ValueTask.FromResult(GetLatestSessionContextCheckpoint(request));
+        ValueTask<AgentProfileModelBindingRecord?> MemoryServices.IRuntimeCatalogService.GetSessionModelBindingAsync(MemoryModels.CSunder_Agent_Runtime_Catalog_RuntimeCatalogGetSessionModelBindingRequest request, CancellationToken token)
+            => ValueTask.FromResult(GetSessionModelBinding(request.SessionId, request.CapabilityKind));
+        ValueTask<AgentProfileRecord?> MemoryServices.IRuntimeCatalogService.GetSessionProfileAsync(Guid request, CancellationToken token)
+            => ValueTask.FromResult(GetSessionProfile(request));
+        ValueTask<AgentWorkingSummaryRecord?> MemoryServices.IRuntimeCatalogService.GetWorkingSummaryAsync(Guid request, CancellationToken token)
+            => ValueTask.FromResult(GetWorkingSummary(request));
+        ValueTask<AgentWorkspaceRecord?> MemoryServices.IRuntimeCatalogService.GetWorkspaceAsync(string request, CancellationToken token)
+            => GetWorkspaceAsync(request, token);
+        ValueTask<IReadOnlyList<AgentProfileRecord>> MemoryServices.IRuntimeCatalogService.ListProfilesAsync(CancellationToken token)
+            => ValueTask.FromResult(ListProfiles());
+        ValueTask<IReadOnlyList<AgentSessionRecord>> MemoryServices.IRuntimeCatalogService.ListSessionsAsync(CancellationToken token)
+            => ValueTask.FromResult(ListSessions());
+        ValueTask<IReadOnlyList<AgentSessionRecord>> MemoryServices.IRuntimeCatalogService.ListSessionsForProfileAsync(string request, CancellationToken token)
+            => ValueTask.FromResult(ListSessionsForProfile(request));
+        ValueTask<IReadOnlyList<AgentSessionRecord>> MemoryServices.IRuntimeCatalogService.ListSessionsForWorkspaceAsync(string request, CancellationToken token)
+            => ValueTask.FromResult(ListSessionsForWorkspace(request));
+        ValueTask<IReadOnlyList<AgentWorkspaceRecord>> MemoryServices.IRuntimeCatalogService.ListWorkspacesAsync(CancellationToken token)
+            => ListWorkspacesAsync(token);
+        ValueTask<MemoryModels.AgentTranscriptToolDetailRecord?> MemoryServices.IRuntimeCatalogService.GetTranscriptToolDetailAsync(MemoryModels.AgentTranscriptToolDetailRequest request, CancellationToken token)
+            => ValueTask.FromResult<MemoryModels.AgentTranscriptToolDetailRecord?>(null);
+        ValueTask<IReadOnlyList<AgentTurnRecord>> MemoryServices.IRuntimeCatalogService.ListRecentTranscriptHeadersAsync(MemoryModels.CSunder_Agent_Runtime_Catalog_RuntimeCatalogListRecentTranscriptHeadersRequest request, CancellationToken token)
+            => ValueTask.FromResult<IReadOnlyList<AgentTurnRecord>>([]);
+        ValueTask<IReadOnlyList<AgentTurnRecord>> MemoryServices.IRuntimeCatalogService.ListRecentTurnsAsync(MemoryModels.CSunder_Agent_Runtime_Catalog_RuntimeCatalogListRecentTurnsRequest request, CancellationToken token)
+            => ValueTask.FromResult(ListRecentTurns(request.SessionId, checked((int)request.Limit)));
+        ValueTask<IReadOnlyList<AgentTurnRecord>> MemoryServices.IRuntimeCatalogService.ListTranscriptHeadersAfterAsync(MemoryModels.CSunder_Agent_Runtime_Catalog_RuntimeCatalogListTranscriptHeadersAfterRequest request, CancellationToken token)
+            => ValueTask.FromResult<IReadOnlyList<AgentTurnRecord>>([]);
+        ValueTask<IReadOnlyList<AgentTurnRecord>> MemoryServices.IRuntimeCatalogService.ListTranscriptHeadersBeforeAsync(MemoryModels.CSunder_Agent_Runtime_Catalog_RuntimeCatalogListTranscriptHeadersBeforeRequest request, CancellationToken token)
+            => ValueTask.FromResult<IReadOnlyList<AgentTurnRecord>>([]);
+        ValueTask<IReadOnlyList<AgentTurnRecord>> MemoryServices.IRuntimeCatalogService.ListTurnsAfterAsync(MemoryModels.CSunder_Agent_Runtime_Catalog_RuntimeCatalogListTurnsAfterRequest request, CancellationToken token)
+            => ValueTask.FromResult<IReadOnlyList<AgentTurnRecord>>([]);
+        ValueTask<IReadOnlyList<AgentTurnRecord>> MemoryServices.IRuntimeCatalogService.ListTurnsBeforeAsync(MemoryModels.CSunder_Agent_Runtime_Catalog_RuntimeCatalogListTurnsBeforeRequest request, CancellationToken token)
+            => ValueTask.FromResult<IReadOnlyList<AgentTurnRecord>>([]);
+        async IAsyncEnumerable<MemoryModels.AgentRuntimeCatalogEvent> MemoryServices.IRuntimeCatalogService.WatchAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken token)
+        {
+            await Task.CompletedTask;
+            yield break;
         }
     }
 

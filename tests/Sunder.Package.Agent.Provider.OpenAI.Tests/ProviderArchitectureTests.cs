@@ -63,6 +63,7 @@ public sealed partial class ProviderArchitectureTests
                 [
                     "Presentation/PackageCallbackFlowRunner.cs",
                     "Presentation/PresentationOperationObserver.cs",
+                    "Presentation/PresentationTaskScope.cs",
                 ])
                 .ToHashSet(StringComparer.OrdinalIgnoreCase),
         };
@@ -140,28 +141,21 @@ public sealed partial class ProviderArchitectureTests
         var expectedTypes = new HashSet<string>(StringComparer.Ordinal)
         {
             "Anthropic.AnthropicAgentProvider",
-            "Anthropic.AnthropicCredentialProtocol",
             "Anthropic.AnthropicProviderConfiguration",
             "Anthropic.AnthropicSettingsView",
             "Anthropic.AnthropicSettingsViewModel",
-            "Anthropic.AppPackageModule",
             "Gemini.GeminiAgentProvider",
-            "Gemini.GeminiCredentialProtocol",
             "Gemini.GeminiEmbeddingProvider",
             "Gemini.GeminiProviderConfiguration",
             "Gemini.GeminiSettingsView",
             "Gemini.GeminiSettingsViewModel",
-            "Gemini.AppPackageModule",
             "LMStudio.LMStudioAgentProvider",
-            "LMStudio.LMStudioCredentialProtocol",
             "LMStudio.LMStudioEmbeddingProvider",
             "LMStudio.LMStudioProviderConfiguration",
             "LMStudio.LMStudioSettingsLoadState",
             "LMStudio.LMStudioSettingsView",
             "LMStudio.LMStudioSettingsViewModel",
-            "LMStudio.AppPackageModule",
             "OpenAI.ApiKeyAuthStrategy",
-            "OpenAI.AppPackageModule",
             "OpenAI.CodexConnectedAuthStrategy",
             "OpenAI.CodexConnectedTransport",
             "OpenAI.CodexResponseContinuationStore",
@@ -305,13 +299,9 @@ public sealed partial class ProviderArchitectureTests
     private static readonly IReadOnlySet<string> ProviderSettingsSharedSources = new HashSet<string>(
         [
             "PackageViews/SunderComboBox.cs",
-            "Presentation/CapabilitySelectionState.cs",
-            "Presentation/ModelBindingEditorState.cs",
             "Presentation/OperationState.cs",
             "Presentation/PresentationDispatcher.cs",
             "Presentation/PresentationExceptionPolicy.cs",
-            "Presentation/PresentationTaskScope.cs",
-            "Presentation/ProviderModelLoader.cs",
             "Presentation/TimedStatusController.cs",
         ],
         StringComparer.OrdinalIgnoreCase);

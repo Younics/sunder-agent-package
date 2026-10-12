@@ -1,0 +1,21 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+
+public sealed class RoleLocalEmbeddingProbe(Func<string, string, CancellationToken, ValueTask<string>> call)
+    : IEmbeddingProviderService
+{
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
+    {
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.KebabCaseLower, allowIntegerValues: false) },
+    };
+    public ValueTask<AgentEmbeddingProviderDescriptor> DescribeAsync(CancellationToken cancellationToken = default) => Invoke<AgentEmbeddingProviderDescriptor>("describe", new { }, cancellationToken);
+    public async ValueTask<IReadOnlyList<AgentEmbeddingModelDescriptor>> ListModelsAsync(CancellationToken cancellationToken = default) => await Invoke<AgentEmbeddingModelDescriptor[]>("models", new { }, cancellationToken);
+    public ValueTask<AgentEmbeddingProviderReadiness> GetReadinessAsync(CancellationToken cancellationToken = default) => Invoke<AgentEmbeddingProviderReadiness>("readiness", new { }, cancellationToken);
+    public ValueTask<string> SpaceIdentityAsync(string modelId, CancellationToken cancellationToken = default) => Invoke<string>("space", new { modelId }, cancellationToken);
+    public ValueTask<AgentEmbeddingGenerationResult?> GenerateAsync(CSunder_Agent_Embedding_Provider_EmbeddingProviderGenerateRequest request, CancellationToken cancellationToken = default) => Invoke<AgentEmbeddingGenerationResult?>("generate", new { modelId = request.ModelId, text = request.Text }, cancellationToken);
+    public async ValueTask<IReadOnlyList<AgentEmbeddingGenerationResult?>> GenerateBatchAsync(CSunder_Agent_Embedding_Provider_EmbeddingProviderGenerateBatchRequest request, CancellationToken cancellationToken = default) => await Invoke<AgentEmbeddingGenerationResult?[]>("batch", new { modelId = request.ModelId, texts = request.Texts }, cancellationToken);
+    private async ValueTask<T> Invoke<T>(string operation, object request, CancellationToken token) => JsonSerializer.Deserialize<T>(await call(operation, JsonSerializer.Serialize(request, Json), token), Json)!;
+}

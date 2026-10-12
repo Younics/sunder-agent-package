@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Contracts.Models;
 
@@ -41,18 +42,22 @@ public sealed record AgentExecutionTargetContext(
 
     /// <summary>Gets transient process-local capabilities available to this exact operation.</summary>
     [JsonIgnore]
+    [SunderServiceMember]
     public IReadOnlyList<string> ApprovedResourceCapabilities { get; init; } = [];
 
     /// <summary>Gets the transient invocation binding used for resource planning or execution.</summary>
     [JsonIgnore]
+    [SunderServiceMember]
     public AgentResourceOperationContext? ResourceOperation { get; init; }
 
     /// <summary>Gets whether a successful mutation should return a transient resource receipt for its exact post-mutation state.</summary>
     [JsonIgnore]
+    [SunderServiceMember]
     public bool CapturePostMutationResource { get; init; }
 
     /// <summary>Gets the target-owned configuration generation captured before permission planning.</summary>
     /// <remarks>When set, the target must reject the operation before side effects if its current generation differs.</remarks>
     [JsonIgnore]
+    [SunderServiceMember]
     public string? ExpectedConfigurationGeneration { get; init; }
 }

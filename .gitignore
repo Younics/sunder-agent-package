@@ -14,6 +14,12 @@
 [Rr]elease/
 !scripts/release/
 !scripts/release/*.sh
+# Script source is not a Release build output; Python caches are never source.
+!scripts/release/**
+!scripts/test/release/
+!scripts/test/release/**
+__pycache__/
+*.py[cod]
 x64/
 [Bb]in/
 [Oo]bj/

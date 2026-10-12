@@ -12,7 +12,10 @@ using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Logging;
+using Sunder.Sdk.Services;
 using Xunit;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using BuilderModels = BuilderApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -357,7 +360,7 @@ public sealed class BuilderViewModelTests
             new AgentWorkspacePathRecord("secondary", project.WorkspaceId, "/tmp/secondary", IsDefault: false, SortOrder: 0, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow),
             new AgentWorkspacePathRecord("primary", project.WorkspaceId, "/tmp/primary", IsDefault: true, SortOrder: 1, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
         );
-        viewModel.Workspaces.Add(AgentRoleBoundary.As<BuilderApp::Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord>(workspace));
+        viewModel.Workspaces.Add(ToBuilderWorkspace(workspace));
         viewModel.Projects.Add(project);
 
         viewModel.ActivateProject(project);
@@ -371,9 +374,9 @@ public sealed class BuilderViewModelTests
     {
         var viewModel = CreateViewModel();
         var project = CreateProject("one", "One Package");
-        viewModel.Workspaces.Add(AgentRoleBoundary.As<BuilderApp::Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord>(
+        viewModel.Workspaces.Add(ToBuilderWorkspace(
             CreateWorkspace(project.WorkspaceId, "first-path", "/tmp/first", isDefault: true)));
-        viewModel.Workspaces.Add(AgentRoleBoundary.As<BuilderApp::Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord>(
+        viewModel.Workspaces.Add(ToBuilderWorkspace(
             CreateWorkspace("workspace.second", "second-path", "/tmp/second", isDefault: true)));
         viewModel.Projects.Add(project);
         viewModel.ActivateProject(project);
@@ -399,9 +402,9 @@ public sealed class BuilderViewModelTests
         );
         var resolver = new TestWorkspaceExecutionResolver(workspace);
         using var runtime = new BuilderServiceTests.LoopbackBuilderRpcClient(resolver);
-        var executionService = new BuilderWorkspaceExecutionService(new BuilderRpcGateway(runtime));
+        var executionService = new BuilderWorkspaceExecutionService(runtime);
         var viewModel = CreateViewModel();
-        viewModel.Workspaces.Add(AgentRoleBoundary.As<BuilderApp::Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord>(workspace));
+        viewModel.Workspaces.Add(ToBuilderWorkspace(workspace));
         var project = CreateProject("one", "USB Lootbox");
         project.WorkspacePathId = "second";
         viewModel.Projects.Add(project);
@@ -410,7 +413,8 @@ public sealed class BuilderViewModelTests
         try
         {
             var execution = await executionService.ResolveAsync(workspace.WorkspaceId);
-            var executionRoot = execution.ResolveExecutionWorkspacePath(AgentRoleBoundary.As<BuilderApp::Sunder.Package.Agent.Contracts.Models.AgentWorkspacePathRecord>(workspace.Paths.Single(path => path.PathId == "second")));
+            var executionRoot = execution.ResolveExecutionWorkspacePath(
+                ToBuilderWorkspacePath(workspace.Paths.Single(path => path.PathId == "second")));
             var executionProjectFolder = execution.CombinePath(executionRoot, "USBLootbox");
             var hostMapping = await execution.MapToHostPathAsync(executionProjectFolder);
             var expectedProjectFolder = Path.Combine(secondRoot, "USBLootbox");
@@ -450,7 +454,7 @@ public sealed class BuilderViewModelTests
 
     private static void AddWorkspace(BuilderViewModel viewModel, string workspaceId)
     {
-        viewModel.Workspaces.Add(AgentRoleBoundary.As<BuilderApp::Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord>(
+        viewModel.Workspaces.Add(ToBuilderWorkspace(
             CreateWorkspace(workspaceId, DefaultPathId(workspaceId), $"/tmp/{workspaceId}", isDefault: true)));
     }
 
@@ -468,6 +472,41 @@ public sealed class BuilderViewModelTests
         var now = DateTimeOffset.UtcNow;
         return new AgentWorkspaceRecord(workspaceId, "Local workspace", null, now, now, paths);
     }
+
+    private static BuilderModels.AgentWorkspaceRecord ToBuilderWorkspace(AgentWorkspaceRecord workspace)
+        => new()
+        {
+            WorkspaceId = workspace.WorkspaceId,
+            DisplayName = workspace.DisplayName,
+            Description = workspace.Description,
+            CreatedAtUtc = ToWireTimestamp(workspace.CreatedAtUtc),
+            UpdatedAtUtc = ToWireTimestamp(workspace.UpdatedAtUtc),
+            Paths = workspace.Paths.Select(ToBuilderWorkspacePath).ToArray(),
+            Documents = workspace.Documents.Select(document => new BuilderModels.AgentWorkspaceDocumentRecord
+            {
+                DocumentId = document.DocumentId,
+                WorkspaceId = document.WorkspaceId,
+                FilePath = document.FilePath,
+                SortOrder = document.SortOrder,
+                CreatedAtUtc = ToWireTimestamp(document.CreatedAtUtc),
+                UpdatedAtUtc = ToWireTimestamp(document.UpdatedAtUtc),
+            }).ToArray(),
+        };
+
+    private static BuilderModels.AgentWorkspacePathRecord ToBuilderWorkspacePath(AgentWorkspacePathRecord path)
+        => new()
+        {
+            PathId = path.PathId,
+            WorkspaceId = path.WorkspaceId,
+            HostPath = path.HostPath,
+            IsDefault = path.IsDefault,
+            SortOrder = path.SortOrder,
+            CreatedAtUtc = ToWireTimestamp(path.CreatedAtUtc),
+            UpdatedAtUtc = ToWireTimestamp(path.UpdatedAtUtc),
+        };
+
+    private static Sunder.Sdk.Rpc.SunderRpcOffsetDateTime ToWireTimestamp(DateTimeOffset value)
+        => new(value.ToString("O"));
 
     private static string DefaultPathId(string workspaceId) => workspaceId + ".path";
 
@@ -488,37 +527,29 @@ public sealed class BuilderViewModelTests
         });
     }
 
-    private sealed class TestExtensionCatalog : RegressionTestExtensionCatalog
-    {
-        public TestExtensionCatalog(IAgentWorkspaceExecutionResolver? resolver)
-        {
-            if (resolver is not null)
-            {
-                AddProvider(AgentRpcContractIds.WorkspaceExecutionResolver, resolver, "sunder.package.agent");
-            }
-        }
-    }
-
     private sealed class TestWorkspaceExecutionResolver :
         IAgentWorkspaceExecutionResolver,
-        ITestWorkspaceExecutionResolverBinding
+        ITestWorkspaceExecutionResolverBinding,
+        IAsyncDisposable
     {
         private readonly AgentWorkspaceRecord _workspace;
         private readonly TestExecutionTarget _target = new();
-        private readonly RegressionTestExtensionCatalog _targetCatalog = new();
-        private AgentRpcReference<IAgentExecutionTarget> _targetReference;
+        private readonly FakeServiceCatalog<AgentServices.IExecutionTargetService> _targetCatalog = new(
+            CurrentPublicRpcDescriptors.Get(RegressionTestBindings.ExecutionTargets));
+        private ServiceReference<AgentServices.IExecutionTargetService> _targetReference;
 
         public TestWorkspaceExecutionResolver(AgentWorkspaceRecord workspace)
         {
             _workspace = workspace;
-            _targetCatalog.AddProvider(RegressionTestBindings.ExecutionTargets, _target);
-            _targetReference = _targetCatalog.GetRequiredReference(RegressionTestBindings.ExecutionTargets);
+            _targetReference = _targetCatalog.Add(new RegressionTestExecutionProvider(_target), "test.execution.target").Reference;
         }
 
         IAgentExecutionTarget ITestWorkspaceExecutionResolverBinding.Target => _target;
 
-        public void BindTargetReference(AgentRpcReference<IAgentExecutionTarget> targetReference)
+        public void BindTargetReference(ServiceReference<AgentServices.IExecutionTargetService> targetReference)
             => _targetReference = targetReference;
+
+        public ValueTask DisposeAsync() => _targetCatalog.DisposeAsync();
 
         public ValueTask<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesAsync(
             CancellationToken cancellationToken = default)
@@ -530,7 +561,7 @@ public sealed class BuilderViewModelTests
             var binding = new AgentWorkspaceBindingRecord(
                 "binding.local",
                 _workspace.WorkspaceId,
-                AgentRpcContractIds.ExecutionTarget,
+                RegressionTestBindings.ExecutionTargets,
                 "local",
                 "primary",
                 IsEnabled: true,
@@ -548,12 +579,7 @@ public sealed class BuilderViewModelTests
                 binding,
                 _target.Descriptor,
                 scope,
-                _target
-            )
-            {
-                ExecutionTargetReference = _targetReference,
-                ExecutionTargetHandle = _targetReference.ToHandle(),
-            });
+                _targetReference));
         }
     }
 

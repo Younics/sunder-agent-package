@@ -7,11 +7,11 @@ namespace Sunder.Package.Agent.Contracts.Models;
 public enum AgentPermissionDecision
 {
     /// <summary>The invocation may proceed without an interactive prompt.</summary>
-    Allow = 0,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("allow")] Allow = 0,
 
     /// <summary>The run is suspended until a user explicitly approves or denies the invocation.</summary>
-    Ask = 1,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("ask")] Ask = 1,
 
     /// <summary>The invocation must not execute.</summary>
-    Deny = 2,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("deny")] Deny = 2,
 }

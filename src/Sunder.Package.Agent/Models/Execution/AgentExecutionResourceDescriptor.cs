@@ -71,10 +71,10 @@ public enum AgentExecutionResourceAccessMode
     /// <summary>
     /// Consumers may inspect the resource but must not modify it; capable targets should enforce read-only exposure.
     /// </summary>
-    ReadOnly = 0,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("read-only")] ReadOnly = 0,
 
     /// <summary>
     /// Consumers may inspect and modify the resource, subject to target capabilities and separately evaluated permissions.
     /// </summary>
-    ReadWrite = 1,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("read-write")] ReadWrite = 1,
 }

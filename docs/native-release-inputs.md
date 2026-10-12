@@ -181,8 +181,8 @@ The owned workflow/publish/promote/acceptance/handoff changes are separate:
 ## Local checks and qualification scope
 
 ```sh
-python3 -B scripts/release/native-family.fixture.py
-bash scripts/release/native-release.fixture.sh
+python3 -B scripts/test/release/native-family.fixture.py
+bash scripts/test/release/native-release.fixture.sh
 ```
 
 The Python fixture exercises actual capture/transport/verification and a mocked

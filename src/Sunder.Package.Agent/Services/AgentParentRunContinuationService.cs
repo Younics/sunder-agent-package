@@ -216,7 +216,7 @@ public sealed class AgentParentRunContinuationService(
                 "The durable parent continuation context is no longer available.");
         }
 
-        using var providerSelection = _providerResolver.ResolveChatProvider(parentProfile);
+        var providerSelection = await _providerResolver.ResolveChatProviderAsync(parentProfile, cancellationToken).ConfigureAwait(false);
         var chatBinding = providerSelection.ChatBinding;
         if (!providerSelection.IsAvailable
             || chatBinding is null
@@ -323,7 +323,7 @@ public sealed class AgentParentRunContinuationService(
             }
 
             var host = _behaviorLoopHostFactory.Create(
-                providerSelection.Provider,
+                providerSelection,
                 parentSession,
                 parentProfile,
                 workspace,
@@ -333,7 +333,7 @@ public sealed class AgentParentRunContinuationService(
                 dispatch.Run.UserMessage,
                 parentUserTurn.TurnId,
                 ResolveExecutionBinding(workspace));
-            using var behaviorLoop = _behaviorLoopResolver.Resolve(parentProfile);
+            var behaviorLoop = await _behaviorLoopResolver.ResolveAsync(parentProfile, runCancellationToken).ConfigureAwait(false);
             var loopResult = await behaviorLoop.RunAsync(
                 new AgentBehaviorLoopContext(
                     parentSession,

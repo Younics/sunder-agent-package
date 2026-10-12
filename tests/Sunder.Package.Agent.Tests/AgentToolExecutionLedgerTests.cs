@@ -223,7 +223,7 @@ public sealed class AgentToolExecutionLedgerTests
                 return Task.FromResult(AgentRoleBoundary.As<AppModels.AgentTranscriptToolDetailRecord?>(
                     store.GetTranscriptToolDetail(AgentRoleBoundary.As<AgentTranscriptToolDetailRequest>(request))!));
             },
-            new AgentToolPresentationService().Resolve);
+            new AgentToolPresentationService().ResolveAsync);
         var request = Assert.IsType<CorePresentation.TranscriptToolExpansionRequest>(state.BeginExpansion());
         var loaded = await state.LoadAsync(request, CancellationToken.None);
 
@@ -231,8 +231,8 @@ public sealed class AgentToolExecutionLedgerTests
         Assert.NotNull(materialized);
         Assert.True(state.CommitExpanded(request));
         Assert.Equal(CorePresentation.TranscriptToolExpansionState.Expanded, state.State);
-        Assert.Equal("{\"path\":\"live.txt\"}", loaded?.ArgumentsJson);
-        Assert.Equal(AppModels.AgentToolExecutionStatus.Started, loaded?.Status);
+        Assert.Equal("{\"path\":\"live.txt\"}", loaded?.Detail.ArgumentsJson);
+        Assert.Equal(AppModels.AgentToolExecutionStatus.Started, loaded?.Detail.Status);
     }
 
     [Theory]

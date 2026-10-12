@@ -71,6 +71,6 @@ public sealed record AgentSystemPromptRequest(
     IReadOnlyList<AgentToolDescriptor> AvailableTools,
     IReadOnlyList<AgentTurnRecord> Turns,
     Guid RunId,
-    long RunRevision,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long RunRevision,
     DateTimeOffset RunStartedAtUtc,
     string UserMessage);

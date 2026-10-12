@@ -123,7 +123,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts/reports
-          python3 scripts/generate-test-duration-report.py artifacts/test-results \
+          python3 scripts/test/generate-test-duration-report.py artifacts/test-results \
             --expected-skips 0 > artifacts/reports/stress-test-duration-report.json
 
       - name: Upload stress test evidence

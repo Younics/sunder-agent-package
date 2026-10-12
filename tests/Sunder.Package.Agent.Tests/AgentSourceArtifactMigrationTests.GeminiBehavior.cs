@@ -51,15 +51,15 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.NotNull(options.SettingsSchema); Assert.Empty(factoryCalls);
             var registrations = options.Providers.ToDictionary(value => value.ProviderId);
             Assert.Equal(new[] { "gemini.chat", "gemini.credentials", "gemini.embedding" }, registrations.Keys.Order(StringComparer.Ordinal));
-            var credentialDescriptor = RegressionTestRpcDescriptors.Get("sunder.package.agent.provider.gemini.credentials");
+            var credentialDescriptor = CurrentPrivateRpcDescriptors.Get("sunder.package.agent.provider.gemini.credentials");
             foreach (var provider in options.Providers)
             {
-                var descriptor = provider.ProviderId == "gemini.credentials" ? credentialDescriptor : RegressionTestRpcDescriptors.Get(provider.ContractId);
+                var descriptor = provider.ProviderId == "gemini.credentials" ? credentialDescriptor : CurrentPublicRpcDescriptors.Get(provider.ContractId);
                 Assert.Equal(descriptor.Sha256, provider.DescriptorSha256); Assert.Equal(descriptor.AbiSha256, provider.AbiSha256);
                 state.Add(context.PackageId, descriptor, provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, "2.0.0");
             }
             await using var appServices = CreateGeneratedApp(presentation, context, rpc);
-            var credentials = appServices.GetRequiredService(presentation.GetType("Sunder.Package.Agent.Provider.Gemini.ProviderCredentialOwnerRpcClient", true)!);
+            var credentials = appServices.GetRequiredService(presentation.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Provider_Gemini_Services.ICredentialSettingsService", true)!);
             Assert.False(await Credential("GetStatusAsync", [CancellationToken.None]));
             foreach (var id in new[] { "gemini.chat", "gemini.embedding" })
                 Assert.Equal("needs-configuration", (await Rpc(id, "get-readiness", new { })).GetProperty("status").GetString());
@@ -72,23 +72,25 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 Assert.NotEmpty((await Rpc(id, "list-models", new { })).EnumerateArray());
             }
             Assert.Equal("gemini/gemini-2.5-flash", (await Rpc("gemini.chat", "resolve-utility-model", new { })).GetString());
-            Assert.True((await Rpc("gemini.chat", "get-capabilities", new { modelId = "gemini/gemini-3-flash-preview" })).GetProperty("supportsVideoInput").GetBoolean());
-            Assert.Equal("https://generativelanguage.googleapis.com", (await Rpc("gemini.embedding", "space-identity", new { value = "gemini/text-embedding-004" })).GetString());
+            Assert.True((await Rpc("gemini.chat", "get-capabilities", "gemini/gemini-3-flash-preview")).GetProperty("supportsVideoInput").GetBoolean());
+            Assert.Equal("https://generativelanguage.googleapis.com", (await Rpc("gemini.embedding", "space-identity", "gemini/text-embedding-004")).GetString());
             Assert.Equal(JsonValueKind.Null, (await Rpc("gemini.embedding", "generate", new { modelId = "gemini/text-embedding-004", text = " " })).ValueKind);
             Assert.Empty(factoryCalls);
             var batch = await Rpc("gemini.embedding", "generate-batch", new { modelId = "gemini/text-embedding-004", texts = new[] { "first", " ", "second" } });
             Assert.Equal(3, batch.GetArrayLength()); Assert.Equal(JsonValueKind.Null, batch[1].ValueKind);
             Assert.True(batch[0].ValueKind == JsonValueKind.Object, "Embedding response: " + batch.GetRawText() + "; requests: " + string.Join(", ", peer.Requests.Select(value => value.Path)));
-            Assert.Equal(3, batch[0].GetProperty("dimensions").GetInt32()); Assert.Equal(0.25, batch[2].GetProperty("values")[0].GetDouble());
+            Assert.Equal(3, batch[0].GetProperty("values").GetArrayLength()); Assert.Equal(0.25, batch[2].GetProperty("values")[0].GetDouble());
+            Assert.False(batch[0].TryGetProperty("dimensions", out _));
             Assert.Equal("gemini/text-embedding-004", batch[0].GetProperty("modelId").GetString());
-            var embeddingSnapshot = Assert.Single((await rpc.DiscoverAsync(AgentRpcContractIds.EmbeddingProvider)).Providers);
-            var generatedEmbedding = CreateAgentEmbeddingClient(agentOwner, new RegressionTestRpcClient(state, "sunder.package.agent"), embeddingSnapshot);
-            await using var embeddingLifetime = (IAsyncDisposable)generatedEmbedding;
+            var embeddingCatalog = CreateAgentEmbeddingCatalog(agentOwner, new RegressionTestRpcClient(state, "sunder.package.agent"));
+            await using var embeddingLifetime = (IAsyncDisposable)embeddingCatalog;
+            var generatedEmbedding = EmbeddingService(await SingleAgentEmbeddingProvider(embeddingCatalog));
             Assert.Equal(AgentProviderReadinessStatus.Ready, (await generatedEmbedding.GetReadinessAsync()).Status);
-            var generatedBatch = await generatedEmbedding.GenerateEmbeddingsAsync("gemini/text-embedding-004", ["first", " ", "second"]);
+            var generatedBatch = await generatedEmbedding.GenerateBatchAsync("gemini/text-embedding-004", ["first", " ", "second"]);
             Assert.Equal(3, generatedBatch.Count); Assert.Null(generatedBatch[1]);
+            Assert.Equal(3, generatedBatch[0]!.Values.Count);
             Assert.Equal(0.25, generatedBatch[2]!.Values[0]);
-            var chatProvider = CreateAgentChatProvider(agentOwner, rpc.ForCaller("sunder.package.agent"), Assert.Single((await rpc.DiscoverAsync(AgentRpcContractIds.ChatProvider)).Providers));
+            var chatProvider = await CreateAgentChatProvider(agentOwner, rpc.ForCaller("sunder.package.agent"), Assert.Single((await rpc.DiscoverAsync(RegressionTestBindings.ChatProviders)).Providers));
             await using var chatLifetime = (IAsyncDisposable)chatProvider;
             using var chat = await CreateAgentChatClientAsync(chatProvider, new("gemini", "gemini/gemini-3-flash-preview"));
             var updates = new List<ChatResponseUpdate>();
@@ -126,7 +128,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.Equal(SunderRpcErrorKind.ProviderFaulted, denied.Error.Kind);
             Assert.DoesNotContain("artifact-secret", denied.ToString(), StringComparison.Ordinal);
             await state.RetireAsync(registrations["gemini.credentials"].Handler).WaitAsync(TimeSpan.FromSeconds(5));
-            Assert.Equal("provider.credential.unavailable", (await Assert.ThrowsAsync<SunderRpcException>(() => Credential("GetStatusAsync", [CancellationToken.None]))).Error.Code);
+            Assert.Equal("rpc.provider-not-found", (await Assert.ThrowsAsync<SunderRpcException>(() => Credential("GetStatusAsync", [CancellationToken.None]))).Error.Code);
             await VerifyProviderStreamLifecycle(runtime, "Gemini", agentOwner, probes);
             await lifetime.DisposeAsync(); await lifetime.DisposeAsync();
 
@@ -136,8 +138,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 var task = (Task)value.GetType().GetMethod("AsTask")!.Invoke(value, null)!;
                 await task.WaitAsync(TimeSpan.FromSeconds(10));
                 var result = task.GetType().GetProperty("Result")!.GetValue(task)!;
-                Assert.Same(presentation, result.GetType().Assembly);
-                return (bool)result.GetType().GetProperty("HasStoredCredential")!.GetValue(result)!;
+                return Assert.IsType<bool>(result);
             }
             async Task<JsonElement> Rpc(string id, string method, object request)
             {

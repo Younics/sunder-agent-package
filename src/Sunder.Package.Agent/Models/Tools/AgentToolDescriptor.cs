@@ -61,8 +61,8 @@ public sealed record AgentToolDescriptor(
 public enum AgentToolConcurrencyMode
 {
     /// <summary>Each call forms a scheduling barrier and executes after earlier calls complete.</summary>
-    Sequential = 0,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("sequential")] Sequential = 0,
 
     /// <summary>Independent calls may execute simultaneously without corrupting state or depending on call order.</summary>
-    ParallelSafe = 1,
+    [System.Text.Json.Serialization.JsonStringEnumMemberName("parallel-safe")] ParallelSafe = 1,
 }

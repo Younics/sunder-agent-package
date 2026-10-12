@@ -15,22 +15,22 @@ public sealed partial class AgentSourceArtifactMigrationTests
     {
         var id = family.ToLowerInvariant();
         var packageId = "sunder.package.agent.provider." + id;
-        var providerType = runtime.GetType("Sunder.Package.Agent.Provider." + family + ".Rpc.ChatProvider", true)!;
         var errorType = runtime.GetType("Sunder.Package.Agent.Contracts.Models.AgentChatProviderException", true)!;
         var probeType = probes.GetType("RoleLocalChatProbe", true)!;
         foreach (var mode in new[] { "flood", "cancel", "retire", "error", "unsafe", "queue", "fault", "complete", "cleanup-fault", "primary-fault", "error-cleanup" })
         {
             var probe = new ChatStreamProbe(mode, errorType);
-            var local = Activator.CreateInstance(probeType, id, (Func<IChatClient>)probe.CreateClient)!;
-            var provider = Activator.CreateInstance(providerType, local)!;
-            var registration = (SunderWorkerProviderRegistration)provider.GetType().GetMethod("CreateSunderRpcProviderRegistration")!.Invoke(provider, null)!;
             using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-            state.Add(packageId, RegressionTestRpcDescriptors.Get(AgentRpcContractIds.ChatProvider), provider, registration.Handler, Noop.Instance, registration.ProviderId, "2.0.0");
+            using var providers = new RegressionTestSourceProviders();
+            await using var receiver = new GeneratedServiceTestScope(new RegressionTestRpcClient(state, packageId));
+            var provider = Activator.CreateInstance(probeType, id, (Func<IChatClient>)probe.CreateClient)!;
+            var registration = providers.Create(RegressionTestBindings.ChatProviders, provider, receiver);
+            state.AddGenerated(packageId, provider, registration, Noop.Instance, registration.ProviderId);
             var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
-            var selected = Assert.Single((await rpc.DiscoverAsync(AgentRpcContractIds.ChatProvider)).Providers);
+            var selected = Assert.Single((await rpc.DiscoverAsync(RegressionTestBindings.ChatProviders)).Providers);
             var endpoint = selected.Endpoint;
             var observed = new FilesRpcObserver(rpc);
-            var binding = CreateAgentChatProvider(owner, observed, selected);
+            var binding = await CreateAgentChatProvider(owner, observed, selected);
             await using var bindingLifetime = (IAsyncDisposable)binding;
             using var client = await CreateAgentChatClientAsync(binding, new(id, id + "/test"));
             using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -54,12 +54,12 @@ public sealed partial class AgentSourceArtifactMigrationTests
                         Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => next)).Error.Kind);
                         await retiring.WaitAsync(TimeSpan.FromSeconds(5));
                         var replacementProbe = new ChatStreamProbe("complete", errorType);
-                        var replacement = Activator.CreateInstance(providerType, Activator.CreateInstance(probeType, id, (Func<IChatClient>)replacementProbe.CreateClient)!)!;
-                        var added = (SunderWorkerProviderRegistration)providerType.GetMethod("CreateSunderRpcProviderRegistration")!.Invoke(replacement, null)!;
-                        state.Add(packageId, RegressionTestRpcDescriptors.Get(AgentRpcContractIds.ChatProvider), replacement, added.Handler, Noop.Instance, added.ProviderId, "2.0.0");
-                        var current = Assert.Single((await rpc.DiscoverAsync(AgentRpcContractIds.ChatProvider)).Providers);
+                        var replacement = Activator.CreateInstance(probeType, id, (Func<IChatClient>)replacementProbe.CreateClient)!;
+                        var added = providers.Create(RegressionTestBindings.ChatProviders, replacement, receiver);
+                        state.AddGenerated(packageId, replacement, added, Noop.Instance, added.ProviderId);
+                        var current = Assert.Single((await rpc.DiscoverAsync(RegressionTestBindings.ChatProviders)).Providers);
                         Assert.NotEqual(endpoint, current.Endpoint);
-                        var replacementBinding = CreateAgentChatProvider(owner, observed, current);
+                        var replacementBinding = await CreateAgentChatProvider(owner, observed, current);
                         await using var replacementLifetime = (IAsyncDisposable)replacementBinding;
                         using var replacementClient = await CreateAgentChatClientAsync(replacementBinding, new(id, id + "/test"));
                         var updates = new List<ChatResponseUpdate>();
@@ -86,7 +86,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             }
             finally { await stream.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5)); }
             Assert.Equal(1, probe.Disposed); Assert.True(probe.IteratorDisposed);
-            Assert.Equal(0, observed.UnscopedLookups); Assert.All(observed.Scopes, scope => Assert.True(scope.Disposed));
+            observed.AssertScopedOperations(); Assert.All(observed.Scopes, scope => Assert.True(scope.Disposed));
             await state.RetireAsync(provider).WaitAsync(TimeSpan.FromSeconds(5));
         }
     }

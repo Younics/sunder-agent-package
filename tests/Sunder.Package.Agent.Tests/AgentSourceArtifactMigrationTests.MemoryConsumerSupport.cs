@@ -4,6 +4,7 @@ using System.Text.Json;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Sdk.Rpc;
+using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -46,7 +47,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
         public IAsyncEnumerable<JsonElement> SubscribeAsync(SunderRpcEndpointReference endpoint, string serviceId, string methodId, JsonElement request, SunderRpcCallOptions? options = null, CancellationToken cancellationToken = default) => inner.SubscribeAsync(endpoint, serviceId, methodId, request, options, cancellationToken);
     }
 
-    private sealed class MemoryConsumerEmbedding(string name) : IAgentEmbeddingProvider, IAgentEmbeddingSpaceIdentityProvider
+    private sealed class MemoryConsumerEmbedding(string name) : AgentServices.IEmbeddingProviderService,
+        IAgentEmbeddingProvider, IAgentEmbeddingSpaceIdentityProvider
     {
         public AgentEmbeddingProviderDescriptor Descriptor { get; } = new("embedding", name, []);
         internal bool Block;
@@ -76,9 +78,24 @@ public sealed partial class AgentSourceArtifactMigrationTests
             foreach (var text in texts) result.Add(await GenerateEmbeddingAsync(modelId, text, cancellationToken));
             return result;
         }
+
+        ValueTask<AgentEmbeddingProviderDescriptor> AgentServices.IEmbeddingProviderService.DescribeAsync(CancellationToken token)
+            => ValueTask.FromResult(Descriptor);
+        ValueTask<IReadOnlyList<AgentEmbeddingModelDescriptor>> AgentServices.IEmbeddingProviderService.ListModelsAsync(CancellationToken token)
+            => GetAvailableModelsAsync(token);
+        ValueTask<AgentEmbeddingProviderReadiness> AgentServices.IEmbeddingProviderService.GetReadinessAsync(CancellationToken token)
+            => GetReadinessAsync(token);
+        ValueTask<string> AgentServices.IEmbeddingProviderService.SpaceIdentityAsync(string request, CancellationToken token)
+            => GetEmbeddingSpaceIdentityAsync(request, token);
+        ValueTask<AgentEmbeddingGenerationResult?> AgentServices.IEmbeddingProviderService.GenerateAsync(
+            string modelId, string text, CancellationToken token)
+            => GenerateEmbeddingAsync(modelId, text, token);
+        ValueTask<IReadOnlyList<AgentEmbeddingGenerationResult?>> AgentServices.IEmbeddingProviderService.GenerateBatchAsync(
+            string modelId, IReadOnlyList<string> texts, CancellationToken token)
+            => GenerateEmbeddingsAsync(modelId, texts, token);
     }
 
-    private class MemoryConsumerRuntime : IAgentRuntimeCatalog
+    private class MemoryConsumerRuntime : AgentServices.IRuntimeCatalogService, IAgentRuntimeCatalog
     {
         private Action<Guid>? _sessionChanged;
         public AgentProfileRecord Profile { get; }
@@ -120,5 +137,77 @@ public sealed partial class AgentSourceArtifactMigrationTests
         public AgentProfileModelBindingRecord? GetSessionModelBinding(Guid sessionId, string capabilityKind) => sessionId == Session.SessionId ? GetModelBinding(Profile.ProfileId, capabilityKind) : null;
         public AgentProfileModelBindingRecord? GetModelBinding(string profileId, string capabilityKind) => profileId == Profile.ProfileId && capabilityKind == AgentModelCapabilityKinds.Embedding
             ? new(profileId, capabilityKind, "embedding", "embedding/model", null, Profile.UpdatedAtUtc) : null;
+
+        ValueTask<AgentRunCheckpointRecord?> AgentServices.IRuntimeCatalogService.GetLatestCheckpointAsync(Guid request, CancellationToken token)
+            => ValueTask.FromResult(GetLatestCheckpoint(request));
+        ValueTask<AgentProfileModelBindingRecord?> AgentServices.IRuntimeCatalogService.GetModelBindingAsync(
+            string profileId, string capabilityKind, CancellationToken token)
+            => ValueTask.FromResult(GetModelBinding(profileId, capabilityKind));
+        ValueTask<AgentProfileRecord?> AgentServices.IRuntimeCatalogService.GetProfileAsync(string request, CancellationToken token)
+            => ValueTask.FromResult(GetProfile(request));
+        ValueTask<AgentSessionRecord?> AgentServices.IRuntimeCatalogService.GetSessionAsync(Guid request, CancellationToken token)
+            => ValueTask.FromResult(GetSession(request));
+        ValueTask<AgentSessionContextCheckpointRecord?> AgentServices.IRuntimeCatalogService.GetSessionContextCheckpointAsync(Guid request, CancellationToken token)
+            => ValueTask.FromResult(GetLatestSessionContextCheckpoint(request));
+        ValueTask<AgentProfileModelBindingRecord?> AgentServices.IRuntimeCatalogService.GetSessionModelBindingAsync(
+            Guid sessionId, string capabilityKind, CancellationToken token)
+            => ValueTask.FromResult(GetSessionModelBinding(sessionId, capabilityKind));
+        ValueTask<AgentProfileRecord?> AgentServices.IRuntimeCatalogService.GetSessionProfileAsync(Guid request, CancellationToken token)
+            => ValueTask.FromResult(GetSessionProfile(request));
+        ValueTask<AgentWorkingSummaryRecord?> AgentServices.IRuntimeCatalogService.GetWorkingSummaryAsync(Guid request, CancellationToken token)
+            => ValueTask.FromResult(GetWorkingSummary(request));
+        ValueTask<AgentWorkspaceRecord?> AgentServices.IRuntimeCatalogService.GetWorkspaceAsync(string request, CancellationToken token)
+            => GetWorkspaceAsync(request, token);
+        ValueTask<IReadOnlyList<AgentProfileRecord>> AgentServices.IRuntimeCatalogService.ListProfilesAsync(CancellationToken token)
+            => ValueTask.FromResult(ListProfiles());
+        ValueTask<IReadOnlyList<AgentSessionRecord>> AgentServices.IRuntimeCatalogService.ListSessionsAsync(CancellationToken token)
+            => ValueTask.FromResult(ListSessions());
+        ValueTask<IReadOnlyList<AgentSessionRecord>> AgentServices.IRuntimeCatalogService.ListSessionsForProfileAsync(string request, CancellationToken token)
+            => ValueTask.FromResult(ListSessionsForProfile(request));
+        ValueTask<IReadOnlyList<AgentSessionRecord>> AgentServices.IRuntimeCatalogService.ListSessionsForWorkspaceAsync(string request, CancellationToken token)
+            => ValueTask.FromResult(ListSessionsForWorkspace(request));
+        ValueTask<IReadOnlyList<AgentWorkspaceRecord>> AgentServices.IRuntimeCatalogService.ListWorkspacesAsync(CancellationToken token)
+            => ListWorkspacesAsync(token);
+        ValueTask<AgentTranscriptToolDetailRecord?> AgentServices.IRuntimeCatalogService.GetTranscriptToolDetailAsync(
+            AgentTranscriptToolDetailRequest request, CancellationToken token)
+            => ValueTask.FromResult<AgentTranscriptToolDetailRecord?>(null);
+        ValueTask<IReadOnlyList<AgentTurnRecord>> AgentServices.IRuntimeCatalogService.ListRecentTranscriptHeadersAsync(
+            Guid sessionId, int limit, CancellationToken token)
+            => ValueTask.FromResult<IReadOnlyList<AgentTurnRecord>>([]);
+        ValueTask<IReadOnlyList<AgentTurnRecord>> AgentServices.IRuntimeCatalogService.ListRecentTurnsAsync(
+            Guid sessionId, int limit, CancellationToken token)
+            => ValueTask.FromResult(ListRecentTurns(sessionId, limit));
+        ValueTask<IReadOnlyList<AgentTurnRecord>> AgentServices.IRuntimeCatalogService.ListTranscriptHeadersAfterAsync(
+            Guid sessionId, DateTimeOffset createdAtUtc, Guid turnId, int limit, CancellationToken token)
+            => ValueTask.FromResult<IReadOnlyList<AgentTurnRecord>>([]);
+        ValueTask<IReadOnlyList<AgentTurnRecord>> AgentServices.IRuntimeCatalogService.ListTranscriptHeadersBeforeAsync(
+            Guid sessionId, DateTimeOffset createdAtUtc, Guid turnId, int limit, CancellationToken token)
+            => ValueTask.FromResult<IReadOnlyList<AgentTurnRecord>>([]);
+        ValueTask<IReadOnlyList<AgentTurnRecord>> AgentServices.IRuntimeCatalogService.ListTurnsAfterAsync(
+            Guid sessionId, DateTimeOffset createdAtUtc, Guid turnId, int limit, CancellationToken token)
+            => ValueTask.FromResult<IReadOnlyList<AgentTurnRecord>>([]);
+        ValueTask<IReadOnlyList<AgentTurnRecord>> AgentServices.IRuntimeCatalogService.ListTurnsBeforeAsync(
+            Guid sessionId, DateTimeOffset createdAtUtc, Guid turnId, int limit, CancellationToken token)
+            => ValueTask.FromResult<IReadOnlyList<AgentTurnRecord>>([]);
+        async IAsyncEnumerable<AgentRuntimeCatalogEvent> AgentServices.IRuntimeCatalogService.WatchAsync(
+            [EnumeratorCancellation] CancellationToken token)
+        {
+            var events = System.Threading.Channels.Channel.CreateUnbounded<AgentRuntimeCatalogEvent>();
+            var sequence = 0L;
+            void Session(Guid value) => events.Writer.TryWrite(new AgentSessionCatalogEvent(Interlocked.Increment(ref sequence), value));
+            void Reset() => events.Writer.TryWrite(new AgentRuntimeCatalogResetEvent(Interlocked.Increment(ref sequence)));
+            SessionChanged += Session;
+            ResetRequired += Reset;
+            try
+            {
+                Reset();
+                await foreach (var value in events.Reader.ReadAllAsync(token)) yield return value;
+            }
+            finally
+            {
+                SessionChanged -= Session;
+                ResetRequired -= Reset;
+            }
+        }
     }
 }

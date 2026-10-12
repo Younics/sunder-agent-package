@@ -9,13 +9,23 @@ internal static class FileToolDescriptorRegistry
 
     public static IReadOnlyList<AgentToolDescriptor> Descriptors { get; } =
     [
-        new("read", "Read File", "Read a file or directory from the selected workspace.", IsReadOnly: true, ArgumentsJsonSchema: ReadSchema, SourceKind: "workspace", SourceId: "files", SourceDisplayName: DisplayName, RuntimeInstructions: ReadInstructions, Priority: AgentToolPriority.Medium) { ConcurrencyMode = AgentToolConcurrencyMode.ParallelSafe },
-        new("write", "Write File", "Create or overwrite a file in the selected workspace.", IsReadOnly: false, ArgumentsJsonSchema: WriteSchema, SourceKind: "workspace", SourceId: "files", SourceDisplayName: DisplayName, RuntimeInstructions: WriteInstructions, Priority: AgentToolPriority.Medium),
-        new("edit", "Edit File", "Modify an existing file in the selected workspace using exact string replacement.", IsReadOnly: false, ArgumentsJsonSchema: EditSchema, SourceKind: "workspace", SourceId: "files", SourceDisplayName: DisplayName, RuntimeInstructions: EditInstructions, Priority: AgentToolPriority.Medium),
-        new("apply_patch", "Apply Patch", "Apply a structured patch to files in the selected workspace.", IsReadOnly: false, ArgumentsJsonSchema: ApplyPatchSchema, SourceKind: "workspace", SourceId: "files", SourceDisplayName: DisplayName, RuntimeInstructions: ApplyPatchInstructions, Priority: AgentToolPriority.Medium),
-        new("grep", "Grep", "Search file contents in the selected workspace using regular expressions.", IsReadOnly: true, ArgumentsJsonSchema: GrepSchema, SourceKind: "workspace", SourceId: "files", SourceDisplayName: DisplayName, RuntimeInstructions: GrepInstructions, Priority: AgentToolPriority.Medium) { ConcurrencyMode = AgentToolConcurrencyMode.ParallelSafe },
-        new("glob", "Glob", "Find files in the selected workspace by glob pattern.", IsReadOnly: true, ArgumentsJsonSchema: GlobSchema, SourceKind: "workspace", SourceId: "files", SourceDisplayName: DisplayName, RuntimeInstructions: GlobInstructions, Priority: AgentToolPriority.Medium) { ConcurrencyMode = AgentToolConcurrencyMode.ParallelSafe },
+        Create("read", "Read File", "Read a file or directory from the selected workspace.", true, ReadSchema, ReadInstructions),
+        Create("write", "Write File", "Create or overwrite a file in the selected workspace.", false, WriteSchema, WriteInstructions),
+        Create("edit", "Edit File", "Modify an existing file in the selected workspace using exact string replacement.", false, EditSchema, EditInstructions),
+        Create("apply_patch", "Apply Patch", "Apply a structured patch to files in the selected workspace.", false, ApplyPatchSchema, ApplyPatchInstructions),
+        Create("grep", "Grep", "Search file contents in the selected workspace using regular expressions.", true, GrepSchema, GrepInstructions),
+        Create("glob", "Glob", "Find files in the selected workspace by glob pattern.", true, GlobSchema, GlobInstructions),
     ];
+
+    private static AgentToolDescriptor Create(string id, string name, string description, bool readOnly, string schema, string instructions) => new()
+    {
+        ToolId = id, DisplayName = name, Description = description, IsReadOnly = readOnly, RequiresNetwork = false,
+        ArgumentsJsonSchema = schema, SourceKind = "workspace", SourceId = "files", SourceDisplayName = DisplayName,
+        RuntimeInstructions = instructions, Priority = AgentToolPriority.Medium,
+        ConcurrencyMode = readOnly ? AgentToolConcurrencyMode.ParallelSafe : AgentToolConcurrencyMode.Sequential,
+        Aliases = null, SelectionScope = AgentToolSelectionScope.Tool, SelectionGroupId = null, SelectionGroupDisplayName = null,
+        SelectionGroupDescription = null, ActivationRequirement = null,
+    };
 
     public static bool Contains(string toolId)
         => Descriptors.Any(descriptor => string.Equals(descriptor.ToolId, toolId, StringComparison.OrdinalIgnoreCase));

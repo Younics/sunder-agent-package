@@ -106,6 +106,7 @@ internal static partial class AgentSourceMigrationProjectChanges
 
     private static void AssertCanonicalProject(string root, CanonicalProjectHistory history, string text)
     {
+        if (TryReadNaturalServiceDelta(root, Path.Combine(root, history.Project), text, out var preNatural)) text = preNatural;
         AssertProjectHash(history.CanonicalSha256, text, history.Project);
         var document = XDocument.Parse(text);
         Assert.Equal("Microsoft.NET.Sdk", (string?)document.Root!.Attribute("Sdk"));
@@ -151,6 +152,7 @@ internal static partial class AgentSourceMigrationProjectChanges
     {
         Assert.True(CanonicalSupportHashes.TryGetValue(relative, out var expected), $"Unreviewed canonical import: {relative}");
         var text = ReadNormalizedProjectText(Path.Combine(root, relative));
+        if (TryReadNaturalServiceDelta(root, Path.Combine(root, relative), text, out var preNatural)) text = preNatural;
         AssertProjectHash(expected!, text, relative);
         return text;
     }

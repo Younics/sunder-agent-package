@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Execution_Local_Services;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Abstractions;
@@ -14,7 +15,7 @@ public sealed partial class LocalExecutionSettingsViewModel : ObservableObject,
 {
     private const string SettingsChannel = "local-settings";
     private const string ShellCatalogChannel = "local-shell-catalog";
-    private readonly ILocalExecutionPresentationClient _presentationClient;
+    private readonly IPresentationService _presentationClient;
     private readonly LatestRequestCoordinator _requests = new();
     private readonly CancellationTokenSource _lifetime = new();
     private readonly object _initializationSyncRoot = new();
@@ -27,7 +28,8 @@ public sealed partial class LocalExecutionSettingsViewModel : ObservableObject,
     private long _shellListRevision;
     private long _shellCatalogRevision;
 
-    internal LocalExecutionSettingsViewModel(ILocalExecutionPresentationClient presentationClient)
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
+    internal LocalExecutionSettingsViewModel(IPresentationService presentationClient)
     {
         _presentationClient = presentationClient;
         SyntaxOptions =
@@ -195,9 +197,7 @@ public sealed partial class LocalExecutionSettingsViewModel : ObservableObject,
 
         var timeoutRevision = _timeoutRevision;
         var response = await RunMutationAsync(
-            new LocalExecutionOperationRequest(
-                LocalExecutionOperationKind.SaveSettings,
-                TimeoutSeconds: timeoutSeconds.ToString()),
+            token => _presentationClient.SaveSettingsAsync(timeoutSeconds.ToString(), token),
             cancellationToken);
         if (response is null)
         {
@@ -236,9 +236,7 @@ public sealed partial class LocalExecutionSettingsViewModel : ObservableObject,
         var authority = CaptureShellAuthority();
         try
         {
-            var response = await InvokePresentationRpcAsync(
-                    new LocalExecutionOperationRequest(LocalExecutionOperationKind.GetSettings),
-                    settingsRequest.CancellationToken)
+            var response = await _presentationClient.GetSettingsAsync(settingsRequest.CancellationToken)
                 .AsTask()
                 .WaitAsync(settingsRequest.CancellationToken);
             if (_disposed)
@@ -302,11 +300,6 @@ public sealed partial class LocalExecutionSettingsViewModel : ObservableObject,
         }
     }
 
-    private ValueTask<LocalExecutionOperationResponse> InvokePresentationRpcAsync(
-        LocalExecutionOperationRequest request,
-        CancellationToken cancellationToken)
-        => _presentationClient.ExecuteAsync(request, cancellationToken);
-
     private async Task SaveShellsCoreAsync(string? deletedShellId)
     {
         if (!CanSaveShells)
@@ -339,12 +332,7 @@ public sealed partial class LocalExecutionSettingsViewModel : ObservableObject,
         var operation = BeginBusyOperation();
         try
         {
-            var response = await InvokePresentationRpcAsync(
-                    new LocalExecutionOperationRequest(
-                        LocalExecutionOperationKind.SaveShells,
-                        Shells: shells,
-                        ExpectedShellCatalogRevision: _shellCatalogRevision),
-                    request.CancellationToken)
+            var response = await _presentationClient.SaveShellsAsync(shells, _shellCatalogRevision, request.CancellationToken)
                 .AsTask()
                 .WaitAsync(request.CancellationToken);
             if (_disposed || !_requests.IsCurrent(request))
@@ -392,7 +380,7 @@ public sealed partial class LocalExecutionSettingsViewModel : ObservableObject,
     }
 
     private async Task<LocalExecutionOperationResponse?> RunMutationAsync(
-        LocalExecutionOperationRequest operationRequest,
+        Func<CancellationToken, ValueTask<LocalExecutionOperationResponse>> invoke,
         CancellationToken cancellationToken)
     {
         if (!CanMutate)
@@ -406,7 +394,7 @@ public sealed partial class LocalExecutionSettingsViewModel : ObservableObject,
             _lifetime.Token);
         try
         {
-            var response = await InvokePresentationRpcAsync(operationRequest, linked.Token)
+            var response = await invoke(linked.Token)
                 .AsTask()
                 .WaitAsync(linked.Token);
             if (_disposed || !IsBusyOperationCurrent(operation))
@@ -660,11 +648,12 @@ public sealed partial class LocalExecutionSettingsViewModel : ObservableObject,
 
     private void ApplyRuntimeFailure(SunderRpcException exception)
     {
-        RuntimeErrorCode = exception.Error.Code;
+        RuntimeErrorCode = exception.Error.Kind == SunderRpcErrorKind.NotFound && exception.Error.Code == "rpc.provider-not-found"
+            ? "local.presentation.unavailable" : exception.Error.Code;
         RuntimeCorrelationId = null;
         StatusText = FormatError(
             "Local execution Runtime request failed.",
-            exception.Error.Code,
+            RuntimeErrorCode,
             correlationId: null);
     }
 

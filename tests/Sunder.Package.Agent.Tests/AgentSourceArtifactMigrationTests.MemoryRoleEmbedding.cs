@@ -13,14 +13,13 @@ public sealed partial class AgentSourceArtifactMigrationTests
     {
         var runtime = new MemoryConsumerRuntime();
         var embedding = new MemoryConsumerEmbedding("Role-local embeddings");
-        AddGeneratedPeer(state, "sunder.package.agent", AgentRpcContractIds.RuntimeCatalog, runtime, "agent.runtime.catalog");
-        AddGeneratedPeer(state, "example.embedding", AgentRpcContractIds.EmbeddingProvider, embedding, "example.embedding.provider");
+        AddGeneratedPeer(state, "sunder.package.agent", RegressionTestBindings.RuntimeCatalog, runtime, "agent.runtime.catalog");
+        AddGeneratedPeer(state, "example.embedding", RegressionTestBindings.EmbeddingProviders, embedding, "example.embedding.provider");
         var embeddingRetired = false;
         try
         {
-            var catalog = Service("Rpc.SemanticMemoryRpcCatalog");
-            await catalog.GetType().GetMethod("StartAsync")!.CreateDelegate<Func<CancellationToken, ValueTask>>(catalog)(default);
             var resolver = Service("Services.SemanticModelRuntimeResolver");
+            await ((Sunder.Sdk.Worker.ISunderWorkerLifecycleService)resolver).ActivateAsync(null!);
             var resolved = (await Call(resolver, "ResolveForProfileAsync", runtime.Profile.ProfileId, CancellationToken.None))!;
             Assert.Same(worker, resolved.GetType().Assembly);
             Assert.Equal("Role-local embeddings", resolved.GetType().GetProperty("ProviderDisplayName")!.GetValue(resolved));

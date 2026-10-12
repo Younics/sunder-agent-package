@@ -17,7 +17,7 @@ internal static partial class AgentSourceMigrationProjectChanges
         {
             const string marker = "internal sealed class BuilderRpcDomainException";
             Assert.DoesNotContain(marker, text, StringComparison.Ordinal);
-            var operations = File.ReadAllText(Path.Combine(Path.GetDirectoryName(path)!, "Runtime/BuilderRuntimeOperations.cs")).Replace("\r\n", "\n", StringComparison.Ordinal);
+            var operations = ReadMigrationSourceText(Path.Combine(Path.GetDirectoryName(path)!, "Runtime/BuilderRuntimeOperations.cs"));
             Assert.Equal(2, operations.Split(marker, StringSplitOptions.None).Length);
             text = text.TrimEnd() + "\n\n" + operations[operations.IndexOf(marker, StringComparison.Ordinal)..];
         }

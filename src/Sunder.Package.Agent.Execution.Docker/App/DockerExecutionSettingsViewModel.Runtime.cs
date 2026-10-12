@@ -1,17 +1,21 @@
 using Microsoft.Extensions.Logging;
 using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Execution.Docker;
 
 public sealed partial class DockerExecutionSettingsViewModel
 {
-    private ValueTask<DockerExecutionOperationResponse> InvokePresentationRpcAsync(
-        DockerExecutionOperationRequest request,
-        CancellationToken cancellationToken)
-        => _presentationClient.ExecuteAsync(request, cancellationToken);
+    private static async ValueTask<DockerExecutionOperationResponse> ReadCatalogAsync(
+        ValueTask<SunderContent> operation, CancellationToken cancellationToken)
+    {
+        await using var content = await operation.ConfigureAwait(false);
+        return await DockerPresentationContent.ReadAsync(content, cancellationToken).ConfigureAwait(false);
+    }
 
     private async Task<DockerExecutionOperationResponse?> RunOperationAsync(
-        DockerExecutionOperationRequest request,
+        string operation,
+        Func<CancellationToken, ValueTask<DockerExecutionOperationResponse>> invoke,
         CancellationToken cancellationToken,
         bool showBusy,
         Func<bool>? hasAuthority = null)
@@ -29,7 +33,7 @@ public sealed partial class DockerExecutionSettingsViewModel
 
         try
         {
-            var response = await InvokePresentationRpcAsync(request, cancellationToken)
+            var response = await invoke(cancellationToken)
                 .AsTask()
                 .WaitAsync(cancellationToken)
                 .ConfigureAwait(false);
@@ -82,7 +86,7 @@ public sealed partial class DockerExecutionSettingsViewModel
                     exception,
                     "Docker settings operation failed. CorrelationId: {CorrelationId}; Operation: {Operation}",
                     correlationId,
-                    request.Kind);
+                    operation);
                 RuntimeErrorCode = "docker.presentation.failed";
                 RuntimeCorrelationId = correlationId;
                 StatusText = FormatError(
@@ -150,11 +154,12 @@ public sealed partial class DockerExecutionSettingsViewModel
 
     private void ApplyRuntimeFailure(SunderRpcException exception)
     {
-        RuntimeErrorCode = exception.Error.Code;
+        RuntimeErrorCode = exception.Error.Kind == SunderRpcErrorKind.NotFound && exception.Error.Code == "rpc.provider-not-found"
+            ? "docker.presentation.unavailable" : exception.Error.Code;
         RuntimeCorrelationId = null;
         StatusText = FormatError(
             "Docker Runtime request failed.",
-            exception.Error.Code,
+            RuntimeErrorCode,
             correlationId: null);
         _logger?.LogWarning(
             "Docker Runtime RPC request failed. Code: {Code}; Kind: {Kind}",

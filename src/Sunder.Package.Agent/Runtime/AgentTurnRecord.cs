@@ -29,6 +29,7 @@ public sealed record AgentTurnRecord(
     /// Gets the monotonically increasing, turn-local content revision. Each append, replacement, or streaming
     /// completion advances it; gaps require consumers to reload a full turn snapshot.
     /// </summary>
+    [Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")]
     public long ContentRevision { get; init; } = 1;
 
     /// <summary>
@@ -41,5 +42,6 @@ public sealed record AgentTurnRecord(
     public Guid? RunId { get; init; }
 
     /// <summary>Gets the owning run revision used to scope provider call identifiers.</summary>
+    [Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")]
     public long? RunRevision { get; init; }
 }

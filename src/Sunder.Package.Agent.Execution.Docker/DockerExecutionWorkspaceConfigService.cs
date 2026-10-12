@@ -3,14 +3,16 @@ using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using Sunder.Package.Agent.Contracts.Contracts;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using Sunder.Sdk.Services;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Shared.Storage;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Execution.Docker;
 
-public sealed class DockerExecutionWorkspaceConfigService : IAgentWorkspacePathMigrationContributor
+[SunderServiceProvider(typeof(IWorkspacePathMigratorService), ProviderId = "docker.workspace.path.migrator")]
+public sealed partial class DockerExecutionWorkspaceConfigService : IWorkspacePathMigratorService
 {
     internal const string DefaultContainerRoot = "/workspace";
     internal const string DefaultShellPath = "/bin/sh";
@@ -213,10 +215,13 @@ public sealed class DockerExecutionWorkspaceConfigService : IAgentWorkspacePathM
         }
     }
 
-    public bool CanMigrate(AgentWorkspacePathMigrationContext context)
-        => string.Equals(context.Binding.ContributionId, "docker", StringComparison.OrdinalIgnoreCase);
+    public ValueTask<AgentServiceIdentity> DescribeAsync(CancellationToken token = default)
+    { token.ThrowIfCancellationRequested(); return ValueTask.FromResult(new AgentServiceIdentity { Id = ContributorId, DisplayName = ContributorId }); }
 
-    public async Task<IReadOnlyList<AgentWorkspacePathMigrationItem>> GetLegacyWorkspacePathsAsync(
+    public ValueTask<bool> CanMigrateAsync(AgentWorkspacePathMigrationContext context, CancellationToken token = default)
+    { token.ThrowIfCancellationRequested(); return ValueTask.FromResult(string.Equals(context.Binding.ContributionId, "docker", StringComparison.OrdinalIgnoreCase)); }
+
+    public async ValueTask<IReadOnlyList<AgentWorkspacePathMigrationItem>> ListLegacyPathsAsync(
         AgentWorkspacePathMigrationContext context,
         CancellationToken cancellationToken = default)
     {
@@ -261,7 +266,7 @@ public sealed class DockerExecutionWorkspaceConfigService : IAgentWorkspacePathM
                     ? configuredHostPath
                     : ResolveDefaultHostPath(containerRoot);
                 var isDefault = normalizedDefault is not null && IsSameOrChildPath(normalizedDefault, containerRoot);
-                items.Add(new AgentWorkspacePathMigrationItem(hostPath, isDefault, index++));
+                items.Add(new AgentWorkspacePathMigrationItem { HostPath = hostPath, IsDefault = isDefault, SortOrder = index++ });
             }
 
             return items;
@@ -272,7 +277,7 @@ public sealed class DockerExecutionWorkspaceConfigService : IAgentWorkspacePathM
         }
     }
 
-    public async Task CompleteWorkspacePathMigrationAsync(
+    public async ValueTask CompleteAsync(
         AgentWorkspacePathMigrationContext context,
         CancellationToken cancellationToken = default)
         => await SaveConfigAsync(

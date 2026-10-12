@@ -222,13 +222,13 @@ public sealed class OpenAiAgentProviderTests
     }
 
     [Fact]
-    public async Task GetAvailableModelsAsync_ExposesGpt56ModesWithoutSyntheticModelRows()
+    public async Task ListModelsAsync_ExposesGpt56ModesWithoutSyntheticModelRows()
     {
         var provider = CreateProvider(new TestPackageContext(
             new Dictionary<string, string> { ["auth.mode"] = OpenAiAuthMode.ApiKey },
             new Dictionary<string, string> { ["auth.apiKey"] = "sk-test" }));
 
-        var models = await provider.GetAvailableModelsAsync();
+        var models = await provider.ListModelsAsync();
 
         var sol = models.Single(model => model.ModelId == "openai/gpt-5.6-sol");
         Assert.Contains(sol.SpeedOptions ?? [], option => option.SpeedOptionId == "fast");
@@ -242,13 +242,13 @@ public sealed class OpenAiAgentProviderTests
     }
 
     [Fact]
-    public async Task GetAvailableModelsAsync_CodexMode_UsesCodexContextLimitsAndSolRecommendation()
+    public async Task ListModelsAsync_CodexMode_UsesCodexContextLimitsAndSolRecommendation()
     {
         var provider = CreateProvider(new TestPackageContext(
             new Dictionary<string, string> { ["auth.mode"] = OpenAiAuthMode.CodexConnected },
             new Dictionary<string, string>()));
 
-        var models = await provider.GetAvailableModelsAsync();
+        var models = await provider.ListModelsAsync();
 
         var sol = models.Single(model => model.ModelId == "openai/gpt-5.6-sol");
         var luna = models.Single(model => model.ModelId == "openai/gpt-5.6-luna");
@@ -366,7 +366,7 @@ public sealed class OpenAiAgentProviderTests
             () => new AgentChatClientContextLoggingTests().ProviderStreamTelemetry_SatisfiesCommonLifecycleAndRedactionConformance()));
 
     [Fact]
-    public void CodexResponseContinuationStore_DeleteSessionData_ClearsResponsesLiteSessionId()
+    public async Task CodexResponseContinuationStore_DeleteSessionAsync_ClearsResponsesLiteSessionId()
     {
         var store = new CodexResponseContinuationStore();
         var sessionId = Guid.NewGuid();
@@ -375,7 +375,7 @@ public sealed class OpenAiAgentProviderTests
         var first = store.GetOrCreateResponsesLiteSessionId(conversationId);
         Assert.Equal(first, store.GetOrCreateResponsesLiteSessionId(conversationId));
 
-        store.DeleteSessionData(sessionId);
+        await store.DeleteSessionAsync(sessionId);
 
         Assert.NotEqual(first, store.GetOrCreateResponsesLiteSessionId(conversationId));
     }

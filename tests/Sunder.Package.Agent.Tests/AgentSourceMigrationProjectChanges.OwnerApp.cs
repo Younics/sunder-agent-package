@@ -12,8 +12,10 @@ internal static partial class AgentSourceMigrationProjectChanges
             const string transportMarker = "internal static class AgentOwnerRuntimeRpc";
             Assert.DoesNotContain(providerMarker, text, StringComparison.Ordinal);
             Assert.Equal(2, text.Split(transportMarker, StringSplitOptions.None).Length);
-            var provider = File.ReadAllText(Path.Combine(AgentPackageRepositoryInventory.RepositoryRoot.FullName, AgentCanonicalSourceMigrationTests.OwnerProviderPort))
+            var provider = File.ReadAllText(Path.Combine(AgentPackageRepositoryInventory.RepositoryRoot.FullName,
+                    "tests/Sunder.Package.Agent.Tests/Fixtures/OrdinaryServices/IAgentOwnerRuntimeProvider.cs.txt"))
                 .Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
+            AssertProjectHash("0071ae3868a5e98409b661316bd8120b2db06b30988e840e4f4662a5b291c3ba", provider, "Retired authored owner port");
             Assert.Equal(2, provider.Split(providerMarker, StringSplitOptions.None).Length);
             text = text.Replace(transportMarker, provider[provider.IndexOf(providerMarker, StringComparison.Ordinal)..].TrimEnd() + "\n\n" + transportMarker, StringComparison.Ordinal);
             const string declaration = "internal sealed class AgentOwnerOperationException";

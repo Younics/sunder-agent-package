@@ -1,25 +1,21 @@
-using Sunder.Package.Agent.Contracts.Contracts;
+using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Package.Agent.Tools.Web.Services;
 
 namespace Sunder.Package.Agent.Tools.Web;
 
-public sealed class WebSearchTool(Backends.ExaWebSearchBackend exaWebSearchBackend, WebToolsSettingsService settingsService) : IAgentTool, IAgentToolPresentationResolver
+public sealed class WebSearchTool(WebSearchService webSearchService, WebToolsSettingsService settingsService)
 {
-    private readonly Backends.ExaWebSearchBackend _exaWebSearchBackend = exaWebSearchBackend;
+    private readonly WebSearchService _webSearchService = webSearchService;
     private readonly WebToolsSettingsService _settingsService = settingsService;
 
-    public AgentToolDescriptor Descriptor { get; } = new(
-        "web_search",
-        "Web Search",
-        "Search the web using the Exa-backed route and return normalized result items.",
-        IsReadOnly: true,
-        RequiresNetwork: true,
-        SourceKind: "web",
-        SourceId: "web-tools",
-        SourceDisplayName: "Web Tools",
-        ArgumentsJsonSchema:
+    public AgentToolDescriptor Descriptor { get; } = new()
+    {
+        ToolId = "web_search", DisplayName = "Web Search",
+        Description = "Search the web using the configured provider and return source links and excerpts. Auto mode supports free search and rate-limit failover.",
+        IsReadOnly = true, RequiresNetwork = true, SourceKind = "web", SourceId = "web-tools", SourceDisplayName = "Web Tools",
+        ArgumentsJsonSchema =
         """
         {
           "type": "object",
@@ -38,8 +34,10 @@ public sealed class WebSearchTool(Backends.ExaWebSearchBackend exaWebSearchBacke
           "required": ["query"],
           "additionalProperties": false
         }
-        """)
-    {
+        """,
+        Aliases = null, SelectionScope = AgentToolSelectionScope.Tool, SelectionGroupId = null,
+        SelectionGroupDisplayName = null, SelectionGroupDescription = null, RuntimeInstructions = null,
+        ActivationRequirement = null, Priority = AgentToolPriority.Medium,
         ConcurrencyMode = AgentToolConcurrencyMode.Sequential,
     };
 
@@ -51,20 +49,22 @@ public sealed class WebSearchTool(Backends.ExaWebSearchBackend exaWebSearchBacke
         }
 
         var parsed = TryParseArguments(request.ArgumentsJson, out var args, out var error);
-        return new AgentToolPresentation(
-            HeaderText: request.ResultSummary ?? (parsed ? args.Query : null),
-            DetailMarkdown: !parsed
+        return new AgentToolPresentation
+        {
+            HeaderText = request.ResultSummary ?? (parsed ? args.Query : null),
+            DetailMarkdown = !parsed
                 ? AgentToolPresentationMarkdown.BuildRawRequestMarkdown(request.ArgumentsJson, error)
                 : AgentToolPresentationMarkdown.BuildRequestMarkdown(
                     ("Query", args.Query),
                     ("Max results", args.MaxResults?.ToString())),
-            OutputText: request.TextContent);
+            OutputText = request.TextContent,
+        };
     }
 
     public async ValueTask<AgentToolReadiness> GetReadinessAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return await _exaWebSearchBackend.GetReadinessAsync(cancellationToken);
+        return await _webSearchService.GetReadinessAsync(cancellationToken);
     }
 
     public async ValueTask<AgentToolResult> ExecuteAsync(
@@ -74,60 +74,42 @@ public sealed class WebSearchTool(Backends.ExaWebSearchBackend exaWebSearchBacke
     {
         if (!TryParseArguments(request.ArgumentsJson, out var arguments, out var error))
         {
-            return new AgentToolResult(
-                Descriptor.ToolId,
-                error!,
-                Content: AgentToolPresentationMarkdown.BuildFailureMarkdown("Web search failed", error!),
-                IsError: true,
-                ErrorCode: "web-search-args");
+            return Failure(error!, error!, "web-search-args");
         }
 
         if (string.IsNullOrWhiteSpace(arguments.Query))
         {
-            return new AgentToolResult(
-                Descriptor.ToolId,
-                "The query parameter is required.",
-                Content: AgentToolPresentationMarkdown.BuildFailureMarkdown("Web search failed", "The `query` parameter is required."),
-                IsError: true,
-                ErrorCode: "web-search-query-required");
+            return Failure("The query parameter is required.", "The `query` parameter is required.", "web-search-query-required");
         }
 
-        var readiness = await _exaWebSearchBackend.GetReadinessAsync(cancellationToken);
+        var readiness = await _webSearchService.GetReadinessAsync(cancellationToken);
         if (readiness.Status != AgentToolReadinessStatus.Ready)
         {
-            return new AgentToolResult(
-                Descriptor.ToolId,
-                readiness.Message,
-                Content: AgentToolPresentationMarkdown.BuildFailureMarkdown("Web search not ready", readiness.Message),
-                IsError: true,
-                ErrorCode: "web-search-not-ready");
+            return Failure(readiness.Message, readiness.Message, "web-search-not-ready", "Web search not ready");
         }
 
         try
         {
-            var result = await _exaWebSearchBackend.SearchAsync(
+            var result = await _webSearchService.SearchAsync(
                 arguments.Query,
                 arguments.MaxResults ?? await _settingsService.GetDefaultMaxResultsAsync(cancellationToken),
+                context.SessionId,
                 cancellationToken);
-            return new AgentToolResult(
-                Descriptor.ToolId,
-                result.Summary,
-                Content: result.Content,
-                StructuredPayloadJson: result.StructuredPayloadJson,
-                Sources: result.Sources,
-                WasTruncated: result.WasTruncated,
-                BackendId: result.BackendId);
+            return new AgentToolResult
+            {
+                ToolId = Descriptor.ToolId, Summary = result.Summary, Content = result.Content,
+                StructuredPayloadJson = result.StructuredPayloadJson, Sources = result.Sources,
+                WasTruncated = result.WasTruncated, BackendId = result.BackendId, IsError = false, ErrorCode = null,
+                PresentationPayloadJson = null, RequiresPromptContextRefresh = false,
+            };
+        }
+        catch (Backends.WebSearchRateLimitException ex)
+        {
+            return Failure("Web search rate limited", ex.Message, "web-search-rate-limited");
         }
         catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
         {
-            return new AgentToolResult(
-                Descriptor.ToolId,
-                ex.Message,
-                Content: AgentToolPresentationMarkdown.BuildFailureMarkdown(
-                    "Web search failed",
-                    $"The web search timed out or was canceled before the backend could respond.\n\n{ex.Message}"),
-                IsError: true,
-                ErrorCode: "web-search-http");
+            return Failure(ex.Message, $"The web search timed out or was canceled before the backend could respond.\n\n{ex.Message}", "web-search-http");
         }
         catch (OperationCanceledException)
         {
@@ -135,14 +117,16 @@ public sealed class WebSearchTool(Backends.ExaWebSearchBackend exaWebSearchBacke
         }
         catch (Exception ex) when (!IsFatal(ex))
         {
-            return new AgentToolResult(
-                Descriptor.ToolId,
-                ex.Message,
-                Content: AgentToolPresentationMarkdown.BuildFailureMarkdown("Web search failed", ex.Message),
-                IsError: true,
-                ErrorCode: "web-search-http");
+            return Failure(ex.Message, ex.Message, "web-search-http");
         }
     }
+
+    private AgentToolResult Failure(string summary, string detail, string code, string heading = "Web search failed") => new()
+    {
+        ToolId = Descriptor.ToolId, Summary = summary, Content = AgentToolPresentationMarkdown.BuildFailureMarkdown(heading, detail),
+        StructuredPayloadJson = null, Sources = null, WasTruncated = false, IsError = true, ErrorCode = code, BackendId = null,
+        PresentationPayloadJson = null, RequiresPromptContextRefresh = false,
+    };
 
     private static bool TryParseArguments(string argumentsJson, out WebSearchArguments arguments, out string? error)
     {

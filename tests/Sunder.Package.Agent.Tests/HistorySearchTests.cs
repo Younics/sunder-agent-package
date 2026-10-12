@@ -16,6 +16,7 @@ namespace Sunder.Package.Agent.Tests;
 
 extern alias SubagentsWorker;
 using SubagentsWorker::Sunder.Package.Agent.Subagents.Runtime;
+using SubagentServices = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 public sealed class HistorySearchTests
 {
@@ -405,18 +406,21 @@ public sealed class HistorySearchTests
         Assert.True(around.HasNewer);
 
         extensionCatalog.AddRuntimeCatalog(provider.GetRequiredService<AgentRuntimeCatalog>());
-        using var subsessions = new SubsessionLocalRuntimeAdapter(
-            Assert.Single(extensionCatalog.Subagents().GetRuntimeCatalogs()));
-        var childAround = await subsessions.LoadAroundTurnAsync(
+        var runtime = Assert.Single((await extensionCatalog.Subagents()
+            .Providers<SubagentServices.IRuntimeCatalogService>()
+            .ListAsync()).Providers).Service;
+        var childAround = await SubsessionTranscriptReader.AroundAsync(
+                runtime,
                 child.SessionId,
                 childTurn.TurnId,
                 childTurn.CreatedAtUtc,
                 childTurn.Items[0].ItemId,
                 beforeLimit: 20,
-                afterLimit: 20);
+                afterLimit: 20,
+                CancellationToken.None);
         Assert.Equal(childTurn.TurnId, Assert.Single(childAround.Turns).TurnId);
 
-        sessions.DeleteSession(child.SessionId);
+        await sessions.DeleteSessionAsync(child.SessionId);
         Assert.Empty((await search.SearchAsync(new HistorySearchRequest("child-only"))).Results);
         await indexer.StopAsync();
     }

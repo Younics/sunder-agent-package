@@ -17,30 +17,27 @@ public sealed partial class AgentPublicSourceMigrationTests
             context = new
             {
                 approvedResourceCapabilities = Array.Empty<string>(),
-                context = new
-                {
-                    allowOutsideConfiguredScope = false, approvedResourceClaims = Array.Empty<object>(),
-                    approvedResourceReferences = Array.Empty<string>(), transcriptEpoch = 0,
-                },
+                allowOutsideConfiguredScope = false, approvedResourceClaims = Array.Empty<object>(),
+                approvedResourceReferences = Array.Empty<string>(), transcriptEpoch = 0,
             },
             request = new { argumentsJson = "{unfinished", toolId = "tool.one" },
         });
         const string toolResult = """
-            {"isError":false,"requiresPromptContextRefresh":false,"summary":"Done 漢字","toolId":"tool.one","wasTruncated":false,"structuredPayloadJson":"{opaque"}
+            {"isError":false,"requiresPromptContextRefresh":false,"summary":"Done 漢字","toolId":"tool.one","wasTruncated":false,"structuredPayloadJson":"{opaque","content":null,"errorCode":null,"backendId":null,"presentationPayloadJson":null,"sources":null}
             """;
         await using (var fixture = await CreateExtension(root, loadContext, assembly, "ToolSource", descriptors["sunder.agent.tool.source"]))
         {
             fixture.Probe.Replies["DescribeAsync"] = "{\"displayName\":\"Tools\",\"sourceId\":\"tools\",\"sourceKind\":\"local\"}";
             Assert.Equal("local", (await fixture.Call("DescribeAsync", EmptyRequest())).GetProperty("sourceKind").GetString());
             fixture.Probe.Replies["ListToolsAsync"] = """
-                [{"concurrencyMode":"parallel-safe","description":"Read","displayName":"Read","isReadOnly":true,"priority":"high","requiresNetwork":false,"selectionScope":"group","toolId":"tool.one","argumentsJsonSchema":"{opaque"}]
+                [{"concurrencyMode":"parallel-safe","description":"Read","displayName":"Read","isReadOnly":true,"priority":"high","requiresNetwork":false,"selectionScope":"group","toolId":"tool.one","argumentsJsonSchema":"{opaque","activationRequirement":null,"aliases":null,"runtimeInstructions":null,"selectionGroupDescription":null,"selectionGroupDisplayName":null,"selectionGroupId":null,"sourceDisplayName":null,"sourceId":null,"sourceKind":null}]
                 """;
             var list = await fixture.Call("ListToolsAsync", JsonSerializer.SerializeToElement(new { context = new { } }));
             Assert.Equal("parallel-safe", list[0].GetProperty("concurrencyMode").GetString());
             Assert.Equal("{opaque", list[0].GetProperty("argumentsJsonSchema").GetString());
             fixture.Probe.Replies["GetReadinessAsync"] = "null";
             Assert.Equal(JsonValueKind.Null, (await fixture.Call("GetReadinessAsync",
-                JsonSerializer.SerializeToElement(new { context = new { context = new { } }, toolId = "tool.one" }))).ValueKind);
+                JsonSerializer.SerializeToElement(new { context = new { }, toolId = "tool.one" }))).ValueKind);
             foreach (var method in new[] { "PreflightAsync", "PermissionAsync" })
             {
                 fixture.Probe.Replies[method] = "null";
@@ -51,7 +48,7 @@ public sealed partial class AgentPublicSourceMigrationTests
             Assert.Equal("{opaque", result.GetProperty("structuredPayloadJson").GetString());
             Assert.False(result.GetProperty("requiresPromptContextRefresh").GetBoolean());
             Assert.Equal("{unfinished", fixture.Probe.LastRequest.GetProperty("request").GetProperty("argumentsJson").GetString());
-            Assert.False(fixture.Probe.LastRequest.GetProperty("context").TryGetProperty("executionTarget", out _));
+            Assert.Equal(JsonValueKind.Null, fixture.Probe.LastRequest.GetProperty("context").GetProperty("executionTarget").ValueKind);
             fixture.Probe.Replies["PresentationAsync"] = "null";
             Assert.Equal(JsonValueKind.Null, (await fixture.Call("PresentationAsync",
                 JsonSerializer.SerializeToElement(new { argumentsJson = "{broken", isError = false, toolId = "tool.one" }))).ValueKind);
@@ -59,8 +56,8 @@ public sealed partial class AgentPublicSourceMigrationTests
 
         await using (var fixture = await CreateExtension(root, loadContext, assembly, "ToolExecutionObserved", descriptors["sunder.agent.tool.execution.observed"]))
         {
-            fixture.Probe.Replies["DescribeAsync"] = "{\"sourceId\":\"tools\"}";
-            Assert.Equal("tools", (await fixture.Call("DescribeAsync", EmptyRequest())).GetProperty("sourceId").GetString());
+            fixture.Probe.Replies["DescribeAsync"] = "\"tools\"";
+            Assert.Equal("tools", (await fixture.Call("DescribeAsync", EmptyRequest())).GetString());
             fixture.Probe.Streams["ExecuteAsync"] = ["{\"kind\":\"dispatched\"}", "{\"kind\":\"result\",\"result\":" + toolResult + "}"];
             var events = await ReadGeneratedStream(fixture.Client, CancellationToken.None, null, "ExecuteAsync", invocation);
             Assert.Equal(["dispatched", "result"], events.Select(value => value.GetProperty("kind").GetString()!).ToArray());
@@ -100,17 +97,27 @@ public sealed partial class AgentPublicSourceMigrationTests
             });
             fixture.Probe.Replies["HandleAsync"] = "{}";
             await fixture.Call("HandleAsync", request);
+            var validLifecycleRequest = fixture.State.LastInvocationRequest;
             var received = fixture.Probe.LastRequest;
             Assert.Equal("{opaque", received.GetProperty("payloadJson").GetString());
-            Assert.False(received.TryGetProperty("originalPayloadHash", out _));
+            Assert.Equal(JsonValueKind.Null, received.GetProperty("originalPayloadHash").ValueKind);
             var payload = received.GetProperty("payload");
             Assert.Empty(payload.GetProperty("deletedSessionIds").EnumerateArray());
             Assert.Equal("{opaque", payload.GetProperty("turns")[0].GetProperty("items")[0].GetProperty("argumentsJson").GetString());
             var invalid = JsonNode.Parse(request.GetRawText())!;
             invalid["payloadHash"] = "short";
             var calls = fixture.Probe.Calls;
-            var rejected = await Assert.ThrowsAsync<SunderRpcException>(() => fixture.Call("HandleAsync", JsonSerializer.SerializeToElement(invalid)));
+            var attempts = fixture.State.InvocationAttemptCount;
+            await Assert.ThrowsAsync<JsonException>(() => fixture.Call("HandleAsync", JsonSerializer.SerializeToElement(invalid)));
+            Assert.Equal(attempts, fixture.State.InvocationAttemptCount);
+            Assert.Equal(calls, fixture.Probe.Calls);
+            var invalidWire = JsonNode.Parse(validLifecycleRequest.GetRawText())!;
+            invalidWire["payloadHash"] = "short";
+            var endpoint = Assert.Single(fixture.State.Discover("sunder.agent.durable.lifecycle.observer").Providers).Endpoint;
+            var rejected = await Assert.ThrowsAsync<SunderRpcException>(() => fixture.Rpc.InvokeAsync(endpoint,
+                "durable-lifecycle-observer", "handle", JsonSerializer.SerializeToElement(invalidWire)).AsTask());
             Assert.Equal(SunderRpcErrorKind.Validation, rejected.Error.Kind);
+            Assert.Equal(attempts + 1, fixture.State.InvocationAttemptCount);
             Assert.Equal(calls, fixture.Probe.Calls);
         }
 
@@ -129,13 +136,13 @@ public sealed partial class AgentPublicSourceMigrationTests
                 turns = new[] { turn }, userMessage = "Hello 漢字",
             });
             fixture.Probe.Replies["ContributeAsync"] = """
-                [{"blockId":"context","content":"Context 漢字","metadata":{"origin":"test"},"priority":0,"required":false,"title":"Context"}]
+                [{"blockId":"context","content":"Context 漢字","metadata":{"origin":"test"},"priority":0,"required":false,"title":"Context","sourceId":null,"maxChars":null}]
                 """;
             var result = await fixture.Call("ContributeAsync", request);
             Assert.False(result[0].GetProperty("required").GetBoolean());
             Assert.Equal("test", result[0].GetProperty("metadata").GetProperty("origin").GetString());
             Assert.False(result[0].TryGetProperty("maxChars", out _));
-            Assert.False(fixture.Probe.LastRequest.TryGetProperty("workspace", out _));
+            Assert.Equal(JsonValueKind.Null, fixture.Probe.LastRequest.GetProperty("workspace").ValueKind);
             Assert.False(fixture.Probe.LastRequest.GetProperty("runCapabilities").GetProperty("supportsNativeToolCalling").GetBoolean());
         }
     }

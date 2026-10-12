@@ -1,9 +1,9 @@
 extern alias LocalWorker;
 
-using LocalWorker::Sunder.Package.Agent.Contracts;
-using LocalWorker::Sunder.Package.Agent.Contracts.Models;
 using LocalWorker::Sunder.Package.Agent.Execution.Local;
 using Sunder.Package.Agent.Protocol;
+using Sunder.Sdk.Rpc;
+using LocalModels = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
 
@@ -20,51 +20,64 @@ internal static class LocalResourceAuthorityTestContext
         var ownsResourceReferences = resourceReferences is null;
         resourceReferences ??= new LocalResourceReference();
         var now = DateTimeOffset.UtcNow;
+        var timestamp = new SunderRpcOffsetDateTime(now.ToString("O"));
         var workspaceId = Guid.NewGuid().ToString("N");
-        var workspace = new AgentWorkspaceRecord(
-            workspaceId,
-            "Authority test workspace",
-            null,
-            now,
-            now,
-            config.WorkspacePaths.Select((root, index) => new AgentWorkspacePathRecord(
-                Guid.NewGuid().ToString("N"),
-                workspaceId,
-                root,
-                index == 0,
-                index,
-                now,
-                now)).ToArray());
-        var binding = new AgentWorkspaceBindingRecord(
-            Guid.NewGuid().ToString("N"),
-            workspaceId,
-            AgentRpcContractIds.ExecutionTarget,
-            "local",
-            "primary-execution-target",
-            true,
-            0,
-            now,
-            now);
-        var operation = new AgentResourceOperationContext(
-            Guid.NewGuid(),
-            1,
-            "tool-call",
-            actionId,
-            resourceIndex,
-            "workspace-generation",
-            "binding-generation",
-            "sunder.package.agent.tools.files",
-            "sunder.package.agent.execution.local",
-            Guid.NewGuid().ToString("N"),
-            authorityUseCount,
-            CanIssueOutsideAuthority: true);
-        var planningContext = new AgentExecutionTargetContext(
-            Guid.NewGuid(),
-            "profile",
-            workspace,
-            binding,
-            AllowOutsideConfiguredScope: true)
+        var workspace = new LocalModels.AgentWorkspaceRecord
         {
+            WorkspaceId = workspaceId,
+            DisplayName = "Authority test workspace",
+            CreatedAtUtc = timestamp,
+            UpdatedAtUtc = timestamp,
+            Paths = config.WorkspacePaths.Select((root, index) => new LocalModels.AgentWorkspacePathRecord
+            {
+                PathId = Guid.NewGuid().ToString("N"),
+                WorkspaceId = workspaceId,
+                HostPath = root,
+                IsDefault = index == 0,
+                SortOrder = index,
+                CreatedAtUtc = timestamp,
+                UpdatedAtUtc = timestamp,
+            }).ToArray(),
+            Documents = [],
+        };
+        var binding = new LocalModels.AgentWorkspaceBindingRecord
+        {
+            BindingId = Guid.NewGuid().ToString("N"),
+            WorkspaceId = workspaceId,
+            ExtensionPointId = "execution-targets",
+            ContributionId = "local",
+            Role = "primary-execution-target",
+            IsEnabled = true,
+            SortOrder = 0,
+            CreatedAtUtc = timestamp,
+            UpdatedAtUtc = timestamp,
+        };
+        var operation = new LocalModels.AgentResourceOperationContext
+        {
+            RunId = Guid.NewGuid(),
+            RunRevision = 1,
+            ToolCallId = "tool-call",
+            ActionId = actionId,
+            ResourceIndex = resourceIndex,
+            WorkspaceGeneration = "workspace-generation",
+            BindingGeneration = "binding-generation",
+            ToolOwnerPackageId = "sunder.package.agent.tools.files",
+            ExecutionTargetOwnerPackageId = "sunder.package.agent.execution.local",
+            AuthorityActivationId = Guid.NewGuid().ToString("N"),
+            AuthorityUseCount = authorityUseCount,
+            CanIssueOutsideAuthority = true,
+        };
+        var planningContext = new LocalModels.AgentExecutionTargetContext
+        {
+            SessionId = Guid.NewGuid(),
+            ProfileId = "profile",
+            Workspace = workspace,
+            Binding = binding,
+            AllowOutsideConfiguredScope = true,
+            ApprovedResourceReferences = [],
+            ApprovedResourceClaims = [],
+            ApprovedResourceCapabilities = [],
+            CapturePostMutationResource = false,
             ResourceOperation = operation,
         };
         var resource = LocalResourceResolver.ResolveFileResource(
@@ -91,8 +104,8 @@ internal static class LocalResourceAuthorityTestContext
 }
 
 internal sealed record ApprovedLocalResource(
-    AgentResolvedResource Resource,
-    AgentExecutionTargetContext Context,
+    LocalModels.AgentResolvedResource Resource,
+    LocalModels.AgentExecutionTargetContext Context,
     LocalResourceReference ResourceReferences,
     bool OwnsResourceReferences) : IDisposable
 {

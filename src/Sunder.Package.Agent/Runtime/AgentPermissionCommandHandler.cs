@@ -1,3 +1,4 @@
+using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Services;
 
 namespace Sunder.Package.Agent.Runtime;
@@ -6,7 +7,7 @@ internal sealed class AgentPermissionCommandHandler(
     AgentPermissionService permissions,
     AgentRuntimeChangeHub changes)
 {
-    public ValueTask<AgentPermissionProjection> HandleAsync(
+    public async ValueTask<AgentPermissionProjection> HandleAsync(
         AgentPermissionCommand request, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -33,12 +34,15 @@ internal sealed class AgentPermissionCommandHandler(
         }
         var sessionId = request.SessionId;
         var includeGlobalRules = sessionId is null;
-        return ValueTask.FromResult(new AgentPermissionProjection(
+        IReadOnlyList<AgentPermissionActionDescriptor> actions = includeGlobalRules
+            ? await permissions.ListActionsAsync(cancellationToken).ConfigureAwait(false)
+            : [];
+        return new AgentPermissionProjection(
             changes.Revision,
             sessionId is { } id ? permissions.GetSessionState(id) : null,
-            includeGlobalRules ? permissions.ListActions() : [],
+            actions,
             includeGlobalRules ? permissions.ListOverrides() : [],
-            sessionId is { } pendingId ? permissions.ListPendingRequestsForSessionTree(pendingId) : []));
+            sessionId is { } pendingId ? permissions.ListPendingRequestsForSessionTree(pendingId) : []);
     }
 
     private static Guid RequireSession(AgentPermissionCommand request)
