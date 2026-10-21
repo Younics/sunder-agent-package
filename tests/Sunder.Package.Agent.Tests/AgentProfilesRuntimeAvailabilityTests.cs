@@ -305,9 +305,9 @@ public sealed class AgentProfilesRuntimeAvailabilityTests
         IAgentProfileGateway gateway,
         TimeProvider timeProvider,
         AgentPresentationDispatcher? dispatcher = null,
-        AgentCore::Sunder.Generated.Packages.Sunder_Package_Agent_Services.IAgentProfileService? profileService = null)
+        AgentCore::Sunder.Generated.Packages.Younics_Ai_Agent_Services.IAgentProfileService? profileService = null)
         => new(
-            profileService ?? (AgentCore::Sunder.Generated.Packages.Sunder_Package_Agent_Services.IAgentProfileService)gateway,
+            profileService ?? (AgentCore::Sunder.Generated.Packages.Younics_Ai_Agent_Services.IAgentProfileService)gateway,
             gateway,
             settingsNavigationService: null,
             dispatcher ?? InlinePresentationDispatcher.Instance,
@@ -537,7 +537,7 @@ public sealed class AgentProfilesRuntimeAvailabilityTests
             var extensions = new RegressionTestExtensionCatalog();
             var store = new AgentLocalStore(scope.Context);
             var sessions = new AgentSessionService(store, extensions.SessionCleaners);
-            var workspaces = new AgentWorkspaceService(store, extensions.SessionCleaners, sessions, extensions.WorkspacePathMigrators);
+            var workspaces = new AgentWorkspaceService(store, extensions.SessionCleaners, sessions);
             var targets = new AgentExecutionTargetService(extensions.ExecutionTargets);
             var tools = new AgentToolService(
                 sessions,

@@ -144,7 +144,6 @@ public sealed partial class AgentChatViewModel
             ReconcileSessions([]);
             SelectedSession = null;
             SetDisplayedSession(null);
-            TrackBackgroundTask(() => _selectionState?.SaveSelectedSessionIdAsync((string?)null, null));
             RefreshSetupState();
             return;
         }

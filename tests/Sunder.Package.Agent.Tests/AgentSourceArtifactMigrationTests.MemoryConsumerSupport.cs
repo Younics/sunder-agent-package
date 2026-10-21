@@ -4,7 +4,7 @@ using System.Text.Json;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Sdk.Rpc;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 
 namespace Sunder.Package.Agent.Tests;
 

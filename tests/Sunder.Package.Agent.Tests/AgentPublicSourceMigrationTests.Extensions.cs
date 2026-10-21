@@ -9,7 +9,7 @@ using System.Text.Json.Nodes;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Rpc;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -19,7 +19,7 @@ public sealed partial class AgentPublicSourceMigrationTests
     private static async Task VerifyExtensionsAsync(string root, AssemblyLoadContext loadContext, Assembly assembly,
         IReadOnlyDictionary<string, SunderRpcContractDescriptor> descriptors)
     {
-        await using (var fixture = await CreateExtension(root, loadContext, assembly, "WorkspaceEditor", descriptors["sunder.agent.workspace.editor"]))
+        await using (var fixture = await CreateExtension(root, loadContext, assembly, "WorkspaceEditor", descriptors["younics.ai.agent.workspace.editor"]))
         {
             var now = DateTimeOffset.UtcNow;
             var workspace = new AgentWorkspaceRecord("workspace.one", "Workspace", null, now, now);
@@ -54,7 +54,7 @@ public sealed partial class AgentPublicSourceMigrationTests
             Assert.Equal(calls, fixture.Probe.Calls);
             var invalidWire = JsonNode.Parse(validEditorRequest.GetRawText())!.AsObject();
             invalidWire["configurationId"] = "";
-            var endpoint = Assert.Single(fixture.State.Discover("sunder.agent.workspace.editor").Providers).Endpoint;
+            var endpoint = Assert.Single(fixture.State.Discover("younics.ai.agent.workspace.editor").Providers).Endpoint;
             var validation = await Assert.ThrowsAsync<SunderRpcException>(() => fixture.Rpc.InvokeAsync(endpoint,
                 "workspace-editor", "can-edit", JsonSerializer.SerializeToElement(invalidWire)).AsTask());
             Assert.Equal(SunderRpcErrorKind.Validation, validation.Error.Kind);
@@ -62,7 +62,7 @@ public sealed partial class AgentPublicSourceMigrationTests
             Assert.Equal(calls, fixture.Probe.Calls);
         }
 
-        await using (var fixture = await CreateExtension(root, loadContext, assembly, "PermissionSurface", descriptors["sunder.agent.permission.surface"]))
+        await using (var fixture = await CreateExtension(root, loadContext, assembly, "PermissionSurface", descriptors["younics.ai.agent.permission.surface"]))
         {
             fixture.Probe.Replies["DescribeAsync"] = """
                 {"actions":[{"actionId":"read","boundaries":[{"boundaryId":"outside","defaultDecision":"deny","description":"Outside workspace","displayName":"Outside"}],"description":"Read content","displayName":"Read"}],"displayName":"Files","surfaceId":"files"}
@@ -74,7 +74,7 @@ public sealed partial class AgentPublicSourceMigrationTests
             Assert.Equal(SunderRpcErrorKind.ProviderFaulted, invalid.Error.Kind);
         }
 
-        await using (var fixture = await CreateExtension(root, loadContext, assembly, "ProfileCapabilityConsumer", descriptors["sunder.agent.profile.capability.consumer"]))
+        await using (var fixture = await CreateExtension(root, loadContext, assembly, "ProfileCapabilityConsumer", descriptors["younics.ai.agent.profile.capability.consumer"]))
         {
             fixture.Probe.Replies["DescribeAsync"] = """
                 {"capabilities":[{"capabilityKind":"memory","description":"","displayName":"Memory"}],"consumerId":"memory.one","displayName":"Memory consumer"}
@@ -83,7 +83,7 @@ public sealed partial class AgentPublicSourceMigrationTests
             Assert.Equal("", result.GetProperty("capabilities")[0].GetProperty("description").GetString());
         }
 
-        await using (var fixture = await CreateExtension(root, loadContext, assembly, "SelectableCapabilityProvider", descriptors["sunder.agent.selectable.capability.provider"]))
+        await using (var fixture = await CreateExtension(root, loadContext, assembly, "SelectableCapabilityProvider", descriptors["younics.ai.agent.selectable.capability.provider"]))
         {
             fixture.Probe.Replies["ListAsync"] = """
                 [{"capabilityId":"tool.one","displayName":"Tool","description":null,"groupDescription":null,"groupDisplayName":null,"groupId":null,"groupSortOrder":0,"isSelectable":false,"kind":"tool","sourceDisplayName":null,"sourceId":null,"statusText":null}]
@@ -110,7 +110,7 @@ public sealed partial class AgentPublicSourceMigrationTests
             Assert.Single(cancelled);
         }
 
-        await using (var fixture = await CreateExtension(root, loadContext, assembly, "EmbeddingProvider", descriptors["sunder.agent.embedding.provider"]))
+        await using (var fixture = await CreateExtension(root, loadContext, assembly, "EmbeddingProvider", descriptors["younics.ai.agent.embedding.provider"]))
         {
             fixture.Probe.Replies["DescribeAsync"] = """
                 {"displayName":"Embedding","providerId":"embedding.one","packageId":null,"supportedAuthModes":["api-key","codex-connected"]}
@@ -147,7 +147,7 @@ public sealed partial class AgentPublicSourceMigrationTests
         var probe = new ExtensionProbe();
         var provider = await CreateGeneratedExtensionProviderAsync(root, loadContext, service, probe.Invoke);
         var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
+        var rpc = new RegressionTestRpcClient(state, "younics.ai.agent");
         var receiver = new GeneratedServiceTestScope(rpc.ForCaller("test.extension.owner"));
         probe.ProjectionReceiver = receiver;
         probe.ContractId = descriptor.ContractId;
@@ -155,9 +155,9 @@ public sealed partial class AgentPublicSourceMigrationTests
         state.Add("test.extension.owner", descriptor, provider, registration.Handler, EmptyDisposable.Instance, registration.ProviderId, "2.0.0");
         var clientReceiver = new GeneratedServiceTestScope(rpc);
         var serviceType = service == "WorkspaceEditor"
-            ? typeof(AgentApp::Sunder.Generated.Packages.Sunder_Package_Agent_Services.IWorkspaceEditorService)
+            ? typeof(AgentApp::Sunder.Generated.Packages.Younics_Ai_Agent_Services.IWorkspaceEditorService)
             : typeof(AgentServices.IChatProviderService).Assembly.GetType(
-                "Sunder.Generated.Packages.Sunder_Package_Agent_Services.I" + service + "Service", true)!;
+                "Sunder.Generated.Packages.Younics_Ai_Agent_Services.I" + service + "Service", true)!;
         var catalog = clientReceiver.Providers(serviceType);
         var snapshot = await AgentRoleBoundary.Await(AgentRoleBoundary.Call(catalog, "ListAsync", CancellationToken.None)!);
         var selected = Assert.Single(((IEnumerable)snapshot!.GetType().GetProperty("Providers")!.GetValue(snapshot)!).Cast<object>());

@@ -11,14 +11,15 @@ using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
 using Sunder.Sdk.Logging;
 using Sunder.Sdk.Rpc;
+using Sunder.Sdk.Services;
 using Xunit;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 
 namespace Sunder.Package.Agent.Tests;
 
 extern alias MemoryWorker;
 using MemoryWorker::Sunder.Package.Agent.Memory.Semantic;
-using MemoryModels = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using MemoryModels = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models;
 
 public sealed class AgentLifecycleOutboxTests
 {
@@ -96,7 +97,7 @@ public sealed class AgentLifecycleOutboxTests
         var cleaner = new ThrowingSessionDataCleaner();
         catalog.AddProvider(RegressionTestBindings.SessionCleaners, cleaner);
         var sessions = new AgentSessionService(store, catalog.SessionCleaners);
-        var workspaces = new AgentWorkspaceService(store, catalog.SessionCleaners, sessions, catalog.WorkspacePathMigrators);
+        var workspaces = new AgentWorkspaceService(store, catalog.SessionCleaners, sessions);
         var workspace = workspaces.CreateWorkspace("Lifecycle workspace");
         var session = sessions.CreateSession(
             "Lifecycle session",
@@ -174,27 +175,76 @@ public sealed class AgentLifecycleOutboxTests
         Assert.Equal("Delivered", store.GetLifecycleDeliveryState(subscriptionId, 1)?.Status);
     }
 
-    [Fact]
-    public async Task MissingKnownObserver_ReceivesPendingEventAfterReappearance()
+    [Theory]
+    [InlineData(null)]
+    [InlineData(SunderRpcErrorKind.Unavailable)]
+    [InlineData(SunderRpcErrorKind.StaleEndpoint)]
+    [InlineData(SunderRpcErrorKind.ResourceExhausted)]
+    [InlineData(SunderRpcErrorKind.Cancelled)]
+    [InlineData(SunderRpcErrorKind.PermissionDenied)]
+    [InlineData(SunderRpcErrorKind.Protocol)]
+    public async Task MissingKnownObserver_ReceivesPendingEventAfterReappearance(SunderRpcErrorKind? lookupFailure)
     {
         using var scope = RegressionTestPackageScope.Create();
         var store = new AgentLocalStore(scope.Context);
-        var catalog = new RegressionTestExtensionCatalog();
+        using var catalog = new RegressionTestExtensionCatalog();
         var firstActivation = new RecordingObserver("stable-observer");
         catalog.AddProvider(RegressionTestBindings.DurableLifecycleObservers, firstActivation);
-        await using var dispatcher = new AgentLifecycleDispatcher(store, catalog.DurableLifecycleObservers);
+        var logger = new RecordingEventLogger();
+        var observers = new FaultingLifecycleCatalog(catalog.DurableLifecycleObservers);
+        await using var dispatcher = new AgentLifecycleDispatcher(store, observers, logger);
         await dispatcher.FlushAsync();
         catalog.RemoveProvider(RegressionTestBindings.DurableLifecycleObservers, firstActivation);
+        observers.Failure = lookupFailure;
 
         CreateStartedRun(store);
-        await dispatcher.FlushAsync();
+        var attempts = observers.ListAttempts;
+        if (lookupFailure is SunderRpcErrorKind.PermissionDenied or SunderRpcErrorKind.Protocol)
+        {
+            // Do not disguise security/protocol failures as an absent observer.
+            var error = await Assert.ThrowsAsync<SunderRpcException>(() => dispatcher.FlushAsync());
+            Assert.Equal(lookupFailure, error.Error.Kind);
+        }
+        else await dispatcher.FlushAsync();
+        Assert.Equal(attempts + 1, observers.ListAttempts);
         Assert.Equal(0, firstActivation.DeliveryCount);
+        var subscription = AgentLocalStore.BuildLifecycleSubscriptionId("test.package", "stable-observer", "Durable");
+        var pending = Assert.IsType<AgentLifecycleDeliveryState>(store.GetLifecycleDeliveryState(subscription, 1));
+        Assert.Equal("Pending", pending.Status);
+        Assert.Equal(0, pending.AttemptCount);
+        var deferredRead = lookupFailure is SunderRpcErrorKind.ResourceExhausted or SunderRpcErrorKind.Cancelled;
+        if (deferredRead)
+        {
+            var diagnostic = Assert.Single(logger.Entries);
+            Assert.Equal(PackageLogLevel.Warning, diagnostic.Level);
+            Assert.Equal("lifecycle.discovery.deferred", diagnostic.EventName);
+            Assert.Equal("observer_discovery_deferred", diagnostic.Attributes["lifecycle.failure_code"]);
+            Assert.Equal("catalog", diagnostic.Attributes["lifecycle.phase"]);
+            Assert.Equal(lookupFailure.ToString(), diagnostic.Attributes["rpc.error_kind"]);
+            Assert.Equal("test.rpc.catalog-failure", diagnostic.Attributes["rpc.error_code"]);
+            Assert.DoesNotContain("Injected catalog discovery failure.", diagnostic.Message);
+            for (var poll = 0; poll < 3; poll++) await dispatcher.FlushAsync();
+            Assert.Single(logger.Entries); // Bounded outage diagnostic, not one entry per poll.
+            Assert.Equal(attempts + 4, observers.ListAttempts); // One read per pass, never immediate retry.
+            var unchanged = Assert.IsType<AgentLifecycleDeliveryState>(store.GetLifecycleDeliveryState(subscription, 1));
+            Assert.Equal("Pending", unchanged.Status);
+            Assert.Equal(0, unchanged.AttemptCount);
+        }
+        else Assert.Empty(logger.Entries);
 
+        observers.Failure = null;
         var secondActivation = new RecordingObserver("stable-observer");
         catalog.AddProvider(RegressionTestBindings.DurableLifecycleObservers, secondActivation);
         await dispatcher.FlushAsync();
 
         Assert.Equal(1, secondActivation.DeliveryCount);
+        Assert.Equal("Delivered", store.GetLifecycleDeliveryState(subscription, 1)?.Status);
+        if (deferredRead)
+        {
+            Assert.Equal("lifecycle.discovery.recovered", logger.Entries.Last().EventName);
+            Assert.Equal(PackageLogLevel.Information, logger.Entries.Last().Level);
+            Assert.DoesNotContain(logger.Entries, entry => entry.Level == PackageLogLevel.Error);
+        }
     }
 
     [Fact]
@@ -227,7 +277,7 @@ public sealed class AgentLifecycleOutboxTests
         // A fresh consumer has no cached identity. Retire this same provider
         // activation during rediscovery, before any delivery callback can run.
         observer.RemoveOnMetadataRead = true;
-        var rediscovery = catalog.Receiver("sunder.package.agent.lifecycle.rediscovery")
+        var rediscovery = catalog.Receiver("younics.ai.agent.lifecycle.rediscovery")
             .Providers<AgentServices.IDurableLifecycleObserverService>();
         await using var dispatcher = new AgentLifecycleDispatcher(store, rediscovery);
         await dispatcher.FlushAsync();
@@ -457,7 +507,7 @@ public sealed class AgentLifecycleOutboxTests
     }
 
     [Fact]
-    public void LegacyRollbackOrderingKey_BlocksRecallAndDispatchesBeforeCurrentEvents()
+    public void OldRollbackOrderingKey_DoesNotAuthorizeCurrentIncarnationBarrier()
     {
         using var scope = RegressionTestPackageScope.Create();
         var store = new AgentLocalStore(scope.Context);
@@ -468,7 +518,7 @@ public sealed class AgentLifecycleOutboxTests
             workspaceId: workspace.WorkspaceId);
         var anchor = store.AppendTextTurn(session.SessionId, AgentMessageRole.User, "replace this turn");
         store.AppendTextTurn(session.SessionId, AgentMessageRole.Assistant, "stale response");
-        var rollback = store.RollbackTranscript(session.SessionId, anchor.TurnId);
+        store.RollbackTranscript(session.SessionId, anchor.TurnId);
         var rollbackEvent = Assert.Single(store.ListLifecycleOutboxEvents());
         var legacyOrderingKey = $"workspace:{workspace.WorkspaceId}:root:{session.SessionId:N}";
         RewriteLifecycleOrderingKey(store.DatabasePath, rollbackEvent.Sequence, legacyOrderingKey);
@@ -485,7 +535,7 @@ public sealed class AgentLifecycleOutboxTests
         Assert.Equal(2, events.Count);
         Assert.Equal(legacyOrderingKey, events[0].OrderingKey);
         Assert.NotEqual(events[0].OrderingKey, events[1].OrderingKey);
-        Assert.Equal(rollback.MemoryConsistencyBarrier, store.GetMemoryConsistencyBarrier(laterRun.Key.RunId));
+        Assert.Null(store.GetMemoryConsistencyBarrier(laterRun.Key.RunId));
 
         var subscription = CreateSubscription("legacy-ordering-observer");
         var now = DateTimeOffset.UtcNow;
@@ -1723,6 +1773,27 @@ public sealed class AgentLifecycleOutboxTests
                 throw;
             }
         }
+    }
+
+    private sealed class FaultingLifecycleCatalog(IServiceProviders<AgentServices.IDurableLifecycleObserverService> inner)
+        : IServiceProviders<AgentServices.IDurableLifecycleObserverService>
+    {
+        internal SunderRpcErrorKind? Failure { get; set; }
+        internal int ListAttempts { get; private set; }
+
+        public ValueTask<ServiceProviderCatalog<AgentServices.IDurableLifecycleObserverService>> ListAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ListAttempts++;
+            return Failure is { } kind
+                ? ValueTask.FromException<ServiceProviderCatalog<AgentServices.IDurableLifecycleObserverService>>(
+                    new SunderRpcException(new(kind, "test.rpc.catalog-failure", "Injected catalog discovery failure.")))
+                : inner.ListAsync(cancellationToken);
+        }
+
+        public IAsyncEnumerable<ServiceProviderCatalogEvent<AgentServices.IDurableLifecycleObserverService>> WatchAsync(
+            long afterRevision, long afterSequence, CancellationToken cancellationToken = default)
+            => inner.WatchAsync(afterRevision, afterSequence, cancellationToken);
     }
 
     private sealed class RecordingEventLogger : IPackageEventLogger

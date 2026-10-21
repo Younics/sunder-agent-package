@@ -1,0 +1,227 @@
+{
+  "$schema": "map.schema.json",
+  "schemaVersion": 1,
+  "identityMapVersion": 1,
+  "migrationId": "agent-runtime-identity-v1",
+  "status": "planned-captured",
+  "scope": "runtime-package-and-public-private-rpc-identities",
+  "packageVersion": "2.0.0",
+  "newPublicContractVersion": "1.0.0",
+  "privateContractVersion": "2.0.0",
+  "authoredProjectFolderAssemblyNamespacePolicy": "preserve",
+  "historicalIdentityAndVersionPolicy": "preserve-exact-predecessor-bytes",
+  "newArtifactEvidencePolicy": "owning-tools-and-real-artifacts-required-no-placeholder-hashes",
+  "predecessor": {
+    "manifestPath": "predecessor/manifest.json",
+    "sha256": "7dec732776212922f3c1534ffe8fae9119f57b6d0876efc631c9eba1d3afb904"
+  },
+  "packages": [
+    {
+      "key": "agent",
+      "oldPackageId": "sunder.package.agent",
+      "newPackageId": "younics.ai.agent",
+      "projectPath": "src/Sunder.Package.Agent/Sunder.Package.Agent.csproj",
+      "oldDisplayName": "Sunder Agent",
+      "newDisplayName": "AI Agent",
+      "oldGeneratedNamespaceStem": "Sunder_Package_Agent",
+      "newGeneratedNamespaceStem": "Younics_Ai_Agent"
+    },
+    {
+      "key": "agent-builder",
+      "oldPackageId": "sunder.package.agent.builder",
+      "newPackageId": "younics.sunder.package.maker",
+      "projectPath": "src/Sunder.Package.Agent.Builder/Sunder.Package.Agent.Builder.csproj",
+      "oldDisplayName": "Sunder Agent Builder",
+      "newDisplayName": "Sunder Package Maker",
+      "oldGeneratedNamespaceStem": "Sunder_Package_Agent_Builder",
+      "newGeneratedNamespaceStem": "Younics_Sunder_Package_Maker"
+    },
+    {
+      "key": "agent-execution-docker",
+      "oldPackageId": "sunder.package.agent.execution.docker",
+      "newPackageId": "younics.ai.agent.execution.docker",
+      "projectPath": "src/Sunder.Package.Agent.Execution.Docker/Sunder.Package.Agent.Execution.Docker.csproj",
+      "oldDisplayName": "Sunder Agent Execution Docker",
+      "newDisplayName": "AI Agent - Docker Execution",
+      "oldGeneratedNamespaceStem": "Sunder_Package_Agent_Execution_Docker",
+      "newGeneratedNamespaceStem": "Younics_Ai_Agent_Execution_Docker"
+    },
+    {
+      "key": "agent-execution-local",
+      "oldPackageId": "sunder.package.agent.execution.local",
+      "newPackageId": "younics.ai.agent.execution.local",
+      "projectPath": "src/Sunder.Package.Agent.Execution.Local/Sunder.Package.Agent.Execution.Local.csproj",
+      "oldDisplayName": "Sunder Agent Execution Local",
+      "newDisplayName": "AI Agent - Local Execution",
+      "oldGeneratedNamespaceStem": "Sunder_Package_Agent_Execution_Local",
+      "newGeneratedNamespaceStem": "Younics_Ai_Agent_Execution_Local"
+    },
+    {
+      "key": "agent-mcp",
+      "oldPackageId": "sunder.package.agent.mcp",
+      "newPackageId": "younics.ai.agent.mcp",
+      "projectPath": "src/Sunder.Package.Agent.Mcp/Sunder.Package.Agent.Mcp.csproj",
+      "oldDisplayName": "Sunder Agent MCP",
+      "newDisplayName": "AI Agent - MCP",
+      "oldGeneratedNamespaceStem": "Sunder_Package_Agent_Mcp",
+      "newGeneratedNamespaceStem": "Younics_Ai_Agent_Mcp"
+    },
+    {
+      "key": "agent-memory-semantic",
+      "oldPackageId": "sunder.package.agent.memory.semantic",
+      "newPackageId": "younics.ai.agent.memory.semantic",
+      "projectPath": "src/Sunder.Package.Agent.Memory.Semantic/Sunder.Package.Agent.Memory.Semantic.csproj",
+      "oldDisplayName": "Sunder Agent Memory Semantic",
+      "newDisplayName": "AI Agent - Semantic Memory",
+      "oldGeneratedNamespaceStem": "Sunder_Package_Agent_Memory_Semantic",
+      "newGeneratedNamespaceStem": "Younics_Ai_Agent_Memory_Semantic"
+    },
+    {
+      "key": "agent-provider-anthropic",
+      "oldPackageId": "sunder.package.agent.provider.anthropic",
+      "newPackageId": "younics.ai.agent.provider.anthropic",
+      "projectPath": "src/Sunder.Package.Agent.Provider.Anthropic/Sunder.Package.Agent.Provider.Anthropic.csproj",
+      "oldDisplayName": "Sunder Agent Provider Anthropic",
+      "newDisplayName": "AI Agent - Anthropic",
+      "oldGeneratedNamespaceStem": "Sunder_Package_Agent_Provider_Anthropic",
+      "newGeneratedNamespaceStem": "Younics_Ai_Agent_Provider_Anthropic"
+    },
+    {
+      "key": "agent-provider-gemini",
+      "oldPackageId": "sunder.package.agent.provider.gemini",
+      "newPackageId": "younics.ai.agent.provider.gemini",
+      "projectPath": "src/Sunder.Package.Agent.Provider.Gemini/Sunder.Package.Agent.Provider.Gemini.csproj",
+      "oldDisplayName": "Sunder Agent Provider Gemini",
+      "newDisplayName": "AI Agent - Gemini",
+      "oldGeneratedNamespaceStem": "Sunder_Package_Agent_Provider_Gemini",
+      "newGeneratedNamespaceStem": "Younics_Ai_Agent_Provider_Gemini"
+    },
+    {
+      "key": "agent-provider-lmstudio",
+      "oldPackageId": "sunder.package.agent.provider.lmstudio",
+      "newPackageId": "younics.ai.agent.provider.lmstudio",
+      "projectPath": "src/Sunder.Package.Agent.Provider.LMStudio/Sunder.Package.Agent.Provider.LMStudio.csproj",
+      "oldDisplayName": "Sunder Agent Provider LM Studio",
+      "newDisplayName": "AI Agent - LM Studio",
+      "oldGeneratedNamespaceStem": "Sunder_Package_Agent_Provider_Lmstudio",
+      "newGeneratedNamespaceStem": "Younics_Ai_Agent_Provider_Lmstudio"
+    },
+    {
+      "key": "agent-provider-openai",
+      "oldPackageId": "sunder.package.agent.provider.openai",
+      "newPackageId": "younics.ai.agent.provider.openai",
+      "projectPath": "src/Sunder.Package.Agent.Provider.OpenAI/Sunder.Package.Agent.Provider.OpenAI.csproj",
+      "oldDisplayName": "Sunder Agent Provider OpenAI",
+      "newDisplayName": "AI Agent - OpenAI",
+      "oldGeneratedNamespaceStem": "Sunder_Package_Agent_Provider_Openai",
+      "newGeneratedNamespaceStem": "Younics_Ai_Agent_Provider_Openai"
+    },
+    {
+      "key": "agent-skills",
+      "oldPackageId": "sunder.package.agent.skills",
+      "newPackageId": "younics.ai.agent.skills",
+      "projectPath": "src/Sunder.Package.Agent.Skills/Sunder.Package.Agent.Skills.csproj",
+      "oldDisplayName": "Sunder Agent Skills",
+      "newDisplayName": "AI Agent - Skills",
+      "oldGeneratedNamespaceStem": "Sunder_Package_Agent_Skills",
+      "newGeneratedNamespaceStem": "Younics_Ai_Agent_Skills"
+    },
+    {
+      "key": "agent-subagents",
+      "oldPackageId": "sunder.package.agent.subagents",
+      "newPackageId": "younics.ai.agent.subagents",
+      "projectPath": "src/Sunder.Package.Agent.Subagents/Sunder.Package.Agent.Subagents.csproj",
+      "oldDisplayName": "Sunder Agent Subagents",
+      "newDisplayName": "AI Agent - Subagents",
+      "oldGeneratedNamespaceStem": "Sunder_Package_Agent_Subagents",
+      "newGeneratedNamespaceStem": "Younics_Ai_Agent_Subagents"
+    },
+    {
+      "key": "agent-tools-files",
+      "oldPackageId": "sunder.package.agent.tools.files",
+      "newPackageId": "younics.ai.agent.tools.files",
+      "projectPath": "src/Sunder.Package.Agent.Tools.Files/Sunder.Package.Agent.Tools.Files.csproj",
+      "oldDisplayName": "Sunder Agent Tools Files",
+      "newDisplayName": "AI Agent - Files",
+      "oldGeneratedNamespaceStem": "Sunder_Package_Agent_Tools_Files",
+      "newGeneratedNamespaceStem": "Younics_Ai_Agent_Tools_Files"
+    },
+    {
+      "key": "agent-tools-shell",
+      "oldPackageId": "sunder.package.agent.tools.shell",
+      "newPackageId": "younics.ai.agent.tools.shell",
+      "projectPath": "src/Sunder.Package.Agent.Tools.Shell/Sunder.Package.Agent.Tools.Shell.csproj",
+      "oldDisplayName": "Sunder Agent Tools Shell",
+      "newDisplayName": "AI Agent - Shell",
+      "oldGeneratedNamespaceStem": "Sunder_Package_Agent_Tools_Shell",
+      "newGeneratedNamespaceStem": "Younics_Ai_Agent_Tools_Shell"
+    },
+    {
+      "key": "agent-tools-web",
+      "oldPackageId": "sunder.package.agent.tools.web",
+      "newPackageId": "younics.ai.agent.tools.web",
+      "projectPath": "src/Sunder.Package.Agent.Tools.Web/Sunder.Package.Agent.Tools.Web.csproj",
+      "oldDisplayName": "Sunder Agent Tools Web",
+      "newDisplayName": "AI Agent - Web",
+      "oldGeneratedNamespaceStem": "Sunder_Package_Agent_Tools_Web",
+      "newGeneratedNamespaceStem": "Younics_Ai_Agent_Tools_Web"
+    }
+  ],
+  "publicContractOwnerPackageKey": "agent",
+  "publicContracts": [
+    { "oldContractId": "sunder.agent.behavior.loop", "newContractId": "younics.ai.agent.behavior.loop", "oldVersion": "3.0.0", "newVersion": "1.0.0", "sourcePath": "src/Sunder.Package.Agent/Rpc/Public/BehaviorLoop.cs", "oldContractSymbol": "CSunder_Agent_Behavior_Loop", "newContractSymbol": "CYounics_Ai_Agent_Behavior_Loop" },
+    { "oldContractId": "sunder.agent.chat.provider", "newContractId": "younics.ai.agent.chat.provider", "oldVersion": "3.0.0", "newVersion": "1.0.0", "sourcePath": "src/Sunder.Package.Agent/Rpc/Public/ChatProvider.cs", "oldContractSymbol": "CSunder_Agent_Chat_Provider", "newContractSymbol": "CYounics_Ai_Agent_Chat_Provider" },
+    { "oldContractId": "sunder.agent.child.run.executor", "newContractId": "younics.ai.agent.child.run.executor", "oldVersion": "4.0.0", "newVersion": "1.0.0", "sourcePath": "src/Sunder.Package.Agent/Services/AgentChildRunExecutor.cs", "oldContractSymbol": "CSunder_Agent_Child_Run_Executor", "newContractSymbol": "CYounics_Ai_Agent_Child_Run_Executor" },
+    { "oldContractId": "sunder.agent.durable.lifecycle.observer", "newContractId": "younics.ai.agent.durable.lifecycle.observer", "oldVersion": "3.0.0", "newVersion": "1.0.0", "sourcePath": "src/Sunder.Package.Agent/Rpc/Public/DurableLifecycleObserver.cs", "oldContractSymbol": "CSunder_Agent_Durable_Lifecycle_Observer", "newContractSymbol": "CYounics_Ai_Agent_Durable_Lifecycle_Observer" },
+    { "oldContractId": "sunder.agent.embedding.provider", "newContractId": "younics.ai.agent.embedding.provider", "oldVersion": "3.0.0", "newVersion": "1.0.0", "sourcePath": "src/Sunder.Package.Agent/Rpc/Public/EmbeddingProvider.cs", "oldContractSymbol": "CSunder_Agent_Embedding_Provider", "newContractSymbol": "CYounics_Ai_Agent_Embedding_Provider" },
+    { "oldContractId": "sunder.agent.execution.target", "newContractId": "younics.ai.agent.execution.target", "oldVersion": "3.0.0", "newVersion": "1.0.0", "sourcePath": "src/Sunder.Package.Agent/Rpc/Public/ExecutionTarget.cs", "oldContractSymbol": "CSunder_Agent_Execution_Target", "newContractSymbol": "CYounics_Ai_Agent_Execution_Target" },
+    { "oldContractId": "sunder.agent.permission.surface", "newContractId": "younics.ai.agent.permission.surface", "oldVersion": "2.1.0", "newVersion": "1.0.0", "sourcePath": "src/Sunder.Package.Agent/Rpc/Public/PermissionSurface.cs", "oldContractSymbol": "CSunder_Agent_Permission_Surface", "newContractSymbol": "CYounics_Ai_Agent_Permission_Surface" },
+    { "oldContractId": "sunder.agent.profile.capability.consumer", "newContractId": "younics.ai.agent.profile.capability.consumer", "oldVersion": "2.0.0", "newVersion": "1.0.0", "sourcePath": "src/Sunder.Package.Agent/Rpc/Public/ProfileCapabilityConsumer.cs", "oldContractSymbol": "CSunder_Agent_Profile_Capability_Consumer", "newContractSymbol": "CYounics_Ai_Agent_Profile_Capability_Consumer" },
+    { "oldContractId": "sunder.agent.prompt.context.contributor", "newContractId": "younics.ai.agent.prompt.context.contributor", "oldVersion": "4.0.0", "newVersion": "1.0.0", "sourcePath": "src/Sunder.Package.Agent/Rpc/Public/PromptContextContributor.cs", "oldContractSymbol": "CSunder_Agent_Prompt_Context_Contributor", "newContractSymbol": "CYounics_Ai_Agent_Prompt_Context_Contributor" },
+    { "oldContractId": "sunder.agent.run.control", "newContractId": "younics.ai.agent.run.control", "oldVersion": "3.0.0", "newVersion": "1.0.0", "sourcePath": "src/Sunder.Package.Agent/Services/AgentRunControlService.cs", "oldContractSymbol": "CSunder_Agent_Run_Control", "newContractSymbol": "CYounics_Ai_Agent_Run_Control" },
+    { "oldContractId": "sunder.agent.runtime.catalog", "newContractId": "younics.ai.agent.runtime.catalog", "oldVersion": "3.0.0", "newVersion": "1.0.0", "sourcePath": "src/Sunder.Package.Agent/Services/AgentRuntimeCatalog.cs", "oldContractSymbol": "CSunder_Agent_Runtime_Catalog", "newContractSymbol": "CYounics_Ai_Agent_Runtime_Catalog" },
+    { "oldContractId": "sunder.agent.selectable.capability.provider", "newContractId": "younics.ai.agent.selectable.capability.provider", "oldVersion": "2.0.0", "newVersion": "1.0.0", "sourcePath": "src/Sunder.Package.Agent/Rpc/Public/SelectableCapabilityProvider.cs", "oldContractSymbol": "CSunder_Agent_Selectable_Capability_Provider", "newContractSymbol": "CYounics_Ai_Agent_Selectable_Capability_Provider" },
+    { "oldContractId": "sunder.agent.session.cleaner", "newContractId": "younics.ai.agent.session.cleaner", "oldVersion": "2.0.0", "newVersion": "1.0.0", "sourcePath": "src/Sunder.Package.Agent/Rpc/Public/SessionCleaner.cs", "oldContractSymbol": "CSunder_Agent_Session_Cleaner", "newContractSymbol": "CYounics_Ai_Agent_Session_Cleaner" },
+    { "oldContractId": "sunder.agent.system.prompt.contributor", "newContractId": "younics.ai.agent.system.prompt.contributor", "oldVersion": "3.0.0", "newVersion": "1.0.0", "sourcePath": "src/Sunder.Package.Agent/Rpc/Public/SystemPromptContributor.cs", "oldContractSymbol": "CSunder_Agent_System_Prompt_Contributor", "newContractSymbol": "CYounics_Ai_Agent_System_Prompt_Contributor" },
+    { "oldContractId": "sunder.agent.tool.execution.observed", "newContractId": "younics.ai.agent.tool.execution.observed", "oldVersion": "3.0.0", "newVersion": "1.0.0", "sourcePath": "src/Sunder.Package.Agent/Rpc/Public/ToolExecutionObserved.cs", "oldContractSymbol": "CSunder_Agent_Tool_Execution_Observed", "newContractSymbol": "CYounics_Ai_Agent_Tool_Execution_Observed" },
+    { "oldContractId": "sunder.agent.tool.source", "newContractId": "younics.ai.agent.tool.source", "oldVersion": "3.0.0", "newVersion": "1.0.0", "sourcePath": "src/Sunder.Package.Agent/Rpc/Public/ToolSource.cs", "oldContractSymbol": "CSunder_Agent_Tool_Source", "newContractSymbol": "CYounics_Ai_Agent_Tool_Source" },
+    { "oldContractId": "sunder.agent.workspace.editor", "newContractId": "younics.ai.agent.workspace.editor", "oldVersion": "3.0.0", "newVersion": "1.0.0", "sourcePath": "src/Sunder.Package.Agent/Rpc/Public/WorkspaceEditor.cs", "oldContractSymbol": "CSunder_Agent_Workspace_Editor", "newContractSymbol": "CYounics_Ai_Agent_Workspace_Editor" },
+    { "oldContractId": "sunder.agent.workspace.execution.resolver", "newContractId": "younics.ai.agent.workspace.execution.resolver", "oldVersion": "2.0.0", "newVersion": "1.0.0", "sourcePath": "src/Sunder.Package.Agent/Services/AgentWorkspaceExecutionResolver.cs", "oldContractSymbol": "CSunder_Agent_Workspace_Execution_Resolver", "newContractSymbol": "CYounics_Ai_Agent_Workspace_Execution_Resolver" },
+    { "oldContractId": "sunder.agent.workspace.path.migrator", "newContractId": "younics.ai.agent.workspace.path.migrator", "oldVersion": "2.0.0", "newVersion": "1.0.0", "sourcePath": "src/Sunder.Package.Agent/Rpc/Public/WorkspacePathMigrator.cs", "oldContractSymbol": "CSunder_Agent_Workspace_Path_Migrator", "newContractSymbol": "CYounics_Ai_Agent_Workspace_Path_Migrator" }
+  ],
+  "privateContracts": [
+    { "packageKey": "agent-memory-semantic", "oldContractId": "sunder.agent.memory.semantic.inspector", "newContractId": "younics.ai.agent.memory.semantic.inspector", "kind": "explicit-contract-id" },
+    { "packageKey": "agent", "oldContractId": "sunder.agent.owner.runtime", "newContractId": "younics.ai.agent.owner.runtime", "kind": "explicit-contract-id" },
+    { "packageKey": "agent", "oldContractId": "sunder.package.agent.agent.profile", "newContractId": "younics.ai.agent.agent.profile", "kind": "automatic-package-service-id" },
+    { "packageKey": "agent-builder", "oldContractId": "sunder.package.agent.builder.runtime", "newContractId": "younics.sunder.package.maker.runtime", "kind": "explicit-contract-id" },
+    { "packageKey": "agent-execution-docker", "oldContractId": "sunder.package.agent.execution.docker.presentation", "newContractId": "younics.ai.agent.execution.docker.presentation", "kind": "explicit-contract-id" },
+    { "packageKey": "agent-execution-local", "oldContractId": "sunder.package.agent.execution.local.presentation", "newContractId": "younics.ai.agent.execution.local.presentation", "kind": "explicit-contract-id" },
+    { "packageKey": "agent-mcp", "oldContractId": "sunder.package.agent.mcp.management", "newContractId": "younics.ai.agent.mcp.management", "kind": "explicit-contract-id" },
+    { "packageKey": "agent-provider-anthropic", "oldContractId": "sunder.package.agent.provider.anthropic.credentials", "newContractId": "younics.ai.agent.provider.anthropic.credentials", "kind": "explicit-contract-id" },
+    { "packageKey": "agent-provider-gemini", "oldContractId": "sunder.package.agent.provider.gemini.credentials", "newContractId": "younics.ai.agent.provider.gemini.credentials", "kind": "explicit-contract-id" },
+    { "packageKey": "agent-provider-lmstudio", "oldContractId": "sunder.package.agent.provider.lmstudio.credentials", "newContractId": "younics.ai.agent.provider.lmstudio.credentials", "kind": "explicit-contract-id" },
+    { "packageKey": "agent-provider-openai", "oldContractId": "sunder.package.agent.provider.openai.management", "newContractId": "younics.ai.agent.provider.openai.management", "kind": "explicit-contract-id" },
+    { "packageKey": "agent-skills", "oldContractId": "sunder.package.agent.skills.owner", "newContractId": "younics.ai.agent.skills.owner", "kind": "explicit-contract-id" },
+    { "packageKey": "agent-subagents", "oldContractId": "sunder.package.agent.subagents.owner", "newContractId": "younics.ai.agent.subagents.owner", "kind": "explicit-contract-id" }
+  ],
+  "providerAutoIds": [
+    { "packageKey": "agent", "oldProviderId": "sunder.package.agent.agent.profile.provider", "newProviderId": "younics.ai.agent.agent.profile.provider", "derivedFromNewContractId": "younics.ai.agent.agent.profile", "suffix": ".provider" }
+  ],
+  "explicitProviderServiceMethodKeyPolicy": "preserve",
+  "generatedCode": {
+    "packageNamespacePrefix": "Sunder.Generated.Packages.",
+    "packageNamespaceAreaSuffixes": ["_Services", "_Models", "_Internal"],
+    "contractSymbolRule": "C-plus-dot-segments-first-character-uppercase-joined-with-underscore",
+    "ownedServiceInterfacePlacement": "package-services-namespace",
+    "importedServiceInterfacePlacement": "package-services-namespace.contract-symbol",
+    "transportPlacement": "package-internal-namespace.contract-symbol",
+    "oldModuleNamespace": "Sunder.Generated.Package",
+    "newModuleNamespace": "Sunder.Generated.Package",
+    "appModuleType": "Sunder.Generated.Package.AppModule",
+    "workerEntryPointType": "Sunder.Generated.Package.WorkerEntryPoint",
+    "authoredNamespacePolicy": "preserve"
+  },
+  "preservedExternalAuthorities": [
+    { "authorityId": "sunder.core", "contractId": "sunder.stack.contributor", "contractVersion": "2.0.0" }
+  ]
+}

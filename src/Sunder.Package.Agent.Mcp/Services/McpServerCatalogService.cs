@@ -44,8 +44,8 @@ public sealed class McpServerCatalogService
                     continue;
                 }
 
-                var deserialized = await McpServerRecordSerializer.DeserializeAsync(
-                    payload, _packageContext.Secrets, NormalizeServerName, cancellationToken);
+                var deserialized = McpServerRecordSerializer.Deserialize(
+                    payload, NormalizeServerName, cancellationToken);
                 if (deserialized.Server is not { } server)
                 {
                     diagnostics.Add(new McpCatalogDiagnostic(key, deserialized.Error ?? "Stored MCP server metadata is invalid."));
@@ -90,8 +90,8 @@ public sealed class McpServerCatalogService
             return null;
         }
 
-        return (await McpServerRecordSerializer.DeserializeAsync(
-            payload, _packageContext.Secrets, NormalizeServerName, cancellationToken)).Server;
+        return McpServerRecordSerializer.Deserialize(
+            payload, NormalizeServerName, cancellationToken).Server;
     }
 
     public async Task<string?> ExportServerJsonAsync(string serverId, CancellationToken cancellationToken = default)

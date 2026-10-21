@@ -6,6 +6,7 @@ namespace Sunder.Package.Agent.Provider.OpenAI;
 public partial class OpenAiSettingsView : UserControl, IDisposable
 {
     private OpenAiSettingsViewModel? _viewModel;
+    private int _disposed;
 
     public OpenAiSettingsView()
     {
@@ -22,6 +23,7 @@ public partial class OpenAiSettingsView : UserControl, IDisposable
 
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         DataContext = null;
         _viewModel?.Dispose();
         _viewModel = null;

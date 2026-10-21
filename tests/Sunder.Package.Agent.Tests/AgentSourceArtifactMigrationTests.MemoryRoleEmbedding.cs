@@ -13,7 +13,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
     {
         var runtime = new MemoryConsumerRuntime();
         var embedding = new MemoryConsumerEmbedding("Role-local embeddings");
-        AddGeneratedPeer(state, "sunder.package.agent", RegressionTestBindings.RuntimeCatalog, runtime, "agent.runtime.catalog");
+        AddGeneratedPeer(state, "younics.ai.agent", RegressionTestBindings.RuntimeCatalog, runtime, "agent.runtime.catalog");
         AddGeneratedPeer(state, "example.embedding", RegressionTestBindings.EmbeddingProviders, embedding, "example.embedding.provider");
         var embeddingRetired = false;
         try

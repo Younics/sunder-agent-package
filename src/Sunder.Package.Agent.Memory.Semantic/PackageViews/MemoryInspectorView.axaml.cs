@@ -3,7 +3,7 @@ using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Memory.Semantic.PackageViews;
 
-[Sunder.Sdk.Packaging.SunderPackageView("sunder.package.agent.memory.semantic.inspector", "Memory Inspector",
+[Sunder.Sdk.Packaging.SunderPackageView("younics.ai.agent.memory.semantic.inspector", "Memory Inspector",
     ViewModel = typeof(MemoryInspectorViewModel), IconPath = "assets/memory-icon.png", DefaultPlacement = PackageViewPlacement.LeftBottom)]
 public partial class MemoryInspectorView : UserControl, IDisposable, IPackageViewWarmupTarget, IPackageViewNavigationTarget
 {

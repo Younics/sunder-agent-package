@@ -9,12 +9,13 @@ import sys
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "release"))
 import agent_cohort as cohort
 import agent_cohort_receipt as receipts
+import agent_pipeline as pipeline
 import agent_release as release
 import reverse_agent_cohort as reversal
 
@@ -105,28 +106,6 @@ def evidence_git(source, assets, relative):
     print(release.encoded(value).decode())
 
 
-def fixture_acceptance(source, assets, path):
-    value = release.load(path)
-    provenance = release.validate_provenance(source, assets)
-    identities = [{k: r[k] for k in ("packageId", "version", "packageContentIdentity")} for r in provenance["artifacts"]]
-    proposed = {"idempotencyKey": "fixture-agent-424242", "expectedPackagePolicyRevision": 42,
-                "versions": [{"package": p, "expectedAvailability": "Yanked", "availability": "Listed"} for p in identities],
-                "distTags": [{"packageId": p["packageId"], "tag": "latest", "target": p} for p in identities]}
-    proposed["versions"].sort(key=lambda v: v["package"]["packageId"] + "/" + v["package"]["version"])
-    proposed["distTags"].sort(key=lambda t: t["packageId"] + "/" + t["tag"])
-    committed = {"idempotencyKey": proposed["idempotencyKey"], "requestSha256": cohort.request_hash(proposed),
-                 "packagePolicy": {"revision": 43, "fingerprint": "a" * 64},
-                 "checkpoint": {"sequence": 99, "digest": "b" * 64, "topologyGeneration": 1, "topologyFingerprint": "c" * 64},
-                 "committedAtUtc": "2026-10-05T00:00:00Z", "versions": proposed["versions"],
-                 "previousTags": [{"packageId": p["packageId"], "tags": []} for p in identities],
-                 "resultingTags": sorted([{"packageId": t["packageId"], "tags": [t]} for t in proposed["distTags"]], key=lambda t: t["packageId"])}
-    value.update(schemaVersion=4, phase="post-visibility",
-                 releaseEvidence={"artifactSourceCommit": provenance["artifactSourceCommit"],
-                                  "publicationEvidenceCommit": "6" * 40, "lockSetSha256": provenance["lockSetSha256"]},
-                 cohort={"request": proposed, "result": committed})
-    write(Path(path), value)
-
-
 class ReleaseTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -135,7 +114,7 @@ class ReleaseTests(unittest.TestCase):
         self.source = self.root / "source"
         self.assets = self.root / "assets"
         self.assets.mkdir()
-        self.ids = ["sunder.package.agent"] + [f"sunder.package.agent.fixture{i:02}" for i in range(14)]
+        self.ids = list(release.FAMILY_PACKAGE_IDS)
         seed_source(self.source, self.ids)
         self.manifests = {p: {"id": p, "version": "2.0.0", "dependsOn": [] if i == 0 else [
             {"packageId": self.ids[0], "versionRange": ">=2.0.0 <3.0.0"}], "contractBundles": []} for i, p in enumerate(self.ids)}
@@ -153,8 +132,21 @@ class ReleaseTests(unittest.TestCase):
         self.repack()
         value = self.plan()
         self.assertEqual(self.ids[0], value["order"][0])
+        self.assertIn("younics.sunder.package.maker", value["order"])
         self.assertLess(value["order"].index(self.ids[-1]), value["order"].index(self.ids[1]))
         self.assertTrue(all(p["initialAvailability"] == "Yanked" for p in value["publications"]))
+
+    def test_release_family_is_explicit_and_matches_the_current_inventory(self):
+        repository = Path(__file__).resolve().parents[3]
+        expected = release.load(repository / "compatibility/agent-current-inventory.json")
+        self.assertEqual({row["packageId"] for row in expected["packages"]}, set(release.FAMILY_PACKAGE_IDS))
+        self.assertEqual({row["packageId"] for row in release.inventory(repository)["packages"]}, set(release.FAMILY_PACKAGE_IDS))
+        for replacement in ("younics.ai.agent.builder", "younics.ai.agent.unknown"):
+            value = release.load(self.source / "packages.json")
+            value["packages"][1]["packageId"] = replacement
+            write(self.source / "packages.json", value)
+            with self.assertRaisesRegex(release.Invalid, "exact AI Agent runtime family"):
+                release.inventory(self.source)
 
     def test_cycle_missing_dependency_and_unsatisfied_ordinary_range(self):
         self.manifests[self.ids[0]]["dependsOn"] = [{"packageId": self.ids[1], "versionRange": "2.0.0"}]
@@ -252,6 +244,127 @@ class ReleaseTests(unittest.TestCase):
             release.package_imports(bad)
         self.assertEqual(original, release.canonical(lock))
 
+    def typed_discovery(self):
+        owner, consumer = "younics.ai.agent", "younics.ai.agent.tools.web"
+        target, tools = owner + ".execution.target", owner + ".tool.source"
+        contracts = {key: dict(authorityKind="package", authorityId=owner, selectedAuthorityRelease="2.0.0",
+                               selectedAuthorityContentIdentity="a" * 64, resolvedContractVersion="1.0.0",
+                               descriptorSha256=character * 64, abiSha256="d" * 64)
+                     for key, character in ((target, "b"), (tools, "c"))}
+        lock = dict(packageImports={}, providerImports={"tools": dict(packageId=owner, contractId=tools)},
+                    packageArtifacts={owner: dict(contracts=contracts)})
+        bundles = [dict(contractId=key, version=record["resolvedContractVersion"], source="imported", exposure="public",
+                        **{name: record[name] for name in ("authorityKind", "authorityId", "selectedAuthorityRelease",
+                                                          "selectedAuthorityContentIdentity", "descriptorSha256", "abiSha256")})
+                   for key, record in contracts.items()]
+        provider = dict(role="runtime", providerId="web.tools", contractId=tools, contractVersion="1.0.0")
+        use = dict(role="runtime", contractId=target, contractVersion="1.0.0", abiSha256="d" * 64,
+                   required=False, actions=["discover"])
+        manifest = dict(id=consumer, version="2.0.0", targets=[dict(role="runtime"), dict(role="app")],
+                        contractBundles=bundles, packageApiImports=[], usesContracts=[use], provides=[provider],
+                        providerImports=[dict(key="tools", packageId=owner, contractId=tools, contractVersion="1.0.0",
+                                              bundleRef=dict(contractId=tools, contractVersion="1.0.0"), providerRefs=[provider])])
+        role_uses = [{**use, "descriptorSha256": "b" * 64, "serviceId": "execution-target",
+                      "serviceType": "Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Execution_Target.IExecutionTargetService"}]
+        return lock, manifest, role_uses
+
+    def test_provider_only_optional_typed_discovery_requires_exact_source_intent(self):
+        lock, manifest, role_uses = self.typed_discovery()
+        before = release.canonical([lock, manifest, role_uses])
+        release.verify_consumer_projection(lock, manifest, role_uses=role_uses)
+        self.assertEqual({}, lock["packageImports"])
+        self.assertEqual([], manifest["packageApiImports"])
+        self.assertEqual(before, release.canonical([lock, manifest, role_uses]))
+        with self.assertRaisesRegex(release.Invalid, "reviewed intent"):
+            release.verify_consumer_projection(lock, manifest)
+        manifest["usesContracts"] = []
+        with self.assertRaisesRegex(release.Invalid, "reviewed intent"):
+            release.verify_consumer_projection(lock, manifest, role_uses=role_uses)
+
+    def test_typed_discovery_rejects_orphan_overbroad_and_unreviewed_uses(self):
+        lock, manifest, role_uses = self.typed_discovery()
+        mutations = {
+            "invocation": lambda l, m, u: m["usesContracts"][0].update(actions=["discover", "invoke"]),
+            "subscription": lambda l, m, u: m["usesContracts"][0].update(actions=["discover", "subscribe"]),
+            "required": lambda l, m, u: m["usesContracts"][0].update(required=True),
+            "app": lambda l, m, u: m["usesContracts"][0].update(role="app"),
+            "version": lambda l, m, u: m["usesContracts"][0].update(contractVersion="2.0.0"),
+            "abi": lambda l, m, u: m["usesContracts"][0].update(abiSha256="e" * 64),
+            "duplicate": lambda l, m, u: m["usesContracts"].append(copy.deepcopy(m["usesContracts"][0])),
+            "orphan bundle": lambda l, m, u: m["contractBundles"].pop(0),
+            "unreviewed provider": lambda l, m, u: l["providerImports"].clear(),
+            "absent provider": lambda l, m, u: m["provides"].clear(),
+            "unselected contract": lambda l, m, u: l["packageArtifacts"]["younics.ai.agent"]["contracts"].pop(u[0]["contractId"]),
+            "wrong authority": lambda l, m, u: m["contractBundles"][0].update(authorityId="example.foreign"),
+            "platform": lambda l, m, u: m["contractBundles"][0].update(authorityKind="platform"),
+            "source app grant": lambda l, m, u: u[0].update(role="app"),
+            "source descriptor": lambda l, m, u: u[0].update(descriptorSha256="e" * 64),
+            "unreviewed extra use": lambda l, m, u: m["usesContracts"].append(
+                {**m["usesContracts"][0], "contractId": "younics.ai.agent.tool.source"}),
+        }
+        for name, mutate in mutations.items():
+            changed = copy.deepcopy([lock, manifest, role_uses])
+            mutate(*changed)
+            with self.subTest(case=name), self.assertRaises(release.Invalid):
+                release.verify_consumer_projection(changed[0], changed[1], role_uses=changed[2])
+
+    def test_source_intent_cannot_override_package_consumer_readiness_or_group_roles(self):
+        lock, manifest, role_uses = self.typed_discovery()
+        owner = "younics.ai.agent"
+        target = role_uses[0]["contractId"]
+        lock["packageImports"][owner] = dict(localName="agent", presence="required", requiredContracts=[target], consumerRoles=["runtime"])
+        refs = [dict(contractId=key, contractVersion="1.0.0") for key in sorted(lock["packageArtifacts"][owner]["contracts"])]
+        manifest["packageApiImports"] = [dict(packageId=owner, presence="required", bundleRefs=refs,
+                                              useRefs=[dict(role="runtime", **ref) for ref in refs])]
+        manifest["usesContracts"].append(dict(role="runtime", **refs[1], abiSha256="d" * 64, required=False, actions=["discover"]))
+        with self.assertRaisesRegex(release.Invalid, "reviewed intent"):
+            release.verify_consumer_projection(lock, manifest, role_uses=role_uses)
+        # An explicit optional typed use cannot weaken required-wins readiness.
+        manifest["usesContracts"][0]["required"] = True
+        with self.assertRaises(release.Invalid):
+            release.verify_consumer_projection(lock, manifest, role_uses=role_uses)
+        manifest["packageApiImports"][0]["useRefs"].append(dict(role="app", **refs[0]))
+        with self.assertRaisesRegex(release.Invalid, "role/bundle"):
+            release.verify_consumer_projection(lock, manifest, role_uses=role_uses)
+
+    def test_source_role_uses_are_projected_only_from_the_bound_worker_receipt(self):
+        _, manifest, role_uses = self.typed_discovery()
+        frame = dict(packageId=manifest["id"], packageVersion=manifest["version"], contractLockSha256="e" * 64)
+        receipt = dict(schemaVersion=1, producer=dict(name="Sunder.Package.Build", language="csharp", version="1.1.0"),
+                       packageId=frame["packageId"], packageVersion=frame["packageVersion"], lockSha256=frame["contractLockSha256"],
+                       inputFingerprint="f" * 64, roleUses=role_uses)
+        def qualification(value):
+            return dict(inputs=frame, rolePlan=dict(inputFingerprint="f" * 64,
+                        roles=[dict(role="worker", receipt=release.encoded(value).decode())]))
+        self.assertEqual(dict(lockSha256="e" * 64, roleUses=role_uses), release.source_role_use_evidence(qualification(receipt)))
+        for field, value in (("role", "app"), ("packageId", "example.foreign"), ("packageVersion", "2.1.0"),
+                             ("lockSha256", "b" * 64), ("inputFingerprint", "a" * 64), ("schemaVersion", True)):
+            with self.subTest(field=field), self.assertRaises(release.Invalid):
+                release.source_role_use_evidence(qualification({**receipt, field: value}))
+
+    def test_retained_source_use_evidence_binds_final_archives_current_locks_and_all_rids(self):
+        from native_release_inputs import RIDS
+        records = release.artifact_records(self.source, self.assets)
+        packages = [dict(packageId=row["packageId"], sourceRoleUses=dict(
+            lockSha256=release.file_sha(self.source / Path(row["projectPath"]).parent / "sunder-contracts.lock.json"), roleUses=[]))
+                    for row in release.inventory(self.source)["packages"]]
+        evidence = dict(schemaVersion=3, finalArtifacts=[{k: row[k] for k in ("path", "size", "sha256")} for row in records],
+                        nativeRuns=[dict(rid=rid, packages=copy.deepcopy(packages)) for rid in RIDS])
+        path = self.assets / "native-test-evidence.json"
+        write(path, evidence)
+        self.assertEqual(self.ids[0], self.plan()["order"][0])
+        mutations = [lambda v: v["nativeRuns"].pop(),
+                     lambda v: v["nativeRuns"][0]["packages"].pop(),
+                     lambda v: v["nativeRuns"][0]["packages"][0]["sourceRoleUses"].update(lockSha256="a" * 64),
+                     lambda v: [run["packages"][0]["sourceRoleUses"].update(lockSha256="a" * 64) for run in v["nativeRuns"]],
+                     lambda v: v["finalArtifacts"][0].update(sha256="a" * 64)]
+        for mutate in mutations:
+            changed = copy.deepcopy(evidence)
+            mutate(changed)
+            write(path, changed)
+            with self.assertRaises(release.Invalid):
+                self.plan()
+
     def test_duplicate_fields_symlinks_and_prerelease_ranges_fail(self):
         with self.assertRaises(release.Invalid):
             release.decode(b'{"a":1,"A":2}')
@@ -281,7 +394,7 @@ class ReleaseTests(unittest.TestCase):
 
     def provenance(self):
         value = {"schemaVersion": 1, "buildType": "https://sunderapp.io/provenance/github-actions/v1", "invocation": {
-            "repository": "Younics/sunder-agent-package", "workflow": "Sunder Agent Family Release",
+            "repository": "Younics/sunder-agent-package", "workflow": "AI Agent Family Release",
             "workflowRef": "Younics/sunder-agent-package/.github/workflows/sunder-package-release.yml@refs/tags/agent/v2.0.0",
             "runId": "8001", "runAttempt": "1", "releaseId": 424242, "ref": "refs/tags/agent/v2.0.0", "refName": "agent/v2.0.0", "sha": "1" * 40}}
         write(self.assets / "release-provenance.json", value)
@@ -379,23 +492,37 @@ class CohortTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.identities = [{"packageId": f"sunder.agent.fixture{i:02}", "version": "2.0.0", "packageContentIdentity": f"{i:064x}"} for i in range(15)]
+        self.identities = [{"packageId": package_id, "version": "2.0.0", "packageContentIdentity": f"{i:064x}"}
+                           for i, package_id in enumerate(sorted(release.FAMILY_PACKAGE_IDS, key=lambda value: value + "/2.0.0"))]
         self.request = {"idempotencyKey": "fixture-1", "expectedPackagePolicyRevision": 42,
                         "versions": [{"package": p, "expectedAvailability": "Yanked", "availability": "Listed"} for p in self.identities],
-                        "distTags": [{"packageId": p["packageId"], "tag": "latest", "target": p} for p in self.identities]}
+                        "distTags": [{"packageId": p["packageId"], "tag": "latest", "target": p}
+                                     for p in self.identities]}
         self.result = {"idempotencyKey": "fixture-1", "requestSha256": cohort.request_hash(self.request),
                        "packagePolicy": {"revision": 43, "fingerprint": "a" * 64},
-                       "checkpoint": {"sequence": 99, "digest": "b" * 64, "topologyGeneration": 3, "topologyFingerprint": "c" * 64},
                        "committedAtUtc": "2026-10-05T00:00:00Z", "versions": self.request["versions"],
-                       "previousTags": [{"packageId": p["packageId"], "tags": []} for p in self.identities],
-                       "resultingTags": [{"packageId": t["packageId"], "tags": [t]} for t in self.request["distTags"]]}
+                       "previousTags": [{"packageId": p["packageId"], "tags": []}
+                                        for p in sorted(self.identities, key=lambda value: value["packageId"])],
+                       "resultingTags": [{"packageId": t["packageId"], "tags": [t]}
+                                         for t in sorted(self.request["distTags"], key=lambda value: value["packageId"])]}
         self.req = self.root / "request.json"
         self.res = self.root / "result.json"
         write(self.req, self.request)
 
+    def policy_response(self, synchronization, availability="Listed"):
+        return {"nonce": synchronization["nonce"], "registryOrigin": "https://registry.test",
+                "packagePolicy": copy.deepcopy(self.result["packagePolicy"]),
+                "observedAtUtc": "2026-10-05T00:00:00.1234567Z", "validUntilUtc": "2026-10-06T00:00:00.1234567+00:00",
+                "packages": [{"package": p, "packageState": "Active", "versionAvailability": availability,
+                              "disposition": "Allowed", "errorCode": None, "publicReason": None,
+                              "platformDependencies": synchronization["platformCatalogs"]} for p in synchronization["packages"]],
+                "platformCatalogs": [{"catalog": c, "lifecycleState": "Supported", "disposition": "Allowed",
+                                      "errorCode": None, "revokedAtUtc": None} for c in synchronization["platformCatalogs"]]}
+
     def test_request_hash_matches_actual_core_dto_serialization(self):
         # Captured from the compiled Sunder.Registry.Contracts DTO with Registry's
         # JsonSerializer options; protects property order, domain and '+' escaping.
+        # Preserve the authenticated DTO input together with its captured hash.
         package = {"packageId": "sunder.package.agent", "version": "2.0.0+test", "packageContentIdentity": "a" * 64}
         value = {"idempotencyKey": "fixture", "expectedPackagePolicyRevision": 42,
                  "versions": [{"package": package, "expectedAvailability": "Yanked", "availability": "Listed"}],
@@ -403,8 +530,8 @@ class CohortTests(unittest.TestCase):
         self.assertEqual("275a0573c2c566cfcf3683d5f43c25ed3b8f34e03026e73b6bf0e6a987059d8b", cohort.request_hash(value))
 
     def test_parent_package_uses_registry_slash_key_order(self):
-        parent = {"packageId": "sunder.package.agent", "version": "2.0.0", "packageContentIdentity": "a" * 64}
-        child = {**parent, "packageId": "sunder.package.agent.tools"}
+        parent = {"packageId": "younics.ai.agent", "version": "2.0.0", "packageContentIdentity": "a" * 64}
+        child = {**parent, "packageId": "younics.ai.agent.tools"}
         value = {"idempotencyKey": "order", "expectedPackagePolicyRevision": 1,
                  "versions": [{"package": p, "expectedAvailability": "Yanked", "availability": "Listed"} for p in (parent, child)], "distTags": []}
         with self.assertRaises(release.Invalid):
@@ -418,7 +545,8 @@ class CohortTests(unittest.TestCase):
                      lambda v: v["resultingTags"].pop(), lambda v: v["resultingTags"][0]["tags"].clear(),
                      lambda v: v["previousTags"][0]["tags"].append({"packageId": self.identities[0]["packageId"],
                                                                "tag": "preview", "target": self.identities[0]}),
-                     lambda v: v.update(extra=True), lambda v: v["checkpoint"].update(topologyGeneration=0)]
+                     lambda v: v.update(extra=True), lambda v: v["packagePolicy"].update(fingerprint="invalid"),
+                     lambda v: v.update(checkpoint=None), lambda v: v.update(committedAtUtc="invalid")]
         for mutate in mutations:
             bad = copy.deepcopy(self.result)
             mutate(bad)
@@ -440,16 +568,18 @@ class CohortTests(unittest.TestCase):
         self.assertEqual(sent[0], sent[1])
         self.assertEqual(self.result, release.load(self.res))
 
-    def test_recovery_required_stale_and_conflicting_success_never_fallback(self):
-        for response in [(503, b'{"code":"registry.policy-recovery-required"}', 0),
-                         (409, b'{"code":"registry.policy-stale"}', 0),
-                         (200, release.encoded({**self.result, "requestSha256": "f" * 64}), 0)]:
+    def test_unavailable_stale_and_conflicting_success_never_fallback(self):
+        for response, attempts in [((503, b'{"code":"registry.v1.internal"}', 0), 2),
+                                   ((409, b'{"code":"package.policy-stale"}', 0), 1),
+                                   ((200, release.encoded({**self.result, "requestSha256": "f" * 64}), 0), 1)]:
             with patch.dict(os.environ, {"SUNDER_REGISTRY_CLI_TOKEN": "sunder_cli_" + "a" * 43}), \
                     patch.object(cohort, "current_tags", return_value=self.result["previousTags"]), \
                     patch.object(cohort, "guard"), patch.object(cohort, "http", return_value=response) as send:
                 with self.assertRaises(release.Invalid):
                     cohort.apply("https://registry.test", self.req, self.res)
-                self.assertEqual(1, send.call_count)
+                self.assertEqual(attempts, send.call_count)
+                self.assertTrue(all(call.args[2] == cohort.request_bytes(self.request) for call in send.call_args_list))
+                self.assertEqual(self.request, release.load(self.req))
                 self.assertFalse(self.res.exists())
 
     def test_request_tamper_during_guard_stops_before_post(self):
@@ -473,7 +603,7 @@ class CohortTests(unittest.TestCase):
             write(self.req, proposed)
             observed = copy.deepcopy(self.result["previousTags"])
             prior = {**proposed["distTags"][0], "target": {**proposed["distTags"][0]["target"], "version": newer}}
-            observed[0]["tags"] = [prior]
+            next(item for item in observed if item["packageId"] == prior["packageId"])["tags"] = [prior]
             with self.subTest(tag=tag), patch.dict(os.environ, {"SUNDER_REGISTRY_CLI_TOKEN": "sunder_cli_" + "a" * 43}), \
                     patch.object(cohort, "current_tags", return_value=observed), \
                     patch.object(cohort, "guard") as guard, patch.object(cohort, "http") as send:
@@ -490,7 +620,7 @@ class CohortTests(unittest.TestCase):
             self.assertEqual([{ "version": "2.1.0", "revision": 43}], concurrent)
             self.assertEqual("/api/v1/me/package-cohorts/availability", route)
             self.assertEqual(cohort.request_bytes(self.request), payload)
-            return 409, b'{"code":"registry.policy-stale"}', 0
+            return 409, b'{"code":"package.policy-stale"}', 0
         with patch.dict(os.environ, {"SUNDER_REGISTRY_CLI_TOKEN": "sunder_cli_" + "a" * 43}), \
                 patch.object(cohort, "current_tags", return_value=self.result["previousTags"]), \
                 patch.object(cohort, "guard", side_effect=guard), patch.object(cohort, "http", side_effect=http) as send:
@@ -557,20 +687,18 @@ class CohortTests(unittest.TestCase):
         def metadata(path):
             return ({"platformImports": [authority]}, {"packageContentIdentity": content[path.name.removesuffix(".2.0.0.sunderpkg")]}, "unused")
         sent = []
-        stale = False
+        mutate = lambda value: None
         def http(registry, route, payload=None, token=None):
             sent.append(route)
             if route == "/api/v1/policy/synchronize":
                 self.assertIsNone(token)
                 sync = release.decode(payload)
-                self.assertEqual({"nonce", "packages", "platformCatalogs", "minimumPackagePolicy", "minimumCheckpoint"}, set(sync))
+                self.assertEqual({"nonce", "packages", "platformCatalogs", "minimumPackagePolicy"}, set(sync))
+                self.assertRegex(sync["nonce"], r"^[0-9a-f]{32}$")
+                self.assertEqual(self.result["packagePolicy"], sync["minimumPackagePolicy"])
                 self.assertEqual([{"authorityId": "sunder.core", "releaseVersion": "1.1.0", "catalogSha256": "f" * 64}], sync["platformCatalogs"])
-                observed = {"nonce": sync["nonce"], "registryOrigin": registry, "packagePolicy": self.result["packagePolicy"],
-                            "checkpoint": self.result["checkpoint"],
-                            "packages": [{"package": p, "packageState": "Active", "versionAvailability": "Listed", "disposition": "Allowed"} for p in sync["packages"]],
-                            "platformCatalogs": [{"catalog": c, "lifecycleState": "Supported", "disposition": "Allowed"} for c in sync["platformCatalogs"]]}
-                if stale:
-                    observed["packagePolicy"] = {"revision": 42, "fingerprint": "a" * 64}
+                observed = copy.deepcopy(self.policy_response(sync))
+                mutate(observed)
                 return 200, release.encoded(observed), 0
             self.assertEqual("/api/v1/me/package-cohorts/availability", route)
             self.assertEqual(cohort.request_bytes(self.request), payload)
@@ -579,17 +707,106 @@ class CohortTests(unittest.TestCase):
         with patch.dict(os.environ, {"SUNDER_REGISTRY_CLI_TOKEN": "sunder_cli_" + "a" * 43}), \
                 patch.object(cohort, "archive_metadata", side_effect=metadata), patch.object(cohort, "verify_current"), \
                 patch.object(cohort, "http", side_effect=http):
-            cohort.confirm("https://registry.test", self.req, self.res, self.root)
-            self.assertEqual(["/api/v1/policy/synchronize", "/api/v1/me/package-cohorts/availability"], sent)
-            sent.clear()
-            stale = True
-            with self.assertRaises(release.Invalid):
+            for mutate in (lambda v: None, lambda v: v["packagePolicy"].update(revision=44, fingerprint="b" * 64)):
+                sent.clear()
                 cohort.confirm("https://registry.test", self.req, self.res, self.root)
-            self.assertEqual(["/api/v1/policy/synchronize"], sent)
+                self.assertEqual(["/api/v1/policy/synchronize", "/api/v1/me/package-cohorts/availability"], sent)
+            mutations = {
+                "older revision": lambda v: v["packagePolicy"].update(revision=42),
+                "same revision conflict": lambda v: v["packagePolicy"].update(fingerprint="b" * 64),
+                "malformed newer fingerprint": lambda v: v["packagePolicy"].update(revision=44, fingerprint="invalid"),
+                "nonce": lambda v: v.update(nonce="0" * 32),
+                "origin": lambda v: v.update(registryOrigin="https://other.test"),
+                "missing package": lambda v: v["packages"].pop(),
+                "package identity": lambda v: v["packages"][0]["package"].update(packageContentIdentity="f" * 64),
+                "package block": lambda v: v["packages"][0].update(packageState="SecurityBlocked"),
+                "package error": lambda v: v["packages"][0].update(errorCode="package.security-blocked"),
+                "missing platform": lambda v: v["platformCatalogs"].clear(),
+                "revoked platform": lambda v: v["platformCatalogs"][0].update(lifecycleState="Revoked"),
+                "platform error": lambda v: v["platformCatalogs"][0].update(errorCode="contract-authority.revoked"),
+                "missing time": lambda v: v.pop("observedAtUtc"),
+                "timezone": lambda v: v.update(observedAtUtc="2026-10-05T01:00:00.1234567+01:00"),
+                "lease interval": lambda v: v.update(validUntilUtc="2026-10-06T00:00:01.1234567Z"),
+                "sub-microsecond interval": lambda v: v.update(validUntilUtc="2026-10-06T00:00:00.1234568Z"),
+                "removed checkpoint": lambda v: v.update(checkpoint=None),
+            }
+            for name, mutate in mutations.items():
+                sent.clear()
+                with self.subTest(case=name), self.assertRaises(release.Invalid):
+                    cohort.confirm("https://registry.test", self.req, self.res, self.root)
+                self.assertEqual(["/api/v1/policy/synchronize"], sent)
+
+    def test_pipeline_retains_current_policy_request_before_cohort_mutation(self):
+        provenance = {"invocation": {"releaseId": 424242}, "publication": {"registryOrigin": "https://registry.test"},
+                      "artifactSourceCommit": "1" * 40, "artifacts": self.identities}
+        store = Mock(tag="agent/v2.0.0")
+        retained = {}
+        def http(registry, route, payload, token=None):
+            self.assertEqual("https://registry.test", registry)
+            self.assertEqual("/api/v1/policy/synchronize", route)
+            self.assertIsNone(token)
+            synchronization = release.decode(payload)
+            self.assertEqual({"nonce", "packages", "platformCatalogs", "minimumPackagePolicy"}, set(synchronization))
+            self.assertIsNone(synchronization["minimumPackagePolicy"])
+            self.assertEqual([], synchronization["platformCatalogs"])
+            self.assertEqual(sorted(self.identities, key=lambda p: (p["packageId"], p["version"], p["packageContentIdentity"])), synchronization["packages"])
+            return 200, release.encoded(self.policy_response(synchronization, "Yanked")), 0
+        def apply(registry, request_path, result_path):
+            store.upload.assert_called_once_with(424242, [request_path])
+            proposed = release.load(request_path)
+            self.assertEqual(pipeline.cohort_request(provenance, 43), proposed)
+            committed = {**self.result, "idempotencyKey": proposed["idempotencyKey"], "requestSha256": cohort.request_hash(proposed),
+                         "packagePolicy": {"revision": 44, "fingerprint": "b" * 64}, "versions": proposed["versions"]}
+            cohort.result(committed, proposed)
+            cohort.store(result_path, committed)
+            retained.update(schemaVersion=2, registryOrigin=registry, artifactSourceCommit=provenance["artifactSourceCommit"],
+                            releaseId=424242, request=proposed, result=committed)
+        with patch.dict(os.environ), patch.object(pipeline, "verified", return_value=(store, {"draft": True}, provenance)), \
+                patch.object(pipeline, "registry_versions") as versions, patch.object(cohort, "http", side_effect=http), \
+                patch.object(cohort, "apply", side_effect=apply) as mutate, patch.object(receipts, "upload"), \
+                patch.object(receipts, "download_bytes", side_effect=lambda *args: retained), patch.object(cohort, "confirm") as confirm:
+            pipeline.visibility(self.root / "core", self.root, 424242)
+            mutate.assert_called_once()
+            confirm.assert_called_once()
+            self.assertEqual(["Yanked", "Listed"], [call.args[2] for call in versions.call_args_list])
+        self.assertEqual(pipeline.cohort_request(provenance, 43), release.load(self.root / pipeline.REQUEST))
+        self.assertEqual(retained, release.load(self.root / ("agent-family-cohort-" + cohort.request_hash(retained["request"]) + ".json")))
+
+    def test_pipeline_invalid_policy_never_retains_or_dispatches_a_cohort(self):
+        provenance = {"invocation": {"releaseId": 424242}, "publication": {"registryOrigin": "https://registry.test"},
+                      "artifacts": self.identities}
+        store = Mock(tag="agent/v2.0.0")
+        mutations = {
+            "nonce": lambda v: v.update(nonce="0" * 32),
+            "origin": lambda v: v.update(registryOrigin="https://other.test"),
+            "fingerprint": lambda v: v["packagePolicy"].update(fingerprint="invalid"),
+            "revision": lambda v: v["packagePolicy"].update(revision=0),
+            "package state": lambda v: v["packages"][0].update(packageState="SecurityBlocked"),
+            "availability": lambda v: v["packages"][0].update(versionAvailability="Listed"),
+            "identity": lambda v: v["packages"][0]["package"].update(version="9.0.0"),
+            "unexpected platform": lambda v: v["platformCatalogs"].append({"catalog": {}, "lifecycleState": "Unknown",
+                                                                           "disposition": "PolicyRequired", "errorCode": None, "revokedAtUtc": None}),
+            "time": lambda v: v.update(validUntilUtc="2026-10-05T00:00:00.1234567Z"),
+            "removed checkpoint": lambda v: v.update(checkpoint=None),
+        }
+        def http(registry, route, payload):
+            value = self.policy_response(release.decode(payload), "Yanked")
+            mutate(value)
+            return 200, release.encoded(value), 0
+        with patch.object(pipeline, "verified", return_value=(store, {"draft": True}, provenance)), \
+                patch.object(pipeline, "registry_versions"), patch.object(cohort, "http", side_effect=http), \
+                patch.object(cohort, "apply") as apply:
+            for name, mutate in mutations.items():
+                with self.subTest(case=name), self.assertRaises(release.Invalid):
+                    pipeline.visibility(self.root / "core", self.root, 424242)
+                self.assertFalse((self.root / pipeline.REQUEST).exists())
+            store.upload.assert_not_called()
+            apply.assert_not_called()
 
     def test_explicit_reverse_restores_old_tag_and_deletes_only_new_tag(self):
         old = {**self.identities[0], "version": "1.0.0", "packageContentIdentity": "d" * 64}
-        self.result["previousTags"][0]["tags"] = [{"packageId": old["packageId"], "tag": "latest", "target": old}]
+        next(item for item in self.result["previousTags"] if item["packageId"] == old["packageId"])["tags"] = [
+            {"packageId": old["packageId"], "tag": "latest", "target": old}]
         reverse = cohort.reverse(self.request, self.result, "reviewed-reverse", 43)
         self.assertEqual(old, reverse["distTags"][0]["target"])
         self.assertTrue(all(t["target"] is None for t in reverse["distTags"][1:]))
@@ -601,14 +818,14 @@ class CohortTests(unittest.TestCase):
 class ReceiptTests(unittest.TestCase):
     def setUp(self):
         CohortTests.setUp(self)
-        self.value = {"schemaVersion": 1, "registryOrigin": "https://registry.test", "preVisibilityAcceptanceSha256": "e" * 64,
+        self.value = {"schemaVersion": 2, "registryOrigin": "https://registry.test", "artifactSourceCommit": "1" * 40, "releaseId": 424242,
                       "request": self.request, "result": self.result}
         self.request_sha = receipts.check(self.value)
         self.data = release.canonical(self.value) + b"\n"
         self.asset = {"id": 1001, "name": "agent-family-cohort-" + self.request_sha + ".json", "state": "uploaded",
                       "size": len(self.data), "digest": "sha256:" + release.sha(self.data),
                       "url": "https://api.github.com/repos/Younics/sunder-agent-package/releases/assets/1001"}
-        self.info = {"id": 424242, "tag_name": "agent/v2.0.0", "draft": True, "assets": [self.asset]}
+        self.info = {"id": 424242, "tag_name": "agent/v2.0.0", "draft": True, "target_commitish": "1" * 40, "assets": [self.asset]}
 
     def test_numeric_asset_byte_binding_and_tamper_rejection(self):
         def download():
@@ -627,11 +844,8 @@ class ReceiptTests(unittest.TestCase):
                 download()
 
     def test_ambiguous_receipt_upload_recovers_exact_bytes_without_replacement(self):
-        acceptance = self.root / "acceptance.json"
-        write(acceptance, {"schemaVersion": 4, "phase": "pre-visibility", "draftRelease": {"id": 424242},
-                           "tag": "agent/v2.0.0", "cohort": {"request": self.request, "result": None}})
+        write(self.req, self.request)
         write(self.res, self.result)
-        self.value["preVisibilityAcceptanceSha256"] = release.file_sha(acceptance)
         self.data = release.canonical(self.value) + b"\n"
         self.asset.update(size=len(self.data), digest="sha256:" + release.sha(self.data))
         self.info["assets"] = []
@@ -645,7 +859,7 @@ class ReceiptTests(unittest.TestCase):
                 patch.object(receipts.subprocess, "run", side_effect=upload) as send, \
                 patch.object(receipts.subprocess, "check_output", return_value=self.data):
             for _ in range(2):
-                receipts.upload("Younics/sunder-agent-package", "424242", "agent/v2.0.0", "https://registry.test", acceptance, self.res)
+                receipts.upload("Younics/sunder-agent-package", "424242", "agent/v2.0.0", "https://registry.test", "1" * 40, self.req, self.res)
             self.assertEqual(1, send.call_count)
 
 
@@ -654,13 +868,13 @@ class ReverseTests(unittest.TestCase):
         CohortTests.setUp(self)
         self.source = self.root / "source"
         seed_source(self.source, [p["packageId"] for p in self.identities])
-        self.forward = {"schemaVersion": 1, "registryOrigin": "https://registry.test", "preVisibilityAcceptanceSha256": "e" * 64,
+        self.forward = {"schemaVersion": 2, "registryOrigin": "https://registry.test", "artifactSourceCommit": "1" * 40, "releaseId": 424242,
                         "request": self.request, "result": self.result}
         self.forward_path = self.root / "forward.json"
         write(self.forward_path, self.forward)
         proposed = cohort.reverse(self.request, self.result, "reviewed-reverse", 43)
         write(self.req, proposed)
-        self.info = {"id": 424242, "tag_name": "agent/v2.0.0", "draft": True, "body": "Agent source commit: " + "1" * 40}
+        self.info = {"id": 424242, "tag_name": "agent/v2.0.0", "draft": True, "target_commitish": "1" * 40}
         self.tag = {"ref": "refs/tags/agent/v2.0.0", "object": {"type": "commit", "sha": "1" * 40}}
         self.args = ["Younics/sunder-agent-package", "424242", "agent/v2.0.0", str(self.source), "1" * 40,
                      str(self.forward_path), str(self.req)]
@@ -725,7 +939,5 @@ if __name__ == "__main__":
         fixture_release(*sys.argv[2:])
     elif len(sys.argv) > 1 and sys.argv[1] == "evidence-git":
         evidence_git(*sys.argv[2:])
-    elif len(sys.argv) > 1 and sys.argv[1] == "acceptance":
-        fixture_acceptance(*sys.argv[2:])
     else:
         unittest.main()

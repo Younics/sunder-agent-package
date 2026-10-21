@@ -1,5 +1,9 @@
 using Sunder.Agent.Execution.Common;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using IExecutionTargetService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Execution_Target.IExecutionTargetService;
+using IPermissionSurfaceService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Permission_Surface.IPermissionSurfaceService;
+using IPromptContextContributorService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Prompt_Context_Contributor.IPromptContextContributorService;
+using ISessionCleanerService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Session_Cleaner.ISessionCleanerService;
+using IToolSourceService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Tool_Source.IToolSourceService;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
@@ -68,7 +72,7 @@ public sealed partial class FilesToolSource : IToolSourceService, IPermissionSur
     }
 
     public async ValueTask<AgentToolReadiness?> GetReadinessAsync(
-        CSunder_Agent_Tool_Source_ToolSourceGetReadinessRequest request,
+        CYounics_Ai_Agent_Tool_Source_ToolSourceGetReadinessRequest request,
         CancellationToken cancellationToken = default)
     {
         var (toolId, context) = (request.ToolId, request.Context);
@@ -131,7 +135,7 @@ public sealed partial class FilesToolSource : IToolSourceService, IPermissionSur
     }
 
     public async ValueTask<AgentToolResult> ExecuteAsync(
-        CSunder_Agent_Tool_Source_ToolSourceExecuteRequest invocation,
+        CYounics_Ai_Agent_Tool_Source_ToolSourceExecuteRequest invocation,
         CancellationToken cancellationToken = default)
     {
         var (context, request) = (invocation.Context, invocation.Request);
@@ -310,7 +314,7 @@ public sealed partial class FilesToolSource : IToolSourceService, IPermissionSur
     }
 
     public async ValueTask<AgentPermissionRequest?> PermissionAsync(
-        CSunder_Agent_Tool_Source_ToolSourcePermissionRequest invocation,
+        CYounics_Ai_Agent_Tool_Source_ToolSourcePermissionRequest invocation,
         CancellationToken cancellationToken = default)
     {
         var (context, request) = (invocation.Context, invocation.Request);
@@ -371,7 +375,7 @@ public sealed partial class FilesToolSource : IToolSourceService, IPermissionSur
     }
 
     public async ValueTask<AgentToolResult?> PreflightAsync(
-        CSunder_Agent_Tool_Source_ToolSourcePreflightRequest invocation,
+        CYounics_Ai_Agent_Tool_Source_ToolSourcePreflightRequest invocation,
         CancellationToken cancellationToken = default)
     {
         var (context, request) = (invocation.Context, invocation.Request);

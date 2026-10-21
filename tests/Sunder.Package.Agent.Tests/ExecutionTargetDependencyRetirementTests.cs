@@ -16,7 +16,7 @@ extern alias ShellWorker;
 using SkillsWorker::Sunder.Package.Agent.Skills.Services;
 using FilesWorker::Sunder.Package.Agent.Tools.Files;
 using ShellWorker::Sunder.Package.Agent.Tools.Shell;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 
 public sealed class ExecutionTargetDependencyRetirementTests
 {
@@ -75,7 +75,7 @@ public sealed class ExecutionTargetDependencyRetirementTests
         catalog.AddProvider(RegressionTestBindings.ToolSources, source, ToolSourcePackageId);
         var store = new AgentLocalStore(scope.Context);
         var sessions = new AgentSessionService(store, catalog.SessionCleaners);
-        var workspaces = new AgentWorkspaceService(store, catalog.SessionCleaners, sessions, catalog.WorkspacePathMigrators);
+        var workspaces = new AgentWorkspaceService(store, catalog.SessionCleaners, sessions);
         var workspace = workspaces.CreateWorkspace("Workspace");
         workspaces.SavePrimaryExecutionBinding(workspace.WorkspaceId, target.Descriptor.TargetId);
         var tools = new AgentToolService(
@@ -164,7 +164,7 @@ public sealed class ExecutionTargetDependencyRetirementTests
         catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target);
         var targetReference = await GetTargetReferenceAsync(catalog);
         var (workspace, binding) = CreateWorkspace();
-        using var source = new GeneratedToolSourceProbe(catalog, new ShellToolSource(), "sunder.package.agent.tools.shell", withPromptContext: true);
+        using var source = new GeneratedToolSourceProbe(catalog, new ShellToolSource(), "younics.ai.agent.tools.shell", withPromptContext: true);
         await catalog.RetireProviderAsync(target);
         var replacement = new TestExecutionTarget();
         catalog.AddProvider(RegressionTestBindings.ExecutionTargets, replacement);
@@ -200,7 +200,7 @@ public sealed class ExecutionTargetDependencyRetirementTests
         catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target);
         var targetReference = await GetTargetReferenceAsync(catalog);
         var (workspace, binding) = CreateWorkspace();
-        using var source = new GeneratedToolSourceProbe(catalog, new FilesToolSource(scope.Context), "sunder.package.agent.tools.files", withPromptContext: true);
+        using var source = new GeneratedToolSourceProbe(catalog, new FilesToolSource(scope.Context), "younics.ai.agent.tools.files", withPromptContext: true);
         await catalog.RetireProviderAsync(target);
 
         var descriptors = await source.ListToolsAsync(CreateSourceContext(workspace, binding, targetReference));
@@ -250,25 +250,34 @@ public sealed class ExecutionTargetDependencyRetirementTests
     }
 
     [Fact]
-    public async Task Shell_TargetRetirementDuringCallbackReturnsPackageUnavailable()
+    public async Task Shell_TargetRetirementDuringCallbackPreservesDispatchUncertainty()
     {
         using var catalog = new RegressionTestExtensionCatalog();
         var target = new BlockingExecutionTarget();
         catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target, "test.package.target");
         var targetReference = await GetTargetReferenceAsync(catalog);
         var (workspace, binding) = CreateWorkspace();
-        using var source = new GeneratedToolSourceProbe(catalog, new ShellToolSource(), "sunder.package.agent.tools.shell");
+        using var source = new GeneratedToolSourceProbe(catalog, new ShellToolSource(), "younics.ai.agent.tools.shell");
         var execution = source.ExecuteAsync(
             CreateExecutionContext(workspace, binding, targetReference),
             new AgentToolRequest("shell", "{\"command\":\"sleep\"}")).AsTask();
         await target.ShellStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
         var retirement = catalog.RetireProviderAsync(target);
-        var result = await execution;
+        var replacement = new TestExecutionTarget();
+        catalog.AddProvider(RegressionTestBindings.ExecutionTargets, replacement, "test.package.target");
+        var error = await Assert.ThrowsAsync<SunderRpcException>(() => execution);
         await retirement;
 
-        Assert.True(result.IsError);
-        Assert.Equal(AgentToolResultErrorCodes.PackageUnavailable, result.ErrorCode);
+        // The callback was running before retirement. Preserve its uncertainty
+        // rather than synthesizing a safe result or following the replacement.
+        Assert.Equal(SunderRpcErrorKind.StaleEndpoint, error.Error.Kind);
+        Assert.Equal(SunderRpcDispatchState.PossiblyDispatched, error.Error.DispatchState);
+        Assert.Equal(SunderRpcRetrySafety.Unsafe, error.Error.RetrySafety);
+        Assert.False(SunderRpcException.HasTrustedNoDispatchEvidence(error));
+        Assert.True(target.ShellCancellationObserved.Task.IsCompletedSuccessfully);
+        Assert.Equal(1, target.BlockingShellExecutionCount);
+        Assert.Equal(0, replacement.ShellExecutionCount);
     }
 
     [Fact]
@@ -280,7 +289,7 @@ public sealed class ExecutionTargetDependencyRetirementTests
         catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target, "test.package.target");
         var targetReference = await GetTargetReferenceAsync(catalog);
         var (workspace, binding) = CreateWorkspace();
-        using var source = new GeneratedToolSourceProbe(catalog, new FilesToolSource(scope.Context), "sunder.package.agent.tools.files");
+        using var source = new GeneratedToolSourceProbe(catalog, new FilesToolSource(scope.Context), "younics.ai.agent.tools.files");
         var execution = source.ExecuteAsync(
             CreateExecutionContext(workspace, binding, targetReference),
             new AgentToolRequest("read", "{\"path\":\"README.md\"}")).AsTask();
@@ -328,8 +337,8 @@ public sealed class ExecutionTargetDependencyRetirementTests
         using var catalog = new RegressionTestExtensionCatalog();
         var profile = CreateProfileWithSkill();
         using var feature = CreateSkillsFeature(scope, catalog, profile);
-        using var shell = new GeneratedToolSourceProbe(catalog, new ShellToolSource(), "sunder.package.agent.tools.shell");
-        using var files = new GeneratedToolSourceProbe(catalog, new FilesToolSource(scope.Context), "sunder.package.agent.tools.files");
+        using var shell = new GeneratedToolSourceProbe(catalog, new ShellToolSource(), "younics.ai.agent.tools.shell");
+        using var files = new GeneratedToolSourceProbe(catalog, new FilesToolSource(scope.Context), "younics.ai.agent.tools.files");
         var target = new FailingExecutionTarget(errorKind);
         catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target);
         var targetReference = await GetTargetReferenceAsync(catalog);
@@ -362,8 +371,8 @@ public sealed class ExecutionTargetDependencyRetirementTests
         using var catalog = new RegressionTestExtensionCatalog();
         var profile = CreateProfileWithSkill();
         using var feature = CreateSkillsFeature(scope, catalog, profile);
-        using var shell = new GeneratedToolSourceProbe(catalog, new ShellToolSource(), "sunder.package.agent.tools.shell");
-        using var files = new GeneratedToolSourceProbe(catalog, new FilesToolSource(scope.Context), "sunder.package.agent.tools.files");
+        using var shell = new GeneratedToolSourceProbe(catalog, new ShellToolSource(), "younics.ai.agent.tools.shell");
+        using var files = new GeneratedToolSourceProbe(catalog, new FilesToolSource(scope.Context), "younics.ai.agent.tools.files");
         var target = new FailingExecutionTarget(errorKind);
         catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target);
         var targetReference = await GetTargetReferenceAsync(catalog);
@@ -399,8 +408,8 @@ public sealed class ExecutionTargetDependencyRetirementTests
         using var catalog = new RegressionTestExtensionCatalog();
         var profile = CreateProfileWithSkill();
         using var feature = CreateSkillsFeature(scope, catalog, profile);
-        using var shell = new GeneratedToolSourceProbe(catalog, new ShellToolSource(), "sunder.package.agent.tools.shell");
-        using var files = new GeneratedToolSourceProbe(catalog, new FilesToolSource(scope.Context), "sunder.package.agent.tools.files");
+        using var shell = new GeneratedToolSourceProbe(catalog, new ShellToolSource(), "younics.ai.agent.tools.shell");
+        using var files = new GeneratedToolSourceProbe(catalog, new FilesToolSource(scope.Context), "younics.ai.agent.tools.files");
         var target = new FailingExecutionTarget(errorKind: null);
         catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target);
         var targetReference = await GetTargetReferenceAsync(catalog);
@@ -454,7 +463,7 @@ public sealed class ExecutionTargetDependencyRetirementTests
             []));
         catalog.AddRuntimeCatalog(new SingleProfileRuntimeCatalog(profile));
         return new GeneratedToolSourceProbe(catalog, new SkillsFeature(store, catalog.Skills()),
-            "sunder.package.agent.skills", withPromptContext: true);
+            "younics.ai.agent.skills", withPromptContext: true);
     }
 
     private static AgentProfileRecord CreateProfileWithSkill()
@@ -475,7 +484,7 @@ public sealed class ExecutionTargetDependencyRetirementTests
             [new AgentProfileSelectableCapabilityAssignmentRecord(
                 "skill",
                 "test-skill",
-                "sunder.package.agent.skills")]);
+                "younics.ai.agent.skills")]);
     }
 
     private static (AgentWorkspaceRecord Workspace, AgentWorkspaceBindingRecord Binding) CreateWorkspace()
@@ -667,6 +676,8 @@ public sealed class ExecutionTargetDependencyRetirementTests
     private sealed class BlockingExecutionTarget : TestExecutionTarget
     {
         public TaskCompletionSource ShellStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ShellCancellationObserved { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int BlockingShellExecutionCount { get; private set; }
         public TaskCompletionSource ReadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource ResourcesStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -675,8 +686,17 @@ public sealed class ExecutionTargetDependencyRetirementTests
             AgentShellCommandRequest request,
             CancellationToken cancellationToken = default)
         {
+            BlockingShellExecutionCount++;
             ShellStarted.TrySetResult();
-            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                ShellCancellationObserved.TrySetResult();
+                throw;
+            }
             return new AgentShellCommandResult(0, "unreachable");
         }
 

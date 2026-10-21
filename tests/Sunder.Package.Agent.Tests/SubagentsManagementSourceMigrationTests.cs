@@ -9,7 +9,7 @@ using AppSubagentChanged = SubagentsApp::Sunder.Package.Agent.Subagents.Runtime.
 using AppSubagentProjection = SubagentsApp::Sunder.Package.Agent.Subagents.Runtime.SubagentProjection;
 using AppSubagentProjectionContent = SubagentsApp::Sunder.Package.Agent.Subagents.Runtime.SubagentProjectionContent;
 using AppSubagentSaveRequest = SubagentsApp::Sunder.Package.Agent.Subagents.Runtime.SubagentSaveRequest;
-using SubagentManagementServices = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Subagents_Services;
+using SubagentManagementServices = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Subagents_Services;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -30,7 +30,7 @@ public sealed class SubagentsManagementSourceMigrationTests
     {
         using var package = RegressionTestPackageScope.Create();
         using var state = new RegressionTestRpcState();
-        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent.subagents");
+        var rpc = new RegressionTestRpcClient(state, "younics.ai.agent.subagents");
         var assembly = typeof(SubagentManagementService).Assembly;
         Assert.Null(assembly.GetType("Sunder.Package.Agent.Subagents.Runtime.SubagentsWorkerComposition"));
         Assert.Null(assembly.GetType("Sunder.Package.Agent.Subagents.Runtime.SubagentsWorkerBindings"));
@@ -52,15 +52,15 @@ public sealed class SubagentsManagementSourceMigrationTests
     {
         using var package = RegressionTestPackageScope.Create();
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        await using var catalog = new RegressionTestExtensionCatalog(new RegressionTestRpcClient(state, "sunder.package.agent"));
+        await using var catalog = new RegressionTestExtensionCatalog(new RegressionTestRpcClient(state, "younics.ai.agent"));
         var store = new SubagentStore(package.Context);
         store.Activate();
         var domain = new SubagentService(store);
         await using var management = await catalog.CreateSubagentRuntimeManagementAsync(domain);
         var receiver = catalog.Subagents();
-        var registration = receiver.Register(management.Service, "sunder.package.agent.subagents.owner");
+        var registration = receiver.Register(management.Service, "younics.ai.agent.subagents.owner");
         Assert.Equal("subagents.management", registration.ProviderId);
-        catalog.AddGeneratedProvider("sunder.package.agent.subagents", management.Service, registration);
+        catalog.AddGeneratedProvider("younics.ai.agent.subagents", management.Service, registration);
         var selected = Assert.Single((await receiver.Providers<SubagentManagementServices.ISubagentsManagementService>().ListAsync()).Providers);
         var client = selected.Service;
         Assert.Empty((await ReadProjectionAsync(client.ManagementAsync())).Subagents!);

@@ -9,7 +9,7 @@ using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Services;
 using Sunder.Sdk.Worker;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -21,7 +21,6 @@ public sealed partial class AgentPublicSourceMigrationTests
         "src/Sunder.Package.Agent/Rpc/Public/AgentRpcValues.cs",
         "src/Sunder.Package.Agent/Rpc/Public/WorkspaceModels.cs",
         "src/Sunder.Package.Agent/Rpc/Public/WorkspaceExecutionResolver.cs",
-        "src/Sunder.Package.Agent/Rpc/Public/WorkspacePathMigrator.cs",
         "src/Sunder.Package.Agent/Rpc/Public/ExecutionTarget.cs",
         "src/Sunder.Package.Agent/Rpc/Public/ExecutionContextModels.cs",
         "src/Sunder.Package.Agent/Rpc/Public/ExecutionOperationModels.cs",
@@ -81,7 +80,7 @@ public sealed partial class AgentPublicSourceMigrationTests
             var baselineBytes = File.ReadAllBytes(baselinePath);
             var owned = JsonNode.Parse(baselineBytes)!["contracts"]!.AsObject()
                 .Where(entry => entry.Value!["current"]!["exposure"]!.GetValue<string>() == "public").ToArray();
-            Assert.Equal(19, owned.Length);
+            Assert.Equal(18, owned.Length);
             var descriptors = new Dictionary<string, SunderRpcContractDescriptor>(StringComparer.Ordinal);
             foreach (var entry in owned)
             {
@@ -97,7 +96,7 @@ public sealed partial class AgentPublicSourceMigrationTests
             using (var receipt = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(sourceRoot, "obj", configuration, "net10.0/sunder-analysis",
                 System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier, "sunder-rpc/authoring-receipt.v1.json"))))
             {
-                Assert.Equal(22, receipt.RootElement.GetProperty("bundles").GetArrayLength());
+                Assert.Equal(21, receipt.RootElement.GetProperty("bundles").GetArrayLength());
                 Assert.Equal(12, receipt.RootElement.GetProperty("providers").GetArrayLength());
                 var contractIds = receipt.RootElement.GetProperty("contracts").EnumerateArray().ToDictionary(
                     contract => contract.GetProperty("contractKey").GetString()!, contract => contract.GetProperty("contractId").GetString()!, StringComparer.Ordinal);
@@ -113,9 +112,7 @@ public sealed partial class AgentPublicSourceMigrationTests
                 AgentRuntimeUsePolicyAssertions.AssertWorkerReceipt(repository, receipt.RootElement);
             }
 
-            var declaration = assembly.GetType("Sunder.Package.Agent.Rpc.Public.WorkspacePathMigratorService", true)!;
-            Assert.True(declaration.IsInterface);
-            Assert.Equal(4, declaration.GetMethods().Length);
+            Assert.Null(assembly.GetType("Sunder.Package.Agent.Rpc.Public.WorkspacePathMigratorService"));
             var execution = assembly.GetType("Sunder.Package.Agent.Rpc.Public.ExecutionTargetService", true)!;
             Assert.True(execution.IsInterface);
             Assert.Equal(19, execution.GetMethods().Length);
@@ -129,7 +126,7 @@ public sealed partial class AgentPublicSourceMigrationTests
                 var implementationType = assembly.GetType("Sunder.Package.Agent.Services." + implementation, true)!;
                 Assert.True(implementationType.IsClass);
                 Assert.Equal(SunderServiceExposure.Public, implementationType.GetCustomAttribute<SunderServiceAttribute>()!.Exposure);
-                var generated = assembly.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Services.I" + contract + "Service", true)!;
+                var generated = assembly.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Services.I" + contract + "Service", true)!;
                 Assert.True(generated.IsInterface);
                 Assert.Equal(count, generated.GetMethods().Length);
             }
@@ -142,29 +139,29 @@ public sealed partial class AgentPublicSourceMigrationTests
             await VerifyPromptContextAsync(assembly, descriptors);
             await VerifyChildRunsAsync(assembly, descriptors[RegressionTestBindings.ChildRunExecutor]);
             await VerifyBehaviorLoopAsync(assembly, descriptors);
-            await VerifyRunControlAsync(assembly, descriptors["sunder.agent.run.control"]);
-            await VerifyRuntimeCatalogAsync(assembly, descriptors["sunder.agent.runtime.catalog"]);
+            await VerifyRunControlAsync(assembly, descriptors["younics.ai.agent.run.control"]);
+            await VerifyRuntimeCatalogAsync(assembly, descriptors["younics.ai.agent.runtime.catalog"]);
             await VerifyExecutionTargetAsync(root, loadContext, assembly, descriptors[RegressionTestBindings.ExecutionTargets]);
             await VerifyExtensionsAsync(root, loadContext, assembly, descriptors);
             await VerifyToolLifecycleAsync(root, loadContext, assembly, descriptors);
-            await VerifyChatAsync(root, loadContext, assembly, descriptors["sunder.agent.chat.provider"]);
-            await VerifySessionCleanersAsync(assembly, descriptors["sunder.agent.session.cleaner"]);
-            var serviceType = assembly.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Services.IWorkspaceExecutionResolverService", true)!;
+            await VerifyChatAsync(root, loadContext, assembly, descriptors["younics.ai.agent.chat.provider"]);
+            await VerifySessionCleanersAsync(assembly, descriptors["younics.ai.agent.session.cleaner"]);
+            var serviceType = assembly.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Services.IWorkspaceExecutionResolverService", true)!;
             Assert.True(serviceType.IsInterface);
             using var state = new RegressionTestRpcState();
-            var client = new RegressionTestRpcClient(state, "sunder.package.agent.builder");
+            var client = new RegressionTestRpcClient(state, "younics.sunder.package.maker");
             await using var receiver = new GeneratedServiceTestScope(client);
             var target = new PromptTargetProbe();
             using var sources = new RegressionTestSourceProviders();
             var targetRegistration = sources.Create(RegressionTestBindings.ExecutionTargets, target, receiver);
-            var targetSnapshot = state.Add("sunder.package.agent", descriptors[RegressionTestBindings.ExecutionTargets], target, targetRegistration.Handler,
+            var targetSnapshot = state.Add("younics.ai.agent", descriptors[RegressionTestBindings.ExecutionTargets], target, targetRegistration.Handler,
                 EmptyDisposable.Instance, targetRegistration.ProviderId, "2.0.0");
             var targetReference = Assert.Single((await receiver.Providers<AgentServices.IExecutionTargetService>().ListAsync()).Providers).Reference;
             var resolver = CreateResolver(targetReference);
             var service = resolver;
             var registration = sources.Create(RegressionTestBindings.WorkspaceExecutionResolver, service, receiver);
             var resolverDescriptor = descriptors[RegressionTestBindings.WorkspaceExecutionResolver];
-            state.Add("sunder.package.agent", resolverDescriptor, service, registration.Handler, EmptyDisposable.Instance, registration.ProviderId, "2.0.0");
+            state.Add("younics.ai.agent", resolverDescriptor, service, registration.Handler, EmptyDisposable.Instance, registration.ProviderId, "2.0.0");
             var providers = (await client.DiscoverAsync(resolverDescriptor.ContractId)).Providers;
             var source = providers.Single(value => value.ProviderId == registration.ProviderId);
             var resolverJson = new JsonSerializerOptions(JsonSerializerDefaults.Web)

@@ -1,341 +1,509 @@
-using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using System.Diagnostics;
+using System.Runtime.ExceptionServices;
+using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Abstractions;
-using Sunder.Sdk.Packaging;
+using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Builder;
 
-public sealed record BuilderProjectValidationResult(BuilderProjectRecord? Project, string? Error)
+/// <summary>The App's typed boundary to the local Builder worker. Discovery never installs or builds.</summary>
+public interface IBuilderBackend
 {
-    public bool IsValid => Project is not null && string.IsNullOrWhiteSpace(Error);
+    Task<IReadOnlyList<BuilderProjectInspection>> DiscoverAsync(string folder, CancellationToken cancellationToken = default);
+    Task<BuilderProjectInspection> InspectAsync(string entryPoint, CancellationToken cancellationToken = default);
+    Task<BuilderToolchainStatus> GetToolchainsAsync(BuilderProjectKind kind, bool checkUpdates, CancellationToken cancellationToken = default);
+    Task<IBuilderJobExecution> CaptureExecutionAsync(CancellationToken cancellationToken = default)
+        => Task.FromException<IBuilderJobExecution>(new NotSupportedException("Builder jobs require exact worker execution capture before Start."));
+    Task<PackageWorkerExecutionObservation> ObserveExecutionAsync(PackageWorkerExecutionReference reference, CancellationToken cancellationToken = default)
+        => Task.FromException<PackageWorkerExecutionObservation>(new NotSupportedException("Builder execution observations are unavailable."));
+    Task<BuilderRecordedJobRecovery?> RecoverRecordedJobAsync(BuilderJobReservation reservation, CancellationToken cancellationToken = default);
 }
 
-public sealed record BuilderInitializationResult(
-    BuilderProjectRecord Project,
-    IReadOnlyList<BuilderPrerequisiteStatus> Prerequisites);
+public sealed class BuilderJobCleanupException(string message, Exception innerException) : IOException(message, innerException);
 
-public sealed record BuilderProjectOperationResult(BuilderProjectRecord Project, string RuntimeLog);
-
+/// <summary>Journal-admitted job gateway. A watch is polled, but never occupies the finite operation queue.</summary>
 public sealed class BuilderProjectApplicationService(
-    BuilderSetupService setupService,
-    BuilderWorkspaceExecutionService executionService,
+    IBuilderBackend backend,
     IBuilderProjectStore projectStore,
-    BuilderPathService pathService)
+    BuilderOperationQueue operations,
+    IBuilderJobJournal journal) : IAsyncDisposable
 {
-    public Task<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesAsync(
-        CancellationToken cancellationToken = default)
-        => executionService.ListWorkspacesAsync(cancellationToken);
+    private readonly object _sync = new();
+    private readonly CancellationTokenSource _lifetime = new();
+    private readonly Dictionary<string, Task> _active = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, OwnedJob> _uncertain = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, BuilderJobStopResult> _completed = new(StringComparer.Ordinal);
+    private readonly Queue<string> _completedOrder = new();
+    private static readonly TimeSpan ReconciliationBudget = TimeSpan.FromSeconds(12);
+    private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(500);
+    private Task? _disposal;
 
     public Task<IReadOnlyList<BuilderProjectRecord>> LoadProjectsAsync(CancellationToken cancellationToken = default)
         => projectStore.LoadAsync(cancellationToken);
 
-    public async Task<IReadOnlyList<BuilderPrerequisiteStatus>> CheckSetupAsync(
-        string workspaceId,
-        CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<BuilderProjectInspection>> DiscoverAsync(string folder, CancellationToken cancellationToken = default)
+        => backend.DiscoverAsync(folder, cancellationToken);
+
+    public Task<BuilderProjectInspection> InspectAsync(string entryPoint, CancellationToken cancellationToken = default)
+        => backend.InspectAsync(entryPoint, cancellationToken);
+
+    public Task<BuilderToolchainStatus> GetToolchainsAsync(BuilderProjectKind kind, bool checkUpdates, CancellationToken cancellationToken = default)
+        => backend.GetToolchainsAsync(kind, checkUpdates, cancellationToken);
+
+    /// <summary>Reconciles an uncertain watcher stop after transport recovery, using bounded independent cleanup.</summary>
+    public async Task<BuilderJobStopResult> StopJobAsync(string jobId)
     {
-        var execution = await executionService.ResolveAsync(workspaceId, cancellationToken);
-        return await setupService.CheckAsync(execution, cancellationToken);
+        OwnedJob? owned;
+        lock (_sync)
+        {
+            if (_completed.TryGetValue(jobId, out var terminal)) return terminal;
+            _uncertain.TryGetValue(jobId, out owned);
+        }
+        if (owned is null)
+            return RememberStop(await journal.ReconcileAsync(jobId, backend).ConfigureAwait(false));
+        if (!owned.StartAttempted || owned.Admission.HasPositiveNoStartProof)
+        {
+            using var noStart = new CancellationTokenSource(ReconciliationBudget);
+            return RememberStop(await journal.AbortKnownNotStartedAsync(owned.Admission, noStart.Token).ConfigureAwait(false));
+        }
+        if (owned.Admission.TerminalReceipt is { } receipt)
+            return await CommitStopAsync(owned, receipt.Result).ConfigureAwait(false);
+        var started = Stopwatch.GetTimestamp();
+        using (var readback = new CancellationTokenSource(ReconciliationBudget))
+        {
+            try
+            {
+                if (await journal.ReadCompletedAsync(owned.Reservation, readback.Token).ConfigureAwait(false) is { } completed)
+                    return RememberStop(completed); // Completion may have committed before its acknowledgement was lost.
+            }
+            catch (OperationCanceledException error) when (readback.IsCancellationRequested)
+            { throw new TimeoutException("Builder journal readback did not reconnect within the 12-second reconciliation budget.", error); }
+        }
+        var cleanup = await CancelAndReadAsync(owned, ReconciliationBudget - Stopwatch.GetElapsedTime(started)).ConfigureAwait(false);
+        if (cleanup.Result is null)
+        {
+            if (cleanup.Failure is { } error && IsBoundaryFailure(error)) ExceptionDispatchInfo.Capture(error).Throw();
+            throw new IOException("The Builder job has not confirmed shutdown. Reconnect before changing this project or SDK.");
+        }
+        return await CommitStopAsync(owned, cleanup.Result, cleanup.Remaining).ConfigureAwait(false);
     }
 
-    public async Task<string> InstallDotnetSdkAsync(
-        string workspaceId,
-        CancellationToken cancellationToken = default)
+    public async Task<BuilderJobSnapshot> RunJobAsync(BuilderJobRequest request,
+        Func<BuilderJobSnapshot, Task>? changed = null, CancellationToken cancellationToken = default, string? projectId = null)
     {
-        var execution = await executionService.ResolveAsync(workspaceId, cancellationToken);
-        return await setupService.InstallDotnetSdkAsync(execution, cancellationToken);
-    }
-
-    public async Task<string> InstallTemplateAsync(
-        string workspaceId,
-        CancellationToken cancellationToken = default)
-    {
-        var execution = await executionService.ResolveAsync(workspaceId, cancellationToken);
-        return await setupService.InstallTemplateAsync(execution, cancellationToken);
-    }
-
-    public BuilderProjectValidationResult ValidateProject(
-        BuilderProjectRecord project,
-        IReadOnlyList<AgentWorkspaceRecord> workspaces,
-        bool requireExistingFolder,
-        bool requireInitializedPaths)
-    {
-        if (string.IsNullOrWhiteSpace(project.DisplayName))
+        // Allocate once, before either the queue or an uncertain RPC. Application
+        // runs never reuse an already owned ID, including across backend changes.
+        request = request with { Id = request.Id ?? Guid.NewGuid().ToString("N") };
+        var run = new JobRun(request);
+        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (_sync)
         {
-            return Invalid("Package name is required.");
+            ObjectDisposedException.ThrowIf(_disposal is not null, this);
+            if (_active.ContainsKey(request.Id) || _uncertain.ContainsKey(request.Id) || _completed.ContainsKey(request.Id))
+                throw new InvalidOperationException("This Builder job identity is already owned. Reconcile it rather than starting it again.");
+            _active.Add(request.Id, completed.Task);
         }
-
-        if (!PackageId.TryParse(project.PackageId, out _))
-        {
-            return Invalid($"Package id must be a lowercase dot-separated ASCII id of at most {PackageId.MaximumLength} characters.");
-        }
-
-        if (string.IsNullOrWhiteSpace(project.WorkspaceId))
-        {
-            return Invalid("Workspace is required.");
-        }
-
-        var workspace = workspaces.FirstOrDefault(item => string.Equals(item.WorkspaceId, project.WorkspaceId, StringComparison.OrdinalIgnoreCase));
-        if (workspace is null)
-        {
-            return Invalid("Selected workspace was not found.");
-        }
-
-        if (workspace.Paths.Count == 0)
-        {
-            return Invalid("Selected workspace has no workspace paths.");
-        }
-
-        if (string.IsNullOrWhiteSpace(project.WorkspacePathId))
-        {
-            return Invalid("Workspace path is required.");
-        }
-
-        var workspacePath = workspace.Paths.FirstOrDefault(path =>
-            string.Equals(path.PathId, project.WorkspacePathId, StringComparison.OrdinalIgnoreCase));
-        if (workspacePath is null)
-        {
-            return Invalid("Selected workspace path was not found.");
-        }
-
-        if (!requireInitializedPaths)
-        {
-            return new BuilderProjectValidationResult(project, null);
-        }
-
-        if (string.IsNullOrWhiteSpace(project.ExecutionProjectFolder))
-        {
-            return Invalid("Initialize the package project first.");
-        }
-
-        if (string.IsNullOrWhiteSpace(project.ProjectFolder))
-        {
-            return Invalid("Host project folder is not available. Reinitialize the package project.");
-        }
-
         try
         {
-            project = project with
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
+            try
             {
-                ProjectFolder = pathService.ResolveContainedHostPath(project.ProjectFolder, workspacePath.HostPath),
-            };
+                return request.Operation == "watch"
+                    ? await ReconcileAndRunAsync(run, changed, linked.Token).ConfigureAwait(false)
+                    : await EnqueueFiniteJobAsync(run, projectId, changed, linked.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException error) when (cancellationToken.IsCancellationRequested
+                && error.CancellationToken == linked.Token && !PresentationExceptionPolicy.IsFatal(error))
+            {
+                // Translate only the private token we introduced. Presentation must not have to
+                // treat every cancellation racing its owner stop as that owner's cancellation.
+                throw new OperationCanceledException(error.Message, error, cancellationToken);
+            }
         }
-        catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException)
+        finally
         {
-            return Invalid(ex.Message);
+            lock (_sync)
+            {
+                // Record positive no-attempt authority separately from any job result.
+                // Even an unexpected/fatal exit after dispatch retains its exact capture.
+                if (run.StopResult is null && run.Owned is { } owned && run.Admission?.PendingWriteAttempted == true)
+                    _uncertain[request.Id] = owned;
+                else if (!run.AttemptedStart && run.StopResult is null)
+                    RememberStop(BuilderJobStopResult.NotStarted(request.Id));
+                _active.Remove(request.Id);
+            }
+            completed.TrySetResult();
         }
-
-        if (requireExistingFolder && !Directory.Exists(project.ProjectFolder))
-        {
-            return Invalid("Project folder does not exist.");
-        }
-
-        return new BuilderProjectValidationResult(project, null);
     }
 
-    public async Task<BuilderInitializationResult> InitializeProjectAsync(
-        BuilderProjectRecord project,
-        AgentWorkspacePathRecord workspacePath,
-        BackgroundProcessContext context,
-        Func<IReadOnlyList<BuilderPrerequisiteStatus>, Task>? prerequisitesChanged = null)
+    private async Task<BuilderJobSnapshot> EnqueueFiniteJobAsync(JobRun run, string? projectId,
+        Func<BuilderJobSnapshot, Task>? changed, CancellationToken token)
     {
-        context.ReportIndeterminate("Resolving workspace execution target...");
-        var execution = await executionService.ResolveAsync(project.WorkspaceId, context.CancellationToken);
-        var prerequisites = await EnsurePrerequisitesInstalledAsync(execution, context, prerequisitesChanged);
-        if (!prerequisites.All(status => status.IsInstalled))
+        var request = run.Request;
+        var sdk = request.Operation.EndsWith("-sdk", StringComparison.Ordinal);
+        var technology = request.Kind == BuilderProjectKind.Dotnet ? ".NET" : "Node.js";
+        var action = request.Operation switch
         {
-            throw new InvalidOperationException(BuildMissingPrerequisitesMessage(prerequisites));
-        }
-
-        context.ReportIndeterminate("Creating Sunder package project...");
-        var executionProjectFolder = pathService.ResolveExecutionProjectFolder(execution, workspacePath, project.DisplayName);
-        var hostMapping = await execution.MapToHostPathAsync(executionProjectFolder, context.CancellationToken);
-        if (!hostMapping.IsInsideAllowedRoot)
-        {
-            throw new InvalidOperationException("Generated project path is outside the selected workspace paths.");
-        }
-
-        // Host mapping is advisory only. The target-owned dotnet process below creates the project;
-        // Builder must not turn a point-in-time mapping into a host-side structured mutation.
-        var hostProjectFolder = hostMapping.HostPath;
-
-        var workingDirectory = pathService.GetExecutionParentFolder(executionProjectFolder) ?? execution.DefaultExecutionRoot;
-        var result = await execution.RunProcessAsync(
-            "dotnet",
-            BuildTemplateArguments(project, executionProjectFolder),
-            workingDirectory,
-            cancellationToken: context.CancellationToken);
-        if (result.ExitCode != 0)
-        {
-            throw new InvalidOperationException(string.IsNullOrWhiteSpace(result.CombinedOutput)
-                ? "Package initialization failed."
-                : result.CombinedOutput);
-        }
-
-        // The template's private service follows the package version and needs no
-        // authored baseline. Restore through the same target before ordinary Build.
-        context.ReportIndeterminate("Restoring the new package project...");
-        var restore = await execution.RunProcessAsync("dotnet", ["restore", executionProjectFolder], executionProjectFolder,
-            cancellationToken: context.CancellationToken);
-        if (restore.ExitCode != 0)
-            throw new InvalidOperationException(string.IsNullOrWhiteSpace(restore.CombinedOutput) ? "Package restore failed." : restore.CombinedOutput);
-
-        var initialized = project with
-        {
-            ExecutionProjectFolder = executionProjectFolder,
-            ProjectFolder = hostProjectFolder,
-            UpdatedAtUtc = DateTimeOffset.UtcNow,
+            "ensure-sdk" => "Set up SDK", "repair-sdk" => "Repair SDK", "remove-sdk" => "Remove SDK",
+            "create" => "Create project", "setup" => "Set up project", "build" => "Build",
+            "archive" => "Create package archive", "save-metadata" => "Save source metadata", _ => request.Operation,
         };
-        return new BuilderInitializationResult(initialized, prerequisites);
+        var title = $"{action} · {(sdk ? technology : request.DisplayName ?? Path.GetFileName(request.ProjectFolder) ?? technology)}";
+        Dictionary<string, string> metadata = new(StringComparer.Ordinal)
+        {
+            ["builder.operation"] = request.Operation, ["builder.jobId"] = request.Id!,
+            ["builder.kind"] = request.Kind == BuilderProjectKind.Dotnet ? "dotnet" : "node",
+        };
+        if ((projectId ?? request.PackageId ?? request.EntryPoint) is { } identity) metadata["builder.projectId"] = identity;
+        if (request.PackageId is { } packageId) metadata["builder.packageId"] = packageId;
+        if (request.ProjectFolder is { } folder) metadata["builder.projectFolder"] = folder;
+        if (request.EntryPoint is { } entry) metadata["builder.entryPoint"] = entry;
+        try
+        {
+            return await operations.EnqueueAsync(title, sdk ? BackgroundProcessIndicator.Settings : BackgroundProcessIndicator.Main,
+                metadata, context => ReconcileAndRunAsync(run, async snapshot =>
+                {
+                    if (snapshot.State == "running") context.ReportIndeterminate(snapshot.Message);
+                    else context.ReportStatus(snapshot.Error ?? snapshot.Message);
+                    if (changed is not null) await changed(snapshot).ConfigureAwait(false);
+                }, context.CancellationToken), token).ConfigureAwait(false);
+        }
+        catch (BuilderQueueCanceledException error)
+        {
+            // A shell-owned cancellation has no caller token, but it is a real terminal outcome.
+            // No backend ran, so retain only the request identity, never project/session results.
+            var snapshot = new BuilderJobSnapshot
+            {
+                Id = request.Id!, Operation = request.Operation, State = "cancelled", Message = error.Message, Output = string.Empty,
+            };
+            if (changed is not null) await changed(snapshot).ConfigureAwait(false);
+            return snapshot;
+        }
     }
 
-    public async Task<BuilderProjectOperationResult> BuildProjectAsync(
-        BuilderProjectRecord project,
-        BackgroundProcessContext context)
+    private async Task<BuilderJobSnapshot> ReconcileAndRunAsync(JobRun run,
+        Func<BuilderJobSnapshot, Task>? changed, CancellationToken token)
     {
-        context.ReportIndeterminate("Running dotnet build...");
-        var execution = await executionService.ResolveAsync(project.WorkspaceId, context.CancellationToken);
-        var projectFolder = pathService.ResolveExecutionProjectFolder(project);
-        var result = await execution.RunProcessAsync(
-            "dotnet",
-            ["build", projectFolder],
-            projectFolder,
-            cancellationToken: context.CancellationToken);
-        if (result.ExitCode != 0)
+        OwnedJob[] uncertain;
+        lock (_sync) uncertain = _uncertain.Values.ToArray();
+        foreach (var prior in uncertain.Where(prior => OwnershipOverlaps(prior.Request, run.Request)))
         {
-            throw new BuilderProjectOperationException(
-                "dotnet build failed. See Builder runtime log for details.",
-                string.IsNullOrWhiteSpace(result.CombinedOutput) ? "dotnet build failed." : result.CombinedOutput);
+            token.ThrowIfCancellationRequested();
+            await StopJobAsync(prior.Request.Id!).ConfigureAwait(false);
         }
-
-        var updated = project with { UpdatedAtUtc = DateTimeOffset.UtcNow };
-        return new BuilderProjectOperationResult(updated, string.Empty);
+        return await PollJobAsync(run, changed, token).ConfigureAwait(false);
     }
 
-    public async Task<BuilderProjectOperationResult> PublishProjectAsync(
-        BuilderProjectRecord project,
-        BackgroundProcessContext context)
+    private async Task<BuilderJobSnapshot> PollJobAsync(JobRun run,
+        Func<BuilderJobSnapshot, Task>? changed, CancellationToken token)
     {
-        context.ReportIndeterminate("Checking package APIs and creating the package archive...");
-        var execution = await executionService.ResolveAsync(project.WorkspaceId, context.CancellationToken);
-        var projectFolder = pathService.ResolveExecutionProjectFolder(project);
-        // Check/Freeze retain the reviewed public API gates and are no-ops for
-        // private-only packages, whose services follow their package version.
-        var result = await execution.RunProcessAsync(
-            "dotnet",
-            ["msbuild", "-t:CheckSunderContracts;FreezeSunderContracts;PackSunderPackage", "-p:Configuration=Release"],
-            projectFolder,
-            timeoutSeconds: 900,
-            cancellationToken: context.CancellationToken);
-        if (result.ExitCode != 0)
+        token.ThrowIfCancellationRequested();
+        var admission = run.Admission = new BuilderJobAdmission(run.Request);
+        OwnedJob? owned = null;
+        try
         {
-            throw new BuilderProjectOperationException(
-                "Package creation failed. See Builder runtime log for details.",
-                string.IsNullOrWhiteSpace(result.CombinedOutput) ? "Package creation failed." : result.CombinedOutput);
-        }
+            try
+            {
+                await journal.AdmitAndStartAsync(admission, backend,
+                    current => ReadWithCallerHandoffAsync(backend.CaptureExecutionAsync, null, current), token).ConfigureAwait(false);
+            }
+            catch (Exception error) when (admission.StartAttempted && admission.StopResult is null
+                && !token.IsCancellationRequested && error is not InvalidDataException
+                && (IsReconnecting(error) || error is IOException or HttpRequestException or TimeoutException))
+            {
+                // Acceptance may have happened. Only read this job on this backend;
+                // never replay Start against a newly selected Worker incarnation.
+            }
+            finally
+            {
+                run.AttemptedStart = admission.StartAttempted;
+                if (admission.Execution is { } execution && admission.Reservation is { } reservation)
+                    owned = run.Owned = new OwnedJob(admission.Request, execution, reservation, admission);
+                if (admission.StopResult is { } stopped) run.StopResult = RememberStop(stopped);
+            }
 
-        return new BuilderProjectOperationResult(
-            project with { UpdatedAtUtc = DateTimeOffset.UtcNow },
-            string.IsNullOrWhiteSpace(result.CombinedOutput) ? "Package archive created." : result.CombinedOutput);
+            while (true)
+            {
+                var snapshot = await ReadJobAsync(owned!, changed, token).ConfigureAwait(false);
+                if (changed is not null) await changed(snapshot).ConfigureAwait(false);
+                if (snapshot.State != "running")
+                { run.StopResult = await CommitStopAsync(owned!, BuilderJobStopResult.KnownTerminal(snapshot)).ConfigureAwait(false); return snapshot; }
+                await Task.Delay(PollInterval, token).ConfigureAwait(false);
+            }
+        }
+        catch (Exception error) when (admission.StartAttempted && !admission.HasPositiveNoStartProof && owned is not null && !PresentationExceptionPolicy.IsFatal(error)
+            && (!IsRecoverable(error)
+                || error is SunderRpcException || IsBoundaryFailure(error)
+                || error is OperationCanceledException && !PresentationCancellation.IsExpected(error, token)))
+        {
+            // Cleanup must not need another presentation callback, and a foreign cancellation or
+            // callback fault must not be replaced by a successful-looking terminal job snapshot.
+            var cleanup = await CancelAndReadAsync(owned).ConfigureAwait(false);
+            if (cleanup.Result is null)
+            {
+                var unconfirmed = await UnconfirmedAsync(owned,
+                    IsRecoverable(error) && error is not OperationCanceledException ? changed : null, error, cleanup.Remaining).ConfigureAwait(false);
+                // Retain exact ownership without disguising a permission/protocol rejection as a reconnect.
+                if (IsBoundaryFailure(error)) throw;
+                throw unconfirmed;
+            }
+            run.StopResult = await CommitStopAsync(owned, cleanup.Result, cleanup.Remaining).ConfigureAwait(false);
+            throw;
+        }
+        catch (Exception error) when (admission.StartAttempted && !admission.HasPositiveNoStartProof && owned is not null && IsRecoverable(error))
+        {
+            // A canceled/failed start may already have created source. Never use the canceled caller token
+            // for cleanup and always fetch the final partial result before relinquishing this job.
+            var cleanup = await CancelAndReadAsync(owned).ConfigureAwait(false);
+            if (cleanup.Result is { } stopped)
+            {
+                stopped = run.StopResult = await CommitStopAsync(owned, stopped, cleanup.Remaining).ConfigureAwait(false);
+                if (stopped.TerminalSnapshot is { } final)
+                {
+                    if (changed is not null) await changed(final).ConfigureAwait(false);
+                    return final;
+                }
+                // Host cleanup permits resource/exclusion release, not a fabricated business outcome.
+                throw new BuilderJobOutcomeUnknownException(stopped, error);
+            }
+            if (cleanup.Failure is { } failure && IsBoundaryFailure(failure)) ExceptionDispatchInfo.Capture(failure).Throw();
+            throw await UnconfirmedAsync(owned, changed, error, cleanup.Remaining).ConfigureAwait(false);
+        }
     }
 
-    public async Task<IReadOnlyList<BuilderPrerequisiteStatus>> EnsurePrerequisitesInstalledAsync(
-        string workspaceId,
-        BackgroundProcessContext context,
-        Func<IReadOnlyList<BuilderPrerequisiteStatus>, Task>? prerequisitesChanged = null)
+    private async Task<BuilderJobSnapshot> ReadJobAsync(OwnedJob owned,
+        Func<BuilderJobSnapshot, Task>? changed, CancellationToken token)
     {
-        context.ReportIndeterminate("Resolving workspace execution target...");
-        var execution = await executionService.ResolveAsync(workspaceId, context.CancellationToken);
-        return await EnsurePrerequisitesInstalledAsync(execution, context, prerequisitesChanged);
+        var snapshot = await ReadWithCallerHandoffAsync(
+            current => owned.Execution.GetJobAsync(owned.Request.Id!, current),
+            owned.Last is { } last && changed is not null
+                ? () => changed(last with { ConnectionState = BuilderJobConnectionState.Reconnecting }) : null, token).ConfigureAwait(false);
+        snapshot = AcceptSnapshot(owned, snapshot);
+        await journal.SavePartialAsync(owned.Reservation, snapshot, token).ConfigureAwait(false);
+        return snapshot;
     }
 
-    private async Task<IReadOnlyList<BuilderPrerequisiteStatus>> EnsurePrerequisitesInstalledAsync(
-        BuilderWorkspaceExecution execution,
-        BackgroundProcessContext context,
-        Func<IReadOnlyList<BuilderPrerequisiteStatus>, Task>? prerequisitesChanged)
+    private static BuilderJobSnapshot AcceptSnapshot(OwnedJob owned, BuilderJobSnapshot snapshot)
     {
-        context.ReportIndeterminate("Checking package builder prerequisites...");
-        var statuses = await CheckAndReportSetupAsync(execution, context.CancellationToken, prerequisitesChanged);
-        if (statuses.All(status => status.IsInstalled))
-        {
-            context.ReportProgress(100, "Package builder setup is already ready.");
-            return statuses;
-        }
-
-        if (IsMissing(statuses, BuilderPrerequisiteKind.DotnetSdk))
-        {
-            context.ReportIndeterminate("Downloading .NET SDK installer...");
-            var message = await setupService.InstallDotnetSdkAsync(execution, context.CancellationToken);
-            context.ReportIndeterminate(message);
-            statuses = await CheckAndReportSetupAsync(execution, context.CancellationToken, prerequisitesChanged);
-        }
-
-        if (IsMissing(statuses, BuilderPrerequisiteKind.DotnetSdk))
-        {
-            context.ReportProgress(100, "Complete the .NET SDK installer, then recheck setup.");
-            return statuses;
-        }
-
-        if (IsMissing(statuses, BuilderPrerequisiteKind.SunderTemplate))
-        {
-            context.ReportIndeterminate("Installing Sunder package template...");
-            var message = await setupService.InstallTemplateAsync(execution, context.CancellationToken);
-            context.ReportIndeterminate(message);
-            statuses = await CheckAndReportSetupAsync(execution, context.CancellationToken, prerequisitesChanged);
-        }
-
-        context.ReportProgress(100, statuses.All(status => status.IsInstalled)
-            ? "Package builder setup is ready."
-            : "Some prerequisites are still missing.");
-        return statuses;
+        var request = owned.Request;
+        if (snapshot.Id != request.Id || snapshot.Operation != request.Operation || snapshot.BackendId != request.BackendId
+            || snapshot.State is not ("running" or "succeeded" or "failed" or "cancelled"))
+            throw new InvalidDataException("Builder returned a job from a different backend, request or operation, or an invalid outcome.");
+        return owned.Last = snapshot;
     }
 
-    private async Task<IReadOnlyList<BuilderPrerequisiteStatus>> CheckAndReportSetupAsync(
-        BuilderWorkspaceExecution execution,
-        CancellationToken cancellationToken,
-        Func<IReadOnlyList<BuilderPrerequisiteStatus>, Task>? prerequisitesChanged)
+    // Only reads use this loop. Start is
+    // deliberately absent: a reconnect cannot justify replaying a mutation.
+    private static async Task<T> ReadWithCallerHandoffAsync<T>(Func<CancellationToken, Task<T>> read,
+        Func<Task>? reconnecting, CancellationToken token)
     {
-        var statuses = await setupService.CheckAsync(execution, cancellationToken);
-        if (prerequisitesChanged is not null)
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+        deadline.CancelAfter(ReconciliationBudget);
+        var started = Stopwatch.GetTimestamp();
+        var notified = false;
+        while (true)
         {
-            await prerequisitesChanged(statuses);
+            try
+            {
+                var remaining = ReconciliationBudget - Stopwatch.GetElapsedTime(started);
+                if (remaining <= TimeSpan.Zero) throw new TimeoutException("Builder job observation could not reconnect within its bounded budget.");
+                return await read(deadline.Token).WaitAsync(remaining, token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException error) when (token.IsCancellationRequested && error.CancellationToken == deadline.Token)
+            { throw new OperationCanceledException(error.Message, error, token); }
+            catch (OperationCanceledException error) when (deadline.IsCancellationRequested && error.CancellationToken == deadline.Token)
+            { throw new TimeoutException("Builder job observation could not reconnect within its bounded budget.", error); }
+            catch (Exception error) when (IsReconnecting(error) && !deadline.IsCancellationRequested)
+            {
+                if (!notified && reconnecting is not null) await reconnecting().ConfigureAwait(false);
+                notified = true;
+                await Task.Delay(PollInterval, token).ConfigureAwait(false);
+            }
         }
-
-        return statuses;
     }
 
-    private string[] BuildTemplateArguments(BuilderProjectRecord project, string outputFolder)
-        =>
-        [
-            "new",
-            "sunder-package",
-            "--name",
-            pathService.ToProjectName(project.DisplayName),
-            "--packageId",
-            project.PackageId,
-            "--packageName",
-            project.DisplayName,
-            "--output",
-            outputFolder,
-        ];
-
-    private static BuilderProjectValidationResult Invalid(string error)
-        => new(null, error);
-
-    private static bool IsMissing(IReadOnlyList<BuilderPrerequisiteStatus> statuses, BuilderPrerequisiteKind kind)
-        => statuses.Any(status => status.Kind == kind && !status.IsInstalled);
-
-    private static string BuildMissingPrerequisitesMessage(IReadOnlyList<BuilderPrerequisiteStatus> statuses)
+    private async Task<CleanupAttempt> CancelAndReadAsync(OwnedJob owned, TimeSpan? remaining = null)
     {
-        var missing = statuses
-            .Where(status => !status.IsInstalled)
-            .Select(status => $"{status.Name}: {status.Detail}")
-            .ToArray();
-        return missing.Length == 0
-            ? "Package builder setup is incomplete."
-            : "Package builder setup is incomplete." + Environment.NewLine + string.Join(Environment.NewLine, missing);
+        var budget = remaining ?? ReconciliationBudget;
+        if (budget <= TimeSpan.Zero) return new(null, new TimeoutException("Builder cleanup exhausted its reconciliation budget."));
+        var started = Stopwatch.GetTimestamp();
+        var result = await CancelAndReadCoreAsync(owned, budget).ConfigureAwait(false);
+        return result with { Remaining = budget - Stopwatch.GetElapsedTime(started) };
     }
-}
 
-public sealed class BuilderProjectOperationException(string message, string runtimeLog) : Exception(message)
-{
-    public string RuntimeLog { get; } = runtimeLog;
+    private async Task<CleanupAttempt> CancelAndReadCoreAsync(OwnedJob owned, TimeSpan budget)
+    {
+        using var cleanup = new CancellationTokenSource(budget);
+        if (owned.Last is { State: "succeeded" or "failed" or "cancelled" } terminal)
+            return new(BuilderJobStopResult.KnownTerminal(terminal));
+        try
+        {
+            try
+            {
+                // Each attempt remains fenced to this capture. A failed Cancel is not
+                // stop authority; read the old job or its independently owned Host receipt.
+                await owned.Execution.CancelJobAsync(owned.Request.Id!, cleanup.Token).WaitAsync(cleanup.Token).ConfigureAwait(false);
+            }
+            catch (Exception error) when (IsRecoverable(error) && !cleanup.IsCancellationRequested)
+            {
+                if (IsBoundaryFailure(error)) return new(null, error);
+            }
+            do
+            {
+                Exception? readFailure = null;
+                try
+                {
+                    var snapshot = AcceptSnapshot(owned, await owned.Execution.GetJobAsync(owned.Request.Id!, cleanup.Token)
+                        .WaitAsync(cleanup.Token).ConfigureAwait(false));
+                    if (snapshot.State != "running") return new(BuilderJobStopResult.KnownTerminal(snapshot));
+                }
+                catch (Exception error) when (IsRecoverable(error) && !cleanup.IsCancellationRequested)
+                {
+                    if (IsBoundaryFailure(error)) return new(null, error);
+                    readFailure = error;
+                }
+
+                PackageWorkerExecutionObservation? observation = null;
+                try
+                {
+                    observation = await owned.Execution.ObserveCleanupAsync(cleanup.Token).WaitAsync(cleanup.Token).ConfigureAwait(false);
+                    if (observation.Reference != owned.Execution.Reference || !Enum.IsDefined(observation.State))
+                        throw new InvalidDataException("Builder received cleanup evidence for a different execution or an invalid state.");
+                    if (observation.State == PackageWorkerExecutionState.CleanupConfirmed)
+                        return new(BuilderJobStopResult.ExecutionCleaned(owned.Request.Id!, owned.Last, observation));
+                }
+                catch (Exception error) when (IsRecoverable(error) && !cleanup.IsCancellationRequested)
+                {
+                    if (IsBoundaryFailure(error) || !IsReconnecting(error)) return new(null, error);
+                }
+
+                // Ordinary disappearance/NotFound is never confirmation. Keep the
+                // exact capture and partial result; a later explicit reconciliation
+                // may observe the Host's positive, historical cleanup receipt.
+                if (readFailure is not null && !IsReconnecting(readFailure)
+                    && observation?.State != PackageWorkerExecutionState.CleanupPending)
+                    return new(null, readFailure);
+                await Task.Delay(100, cleanup.Token).ConfigureAwait(false);
+            } while (true);
+        }
+        catch (Exception error) when (IsRecoverable(error))
+        {
+            // Preserve partial source even when a disconnected worker cannot confirm shutdown.
+            return new(null, error);
+        }
+    }
+
+    private async Task<BuilderJobCleanupException> UnconfirmedAsync(OwnedJob owned,
+        Func<BuilderJobSnapshot, Task>? changed, Exception error, TimeSpan remaining)
+    {
+        const string message = "Builder could not confirm that the job stopped. Reconnect before retrying.";
+        lock (_sync) _uncertain[owned.Request.Id!] = owned;
+        if (remaining > TimeSpan.Zero)
+        {
+            using var persistence = new CancellationTokenSource(remaining);
+            try
+            {
+                await journal.SaveFailureAsync(owned.Reservation, error.Message, persistence.Token).ConfigureAwait(false);
+                if (owned.Last is { } partial) await journal.SavePartialAsync(owned.Reservation, partial, persistence.Token).ConfigureAwait(false);
+            }
+            catch (Exception persistenceError) when (IsRecoverable(persistenceError))
+            { error = new AggregateException("Builder stop and ownership persistence did not both confirm completion.", error, persistenceError); }
+        }
+        if (owned.Last is { } last && changed is not null)
+            await changed(last with { ConnectionState = BuilderJobConnectionState.StopUnconfirmed }).ConfigureAwait(false);
+        return new(message + " " + error.Message, error);
+    }
+
+    private BuilderJobStopResult RememberStop(BuilderJobStopResult result)
+    {
+        lock (_sync)
+        {
+            _uncertain.Remove(result.JobId);
+            if (_completed.TryAdd(result.JobId, result)) _completedOrder.Enqueue(result.JobId);
+            while (_completedOrder.Count > 64) _completed.Remove(_completedOrder.Dequeue());
+            return _completed.GetValueOrDefault(result.JobId) ?? result;
+        }
+    }
+
+    private async Task<BuilderJobStopResult> CommitStopAsync(OwnedJob owned, BuilderJobStopResult result, TimeSpan? remaining = null)
+    {
+        var budget = remaining ?? ReconciliationBudget;
+        if (budget <= TimeSpan.Zero) throw new TimeoutException("Builder stop proof arrived without remaining reconciliation time to acknowledge its journal update. Retry reconciliation; do not replay Start.");
+        using var persistence = new CancellationTokenSource(budget);
+        try { result = await journal.CompleteOwnedAsync(owned.Admission, result, persistence.Token).ConfigureAwait(false); }
+        catch (OperationCanceledException error) when (persistence.IsCancellationRequested)
+        { throw new TimeoutException("Builder stop proof could not acknowledge its journal update within the remaining reconciliation budget.", error); }
+        return RememberStop(result);
+    }
+
+    internal bool IsJobStopConfirmed(string? jobId)
+    {
+        lock (_sync) return jobId is not null && _completed.ContainsKey(jobId);
+    }
+
+    private static bool IsBoundaryFailure(Exception error)
+        => error is InvalidDataException or UnauthorizedAccessException
+            or SunderRpcException { Error.Kind: SunderRpcErrorKind.PermissionDenied or SunderRpcErrorKind.Protocol or SunderRpcErrorKind.Validation }
+            || error is AggregateException aggregate && aggregate.InnerExceptions.Any(IsBoundaryFailure)
+            || error.InnerException is { } inner && IsBoundaryFailure(inner);
+
+    private static bool IsReconnecting(Exception error)
+        => error is SunderRpcException rpc
+            && (((rpc.Error.Kind is SunderRpcErrorKind.Unavailable or SunderRpcErrorKind.ResourceExhausted)
+                    && rpc.Error.Code != "rpc.worker-execution.unsupported")
+                || rpc.Error is { Kind: SunderRpcErrorKind.StaleEndpoint, Code: "rpc.caller-retired" });
+
+    internal static bool IsRecoverable(Exception error)
+        => error is not PresentationCallbackException && !PresentationExceptionPolicy.IsFatal(error)
+            && (error is not AggregateException aggregate || aggregate.InnerExceptions.All(IsRecoverable))
+            && (error.InnerException is null || IsRecoverable(error.InnerException));
+
+    internal bool HasUnconfirmedJob(string projectFolder)
+    {
+        OwnedJob[] uncertain;
+        lock (_sync) uncertain = _uncertain.Values.ToArray();
+        var scope = new BuilderJobExclusionScope(Path.TrimEndingDirectorySeparator(new BuilderPathService().CanonicalEntryPoint(projectFolder)), false);
+        return uncertain.Any(owned => owned.Reservation.Scope.Overlaps(scope));
+    }
+
+    private static bool OwnershipOverlaps(BuilderJobRequest left, BuilderJobRequest right)
+        => BuilderJobExclusionScope.Create(left).Overlaps(BuilderJobExclusionScope.Create(right));
+
+    private sealed class OwnedJob(BuilderJobRequest request, IBuilderJobExecution execution,
+        BuilderJobReservation reservation, BuilderJobAdmission admission)
+    {
+        public BuilderJobRequest Request { get; } = request;
+        public IBuilderJobExecution Execution { get; } = execution;
+        public BuilderJobReservation Reservation { get; } = reservation;
+        public BuilderJobAdmission Admission { get; } = admission;
+        public bool StartAttempted => Admission.StartAttempted;
+        public BuilderJobSnapshot? Last { get; set; }
+    }
+
+    private sealed class JobRun(BuilderJobRequest request)
+    {
+        public BuilderJobRequest Request { get; } = request;
+        public BuilderJobAdmission? Admission { get; set; }
+        public OwnedJob? Owned { get; set; }
+        public bool AttemptedStart { get; set; }
+        public BuilderJobStopResult? StopResult { get; set; }
+    }
+
+    private sealed record CleanupAttempt(BuilderJobStopResult? Result, Exception? Failure = null)
+    { public TimeSpan Remaining { get; init; } }
+
+    public ValueTask DisposeAsync()
+    {
+        lock (_sync) return new(_disposal ??= Task.Run(async () =>
+        {
+            await _lifetime.CancelAsync().ConfigureAwait(false);
+            Task[] active;
+            lock (_sync) active = _active.Values.ToArray();
+            await Task.WhenAll(active).ConfigureAwait(false);
+            string[] uncertain;
+            lock (_sync) uncertain = _uncertain.Keys.ToArray();
+            try { await Task.WhenAll(uncertain.Select(StopJobAsync)).ConfigureAwait(false); }
+            finally { _lifetime.Dispose(); }
+        }));
+    }
 }

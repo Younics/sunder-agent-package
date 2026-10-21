@@ -25,14 +25,14 @@ public sealed class AgentNativeReleaseSmokeTests(
     OfficialRuntimeFixture executionRuntimes)
     : IClassFixture<OfficialRuntimeFixture>
 {
-    private const string AgentPackageId = "sunder.package.agent";
-    private const string BuilderPackageId = "sunder.package.agent.builder";
-    private const string McpPackageId = "sunder.package.agent.mcp";
-    private const string OpenAiPackageId = "sunder.package.agent.provider.openai";
-    private const string SemanticMemoryPackageId = "sunder.package.agent.memory.semantic";
-    private const string ShellPackageId = "sunder.package.agent.tools.shell";
-    private const string AgentOwnerContractId = "sunder.agent.owner.runtime";
-    private const string BuilderRuntimeContractId = "sunder.package.agent.builder.runtime";
+    private const string AgentPackageId = "younics.ai.agent";
+    private const string BuilderPackageId = "younics.sunder.package.maker";
+    private const string McpPackageId = "younics.ai.agent.mcp";
+    private const string OpenAiPackageId = "younics.ai.agent.provider.openai";
+    private const string SemanticMemoryPackageId = "younics.ai.agent.memory.semantic";
+    private const string ShellPackageId = "younics.ai.agent.tools.shell";
+    private const string AgentOwnerContractId = "younics.ai.agent.owner.runtime";
+    private const string BuilderRuntimeContractId = "younics.sunder.package.maker.runtime";
 
     [NativeReleaseFact]
     [Trait("Category", "Release")]
@@ -1049,7 +1049,7 @@ public sealed class AgentNativeReleaseSmokeTests(
                 + $"{exception.Error.Message} Details: {exception.Error.Details?.GetRawText() ?? "<none>"}. "
                 + launchDiagnostics.DescribeStandardError(BuilderPackageId) + "; "
                 + launchDiagnostics.DescribeStandardError(AgentPackageId) + "; "
-                + launchDiagnostics.DescribeStandardError("sunder.package.agent.execution.local"),
+                + launchDiagnostics.DescribeStandardError("younics.ai.agent.execution.local"),
                 exception);
         }
         var reference = ReadContentReference(response.GetProperty("content"));

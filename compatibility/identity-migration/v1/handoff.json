@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "identityMapVersion": 1,
+  "verifiedAtUtc": "2026-10-14T07:23:59.143327+00:00",
+  "scope": "map-schema-and-capture-guards-only-no-product-build-or-test",
+  "mapSha256": "31ad8ca21dc07dcf562e5cb53e5168097b2f626ec3be4fc14edb941eb3de36a9",
+  "schemaSha256": "0885b18bba540ec919ab5167ed7884790d3097a17f9ecc58a234378684568057",
+  "predecessorManifestSha256": "7dec732776212922f3c1534ffe8fae9119f57b6d0876efc631c9eba1d3afb904",
+  "checkerSha256": "5e6354a7da8ce7aabfa839528cb74addb7a17d8812879c74e522a44a06349c51",
+  "gitIndexSha256AtHandoff": "eab9249ebdb7c38ff91f7d4eca5c5ad40f35b34fed82242b50236e39551d068b",
+  "currentInputsEqualCapturedBytes": true,
+  "unrelatedGitStatusAndFileSelectionUnchanged": true,
+  "negativeGuardsPassed": 18,
+  "importedServiceNamesChain": {
+    "path": "tests/Sunder.Package.Agent.Tests/AgentSourceMigrationProjectChanges.ApprovedImportedServiceNames.cs",
+    "sha256": "00916b8c1c262e0c8e0abab1f2c9a913081ceebf8029252b50474a38b704ca68",
+    "afterPinsVerified": 35,
+    "composition": "identity inverse first, then BeforeApprovedImportedServiceNames, then existing inverses"
+  },
+  "packagesMapped": 15,
+  "publicContractsMapped": 19,
+  "privateContractsMapped": 13,
+  "automaticProviderIdsMapped": 1
+}

@@ -11,7 +11,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.DoesNotContain(worker.GetReferencedAssemblies(), reference => reference.Name is "Sunder.Package.Agent.Protocol" or "Sunder.Agent.Execution.Common");
         foreach (var name in new[] { "AgentToolExecutionContext", "AgentResourceOperationContext", "AgentPromptContextReceipt" })
             AssertImportedRoleModel(worker, name);
-        foreach (var type in new[] { "Sunder.Generated.Packages.Sunder_Package_Agent_Services.IExecutionTargetService",
+        foreach (var type in new[] { "Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Execution_Target.IExecutionTargetService",
             "Sunder.Package.Agent.Protocol.AgentExecutionFacetIds" })
             Assert.Same(worker, worker.GetType(type, true)!.Assembly);
         Assert.Null(worker.GetType("Sunder.Agent.Execution.Common.HostSecurePathEngine"));

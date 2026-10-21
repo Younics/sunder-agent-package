@@ -32,20 +32,20 @@ internal static class FileReadHandler
                 IsDirectory: true);
         }
 
-        var legacyTruncated = false;
+        var slicedTruncated = false;
         var supportsRangedRead = FilesExecutionFacets.SupportsFacet(
             target,
             AgentExecutionFacetIds.RangedFileRead);
         var content = supportsRangedRead
             ? NumberLines(result.Content, args.EffectiveOffset)
-            : SliceAndNumberLegacyResult(result.Content, args.EffectiveOffset, args.EffectiveLimit, out legacyTruncated);
+            : SliceAndNumberWholeFileResult(result.Content, args.EffectiveOffset, args.EffectiveLimit, out slicedTruncated);
         return new FileReadToolResult(
             FileToolResult.Success(request.ToolId, $"Read {result.Path}", content, FileToolResult.BackendId(target),
-                result.WasTruncated || (!supportsRangedRead && legacyTruncated)),
+                result.WasTruncated || (!supportsRangedRead && slicedTruncated)),
             IsDirectory: false);
     }
 
-    private static string SliceAndNumberLegacyResult(string content, int offset, int limit, out bool wasTruncated)
+    private static string SliceAndNumberWholeFileResult(string content, int offset, int limit, out bool wasTruncated)
     {
         var lines = SplitLines(content);
         wasTruncated = offset - 1 + limit < lines.Length;

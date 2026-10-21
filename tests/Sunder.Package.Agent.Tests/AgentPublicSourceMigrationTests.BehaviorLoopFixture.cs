@@ -7,7 +7,7 @@ using Sunder.Package.Agent.Services;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Services;
 using Sunder.Sdk.Worker;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -18,14 +18,14 @@ public sealed partial class AgentPublicSourceMigrationTests
         IAgentBehaviorLoop loop, string loopPackage = "test.behavior.extension")
     {
         var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        var owner = new BehaviorCallRecorder(new RegressionTestRpcClient(state, "sunder.package.agent"));
+        var owner = new BehaviorCallRecorder(new RegressionTestRpcClient(state, "younics.ai.agent"));
         var ownerReceiver = new GeneratedServiceTestScope(owner);
         var providerReceiver = new GeneratedServiceTestScope(new RegressionTestRpcClient(state, loopPackage));
         var activeRuns = new AgentActiveRunRegistry();
         var registry = new AgentRoleRunControls(assembly, activeRuns);
         var control = new AgentRunControlService(activeRuns);
         var controlRegistration = ownerReceiver.Register(control, descriptors[RegressionTestBindings.RunControls].ContractId);
-        state.Add("sunder.package.agent", descriptors[RegressionTestBindings.RunControls], control, controlRegistration.Handler,
+        state.Add("younics.ai.agent", descriptors[RegressionTestBindings.RunControls], control, controlRegistration.Handler,
             EmptyDisposable.Instance, controlRegistration.ProviderId, "2.0.0");
         var loopType = assembly.GetType("Sunder.Package.Agent.Rpc.Public.BehaviorLoopService", true)!;
         Assert.True(loopType.IsInterface);

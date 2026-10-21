@@ -1,4 +1,4 @@
-using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using IWorkspaceEditorService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Workspace_Editor.IWorkspaceEditorService;
 using Sunder.Sdk.Services;
 using Sunder.Package.Agent.Contracts.Models;
 
@@ -10,13 +10,13 @@ public sealed partial class DockerExecutionWorkspaceEditorContributor(
     DockerImageCatalogService imageCatalogService)
     : IWorkspaceEditorService
 {
-    private const string PackageId = "sunder.package.agent.execution.docker";
+    private const string PackageId = "younics.ai.agent.execution.docker";
     private const string TargetId = "docker";
     private const string SectionId = "docker-execution-settings";
     private const string ImageFieldId = "image";
     private const string ShellPathFieldId = "shell-path";
 
-    public string ContributorId => "sunder.package.agent.execution.docker.workspace-editor";
+    public string ContributorId => "younics.ai.agent.execution.docker.workspace-editor";
 
     public ValueTask<AgentServiceIdentity> DescribeAsync(CancellationToken token = default)
     { token.ThrowIfCancellationRequested(); return ValueTask.FromResult(new AgentServiceIdentity { Id = ContributorId, DisplayName = ContributorId }); }
@@ -79,7 +79,7 @@ public sealed partial class DockerExecutionWorkspaceEditorContributor(
     }
 
     public async ValueTask<AgentEditorSaveResult> SaveSectionAsync(
-        CSunder_Agent_Workspace_Editor_WorkspaceEditorSaveSectionRequest invocation,
+        CYounics_Ai_Agent_Workspace_Editor_WorkspaceEditorSaveSectionRequest invocation,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();

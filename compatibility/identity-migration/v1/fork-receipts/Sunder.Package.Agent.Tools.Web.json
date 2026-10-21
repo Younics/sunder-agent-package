@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "checked-identity-fork-proposal",
+  "migrationId": "agent-runtime-identity-v1",
+  "mapSha256": "31ad8ca21dc07dcf562e5cb53e5168097b2f626ec3be4fc14edb941eb3de36a9",
+  "predecessorManifestSha256": "7dec732776212922f3c1534ffe8fae9119f57b6d0876efc631c9eba1d3afb904",
+  "predecessorBaselineSha256": "1f3e53c0e4b09c9861ffab1071613e0b77a30c66f5d65cf6f06c0ae1de06a881",
+  "oldOwner": "sunder.package.agent.tools.web",
+  "newOwner": "younics.ai.agent.tools.web",
+  "packageVersion": "2.0.0",
+  "baselineSha256": "57a31e093451260e47d39fed18d7b717234aa12719ddb5f1b929010a85dc08c2",
+  "sourceInputFingerprint": "8aed28dc73afac8867c45d5678f44c9e110388da4651fdf7601cdf65a97c1d33",
+  "contractLockSha256": "bbd60447f40a7df7b950c032b0bb335adc8bf8acf2110ea28f2e6f16b19a6555",
+  "completionRule": "active-baseline-sha256-matches",
+  "releaseOrPublicationClaim": false
+}

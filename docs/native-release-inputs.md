@@ -56,7 +56,7 @@ qualification is exported. Subsequent signing, reindexing or editing invalidates
 the qualified bytes. Native tests must consume the producer's retained archives.
 
 After the existing native lifecycle/metric gate, call
-`record-native-leaf-evidence.sh` with its existing ten positional arguments. It:
+`python3 -B scripts/release/native-family.py record` with its ten positional arguments. It:
 
 1. Checks the whole qualified leaf against Core's exact file list and digest sidecar.
 2. Matches every non-composed native file to the tested archive, allowing Core's
@@ -70,11 +70,15 @@ Each package in native schema 3 retains `workerProject`, `leaf`, `testedArchive`
 ```json
 {
   "qualification": {
-    "path": "sunder.package.agent/osx-arm64/role-inputs.v1.json",
+    "path": "younics.ai.agent/osx-arm64/role-inputs.v1.json",
     "sha256": "<exact reviewed Core evidence digest>",
     "size": 12345
   },
-  "metricsSize": 1234
+  "metricsSize": 1234,
+  "sourceRoleUses": {
+    "lockSha256": "<exact qualified contract-lock digest>",
+    "roleUses": []
+  }
 }
 ```
 
@@ -85,6 +89,17 @@ qualification, its LF-terminated digest sidecar, every qualified leaf file, and
 `metrics/<packageId>.<rid>.json`. Paths are independent of the producer checkout.
 The digest is bound into the owning CI provenance; an unauthenticated sidecar or
 locally fabricated provenance alone is not release approval or native attestation.
+
+`sourceRoleUses` is copied from the qualified Core Worker receipt and rechecked
+against that receipt during transport. It is carried through fan-in so the release
+reader can verify separately authored typed Runtime uses against the current lock
+and all six RID qualifications. Package API `consumerRoles`/`requiredContracts`
+still govern their complete import groups. Provider imports grant no consumer use
+by themselves: an additional use must match the source receipt's exact contract,
+descriptor/ABI, role, required flag and actions. In particular, Web's optional
+execution-target discovery does not grant invocation, subscription or App use.
+Older schema-3 captures without this projection are usable only when their qualified
+receipts contain no separately authored role uses.
 
 ## Fan-in prerequisites and execution
 
@@ -98,7 +113,7 @@ dotnet restore <canonical-project.csproj> --locked-mode --source "$NUGET_SOURCE"
   -p:SunderAgentVersion=2.0.0 -p:ContinuousIntegrationBuild=true
 ```
 
-Then call `assemble-native-family.sh` with its existing eight positional arguments.
+Then call `python3 -B scripts/release/native-family.py assemble` with its eight positional arguments.
 The assembler performs **no Restore, Build, Compile, source generation, package
 execution or Host launch**. It validates all six uploaded bundles before extracting
 any of them, extracts into a fresh private directory beneath the artifact output,
@@ -157,7 +172,7 @@ toolsets are selected by Core normally. Fan-in never bootstraps source tooling.
   leave an incomplete family: verification fails closed and the same handoff can
   be rerun. If the publication lock survives a terminated process, remove that
   directory only after confirming the prior publisher has stopped. Never publish
-  a directory until `verify-native-family-evidence.sh` succeeds.
+  a directory until `native-family.py verify` succeeds.
 
 ## Release-owner integration
 
@@ -166,7 +181,7 @@ The owned workflow/publish/promote/acceptance/handoff changes are separate:
 1. Provision Python 3.9+ on producer and fan-in runners, alongside existing tools.
 2. Use the same reviewed/frozen source, exact restored SDK/tool inputs and source
    mode on all native jobs and fan-in. Add the explicit fan-in restore step **before**
-   `assemble-native-family.sh`; restore is no longer hidden inside that script.
+   `native-family.py assemble`; restore is never hidden inside the assembler.
 3. Keep existing native artifact names (`sunder-agent-native-leaves-<rid>`) and
    `native-leaf-evidence-<rid>.json` / `native-leaves-<rid>.tar.gz` upload/download
    names. Merge all six artifacts, including their metric directories.

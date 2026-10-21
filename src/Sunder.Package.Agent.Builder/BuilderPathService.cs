@@ -1,5 +1,3 @@
-using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
-
 using Sunder.Sdk.Packaging;
 
 namespace Sunder.Package.Agent.Builder;
@@ -14,45 +12,27 @@ public sealed class BuilderPathService
         var physicalRoot = ResolvePhysicalPath(allowedRoot);
         if (!IsSameOrChildPath(physicalPath, physicalRoot))
         {
-            throw new InvalidOperationException($"Host path '{hostPath}' resolves outside the selected workspace path.");
+            throw new InvalidOperationException($"Host path '{hostPath}' resolves outside the selected parent folder.");
         }
 
         return physicalPath;
     }
 
-    public string ResolveExecutionProjectFolder(BuilderProjectRecord project)
-        => string.IsNullOrWhiteSpace(project.ExecutionProjectFolder)
-            ? project.ProjectFolder
-            : project.ExecutionProjectFolder;
-
-    public string ResolveExecutionProjectFolder(
-        BuilderWorkspaceExecution execution,
-        AgentWorkspacePathRecord workspacePath,
-        string displayName)
+    public string ResolveCreationFolder(string parentFolder, string subfolder)
     {
-        var root = execution.ResolveExecutionWorkspacePath(workspacePath);
-        return execution.CombinePath(root, ToProjectName(displayName));
+        if (!Path.IsPathFullyQualified(parentFolder)) throw new ArgumentException("Choose an absolute local parent folder.");
+        if (string.IsNullOrWhiteSpace(subfolder) || subfolder is "." or ".."
+            || subfolder.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || subfolder.Contains('/') || subfolder.Contains('\\'))
+            throw new ArgumentException("Enter a single subfolder name, without path separators.");
+        return ResolveContainedHostPath(Path.Combine(parentFolder, subfolder), parentFolder);
     }
 
-    public bool IsProjectInitialized(BuilderProjectRecord? project)
-    {
-        if (project is null || string.IsNullOrWhiteSpace(project.ProjectFolder) || !Directory.Exists(project.ProjectFolder))
-        {
-            return false;
-        }
+    public string CanonicalEntryPoint(string path) => ResolvePhysicalPath(path);
 
-        try
-        {
-            return Directory.EnumerateFiles(project.ProjectFolder, "*.csproj", SearchOption.TopDirectoryOnly)
-                .Any(path => !IsContractsProjectFile(path));
-        }
-        catch
-        {
-            return false;
-        }
-    }
+    public bool SameEntryPoint(string left, string right)
+        => string.Equals(CanonicalEntryPoint(left), CanonicalEntryPoint(right), PathComparison);
 
-    public string FormatWorkspacePath(string hostPath)
+    public string FormatLocalPath(string hostPath)
     {
         if (string.IsNullOrWhiteSpace(hostPath))
         {
@@ -76,23 +56,6 @@ public sealed class BuilderPathService
         }
 
         return fullPath.Replace(Path.DirectorySeparatorChar, '/');
-    }
-
-    public string? GetExecutionParentFolder(string path)
-    {
-        var trimmed = path.TrimEnd('/', '\\');
-        var separatorIndex = Math.Max(trimmed.LastIndexOf('/'), trimmed.LastIndexOf('\\'));
-        if (separatorIndex <= 0)
-        {
-            return null;
-        }
-
-        if (trimmed.Length > 2 && trimmed[1] == ':' && separatorIndex == 2)
-        {
-            return trimmed[..3];
-        }
-
-        return trimmed[..separatorIndex];
     }
 
     public string ToProjectName(string displayName)

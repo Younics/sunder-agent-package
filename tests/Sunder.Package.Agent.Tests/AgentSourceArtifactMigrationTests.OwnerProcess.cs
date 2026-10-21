@@ -30,7 +30,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             await active.Prepare();
             await active.Activate();
             Assert.True(File.Exists(Path.Combine(workspace, "agent/agent.db")));
-            var profile = await active.Invoke("sunder.package.agent.agent.profile.provider", "agent-profile", "create-profile", "Native source profile");
+            var profile = await active.Invoke("younics.ai.agent.agent.profile.provider", "agent-profile", "create-profile", "Native source profile");
             profileId = profile.GetProperty("profileId").GetString()!;
             var createdWorkspace = await active.Invoke("agent.owner.runtime", "agent-runtime", "workspace-command",
                 JsonSerializer.SerializeToElement(new AgentWorkspaceCommand(AgentWorkspaceCommandKind.Create, DisplayName: "Native source workspace"),

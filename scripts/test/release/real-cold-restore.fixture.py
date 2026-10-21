@@ -47,7 +47,7 @@ def main(source, tasks, catalog):
             path = directory / "Restore.proj"
             ET.ElementTree(project).write(path, encoding="utf-8", xml_declaration=True)
             projects.append((path, lock, original))
-        owner = next(p for p in release.inventory(source)["packages"] if p["packageId"] == "sunder.package.agent")
+        owner = next(p for p in release.inventory(source)["packages"] if p["packageId"] == "younics.ai.agent")
         candidate_project = Path(owner["projectPath"])
         candidate = source / candidate_project.parent / "bin/Debug/net10.0" / f"{candidate_project.stem}.2.0.0.sunderpkg"
         probe = next(path for path, lock, _ in projects if lock["packageArtifacts"])

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "kind": "checked-identity-fork-proposal",
+  "migrationId": "agent-runtime-identity-v1",
+  "mapSha256": "31ad8ca21dc07dcf562e5cb53e5168097b2f626ec3be4fc14edb941eb3de36a9",
+  "predecessorManifestSha256": "7dec732776212922f3c1534ffe8fae9119f57b6d0876efc631c9eba1d3afb904",
+  "predecessorBaselineSha256": "db4330af6184d044ad55e9fef96c24aa9b8cd009b7a589721cc9a6d5e100761b",
+  "oldOwner": "sunder.package.agent.provider.gemini",
+  "newOwner": "younics.ai.agent.provider.gemini",
+  "packageVersion": "2.0.0",
+  "baselineSha256": "6066531734666821d5d9a4f435f375094a9c17201bbaa64cdd0b8642edca98af",
+  "sourceInputFingerprint": "8ffeabbed92a828d1b5c43195e0ef7111848b50443ac56e0e36bfa68f19fc108",
+  "contractLockSha256": "56acce7a248d603a490fc25df8573c2f5000173eafdc8d0a99c3fe4fd48b6c59",
+  "completionRule": "active-baseline-sha256-matches",
+  "releaseOrPublicationClaim": false
+}

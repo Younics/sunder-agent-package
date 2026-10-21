@@ -11,23 +11,24 @@ using MemoryWorker::Sunder.Package.Agent.Memory.Semantic;
 using MemoryWorker::Sunder.Package.Agent.Memory.Semantic.Services;
 using MemoryWorker::Sunder.Package.Agent.Contracts.Models;
 using AgentDurableLifecycleIntegrityException = MemoryWorker::Sunder.Package.Agent.Contracts.Contracts.AgentDurableLifecycleIntegrityException;
-using AgentDurableLifecycleEventEnvelope = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentDurableLifecycleEventEnvelope;
-using AgentDurableLifecycleEventPayload = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentDurableLifecycleEventPayload;
-using AgentLifecycleEventKind = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentLifecycleEventKind;
-using AgentMemoryConsistencyBarrier = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentMemoryConsistencyBarrier;
-using AgentMessageRole = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentMessageRole;
-using AgentPromptContextPlan = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentPromptContextPlan;
-using AgentPromptContextRequest = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentPromptContextRequest;
-using AgentRunContextRecord = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentRunContextRecord;
-using AgentRunStatus = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentRunStatus;
-using AgentSessionContextRecord = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionContextRecord;
-using AgentSessionState = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionState;
-using AgentTurnContextRecord = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnContextRecord;
-using AgentTurnItemKind = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnItemKind;
-using AgentTurnItemRecord = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnItemRecord;
-using AgentTurnKind = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnKind;
-using AgentTurnRecord = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnRecord;
-using MemoryServices = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentDurableLifecycleEventEnvelope = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentDurableLifecycleEventEnvelope;
+using AgentDurableLifecycleEventPayload = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentDurableLifecycleEventPayload;
+using AgentLifecycleEventKind = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentLifecycleEventKind;
+using AgentMemoryConsistencyBarrier = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentMemoryConsistencyBarrier;
+using AgentMessageRole = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentMessageRole;
+using AgentPromptContextPlan = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentPromptContextPlan;
+using AgentPromptContextRequest = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentPromptContextRequest;
+using AgentRunContextRecord = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentRunContextRecord;
+using AgentRunStatus = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentRunStatus;
+using AgentSessionContextRecord = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentSessionContextRecord;
+using AgentSessionState = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentSessionState;
+using AgentTurnContextRecord = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTurnContextRecord;
+using AgentTurnItemKind = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTurnItemKind;
+using AgentTurnItemRecord = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTurnItemRecord;
+using AgentTurnKind = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTurnKind;
+using AgentTurnRecord = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTurnRecord;
+using IEmbeddingProviderService = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Embedding_Provider.IEmbeddingProviderService;
+using IRuntimeCatalogService = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Runtime_Catalog.IRuntimeCatalogService;
 
 public sealed class SemanticMemoryDurableLifecycleTests
 {
@@ -450,8 +451,8 @@ public sealed class SemanticMemoryDurableLifecycleTests
         var settings = new MemorySemanticSettingsService(scope.Context);
         using var catalog = new RegressionTestExtensionCatalog();
         using var resolver = new SemanticModelRuntimeResolver(
-            catalog.Memory().Providers<MemoryServices.IRuntimeCatalogService>(),
-            catalog.Memory().Providers<MemoryServices.IEmbeddingProviderService>(),
+            catalog.Memory().Providers<IRuntimeCatalogService>(),
+            catalog.Memory().Providers<IEmbeddingProviderService>(),
             settings);
         var backend = new SemanticMemoryRetrievalBackend(store, resolver, settings);
         var recall = new SemanticMemoryRecallService(store, backend, new SemanticMemoryMetricsService());

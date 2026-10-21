@@ -3,7 +3,7 @@ using System.Runtime.ExceptionServices;
 using System.Text;
 using System.Threading.Channels;
 using Microsoft.Extensions.AI;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using Sunder.Generated.Packages.Younics_Ai_Agent_Models;
 using Sunder.Sdk.Rpc;
 using AgentChatClientContext = Sunder.Package.Agent.Contracts.Models.AgentChatClientContext;
 using AgentChatProviderException = Sunder.Package.Agent.Contracts.Models.AgentChatProviderException;

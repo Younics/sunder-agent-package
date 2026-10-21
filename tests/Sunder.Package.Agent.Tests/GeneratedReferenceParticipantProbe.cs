@@ -3,7 +3,7 @@ using System.Runtime.Loader;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Services;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -36,7 +36,7 @@ internal static class GeneratedReferenceParticipantProbe
     private static async Task VerifyAsync(Assembly module, bool observed, string completion)
     {
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
+        var rpc = new RegressionTestRpcClient(state, "younics.ai.agent");
         await using var targetReceiver = new GeneratedServiceTestScope(rpc.ForCaller("example.controlled.target"));
         await using var toolReceiver = new GeneratedServiceTestScope(rpc.ForCaller("example.controlled.tools"));
         await using var consumer = new GeneratedServiceTestScope(rpc);

@@ -5,7 +5,7 @@ using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Logging;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Services;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 
 namespace Sunder.Package.Agent.Services;
 
@@ -27,6 +27,7 @@ public sealed class AgentLifecycleDispatcher : IAsyncDisposable
     private CancellationTokenSource? _lifetime;
     private Task? _worker;
     private bool _startupRecoveryPending;
+    private bool _discoveryDeferred;
     private bool _disposed;
 
     [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
@@ -263,6 +264,7 @@ public sealed class AgentLifecycleDispatcher : IAsyncDisposable
     {
         var now = DateTimeOffset.UtcNow;
         var replayPending = false;
+        var readDeferred = false;
         var active = new Dictionary<string, ActiveLifecycleSubscription>(StringComparer.Ordinal);
         ServiceProviderCatalog<AgentServices.IDurableLifecycleObserverService>? catalog;
         try
@@ -270,9 +272,15 @@ public sealed class AgentLifecycleDispatcher : IAsyncDisposable
             catalog = await _observers.ListAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (SunderRpcException exception) when (!cancellationToken.IsCancellationRequested
-            && exception.Error.Kind == SunderRpcErrorKind.Unavailable)
+            && IsDeferredDiscoveryRead(exception))
         {
+            // Generation retirement can withdraw catalog discovery before the
+            // worker's stop token arrives. Keep durable deliveries pending, just
+            // as for a temporarily unavailable catalog; do not classify expected
+            // retirement as a dispatcher fault. Security/protocol errors escape.
             catalog = null;
+            readDeferred = true;
+            await ReportDeferredDiscoveryAsync(exception, "catalog").ConfigureAwait(false);
         }
         foreach (var observer in catalog?.Providers ?? [])
         {
@@ -284,9 +292,11 @@ public sealed class AgentLifecycleDispatcher : IAsyncDisposable
                 replayPending |= AddSubscription(active, observer, identity.Id, identity.DisplayName, now);
             }
             catch (SunderRpcException exception) when (!cancellationToken.IsCancellationRequested
-                && exception.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable)
+                && IsDeferredDiscoveryRead(exception))
             {
                 // The existing bounded outbox poll reconciles reappearing owners.
+                readDeferred = true;
+                await ReportDeferredDiscoveryAsync(exception, "observer-metadata").ConfigureAwait(false);
             }
         }
 
@@ -295,7 +305,42 @@ public sealed class AgentLifecycleDispatcher : IAsyncDisposable
         {
             _activeSubscriptions = active;
         }
+        if (!readDeferred)
+        {
+            bool recovered;
+            lock (_syncRoot) { recovered = _discoveryDeferred; _discoveryDeferred = false; }
+            if (recovered) await LogSafelyAsync(PackageLogLevel.Information, "lifecycle.discovery.recovered",
+                "Durable lifecycle observer discovery is current again.", null).ConfigureAwait(false);
+        }
         return replayPending;
+    }
+
+    // List and Describe are read-only. A canceled/pressure-limited discovery pass
+    // supplies no identity or delivery acknowledgement; keep the outbox pending
+    // and re-read on the existing bounded poll. Do not apply this to Handle:
+    // uncertain observer side effects retain the normal durable delivery policy.
+    private static bool IsDeferredDiscoveryRead(SunderRpcException exception)
+        => exception.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable
+            or SunderRpcErrorKind.ResourceExhausted or SunderRpcErrorKind.Cancelled;
+
+    private async Task ReportDeferredDiscoveryAsync(SunderRpcException exception, string phase)
+    {
+        // Retirement already has its ordinary quiet reconnect behavior. Pressure
+        // and remote cancellation remain observable, once per outage rather than
+        // logging an Error every 250ms or silently dropping diagnostics.
+        if (exception.Error.Kind is not (SunderRpcErrorKind.ResourceExhausted or SunderRpcErrorKind.Cancelled)) return;
+        lock (_syncRoot)
+        {
+            if (_discoveryDeferred) return;
+            _discoveryDeferred = true;
+        }
+        var attributes = new Dictionary<string, object?>(CreateProcessingFailureAttributes(exception), StringComparer.Ordinal)
+        {
+            ["lifecycle.failure_code"] = "observer_discovery_deferred",
+            ["lifecycle.phase"] = phase,
+        };
+        await LogSafelyAsync(PackageLogLevel.Warning, "lifecycle.discovery.deferred",
+            "Durable lifecycle observer discovery is deferred; pending deliveries retain their ordering and retry state.", attributes).ConfigureAwait(false);
     }
 
     private bool RecoverStartupDeliveries()

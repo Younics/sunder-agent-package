@@ -65,18 +65,18 @@ public sealed class AgentToolExecutionLedgerTests
                 "read",
                 "{\"path\":\"src/Owned.cs\"}",
                 isReadOnly: true,
-                ownerPackageId: "sunder.package.agent.tools.files",
+                ownerPackageId: "younics.ai.agent.tools.files",
                 toolSchemaId: "files.read",
                 toolSchemaVersion: "1",
-                executionTargetOwnerPackageId: "sunder.package.agent.execution.local")])!);
+                executionTargetOwnerPackageId: "younics.ai.agent.execution.local")])!);
 
         var restarted = new AgentLocalStore(scope.Context);
         var execution = Assert.IsType<AgentToolExecutionRecord>(
             restarted.GetToolExecution(prepared.Execution.ExecutionId));
-        Assert.Equal("sunder.package.agent.tools.files", execution.OwnerPackageId);
+        Assert.Equal("younics.ai.agent.tools.files", execution.OwnerPackageId);
         Assert.Equal("files.read", execution.ToolSchemaId);
         Assert.Equal("1", execution.ToolSchemaVersion);
-        Assert.Equal("sunder.package.agent.execution.local", execution.ExecutionTargetOwnerPackageId);
+        Assert.Equal("younics.ai.agent.execution.local", execution.ExecutionTargetOwnerPackageId);
         var item = Assert.Single(restarted.ListTurns(session.SessionId)).Items[0];
         Assert.Equal(execution.ExecutionId, item.ToolExecutionId);
         Assert.Equal(execution.OwnerPackageId, item.ToolOwnerPackageId);
@@ -592,7 +592,7 @@ public sealed class AgentToolExecutionLedgerTests
                 "mutate",
                 "{}",
                 isReadOnly: false,
-                ownerPackageId: "sunder.package.agent.tools.files")])!);
+                ownerPackageId: "younics.ai.agent.tools.files")])!);
         var request = CreatePermissionRequest(session, run, prepared.Execution);
         Assert.NotNull(store.SavePendingPermissionRequestAndSuspendRun(request, running.Run.Epoch));
         var restarted = new AgentLocalStore(scope.Context);
@@ -634,7 +634,7 @@ public sealed class AgentToolExecutionLedgerTests
             restarted.ListTurns(session.SessionId).SelectMany(turn => turn.Items),
             item => item.ToolExecutionId == prepared.Execution.ExecutionId
                     && item.Kind == AgentTurnItemKind.ToolResult);
-        Assert.Equal("sunder.package.agent.tools.files", resultItem.ToolOwnerPackageId);
+        Assert.Equal("younics.ai.agent.tools.files", resultItem.ToolOwnerPackageId);
     }
 
     [Fact]

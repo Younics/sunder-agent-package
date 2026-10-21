@@ -68,7 +68,7 @@ internal static class AgentAppSourceMigrationTests
             Assert.NotSame(type, local);
         }
         Assert.Null(assembly.GetType("Sunder.Package.Agent.Runtime.AgentOwnerRuntimeRpc"));
-        Assert.NotNull(assembly.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Services.IAgentRuntimeService"));
+        Assert.NotNull(assembly.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Services.IAgentRuntimeService"));
         Assert.Null(assembly.GetType("Sunder.Package.Agent.Runtime.AgentOwnerRuntimeProvider"));
     }
 
@@ -77,8 +77,8 @@ internal static class AgentAppSourceMigrationTests
         await using var services = CreateAppServices();
         await using var receiver = new GeneratedServiceTestScope(rpc);
         var gatewayType = assembly.GetType("Sunder.Package.Agent.Runtime.AgentAppRuntimeGateway", true)!;
-        var ownerType = assembly.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Internal.CSunder_Agent_Owner_RuntimeClient", true)!;
-        var ownerContract = assembly.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Services.IAgentRuntimeService", true)!;
+        var ownerType = assembly.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Internal.CYounics_Ai_Agent_Owner_RuntimeClient", true)!;
+        var ownerContract = assembly.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Services.IAgentRuntimeService", true)!;
         var owner = services?.GetRequiredService(ownerContract) ?? Activator.CreateInstance(ownerType, rpc)!;
         var resourceType = assembly.GetType("Sunder.Package.Agent.Runtime.AgentOwnerResources", true)!;
         var resources = services?.GetRequiredService(resourceType)

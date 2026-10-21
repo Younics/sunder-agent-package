@@ -1,7 +1,7 @@
 extern alias AnthropicApp;
 
 using Microsoft.Extensions.DependencyInjection;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using IChatProviderService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Chat_Provider.IChatProviderService;
 using Sunder.Package.Agent.Provider.Anthropic.Rpc;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Package.Agent.Provider.TestSupport;
@@ -9,7 +9,7 @@ using Sunder.Package.Agent.TestSupport.Avalonia;
 using Xunit;
 using AnthropicSettingsView = AnthropicApp::Sunder.Package.Agent.Provider.Anthropic.AnthropicSettingsView;
 using AnthropicSettingsViewModel = AnthropicApp::Sunder.Package.Agent.Provider.Anthropic.AnthropicSettingsViewModel;
-using ICredentialSettingsService = AnthropicApp::Sunder.Generated.Packages.Sunder_Package_Agent_Provider_Anthropic_Services.ICredentialSettingsService;
+using ICredentialSettingsService = AnthropicApp::Sunder.Generated.Packages.Younics_Ai_Agent_Provider_Anthropic_Services.ICredentialSettingsService;
 
 namespace Sunder.Package.Agent.Provider.Anthropic.Tests;
 
@@ -19,7 +19,7 @@ public sealed class AnthropicPackageCompositionTests
     [Trait("Lane", "PackageCompatibility")]
     public void WorkerAndAppComposition_KeepProviderExecutionWorkerOnly()
     {
-        var context = new ProviderTestPackageContext("sunder.package.agent.provider.anthropic");
+        var context = new ProviderTestPackageContext("younics.ai.agent.provider.anthropic");
         var credentials = new ProviderCredentialAccessor(
             context.Secrets,
             AnthropicProviderConfiguration.ApiKeySecretKey);

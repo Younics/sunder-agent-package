@@ -1,354 +1,78 @@
-name: Sunder Agent Family Release
+name: AI Agent Family Release
 
 on:
   push:
-    tags:
-      - "agent/v*"
+    tags: ["agent/v*"]
 
 permissions: {}
-
 concurrency:
-  group: sunder-agent-family-release-${{ github.ref }}
+  group: sunder-agent-family
   cancel-in-progress: false
-
 env:
   DOTNET_VERSION: "10.0.100"
-  MSBUILDDISABLENODEREUSE: "1"
   CORE_SDK_VERSION: "1.1.0"
   NUGET_SOURCE: https://api.nuget.org/v3/index.json
-  NUGET_FLAT_CONTAINER: https://api.nuget.org/v3-flatcontainer
 
 jobs:
   prepare:
-    name: Resolve immutable Core and Agent release metadata
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: sunder-agent-release-promotion
-    env:
-      SUNDER_AGENT_ARTIFACT_SOURCE_COMMIT: ${{ vars.SUNDER_AGENT_ARTIFACT_SOURCE_COMMIT }}
-      SUNDER_AGENT_LOCK_SET_SHA256: ${{ vars.SUNDER_AGENT_LOCK_SET_SHA256 }}
-      SUNDER_AGENT_RELEASE_APPROVAL_REFERENCE: ${{ vars.SUNDER_AGENT_RELEASE_APPROVAL_REFERENCE }}
-      SUNDER_AGENT_COLD_INPUT_MANIFEST: ${{ vars.SUNDER_AGENT_COLD_INPUT_MANIFEST }}
     permissions:
       contents: read
     outputs:
-      core_commit: ${{ steps.core.outputs.commit }}
-      core_tag: ${{ steps.core.outputs.tag }}
-      is_prerelease: ${{ steps.release.outputs.is_prerelease }}
       version: ${{ steps.release.outputs.version }}
-      resume: ${{ steps.recovery.outputs.resume }}
-      cold_inputs: ${{ steps.cold_inputs.outputs.locator }}
+      core_commit: ${{ steps.release.outputs.core_commit }}
+      core_tag: ${{ steps.release.outputs.core_tag }}
+      cold_inputs: ${{ steps.inputs.outputs.locator }}
     steps:
-      - name: Checkout Agent repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-
-      - name: Require Python 3.9 or newer
-        shell: bash
-        run: python3 -B scripts/release/release_inputs.py check-python
-
-      - name: Validate family release tag and inventory
+      - name: Verify source, locks, version and the final Core SDK release
         id: release
-        shell: bash
+        env:
+          SUNDER_AGENT_ARTIFACT_SOURCE_COMMIT: ${{ vars.SUNDER_AGENT_ARTIFACT_SOURCE_COMMIT }}
+          SUNDER_AGENT_LOCK_SET_SHA256: ${{ vars.SUNDER_AGENT_LOCK_SET_SHA256 }}
+          SUNDER_AGENT_RELEASE_APPROVAL_REFERENCE: ${{ vars.SUNDER_AGENT_RELEASE_APPROVAL_REFERENCE }}
         run: |
           set -euo pipefail
           test "$GITHUB_SHA" = "$SUNDER_AGENT_ARTIFACT_SOURCE_COMMIT"
           test "$GITHUB_WORKFLOW_SHA" = "$GITHUB_SHA"
-          test "$GITHUB_EVENT_NAME" = push
+          test "$GITHUB_REF_PROTECTED" = true
           [[ "$SUNDER_AGENT_RELEASE_APPROVAL_REFERENCE" =~ ^https://[^/?#]+/[^[:space:]#]+$ ]]
-          test "$(python3 scripts/release/agent_release.py lock-set "$PWD")" = "$SUNDER_AGENT_LOCK_SET_SHA256"
-          tag="$GITHUB_REF_NAME"
-          if [[ "$tag" != agent/v* ]]; then
-            echo "Agent family releases must use agent/v<semver>." >&2
-            exit 1
-          fi
-          version="${tag#agent/v}"
+          test "$(python3 -B scripts/release/agent_release.py lock-set "$PWD")" = "$SUNDER_AGENT_LOCK_SET_SHA256"
+          version="${GITHUB_REF_NAME#agent/v}"
+          test "$version" = "$(jq -er .releaseVersion packages.json)"
           bash scripts/release/verify-agent-release-version.sh "$version" "$CORE_SDK_VERSION"
-          test "$version" = "$(jq -er '.releaseVersion' packages.json)" \
-            || { echo "Release tag must match packages.json releaseVersion." >&2; exit 1; }
-          jq -e '.packages | length == 15 and all(.[]; .artifactType == "sunderpkg") and ([.[].packageId] | unique | length) == 15' packages.json >/dev/null \
-            || { echo "packages.json must contain exactly 15 unique canonical package archives." >&2; exit 1; }
-          node scripts/compatibility/check-protocol-retirement.mjs
-
-          is_prerelease=false
-          if [[ "$version" == *-* ]]; then
-            is_prerelease=true
-          fi
-          # Canonical Pack requires source-matched release-frozen owned contracts.
-          # Native lanes consume Core's qualified V1 prebuilt role-input contract.
-          {
-            echo "is_prerelease=$is_prerelease"
-            echo "version=$version"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Resolve and verify final remote Core release
-        id: core
-        shell: bash
-        run: |
-          set -euo pipefail
           commit="$(bash scripts/release/verify-core-sdk-release.sh "$CORE_SDK_VERSION" resolve)"
           [[ "$commit" =~ ^[0-9a-f]{40}$ ]]
-          echo "commit=$commit" >> "$GITHUB_OUTPUT"
-          echo "tag=sdk/v$CORE_SDK_VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Fence release recovery to exact Agent and Core provenance
-        id: recovery
-        shell: bash
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "core_commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "core_tag=sdk/v$CORE_SDK_VERSION" >> "$GITHUB_OUTPUT"
+      - name: Verify exact durable release inputs
+        id: inputs
         env:
-          CORE_COMMIT: ${{ steps.core.outputs.commit }}
-          CORE_TAG: ${{ steps.core.outputs.tag }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          VERSION: ${{ steps.release.outputs.version }}
-        run: |
-          set -euo pipefail
-          state="$RUNNER_TEMP/agent-release-state.json"
-          encoded_tag="$(jq -rn --arg value "$GITHUB_REF_NAME" '$value | @uri')"
-          status="$(curl --silent --show-error \
-            --header "Authorization: Bearer $GH_TOKEN" \
-            --header 'Accept: application/vnd.github+json' \
-            --header 'X-GitHub-Api-Version: 2022-11-28' \
-            --output "$state" --write-out '%{http_code}' \
-            "https://api.github.com/repos/$GH_REPO/releases/tags/$encoded_tag")"
-          if [[ "$status" == 404 ]]; then
-            echo 'resume=false' >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          [[ "$status" == 200 ]] || { echo "GitHub release lookup returned HTTP $status." >&2; exit 1; }
-          jq -e --arg tag "$GITHUB_REF_NAME" '.draft == true and .tag_name == $tag' "$state" >/dev/null \
-            || { echo "Immutable publication recovery requires the exact GitHub draft release." >&2; exit 1; }
-          provenance_url="$(jq -er '[.assets[] | select(.name == "release-provenance.json")] | if length == 1 then .[0].url else error("release must have one provenance asset") end' "$state")"
-          provenance="$RUNNER_TEMP/release-provenance.json"
-          curl --fail --silent --show-error --location \
-            --header "Authorization: Bearer $GH_TOKEN" \
-            --header 'Accept: application/octet-stream' \
-            --header 'X-GitHub-Api-Version: 2022-11-28' \
-            --output "$provenance" "$provenance_url"
-          jq -e \
-            --arg agent_commit "$GITHUB_SHA" \
-            --arg core_commit "$CORE_COMMIT" \
-            --arg core_tag "$CORE_TAG" \
-            --arg core_version "$CORE_SDK_VERSION" '
-              .schemaVersion == 1
-              and ([.sources[] | select(.name == "sunder-agent-package" and .sha == $agent_commit)] | length == 1)
-              and ([.sources[] | select(.name == "sunder-core" and .sha == $core_commit)] | length == 1)
-              and .materials == [{name: "sunder-core-sdk", tag: $core_tag, sha: $core_commit, packageVersion: $core_version}]
-            ' "$provenance" >/dev/null \
-            || { echo "Existing release provenance differs from this Agent tag or final Core release." >&2; exit 1; }
-          echo 'resume=true' >> "$GITHUB_OUTPUT"
+          GH_TOKEN: ${{ github.token }}
+          SUNDER_AGENT_COLD_INPUT_MANIFEST: ${{ vars.SUNDER_AGENT_COLD_INPUT_MANIFEST }}
+          CORE_COMMIT: ${{ steps.release.outputs.core_commit }}
+        run: python3 -B scripts/release/release_inputs.py fetch "$PWD" "$RUNNER_TEMP/release-inputs" "$GITHUB_SHA" "$CORE_COMMIT"
 
-      - name: Verify reviewed durable candidate and catalog inputs
-        id: cold_inputs
-        if: steps.recovery.outputs.resume != 'true'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CORE_COMMIT: ${{ steps.core.outputs.commit }}
-        run: |
-          python3 -B scripts/release/release_inputs.py fetch "$PWD" \
-            "$RUNNER_TEMP/agent-approved-inputs" "$GITHUB_SHA" "$CORE_COMMIT"
-
-  source-verify:
-    name: Complete source behavior and focused locked-package compatibility
+  validation:
     needs: prepare
-    if: needs.prepare.outputs.resume != 'true'
-    runs-on: ubuntu-latest
-    env:
-      SUNDER_AGENT_COLD_INPUT_MANIFEST: ${{ needs.prepare.outputs.cold_inputs }}
-      SUNDER_AGENT_OFFLINE_RUNNER: ${{ vars.SUNDER_AGENT_OFFLINE_RUNNER_LINUX_X64 }}
-      SUNDER_AGENT_OFFLINE_RUNNER_SHA256: ${{ vars.SUNDER_AGENT_OFFLINE_RUNNER_SHA256_LINUX_X64 }}
+    uses: ./.github/workflows/sunder-package-smoke.yml
     permissions:
       contents: read
-    defaults:
-      run:
-        working-directory: sunder-agent-package
-    steps:
-      - name: Checkout exact Agent source
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          path: sunder-agent-package
-          persist-credentials: false
+    with:
+      core_commit: ${{ needs.prepare.outputs.core_commit }}
+      cold_inputs: ${{ needs.prepare.outputs.cold_inputs }}
 
-      - name: Checkout exact Core source and fixture tooling
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          repository: Younics/sunder-core
-          ref: ${{ needs.prepare.outputs.core_commit }}
-          path: sunder-core
-          persist-credentials: false
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
-        with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
-
-      - name: Verify release scripts and fixtures
-        shell: bash
-        env:
-          EXPECTED_CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
-        run: |
-          set -euo pipefail
-          python3 -B scripts/release/release_inputs.py check-python
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          for script in scripts/dev/*.sh scripts/release/*.sh scripts/test/*.sh scripts/test/release/*.sh; do
-            bash -n "$script"
-          done
-          bash scripts/test/release/verify-nuget-package.fixture.sh
-          bash scripts/test/release/verify-core-sdk-release.fixture.sh
-          bash scripts/test/release/publish-registry-package.fixture.sh
-          bash scripts/test/release/promote-agent-family.fixture.sh
-          bash scripts/test/release/upload-agent-acceptance.fixture.sh
-          bash scripts/test/release/verify-agent-publication.fixture.sh
-          bash scripts/test/release/generate-agent-publication-handoff.fixture.sh
-          python3 -B scripts/test/release/agent-release.fixture.py
-          python3 -B scripts/test/release/publish-agent-family.fixture.py
-          python3 -B scripts/test/release/release-inputs.fixture.py
-          bash scripts/test/release/native-release.fixture.sh
-          bash scripts/test/release/verify-agent-release-version.fixture.sh
-          bash scripts/test/generate-test-duration-report.fixture.sh
-          bash scripts/release/verify-core-sdk-release.sh "$CORE_SDK_VERSION" "$EXPECTED_CORE_COMMIT"
-
-      - name: Download exact reviewed cold inputs for this source job
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
-        run: |
-          python3 -B scripts/release/release_inputs.py fetch "$PWD" \
-            "$RUNNER_TEMP/agent-approved-inputs" "$GITHUB_SHA" "$CORE_COMMIT"
-
-      - name: Cold hydrate and build complete source mode offline against exact Core
-        shell: bash
-        env:
-          VERSION: ${{ needs.prepare.outputs.version }}
-          CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
-        run: |
-          set -euo pipefail
-          test "$(git -C ../sunder-core rev-parse HEAD)" = "${{ needs.prepare.outputs.core_commit }}"
-          mkdir -p artifacts/test-results/source/full artifacts/reports
-          bash scripts/test/generate-test-inventory.sh > artifacts/reports/test-inventory.json
-          manifest_sha="$(jq -r '.sha256' <<< "$SUNDER_AGENT_COLD_INPUT_MANIFEST")"
-          python3 -B scripts/release/release_inputs.py prepare "$PWD" \
-            "$RUNNER_TEMP/agent-approved-inputs" "$RUNNER_TEMP/agent-source-cold" \
-            source "$GITHUB_SHA" "$CORE_COMMIT" "$manifest_sha" --solution
-          python3 -B scripts/release/release_inputs.py exec "$RUNNER_TEMP/agent-source-cold/cold-state.json" -- \
-            dotnet build Sunder.AgentPackage.slnx -c Release --no-restore --disable-build-servers
-
-      - name: Run complete source-mode behavioral suite
-        id: source_tests
-        continue-on-error: true
-        shell: bash
-        run: |
-          set -euo pipefail
-          dotnet test Sunder.AgentPackage.slnx -c Release --no-build --no-restore -m:1 \
-            -p:SunderUseSourceSdk=true --logger trx \
-            --results-directory "$PWD/artifacts/test-results/source/full"
-
-      - name: Restore and build final locked Core packages
-        shell: bash
-        env:
-          VERSION: ${{ needs.prepare.outputs.version }}
-          CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
-        run: |
-          set -euo pipefail
-          bash scripts/release/verify-release-locks.sh "$CORE_SDK_VERSION"
-          manifest_sha="$(jq -r '.sha256' <<< "$SUNDER_AGENT_COLD_INPUT_MANIFEST")"
-          python3 -B scripts/release/release_inputs.py prepare "$PWD" \
-            "$RUNNER_TEMP/agent-approved-inputs" "$RUNNER_TEMP/agent-package-cold" \
-            package "$GITHUB_SHA" "$CORE_COMMIT" "$manifest_sha" --solution
-          python3 -B scripts/release/release_inputs.py exec "$RUNNER_TEMP/agent-package-cold/cold-state.json" -- \
-            dotnet build Sunder.AgentPackage.slnx -c Release --no-restore --disable-build-servers
-          mkdir -p artifacts/test-results/package/full
-
-      - name: Run focused package compatibility lane
-        id: package_compatibility_tests
-        continue-on-error: true
-        shell: bash
-        run: |
-          set -euo pipefail
-          dotnet test Sunder.AgentPackage.slnx -c Release --no-build --no-restore -m:1 \
-            -p:SunderUseSourceSdk=false \
-            --filter "Lane=PackageCompatibility&Category!=Artifact" --logger trx \
-            --results-directory "$PWD/artifacts/test-results/package/full"
-
-      - name: Summarize source and package compatibility evidence
-        id: test_summary
-        if: always()
-        shell: bash
-        run: |
-          set -uo pipefail
-          status=0
-          python3 scripts/test/generate-test-duration-report.py artifacts/test-results/source \
-            --inventory artifacts/reports/test-inventory.json \
-            --mode source \
-            --platform linux \
-            --expectations tests/test-evidence-expectations.json \
-            > artifacts/reports/source-test-duration-report.json || status=1
-          python3 scripts/test/generate-test-duration-report.py artifacts/test-results/package \
-            --inventory artifacts/reports/test-inventory.json \
-            --mode package \
-            --platform linux \
-            --lane PackageCompatibility \
-            --exclude-category Artifact \
-            --expectations tests/test-evidence-expectations.json \
-            > artifacts/reports/package-test-duration-report.json || status=1
-          exit "$status"
-
-      - name: Upload source- and package-mode test evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: sunder-agent-release-test-evidence
-          path: |
-            sunder-agent-package/artifacts/reports/test-inventory.json
-            sunder-agent-package/artifacts/reports/source-test-duration-report.json
-            sunder-agent-package/artifacts/reports/package-test-duration-report.json
-            sunder-agent-package/artifacts/test-results/**/*.trx
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Enforce complete source and focused package evidence
-        if: always()
-        shell: bash
-        env:
-          PACKAGE_TEST_OUTCOME: ${{ steps.package_compatibility_tests.outcome }}
-          SOURCE_TEST_OUTCOME: ${{ steps.source_tests.outcome }}
-          SUMMARY_OUTCOME: ${{ steps.test_summary.outcome }}
-        run: |
-          set -euo pipefail
-          test "$SOURCE_TEST_OUTCOME" = success
-          test "$PACKAGE_TEST_OUTCOME" = success
-          test "$SUMMARY_OUTCOME" = success
-          jq -e '
-            .selection == {mode: "source", lane: null, platform: "linux"}
-            and .summary.failed == 0
-            and .summary.other == 0
-            and .canonicalIdentityExpectation == {platform: "linux", enforced: true}
-            and (.projectSuiteEvidence | length) == 11
-            and (.identityEvidence | length) == 11
-            and .evidenceViolations == []
-          ' artifacts/reports/source-test-duration-report.json >/dev/null
-          jq -e '
-            .selection == {mode: "package", lane: "PackageCompatibility", platform: "linux"}
-            and .summary.failed == 0
-            and .summary.other == 0
-            and .primarySummary.skipped == 0
-            and .canonicalIdentityExpectation == {platform: "linux", enforced: true}
-            and (.projectSuiteEvidence | length) == 9
-            and (.identityEvidence | length) == 9
-            and .evidenceViolations == []
-          ' artifacts/reports/package-test-duration-report.json >/dev/null
-
-  native-leaves:
-    name: Native framework-dependent leaves and Runtime lifecycle (${{ matrix.rid }})
-    needs:
-      - prepare
-      - source-verify
+  native:
+    needs: [prepare, validation]
+    runs-on: ${{ fromJSON(matrix.runner_labels) }}
+    timeout-minutes: 240
     permissions:
       contents: read
     strategy:
@@ -356,487 +80,265 @@ jobs:
       matrix:
         include:
           - rid: win-x64
-            offline_key: WIN_X64
-            runner_labels: ${{ vars.SUNDER_AGENT_RUNNER_WIN_X64 || '["windows-latest"]' }}
+            key: WIN_X64
+            runner_labels: ${{ vars.SUNDER_AGENT_RUNNER_WIN_X64 || '["windows-2022"]' }}
           - rid: win-arm64
-            offline_key: WIN_ARM64
+            key: WIN_ARM64
             runner_labels: ${{ vars.SUNDER_AGENT_RUNNER_WIN_ARM64 || '["windows-11-arm"]' }}
           - rid: linux-x64
-            offline_key: LINUX_X64
+            key: LINUX_X64
             runner_labels: ${{ vars.SUNDER_AGENT_RUNNER_LINUX_X64 || '["ubuntu-24.04"]' }}
           - rid: linux-arm64
-            offline_key: LINUX_ARM64
+            key: LINUX_ARM64
             runner_labels: ${{ vars.SUNDER_AGENT_RUNNER_LINUX_ARM64 || '["ubuntu-24.04-arm"]' }}
           - rid: osx-x64
-            offline_key: OSX_X64
+            key: OSX_X64
             runner_labels: ${{ vars.SUNDER_AGENT_RUNNER_OSX_X64 || '["macos-15-intel"]' }}
           - rid: osx-arm64
-            offline_key: OSX_ARM64
-            runner_labels: ${{ vars.SUNDER_AGENT_RUNNER_OSX_ARM64 || '["macos-14"]' }}
-    runs-on: ${{ fromJSON(matrix.runner_labels) }}
+            key: OSX_ARM64
+            runner_labels: ${{ vars.SUNDER_AGENT_RUNNER_OSX_ARM64 || '["macos-15"]' }}
     env:
+      CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
+      CORE_TAG: ${{ needs.prepare.outputs.core_tag }}
+      VERSION: ${{ needs.prepare.outputs.version }}
       SUNDER_AGENT_COLD_INPUT_MANIFEST: ${{ needs.prepare.outputs.cold_inputs }}
-      SUNDER_AGENT_OFFLINE_RUNNER: ${{ vars[format('SUNDER_AGENT_OFFLINE_RUNNER_{0}', matrix.offline_key)] }}
-      SUNDER_AGENT_OFFLINE_RUNNER_SHA256: ${{ vars[format('SUNDER_AGENT_OFFLINE_RUNNER_SHA256_{0}', matrix.offline_key)] }}
+      SUNDER_AGENT_OFFLINE_RUNNER: ${{ vars[format('SUNDER_AGENT_OFFLINE_RUNNER_{0}', matrix.key)] }}
+      SUNDER_AGENT_OFFLINE_RUNNER_SHA256: ${{ vars[format('SUNDER_AGENT_OFFLINE_RUNNER_SHA256_{0}', matrix.key)] }}
+    defaults:
+      run:
+        working-directory: sunder-agent-package
+        shell: bash
     steps:
-      - name: Checkout exact Agent source
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           path: sunder-agent-package
           persist-credentials: false
-
-      - name: Checkout Core provenance commit for the Runtime gate
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: Younics/sunder-core
           ref: ${{ needs.prepare.outputs.core_commit }}
           path: sunder-core
           persist-credentials: false
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-
-      - name: Verify exact source and final remote package locks
-        working-directory: sunder-agent-package
-        shell: bash
+      - name: Verify release locks and download native inputs
         env:
-          EXPECTED_CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
-          python3 -B scripts/release/release_inputs.py check-python
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git -C ../sunder-core rev-parse HEAD)" = "$EXPECTED_CORE_COMMIT"
           bash scripts/release/verify-release-locks.sh "$CORE_SDK_VERSION"
-
-      - name: Download exact reviewed cold inputs for this native runner
-        working-directory: sunder-agent-package
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
-        run: |
-          python3 -B scripts/release/release_inputs.py fetch "$PWD" \
-            "$RUNNER_TEMP/agent-approved-inputs" "$GITHUB_SHA" "$CORE_COMMIT"
-
-      - name: Build exactly 15 native framework-dependent leaves
-        working-directory: sunder-agent-package
+          python3 -B scripts/release/release_inputs.py fetch "$PWD" "$RUNNER_TEMP/release-inputs" "$GITHUB_SHA" "$CORE_COMMIT"
+      - name: Build and qualify 15 exact native leaves offline
         shell: pwsh
-        env:
-          VERSION: ${{ needs.prepare.outputs.version }}
-          CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
         run: |
           $manifest = $env:SUNDER_AGENT_COLD_INPUT_MANIFEST | ConvertFrom-Json
           ./scripts/release/build-native-family.ps1 -Rid "${{ matrix.rid }}" -Version $env:VERSION `
-            -OutputDirectory "artifacts/native-build/${{ matrix.rid }}" `
-            -ColdInputsDirectory (Join-Path $env:RUNNER_TEMP 'agent-approved-inputs') `
+            -OutputDirectory "artifacts/native-build/${{ matrix.rid }}" -ColdInputsDirectory "$env:RUNNER_TEMP/release-inputs" `
             -ColdManifestSha256 $manifest.sha256 -ArtifactSourceCommit $env:GITHUB_SHA -CoreCommit $env:CORE_COMMIT
-
-      - name: Exercise all native workers and Core release budgets
-        working-directory: sunder-agent-package
-        shell: bash
+      - name: Exercise actual native Workers and retain qualified role bytes
         env:
-          EXPECTED_CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
+          RID: ${{ matrix.rid }}
           SUNDER_AGENT_BUILDER_SDK_VERSION: ${{ env.DOTNET_VERSION }}
         run: |
-          bash scripts/release/run-native-runtime-smoke.sh \
-            ../sunder-core \
-            "artifacts/native-build/${{ matrix.rid }}/current-rid-archives" \
-            "artifacts/native-build/${{ matrix.rid }}/metrics" \
-            "$EXPECTED_CORE_COMMIT"
-
-      - name: Record exact managed module, lifecycle, and metric evidence
-        working-directory: sunder-agent-package
-        shell: bash
-        env:
-          CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
-          CORE_TAG: ${{ needs.prepare.outputs.core_tag }}
-          VERSION: ${{ needs.prepare.outputs.version }}
-        run: |
-          bash scripts/release/record-native-leaf-evidence.sh \
-            "${{ matrix.rid }}" "$VERSION" "$GITHUB_SHA" "$CORE_TAG" "$CORE_COMMIT" "$CORE_SDK_VERSION" \
-            "artifacts/native-build/${{ matrix.rid }}/current-rid-archives" \
-            "artifacts/native-build/${{ matrix.rid }}/metrics" \
-            "artifacts/native/${{ matrix.rid }}" "$PWD"
-
-      - name: Upload exact native leaves and evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+          set -euo pipefail
+          bash scripts/release/run-native-runtime-smoke.sh ../sunder-core "artifacts/native-build/$RID/current-rid-archives" "artifacts/native-build/$RID/metrics" "$CORE_COMMIT"
+          python3 -B scripts/release/native-family.py record "$RID" "$VERSION" "$GITHUB_SHA" "$CORE_TAG" "$CORE_COMMIT" "$CORE_SDK_VERSION" \
+            "artifacts/native-build/$RID/current-rid-archives" "artifacts/native-build/$RID/metrics" "artifacts/native/$RID" "$PWD"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: sunder-agent-native-leaves-${{ matrix.rid }}
+          name: sunder-agent-native-${{ matrix.rid }}
           path: sunder-agent-package/artifacts/native/${{ matrix.rid }}/*
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 90
           compression-level: 0
 
   fan-in:
-    name: Fan in tested native leaves and verify immutable family
-    needs:
-      - prepare
-      - native-leaves
-    runs-on: ubuntu-latest
+    needs: [prepare, native]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    permissions:
+      contents: read
     env:
+      CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
+      CORE_TAG: ${{ needs.prepare.outputs.core_tag }}
+      VERSION: ${{ needs.prepare.outputs.version }}
       SUNDER_AGENT_COLD_INPUT_MANIFEST: ${{ needs.prepare.outputs.cold_inputs }}
       SUNDER_AGENT_OFFLINE_RUNNER: ${{ vars.SUNDER_AGENT_OFFLINE_RUNNER_LINUX_X64 }}
       SUNDER_AGENT_OFFLINE_RUNNER_SHA256: ${{ vars.SUNDER_AGENT_OFFLINE_RUNNER_SHA256_LINUX_X64 }}
-    permissions:
-      contents: read
+    defaults:
+      run:
+        working-directory: sunder-agent-package
+        shell: bash
     steps:
-      - name: Checkout exact Agent source
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           path: sunder-agent-package
           persist-credentials: false
-
-      - name: Checkout exact Core provenance commit
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: Younics/sunder-core
           ref: ${{ needs.prepare.outputs.core_commit }}
           path: sunder-core
           persist-credentials: false
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-
-      - name: Download every exact native leaf artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          pattern: sunder-agent-native-leaves-*
+          node-version: "24.18.1"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: sunder-agent-native-*
           path: native-input
           merge-multiple: true
-
-      - name: Download exact reviewed fan-in inputs
-        working-directory: sunder-agent-package
-        shell: bash
+      - name: Prepare dependencies, then compose without rebuilding qualified leaves
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
-        run: |
-          python3 -B scripts/release/release_inputs.py check-python
-          python3 -B scripts/release/release_inputs.py fetch "$PWD" \
-            "$RUNNER_TEMP/agent-approved-inputs" "$GITHUB_SHA" "$CORE_COMMIT"
-
-      - name: Restore matching Release/version/CI graph, hydrate, and fan in offline
-        working-directory: sunder-agent-package
-        shell: bash
-        env:
-          CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
-          CORE_TAG: ${{ needs.prepare.outputs.core_tag }}
-          VERSION: ${{ needs.prepare.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git -C ../sunder-core rev-parse HEAD)" = "$CORE_COMMIT"
-          bash scripts/release/verify-release-locks.sh "$CORE_SDK_VERSION"
-          # The shared prepare operation uses Configuration=Release, the exact
-          # SunderAgentVersion, ContinuousIntegrationBuild=true and all declared RIDs.
-          # Restore/hydration finish before Core's no-Restore prebuilt fan-in starts.
-          manifest_sha="$(jq -r '.sha256' <<< "$SUNDER_AGENT_COLD_INPUT_MANIFEST")"
-          python3 -B scripts/release/release_inputs.py prepare "$PWD" \
-            "$RUNNER_TEMP/agent-approved-inputs" "$RUNNER_TEMP/agent-fanin-cold" \
-            package "$GITHUB_SHA" "$CORE_COMMIT" "$manifest_sha"
-          python3 -B scripts/release/release_inputs.py exec "$RUNNER_TEMP/agent-fanin-cold/cold-state.json" -- \
-            bash scripts/release/assemble-native-family.sh \
-            ../native-input artifacts/family "$VERSION" "$GITHUB_SHA" \
-            "$CORE_TAG" "$CORE_COMMIT" "$CORE_SDK_VERSION" "$PWD"
-
-      - name: Verify final inventory, budgets, native ownership, and managed module identity
-        working-directory: sunder-agent-package
-        shell: bash
-        env:
-          CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
-          CORE_TAG: ${{ needs.prepare.outputs.core_tag }}
-          VERSION: ${{ needs.prepare.outputs.version }}
-        run: |
-          set -euo pipefail
-          output=artifacts/family
-          evidence="$output/native-test-evidence.json"
-          runtime_count="$(jq '[.packages[] | select(.artifactType == "sunderpkg")] | length' packages.json)"
-          test "$runtime_count" -eq 15
-          test "$(find "$output" -maxdepth 1 -name '*.sunderpkg' -type f | wc -l)" -eq 15
-          test "$(find "$output" -maxdepth 1 -name '*.nupkg' -type f | wc -l)" -eq 0
-          bash scripts/release/verify-native-family-evidence.sh \
-            "$evidence" "$output" packages.json \
-            "$VERSION" "$GITHUB_SHA" "$CORE_TAG" "$CORE_COMMIT" "$CORE_SDK_VERSION"
-          bash scripts/release/generate-package-output-audit.sh \
-            "$output" "$evidence" "$PWD" "$output/package-output-audit.json"
-
-          max_runtime_archive_bytes=$((256 * 1024 * 1024))
-          max_runtime_payload_bytes=$((640 * 1024 * 1024))
-          max_family_archive_bytes=$((4 * 1024 * 1024 * 1024))
-          family_bytes=0
-          while IFS=$'\t' read -r package_id provider_ids; do
-            archive="$output/$package_id.$VERSION.sunderpkg"
-            manifest="$RUNNER_TEMP/$package_id-manifest.json"
-            index="$RUNNER_TEMP/$package_id-content-index.json"
-            unzip -p "$archive" manifest/sunder-package.json > "$manifest"
-            unzip -p "$archive" manifest/content-index.json > "$index"
-            archive_bytes="$(wc -c < "$archive" | tr -d '[:space:]')"
-            payload_bytes="$(jq -er '[.files[].size] | add // 0' "$index")"
-            (( archive_bytes > 0 && archive_bytes <= max_runtime_archive_bytes ))
-            (( payload_bytes > 0 && payload_bytes <= max_runtime_payload_bytes ))
-            family_bytes=$((family_bytes + archive_bytes))
-            jq --argjson provider_ids "$provider_ids" -e '
-              def rids: ["linux-arm64","linux-x64","osx-arm64","osx-x64","win-arm64","win-x64"];
-              ([.targets[] | select(.role == "runtime") | .rid] | sort) == rids
-              and (([.targets[] | select(.role == "app") | .rid] | sort) as $apps | $apps == [] or $apps == rids)
-              and all(.targets[] | select(.role == "runtime");
-                .kind == "worker"
-                and .targetFramework == "net10.0"
-                and (.entryPoint | test("^lib/[A-Za-z0-9._-]+\\.dll$"))
-                and .executionRuntime == {
-                  id: "sunder.runtime.dotnet",
-                  versionRange: ">=10.0.0 <11.0.0",
-                  moduleAbi: "sunder.dotnet-worker-module.v1"
-                }
-                and (.requiredHostCapabilities | index("worker-protocol.v1") != null))
-              and all(.dependsOn[]; .versionRange == ">=2.0.0 <3.0.0")
-              and ([.provides[].providerId] | sort) == ($provider_ids | sort)
-            ' "$manifest" >/dev/null
-            if [[ "$package_id" == "sunder.package.agent" || "$package_id" == "sunder.package.agent.memory.semantic" ]]; then
-              jq -e '
-                ([.files[].path | select(test("payload/runtime/(win-(x64|arm64)/lib/e_sqlite3\\.dll|osx-(x64|arm64)/lib/libe_sqlite3\\.dylib|linux-(x64|arm64)/lib/libe_sqlite3\\.so)$"))] | length) == 6
-                and ([.files[].path | select(. == "payload/runtime/shared/lib/SQLitePCLRaw.provider.e_sqlite3.dll")] | length) == 1
-              ' "$index" >/dev/null
-            fi
-          done < <(jq -r '.packages | map(select(.artifactType == "sunderpkg")) | sort_by(.key)[] | [.packageId, (.providerIds | tojson)] | @tsv' packages.json)
-          (( family_bytes <= max_family_archive_bytes ))
-          jq -e '
-            .installedProjectionGate == {
-              phase0BaselineBytes: 1440013254,
-              requiredReductionPercent: 75,
-              maximumBytes: 360003313
-            }
-            and all(.family.rids[];
-              .meetsInstalledProjectionGate == true
-              and .installedProjection.bytes <= 360003313)
-          ' "$output/package-output-audit.json" >/dev/null
-
-          while IFS=$'\t' read -r artifact expected_sha expected_size; do
-            path="$output/$artifact"
-            test -f "$path"
-            test "$(sha256sum "$path" | cut -d ' ' -f 1)" = "$expected_sha"
-            test "$(wc -c < "$path" | tr -d '[:space:]')" = "$expected_size"
-          done < <(jq -r '.finalArtifacts[] | [.path, .sha256, (.size | tostring)] | @tsv' "$evidence")
-          while IFS=$'\t' read -r rid package_id artifact_path expected_sha; do
-            archive="$output/$package_id.$VERSION.sunderpkg"
-            logical_path="${artifact_path#payload/runtime/$rid/}"
-            candidates=(
-              "$artifact_path"
-              "payload/runtime/shared/$logical_path"
-              "payload/shared/$logical_path"
-            )
-            resolved=''
-            for candidate in "${candidates[@]}"; do
-              if unzip -Z1 "$archive" "$candidate" >/dev/null 2>&1; then
-                test -z "$resolved"
-                resolved="$candidate"
-              fi
-            done
-            test -n "$resolved"
-            actual_sha="$(unzip -p "$archive" "$resolved" | sha256sum | cut -d ' ' -f 1)"
-            test "$actual_sha" = "$expected_sha"
-          done < <(jq -r '
-            .nativeRuns[] | .rid as $rid | .packages[] |
-            [
-              [$rid, .packageId, .leaf.modulePath, .leaf.moduleSha256],
-              [$rid, .packageId, .leaf.runtimeConfigPath, .leaf.runtimeConfigSha256],
-              [$rid, .packageId, .leaf.dependencyManifestPath, .leaf.dependencyManifestSha256]
-            ][] | @tsv
-          ' "$evidence")
-
-      - name: Run Agent contract against exact immutable archives
-        working-directory: sunder-agent-package
-        shell: bash
+          python3 -B scripts/release/release_inputs.py fetch "$PWD" "$RUNNER_TEMP/release-inputs" "$GITHUB_SHA" "$CORE_COMMIT"
+          manifest_sha="$(jq -r .sha256 <<< "$SUNDER_AGENT_COLD_INPUT_MANIFEST")"
+          python3 -B scripts/release/release_inputs.py prepare "$PWD" "$RUNNER_TEMP/release-inputs" "$RUNNER_TEMP/fanin" package "$GITHUB_SHA" "$CORE_COMMIT" "$manifest_sha"
+          python3 -B scripts/release/release_inputs.py exec "$RUNNER_TEMP/fanin/cold-state.json" -- \
+            python3 -B scripts/release/native-family.py assemble ../native-input artifacts/family "$VERSION" "$GITHUB_SHA" "$CORE_TAG" "$CORE_COMMIT" "$CORE_SDK_VERSION" "$PWD"
+          python3 -B scripts/release/native-family.py verify artifacts/family/native-test-evidence.json artifacts/family packages.json "$VERSION" "$GITHUB_SHA" "$CORE_TAG" "$CORE_COMMIT" "$CORE_SDK_VERSION"
+          bash scripts/release/generate-package-output-audit.sh artifacts/family artifacts/family/native-test-evidence.json "$PWD" artifacts/family/package-output-audit.json
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: agent-package-test-binaries
+          path: sunder-agent-package/tests/Sunder.Package.Agent.Tests/bin/Release/net10.0
+      - name: Inspect exact archives with the previously built Agent contract tests
         env:
           SUNDER_REQUIRE_TEST_PREREQUISITES: "1"
           SUNDER_AGENT_PACKAGE_ARCHIVE_DIR: ${{ github.workspace }}/sunder-agent-package/artifacts/family
           SUNDER_AGENT_PACKAGE_OUTPUT_AUDIT_REQUIRED: "1"
-        run: |
-          set -euo pipefail
-          dotnet restore tests/Sunder.Package.Agent.Tests/Sunder.Package.Agent.Tests.csproj \
-            --locked-mode -p:SunderUseSourceSdk=false -p:RestoreLockedMode=true \
-            --source "$NUGET_SOURCE"
-          dotnet build tests/Sunder.Package.Agent.Tests/Sunder.Package.Agent.Tests.csproj \
-            -c Release --no-restore -p:SunderUseSourceSdk=false
-          dotnet test tests/Sunder.Package.Agent.Tests/Sunder.Package.Agent.Tests.csproj \
-            -c Release --no-build --no-restore -p:SunderUseSourceSdk=false \
-            --filter "FullyQualifiedName~PackageFamilyArchiveContractTests"
-
-      - name: Build exact Core validation paths
+        run: >-
+          dotnet vstest tests/Sunder.Package.Agent.Tests/bin/Release/net10.0/Sunder.Package.Agent.Tests.dll
+          --TestCaseFilter:FullyQualifiedName~PackageFamilyArchiveContractTests --Logger:trx --ResultsDirectory:artifacts/family-results/agent
+      - name: Require executed Agent archive assertions
+        run: python3 scripts/test/generate-test-duration-report.py artifacts/family-results/agent --expected-skips 0
+      - name: Build Core validation paths
         working-directory: sunder-core
-        shell: bash
         run: |
-          set -euo pipefail
-          dotnet restore languages/csharp/dotnet/host/Sunder.Cli/Sunder.Cli.csproj --locked-mode
-          dotnet restore languages/csharp/dotnet/tests/Sunder.Runtime.Host.Tests/Sunder.Runtime.Host.Tests.csproj --locked-mode
-          dotnet restore languages/csharp/dotnet/tests/Sunder.App.Tests/Sunder.App.Tests.csproj --locked-mode
-          dotnet build languages/csharp/dotnet/host/Sunder.Cli/Sunder.Cli.csproj -c Release --no-restore
-          dotnet build languages/csharp/dotnet/tests/Sunder.Runtime.Host.Tests/Sunder.Runtime.Host.Tests.csproj -c Release --no-restore
-          dotnet build languages/csharp/dotnet/tests/Sunder.App.Tests/Sunder.App.Tests.csproj -c Release --no-restore
-
-      - name: Validate exact immutable archives through Package Format
-        working-directory: sunder-agent-package
-        shell: bash
-        run: |
-          set -euo pipefail
-          while IFS= read -r archive; do
-            dotnet ../sunder-core/languages/csharp/dotnet/host/Sunder.Cli/bin/Release/net10.0/sunder.dll dev package validate "$archive"
-          done < <(find artifacts/family -maxdepth 1 -name '*.sunderpkg' -type f | sort)
-
-      - name: Re-run complete final family lifecycle and produce App snapshot
-        working-directory: sunder-core
-        shell: bash
+          dotnet restore Sunder.Core.slnx --locked-mode
+          dotnet build Sunder.Core.slnx -c Release --no-restore -p:GeneratePackageOnBuild=false
+      - name: Validate and exercise exact family bytes through Runtime and App
         env:
           SUNDER_REQUIRE_AGENT_PACKAGE_RELEASE: "1"
-          SUNDER_AGENT_PACKAGE_ARCHIVE_DIR: ${{ github.workspace }}/sunder-agent-package/artifacts/family
-          SUNDER_AGENT_UI_SNAPSHOT_DIR: ${{ github.workspace }}/agent-ui-snapshot
-        run: |
-          set -euo pipefail
-          mkdir -p "$SUNDER_AGENT_UI_SNAPSHOT_DIR"
-          test_fqn="Sunder.Runtime.Host.Tests.AgentPackageReleaseSmokeTests.ReleaseArchives_InstallActivateUnloadReloadAndReinstallAsOneFamily"
-          discovered="$(dotnet test languages/csharp/dotnet/tests/Sunder.Runtime.Host.Tests/Sunder.Runtime.Host.Tests.csproj -c Release --no-build --no-restore --list-tests --filter "FullyQualifiedName=$test_fqn")"
-          grep -Fqx "    $test_fqn" <<< "$discovered"
-          dotnet test languages/csharp/dotnet/tests/Sunder.Runtime.Host.Tests/Sunder.Runtime.Host.Tests.csproj -c Release --no-build --no-restore --filter "FullyQualifiedName=$test_fqn"
-
-      - name: Activate Runtime-produced snapshot in the real App host
-        working-directory: sunder-core
-        shell: bash
-        env:
           SUNDER_REQUIRE_AGENT_UI_SNAPSHOT: "1"
-          SUNDER_AGENT_UI_SNAPSHOT_DIR: ${{ github.workspace }}/agent-ui-snapshot
+          SUNDER_AGENT_PACKAGE_ARCHIVE_DIR: ${{ github.workspace }}/sunder-agent-package/artifacts/family
+          SUNDER_AGENT_UI_SNAPSHOT_DIR: ${{ runner.temp }}/agent-ui-snapshot
         run: |
           set -euo pipefail
-          test_fqn="Sunder.App.Tests.AgentPackageReleaseSmokeTests.RuntimeProducedAgentSnapshot_MaterializesAndActivatesInApp"
-          discovered="$(dotnet test languages/csharp/dotnet/tests/Sunder.App.Tests/Sunder.App.Tests.csproj -c Release --no-build --no-restore --list-tests --filter "FullyQualifiedName=$test_fqn")"
-          grep -Fqx "    $test_fqn" <<< "$discovered"
-          dotnet test languages/csharp/dotnet/tests/Sunder.App.Tests/Sunder.App.Tests.csproj -c Release --no-build --no-restore --filter "FullyQualifiedName=$test_fqn"
-
-      - name: Upload exact tested family and native evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+          for archive in artifacts/family/*.sunderpkg; do
+            dotnet ../sunder-core/languages/csharp/dotnet/host/Sunder.Cli/bin/Release/net10.0/sunder.dll dev package validate "$archive"
+          done
+          for project in Sunder.Runtime.Host.Tests Sunder.App.Tests; do
+            dotnet test "../sunder-core/languages/csharp/dotnet/tests/$project/$project.csproj" -c Release --no-build --no-restore \
+              --filter FullyQualifiedName~AgentPackageReleaseSmokeTests --logger trx --results-directory "$PWD/artifacts/family-results/core"
+          done
+          node ../sunder-core/scripts/test-oracles/summarize-core-test-results.mjs "$PWD/artifacts/family-results/core" --allow-partial \
+            --require-test Sunder.Runtime.Host.Tests.AgentPackageReleaseSmokeTests.ReleaseArchives_InstallActivateUnloadReloadAndReinstallAsOneFamily \
+            --require-test Sunder.App.Tests.AgentPackageReleaseSmokeTests.RuntimeProducedAgentSnapshot_MaterializesAndActivatesInApp
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sunder-agent-family-release
           path: sunder-agent-package/artifacts/family/*
           if-no-files-found: error
-          retention-days: 7
-          compression-level: 0
-
-  publish-immutable:
-    name: Publish exact versions and preserve verified GitHub draft
-    needs:
-      - prepare
-      - fan-in
-    if: ${{ !cancelled() && needs.prepare.result == 'success' && (needs.prepare.outputs.resume == 'true' || needs.fan-in.result == 'success') }}
-    runs-on: ubuntu-latest
-    environment: sunder-agent-release-promotion
-    permissions:
-      actions: read
-      contents: write
-    steps:
-      - name: Checkout exact Agent source
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
-        with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
-
-      - name: Verify release Python runtime
-        shell: bash
-        run: python3 -B scripts/release/release_inputs.py check-python
-
-      - name: Download only the exact tested fan-in artifact
-        if: needs.prepare.outputs.resume != 'true'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: sunder-agent-family-release
-          path: release-assets
-
-      - name: Resume only the retained draft artifacts without rebuilding
-        if: needs.prepare.outputs.resume == 'true'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          mkdir release-assets
-          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --dir release-assets \
-            --pattern '*.sunderpkg' --pattern 'native-test-evidence.json' --pattern 'package-output-audit.json'
-          test "$(find release-assets -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d '[:space:]')" = 17
-
-      - name: Refresh Protocol retirement evidence immediately before publication
-        shell: bash
-        run: node scripts/compatibility/check-protocol-retirement.mjs
-
-      - name: Publish and verify immutable versions and exact draft assets
-        id: publication
-        shell: bash
-        env:
-          CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
-          CORE_TAG: ${{ needs.prepare.outputs.core_tag }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          IS_PRERELEASE: ${{ needs.prepare.outputs.is_prerelease }}
-          REGISTRY_API_URL: ${{ vars.SUNDER_REGISTRY_API_URL }}
-          SUNDER_REGISTRY_PUBLISH_TOKEN: ${{ secrets.SUNDER_REGISTRY_PUBLISH_TOKEN }}
-          SUNDER_AGENT_ARTIFACT_SOURCE_COMMIT: ${{ vars.SUNDER_AGENT_ARTIFACT_SOURCE_COMMIT }}
-          SUNDER_AGENT_LOCK_SET_SHA256: ${{ vars.SUNDER_AGENT_LOCK_SET_SHA256 }}
-          SUNDER_AGENT_RELEASE_APPROVAL_REFERENCE: ${{ vars.SUNDER_AGENT_RELEASE_APPROVAL_REFERENCE }}
-          SUNDER_AGENT_RELEASE_OWNER_PRINCIPAL_ID: ${{ vars.SUNDER_AGENT_RELEASE_OWNER_PRINCIPAL_ID }}
-          VERSION: ${{ needs.prepare.outputs.version }}
-        run: bash scripts/release/publish-agent-family.sh release-assets
-
-      - name: Capture exact verified publication bytes
-        id: handoff
-        shell: bash
-        env:
-          EVIDENCE_RUN_ATTEMPT: ${{ steps.publication.outputs.evidence_run_attempt }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_ID: ${{ steps.publication.outputs.release_id }}
-          VERIFIED_RELEASE_ASSETS_SHA256: ${{ steps.publication.outputs.release_assets_sha256 }}
-        run: |
-          set -euo pipefail
-          artifact_name="sunder-agent-publication-evidence-$RELEASE_ID-$GITHUB_RUN_ATTEMPT"
-          mkdir publication-evidence
-          gh release download "$GITHUB_REF_NAME" --repo "$GH_REPO" --dir publication-evidence \
-            --pattern '*.sunderpkg' \
-            --pattern 'native-test-evidence.json' \
-            --pattern 'package-output-audit.json' \
-            --pattern 'SHA256SUMS' \
-            --pattern 'release-provenance.json' \
-            --pattern 'release-sbom.spdx.json' \
-            --pattern 'toolchain.txt'
-          test "$(find publication-evidence -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d '[:space:]')" = 21
-          bash scripts/release/generate-agent-publication-handoff.sh \
-            publication-evidence \
-            "$RELEASE_ID" \
-            "$GITHUB_REF_NAME" \
-            "$GITHUB_SHA" \
-            "$EVIDENCE_RUN_ATTEMPT" \
-            "$VERIFIED_RELEASE_ASSETS_SHA256"
-          test "$(find publication-evidence -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d '[:space:]')" = 22
-          encoded_name="$(jq -rn --arg value "$artifact_name" '$value | @uri')"
-          artifacts="$(gh api -H 'Accept: application/vnd.github+json' \
-            "repos/$GH_REPO/actions/runs/$GITHUB_RUN_ID/artifacts?name=$encoded_name")"
-          artifact_count="$(jq --arg name "$artifact_name" '[.artifacts[] | select(.name == $name and .expired == false)] | length' <<< "$artifacts")"
-          [[ "$artifact_count" -le 1 ]] || { echo "Publication handoff artifact is ambiguous." >&2; exit 1; }
-          {
-            echo "artifact_name=$artifact_name"
-            echo "upload=$([[ "$artifact_count" == 0 ]] && echo true || echo false)"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Upload immutable Agent publication evidence
-        if: steps.handoff.outputs.upload == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: ${{ steps.handoff.outputs.artifact_name }}
-          path: publication-evidence/*
-          if-no-files-found: error
           retention-days: 90
           compression-level: 0
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: agent-family-results-${{ github.run_attempt }}
+          path: sunder-agent-package/artifacts/family-results
+          if-no-files-found: error
+
+  publish:
+    needs: [prepare, fan-in]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    environment: sunder-agent-release-promotion
+    permissions:
+      contents: write
+    outputs:
+      release_id: ${{ steps.stage.outputs.release_id }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
+      CORE_TAG: ${{ needs.prepare.outputs.core_tag }}
+      REGISTRY_API_URL: ${{ vars.SUNDER_REGISTRY_API_URL }}
+      SUNDER_AGENT_ARTIFACT_SOURCE_COMMIT: ${{ vars.SUNDER_AGENT_ARTIFACT_SOURCE_COMMIT }}
+      SUNDER_AGENT_LOCK_SET_SHA256: ${{ vars.SUNDER_AGENT_LOCK_SET_SHA256 }}
+      SUNDER_AGENT_RELEASE_APPROVAL_REFERENCE: ${{ vars.SUNDER_AGENT_RELEASE_APPROVAL_REFERENCE }}
+      SUNDER_AGENT_RELEASE_OWNER_PRINCIPAL_ID: ${{ vars.SUNDER_AGENT_RELEASE_OWNER_PRINCIPAL_ID }}
+    defaults:
+      run:
+        working-directory: sunder-agent-package
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: sunder-agent-package
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Younics/sunder-core
+          ref: ${{ needs.prepare.outputs.core_commit }}
+          path: sunder-core
+          persist-credentials: false
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: sunder-agent-family-release
+          path: sunder-agent-package/artifacts/release
+      - name: Stage immutable tested bytes on one numeric release
+        id: stage
+        run: python3 -B scripts/release/agent_pipeline.py stage --core ../sunder-core --directory artifacts/release
+      - name: Publish and verify every exact Registry version as Yanked
+        env:
+          SUNDER_REGISTRY_PUBLISH_TOKEN: ${{ secrets.SUNDER_REGISTRY_PUBLISH_TOKEN }}
+          RELEASE_ID: ${{ steps.stage.outputs.release_id }}
+        run: python3 -B scripts/release/agent_pipeline.py publish --core ../sunder-core --directory artifacts/release --release-id "$RELEASE_ID"
+
+  release:
+    needs: [prepare, publish]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    environment: sunder-agent-release-promotion
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
+      CORE_TAG: ${{ needs.prepare.outputs.core_tag }}
+      RELEASE_ID: ${{ needs.publish.outputs.release_id }}
+      REGISTRY_API_URL: ${{ vars.SUNDER_REGISTRY_API_URL }}
+      SUNDER_REGISTRY_CLI_TOKEN: ${{ secrets.SUNDER_REGISTRY_CLI_TOKEN }}
+      SUNDER_AGENT_ARTIFACT_SOURCE_COMMIT: ${{ vars.SUNDER_AGENT_ARTIFACT_SOURCE_COMMIT }}
+      SUNDER_AGENT_LOCK_SET_SHA256: ${{ vars.SUNDER_AGENT_LOCK_SET_SHA256 }}
+      SUNDER_AGENT_RELEASE_APPROVAL_REFERENCE: ${{ vars.SUNDER_AGENT_RELEASE_APPROVAL_REFERENCE }}
+      SUNDER_AGENT_RELEASE_OWNER_PRINCIPAL_ID: ${{ vars.SUNDER_AGENT_RELEASE_OWNER_PRINCIPAL_ID }}
+    defaults:
+      run:
+        working-directory: sunder-agent-package
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: sunder-agent-package
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Younics/sunder-core
+          ref: ${{ needs.prepare.outputs.core_commit }}
+          path: sunder-core
+          persist-credentials: false
+      - name: Download only the same retained numeric release
+        run: |
+          mkdir -p artifacts/release
+          python3 -B ../sunder-core/scripts/release/github_release.py download "$GITHUB_REF_NAME" --repository "$GITHUB_REPOSITORY" --release-id "$RELEASE_ID" --directory artifacts/release
+      - name: Commit and confirm one retained atomic visibility request
+        run: python3 -B scripts/release/agent_pipeline.py visibility --core ../sunder-core --directory artifacts/release --release-id "$RELEASE_ID"
+      - name: Recheck public bytes, policy, tags and six-RID plans before announcement
+        run: python3 -B scripts/release/agent_pipeline.py finalize --core ../sunder-core --directory artifacts/release --release-id "$RELEASE_ID"

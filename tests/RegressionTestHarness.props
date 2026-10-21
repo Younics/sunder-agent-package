@@ -1,4 +1,5 @@
 <Project>
+  <Import Project="CurrentContractFixtures.props" />
   <!-- Linked into owning suites; this is test infrastructure, never package source. -->
   <ItemGroup>
     <Compile Include="$(MSBuildThisFileDirectory)Sunder.Package.Agent.Tests/LocalProviderFakes/*.cs"
@@ -8,7 +9,6 @@
                       $(MSBuildThisFileDirectory)Sunder.Package.Agent.Tests/GeneratedServiceTestScope.cs;
                       $(MSBuildThisFileDirectory)Sunder.Package.Agent.Tests/FakeServiceCatalog.cs;
                       $(MSBuildThisFileDirectory)Sunder.Package.Agent.Tests/RegressionTestRpcState.FailureBoundary.cs;
-                      $(MSBuildThisFileDirectory)Sunder.Package.Agent.Tests/RegressionTestRpcDescriptors.cs;
                       $(MSBuildThisFileDirectory)Sunder.Package.Agent.Tests/CurrentPrivateRpcDescriptors.cs;
                       $(MSBuildThisFileDirectory)Sunder.Package.Agent.Tests/CurrentPublicRpcDescriptors.cs;
                       $(MSBuildThisFileDirectory)Sunder.Package.Agent.Tests/RegressionTestRpcValues.cs;

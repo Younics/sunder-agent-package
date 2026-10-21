@@ -8,7 +8,7 @@ using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.TestSupport;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Worker;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -19,7 +19,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
     {
         using var package = RegressionTestPackageScope.Create();
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
+        var rpc = new RegressionTestRpcClient(state, "younics.ai.agent");
         var (_, ownerLifetime, ownerServices) = CreateGeneratedWorker(owner, package.Context, rpc);
         await using var ownedOwner = ownerLifetime;
         var permissionServiceType = owner.GetType(typeof(AgentServices.IPermissionSurfaceService).FullName!, true)!;
@@ -38,16 +38,16 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.Equal(AgentPermissionDecision.Deny, (await EvaluateAsync("", "")).Decision);
         Assert.Equal(AgentPermissionDecisionSource.UnknownBoundary, (await EvaluateAsync("files.read", AgentPermissionBoundaryIds.ConfiguredScope)).Source);
 
-        var filesContext = new TestPackageContext("sunder.package.agent.tools.files", package.RootPath, version: "2.0.0", storage: package.Context.Storage);
+        var filesContext = new TestPackageContext("younics.ai.agent.tools.files", package.RootPath, version: "2.0.0", storage: package.Context.Storage);
         var (filesOptions, filesLifetime, _) = CreateGeneratedWorker(files, filesContext, rpc);
         await using var ownedFiles = filesLifetime;
         var filesRegistration = Assert.Single(filesOptions.Providers, value => value.ProviderId == "files.permissions");
         var filesHandler = AddSurfaceProvider(state, filesContext.PackageId, filesRegistration);
-        var shellContext = new TestPackageContext("sunder.package.agent.tools.shell", package.RootPath, version: "2.0.0", storage: package.Context.Storage);
+        var shellContext = new TestPackageContext("younics.ai.agent.tools.shell", package.RootPath, version: "2.0.0", storage: package.Context.Storage);
         var (shellOptions, shellLifetime, _) = CreateGeneratedWorker(shell, shellContext, rpc);
         await using var ownedShell = shellLifetime;
         var shellRegistration = Assert.Single(shellOptions.Providers, value => value.ProviderId == "shell.permissions");
-        var shellHandler = AddSurfaceProvider(state, "sunder.package.agent.tools.shell", shellRegistration);
+        var shellHandler = AddSurfaceProvider(state, "younics.ai.agent.tools.shell", shellRegistration);
         var actions = await ActionsAsync(); Assert.Equal(5, actions.Count);
         Assert.Equal(actions.OrderBy(action => action.DisplayName, StringComparer.OrdinalIgnoreCase), actions);
         foreach (var action in actions.Where(action => action.ActionId.StartsWith("files.", StringComparison.Ordinal)))
@@ -107,7 +107,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         // A valid deny default is mapped by its wire name; case-insensitive action
         // deduplication keeps the first provider's definition.
         await state.RetireAsync(shellHandler);
-        shellHandler = AddSurfaceProvider(state, "sunder.package.agent.tools.shell", shellRegistration);
+        shellHandler = AddSurfaceProvider(state, "younics.ai.agent.tools.shell", shellRegistration);
         shellHandler.Transform = (_, value) =>
         {
             var node = JsonNode.Parse(value.GetRawText())!;

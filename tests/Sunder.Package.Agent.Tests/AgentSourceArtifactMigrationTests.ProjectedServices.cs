@@ -11,9 +11,21 @@ public sealed partial class AgentSourceArtifactMigrationTests
     // Reflection crosses only the collectible CLR boundary. The selected instance,
     // reference, generated client, marshalling and retirement remain SDK-owned.
     private static async Task<ProjectedArtifactProvider[]> ProjectedProviders(
-        GeneratedServiceTestScope receiver, Assembly module, string service)
+        GeneratedServiceTestScope receiver, Assembly module, string service, bool imported = true)
     {
-        var contract = module.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Services." + service, true)!;
+        // Importers use the selected contract scope. Owner modules retain their
+        // flat, source-shaped interfaces; callers identify that boundary explicitly.
+        var scope = imported ? (service switch
+        {
+            "IChatProviderService" => "CYounics_Ai_Agent_Chat_Provider",
+            "IChildRunExecutorService" => "CYounics_Ai_Agent_Child_Run_Executor",
+            "IExecutionTargetService" => "CYounics_Ai_Agent_Execution_Target",
+            "IRuntimeCatalogService" => "CYounics_Ai_Agent_Runtime_Catalog",
+            "ISelectableCapabilityProviderService" => "CYounics_Ai_Agent_Selectable_Capability_Provider",
+            "IToolSourceService" => "CYounics_Ai_Agent_Tool_Source",
+            _ => throw new ArgumentOutOfRangeException(nameof(service), service, "No imported contract scope is mapped for this probe."),
+        }) + "." : "";
+        var contract = module.GetType(ImportedServices + scope + service, true)!;
         var catalog = receiver.Providers(contract);
         var result = (await AgentRoleBoundary.Await(catalog.GetType().GetMethod("ListAsync")!
             .Invoke(catalog, [CancellationToken.None])!))!;

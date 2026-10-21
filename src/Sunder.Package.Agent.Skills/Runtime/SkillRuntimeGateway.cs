@@ -13,7 +13,7 @@ using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Services;
 #if SUNDER_SKILLS_APP
-using Sunder.Generated.Packages.Sunder_Package_Agent_Skills_Services;
+using Sunder.Generated.Packages.Younics_Ai_Agent_Skills_Services;
 #endif
 
 namespace Sunder.Package.Agent.Skills.Runtime;
@@ -228,7 +228,7 @@ internal sealed partial class SkillAppRuntimeGateway :
 #endif
 
 #if SUNDER_SKILLS_WORKER
-[SunderService(Key = "management", ContractId = "sunder.package.agent.skills.owner", ServiceId = "skills-management", IncludeSchemaDialect = true)]
+[SunderService(Key = "management", ContractId = "younics.ai.agent.skills.owner", ServiceId = "skills-management", IncludeSchemaDialect = true)]
 [SunderServiceProvider(ProviderId = "skills.management")]
 [SunderServiceError("skills.owner.operation-failed", Description = "The requested Skills operation could not be completed.")]
 internal sealed partial class SkillRuntimeHandler(

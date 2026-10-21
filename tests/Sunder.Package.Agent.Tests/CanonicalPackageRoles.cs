@@ -20,6 +20,12 @@ internal sealed class CanonicalPackageRoles : IDisposable
     internal static string Output(string root, string role) => Path.Combine(root, "bin", Configuration,
         "net10.0", "sunder-roles", role, RuntimeInformation.RuntimeIdentifier);
 
+    internal static byte[]? ReadOwnedBaseline(string root)
+    {
+        var path = Path.Combine(root, "sunder-contracts.owned.json");
+        return File.Exists(path) ? File.ReadAllBytes(path) : null;
+    }
+
     internal Assembly Load(string family, string role, string? root = null)
     {
         root ??= Source(family);
@@ -54,9 +60,7 @@ internal sealed class CanonicalPackageRoles : IDisposable
             entry => entry.Value.GetProperty("contractId").GetString() == contractId).Value.GetProperty("current");
         Assert.Equal("release-frozen", current.GetProperty("state").GetString());
         var descriptor = SunderRpcContractDescriptor.Parse(Encoding.UTF8.GetBytes(current.GetProperty("canonicalDescriptor").GetString()!));
-        var oracle = CurrentPublicRpcDescriptors.IsAgentPublicContract(contractId)
-            ? CurrentPublicRpcDescriptors.Get(contractId)
-            : RegressionTestRpcDescriptors.Get(contractId);
+        var oracle = CurrentPublicRpcDescriptors.Get(contractId);
         Assert.Equal(oracle.GetCanonicalUtf8(), descriptor.GetCanonicalUtf8());
         Assert.Equal(oracle.GetCanonicalAbiProjectionUtf8(), descriptor.GetCanonicalAbiProjectionUtf8());
         Assert.Equal(oracle.Sha256, current.GetProperty("descriptorSha256").GetString());

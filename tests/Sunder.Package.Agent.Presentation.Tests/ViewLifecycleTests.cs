@@ -48,11 +48,13 @@ using AgentApp::Sunder.Package.Agent.PackageViews;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Runtime;
 using AppRuntime = AgentApp::Sunder.Package.Agent.Runtime;
-using IAgentOwnerRuntimeProvider = AgentApp::Sunder.Generated.Packages.Sunder_Package_Agent_Services.IAgentRuntimeService;
+using IAgentOwnerRuntimeProvider = AgentApp::Sunder.Generated.Packages.Younics_Ai_Agent_Services.IAgentRuntimeService;
 using AgentChatSelectionStateService = AgentApp::Sunder.Package.Agent.Services.AgentChatSelectionStateService;
 using AgentToolPresentationService = AgentApp::Sunder.Package.Agent.Services.AgentToolPresentationService;
 using AppModels = AgentApp::Sunder.Package.Agent.Contracts.Models;
 using MemoryAppGateway = MemoryApp::Sunder.Package.Agent.Memory.Semantic.Runtime.IMemoryInspectorGateway;
+using IEmbeddingProviderService = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Embedding_Provider.IEmbeddingProviderService;
+using IRuntimeCatalogService = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Runtime_Catalog.IRuntimeCatalogService;
 using Sunder.Package.Agent.Services;
 using AgentApp::Sunder.Package.Agent.Shared.PackageViews;
 using Sunder.Package.Agent.Storage;
@@ -78,12 +80,47 @@ using MemoryInspectorView = MemoryApp::Sunder.Package.Agent.Memory.Semantic.Pack
 using MemoryInspectorViewModel = MemoryApp::Sunder.Package.Agent.Memory.Semantic.PackageViews.MemoryInspectorViewModel;
 using OpenAiSettingsView = OpenAiApp::Sunder.Package.Agent.Provider.OpenAI.OpenAiSettingsView;
 using OpenAiSettingsViewModel = OpenAiApp::Sunder.Package.Agent.Provider.OpenAI.OpenAiSettingsViewModel;
-using IOpenAiManagementService = OpenAiApp::Sunder.Generated.Packages.Sunder_Package_Agent_Provider_Openai_Services.IManagementService;
+using IOpenAiManagementService = OpenAiApp::Sunder.Generated.Packages.Younics_Ai_Agent_Provider_Openai_Services.IManagementService;
 
 namespace Sunder.Package.Agent.Presentation.Tests;
 
 public sealed class ViewLifecycleTests
 {
+    [AvaloniaTheory]
+    [InlineData("agent")]
+    [InlineData("builder")]
+    [InlineData("anthropic")]
+    [InlineData("gemini")]
+    [InlineData("lmstudio")]
+    [InlineData("openai")]
+    public async Task SettingsView_UiRetirementThenBackgroundContainerDisposalIsIdempotent(string package)
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<Control>(_ => package switch
+        {
+            "agent" => new AgentPermissionsView(),
+            "builder" => new BuilderSettingsView(),
+            "anthropic" => new AnthropicSettingsView(),
+            "gemini" => new GeminiSettingsView(),
+            "lmstudio" => new LMStudioSettingsView(),
+            "openai" => new OpenAiSettingsView(),
+            _ => throw new ArgumentOutOfRangeException(nameof(package)),
+        });
+        await using var provider = services.BuildServiceProvider();
+        var view = provider.GetRequiredService<Control>();
+        view.DataContext = new object();
+
+        // The shell retires cached controls on its UI dispatcher before it drains
+        // the generated composition's singleton service container off-thread.
+        Assert.IsAssignableFrom<IDisposable>(view).Dispose();
+        Assert.Null(view.DataContext);
+        await Task.Run(async () =>
+        {
+            Assert.False(Dispatcher.UIThread.CheckAccess());
+            await provider.DisposeAsync();
+        });
+    }
+
     [AvaloniaFact]
     public async Task HistorySearchView_UsesLockedBreakpointsWithoutHorizontalOverflow()
     {
@@ -172,7 +209,7 @@ public sealed class ViewLifecycleTests
         Assert.False(query.IsKeyboardFocusWithin);
 
         await view.OnNavigatedToAsync(new PackageViewNavigationContext(
-            "sunder.package.agent.history",
+            "younics.ai.agent.history",
             new Dictionary<string, string?>()));
         await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
         Assert.True(query.IsKeyboardFocusWithin);
@@ -221,7 +258,7 @@ public sealed class ViewLifecycleTests
         var window = new Window { Width = 900, Height = 600, Content = view };
         window.Show();
         await view.OnNavigatedToAsync(new PackageViewNavigationContext(
-            "sunder.package.agent.chat",
+            "younics.ai.agent.chat",
             new Dictionary<string, string?>()));
         await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
 
@@ -324,7 +361,7 @@ public sealed class ViewLifecycleTests
             ((INotifyCollectionChanged)viewModel.TranscriptItems).CollectionChanged +=
                 (_, change) => itemChanges.Add(change.Action);
             var context = new PackageViewNavigationContext(
-                "sunder.package.agent.chat",
+                "younics.ai.agent.chat",
                 TranscriptAnchorNavigation.ToParameters(new TranscriptNavigationTarget(
                     workspace.WorkspaceId,
                     session.SessionId,
@@ -411,7 +448,7 @@ public sealed class ViewLifecycleTests
             var loadedTarget = turns[36];
             var loadedTargetItem = Assert.Single(loadedTarget.Items);
             var loadedContext = new PackageViewNavigationContext(
-                "sunder.package.agent.chat",
+                "younics.ai.agent.chat",
                 TranscriptAnchorNavigation.ToParameters(new TranscriptNavigationTarget(
                     workspace.WorkspaceId,
                     session.SessionId,
@@ -607,7 +644,7 @@ public sealed class ViewLifecycleTests
             {
                 var item = Assert.Single(turn.Items);
                 return new PackageViewNavigationContext(
-                    "sunder.package.agent.chat",
+                    "younics.ai.agent.chat",
                     TranscriptAnchorNavigation.ToParameters(new TranscriptNavigationTarget(
                         workspace.WorkspaceId,
                         session.SessionId,
@@ -689,7 +726,7 @@ public sealed class ViewLifecycleTests
 
         await Task.Run(async () => await view.OnNavigatedToAsync(
             new PackageViewNavigationContext(
-                "sunder.package.agent.chat",
+                "younics.ai.agent.chat",
                 new Dictionary<string, string?>())));
         await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Loaded);
 
@@ -781,7 +818,7 @@ public sealed class ViewLifecycleTests
         var window = new Window { Width = 900, Height = 600, Content = view };
         window.Show();
         await view.OnNavigatedToAsync(new PackageViewNavigationContext(
-            "sunder.package.agent.chat",
+            "younics.ai.agent.chat",
             new Dictionary<string, string?>()));
         await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
         var viewModel = Assert.IsType<AgentChatViewModel>(view.DataContext);
@@ -878,7 +915,7 @@ public sealed class ViewLifecycleTests
         var window = new Window { Width = 900, Height = 500, Content = view };
         window.Show();
         await view.OnNavigatedToAsync(new PackageViewNavigationContext(
-            "sunder.package.agent.chat",
+            "younics.ai.agent.chat",
             new Dictionary<string, string?>()));
         await WaitForPendingCoordinatorOperationsAsync(view);
         await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
@@ -997,7 +1034,7 @@ public sealed class ViewLifecycleTests
         try
         {
             await view.OnNavigatedToAsync(new PackageViewNavigationContext(
-                "sunder.package.agent.chat",
+                "younics.ai.agent.chat",
                 new Dictionary<string, string?>()));
             await GetSettledScrollOperation(view).WaitAsync(TimeSpan.FromSeconds(3));
             await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
@@ -1104,7 +1141,7 @@ public sealed class ViewLifecycleTests
         try
         {
             await view.OnNavigatedToAsync(new PackageViewNavigationContext(
-                "sunder.package.agent.chat",
+                "younics.ai.agent.chat",
                 new Dictionary<string, string?>()));
             await GetSettledScrollOperation(view).WaitAsync(TimeSpan.FromSeconds(3));
             await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
@@ -1208,7 +1245,7 @@ public sealed class ViewLifecycleTests
         try
         {
             await view.OnNavigatedToAsync(new PackageViewNavigationContext(
-                "sunder.package.agent.chat",
+                "younics.ai.agent.chat",
                 new Dictionary<string, string?>()));
             await GetSettledScrollOperation(view).WaitAsync(TimeSpan.FromSeconds(3));
             await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
@@ -1294,6 +1331,7 @@ public sealed class ViewLifecycleTests
             new SkillSettingsView(),
             new AgentMcpSettingsView(),
             new BuilderView(),
+            new BuilderSettingsView(),
             new AgentChatView(),
             new AgentProfilesView(),
             new AgentWorkspacesView(),
@@ -1328,6 +1366,9 @@ public sealed class ViewLifecycleTests
         services.AddSingleton<IPackageNotificationService>(NullPackageNotificationService.Instance);
         services.AddSingleton<IBackgroundProcessQueue, NoOpBackgroundProcessQueue>();
         services.AddSingleton<IPackageSettingsNavigationService>(NullPackageSettingsNavigationService.Instance);
+        services.AddSingleton<IPackageDevelopmentService>(new ColdBuilderServices());
+        services.AddSingleton<IPackageLogNavigationService>(new ColdBuilderServices());
+        services.AddSingleton<IPackageAppStateUpdates>(new ColdBuilderServices());
         new AgentApp::Sunder.Generated.Package.AppModule().ConfigureAppServices(services, scope.Context);
         new MemoryAppPackageModule().ConfigureAppServices(services, scope.Context);
         new SubagentsAppPackageModule().ConfigureAppServices(services, scope.Context);
@@ -1393,7 +1434,7 @@ public sealed class ViewLifecycleTests
             await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
             var lifecycle = Assert.IsAssignableFrom<IPackageViewNavigationPreparationTarget>(viewModel);
             var context = new PackageViewNavigationContext(
-                "sunder.package.agent.execution.docker.settings",
+                "younics.ai.agent.execution.docker.settings",
                 new Dictionary<string, string?>());
 
             var preparation = lifecycle.PrepareNavigationAsync(context).AsTask();
@@ -1548,22 +1589,118 @@ public sealed class ViewLifecycleTests
     }
 
     [AvaloniaFact]
+    public void AppNativeViewport_RadiusOnlyChangeInvalidatesArrangementAndReparentingUsesTheNewShell()
+    {
+        var browser = new Border();
+        var viewport = new Sunder.App.Services.AppNativeWebViewViewport(browser);
+        var boundary = new Border { ClipToBounds = true, CornerRadius = new CornerRadius(18), Child = viewport };
+        boundary.Classes.Add("shell-panel-content-clip");
+        var window = new Window { Width = 300, Height = 200, Content = boundary };
+        window.Show();
+        try
+        {
+            window.UpdateLayout();
+            Assert.True(viewport.IsArrangeValid);
+            Assert.Equal(7, browser.Bounds.X);
+            boundary.CornerRadius = new CornerRadius(60); // Border invalidates rendering, not layout.
+            Assert.False(viewport.IsArrangeValid);
+            window.UpdateLayout();
+            Assert.Equal(19, browser.Bounds.X);
+
+            window.Content = null;
+            Assert.False(browser.IsVisible);
+            boundary.Child = null;
+            var replacement = new Border { ClipToBounds = true, CornerRadius = new CornerRadius(30), Child = viewport };
+            replacement.Classes.Add("secondary-panel-content-clip");
+            window.Content = replacement;
+            window.UpdateLayout();
+            Assert.True(browser.IsVisible);
+            Assert.Equal(10, browser.Bounds.X);
+            Assert.True(viewport.IsArrangeValid);
+            boundary.CornerRadius = new CornerRadius(100); // Detached predecessor must no longer invalidate the viewport.
+            Assert.True(viewport.IsArrangeValid);
+            replacement.CornerRadius = new CornerRadius(60);
+            Assert.False(viewport.IsArrangeValid);
+            window.UpdateLayout();
+            Assert.Equal(19, browser.Bounds.X);
+        }
+        finally { window.Close(); }
+    }
+
+    [AvaloniaTheory]
+    [InlineData(1000, 1000, 1000, 1000, 68)]
+    [InlineData(100, 0, 0, 0, 38)]
+    public void AppNativeViewport_NormalizesAllCornerRadiiTogetherWithoutBlankingOrUnsafeHalfSizeClamping(
+        double topLeft, double topRight, double bottomRight, double bottomLeft, double expectedWidth)
+    {
+        var browser = new Border();
+        var viewport = new Sunder.App.Services.AppNativeWebViewViewport(browser);
+        var boundary = new Border { ClipToBounds = true, CornerRadius = new CornerRadius(topLeft, topRight, bottomRight, bottomLeft), Child = viewport };
+        boundary.Classes.Add("shell-panel-content-clip");
+        var window = new Window { Width = 100, Height = 100, Content = boundary };
+        window.Show();
+        try
+        {
+            window.UpdateLayout();
+            Assert.True(browser.IsVisible);
+            Assert.Equal(expectedWidth, browser.Bounds.Width);
+        }
+        finally { window.Close(); }
+    }
+
+    [AvaloniaFact]
+    public async Task BuilderView_StretchesProjectRowsAndReflowsCompactActionsWithoutHorizontalOverflow()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "builder-layout", new string('a', 100));
+        var source = new BuilderProjectInspection { Kind = BuilderProjectKind.Node, ProjectFolder = folder,
+            EntryPoint = Path.Combine(folder, "package.json"), PackageId = "local.layout", DisplayName = "A long project name for responsive layout",
+            SourceRevision = "layout", CanEditDisplayName = true, CanEditPackageId = true };
+        await using var model = CreateColdBuilderViewModel(new BlockingBuilderProjectStore(), source);
+        var row = new BuilderProjectViewModel(new("layout", source.DisplayName, source.PackageId, folder, source.EntryPoint,
+            source.Kind, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow));
+        row.ApplyInspection(source);
+        model.Projects.Add(row);
+        model.ActivateProject(row);
+        await model.RefreshSelectedProjectAsync();
+        using var view = new BuilderView(model);
+        var window = new Window { Width = 1200, Height = 800, Content = view };
+        window.Show();
+        try
+        {
+            foreach (var width in new[] { 320d, 600d, 819d, 820d, 1200d })
+            {
+                window.Width = width;
+                await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+                var actions = Assert.Single(view.GetVisualDescendants().OfType<WrapPanel>(), panel => panel.Classes.Contains("header-actions"));
+                Assert.Equal(width < 820 ? 2 : 0, Grid.GetRow(actions));
+                Assert.Equal(width < 820 ? 0 : 1, Grid.GetColumn(actions));
+                Assert.Equal(width < 820 ? 2 : 1, Grid.GetColumnSpan(actions));
+                Assert.Equal(width < 820 ? HorizontalAlignment.Left : HorizontalAlignment.Right, actions.HorizontalAlignment);
+                var details = Assert.Single(view.GetVisualDescendants().OfType<ScrollViewer>(), scroll => scroll.Content is ContentControl { Content: BuilderProjectViewModel });
+                Assert.True(details.Extent.Width <= details.Viewport.Width + 0.5,
+                    $"Builder details overflowed at {width}px: {details.Extent.Width} > {details.Viewport.Width}.");
+                var settings = Assert.Single(view.GetVisualDescendants().OfType<Expander>(), expander => Equals(expander.Header, "Project settings"));
+                Assert.False(settings.IsExpanded);
+                if (width >= 820)
+                {
+                    var list = Assert.Single(view.GetVisualDescendants().OfType<ListBox>(), control => control.Classes.Contains("projects"));
+                    var item = Assert.Single(list.GetVisualDescendants().OfType<ListBoxItem>());
+                    Assert.Equal(HorizontalAlignment.Stretch, item.HorizontalContentAlignment);
+                    Assert.True(Math.Abs(list.Bounds.Width - item.Bounds.Width) <= 1,
+                        $"Project row does not fill its aligned list: {item.Bounds.Width} / {list.Bounds.Width}.");
+                }
+            }
+        }
+        finally { window.Close(); }
+    }
+
+    [AvaloniaFact]
     public async Task BuilderView_ConstructionIsColdAndWarmupNavigationShareOneLoad()
     {
         var store = new BlockingBuilderProjectStore();
-        var pathService = new BuilderPathService();
-        await using var viewModel = new BuilderViewModel(
-            new BuilderProjectApplicationService(
-                new BuilderSetupService(),
-                new BuilderWorkspaceExecutionService(),
-                store,
-                pathService),
-            new BuilderOperationQueue(new NoOpBackgroundProcessQueue()),
-            new BuilderProjectPersistence(store),
-            pathService,
-            new AvaloniaBuilderUiDispatcher());
+        await using var viewModel = CreateColdBuilderViewModel(store);
         using var view = new BuilderView(viewModel);
-        var context = new PackageViewNavigationContext("sunder.package.agent.builder", new Dictionary<string, string?>());
+        var context = new PackageViewNavigationContext("younics.sunder.package.maker", new Dictionary<string, string?>());
 
         Assert.Equal(0, store.LoadCount);
         var warmup = view.WarmupAsync().AsTask();
@@ -1613,17 +1750,7 @@ public sealed class ViewLifecycleTests
     public async Task BuilderView_RetriesTransientWarmupFailure()
     {
         var store = new FailOnceBuilderProjectStore();
-        var pathService = new BuilderPathService();
-        await using var viewModel = new BuilderViewModel(
-            new BuilderProjectApplicationService(
-                new BuilderSetupService(),
-                new BuilderWorkspaceExecutionService(),
-                store,
-                pathService),
-            new BuilderOperationQueue(new NoOpBackgroundProcessQueue()),
-            new BuilderProjectPersistence(store),
-            pathService,
-            new AvaloniaBuilderUiDispatcher());
+        await using var viewModel = CreateColdBuilderViewModel(store);
         using var view = new BuilderView(viewModel);
 
         await view.WarmupAsync();
@@ -1640,17 +1767,7 @@ public sealed class ViewLifecycleTests
     public async Task BuilderViewModel_DisposalDrainsBlockedInitializationBeforePersistenceDisposal()
     {
         var store = new BlockingBuilderProjectStore();
-        var pathService = new BuilderPathService();
-        var viewModel = new BuilderViewModel(
-            new BuilderProjectApplicationService(
-                new BuilderSetupService(),
-                new BuilderWorkspaceExecutionService(),
-                store,
-                pathService),
-            new BuilderOperationQueue(new NoOpBackgroundProcessQueue()),
-            new BuilderProjectPersistence(store),
-            pathService,
-            new AvaloniaBuilderUiDispatcher());
+        var viewModel = CreateColdBuilderViewModel(store);
         var initialization = viewModel.InitializeAsync();
         await store.LoadStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
@@ -1664,12 +1781,125 @@ public sealed class ViewLifecycleTests
     }
 
     [AvaloniaFact]
+    public async Task BuilderView_CloseDoesNotCancelActivationOwnedInitialization()
+    {
+        var store = new BlockingBuilderProjectStore();
+        await using var model = CreateColdBuilderViewModel(store);
+        var view = new BuilderView(model);
+        var initialization = view.WarmupAsync().AsTask();
+        await store.LoadStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        view.Dispose();
+        Assert.False(store.CancellationObserved.Task.IsCompleted);
+        store.ReleaseLoad.TrySetResult();
+        await initialization.WaitAsync(TimeSpan.FromSeconds(2));
+        using var replacement = new BuilderView(model);
+        await replacement.WarmupAsync();
+        Assert.Equal(1, store.LoadCount);
+    }
+
+    [AvaloniaFact]
+    public async Task PresentationDispatcher_AbortedFailureHandlerAndLateCaptureDrainOnIsolatedDispatcher()
+    {
+        // A dedicated dispatcher can really shut down without killing the suite's shared UIThread.
+        var ready = new TaskCompletionSource<Dispatcher>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var stop = new ManualResetEventSlim();
+        var stopped = new TaskCompletionSource<Exception?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var callbacks = 0;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                var dispatcher = Dispatcher.CurrentDispatcher;
+                ready.SetResult(dispatcher);
+                stop.Wait();
+                dispatcher.InvokeShutdown();
+                // First capture in this independently compiled package, on the native owner thread.
+                // An inline CheckAccess shortcut would incorrectly execute the callback here.
+                var late = BuilderApp::Sunder.Package.Agent.Shared.Presentation.PresentationDispatcher.For(dispatcher);
+                Exception? failure = null;
+                try { late.InvokeAsync(() => callbacks++).GetAwaiter().GetResult(); }
+                catch (Exception error) { failure = error; }
+                stopped.TrySetResult(failure);
+            }
+            catch (Exception error) { ready.TrySetException(error); stopped.TrySetException(error); }
+        }) { IsBackground = true };
+        thread.Start();
+        try
+        {
+            var native = await ready.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            var dispatcher = AgentApp::Sunder.Package.Agent.Shared.Presentation.PresentationDispatcher.For(native);
+            await using var scope = new AgentApp::Sunder.Package.Agent.Shared.Presentation.PresentationTaskScope(
+                (_, token) => dispatcher.InvokeAsync(() => callbacks++, token), dispatcher.ShutdownToken);
+            var observation = scope.RunAsync(_ => Task.FromException(new IOException("original failure")));
+            Assert.False(observation.IsCompleted);
+            stop.Set();
+            var aborted = Assert.IsType<BuilderApp::Sunder.Package.Agent.Shared.Presentation.PresentationDispatchCanceledException>(
+                await stopped.Task.WaitAsync(TimeSpan.FromSeconds(2)));
+            await observation.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.True(scope.CancellationToken.IsCancellationRequested);
+            Assert.Equal(0, callbacks);
+
+            // Only DispatcherOperation.Status proved that late capture's tokenless task abort.
+            var late = BuilderApp::Sunder.Package.Agent.Shared.Presentation.PresentationDispatcher.For(native);
+            Assert.False(late.ShutdownToken.IsCancellationRequested);
+            Assert.Equal(BuilderApp::Sunder.Package.Agent.Shared.Presentation.PresentationDispatchCancellationReason.DispatcherAborted, aborted.Reason);
+            await using var lateScope = new BuilderApp::Sunder.Package.Agent.Shared.Presentation.PresentationTaskScope(
+                (_, token) => late.InvokeAsync(() => callbacks++, token));
+            await lateScope.RunAsync(_ => Task.FromException(new IOException("failure after dispatcher shutdown")))
+                .WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.False(lateScope.CancellationToken.IsCancellationRequested);
+            Assert.Equal(0, callbacks);
+        }
+        finally { stop.Set(); thread.Join(TimeSpan.FromSeconds(2)); }
+    }
+
+    [AvaloniaFact]
+    public async Task BuilderDispatcher_CancelledQueryDoesNotReturnDefaultOrHideCallbackFailure()
+    {
+        var dispatcher = new AvaloniaBuilderUiDispatcher();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var calls = 0;
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Task.Run(() => dispatcher.InvokeAsync(() => ++calls, cancellation.Token)));
+        Assert.Equal(0, calls);
+        var callbackFailure = new OperationCanceledException(cancellation.Token);
+        var observed = await Assert.ThrowsAsync<BuilderApp::Sunder.Package.Agent.Shared.Presentation.PresentationCallbackException>(
+            () => Task.Run(() => dispatcher.InvokeAsync<int>(() => throw callbackFailure)));
+        Assert.Same(callbackFailure, observed.InnerException);
+        // Builder retains its callback/backend distinction even though the shared dispatcher
+        // preserves ordinary failures for domain handlers such as subsession navigation.
+        var ordinaryFailure = new IOException("Builder query callback failed.");
+        observed = await Assert.ThrowsAsync<BuilderApp::Sunder.Package.Agent.Shared.Presentation.PresentationCallbackException>(
+            () => Task.Run(() => dispatcher.InvokeAsync<int>(() => throw ordinaryFailure)));
+        Assert.Same(ordinaryFailure, observed.InnerException);
+    }
+
+    [AvaloniaFact]
+    public async Task PresentationDispatcher_QueuedFocusRemainsDeferredAndCanBeAbortedByOwner()
+    {
+        using var owner = new CancellationTokenSource();
+        var calls = 0;
+        var queued = AgentApp::Sunder.Package.Agent.Shared.Presentation.PresentationDispatcher.QueueAsync(
+            () => calls++, DispatcherPriority.Background, owner.Token);
+        Assert.False(queued.IsCompleted);
+        Assert.Equal(0, calls);
+        owner.Cancel();
+        var stopped = await Assert.ThrowsAsync<AgentApp::Sunder.Package.Agent.Shared.Presentation.PresentationDispatchCanceledException>(() => queued);
+        Assert.Equal(owner.Token, stopped.CancellationToken);
+        Assert.Equal(0, calls);
+        var dispatcher = AgentApp::Sunder.Package.Agent.Shared.Presentation.PresentationDispatcher.For(Dispatcher.UIThread);
+        Assert.False(dispatcher.ShutdownToken.IsCancellationRequested);
+        await dispatcher.InvokeAsync(() => calls++);
+        Assert.Equal(1, calls);
+    }
+
+    [AvaloniaFact]
     public async Task AgentPermissionsViewModel_EmptySuccessfulRetryClearsUnavailableStatus()
     {
         var gateway = new TogglePermissionGateway();
         using var viewModel = new AgentPermissionsViewModel(AgentRoleBoundary.As<AppRuntime.IAgentPermissionGateway>(gateway));
         await viewModel.PrepareNavigationAsync(new PackageViewNavigationContext(
-            "settings:sunder.package.agent.permissions",
+            "settings:younics.ai.agent.permissions",
             new Dictionary<string, string?>()));
         Assert.Contains("unavailable", viewModel.StatusText, StringComparison.OrdinalIgnoreCase);
 
@@ -1754,7 +1984,7 @@ public sealed class ViewLifecycleTests
             transcriptNotificationsOnUi.Add(Dispatcher.UIThread.CheckAccess());
 
         await Task.Run(async () => await view.OnNavigatedToAsync(new PackageViewNavigationContext(
-            "sunder.package.agent.chat",
+            "younics.ai.agent.chat",
             new Dictionary<string, string?>())));
 
         Assert.Single(viewModel.Messages);
@@ -1797,7 +2027,7 @@ public sealed class ViewLifecycleTests
         var window = new Window { Width = 900, Height = 700, Content = host };
         window.Show();
         var context = new PackageViewNavigationContext(
-            "sunder.package.agent.chat",
+            "younics.ai.agent.chat",
             new Dictionary<string, string?>());
         await Task.Run(async () => await view.OnNavigatedToAsync(context));
         var transcript = GetTranscriptScrollViewer(view);
@@ -1901,7 +2131,7 @@ public sealed class ViewLifecycleTests
             }
         };
         var context = new PackageViewNavigationContext(
-            "sunder.package.agent.chat",
+            "younics.ai.agent.chat",
             new Dictionary<string, string?>());
 
         var navigation = Task.Run(async () => await view.OnNavigatedToAsync(context, cancellation.Token));
@@ -2058,7 +2288,7 @@ public sealed class ViewLifecycleTests
         try
         {
             await view.OnNavigatedToAsync(new PackageViewNavigationContext(
-                    "sunder.package.agent.chat",
+                    "younics.ai.agent.chat",
                     new Dictionary<string, string?>()))
                 .AsTask()
                 .WaitAsync(TimeSpan.FromSeconds(3));
@@ -2173,7 +2403,7 @@ public sealed class ViewLifecycleTests
         try
         {
             await view.OnNavigatedToAsync(new PackageViewNavigationContext(
-                "sunder.package.agent.chat",
+                "younics.ai.agent.chat",
                 new Dictionary<string, string?>()));
             var viewModel = Assert.IsType<AgentChatViewModel>(view.DataContext);
             await WaitUntilAsync(() => viewModel.Messages
@@ -2220,7 +2450,7 @@ public sealed class ViewLifecycleTests
         try
         {
             await view.OnNavigatedToAsync(new PackageViewNavigationContext(
-                "sunder.package.agent.chat",
+                "younics.ai.agent.chat",
                 new Dictionary<string, string?>()));
             await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
             var viewModel = Assert.IsType<AgentChatViewModel>(view.DataContext);
@@ -2448,7 +2678,7 @@ public sealed class ViewLifecycleTests
         {
             await Task.Run(async () => await view.OnNavigatedToAsync(
                 new PackageViewNavigationContext(
-                    "sunder.package.agent.chat",
+                    "younics.ai.agent.chat",
                     new Dictionary<string, string?>())));
             await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
             var viewModel = Assert.IsType<AgentChatViewModel>(view.DataContext);
@@ -3596,7 +3826,7 @@ public sealed class ViewLifecycleTests
         var window = new Window { Width = 900, Height = 700, Content = view };
         window.Show();
         var context = new PackageViewNavigationContext(
-            "sunder.package.agent.chat",
+            "younics.ai.agent.chat",
             new Dictionary<string, string?>());
         var failureNotificationsOnUi = new List<bool>();
         viewModel.PropertyChanged += (_, eventArgs) =>
@@ -3673,7 +3903,7 @@ public sealed class ViewLifecycleTests
         try
         {
             await view.OnNavigatedToAsync(new PackageViewNavigationContext(
-                "sunder.package.agent.chat",
+                "younics.ai.agent.chat",
                 new Dictionary<string, string?>()));
             var viewModel = Assert.IsType<AgentChatViewModel>(view.DataContext);
             viewModel.SelectedSession = viewModel.Sessions.Single(item => item.SessionId == session.SessionId);
@@ -3727,7 +3957,7 @@ public sealed class ViewLifecycleTests
         try
         {
             await view.OnNavigatedToAsync(new PackageViewNavigationContext(
-                "sunder.package.agent.chat",
+                "younics.ai.agent.chat",
                 new Dictionary<string, string?>()));
             var viewModel = Assert.IsType<AgentChatViewModel>(view.DataContext);
             viewModel.SelectedSession = viewModel.Sessions.Single(item => item.SessionId == session.SessionId);
@@ -3760,7 +3990,7 @@ public sealed class ViewLifecycleTests
         var view = RegressionTestAppViews.ProfilesView(profileService);
         var viewModel = Assert.IsType<AgentProfilesViewModel>(view.DataContext);
         await view.OnNavigatedToAsync(new PackageViewNavigationContext(
-            "sunder.package.agent.profiles",
+            "younics.ai.agent.profiles",
             new Dictionary<string, string?>()));
         await WaitUntilAsync(() => viewModel.Profiles.Count > 0 && !viewModel.IsBusy);
         var profileCount = viewModel.Profiles.Count;
@@ -3786,7 +4016,7 @@ public sealed class ViewLifecycleTests
             services.ExtensionCatalog);
         var viewModel = Assert.IsType<AgentWorkspacesViewModel>(view.DataContext);
         await view.OnNavigatedToAsync(new PackageViewNavigationContext(
-            "sunder.package.agent.workspaces",
+            "younics.ai.agent.workspaces",
             new Dictionary<string, string?>()));
         var workspaceCount = viewModel.Workspaces.Count;
 
@@ -3831,7 +4061,7 @@ public sealed class ViewLifecycleTests
             culture: null)!;
         var view = new MemoryInspectorView(viewModel);
         var navigation = view.OnNavigatedToAsync(new PackageViewNavigationContext(
-            "sunder.package.agent.memory.semantic.inspector",
+            "younics.ai.agent.memory.semantic.inspector",
             new Dictionary<string, string?>())).AsTask();
         await embeddingProvider.ReadinessStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
@@ -4124,7 +4354,7 @@ public sealed class ViewLifecycleTests
         Assert.Equal(0, management.InvocationCount);
         var lifecycle = Assert.IsAssignableFrom<IPackageViewNavigationPreparationTarget>(view.DataContext);
         Assert.True(await lifecycle.PrepareNavigationAsync(new PackageViewNavigationContext(
-            "settings:sunder.package.agent.provider.openai",
+            "settings:younics.ai.agent.provider.openai",
             new Dictionary<string, string?>())));
 
         Assert.True(management.InvocationCount > 0);
@@ -4138,7 +4368,7 @@ public sealed class ViewLifecycleTests
         var extensionCatalog = new RegressionTestExtensionCatalog();
         var store = new AgentLocalStore(scope.Context);
         var sessionService = new AgentSessionService(store, extensionCatalog.SessionCleaners);
-        var workspaceService = new AgentWorkspaceService(store, extensionCatalog.SessionCleaners, sessionService, extensionCatalog.WorkspacePathMigrators);
+        var workspaceService = new AgentWorkspaceService(store, extensionCatalog.SessionCleaners, sessionService);
         var targetService = new AgentExecutionTargetService(extensionCatalog.ExecutionTargets);
         var toolService = new AgentToolService(
             sessionService,
@@ -4164,7 +4394,7 @@ public sealed class ViewLifecycleTests
         services.AddSingleton<IAgentOwnerRuntimeProvider>(runtime);
         services.AddSingleton(new AppRuntime.AgentAppRuntimeGateway(runtime));
         services.AddSingleton<RegressionTestExtensionCatalog>();
-        services.AddSingleton<ISunderRpcClient>(provider => provider.GetRequiredService<RegressionTestExtensionCatalog>().RpcForCaller("sunder.package.agent"));
+        services.AddSingleton<ISunderRpcClient>(provider => provider.GetRequiredService<RegressionTestExtensionCatalog>().RpcForCaller("younics.ai.agent"));
         services.AddSingleton<IPackageShellViewService, NoOpPackageShellViewService>();
         services.AddSingleton<IPackageNotificationService>(NullPackageNotificationService.Instance);
         services.AddSingleton<IBackgroundProcessQueue, NoOpBackgroundProcessQueue>();
@@ -4240,8 +4470,8 @@ public sealed class ViewLifecycleTests
         var settings = new MemorySemanticSettingsService(context);
         var metrics = new SemanticMemoryMetricsService();
         var resolver = new SemanticModelRuntimeResolver(
-            extensionCatalog.Memory().Providers<MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services.IRuntimeCatalogService>(),
-            extensionCatalog.Memory().Providers<MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services.IEmbeddingProviderService>(),
+            extensionCatalog.Memory().Providers<IRuntimeCatalogService>(),
+            extensionCatalog.Memory().Providers<IEmbeddingProviderService>(),
             settings);
         var retrieval = new SemanticMemoryRetrievalBackend(store, resolver, settings);
         var worker = new SemanticMemoryIndexingBackgroundService(store, resolver, settings, retrieval, metrics);
@@ -5924,6 +6154,43 @@ public sealed class ViewLifecycleTests
             => ValueTask.FromResult<IReadOnlyList<AgentEmbeddingGenerationResult?>>([]);
     }
 
+    private static BuilderViewModel CreateColdBuilderViewModel(IBuilderProjectStore store, BuilderProjectInspection? project = null)
+    {
+        var services = new ColdBuilderServices { Project = project };
+        return new(new(services, store, new(new NoOpBackgroundProcessQueue()), services), new(store, services), new(),
+            new AvaloniaBuilderUiDispatcher(), services, services, NullPackageSettingsNavigationService.Instance);
+    }
+
+    private sealed class ColdBuilderServices : IBuilderBackend, IBuilderJobJournal, IPackageDevelopmentService, IPackageLogNavigationService, IPackageAppStateUpdates
+    {
+        internal BuilderProjectInspection? Project { get; init; }
+        public Task<string> GetBackendIdAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<IReadOnlyList<BuilderProjectInspection>> DiscoverAsync(string folder, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<BuilderProjectInspection> InspectAsync(string entryPoint, CancellationToken cancellationToken = default)
+            => Project is { } project ? Task.FromResult(project) : throw new NotSupportedException();
+        public Task<BuilderToolchainStatus> GetToolchainsAsync(BuilderProjectKind kind, bool checkUpdates, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<string> StartJobAsync(BuilderJobRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<BuilderJobSnapshot> GetJobAsync(string jobId, string backendId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task CancelJobAsync(string jobId, string backendId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<IBuilderJobExecution> CaptureExecutionAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<BuilderRecordedJobRecovery?> RecoverRecordedJobAsync(BuilderJobReservation reservation,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        // These views must remain job/journal-cold. An accidental admission call
+        // fails the existing fixture rather than receiving a production bypass.
+        public Task<string> AdmitAndStartAsync(BuilderJobAdmission admission, IBuilderBackend backend,
+            Func<CancellationToken, Task<IBuilderJobExecution>> capture, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<BuilderJobStopResult> ReconcileAsync(string jobId, IBuilderBackend backend, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<BuilderJobStopResult?> ReadCompletedAsync(BuilderJobReservation reservation, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<BuilderJobStopResult> AbortKnownNotStartedAsync(BuilderJobAdmission admission, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<BuilderJobStopResult> CompleteAsync(BuilderJobReservation reservation, BuilderJobStopResult result, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<BuilderJobStopResult> CompleteOwnedAsync(BuilderJobAdmission admission, BuilderJobStopResult result, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task SavePartialAsync(BuilderJobReservation reservation, BuilderJobSnapshot snapshot, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task SaveFailureAsync(BuilderJobReservation reservation, string failure, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<IPackageDevelopmentSession> LoadAsync(string developmentFolder, bool watch, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task OpenPackageLogsAsync(string packageId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task RunAsync(string key, Func<PackageAppStateUpdateContext, Task> update, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    }
+
     private sealed class BlockingBuilderProjectStore : IBuilderProjectStore
     {
         private int _loadCount;
@@ -6045,7 +6312,7 @@ public sealed class ViewLifecycleTests
         {
             var service = (DockerPresentationServiceProxy)System.Reflection.DispatchProxy.Create(
                 typeof(DockerExecutionSettingsViewModel).Assembly.GetType(
-                    "Sunder.Generated.Packages.Sunder_Package_Agent_Execution_Docker_Services.IPresentationService", true)!,
+                    "Sunder.Generated.Packages.Younics_Ai_Agent_Execution_Docker_Services.IPresentationService", true)!,
                 typeof(DockerPresentationServiceProxy));
             service.Runtime = this;
             Service = service;

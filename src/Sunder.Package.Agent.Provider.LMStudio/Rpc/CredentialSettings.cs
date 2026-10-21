@@ -4,7 +4,7 @@ using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Provider.LMStudio.Rpc;
 
-[SunderService(ContractId = "sunder.package.agent.provider.lmstudio.credentials", ServiceId = "credential-settings", IncludeSchemaDialect = true)]
+[SunderService(ContractId = "younics.ai.agent.provider.lmstudio.credentials", ServiceId = "credential-settings", IncludeSchemaDialect = true)]
 [SunderServiceProvider(ProviderId = "lmstudio.credentials")]
 [SunderServiceError("provider.credential.required", Description = "A non-empty credential is required.")]
 internal sealed partial class CredentialSettingsService(ProviderCredentialAccessor credentials)

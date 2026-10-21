@@ -2,7 +2,7 @@ using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Services;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 
 namespace Sunder.Package.Agent.Services.BehaviorLoops;
 
@@ -94,8 +94,8 @@ public sealed class AgentBehaviorLoopSelection
 
         var control = (await _runControls!.ListAsync(cancellationToken).ConfigureAwait(false)).Providers
             .SingleOrDefault(provider => provider.State == ServiceProviderState.Active
-                && provider.PackageId == "sunder.package.agent" && provider.ProviderId == "agent.run.control")
-            ?? throw new AgentPackageUnavailableException("sunder.package.agent");
+                && provider.PackageId == "younics.ai.agent" && provider.ProviderId == "agent.run.control")
+            ?? throw new AgentPackageUnavailableException("younics.ai.agent");
         using var grant = _activeRuns!.OpenBehaviorInvocation(context.Session.SessionId, context.RunId,
             context.RunRevision, runtime, OwnerPackageId);
         try

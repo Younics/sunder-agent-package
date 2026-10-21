@@ -17,14 +17,14 @@ using McpWorker::Sunder.Package.Agent.Mcp.Runtime;
 using McpWorker::Sunder.Package.Agent.Mcp.Services;
 using AgentMcpSettingsViewModel = McpApp::Sunder.Package.Agent.Mcp.AgentMcpSettingsViewModel;
 using McpAppRuntimeGateway = McpApp::Sunder.Package.Agent.Mcp.Runtime.McpAppRuntimeGateway;
-using McpAppManagementService = McpApp::Sunder.Generated.Packages.Sunder_Package_Agent_Mcp_Services.IManagementService;
-using AgentToolDispatchedEvent = McpWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentToolDispatchedEvent;
-using AgentToolExecutionCompletedEvent = McpWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentToolExecutionCompletedEvent;
-using AgentToolExecutionContext = McpWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentToolExecutionContext;
-using AgentToolRequest = McpWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentToolRequest;
-using AgentToolResult = McpWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentToolResult;
-using ObservedToolExecutionRequest = McpWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.CSunder_Agent_Tool_Execution_Observed_ToolExecutionObservedExecuteRequest;
-using ToolSourceExecuteRequest = McpWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.CSunder_Agent_Tool_Source_ToolSourceExecuteRequest;
+using McpAppManagementService = McpApp::Sunder.Generated.Packages.Younics_Ai_Agent_Mcp_Services.IManagementService;
+using AgentToolDispatchedEvent = McpWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentToolDispatchedEvent;
+using AgentToolExecutionCompletedEvent = McpWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentToolExecutionCompletedEvent;
+using AgentToolExecutionContext = McpWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentToolExecutionContext;
+using AgentToolRequest = McpWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentToolRequest;
+using AgentToolResult = McpWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentToolResult;
+using ObservedToolExecutionRequest = McpWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.CYounics_Ai_Agent_Tool_Execution_Observed_ToolExecutionObservedExecuteRequest;
+using ToolSourceExecuteRequest = McpWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.CYounics_Ai_Agent_Tool_Source_ToolSourceExecuteRequest;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Logging;
 using Sunder.Sdk.Callbacks;
@@ -86,20 +86,12 @@ public sealed class McpRefactorTests
         Assert.Equal("tool_with_prefix__segment-9", toolName);
     }
 
-    [Fact]
-    public void LegacyToolIdentity_IsAliasOnlyAndRejectsPrefixAmbiguity()
+    [Theory]
+    [InlineData("foo_run")]
+    [InlineData("foo_bar_run")]
+    public void ToolIdentity_RejectsNameBasedAliases(string toolId)
     {
-        var servers = new[]
-        {
-            CreateServer("one", "foo"),
-            CreateServer("two", "foo_bar"),
-        };
-
-        Assert.Equal("foo_run", McpToolIdentity.CreateLegacyAlias("foo", "run"));
-        Assert.False(McpToolIdentity.TryParseLegacy("foo_bar_run", servers, out _, out _));
-        Assert.True(McpToolIdentity.TryParseLegacy("foo_run", servers, out var server, out var toolName));
-        Assert.Equal("one", server?.ServerId);
-        Assert.Equal("run", toolName);
+        Assert.False(McpToolIdentity.TryParseStable(toolId, out _, out _));
     }
 
     [Fact]
@@ -200,7 +192,7 @@ public sealed class McpRefactorTests
     }
 
     [Fact]
-    public async Task LegacyToolIdentity_CanonicalizesForPersistedCalls()
+    public async Task NameBasedToolIdentity_CannotResolveAConfiguredServer()
     {
         var context = new TestPackageContext();
         var catalog = new McpServerCatalogService(context);
@@ -213,9 +205,8 @@ public sealed class McpRefactorTests
             CreateToolRequest("foo_run", "{}"));
 
         Assert.True(result.IsError);
-        Assert.Equal(McpToolIdentity.CreateStable("one", "run"), result.ToolId);
-        Assert.Equal("MCP: foo: Run is unavailable.", result.Summary);
-        Assert.Equal("mcp-server-unavailable", result.ErrorCode);
+        Assert.Equal("foo_run", result.ToolId);
+        Assert.Equal("mcp-tool-not-found", result.ErrorCode);
     }
 
     [Fact]
@@ -345,10 +336,10 @@ public sealed class McpRefactorTests
     [InlineData("""{"type":"object","properties":{"name":{"type":"string"}}}""")]
     [InlineData("""{"type":"object","properties":{},"patternProperties":{"^x-":{"type":"string"}},"additionalProperties":false}""")]
     [InlineData("""{"type":"object","properties":{},"propertyNames":{"pattern":"^[a-z]+$"},"additionalProperties":false}""")]
-    [InlineData("""{"type":"object","properties":{"__sunder_mcp_metadata_version":{"type":"string"}},"additionalProperties":false}""")]
-    [InlineData("""{"type":"object","properties":{},"required":["__sunder_expected_timeout_seconds"],"additionalProperties":false}""")]
-    [InlineData("""{"type":"object","properties":{"__sunder_mcp_call":{"type":"string"}},"additionalProperties":false}""")]
-    [InlineData("""{"type":"object","properties":{},"required":["__sunder_mcp_call"],"additionalProperties":false}""")]
+    [InlineData("""{"type":"object","properties":{"__younics_mcp_metadata_version":{"type":"string"}},"additionalProperties":false}""")]
+    [InlineData("""{"type":"object","properties":{},"required":["__younics_expected_timeout_seconds"],"additionalProperties":false}""")]
+    [InlineData("""{"type":"object","properties":{"__younics_mcp_call":{"type":"string"}},"additionalProperties":false}""")]
+    [InlineData("""{"type":"object","properties":{},"required":["__younics_mcp_call"],"additionalProperties":false}""")]
     [InlineData("""{"type":"object","$defs":{"name":{"type":"string"}},"properties":{"name":{"$ref":"#/$defs/name"}},"additionalProperties":false}""")]
     [InlineData("""{"$id":"https://example.test/args","type":"object","properties":{"name":{"type":"string"}},"additionalProperties":false}""")]
     [InlineData("""{"$ref":"#/$defs/args","$defs":{"args":{"type":"object","properties":{"name":{"type":"string"}},"additionalProperties":false}}}""")]
@@ -436,7 +427,7 @@ public sealed class McpRefactorTests
             .GetProperty(McpToolTimeoutMetadata.EnvelopeArgumentsPropertyName);
 
         Assert.Equal("#/$defs/args", argumentsSchema.GetProperty("$ref").GetString());
-        Assert.Equal("urn:sunder:mcp:arguments:1", argumentsSchema.GetProperty("$id").GetString());
+        Assert.Equal("urn:younics:ai:agent:mcp:arguments:1", argumentsSchema.GetProperty("$id").GetString());
         Assert.Equal(2, argumentsSchema.GetProperty("$defs").GetProperty("args").GetProperty("oneOf").GetArrayLength());
     }
 
@@ -460,7 +451,7 @@ public sealed class McpRefactorTests
             .GetProperty("properties")
             .GetProperty(McpToolTimeoutMetadata.EnvelopeArgumentsPropertyName);
 
-        Assert.Equal("sunder:mcp-arguments:1", embedded.GetProperty("$comment").GetString());
+        Assert.Equal("younics:ai:agent:mcp-arguments:1", embedded.GetProperty("$comment").GetString());
         var originalResource = embedded.GetProperty("allOf")[0];
         Assert.Equal("https://example.test/mcp-arguments", originalResource.GetProperty("$id").GetString());
         Assert.Equal("#/$defs/args", originalResource.GetProperty("$ref").GetString());
@@ -521,6 +512,7 @@ public sealed class McpRefactorTests
 
         Assert.Equal(McpToolArgumentSchemaMode.Flat, converted.ArgumentSchemaMode);
         Assert.Equal(converted.RuntimeTool.Descriptor.ToolId, converted.RuntimeTool.Declaration.Name);
+        Assert.Empty(converted.RuntimeTool.Descriptor.Aliases ?? []);
         Assert.NotNull(converted.RuntimeTool.Descriptor.ArgumentsJsonSchema);
         using var descriptorSchema = JsonDocument.Parse(converted.RuntimeTool.Descriptor.ArgumentsJsonSchema!);
         Assert.Equal(
@@ -538,6 +530,21 @@ public sealed class McpRefactorTests
             originalSchema.GetProperty("properties").TryGetProperty(
                 McpToolTimeoutMetadata.TimeoutPropertyName,
                 out _));
+    }
+
+    [Fact]
+    public void ToolTimeoutMetadata_RejectsPredecessorMarkerValue()
+    {
+        Assert.True(AgentToolArgumentObject.TryParse(
+            JsonSerializer.Serialize(new Dictionary<string, object?>
+            {
+                [McpToolTimeoutMetadata.MetadataMarkerPropertyName] = "sunder.mcp.call/1",
+                [McpToolTimeoutMetadata.TimeoutPropertyName] = 60,
+            }), out var arguments, out _));
+
+        Assert.False(McpToolTimeoutMetadata.TryExtract(arguments!, out _, out var timeout, out var error));
+        Assert.Null(timeout);
+        Assert.NotNull(error);
     }
 
     [Theory]
@@ -1770,7 +1777,7 @@ public sealed class McpRefactorTests
     }
 
     [Fact]
-    public async Task Catalog_ReadsReleasedFlatRecordDocument()
+    public async Task Catalog_RejectsFlatRecordDocumentWithoutMutation()
     {
         var context = new TestPackageContext();
         var catalog = new McpServerCatalogService(context);
@@ -1779,14 +1786,15 @@ public sealed class McpRefactorTests
             McpServerCatalogService.BuildServerKey(server.ServerId),
             JsonSerializer.Serialize(server));
 
-        var loaded = Assert.Single(await catalog.ListServersAsync());
-
-        Assert.Equal(server.ServerId, loaded.ServerId);
-        Assert.Empty(catalog.LastDiagnostics);
+        Assert.Empty(await catalog.ListServersAsync());
+        Assert.Contains(catalog.LastDiagnostics, diagnostic => diagnostic.StorageKey == McpServerCatalogService.BuildServerKey(server.ServerId));
+        Assert.Equal(JsonSerializer.Serialize(server), await context.State.GetValueAsync(McpServerCatalogService.BuildServerKey(server.ServerId)));
     }
 
-    [Fact]
-    public async Task Catalog_RejectsFutureDocumentSchemaAndPreservesPayload()
+    [Theory]
+    [InlineData("sunder.agent.mcp.server-record", 1)]
+    [InlineData("younics.ai.agent.mcp.server-record", 2)]
+    public async Task Catalog_RejectsUnsupportedDocumentSchemaAndPreservesPayload(string schemaId, int schemaVersion)
     {
         var context = new TestPackageContext();
         var catalog = new McpServerCatalogService(context);
@@ -1794,14 +1802,37 @@ public sealed class McpRefactorTests
         var key = McpServerCatalogService.BuildServerKey(server.ServerId);
         var payload = JsonSerializer.Serialize(new
         {
-            DocumentSchemaId = McpServerRecordSerializer.DocumentSchemaId,
-            DocumentSchemaVersion = McpServerRecordSerializer.DocumentSchemaVersion + 1,
+            DocumentSchemaId = schemaId,
+            DocumentSchemaVersion = schemaVersion,
             Server = server,
         });
         await context.State.SetValueAsync(key, payload);
 
         Assert.Empty(await catalog.ListServersAsync());
         Assert.Contains(catalog.LastDiagnostics, diagnostic => diagnostic.StorageKey == key);
+        Assert.Equal(payload, await context.State.GetValueAsync(key));
+    }
+
+    [Theory]
+    [InlineData("TransportType", "\"Stdio\"")]
+    [InlineData("TransportType", "999")]
+    [InlineData("CommandParts", "[42]")]
+    [InlineData("IsEnabled", "\"true\"")]
+    [InlineData("ToolTimeoutMilliseconds", "\"1000\"")]
+    public async Task Catalog_RejectsWrongCurrentFieldTypesWithoutRepair(string propertyName, string value)
+    {
+        var context = new TestPackageContext();
+        var catalog = new McpServerCatalogService(context);
+        var server = CreateServer("strict", "strict");
+        var document = System.Text.Json.Nodes.JsonNode.Parse(McpServerRecordSerializer.Serialize(server))!;
+        document["Server"]![propertyName] = System.Text.Json.Nodes.JsonNode.Parse(value);
+        var payload = document.ToJsonString();
+        var key = McpServerCatalogService.BuildServerKey(server.ServerId);
+        await context.State.SetValueAsync(key, payload);
+
+        Assert.Null(await catalog.GetServerAsync(server.ServerId));
+        Assert.Empty(await catalog.ListServersAsync());
+        Assert.Single(catalog.LastDiagnostics);
         Assert.Equal(payload, await context.State.GetValueAsync(key));
     }
 

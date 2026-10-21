@@ -3,7 +3,7 @@ using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Services;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 
 namespace Sunder.Package.Agent.Services;
 

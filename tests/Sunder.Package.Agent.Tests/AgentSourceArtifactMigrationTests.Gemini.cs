@@ -36,7 +36,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         using var manifestStream = archive.GetEntry("manifest/sunder-package.json")!.Open();
         using var manifest = JsonDocument.Parse(manifestStream);
         var value = manifest.RootElement;
-        Assert.Equal("sunder.package.agent.provider.gemini", value.GetProperty("id").GetString());
+        Assert.Equal("younics.ai.agent.provider.gemini", value.GetProperty("id").GetString());
         Assert.Equal(3, value.GetProperty("contractBundles").GetArrayLength());
         Assert.Equal(3, value.GetProperty("provides").GetArrayLength());
         var use = Assert.Single(value.GetProperty("usesContracts").EnumerateArray());

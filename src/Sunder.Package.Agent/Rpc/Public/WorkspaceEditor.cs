@@ -3,7 +3,7 @@ using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Rpc.Public;
 
-[SunderService(SunderServiceExposure.Public, ContractId = "sunder.agent.workspace.editor", ServiceId = "workspace-editor", IncludeSchemaDialect = true)]
+[SunderService(SunderServiceExposure.Public, ContractId = "younics.ai.agent.workspace.editor", ServiceId = "workspace-editor", IncludeSchemaDialect = true)]
 [SunderAppUse(Actions = ["discover", "invoke"])]
 public interface WorkspaceEditorService
 {

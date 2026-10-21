@@ -414,9 +414,10 @@ public sealed partial class AgentRunCoordinatorTests
 
         try
         {
-            var selectionState = new AgentChatSelectionStateService(new TestPackageContext(stateRoot));
+            var selectionContext = new TestPackageContext(stateRoot);
+            var selectionState = new AgentChatSelectionStateService(selectionContext);
             await selectionState.SaveSelectedWorkspaceIdAsync(secondWorkspace.WorkspaceId);
-            await selectionState.SaveSelectedSessionIdAsync(firstSessionId);
+            await selectionContext.Storage.State.SetValueAsync("agent.chat.selectedSessionId", firstSessionId.ToString("N"));
 
             using var viewModel = RegressionTestAppViews.Chat(
                 runtime.ProfileService,
@@ -797,7 +798,7 @@ public sealed partial class AgentRunCoordinatorTests
             var selectionContext = new TestPackageContext(selectionRootPath);
             var selectionState = new AgentChatSelectionStateService(selectionContext);
             await selectionState.SaveSelectedWorkspaceIdAsync(runtime.CurrentWorkspaceId);
-            await selectionState.SaveSelectedSessionIdAsync(childSession.SessionId);
+            await selectionState.SaveSelectedSessionIdAsync(runtime.CurrentWorkspaceId, childSession.SessionId);
             await selectionState.SaveSelectedProfileIdAsync(runtime.CurrentProfileId);
 
             using var viewModel = RegressionTestAppViews.Chat(
@@ -1448,21 +1449,21 @@ public sealed partial class AgentRunCoordinatorTests
     {
         var now = DateTimeOffset.UtcNow;
         var sessionId = Guid.NewGuid();
-        var session = new SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionRecord
+        var session = new SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentSessionRecord
         {
             SessionId = sessionId,
             Title = "Background Child",
-            State = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionState.Active,
+            State = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentSessionState.Active,
             CreatedAtUtc = new SunderRpcOffsetDateTime(now.ToString("O")),
             UpdatedAtUtc = new SunderRpcOffsetDateTime(now.ToString("O")),
             AgentKind = "subagent",
         };
-        var checkpoint = new SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentRunCheckpointRecord
+        var checkpoint = new SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentRunCheckpointRecord
         {
             CheckpointId = Guid.NewGuid(),
             SessionId = sessionId,
             RunRevision = 1,
-            Status = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentRunStatus.Running,
+            Status = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentRunStatus.Running,
             Summary = "Running.",
             CreatedAtUtc = new SunderRpcOffsetDateTime(now.ToString("O")),
         };
@@ -1562,6 +1563,17 @@ public sealed partial class AgentRunCoordinatorTests
             AgentMessageRole.Assistant,
             "Initial child transcript."
         );
+        var rpc = Assert.IsType<RegressionTestRpcClient>(runtime.ExtensionCatalog.RpcForCaller("younics.ai.agent.subagents"));
+        var coreProvider = Assert.Single((await rpc.DiscoverAsync("younics.ai.agent.runtime.catalog")).Providers);
+        var upstreamReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void ObserveCoreWatch(string caller, SunderRpcProviderSnapshot provider, string service, string method)
+        {
+            if (caller == "younics.ai.agent.subagents" && service == "runtime-catalog" && method == "watch"
+                && provider.ActivationId == coreProvider.ActivationId && provider.ActivationEpoch == coreProvider.ActivationEpoch
+                && provider.SessionGeneration == coreProvider.SessionGeneration && provider.Endpoint == coreProvider.Endpoint)
+                upstreamReady.TrySetResult();
+        }
+        rpc.State.ProviderStreamItemObserved += ObserveCoreWatch;
         using var runtimeAdapter = WorkerBackedSubagentManagementGateway.ForRuntime(
             new TestPackageContext(runtime.RootPath), runtime.ExtensionCatalog);
         using var viewModel = new SubsessionsViewModel(
@@ -1569,28 +1581,72 @@ public sealed partial class AgentRunCoordinatorTests
             runtimeAdapter,
             runtimeAdapter,
             runtimeAdapter, InlineAgentPresentationDispatcher.Instance);
-        await viewModel.OnNavigatedToAsync(
-            new PackageViewNavigationContext(
-                SubagentConstants.SubsessionsViewId,
-                new Dictionary<string, string?>
-                {
-                    [SubagentConstants.SubsessionNavigationSessionIdKey] =
-                        childSession.SessionId.ToString("D"),
-                }
-            )
-        );
-        var initialRow = Assert.Single(
-            viewModel.Messages.OfType<SubsessionTextTranscriptRowViewModel>()
-        );
+        var observedEvents = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        runtimeAdapter.ResnapshotRequired += () => observedEvents.Enqueue("resnapshot");
+        runtimeAdapter.TurnChanged += (sessionId, turn) => observedEvents.Enqueue($"turn:{sessionId:N}:{turn.TurnId:N}");
+        try
+        {
+            await viewModel.OnNavigatedToAsync(new PackageViewNavigationContext(SubagentConstants.SubsessionsViewId,
+                new Dictionary<string, string?> { [SubagentConstants.SubsessionNavigationSessionIdKey] = childSession.SessionId.ToString("D") }));
+            await upstreamReady.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+        finally { rpc.State.ProviderStreamItemObserved -= ObserveCoreWatch; }
 
-        viewModel.DetachTranscriptFromLatest();
+        // Initialization starts observation, but a navigation return is not proof
+        // that bootstrap resets have reached the presentation. An unrelated parent
+        // turn/session pair provides an ordered fence on the genuine generated stream.
+        var marker = "ordinary-live-fence-" + Guid.NewGuid().ToString("N");
+        var markerSeen = 0;
+        var deliveredTurn = new TaskCompletionSource<Guid>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var deliveredSession = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Action<Guid, SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTurnRecord> onTurn = (id, turn) =>
+        {
+            if (id == parentSessionId && turn.Items.Any(item => item.TextContent == marker))
+            {
+                Interlocked.Exchange(ref markerSeen, 1);
+                deliveredTurn.TrySetResult(turn.TurnId);
+            }
+        };
+        Action<Guid> onSession = id =>
+        {
+            if (id == parentSessionId && Volatile.Read(ref markerSeen) != 0) deliveredSession.TrySetResult();
+        };
+        runtimeAdapter.TurnChanged += onTurn;
+        runtimeAdapter.SessionChanged += onSession;
+        try
+        {
+            var markerTurn = runtime.SessionService.AppendTextTurn(parentSessionId, AgentMessageRole.Assistant, marker);
+            Assert.Equal(markerTurn.TurnId, await deliveredTurn.Task.WaitAsync(TimeSpan.FromSeconds(2)));
+            await deliveredSession.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+        finally { runtimeAdapter.TurnChanged -= onTurn; runtimeAdapter.SessionChanged -= onSession; }
+        var refresh = typeof(SubsessionsViewModel).GetField("_runtimeRefresh", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(viewModel)!;
+        await ((Task)refresh.GetType().GetProperty("WhenIdle")!.GetValue(refresh)!).WaitAsync(TimeSpan.FromSeconds(2));
+        // Capture after refresh: that refresh can start an authoritative transcript read.
+        await ((Task)typeof(SubsessionsViewModel).GetField("_transcriptLoadOperation", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(viewModel)!).WaitAsync(TimeSpan.FromSeconds(2));
+        SubsessionTextTranscriptRowViewModel? initialRow = null;
+        await InlineAgentPresentationDispatcher.Instance.InvokeAsync(() =>
+        {
+            Assert.False(viewModel.IsTranscriptLoading);
+            initialRow = Assert.Single(viewModel.Messages.OfType<SubsessionTextTranscriptRowViewModel>());
+            Assert.True(viewModel.DetachTranscriptFromLatest());
+            observedEvents.Enqueue("detached-confirmed-after-bootstrap-fence");
+        });
         runtime.SessionService.AppendTextTurn(
             childSession.SessionId,
             AgentMessageRole.Assistant,
             "Live child update while detached."
         );
 
-        await WaitUntilAsync(() => viewModel.HasNewerTranscriptRows);
+        try { await WaitUntilAsync(() => viewModel.HasNewerTranscriptRows); }
+        catch (OperationCanceledException error)
+        {
+            var state = "";
+            await InlineAgentPresentationDispatcher.Instance.InvokeAsync(() => state =
+                $"following={viewModel.IsTranscriptFollowingLatest}; loading={viewModel.IsTranscriptLoading}; newer={viewModel.HasNewerTranscriptRows}; "
+                + $"error={viewModel.HasLoadError}; rows={viewModel.Messages.Count}; events={string.Join(",", observedEvents)}");
+            throw new InvalidOperationException("Detached transcript did not advertise buffered live rows: " + state, error);
+        }
         Assert.Same(
             initialRow,
             Assert.Single(viewModel.Messages.OfType<SubsessionTextTranscriptRowViewModel>())
@@ -1777,7 +1833,7 @@ public sealed partial class AgentRunCoordinatorTests
             var selectionContext = new TestPackageContext(selectionRootPath);
             var selectionState = new AgentChatSelectionStateService(selectionContext);
             await selectionState.SaveSelectedWorkspaceIdAsync(secondWorkspace.WorkspaceId);
-            await selectionState.SaveSelectedSessionIdAsync(secondSession.SessionId);
+            await selectionState.SaveSelectedSessionIdAsync(secondWorkspace.WorkspaceId, secondSession.SessionId);
             await selectionState.SaveSelectedProfileIdAsync(secondProfile.ProfileId);
 
             using var viewModel = RegressionTestAppViews.Chat(

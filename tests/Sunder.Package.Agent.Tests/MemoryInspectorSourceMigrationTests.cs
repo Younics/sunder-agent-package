@@ -11,7 +11,7 @@ extern alias MemoryApp;
 using MemoryWorker::Sunder.Package.Agent.Memory.Semantic;
 using MemoryWorker::Sunder.Package.Agent.Memory.Semantic.Runtime;
 using MemoryWorker::Sunder.Package.Agent.Memory.Semantic.Services;
-using MemoryServices = MemoryApp::Sunder.Generated.Packages.Sunder_Package_Agent_Memory_Semantic_Services;
+using MemoryServices = MemoryApp::Sunder.Generated.Packages.Younics_Ai_Agent_Memory_Semantic_Services;
 using AppMemoryChangeKind = MemoryApp::Sunder.Package.Agent.Memory.Semantic.Runtime.MemoryChangeKind;
 using AppSemanticEmbeddingContext = MemoryApp::Sunder.Package.Agent.Memory.Semantic.Services.SemanticEmbeddingContext;
 
@@ -27,20 +27,20 @@ public sealed class MemoryInspectorSourceMigrationTests
     [AgentPublicSourceMigrationFact]
     public async Task InspectorSource_PreservesContractStoreMutationsStreamsAndBoundedContentAcrossIsolatedApp()
     {
-        using var source = PrivateManagementSourceFixture.Load("Memory.Semantic", CurrentPrivateRpcDescriptors.Get("sunder.agent.memory.semantic.inspector"));
+        using var source = PrivateManagementSourceFixture.Load("Memory.Semantic", CurrentPrivateRpcDescriptors.Get("younics.ai.agent.memory.semantic.inspector"));
         using var package = RegressionTestPackageScope.Create();
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
         await using var agentRuntime = RegressionTestRuntime.Create(package.Context,
-            new RegressionTestRpcClient(state, "sunder.package.agent"));
+            new RegressionTestRpcClient(state, "younics.ai.agent"));
         var runtimeCatalog = agentRuntime.GetRequiredService<Sunder.Package.Agent.Services.AgentRuntimeCatalog>();
-        state.AddGenerated("sunder.package.agent", runtimeCatalog,
+        state.AddGenerated("younics.ai.agent", runtimeCatalog,
             runtimeCatalog.CreateSunderRpcProviderRegistration(), Noop.Instance, "agent.runtime.catalog");
-        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent.memory.semantic");
+        var rpc = new RegressionTestRpcClient(state, "younics.ai.agent.memory.semantic");
         var (options, workerLifetime, workerServices) = AgentSourceArtifactMigrationTests.CreateGeneratedWorker(source.Worker, package.Context, rpc);
         await using var workerOwner = workerLifetime;
         await AgentSourceArtifactMigrationTests.ActivateGeneratedComposition(options);
         var registration = Assert.Single(options.Providers, value => value.ProviderId == "semantic.memory.inspector");
-        state.Add("sunder.package.agent.memory.semantic", source.Descriptor, registration.Handler, registration.Handler,
+        state.Add("younics.ai.agent.memory.semantic", source.Descriptor, registration.Handler, registration.Handler,
             Noop.Instance, registration.ProviderId, "2.0.0");
         await using var receiver = new GeneratedServiceTestScope(rpc);
         var entry = Assert.Single((await receiver.Providers<MemoryServices.IMemoryInspectorService>().ListAsync()).Providers);

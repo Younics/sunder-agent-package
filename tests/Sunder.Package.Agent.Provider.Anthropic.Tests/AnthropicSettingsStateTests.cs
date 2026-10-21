@@ -9,7 +9,7 @@ using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Storage;
 using Xunit;
 using AnthropicSettingsViewModel = AnthropicApp::Sunder.Package.Agent.Provider.Anthropic.AnthropicSettingsViewModel;
-using ICredentialSettingsService = AnthropicApp::Sunder.Generated.Packages.Sunder_Package_Agent_Provider_Anthropic_Services.ICredentialSettingsService;
+using ICredentialSettingsService = AnthropicApp::Sunder.Generated.Packages.Younics_Ai_Agent_Provider_Anthropic_Services.ICredentialSettingsService;
 
 namespace Sunder.Package.Agent.Provider.Anthropic.Tests;
 
@@ -21,7 +21,7 @@ public sealed class AnthropicSettingsStateTests
         const string storedCanary = "runtime-stored-secret-canary";
         const string replacementCanary = "replacement-command-secret-canary";
         var context = new ProviderTestPackageContext(
-            "sunder.package.agent.provider.anthropic",
+            "younics.ai.agent.provider.anthropic",
             secretValues: new Dictionary<string, string>
             {
                 [AnthropicProviderConfiguration.ApiKeySecretKey] = storedCanary,
@@ -68,7 +68,7 @@ public sealed class AnthropicSettingsStateTests
     {
         var secrets = new ThrowingSecrets();
         var context = new ProviderTestPackageContext(
-            "sunder.package.agent.provider.anthropic",
+            "younics.ai.agent.provider.anthropic",
             secrets: secrets);
         using var viewModel = new AnthropicSettingsViewModel(
             context,
@@ -87,7 +87,7 @@ public sealed class AnthropicSettingsStateTests
     {
         var state = new BlockingKeyValueStore();
         var context = new ProviderTestPackageContext(
-            "sunder.package.agent.provider.anthropic",
+            "younics.ai.agent.provider.anthropic",
             settings: state);
         using var viewModel = new AnthropicSettingsViewModel(context, new CredentialOwnerClientFake(context));
         viewModel.UtilityModelSettings.SelectedUtilityModel = viewModel.UtilityModelSettings.UtilityModels.Last();

@@ -11,7 +11,7 @@ internal sealed partial class SkillStackContributor(
     SkillImportService importService,
     IPackageContext packageContext) : IPackageStackExporter, IPackageStackImporter, IPackageStackImportAppliedHandler
 {
-    private const string SchemaId = "sunder.package.agent.skills/github-skill";
+    private const string SchemaId = "younics.ai.agent.skills/github-skill";
     private const string DetailSource = "github-url";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -19,7 +19,7 @@ internal sealed partial class SkillStackContributor(
         WriteIndented = true,
     };
 
-    public string ContributorId => "sunder.package.agent.skills.github-skills";
+    public string ContributorId => "younics.ai.agent.skills.github-skills";
 
     public string DisplayName => "Agent Skills";
 
@@ -181,6 +181,13 @@ internal sealed partial class SkillStackContributor(
         out GitHubSkillStackPayload? payload)
     {
         payload = null;
+        if (!string.Equals(fragment.OwnerPackageId, SkillConstants.PackageId, StringComparison.Ordinal)
+            || !string.Equals(fragment.SchemaId, SchemaId, StringComparison.Ordinal)
+            || fragment.SchemaVersion != 1)
+        {
+            warnings.Add($"Stack fragment '{fragment.FragmentId}' has an unsupported owner or skill schema.");
+            return false;
+        }
         try
         {
             if (fragment.JsonPayload.Length > 64 * 1024)

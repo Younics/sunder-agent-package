@@ -5,8 +5,10 @@ using Microsoft.Extensions.AI;
 using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using Sunder.Generated.Packages.Younics_Ai_Agent_Models;
+using ISelectableCapabilityProviderService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Selectable_Capability_Provider.ISelectableCapabilityProviderService;
+using IToolExecutionObservedService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Tool_Execution_Observed.IToolExecutionObservedService;
+using IToolSourceService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Tool_Source.IToolSourceService;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Mcp.Services;
 using Sunder.Package.Agent.Shared.Presentation;
@@ -149,7 +151,7 @@ public sealed partial class McpToolSource(
     }
 
     public async ValueTask<AgentToolReadiness?> GetReadinessAsync(
-        CSunder_Agent_Tool_Source_ToolSourceGetReadinessRequest request,
+        CYounics_Ai_Agent_Tool_Source_ToolSourceGetReadinessRequest request,
         CancellationToken cancellationToken = default)
     {
         var (toolId, context) = (request.ToolId, request.Context);
@@ -159,7 +161,7 @@ public sealed partial class McpToolSource(
             return new() { ToolId = toolId, Status = AgentToolReadinessStatus.Failed, Message = "MCP tools require an active session." };
         }
 
-        var resolved = await ResolveToolAsync(toolId, allowLegacyAlias: true, cancellationToken);
+        var resolved = await ResolveToolAsync(toolId, cancellationToken);
         if (resolved is null)
         {
             return null;
@@ -190,7 +192,7 @@ public sealed partial class McpToolSource(
             Message = ready ? $"MCP server '{server.DisplayName}' is connected." : $"MCP server '{server.DisplayName}' is unavailable or did not expose '{toolId}'." };
     }
 
-    public ValueTask<AgentToolResult> ExecuteAsync(CSunder_Agent_Tool_Source_ToolSourceExecuteRequest request, CancellationToken token = default)
+    public ValueTask<AgentToolResult> ExecuteAsync(CYounics_Ai_Agent_Tool_Source_ToolSourceExecuteRequest request, CancellationToken token = default)
         => ExecuteCoreAsync(request.Context, request.Request, null, token);
 
     private async ValueTask<AgentToolResult> ExecuteCoreAsync(
@@ -225,7 +227,7 @@ public sealed partial class McpToolSource(
                 $"### MCP tool failed\n\n{argumentError}", "mcp-arguments-invalid");
         }
 
-        var resolved = await ResolveToolAsync(request.ToolId, allowLegacyAlias: true, cancellationToken);
+        var resolved = await ResolveToolAsync(request.ToolId, cancellationToken);
         if (resolved is null)
         {
             var missingLabel = McpToolCardPresentation.TryParseStableToolId(
@@ -403,24 +405,16 @@ public sealed partial class McpToolSource(
         return exception.InnerException is not null && IsTransportLoss(exception.InnerException);
     }
 
-    private async Task<ResolvedMcpTool?> ResolveToolAsync(string toolId, bool allowLegacyAlias, CancellationToken cancellationToken)
+    private async Task<ResolvedMcpTool?> ResolveToolAsync(string toolId, CancellationToken cancellationToken)
     {
         await EnsureConfigurationInitializedAsync(cancellationToken);
         if (McpToolIdentity.TryParseStable(toolId, out var serverId, out var toolName))
         {
             var server = await _serverCatalogService.GetServerAsync(serverId, cancellationToken);
-            return server?.IsEnabled == true ? new ResolvedMcpTool(server, toolName, IsLegacyAlias: false) : null;
+            return server?.IsEnabled == true ? new ResolvedMcpTool(server, toolName) : null;
         }
 
-        if (!allowLegacyAlias)
-        {
-            return null;
-        }
-
-        var servers = await _serverCatalogService.ListServersAsync(cancellationToken);
-        return McpToolIdentity.TryParseLegacy(toolId, servers, out var legacyServer, out toolName)
-            ? new ResolvedMcpTool(legacyServer!, toolName, IsLegacyAlias: true)
-            : null;
+        return null;
     }
 
     private void QueueBackgroundRefresh(
@@ -481,7 +475,7 @@ public sealed partial class McpToolSource(
             ArgumentsJsonSchema = augmentedSchema.Schema.GetRawText(), SourceKind = "mcp", SourceId = server.ServerId,
             SourceDisplayName = server.DisplayName, SelectionScope = AgentToolSelectionScope.Group, SelectionGroupId = server.ServerId,
             SelectionGroupDisplayName = server.DisplayName, SelectionGroupDescription = server.Description,
-            Aliases = [McpToolIdentity.CreateLegacyAlias(server.Name, toolName)], RuntimeInstructions = null, ActivationRequirement = null,
+            Aliases = [], RuntimeInstructions = null, ActivationRequirement = null,
             Priority = AgentToolPriority.Medium, ConcurrencyMode = AgentToolConcurrencyMode.Sequential,
         };
         return (
@@ -568,7 +562,7 @@ public sealed partial class McpToolSource(
     }
 
     public async IAsyncEnumerable<AgentObservedToolExecutionEvent> ExecuteAsync(
-        CSunder_Agent_Tool_Execution_Observed_ToolExecutionObservedExecuteRequest request,
+        CYounics_Ai_Agent_Tool_Execution_Observed_ToolExecutionObservedExecuteRequest request,
         [EnumeratorCancellation] CancellationToken token = default)
     {
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(token);
@@ -614,9 +608,9 @@ public sealed partial class McpToolSource(
         finally { SelectableCapabilitiesChanged -= Changed; channel.Writer.TryComplete(); }
     }
 
-    public ValueTask<AgentToolResult?> PreflightAsync(CSunder_Agent_Tool_Source_ToolSourcePreflightRequest request, CancellationToken token = default)
+    public ValueTask<AgentToolResult?> PreflightAsync(CYounics_Ai_Agent_Tool_Source_ToolSourcePreflightRequest request, CancellationToken token = default)
     { token.ThrowIfCancellationRequested(); return ValueTask.FromResult<AgentToolResult?>(null); }
-    public ValueTask<AgentPermissionRequest?> PermissionAsync(CSunder_Agent_Tool_Source_ToolSourcePermissionRequest request, CancellationToken token = default)
+    public ValueTask<AgentPermissionRequest?> PermissionAsync(CYounics_Ai_Agent_Tool_Source_ToolSourcePermissionRequest request, CancellationToken token = default)
     { token.ThrowIfCancellationRequested(); return ValueTask.FromResult<AgentPermissionRequest?>(null); }
 
     private static AgentToolResult Result(string toolId, string summary, string? content, string? errorCode = null, string? backendId = null) => new()
@@ -628,7 +622,7 @@ public sealed partial class McpToolSource(
 
     internal sealed record McpRuntimeTool(AgentToolDescriptor Descriptor, AIFunctionDeclaration Declaration);
     private sealed record McpServerSummary(string ServerId, string DisplayName, string? Description, string StatusText);
-    private sealed record ResolvedMcpTool(ConfiguredMcpServerRecord Server, string ToolName, bool IsLegacyAlias);
+    private sealed record ResolvedMcpTool(ConfiguredMcpServerRecord Server, string ToolName);
 
     private sealed record SerializedMcpResult(string? Content, string? StructuredPayloadJson);
 }

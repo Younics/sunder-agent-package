@@ -11,39 +11,23 @@ using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Package.Agent.Provider.TestSupport;
 using Sunder.Sdk.Rpc;
 using Xunit;
-using IManagementService = OpenAiApp::Sunder.Generated.Packages.Sunder_Package_Agent_Provider_Openai_Services.IManagementService;
+using IManagementService = OpenAiApp::Sunder.Generated.Packages.Younics_Ai_Agent_Provider_Openai_Services.IManagementService;
 
 namespace Sunder.Package.Agent.Provider.OpenAI.Tests;
 
 public sealed partial class OpenAiManagementSourceTests
 {
     [OpenAiSourceFact]
-    public async Task SourceManagement_PreservesFrozenIdentityAndRuntimeOwnedCredentialsAndAuth()
+    public async Task SourceManagement_MatchesCurrentContractAndRuntimeOwnedCredentialsAndAuth()
     {
         var repository = FindRepository();
-        const string contractId = "sunder.package.agent.provider.openai.management";
-        using var frozen = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(repository, "compatibility/agent-rpc-migration-baseline.json")));
-        var expected = Assert.Single(frozen.RootElement.GetProperty("descriptors").EnumerateArray(),
-            entry => entry.GetProperty("contractId").GetString() == contractId);
-        var owned = JsonNode.Parse(File.ReadAllBytes(Path.Combine(repository,
-            "src/Sunder.Package.Agent.Provider.OpenAI/sunder-contracts.owned.json")))!;
-        var current = Assert.Single(owned["retiredPrivateContracts"]!.AsObject(),
-            entry => entry.Value!["contractId"]!.GetValue<string>() == contractId).Value!["current"]!;
-        Assert.Equal("release-frozen", current["state"]!.GetValue<string>());
-        var historical = SunderRpcContractDescriptor.Parse(Encoding.UTF8.GetBytes(current["canonicalDescriptor"]!.GetValue<string>()));
-        Assert.Equal(Convert.FromBase64String(expected.GetProperty("canonicalDescriptorBase64").GetString()!), historical.GetCanonicalUtf8());
-        Assert.Equal(expected.GetProperty("descriptorSha256").GetString(), historical.Sha256);
-        Assert.Equal(expected.GetProperty("abiSha256").GetString(), historical.AbiSha256);
+        const string contractId = "younics.ai.agent.provider.openai.management";
         var configuration = typeof(OpenAiManagementService).Assembly.GetCustomAttribute<AssemblyConfigurationAttribute>()!.Configuration;
         using var receipt = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(repository, "src/Sunder.Package.Agent.Provider.OpenAI/obj",
             configuration, "net10.0/sunder-analysis", RuntimeInformation.RuntimeIdentifier, "sunder-rpc/authoring-receipt.v1.json")));
         var emitted = Assert.Single(receipt.RootElement.GetProperty("contracts").EnumerateArray(), item => item.GetProperty("contractId").GetString() == contractId);
         var descriptor = SunderRpcContractDescriptor.Parse(Encoding.UTF8.GetBytes(emitted.GetProperty("canonicalDescriptor").GetString()!));
-        using var successors = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(repository, "compatibility/agent-ordinary-private-successors.json")));
-        var successor = Assert.Single(successors.RootElement.GetProperty("contracts").EnumerateArray(), item => item.GetProperty("contractId").GetString() == contractId);
-        Assert.Equal(successor.GetProperty("version").GetString(), descriptor.Version);
-        Assert.Equal(successor.GetProperty("descriptorSha256").GetString(), descriptor.Sha256);
-        Assert.Equal(successor.GetProperty("abiSha256").GetString(), descriptor.AbiSha256);
+        Sunder.Package.Agent.Tests.CurrentContractRecords.AssertCurrent(descriptor);
         var app = typeof(IManagementService).Assembly;
         Assert.NotSame(typeof(OpenAiManagementService).Assembly, app);
         Assert.DoesNotContain(app.GetReferencedAssemblies(), reference => reference.Name is "Sunder.Package.Agent.Provider.OpenAI" or "Sunder.Sdk.Worker");
@@ -52,7 +36,7 @@ public sealed partial class OpenAiManagementSourceTests
 
     private static async Task Verify(SunderRpcContractDescriptor descriptor)
     {
-        var context = new ProviderTestPackageContext("sunder.package.agent.provider.openai");
+        var context = new ProviderTestPackageContext("younics.ai.agent.provider.openai");
         using var auth = new CodexConnectedAuthStrategy(context);
         var runtime = new OpenAiManagementService(new OpenAiAuthOperationHandler(auth), new ProviderCredentialAccessor(context.Secrets, "auth.apiKey"));
         var registration = runtime.CreateSunderRpcProviderRegistration();

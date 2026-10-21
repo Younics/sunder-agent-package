@@ -2,7 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Sunder.Package.Agent.Mcp.Runtime;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Abstractions;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Mcp_Services;
+using Sunder.Generated.Packages.Younics_Ai_Agent_Mcp_Services;
 
 namespace Sunder.Package.Agent.Mcp
 {

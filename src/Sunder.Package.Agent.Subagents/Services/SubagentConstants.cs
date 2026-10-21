@@ -3,9 +3,9 @@ namespace Sunder.Package.Agent.Subagents.Services;
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 public static class SubagentConstants
 {
-    public const string PackageId = "sunder.package.agent.subagents";
+    public const string PackageId = "younics.ai.agent.subagents";
 
-    public const string SubsessionsViewId = "sunder.package.agent.subagents.sessions";
+    public const string SubsessionsViewId = "younics.ai.agent.subagents.sessions";
 
     public const string SubsessionNavigationSessionIdKey = "sessionId";
 

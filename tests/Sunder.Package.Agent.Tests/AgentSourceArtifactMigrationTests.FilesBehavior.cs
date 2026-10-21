@@ -11,7 +11,7 @@ using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
 
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 
 public sealed partial class AgentSourceArtifactMigrationTests
 {
@@ -27,8 +27,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
             var local = load.LoadFromStream(localBytes);
             using var package = RegressionTestPackageScope.Create();
             var root = OperatingSystem.IsMacOS() && package.RootPath.StartsWith("/var/", StringComparison.Ordinal) ? "/private" + package.RootPath : package.RootPath;
-            var context = new TestPackageContext("sunder.package.agent.tools.files", root, version: "2.0.0", storage: package.Context.Storage);
-            var localContext = new TestPackageContext("sunder.package.agent.execution.local", root, version: "2.0.0", storage: package.Context.Storage);
+            var context = new TestPackageContext("younics.ai.agent.tools.files", root, version: "2.0.0", storage: package.Context.Storage);
+            var localContext = new TestPackageContext("younics.ai.agent.execution.local", root, version: "2.0.0", storage: package.Context.Storage);
             using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
             var (localOptions, localLifetime, _) = CreateGeneratedWorker(local, localContext, new RegressionTestRpcClient(state, localContext.PackageId));
             await using var ownedLocal = localLifetime;
@@ -56,7 +56,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 Assert.Equal(expected.Sha256, provider.DescriptorSha256); Assert.Equal(expected.AbiSha256, provider.AbiSha256);
                 state.Add(context.PackageId, expected, provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, "2.0.0");
             }
-            var host = new RegressionTestRpcClient(state, "sunder.package.agent");
+            var host = new RegressionTestRpcClient(state, "younics.ai.agent");
             await using var toolReceiver = new GeneratedServiceTestScope(host);
             var promptClient = Assert.Single((await toolReceiver.Providers<AgentServices.IPromptContextContributorService>().ListAsync()).Providers).Service;
             var permissionClient = Assert.Single((await toolReceiver.Providers<AgentServices.IPermissionSurfaceService>().ListAsync()).Providers).Service;

@@ -584,9 +584,6 @@ public sealed partial class AgentLocalStore
         Guid rootSessionId)
         => $"workspace:{workspaceIncarnationId ?? workspaceId ?? "unassigned"}:root:{rootSessionId:N}";
 
-    private static string BuildLegacyOrderingKey(string? workspaceId, Guid rootSessionId)
-        => $"workspace:{workspaceId ?? "unassigned"}:root:{rootSessionId:N}";
-
     private static string? ReadWorkspaceIncarnationId(
         SqliteConnection connection,
         SqliteTransaction transaction,

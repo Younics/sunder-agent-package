@@ -12,11 +12,11 @@ public sealed partial class AgentSourceArtifactMigrationTests
 {
     private static async Task VerifySkillsConsumers(Type type, Assembly agentOwner)
     {
-        Assert.True(agentOwner.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Services.IRuntimeCatalogService", true)!.IsInterface);
+        Assert.True(agentOwner.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Services.IRuntimeCatalogService", true)!.IsInterface);
         using var package = RegressionTestPackageScope.Create();
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
         var (_, composition, services) = CreateGeneratedWorker(type.Assembly, package.Context,
-            new RegressionTestRpcClient(state, "sunder.package.agent.skills"));
+            new RegressionTestRpcClient(state, "younics.ai.agent.skills"));
         await using var compositionLifetime = composition;
         var store = services.GetRequiredService(type.Assembly.GetType("Sunder.Package.Agent.Skills.Services.SkillStore", true)!);
         var importer = services.GetRequiredService(type.Assembly.GetType("Sunder.Package.Agent.Skills.Services.SkillImportService", true)!);
@@ -27,7 +27,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var hostPath = (string)AgentRoleBoundary.Call(store, "GetSkillRootPath", installed)!;
         var now = DateTimeOffset.UtcNow;
         var profile = new AgentProfileRecord("profile.generated", "Generated", null, null, null, null, null, null, now, now,
-            SelectableCapabilityAssignments: [new("skill", skillId, "sunder.package.agent.skills")]);
+            SelectableCapabilityAssignments: [new("skill", skillId, "younics.ai.agent.skills")]);
         var runtime = new MemoryConsumerRuntime(profile);
         await using var consumer = NewConsumer();
         Assert.Equal(0, consumer.Transport.DiscoveryCount);
@@ -161,7 +161,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         SkillsConsumerScope NewConsumer() => new(type, store, profile, state);
         void AddTarget(SkillsConsumerHandler value) => state.Add("example.skills.executor", CurrentPublicRpcDescriptors.Get(RegressionTestBindings.ExecutionTargets),
             value, value, Noop.Instance, "skills.execution.target", "2.0.0");
-        SkillsConsumerHandler AddCatalog() => (SkillsConsumerHandler)AddGeneratedPeer(state, "sunder.package.agent", RegressionTestBindings.RuntimeCatalog,
+        SkillsConsumerHandler AddCatalog() => (SkillsConsumerHandler)AddGeneratedPeer(state, "younics.ai.agent", RegressionTestBindings.RuntimeCatalog,
             runtime, "agent.runtime.catalog", handler => new SkillsConsumerHandler(handler));
     }
 
@@ -175,9 +175,9 @@ public sealed partial class AgentSourceArtifactMigrationTests
         internal SkillsConsumerScope(Type type, object store, AgentProfileRecord profile, RegressionTestRpcState state)
         {
             _type = type; _profile = profile;
-            Transport = new(new RegressionTestRpcClient(state, "sunder.package.agent.skills"));
+            Transport = new(new RegressionTestRpcClient(state, "younics.ai.agent.skills"));
             _receiver = new(Transport);
-            var catalog = _receiver.Providers(type.Assembly.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Services.IRuntimeCatalogService", true)!);
+            var catalog = _receiver.Providers(type.Assembly.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Runtime_Catalog.IRuntimeCatalogService", true)!);
             _feature = new(Activator.CreateInstance(type, store, catalog)!);
         }
         internal Task<AgentProfileRecord?> Profile(string? id, CancellationToken token = default)

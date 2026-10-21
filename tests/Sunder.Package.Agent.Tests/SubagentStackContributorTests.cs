@@ -8,8 +8,9 @@ namespace Sunder.Package.Agent.Tests;
 
 extern alias SubagentsWorker;
 using SubagentsWorker::Sunder.Package.Agent.Subagents.Services;
-using AgentProfileSelectableCapabilityAssignmentRecord = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentProfileSelectableCapabilityAssignmentRecord;
-using SubagentsServices = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentProfileSelectableCapabilityAssignmentRecord = SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentProfileSelectableCapabilityAssignmentRecord;
+using IChatProviderService = SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Chat_Provider.IChatProviderService;
+using ISelectableCapabilityProviderService = SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Selectable_Capability_Provider.ISelectableCapabilityProviderService;
 
 public sealed class SubagentStackContributorTests
 {
@@ -38,8 +39,8 @@ public sealed class SubagentStackContributorTests
                 "{\"temperature\":0.1}");
             using var catalog = new RegressionTestExtensionCatalog();
             var contributor = new SubagentStackContributor(service, context,
-                catalog.Subagents().Providers<SubagentsServices.IChatProviderService>(),
-                catalog.Subagents().Providers<SubagentsServices.ISelectableCapabilityProviderService>());
+                catalog.Subagents().Providers<IChatProviderService>(),
+                catalog.Subagents().Providers<ISelectableCapabilityProviderService>());
 
             var item = Assert.Single(await contributor.ListExportItemsAsync(
                 new StackExportDiscoveryContext(context.PackageId)));
@@ -49,7 +50,7 @@ public sealed class SubagentStackContributorTests
             var fragment = Assert.Single(contribution.Fragments);
             Assert.All(item.Details ?? [], detail => Assert.NotNull(detail.Sensitivity));
             var requirement = Assert.Single(contribution.PackageRequirements);
-            Assert.Equal("sunder.package.agent.subagents", requirement.PackageId);
+            Assert.Equal("younics.ai.agent.subagents", requirement.PackageId);
             Assert.Equal("1.1.0", requirement.MinimumVersion);
             Assert.Contains("Focus on bugs", fragment.JsonPayload, StringComparison.Ordinal);
             Assert.Contains("gpt-5.5", fragment.JsonPayload, StringComparison.Ordinal);
@@ -72,8 +73,8 @@ public sealed class SubagentStackContributorTests
             serviceSaveResearcher(sourceService, subagent.SubagentId);
             using var sourceCatalog = new RegressionTestExtensionCatalog();
             var sourceContributor = new SubagentStackContributor(sourceService, sourceContext,
-                sourceCatalog.Subagents().Providers<SubagentsServices.IChatProviderService>(),
-                sourceCatalog.Subagents().Providers<SubagentsServices.ISelectableCapabilityProviderService>());
+                sourceCatalog.Subagents().Providers<IChatProviderService>(),
+                sourceCatalog.Subagents().Providers<ISelectableCapabilityProviderService>());
             var fragment = Assert.Single((await sourceContributor.ExportAsync(new StackExportRequest(
                 [new StackExportItemSelection(subagent.SubagentId)]))).Fragments);
 
@@ -81,14 +82,29 @@ public sealed class SubagentStackContributorTests
             var targetService = new SubagentService(new SubagentStore(targetContext));
             using var targetCatalog = new RegressionTestExtensionCatalog();
             var targetContributor = new SubagentStackContributor(targetService, targetContext,
-                targetCatalog.Subagents().Providers<SubagentsServices.IChatProviderService>(),
-                targetCatalog.Subagents().Providers<SubagentsServices.ISelectableCapabilityProviderService>());
+                targetCatalog.Subagents().Providers<IChatProviderService>(),
+                targetCatalog.Subagents().Providers<ISelectableCapabilityProviderService>());
             var importFragment = ToImportFragment(fragment);
             var preview = await targetContributor.PreviewImportAsync(new StackImportPreviewRequest(
                 [importFragment],
                 new Dictionary<string, string>(),
                 new Dictionary<string, string>()));
             var action = Assert.Single(preview.Actions);
+
+            foreach (var invalid in new[]
+                     {
+                         importFragment with { OwnerPackageId = "sunder.package.agent.subagents" },
+                         importFragment with { SchemaId = "sunder.package.agent.subagents/subagent" },
+                         importFragment with { SchemaVersion = 0 },
+                     })
+            {
+                var rejectedPreview = await targetContributor.PreviewImportAsync(new StackImportPreviewRequest([invalid], new Dictionary<string, string>(), new Dictionary<string, string>()));
+                Assert.Empty(rejectedPreview.Actions);
+                var rejected = await targetContributor.ImportAsync(new StackImportRequest([invalid], new Dictionary<string, string>(), new Dictionary<string, string>(), [action.ActionId]));
+                Assert.Empty(rejected.ImportedItems);
+                Assert.NotEmpty(rejected.Warnings);
+                Assert.Null(targetService.GetSubagent(subagent.SubagentId));
+            }
 
             var result = await targetContributor.ImportAsync(new StackImportRequest(
                 [importFragment],
@@ -124,8 +140,8 @@ public sealed class SubagentStackContributorTests
     private static StackFragmentImport ToImportFragment(StackFragmentExport fragment)
         => new(
             fragment.FragmentId,
-            "sunder.package.agent.subagents",
-            "sunder.package.agent.subagents.subagents",
+            "younics.ai.agent.subagents",
+            "younics.ai.agent.subagents.subagents",
             fragment.SchemaId,
             fragment.SchemaVersion,
             fragment.DisplayName,
@@ -153,7 +169,7 @@ public sealed class SubagentStackContributorTests
 
     private sealed class TestPackageContext(string rootPath) : IPackageContext
     {
-        public string PackageId => "sunder.package.agent.subagents";
+        public string PackageId => "younics.ai.agent.subagents";
 
         public string Version { get; } = "1.2.3";
 

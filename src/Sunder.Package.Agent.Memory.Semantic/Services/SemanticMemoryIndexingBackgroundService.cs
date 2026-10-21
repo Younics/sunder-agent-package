@@ -486,7 +486,7 @@ public sealed partial class SemanticMemoryIndexingBackgroundService : ISunderWor
             foreach (var session in await catalog.ListSessionsAsync(token).ConfigureAwait(false))
             {
                 var binding = await catalog.GetSessionModelBindingAsync(new() { SessionId = session.SessionId, CapabilityKind = AgentModelCapabilityKinds.Embedding }, token).ConfigureAwait(false)
-                    ?? SemanticModelRuntimeResolver.ResolveLegacyBinding(await catalog.GetSessionProfileAsync(session.SessionId, token).ConfigureAwait(false));
+                    ?? SemanticModelRuntimeResolver.ResolveProfileEmbeddingBinding(await catalog.GetSessionProfileAsync(session.SessionId, token).ConfigureAwait(false));
                 result.Add(new(session.SessionId, binding));
             }
             return result.ToArray();

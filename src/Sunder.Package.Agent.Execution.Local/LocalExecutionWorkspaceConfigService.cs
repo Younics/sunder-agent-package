@@ -4,24 +4,18 @@ using System.Security.Cryptography;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
-using Sunder.Sdk.Services;
-using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Shared.Storage;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Execution.Local;
 
-[SunderServiceProvider(typeof(IWorkspacePathMigratorService), ProviderId = "local.workspace.path.migrator")]
-public sealed partial class LocalExecutionWorkspaceConfigService : IWorkspacePathMigratorService
+public sealed class LocalExecutionWorkspaceConfigService
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
     private static readonly HashSet<string> SupportedProperties = new(StringComparer.OrdinalIgnoreCase)
     {
         "SelectedShellId",
         "PathEntries",
-        "AllowedRoots",
-        "DefaultWorkingDirectory",
     };
     private static readonly ConditionalWeakTable<IPackageKeyValueStore, ConcurrentDictionary<string, SemaphoreSlim>> MutationGates = new();
     private readonly IPackageContext _packageContext;
@@ -34,8 +28,6 @@ public sealed partial class LocalExecutionWorkspaceConfigService : IWorkspacePat
             packageContext.Storage.State,
             static _ => new ConcurrentDictionary<string, SemaphoreSlim>(StringComparer.Ordinal));
     }
-
-    public string ContributorId => "sunder.package.agent.execution.local.workspace-path-migration";
 
     public async Task<LocalExecutionWorkspaceConfig> GetConfigAsync(
         string bindingId,
@@ -138,86 +130,6 @@ public sealed partial class LocalExecutionWorkspaceConfigService : IWorkspacePat
             pathEntries);
     }
 
-    public ValueTask<AgentServiceIdentity> DescribeAsync(CancellationToken token = default)
-    { token.ThrowIfCancellationRequested(); return ValueTask.FromResult(new AgentServiceIdentity { Id = ContributorId, DisplayName = ContributorId }); }
-
-    public ValueTask<bool> CanMigrateAsync(AgentWorkspacePathMigrationContext context, CancellationToken token = default)
-    { token.ThrowIfCancellationRequested(); return ValueTask.FromResult(string.Equals(context.Binding.ContributionId, "local", StringComparison.OrdinalIgnoreCase)); }
-
-    public async ValueTask<IReadOnlyList<AgentWorkspacePathMigrationItem>> ListLegacyPathsAsync(
-        AgentWorkspacePathMigrationContext context,
-        CancellationToken cancellationToken = default)
-    {
-        var json = await _packageContext.Storage.State.GetValueAsync(BuildKey(context.Binding.BindingId), cancellationToken);
-        if (string.IsNullOrWhiteSpace(json))
-        {
-            return [];
-        }
-
-        try
-        {
-            using var document = ParseAndValidateDocument(json);
-            var root = document.RootElement;
-            if (!TryGetProperty(root, "AllowedRoots", out var rootsElement))
-            {
-                return [];
-            }
-            if (rootsElement.ValueKind != JsonValueKind.Array)
-            {
-                throw new JsonException("The legacy Local workspace roots are not an array.");
-            }
-
-            var defaultWorkingDirectory = TryGetString(root, "DefaultWorkingDirectory");
-            var normalizedDefault = string.IsNullOrWhiteSpace(defaultWorkingDirectory)
-                ? null
-                : Path.GetFullPath(ExpandPath(defaultWorkingDirectory.Trim()));
-            var items = new List<AgentWorkspacePathMigrationItem>();
-            var index = 0;
-            foreach (var item in rootsElement.EnumerateArray())
-            {
-                if (item.ValueKind != JsonValueKind.String)
-                {
-                    throw new JsonException("A legacy Local workspace root is not a string.");
-                }
-
-                var value = item.GetString();
-                if (string.IsNullOrWhiteSpace(value))
-                {
-                    throw new JsonException("A legacy Local workspace root is empty.");
-                }
-
-                var hostPath = Path.GetFullPath(ExpandPath(value.Trim()));
-                var isDefault = normalizedDefault is not null && IsSameOrChildPath(normalizedDefault, hostPath);
-                items.Add(new AgentWorkspacePathMigrationItem { HostPath = hostPath, IsDefault = isDefault, SortOrder = index++ });
-            }
-
-            return items;
-        }
-        catch (LocalExecutionDomainException)
-        {
-            throw;
-        }
-        catch (Exception exception) when (
-            exception is JsonException
-                or NotSupportedException
-                or ArgumentException
-                or PathTooLongException)
-        {
-            throw new LocalExecutionDomainException(
-                "local.workspace-config.malformed",
-                "The stored Local workspace configuration is malformed and was left unchanged.",
-                innerException: exception);
-        }
-    }
-
-    public async ValueTask CompleteAsync(
-        AgentWorkspacePathMigrationContext context,
-        CancellationToken cancellationToken = default)
-        => await SaveConfigAsync(
-            context.Binding.BindingId,
-            await GetConfigAsync(context.Binding.BindingId, cancellationToken),
-            cancellationToken);
-
     internal static string ExpandPath(string path)
     {
         if (string.IsNullOrWhiteSpace(path))
@@ -281,32 +193,4 @@ public sealed partial class LocalExecutionWorkspaceConfigService : IWorkspacePat
         }
     }
 
-    private static string? TryGetString(JsonElement element, string propertyName)
-    {
-        if (!TryGetProperty(element, propertyName, out var property)
-            || property.ValueKind == JsonValueKind.Null)
-        {
-            return null;
-        }
-        if (property.ValueKind != JsonValueKind.String)
-        {
-            throw new JsonException($"Local workspace property '{propertyName}' is not a string.");
-        }
-        return property.GetString();
-    }
-
-    private static bool TryGetProperty(JsonElement element, string propertyName, out JsonElement value)
-    {
-        foreach (var property in element.EnumerateObject())
-        {
-            if (string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
-            {
-                value = property.Value;
-                return true;
-            }
-        }
-
-        value = default;
-        return false;
-    }
 }

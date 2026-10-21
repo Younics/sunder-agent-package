@@ -14,7 +14,7 @@ public partial class SubagentsView : UserControl, IDisposable, IPackageViewWarmu
 {
     private readonly AdaptiveMasterDetail _adaptiveLayout;
     private readonly PresentationTaskScope _tasks = new(
-        PresentationTaskScope.IgnoreExpectedFailure);
+        PresentationTaskScope.IgnoreExpectedFailure, PresentationDispatcher.Capture().ShutdownToken);
     private SubagentsViewModel? _viewModel;
     private bool _disposed;
 
@@ -92,13 +92,13 @@ public partial class SubagentsView : UserControl, IDisposable, IPackageViewWarmu
     {
         _tasks.Run(async cancellationToken =>
         {
-            await Dispatcher.UIThread.InvokeAsync(() =>
+            await PresentationDispatcher.QueueAsync(() =>
             {
                 if (!cancellationToken.IsCancellationRequested)
                 {
                     SubagentDisplayNameTextBox.Focus();
                 }
-            }, DispatcherPriority.Background);
+            }, DispatcherPriority.Background, cancellationToken).ConfigureAwait(false);
         });
     }
 }

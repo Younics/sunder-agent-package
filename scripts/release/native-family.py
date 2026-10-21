@@ -13,7 +13,10 @@ import tempfile
 import zipfile
 import zlib
 
-from agent_release import owned_contracts, has_public_evidence, version as semantic_version
+from agent_release import (
+    FAMILY_PACKAGE_IDS, owned_contracts, has_public_evidence, source_role_use_evidence,
+    validate_role_uses, version as semantic_version,
+)
 from native_release_inputs import (
     MAX_DOCUMENT, MAX_LEAF, MAX_RUN, RIDS, ROLE_INPUTS, compact, digest, file_record,
     file_set, integer, json_file, keys, parse, projection, qualification, read_bytes, regular,
@@ -29,7 +32,8 @@ def inventory(repository):
     require(len(rows) == 15 and all(row["artifactType"] == "sunderpkg" for row in rows)
             and len({row["packageId"].lower() for row in rows}) == 15
             and len({row["projectPath"].lower() for row in rows}) == 15,
-            "Expected exactly 15 unique runtime packages")
+             "Expected exactly 15 unique runtime packages")
+    require({row["packageId"] for row in rows} == set(FAMILY_PACKAGE_IDS), "Expected the exact AI Agent runtime family")
     for row in rows:
         require(re.fullmatch(r"[a-z0-9]+(?:[.-][a-z0-9]+)*", row["packageId"]), "Invalid package ID")
         relative(row["projectPath"], 1024, 32)
@@ -165,7 +169,12 @@ def validate_run(run, expected, rows):
             "Native evidence requires exactly 15 unique canonical packages")
     projects = {row["packageId"]: row["projectPath"] for row in rows}
     for package in run["packages"]:
-        keys(package, "packageId workerProject qualification leaf testedArchive metricsSha256 metricsSize metrics")
+        keys(package, "packageId workerProject qualification leaf testedArchive metricsSha256 metricsSize metrics"
+             + (" sourceRoleUses" if "sourceRoleUses" in package else ""))
+        if "sourceRoleUses" in package:
+            keys(package["sourceRoleUses"], "lockSha256 roleUses")
+            sha(package["sourceRoleUses"]["lockSha256"])
+            validate_role_uses(package["sourceRoleUses"]["roleUses"])
         package_id = package["packageId"]
         project = projects[package_id]
         require(package["workerProject"] == project, "Mixed canonical project")
@@ -207,6 +216,10 @@ def transport(run, bundle, destination=None):
             q, files = qualification(data, package["packageId"], package["workerProject"], run["rid"], run["version"])
             require(list(files.values()) == package["leaf"]["files"], "Native provenance differs from Core's qualified file closure")
             require(q["rolePlan"]["hasApp"] == package["leaf"]["hasApp"], "Native provenance differs from qualified App role")
+            source_uses = source_role_use_evidence(q)
+            require(package.get("sourceRoleUses") == source_uses
+                    or "sourceRoleUses" not in package and not source_uses["roleUses"],
+                    "Native source role uses differ from the qualified Worker receipt")
             roles[package["packageId"]] = q["rolePlan"]["hasApp"]
         elif kind == "manifest":
             manifest = validate_manifest(data, package["packageId"], run["version"], [run["rid"]])
@@ -276,7 +289,8 @@ def capture(args):
             metric_data = read_bytes(metrics / metric_name)
             (work / "metrics" / metric_name).write_bytes(metric_data)
             package = {"packageId": package_id, "workerProject": project,
-                       "qualification": {"path": prefix + ROLE_INPUTS, "sha256": digest(data), "size": len(data)},
+                        "qualification": {"path": prefix + ROLE_INPUTS, "sha256": digest(data), "size": len(data)},
+                        "sourceRoleUses": source_role_use_evidence(q),
                        "leaf": leaf, "testedArchive": file_record(archives / (package_id + "." + version + ".sunderpkg")),
                        "metricsSha256": digest(metric_data), "metricsSize": len(metric_data), "metrics": parse(metric_data)}
             validate_metrics(package, rid)
@@ -376,7 +390,7 @@ def assemble(args):
             # All restore/tool retention happens explicitly BEFORE entering fan-in.
             # Core's public prebuilt dispatch reevaluates/validates each RID and
             # performs transactional Pack; it never bootstraps mutable source tools.
-            subprocess.run(["dotnet", "msbuild", str(repository / row["projectPath"]), "-t:PackSunderPackage", "-m:1",
+            subprocess.run(["dotnet", "msbuild", str(repository / row["projectPath"]), "-t:PackSunderPackage",
                             "-p:Configuration=Release", "-p:BuildProjectReferences=false", "-p:SunderPackageUsePrebuiltLeaves=true",
                             "-p:SunderPackageComposeRuntimeIdentifiers=" + "%3B".join(RIDS),
                             "-p:SunderPackagePrebuiltRoleInputsFile=" + str(selection), "-p:SunderAgentVersion=" + version,

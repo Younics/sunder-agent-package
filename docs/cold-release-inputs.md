@@ -37,7 +37,7 @@ The asset contains the closed
   },
   "candidates": [
     {
-      "packageId": "sunder.package.agent",
+      "packageId": "younics.ai.agent",
       "version": "2.0.0",
       "packageContentIdentity": "<inspected candidate content identity>",
       "publicInventorySha256": "<complete inspected public-inventory hash>",
@@ -45,7 +45,7 @@ The asset contains the closed
         "repository": "Younics/sunder-agent-package",
         "releaseId": 123,
         "assetId": 457,
-        "name": "Sunder.Package.Agent.2.0.0.sunderpkg",
+        "name": "younics.ai.agent.2.0.0.sunderpkg",
         "size": 1234,
         "sha256": "<archive byte SHA-256>"
       }
@@ -162,14 +162,15 @@ Credentials used for input download/publication are removed from build environme
 python3 -B scripts/test/release/release-inputs.fixture.py
 python3 -B scripts/test/release/native-family.fixture.py
 bash scripts/test/release/native-release.fixture.sh
-bash scripts/test/release/promote-agent-family.fixture.sh
+python3 -B scripts/test/release/test_agent_pipeline.py
 ```
 
 The cold fixture mocks service/tool processes and verifies byte/identity tampering,
 full RID/property consistency, the cold diagnostic, exact hydration, lock mutation,
-source tool retention and fail-closed offline execution. The promotion fixture now
-creates fresh schema-3 capture through the native owner's implementation and runs
-its real final verifier; it no longer relabels schema-2 marker evidence.
+source tool retention and fail-closed offline execution. The native fixture creates
+fresh schema-3 capture through the native owner and runs its real final verifier.
+The integrated pipeline fixture protects source/tag/lock fences and public family
+checks; cohort retry and reverse behavior remains in `agent-release.fixture.py`.
 
 Read-only real-archive comparison is separately available with
 `scripts/test/release/real-release-metadata.fixture.py <agent-root> <existing-core-cli.dll>`. It inspects

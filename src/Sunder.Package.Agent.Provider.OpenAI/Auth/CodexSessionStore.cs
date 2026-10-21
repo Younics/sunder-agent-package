@@ -6,7 +6,7 @@ namespace Sunder.Package.Agent.Provider.OpenAI.Auth;
 internal sealed class CodexSessionStore(IPackageSecrets secrets)
 {
     private const string SessionSecretKey = "auth.codex.session";
-    internal const string DocumentSchemaId = "sunder.agent.openai.codex-session";
+    internal const string DocumentSchemaId = "younics.ai.agent.provider.openai.codex-session";
     internal const int DocumentSchemaVersion = 1;
     private readonly IPackageSecrets _secrets = secrets;
     public async Task<OpenAiCodexSession?> GetAsync(CancellationToken cancellationToken = default)
@@ -29,35 +29,22 @@ internal sealed class CodexSessionStore(IPackageSecrets secrets)
             var hasSchemaId = root.TryGetProperty(nameof(CodexSessionDocument.SchemaId), out var schemaId);
             var hasSchemaVersion = root.TryGetProperty(nameof(CodexSessionDocument.SchemaVersion), out var schemaVersion);
             var hasSession = root.TryGetProperty(nameof(CodexSessionDocument.Session), out var sessionElement);
-            OpenAiCodexSession? session;
-            if (hasSchemaId || hasSchemaVersion || hasSession)
+            if (!hasSchemaId
+                || !hasSchemaVersion
+                || !hasSession
+                || schemaId.ValueKind != JsonValueKind.String
+                || !string.Equals(schemaId.GetString(), DocumentSchemaId, StringComparison.Ordinal)
+                || schemaVersion.ValueKind != JsonValueKind.Number
+                || !schemaVersion.TryGetInt32(out var version)
+                || version != DocumentSchemaVersion
+                || !HasExactProperties(root, nameof(CodexSessionDocument.SchemaId), nameof(CodexSessionDocument.SchemaVersion), nameof(CodexSessionDocument.Session))
+                || sessionElement.ValueKind != JsonValueKind.Object
+                || !HasExactProperties(sessionElement, nameof(OpenAiCodexSession.AccessToken), nameof(OpenAiCodexSession.RefreshToken), nameof(OpenAiCodexSession.ExpiresAtUtc), nameof(OpenAiCodexSession.ChatGptAccountId)))
             {
-                if (!hasSchemaId
-                    || !hasSchemaVersion
-                    || !hasSession
-                    || schemaId.ValueKind != JsonValueKind.String
-                    || !string.Equals(schemaId.GetString(), DocumentSchemaId, StringComparison.Ordinal)
-                    || !schemaVersion.TryGetInt32(out var version)
-                    || version != DocumentSchemaVersion
-                    || !HasExactProperties(root, nameof(CodexSessionDocument.SchemaId), nameof(CodexSessionDocument.SchemaVersion), nameof(CodexSessionDocument.Session))
-                    || sessionElement.ValueKind != JsonValueKind.Object
-                    || !HasExactProperties(sessionElement, nameof(OpenAiCodexSession.AccessToken), nameof(OpenAiCodexSession.RefreshToken), nameof(OpenAiCodexSession.ExpiresAtUtc), nameof(OpenAiCodexSession.ChatGptAccountId)))
-                {
-                    return null;
-                }
-
-                session = sessionElement.Deserialize<OpenAiCodexSession>();
-            }
-            else
-            {
-                if (!HasExactProperties(root, nameof(OpenAiCodexSession.AccessToken), nameof(OpenAiCodexSession.RefreshToken), nameof(OpenAiCodexSession.ExpiresAtUtc), nameof(OpenAiCodexSession.ChatGptAccountId)))
-                {
-                    return null;
-                }
-
-                session = root.Deserialize<OpenAiCodexSession>();
+                return null;
             }
 
+            var session = sessionElement.Deserialize<OpenAiCodexSession>();
             return IsValid(session) ? session : null;
         }
         catch (Exception ex) when (ex is JsonException or NotSupportedException)

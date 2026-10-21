@@ -34,7 +34,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 Assert.DoesNotContain(assembly.GetReferencedAssemblies(), reference => reference.Name == "Sunder.Package.Agent.Provider.LMStudio.Protocol");
             Assert.DoesNotContain(presentation.GetReferencedAssemblies(), reference => reference.Name is "Sunder.Package.Agent.Provider.LMStudio" or "Sunder.Sdk.Worker" or "OpenAI");
             using var package = RegressionTestPackageScope.Create();
-            var context = new TestPackageContext("sunder.package.agent.provider.lmstudio", package.RootPath, version: "2.0.0", storage: package.Context.Storage);
+            var context = new TestPackageContext("younics.ai.agent.provider.lmstudio", package.RootPath, version: "2.0.0", storage: package.Context.Storage);
             await context.Settings.SetValueAsync("connection.baseUrl", "http://127.0.0.1:43123/api/v1/");
             using var handler = new LMStudioArtifactHttp();
             var clock = new LMStudioArtifactClock();
@@ -53,7 +53,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.NotNull(options.SettingsSchema); Assert.Empty(handler.Requests);
             var registrations = options.Providers.ToDictionary(value => value.ProviderId);
             Assert.Equal(new[] { "lmstudio.chat", "lmstudio.credentials", "lmstudio.embedding" }, registrations.Keys.Order(StringComparer.Ordinal));
-            var credentialDescriptor = CurrentPrivateRpcDescriptors.Get("sunder.package.agent.provider.lmstudio.credentials");
+            var credentialDescriptor = CurrentPrivateRpcDescriptors.Get("younics.ai.agent.provider.lmstudio.credentials");
             foreach (var provider in options.Providers)
             {
                 var descriptor = provider.ProviderId == "lmstudio.credentials" ? credentialDescriptor : CurrentPublicRpcDescriptors.Get(provider.ContractId);
@@ -61,7 +61,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 state.Add(context.PackageId, descriptor, provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, "2.0.0");
             }
             await using var appServices = CreateGeneratedApp(presentation, context, rpc);
-            var credentials = appServices.GetRequiredService(presentation.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Provider_Lmstudio_Services.ICredentialSettingsService", true)!);
+            var credentials = appServices.GetRequiredService(presentation.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Provider_Lmstudio_Services.ICredentialSettingsService", true)!);
             Assert.False(await Credential("GetStatusAsync", [CancellationToken.None]));
             foreach (var kind in new[] { "chat", "embedding" })
             {
@@ -108,7 +108,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
 
             await VerifyLMStudioCatalog(context, handler, clock, Rpc);
             await VerifyLMStudioEmbeddings(handler, Rpc);
-            var chatProvider = await CreateAgentChatProvider(agentOwner, rpc.ForCaller("sunder.package.agent"), Assert.Single((await rpc.DiscoverAsync(RegressionTestBindings.ChatProviders)).Providers));
+            var chatProvider = await CreateAgentChatProvider(agentOwner, rpc.ForCaller("younics.ai.agent"), Assert.Single((await rpc.DiscoverAsync(RegressionTestBindings.ChatProviders)).Providers));
             await using var chatLifetime = (IAsyncDisposable)chatProvider;
             using var chat = await CreateAgentChatClientAsync(chatProvider, new("lmstudio", "lmstudio/chat-model"));
             var tool = AIFunctionFactory.CreateDeclaration("read_file", "Read a file", JsonSerializer.SerializeToElement(new

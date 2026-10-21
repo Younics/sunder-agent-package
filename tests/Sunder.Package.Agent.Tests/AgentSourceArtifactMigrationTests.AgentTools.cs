@@ -6,7 +6,7 @@ using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Worker;
 using Xunit;
 
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -42,7 +42,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             var controlled = await BuildControlledProvidersAsync(root, core, driver, archive, cache);
             var controlledModule = load.LoadFromAssemblyPath(controlled);
             using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-            var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
+            var rpc = new RegressionTestRpcClient(state, "younics.ai.agent");
             await using var targetReceiver = new GeneratedServiceTestScope(rpc.ForCaller("example.controlled.target"));
             await using var providerReceiver = new GeneratedServiceTestScope(rpc.ForCaller("example.agent.scripted.tools"));
             await using var receiver = new GeneratedServiceTestScope(rpc);
@@ -118,8 +118,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
     }
 
     private const string ScriptedToolProviderSource = """
-        using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
-        using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+        using Sunder.Generated.Packages.Younics_Ai_Agent_Models;
+        using IToolSourceService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Tool_Source.IToolSourceService;
         using Sunder.Sdk.Services;
         namespace ScriptedToolProvider;
         [SunderServiceProvider(typeof(IToolSourceService), ProviderId = "fixture.scripted.tools")]
@@ -131,12 +131,12 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 => ValueTask.FromResult(new AgentToolSourceDescriptor { SourceId = "fixture.tools", DisplayName = "Fixture tools", SourceKind = "local" });
             public ValueTask<IReadOnlyList<AgentToolDescriptor>> ListToolsAsync(AgentToolSourceContext context, CancellationToken token = default)
                 => ValueTask.FromResult<IReadOnlyList<AgentToolDescriptor>>([new() { ToolId = "fixture.tool", DisplayName = "Fixture", Description = "Static package description", IsReadOnly = false, RequiresNetwork = true, ArgumentsJsonSchema = "{opaque schema", SourceKind = "local", SourceId = "fixture.tools", SourceDisplayName = "Fixture tools", Aliases = null, SelectionScope = AgentToolSelectionScope.Tool, SelectionGroupId = null, SelectionGroupDisplayName = null, SelectionGroupDescription = null, RuntimeInstructions = null, ActivationRequirement = null, Priority = AgentToolPriority.High, ConcurrencyMode = AgentToolConcurrencyMode.ParallelSafe }]);
-            public ValueTask<AgentToolReadiness?> GetReadinessAsync(CSunder_Agent_Tool_Source_ToolSourceGetReadinessRequest request, CancellationToken token = default)
+            public ValueTask<AgentToolReadiness?> GetReadinessAsync(CYounics_Ai_Agent_Tool_Source_ToolSourceGetReadinessRequest request, CancellationToken token = default)
                 => ValueTask.FromResult<AgentToolReadiness?>(new() { ToolId = request.ToolId, Status = AgentToolReadinessStatus.Ready, Message = "Ready" });
-            public ValueTask<AgentToolResult?> PreflightAsync(CSunder_Agent_Tool_Source_ToolSourcePreflightRequest request, CancellationToken token = default) { LastExecution = request.Context; return ValueTask.FromResult<AgentToolResult?>(Result(request.Request.ToolId)); }
-            public ValueTask<AgentPermissionRequest?> PermissionAsync(CSunder_Agent_Tool_Source_ToolSourcePermissionRequest request, CancellationToken token = default) { LastExecution = request.Context; return ValueTask.FromResult<AgentPermissionRequest?>(new() { ActionId = "files.mutate", BoundaryId = "outside-configured-scope", Summary = "Mutation", ToolId = request.Request.ToolId, Command = "fixture command", Path = "/workspace/file.txt", WorkspaceId = request.Context.Workspace!.WorkspaceId, BindingId = request.Context.ExecutionBinding!.BindingId, ResourceDisplayName = "Fixture resource", ResourceReference = "durable", IsMutation = true, ScopeClassificationBasis = AgentPermissionScopeClassificationBasis.VerifiedTargetMapping, ResourceClaims = request.Context.ApprovedResourceClaims, ResourceCapabilities = ["transient"], ResourceReferences = ["durable"] }); }
+            public ValueTask<AgentToolResult?> PreflightAsync(CYounics_Ai_Agent_Tool_Source_ToolSourcePreflightRequest request, CancellationToken token = default) { LastExecution = request.Context; return ValueTask.FromResult<AgentToolResult?>(Result(request.Request.ToolId)); }
+            public ValueTask<AgentPermissionRequest?> PermissionAsync(CYounics_Ai_Agent_Tool_Source_ToolSourcePermissionRequest request, CancellationToken token = default) { LastExecution = request.Context; return ValueTask.FromResult<AgentPermissionRequest?>(new() { ActionId = "files.mutate", BoundaryId = "outside-configured-scope", Summary = "Mutation", ToolId = request.Request.ToolId, Command = "fixture command", Path = "/workspace/file.txt", WorkspaceId = request.Context.Workspace!.WorkspaceId, BindingId = request.Context.ExecutionBinding!.BindingId, ResourceDisplayName = "Fixture resource", ResourceReference = "durable", IsMutation = true, ScopeClassificationBasis = AgentPermissionScopeClassificationBasis.VerifiedTargetMapping, ResourceClaims = request.Context.ApprovedResourceClaims, ResourceCapabilities = ["transient"], ResourceReferences = ["durable"] }); }
             public ValueTask<AgentToolPresentation?> PresentationAsync(AgentToolPresentationRequest request, CancellationToken token = default) { LastPresentation = request; return ValueTask.FromResult<AgentToolPresentation?>(new() { HeaderText = "Header", DetailMarkdown = "Details", OutputText = "Output" }); }
-            public ValueTask<AgentToolResult> ExecuteAsync(CSunder_Agent_Tool_Source_ToolSourceExecuteRequest request, CancellationToken token = default) { LastExecution = request.Context; return ValueTask.FromResult(Result(request.Request.ToolId)); }
+            public ValueTask<AgentToolResult> ExecuteAsync(CYounics_Ai_Agent_Tool_Source_ToolSourceExecuteRequest request, CancellationToken token = default) { LastExecution = request.Context; return ValueTask.FromResult(Result(request.Request.ToolId)); }
             private static AgentToolResult Result(string toolId) => new() { ToolId = toolId, Summary = "Completed 漢字", Content = "Output", StructuredPayloadJson = "{opaque result", Sources = [], WasTruncated = true, IsError = false, ErrorCode = null, BackendId = "fixture", PresentationPayloadJson = "{opaque presentation", RequiresPromptContextRefresh = true };
         }
         """;

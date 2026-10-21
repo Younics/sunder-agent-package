@@ -13,7 +13,7 @@ using Sunder.Package.Agent.Storage;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Worker;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -189,11 +189,11 @@ public sealed partial class AgentPublicSourceMigrationTests
         // decoder, not by rounding the input in this fixture's argument adapter.
         using (var preciseState = new RegressionTestRpcState(workerStyleProviderBoundary: true))
         {
-            var preciseRpc = new RegressionTestRpcClient(preciseState, "sunder.package.agent.memory.semantic");
+            var preciseRpc = new RegressionTestRpcClient(preciseState, "younics.ai.agent.memory.semantic");
             await using var preciseReceiver = new GeneratedServiceTestScope(preciseRpc);
             using var sources = new RegressionTestSourceProviders();
             var registration = sources.Create(descriptor.ContractId, domain.CanonicalOwner, preciseReceiver);
-            var endpoint = preciseState.AddGenerated("sunder.package.agent", domain.CanonicalOwner, registration,
+            var endpoint = preciseState.AddGenerated("younics.ai.agent", domain.CanonicalOwner, registration,
                 EmptyDisposable.Instance, registration.ProviderId).Endpoint;
             var precisionError = await Assert.ThrowsAsync<SunderRpcException>(() => preciseRpc.InvokeAsync(endpoint,
                 "runtime-catalog", "list-turns-before", JsonSerializer.SerializeToElement(imprecise)).AsTask());
@@ -321,7 +321,7 @@ public sealed partial class AgentPublicSourceMigrationTests
     private static async Task<CatalogFixture> CreateCatalogFixture(Assembly assembly, SunderRpcContractDescriptor descriptor, RuntimeCatalogProbe catalog)
     {
         var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent.memory.semantic");
+        var rpc = new RegressionTestRpcClient(state, "younics.ai.agent.memory.semantic");
         var receiver = new GeneratedServiceTestScope(rpc);
         catalog.ProjectionReceiver = receiver;
         var fixtureRoot = Directory.CreateTempSubdirectory("sunder-agent-runtime-catalog-").FullName;
@@ -343,7 +343,7 @@ public sealed partial class AgentPublicSourceMigrationTests
         Assert.Equal("fixture.regression.runtime.catalog", registration.ProviderId);
         Assert.Equal(descriptor.Sha256, registration.DescriptorSha256);
         Assert.Equal(descriptor.AbiSha256, registration.AbiSha256);
-        state.Add("sunder.package.agent", descriptor, implementation, registration.Handler, EmptyDisposable.Instance, registration.ProviderId, "2.0.0");
+        state.Add("younics.ai.agent", descriptor, implementation, registration.Handler, EmptyDisposable.Instance, registration.ProviderId, "2.0.0");
         var provider = Assert.Single((await receiver.Providers<AgentServices.IRuntimeCatalogService>().ListAsync()).Providers,
             value => value.ProviderId == registration.ProviderId);
         var endpoint = Assert.Single(state.Discover(descriptor.ContractId).Providers,

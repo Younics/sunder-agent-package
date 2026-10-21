@@ -65,10 +65,10 @@ internal static class McpTimeoutResolver
             ? Math.Min(timeoutMilliseconds.Value, maximum)
             : null;
 
-    private static int? ResolveConfiguredTimeout(int? phaseTimeoutMilliseconds, int? legacyTimeoutMilliseconds)
+    private static int? ResolveConfiguredTimeout(int? phaseTimeoutMilliseconds, int? sharedTimeoutMilliseconds)
         => phaseTimeoutMilliseconds is >= 0
             ? phaseTimeoutMilliseconds
-            : legacyTimeoutMilliseconds;
+            : sharedTimeoutMilliseconds;
 }
 
 internal readonly record struct McpToolExecutionTimeout(

@@ -207,11 +207,12 @@ public sealed class OpenAiAgentProviderTests
             new Dictionary<string, string>
             {
                 ["auth.apiKey"] = "sk-test",
-                ["auth.codex.session"] = JsonSerializer.Serialize(new OpenAiCodexSession(
+                ["auth.codex.session"] = JsonSerializer.Serialize(new CodexSessionDocument(
+                    CodexSessionStore.DocumentSchemaId, CodexSessionStore.DocumentSchemaVersion, new OpenAiCodexSession(
                     "access-token",
                     "refresh-token",
                     DateTimeOffset.UtcNow.AddHours(1),
-                    "account-id")),
+                    "account-id"))),
             });
         var provider = CreateProvider(packageContext);
 
@@ -509,11 +510,12 @@ public sealed class OpenAiAgentProviderTests
             new Dictionary<string, string>
             {
                 ["auth.apiKey"] = "sk-test",
-                ["auth.codex.session"] = JsonSerializer.Serialize(new OpenAiCodexSession(
+                ["auth.codex.session"] = JsonSerializer.Serialize(new CodexSessionDocument(
+                    CodexSessionStore.DocumentSchemaId, CodexSessionStore.DocumentSchemaVersion, new OpenAiCodexSession(
                     "access-token",
                     "refresh-token",
                     DateTimeOffset.UtcNow.AddHours(1),
-                    "account-id")),
+                    "account-id"))),
             });
         var provider = CreateProvider(packageContext);
 
@@ -652,7 +654,7 @@ public sealed class OpenAiAgentProviderTests
         IReadOnlyDictionary<string, string> configurationValues,
         IReadOnlyDictionary<string, string> secretValues) : IPackageContext
     {
-        public string PackageId { get; } = "sunder.package.agent.provider.openai";
+        public string PackageId { get; } = "younics.ai.agent.provider.openai";
 
         public string Version { get; } = "1.0.0";
 

@@ -3,7 +3,7 @@ using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Rpc.Public;
 
-[SunderService(SunderServiceExposure.Public, ContractId = "sunder.agent.permission.surface", ServiceId = "permission-surface", IncludeSchemaDialect = true)]
+[SunderService(SunderServiceExposure.Public, ContractId = "younics.ai.agent.permission.surface", ServiceId = "permission-surface", IncludeSchemaDialect = true)]
 [SunderRuntimeUse(Actions = ["discover", "invoke"])]
 public interface PermissionSurfaceService
 {

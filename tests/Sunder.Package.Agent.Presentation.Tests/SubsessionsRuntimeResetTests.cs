@@ -5,7 +5,7 @@ using Avalonia.Headless.XUnit;
 using Sunder.Package.Agent.Tests;
 using Sunder.Sdk.Abstractions;
 using SubagentsApp::Sunder.Package.Agent.Subagents.Runtime;
-using SubagentModels = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using SubagentModels = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models;
 using Sunder.Sdk.Rpc;
 using Xunit;
 

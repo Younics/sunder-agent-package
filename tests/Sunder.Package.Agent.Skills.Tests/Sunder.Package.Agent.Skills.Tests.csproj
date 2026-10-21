@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <SunderTestOwner>sunder.package.agent.skills</SunderTestOwner>
+    <SunderTestOwner>younics.ai.agent.skills</SunderTestOwner>
     <SunderTestCategory>Component</SunderTestCategory>
     <SunderTestCapabilities>Filesystem;HTTP;Worker</SunderTestCapabilities>
     <SunderTestOS>Any</SunderTestOS>

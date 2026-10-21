@@ -13,7 +13,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var lockPath = Path.Combine(consumer, "sunder-contracts.lock.json");
         var before = File.ReadAllBytes(lockPath);
         var generated = Snapshot();
-        foreach (var contract in new[] { "sunder.agent.owner.runtime", "sunder.stack.contributor" })
+        foreach (var contract in new[] { "younics.ai.agent.owner.runtime", "sunder.stack.contributor" })
             await Reject("package-api.provider-contract-not-public", "-t:FixtureOperation", "-p:Operation=Require", "-p:ContractId=" + contract);
 
         var corrupt = Path.Combine(root, "corrupt.sunderpkg");
@@ -28,7 +28,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         await Reject("package-api.public-inventory-invalid", "-t:FixtureOperation", "-p:Operation=Add", "-p:Candidate=" + corrupt);
 
         using var locked = JsonDocument.Parse(before);
-        var hash = locked.RootElement.GetProperty("packageArtifacts").GetProperty("sunder.package.agent").GetProperty("contracts")
+        var hash = locked.RootElement.GetProperty("packageArtifacts").GetProperty("younics.ai.agent").GetProperty("contracts")
             .GetProperty("sunder.stack.contributor").GetProperty("selectedAuthorityContentIdentity").GetString()!;
         var catalog = Path.Combine(cache, "platform-catalogs", hash + ".json");
         var held = Path.Combine(root, "held-catalog.json");
@@ -43,7 +43,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             .Order(StringComparer.Ordinal).Select(path => Path.GetRelativePath(consumer, path) + ":" + Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(path)))).ToArray();
         async Task Reject(string expected, params string[] arguments)
         {
-            var start = new ProcessStartInfo("dotnet") { WorkingDirectory = consumer, RedirectStandardOutput = true, RedirectStandardError = true };
+            var start = new ProcessStartInfo(BuilderSourceMigrationTests.DotnetBuildHost) { WorkingDirectory = consumer, RedirectStandardOutput = true, RedirectStandardError = true };
             foreach (var argument in new[] { "msbuild", "Imported.csproj", "-nodeReuse:false", "-v:minimal" }.Concat(arguments)) start.ArgumentList.Add(argument);
             using var process = Process.Start(start)!;
             using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(3));

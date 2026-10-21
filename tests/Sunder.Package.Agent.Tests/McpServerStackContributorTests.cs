@@ -95,6 +95,21 @@ public sealed class McpServerStackContributorTests
             var action = Assert.Single(preview.Actions);
             var input = Assert.Single(preview.RequiredInputs);
 
+            foreach (var invalid in new[]
+                     {
+                         importFragment with { OwnerPackageId = "sunder.package.agent.mcp" },
+                         importFragment with { SchemaId = "sunder.package.agent.mcp/server" },
+                         importFragment with { SchemaVersion = 0 },
+                     })
+            {
+                var rejectedPreview = await targetContributor.PreviewImportAsync(new StackImportPreviewRequest([invalid], new Dictionary<string, string>(), new Dictionary<string, string>()));
+                Assert.Empty(rejectedPreview.Actions);
+                var rejected = await targetContributor.ImportAsync(new StackImportRequest([invalid], new Dictionary<string, string> { [input.InputId] = "rejected-secret" }, new Dictionary<string, string>(), [action.ActionId]));
+                Assert.Empty(rejected.ImportedItems);
+                Assert.NotEmpty(rejected.Warnings);
+                Assert.Null(await targetCatalog.GetServerAsync("server-1"));
+            }
+
             var result = await targetContributor.ImportAsync(new StackImportRequest(
                 [importFragment],
                 new Dictionary<string, string> { [input.InputId] = "Bearer imported-token" },
@@ -144,7 +159,7 @@ public sealed class McpServerStackContributorTests
                 """);
             await catalog.SaveServerAsync(parsed.Server, parsed.Headers, parsed.EnvironmentVariables);
 
-            var discovery = await contributor.ListExportItemsAsync(new StackExportDiscoveryContext("sunder.package.agent.mcp"));
+            var discovery = await contributor.ListExportItemsAsync(new StackExportDiscoveryContext("younics.ai.agent.mcp"));
             var item = Assert.Single(discovery);
             Assert.All(item.Details ?? [], detail => Assert.NotNull(detail.Sensitivity));
             Assert.Contains(item.Details ?? [], detail => detail.DetailId == "header.accept" && detail.Sensitivity == StackValueSensitivity.Public && detail.Value == "application/json");
@@ -639,8 +654,8 @@ public sealed class McpServerStackContributorTests
     private static StackFragmentImport ToImportFragment(StackFragmentExport fragment)
         => new(
             fragment.FragmentId,
-            "sunder.package.agent.mcp",
-            "sunder.package.agent.mcp.servers",
+            "younics.ai.agent.mcp",
+            "younics.ai.agent.mcp.servers",
             fragment.SchemaId,
             fragment.SchemaVersion,
             fragment.DisplayName,
@@ -780,7 +795,7 @@ public sealed class McpServerStackContributorTests
 
     private sealed class TestPackageContext(string rootPath) : IPackageContext
     {
-        public string PackageId => "sunder.package.agent.mcp";
+        public string PackageId => "younics.ai.agent.mcp";
 
         public string Version { get; } = "1.2.3";
 

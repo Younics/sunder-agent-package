@@ -14,7 +14,7 @@ using Xunit;
 namespace Sunder.Package.Agent.Tests;
 
 extern alias LocalWorker;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 using LocalWorker::Sunder.Package.Agent.Execution.Local;
 
 public sealed partial class AgentSourceArtifactMigrationTests
@@ -31,7 +31,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             var local = load.LoadFromStream(localBytes);
             using var package = RegressionTestPackageScope.Create();
             var root = OperatingSystem.IsMacOS() && package.RootPath.StartsWith("/var/", StringComparison.Ordinal) ? "/private" + package.RootPath : package.RootPath;
-            var localContext = new TestPackageContext("sunder.package.agent.execution.local", root, version: "2.0.0", storage: package.Context.Storage);
+            var localContext = new TestPackageContext("younics.ai.agent.execution.local", root, version: "2.0.0", storage: package.Context.Storage);
             using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
             var (localOptions, localLifetime, _) = CreateGeneratedWorker(local, localContext, new RegressionTestRpcClient(state, localContext.PackageId));
             await using var ownedLocal = localLifetime;
@@ -40,7 +40,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             var descriptor = CurrentPublicRpcDescriptors.Get(RegressionTestBindings.ExecutionTargets);
             foreach (var provider in localOptions.Providers)
             {
-                var contract = provider.ProviderId == "local.presentation" ? CurrentPrivateRpcDescriptors.Get("sunder.package.agent.execution.local.presentation") : CurrentPublicRpcDescriptors.Get(provider.ContractId);
+                var contract = provider.ProviderId == "local.presentation" ? CurrentPrivateRpcDescriptors.Get("younics.ai.agent.execution.local.presentation") : CurrentPublicRpcDescriptors.Get(provider.ContractId);
                 var handler = provider.ProviderId == "local.execution.target" ? (ISunderRpcServiceHandler)target : provider.Handler;
                 state.Add(localContext.PackageId, contract, handler, handler, Noop.Instance, provider.ProviderId, "2.0.0");
             }
@@ -75,10 +75,10 @@ public sealed partial class AgentSourceArtifactMigrationTests
             var targetContext = new AgentExecutionTargetContext(sessionId, execution.ProfileId, workspace, binding);
             var generation = await targetProvider.Service.ConfigurationGenerationAsync(targetContext);
             execution = execution with { ExecutionTarget = targetReference, ExecutionTargetConfigurationGeneration = generation };
-            var observer = new FilesRpcObserver(new RegressionTestRpcClient(state, "sunder.package.agent.tools.shell"), "execute-shell");
+            var observer = new FilesRpcObserver(new RegressionTestRpcClient(state, "younics.ai.agent.tools.shell"), "execute-shell");
             Assert.Null(runtime.GetType("Sunder.Package.Agent.Tools.Shell.ShellWorkerComposition"));
             Assert.Null(runtime.GetType("Sunder.Package.Agent.Tools.Shell.ShellWorkerBindings"));
-            var context = new TestPackageContext("sunder.package.agent.tools.shell", root, version: "2.0.0", storage: package.Context.Storage);
+            var context = new TestPackageContext("younics.ai.agent.tools.shell", root, version: "2.0.0", storage: package.Context.Storage);
             var (options, lifetime, services) = CreateGeneratedWorker(runtime, context, observer);
             await using var owned = lifetime;
             Assert.Null(options.Composition);
@@ -90,9 +90,9 @@ public sealed partial class AgentSourceArtifactMigrationTests
             {
                 var expected = CurrentPublicRpcDescriptors.Get(provider.ContractId);
                 Assert.Equal(expected.Sha256, provider.DescriptorSha256); Assert.Equal(expected.AbiSha256, provider.AbiSha256);
-                state.Add("sunder.package.agent.tools.shell", expected, provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, "2.0.0");
+                state.Add("younics.ai.agent.tools.shell", expected, provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, "2.0.0");
             }
-            var host = new RegressionTestRpcClient(state, "sunder.package.agent");
+            var host = new RegressionTestRpcClient(state, "younics.ai.agent");
             await using var toolReceiver = new GeneratedServiceTestScope(host);
             var toolSource = Assert.Single((await toolReceiver.Providers<AgentServices.IToolSourceService>().ListAsync()).Providers,
                 provider => provider.ProviderId == "shell.tools").Service;
@@ -160,7 +160,19 @@ public sealed partial class AgentSourceArtifactMigrationTests
             observer.LookupFailure = SunderRpcErrorKind.PermissionDenied;
             Assert.Equal(SunderRpcErrorKind.ProviderFaulted, (await Assert.ThrowsAsync<SunderRpcException>(() => Ready())).Error.Kind); observer.LookupFailure = null;
             observer.InvalidateAfterInvoke = true;
-            Assert.Equal(AgentToolResultErrorCodes.PackageUnavailable, (await Execute("shell", new { command = echo })).ErrorCode);
+            var onceMarker = Path.Combine(workspaceRoot, "post-dispatch-once");
+            var once = OperatingSystem.IsWindows() ? $"echo x>>\"{onceMarker}\"" : $"printf x >> '{onceMarker}'";
+            var beforeAmbiguous = target.Calls.Count(call => call.Method == "execute-shell");
+            var uncertain = await Assert.ThrowsAsync<SunderRpcException>(() => Execute("shell", new { command = once }));
+            // The nested command completed, but its generated post-Invoke identity
+            // check failed. Preserve ambiguity across the process-provider boundary;
+            // it is not a safe PackageUnavailable result and cannot justify replay.
+            Assert.Equal(SunderRpcErrorKind.ProviderFaulted, uncertain.Error.Kind);
+            Assert.Equal(SunderRpcDispatchState.PossiblyDispatched, uncertain.Error.DispatchState);
+            Assert.Equal(SunderRpcRetrySafety.Unsafe, uncertain.Error.RetrySafety);
+            Assert.False(SunderRpcException.HasTrustedNoDispatchEvidence(uncertain));
+            Assert.Equal(beforeAmbiguous + 1, target.Calls.Count(call => call.Method == "execute-shell"));
+            Assert.Equal("x", (await File.ReadAllTextAsync(onceMarker)).TrimEnd('\r', '\n'));
             observer.InvalidateAfterInvoke = false; observer.Transform = null;
             if (!OperatingSystem.IsWindows())
                 await VerifyShellProcesses(workspaceRoot, Execute, async () =>

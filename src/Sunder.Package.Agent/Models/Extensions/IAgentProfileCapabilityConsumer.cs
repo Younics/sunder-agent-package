@@ -8,7 +8,7 @@ namespace Sunder.Package.Agent.Contracts.Contracts;
 /// <remarks>
 /// <para>
 /// Role and direction: this is a Runtime-role RPC adapter contract. Zero or more packages provide
-/// the <c>sunder.agent.profile.capability.consumer</c> contract, and the Agent Runtime consumes their
+/// the <c>younics.ai.agent.profile.capability.consumer</c> contract, and the Agent Runtime consumes their
 /// declarations to decide which profile capability selectors are relevant.
 /// </para>
 /// <para>

@@ -32,6 +32,36 @@ public sealed class WorkspacePresentationFailureDispatcherTests
         Assert.Equal(dispatcher.ThreadId, publicationThread);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ViewContext_FailureQueuedBeforeRetirementDoesNotPublishOrEscalate(bool shutdown)
+    {
+        using var dispatcher = new QueuedPresentationDispatcher();
+        using var context = new AgentWorkspacesViewContext(dispatcher);
+        var publications = 0;
+        context.Failed += _ => publications++;
+        var failures = new PresentationTaskScopeTests.FailureRecordingSynchronizationContext();
+        var previous = SynchronizationContext.Current;
+        try
+        {
+            SynchronizationContext.SetSynchronizationContext(failures);
+            context.Run(_ => Task.FromException(new IOException("original operation failure")));
+        }
+        finally { SynchronizationContext.SetSynchronizationContext(previous); }
+        await dispatcher.Queued.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        context.Dispose();
+        if (shutdown) dispatcher.Shutdown();
+        else dispatcher.Execute();
+        // Disposal is synchronous on the view context; await its actual shared scope drain.
+        var scope = (AgentCore::Sunder.Package.Agent.Shared.Presentation.PresentationTaskScope)typeof(AgentWorkspacesViewContext)
+            .GetField("_tasks", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(context)!;
+        await scope.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(0, publications);
+        Assert.Equal(0, failures.PostCount);
+    }
+
     [Fact]
     public async Task ViewModel_BackgroundTaskFailurePublishesOnPresentationDispatcher()
     {

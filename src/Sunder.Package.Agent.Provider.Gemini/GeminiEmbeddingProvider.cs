@@ -1,6 +1,6 @@
 using Google.GenAI;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using IEmbeddingProviderService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Embedding_Provider.IEmbeddingProviderService;
+using Sunder.Generated.Packages.Younics_Ai_Agent_Models;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Services;
@@ -76,12 +76,12 @@ public sealed partial class GeminiEmbeddingProvider : IEmbeddingProviderService
             Status = configured ? AgentProviderReadinessStatus.Ready : AgentProviderReadinessStatus.NeedsConfiguration,
             Message = configured
                 ? "Gemini embeddings are ready via API key."
-                : "A Gemini API key is required for embeddings. Open Settings -> Packages -> Sunder Agent Provider Gemini and enter an API key.",
+                : "A Gemini API key is required for embeddings. Open Settings -> Packages -> AI Agent - Gemini and enter an API key.",
         };
     }
 
     public async ValueTask<AgentEmbeddingGenerationResult?> GenerateAsync(
-        CSunder_Agent_Embedding_Provider_EmbeddingProviderGenerateRequest request,
+        CYounics_Ai_Agent_Embedding_Provider_EmbeddingProviderGenerateRequest request,
         CancellationToken cancellationToken = default)
     {
         var apiKey = await _credentials.GetCredentialAsync(cancellationToken).ConfigureAwait(false);
@@ -100,7 +100,7 @@ public sealed partial class GeminiEmbeddingProvider : IEmbeddingProviderService
     }
 
     public async ValueTask<IReadOnlyList<AgentEmbeddingGenerationResult?>> GenerateBatchAsync(
-        CSunder_Agent_Embedding_Provider_EmbeddingProviderGenerateBatchRequest request,
+        CYounics_Ai_Agent_Embedding_Provider_EmbeddingProviderGenerateBatchRequest request,
         CancellationToken cancellationToken = default)
     {
         var apiKey = await _credentials.GetCredentialAsync(cancellationToken).ConfigureAwait(false);

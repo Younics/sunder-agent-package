@@ -69,13 +69,13 @@ public sealed partial class AgentChatViewModel
         _toolPresentationService = toolPresentationService ?? new AgentToolPresentationService();
         _shellViewService = shellViewService;
         _uiDispatcher = uiDispatcher;
-        _backgroundTasks = new PresentationTaskScope(exception => _uiDispatcher.InvokeAsync(() =>
+        _backgroundTasks = new PresentationTaskScope((exception, token) => _uiDispatcher.InvokeAsync(() =>
         {
             if (!_disposed)
             {
                 SetGlobalStatus(exception.Message);
             }
-        }));
+        }, token), _uiDispatcher.ShutdownToken);
         _operations = operationObserver
             ?? PresentationOperationObserver.CreateUnreported("Agent Chat");
         _permissionPanel = new AgentPermissionPanelState(permissionService, runCoordinator, uiDispatcher);

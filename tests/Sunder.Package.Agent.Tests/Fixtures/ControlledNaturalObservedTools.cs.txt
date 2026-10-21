@@ -1,6 +1,6 @@
 using System.Runtime.CompilerServices;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using Sunder.Generated.Packages.Younics_Ai_Agent_Models;
+using IToolExecutionObservedService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Tool_Execution_Observed.IToolExecutionObservedService;
 using Sunder.Sdk.Services;
 
 namespace ControlledNaturalProviders;
@@ -21,7 +21,7 @@ public sealed partial class ControlledObservedTools : IToolExecutionObservedServ
     { token.ThrowIfCancellationRequested(); return ValueTask.FromResult("fixture.tools"); }
 
     public async IAsyncEnumerable<AgentObservedToolExecutionEvent> ExecuteAsync(
-        CSunder_Agent_Tool_Execution_Observed_ToolExecutionObservedExecuteRequest request,
+        CYounics_Ai_Agent_Tool_Execution_Observed_ToolExecutionObservedExecuteRequest request,
         [EnumeratorCancellation] CancellationToken token = default)
     {
         try

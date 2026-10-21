@@ -10,7 +10,7 @@ using AgentApp::Sunder.Package.Agent.Runtime;
 using AgentApp::Sunder.Package.Agent.Services;
 using Sunder.Sdk.Services;
 using Xunit;
-using AppServices = AgentApp::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AppServices = AgentApp::Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 
 namespace Sunder.Package.Agent.Tests;
 

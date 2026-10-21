@@ -8,7 +8,7 @@ namespace Sunder.Package.Agent.Contracts.Contracts;
 /// <remarks>
 /// <para>
 /// Role and direction: this is a Runtime-role RPC adapter contract. Zero or more active packages
-/// provide the <c>sunder.agent.prompt.context.contributor</c> contract, and the Agent Runtime consumes every
+/// provide the <c>younics.ai.agent.prompt.context.contributor</c> contract, and the Agent Runtime consumes every
 /// active provider while preparing a run.
 /// </para>
 /// <para>

@@ -91,7 +91,7 @@ public sealed class AgentRunBudgetTrackerTests
             {
                 Usage = AgentPromptContextUsage.ScopedInstruction,
                 Authority = AgentPromptContextAuthority.ScopedInstruction,
-                HostIdentity = "sunder.host.scoped-instruction.v1",
+                HostIdentity = "younics.ai.agent.scoped-instruction.v1",
                 Scope = new AgentPromptContextScope(
                     "/workspace",
                     "/workspace",

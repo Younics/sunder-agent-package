@@ -150,7 +150,7 @@ public sealed class AgentPermissionPresentationRaceTests
 
     private static PackageViewNavigationContext NavigationContext()
         => new(
-            "settings:sunder.package.agent.permissions",
+            "settings:younics.ai.agent.permissions",
             new Dictionary<string, string?>());
 
     private static AgentPermissionProjection Projection(

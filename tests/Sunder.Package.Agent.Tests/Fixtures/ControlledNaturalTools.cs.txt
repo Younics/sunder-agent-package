@@ -1,5 +1,6 @@
-using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using Sunder.Generated.Packages.Younics_Ai_Agent_Models;
+using IExecutionTargetService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Execution_Target.IExecutionTargetService;
+using IToolSourceService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Tool_Source.IToolSourceService;
 using Sunder.Sdk.Services;
 
 namespace ControlledNaturalProviders;
@@ -23,16 +24,16 @@ public sealed partial class ControlledTools : IToolSourceService
     { token.ThrowIfCancellationRequested(); return ValueTask.FromResult(new AgentToolSourceDescriptor { SourceId = "fixture.tools", DisplayName = "Controlled tools", SourceKind = "fixture" }); }
     public ValueTask<IReadOnlyList<AgentToolDescriptor>> ListToolsAsync(AgentToolSourceContext context, CancellationToken token = default)
     { token.ThrowIfCancellationRequested(); return ValueTask.FromResult<IReadOnlyList<AgentToolDescriptor>>([]); }
-    public ValueTask<AgentToolReadiness?> GetReadinessAsync(CSunder_Agent_Tool_Source_ToolSourceGetReadinessRequest request, CancellationToken token = default)
+    public ValueTask<AgentToolReadiness?> GetReadinessAsync(CYounics_Ai_Agent_Tool_Source_ToolSourceGetReadinessRequest request, CancellationToken token = default)
     { token.ThrowIfCancellationRequested(); return ValueTask.FromResult<AgentToolReadiness?>(null); }
-    public ValueTask<AgentToolResult?> PreflightAsync(CSunder_Agent_Tool_Source_ToolSourcePreflightRequest request, CancellationToken token = default)
+    public ValueTask<AgentToolResult?> PreflightAsync(CYounics_Ai_Agent_Tool_Source_ToolSourcePreflightRequest request, CancellationToken token = default)
     { token.ThrowIfCancellationRequested(); return ValueTask.FromResult<AgentToolResult?>(null); }
-    public ValueTask<AgentPermissionRequest?> PermissionAsync(CSunder_Agent_Tool_Source_ToolSourcePermissionRequest request, CancellationToken token = default)
+    public ValueTask<AgentPermissionRequest?> PermissionAsync(CYounics_Ai_Agent_Tool_Source_ToolSourcePermissionRequest request, CancellationToken token = default)
     { token.ThrowIfCancellationRequested(); return ValueTask.FromResult<AgentPermissionRequest?>(null); }
     public ValueTask<AgentToolPresentation?> PresentationAsync(AgentToolPresentationRequest request, CancellationToken token = default)
     { token.ThrowIfCancellationRequested(); return ValueTask.FromResult<AgentToolPresentation?>(null); }
 
-    public async ValueTask<AgentToolResult> ExecuteAsync(CSunder_Agent_Tool_Source_ToolSourceExecuteRequest request, CancellationToken token = default)
+    public async ValueTask<AgentToolResult> ExecuteAsync(CYounics_Ai_Agent_Tool_Source_ToolSourceExecuteRequest request, CancellationToken token = default)
     {
         ConfigurationGeneration = request.Context.ExecutionTargetConfigurationGeneration;
         ResourceCapabilities = request.Context.ApprovedResourceCapabilities ?? [];

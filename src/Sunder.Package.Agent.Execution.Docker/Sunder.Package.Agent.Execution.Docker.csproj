@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <SunderPackageFamilyId>sunder.package.agent.execution.docker</SunderPackageFamilyId>
+    <SunderPackageFamilyId>younics.ai.agent.execution.docker</SunderPackageFamilyId>
     <SunderSdkAvaloniaReference>true</SunderSdkAvaloniaReference>
     <SunderSdkStacksReference>true</SunderSdkStacksReference>
     <SunderAgentCurrentPackageStorageKey>true</SunderAgentCurrentPackageStorageKey>

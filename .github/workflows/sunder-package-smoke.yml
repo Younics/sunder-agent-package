@@ -1,329 +1,181 @@
-name: Sunder Agent Package Smoke
+name: AI Agent CI
 
 on:
   pull_request:
   merge_group:
   push:
     branches: [main]
+  schedule:
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      core_commit:
+        type: string
+        default: ""
+      cold_inputs:
+        type: string
+        default: ""
 
-permissions: {}
-
+permissions:
+  contents: read
 env:
   DOTNET_VERSION: "10.0.100"
+  NODE_VERSION: "24.18.1"
   MSBUILDDISABLENODEREUSE: "1"
 
 jobs:
-  core-dependency:
-    name: Resolve Core main commit
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    outputs:
-      commit: ${{ steps.core.outputs.commit }}
-    steps:
-      - name: Resolve Core main commit
-        id: core
+  source:
+    name: ${{ matrix.mode }} behavior (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: ${{ inputs.cold_inputs != '' && fromJSON('["source","package"]') || fromJSON('["source"]') }}
+        os: [ubuntu-24.04, windows-2022]
+        include:
+          - {os: ubuntu-24.04, platform: linux}
+          - {os: windows-2022, platform: windows}
+    defaults:
+      run:
         shell: bash
-        run: |
-          set -euo pipefail
-          read -r commit ref < <(git ls-remote --exit-code https://github.com/Younics/sunder-core.git refs/heads/main)
-          if [[ ! "$commit" =~ ^[0-9a-f]{40}$ || "$ref" != "refs/heads/main" ]]; then
-            echo "Could not resolve exactly one full commit SHA for Younics/sunder-core main." >&2
-            exit 1
-          fi
-          echo "commit=$commit" >> "$GITHUB_OUTPUT"
-
-  release-smoke:
-    name: Build and smoke complete family
-    needs: core-dependency
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
+        working-directory: sunder-agent-package
     steps:
-      - name: Checkout Agent repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           path: sunder-agent-package
           persist-credentials: false
-
-      - name: Checkout resolved Core commit
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          repository: Younics/sunder-core
-          ref: ${{ needs.core-dependency.outputs.commit }}
-          path: sunder-core
-          persist-credentials: false
-
-      - name: Verify exact Core checkout
-        working-directory: sunder-core
-        shell: bash
+      - name: Resolve exact selected archives, catalog and Core source
+        id: inputs
         env:
-          EXPECTED_CORE_COMMIT: ${{ needs.core-dependency.outputs.commit }}
-        run: test "$(git rev-parse HEAD)" = "$EXPECTED_CORE_COMMIT"
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
-        with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
-
-      - name: Restore and build coordinated Agent sources
-        working-directory: sunder-agent-package
-        shell: bash
+          GH_TOKEN: ${{ github.token }}
+          SUNDER_AGENT_CI_INPUTS: ${{ vars.SUNDER_AGENT_CI_INPUTS }}
+          COLD_INPUTS: ${{ inputs.cold_inputs }}
+          CORE_COMMIT: ${{ inputs.core_commit }}
         run: |
           set -euo pipefail
-          version="$(jq -er '.releaseVersion' packages.json)"
+          if [[ -n "$COLD_INPUTS" ]]; then
+            python3 -B scripts/ci/agent_ci.py resolve --locator "$COLD_INPUTS" --cold --core-commit "$CORE_COMMIT" --output "$RUNNER_TEMP/agent-inputs"
+          else
+            python3 -B scripts/ci/agent_ci.py resolve --output "$RUNNER_TEMP/agent-inputs"
+          fi
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Younics/sunder-core
+          ref: ${{ steps.inputs.outputs.core_commit }}
+          path: sunder-core
+          persist-credentials: false
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Check scripts, taxonomy and current package contracts
+        run: |
+          set -euo pipefail
           mkdir -p artifacts/reports
           node --test scripts/compatibility/check-protocol-retirement.test.mjs
           node scripts/compatibility/check-protocol-retirement.mjs
+          python3 -B scripts/test/verify-current-contracts.fixture.py
+          python3 -B scripts/test/test_prepare_shared_provider_fixture.py
+          python3 -B scripts/test/verify-current-contracts.py --source-only
           bash scripts/test/generate-test-inventory.sh > artifacts/reports/test-inventory.json
-          test "$(jq '.projects | length' artifacts/reports/test-inventory.json)" -eq 11
           bash scripts/test/test-silent-return-analyzer.fixture.sh
-          bash scripts/test/release/verify-agent-release-version.fixture.sh
           bash scripts/test/generate-test-duration-report.fixture.sh
-          dotnet restore Sunder.AgentPackage.slnx --force-evaluate -p:SunderUseSourceSdk=true
-          dotnet build Sunder.AgentPackage.slnx -c Release --no-restore -m:1 -p:SunderUseSourceSdk=true -p:SunderAgentVersion="$version" -p:ContinuousIntegrationBuild=true
-
-      - name: Run complete source-mode behavioral suite
-        id: source_tests
-        continue-on-error: true
-        working-directory: sunder-agent-package
-        shell: bash
+          bash scripts/test/release/verify-agent-release-version.fixture.sh
+          python3 -B scripts/test/release/release-inputs.fixture.py
+          python3 -B scripts/test/release/test_agent_ci.py
+      - name: Release transport, native fan-in and Registry publication regressions
+        if: runner.os == 'Linux' && matrix.mode == 'source'
         run: |
           set -euo pipefail
-          mkdir -p artifacts/test-results/full
-          dotnet test Sunder.AgentPackage.slnx -c Release --no-build --no-restore -m:1 \
-            -p:SunderUseSourceSdk=true --logger trx \
-            --results-directory "$PWD/artifacts/test-results/full"
-
-      - name: Run required Linux selection once
-        id: required_linux_test
-        continue-on-error: true
-        working-directory: sunder-agent-package
-        shell: bash
+          python3 -B scripts/test/release/agent-release.fixture.py
+          python3 -B scripts/test/release/test_agent_pipeline.py
+          bash scripts/test/release/native-release.fixture.sh
+          bash scripts/test/release/publish-registry-package.fixture.sh
+          bash scripts/test/release/verify-core-sdk-release.fixture.sh
+          bash scripts/test/release/verify-nuget-package.fixture.sh
+      - name: Restore and hydrate the exact committed package selections
+        run: >-
+          python3 -B scripts/ci/agent_ci.py prepare --core ../sunder-core
+          --inputs "$RUNNER_TEMP/agent-inputs" --work "$RUNNER_TEMP/agent-ci" --mode "${{ matrix.mode }}"
+      - name: Normal parallel source build
+        run: >-
+          python3 -B scripts/ci/agent_ci.py run --state "$RUNNER_TEMP/agent-ci/ci-state.json" --
+          dotnet build Sunder.AgentPackage.slnx -c Release --no-restore
+      - name: Prepare the generated provider fixture after the build
         env:
-          SUNDER_REQUIRE_TEST_PREREQUISITES: "1"
-        run: |
-          set -euo pipefail
-          project=tests/Sunder.Package.Agent.Execution.Local.Tests/Sunder.Package.Agent.Execution.Local.Tests.csproj
-          test_fqn=Sunder.Package.Agent.Execution.Local.Tests.FilesToolSourceRefactorTests.ApplyPatch_LinuxAtEmptyPathEperm_UsesPortablePublishFallback
-          discovered="$(dotnet test "$project" -c Release --no-build --no-restore -m:1 \
-            -p:SunderUseSourceSdk=true --list-tests --filter "FullyQualifiedName=$test_fqn")"
-          grep -Fqx "    $test_fqn" <<< "$discovered"
-          mkdir -p artifacts/test-results/required
-          dotnet test "$project" -c Release --no-build --no-restore -m:1 \
-            -p:SunderUseSourceSdk=true --filter "FullyQualifiedName=$test_fqn" \
-            --logger "trx;LogFileName=required-linux.trx" \
-            --results-directory "$PWD/artifacts/test-results/required"
-
-      - name: Run required real-Docker selection once
-        id: required_docker_test
-        continue-on-error: true
-        working-directory: sunder-agent-package
-        shell: bash
+          TMPDIR: ${{ runner.temp }}
+        run: python3 -B scripts/ci/agent_ci.py fixtures --state "$RUNNER_TEMP/agent-ci/ci-state.json"
+      - name: Complete source behavior and required all-family source-artifact gate
+        if: matrix.mode == 'source'
+        env:
+          SUNDER_REQUIRE_AGENT_SOURCE_MIGRATION: "1"
+          SUNDER_AGENT_SOURCE_ARTIFACT_EVIDENCE: ${{ github.workspace }}/sunder-agent-package/artifacts/source-family
+          SUNDER_AGENT_SOURCE_ARTIFACT_COMMAND_EVIDENCE: ${{ github.workspace }}/sunder-agent-package/artifacts/source-commands
+        run: >-
+          python3 -B scripts/ci/agent_ci.py run --state "$RUNNER_TEMP/agent-ci/ci-state.json" --
+          dotnet test Sunder.AgentPackage.slnx -c Release --no-build --no-restore
+          --logger trx --results-directory "${{ github.workspace }}/sunder-agent-package/artifacts/test-results/full"
+      - name: Focused locked-package compatibility
+        if: matrix.mode == 'package'
+        run: >-
+          python3 -B scripts/ci/agent_ci.py run --state "$RUNNER_TEMP/agent-ci/ci-state.json" --
+          dotnet test Sunder.AgentPackage.slnx -c Release --no-build --no-restore
+          --filter "Lane=PackageCompatibility&Category!=Artifact" --logger trx
+          --results-directory "${{ github.workspace }}/sunder-agent-package/artifacts/test-results/full"
+      - name: Required Linux and real-Docker cases
+        if: runner.os == 'Linux' && matrix.mode == 'source'
         env:
           SUNDER_DOCKER_INTEGRATION: "1"
           SUNDER_REQUIRE_TEST_PREREQUISITES: "1"
         run: |
           set -euo pipefail
-          project=tests/Sunder.Package.Agent.Tests/Sunder.Package.Agent.Tests.csproj
-          test_fqn=Sunder.Package.Agent.Tests.WorkspaceTests.DockerExecutionTarget_RealDaemon_VerifiesMountAndContainerCanReadNestedHostCreation
-          discovered="$(dotnet test "$project" -c Release --no-build --no-restore -m:1 \
-            -p:SunderUseSourceSdk=true --list-tests --filter "FullyQualifiedName=$test_fqn")"
-          grep -Fqx "    $test_fqn" <<< "$discovered"
-          mkdir -p artifacts/test-results/required
-          dotnet test "$project" -c Release --no-build --no-restore -m:1 \
-            -p:SunderUseSourceSdk=true --filter "FullyQualifiedName=$test_fqn" \
-            --logger "trx;LogFileName=required-docker.trx" \
-            --results-directory "$PWD/artifacts/test-results/required"
-
-      - name: Summarize source-mode test evidence
-        id: source_test_summary
-        if: always()
-        working-directory: sunder-agent-package
-        shell: bash
+          python3 -B scripts/ci/agent_ci.py run --state "$RUNNER_TEMP/agent-ci/ci-state.json" -- dotnet test Sunder.AgentPackage.slnx \
+            -c Release --no-build --no-restore --logger trx --results-directory "$PWD/artifacts/test-results/required" \
+            --filter 'FullyQualifiedName~ApplyPatch_LinuxAtEmptyPathEperm_UsesPortablePublishFallback|FullyQualifiedName~DockerExecutionTarget_RealDaemon_VerifiesMountAndContainerCanReadNestedHostCreation'
+          python3 scripts/test/generate-test-duration-report.py artifacts/test-results/required --expected-skips 0 > artifacts/reports/required.json
+          jq -e '.summary.total == 2 and .summary.passed == 2 and .evidenceViolations == []' artifacts/reports/required.json
+      - name: Repeat Linux race and Docker checks on scheduled and manual runs
+        if: runner.os == 'Linux' && matrix.mode == 'source' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        env:
+          SUNDER_DOCKER_INTEGRATION: "1"
+          SUNDER_REQUIRE_TEST_PREREQUISITES: "1"
         run: |
-          set -uo pipefail
-          status=0
-          python3 scripts/test/generate-test-duration-report.py artifacts/test-results \
-            --inventory artifacts/reports/test-inventory.json \
-            --mode source \
-            --platform linux \
-            --expectations tests/test-evidence-expectations.json \
-            > artifacts/reports/test-duration-report.json || status=1
-          python3 scripts/test/generate-test-duration-report.py artifacts/test-results/required \
-            --expected-skips 0 \
-            > artifacts/reports/required-test-duration-report.json || status=1
-          exit "$status"
-
-      - name: Upload source-mode test evidence
+          set -euo pipefail
+          filter='(FullyQualifiedName~RaceTests&FullyQualifiedName!~Write_RejectsTemporaryNameSubstitutionBeforePublish&FullyQualifiedName!~WindowsFinalMutationHandles_BlockInPlaceEntryReplacement&FullyQualifiedName!~RecursiveDelete_RejectsCaseFoldedAliasOfNestedConfiguredRoot)|FullyQualifiedName~DockerExecutionTarget_RealDaemon_VerifiesMountAndContainerCanReadNestedHostCreation'
+          for attempt in 1 2 3; do
+            python3 -B scripts/ci/agent_ci.py run --state "$RUNNER_TEMP/agent-ci/ci-state.json" -- dotnet test Sunder.AgentPackage.slnx \
+              -c Release --no-build --no-restore --filter "$filter" --logger trx --results-directory "$PWD/artifacts/stress/$attempt"
+          done
+          python3 scripts/test/generate-test-duration-report.py artifacts/stress --expected-skips 0 > artifacts/reports/stress.json
+      - name: Verify complete source test identities and skip reasons
         if: always()
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          MODE: ${{ matrix.mode }}
+        run: |
+          args=(--inventory artifacts/reports/test-inventory.json --mode "$MODE" --platform "$PLATFORM" --expectations tests/test-evidence-expectations.json)
+          [[ "$MODE" != package ]] || args+=(--lane PackageCompatibility --exclude-category Artifact)
+          python3 scripts/test/generate-test-duration-report.py artifacts/test-results "${args[@]}" > artifacts/reports/results.json
+      - name: Retain the tested package-mode archive verifier for fan-in
+        if: matrix.mode == 'package' && matrix.platform == 'linux'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: sunder-agent-source-mode-tests
+          name: agent-package-test-binaries
+          path: sunder-agent-package/tests/Sunder.Package.Agent.Tests/bin/Release/net10.0/
+          if-no-files-found: error
+          retention-days: 90
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sunder-agent-${{ matrix.mode }}-${{ matrix.platform }}-${{ github.run_attempt }}
           path: |
-            sunder-agent-package/artifacts/reports/test-inventory.json
-            sunder-agent-package/artifacts/reports/test-duration-report.json
-            sunder-agent-package/artifacts/reports/required-test-duration-report.json
-            sunder-agent-package/artifacts/test-results/**/*.trx
+            sunder-agent-package/artifacts/reports
+            sunder-agent-package/artifacts/test-results
+            sunder-agent-package/artifacts/stress
+            sunder-agent-package/artifacts/source-family
+            sunder-agent-package/artifacts/source-commands
           if-no-files-found: error
-          retention-days: 7
-
-      - name: Enforce source-mode test evidence
-        if: always()
-        working-directory: sunder-agent-package
-        shell: bash
-        env:
-          DOCKER_TEST_OUTCOME: ${{ steps.required_docker_test.outcome }}
-          LINUX_TEST_OUTCOME: ${{ steps.required_linux_test.outcome }}
-          SOURCE_SUMMARY_OUTCOME: ${{ steps.source_test_summary.outcome }}
-          SOURCE_TEST_OUTCOME: ${{ steps.source_tests.outcome }}
-        run: |
-          set -euo pipefail
-          test "$SOURCE_TEST_OUTCOME" = success
-          test "$LINUX_TEST_OUTCOME" = success
-          test "$DOCKER_TEST_OUTCOME" = success
-          test "$SOURCE_SUMMARY_OUTCOME" = success
-          jq -e '
-            .selection == {mode: "source", lane: null, platform: "linux"}
-            and .summary.failed == 0
-            and .summary.other == 0
-            and .canonicalIdentityExpectation == {platform: "linux", enforced: true}
-            and (.projectSuiteEvidence | length) == 11
-            and (.identityEvidence | length) == 11
-            and .evidenceViolations == []
-          ' artifacts/reports/test-duration-report.json >/dev/null
-          jq -e '
-            .summary == {
-              total: 2,
-              passed: 2,
-              failed: 0,
-              skipped: 0,
-              other: 0,
-              totalDurationMilliseconds: .summary.totalDurationMilliseconds
-            }
-            and .evidenceViolations == []
-          ' artifacts/reports/required-test-duration-report.json >/dev/null
-
-      - name: Pack all 15 canonical package archives once
-        working-directory: sunder-agent-package
-        shell: bash
-        run: |
-          set -euo pipefail
-          output="$PWD/artifacts/family"
-          mkdir -p "$output"
-          version="$(jq -er '.releaseVersion' packages.json)"
-
-          jq -e '.packages | length == 15 and all(.[]; .artifactType == "sunderpkg") and ([.[].packageId] | unique | length) == 15' packages.json >/dev/null
-
-          while IFS=$'\t' read -r package_id project_path; do
-            output_path="$output/$package_id.$version.sunderpkg"
-            dotnet restore "$project_path" --force-evaluate -p:SunderUseSourceSdk=true
-            dotnet msbuild "$project_path" -t:PackSunderPackage -m:1 \
-              -p:Configuration=Release -p:SunderUseSourceSdk=true \
-              -p:SunderAgentVersion="$version" -p:ContinuousIntegrationBuild=true \
-              -p:SunderPackageOutputPath="$output_path"
-          done < <(jq -r '.packages | map(select(.artifactType == "sunderpkg")) | sort_by(.key)[] | [.packageId, .projectPath] | @tsv' packages.json)
-
-          runtime_count="$(jq '[.packages[] | select(.artifactType == "sunderpkg")] | length' packages.json)"
-          test "$(find "$output" -maxdepth 1 -name '*.sunderpkg' -type f | wc -l)" -eq "$runtime_count"
-          test "$(find "$output" -maxdepth 1 -type f | wc -l)" -eq 15
-
-          while IFS=$'\t' read -r package_id provider_ids; do
-            archive="$output/$package_id.$version.sunderpkg"
-            manifest="$RUNNER_TEMP/$package_id-manifest.json"
-            content_index="$RUNNER_TEMP/$package_id-content-index.json"
-            unzip -p "$archive" manifest/sunder-package.json > "$manifest"
-            unzip -p "$archive" manifest/content-index.json > "$content_index"
-            jq --argjson provider_ids "$provider_ids" -e '
-              def supported_rids: ["linux-arm64", "linux-x64", "osx-arm64", "osx-x64", "win-arm64", "win-x64"];
-              ([.targets[] | select(.role == "runtime") | .rid] | sort) == supported_rids and
-              (([.targets[] | select(.role == "app") | .rid] | sort) as $app_rids |
-                $app_rids == [] or $app_rids == supported_rids) and
-              all(.targets[];
-                if .role == "runtime" then
-                  .kind == "worker" and (.requiredHostCapabilities | index("worker-protocol.v1") != null)
-                elif .role == "app" then
-                  .kind == "avalonia" and (.requiredHostCapabilities | index("worker-protocol.v1") == null)
-                else false end) and
-              all(.dependsOn[]; .versionRange == ">=2.0.0 <3.0.0") and
-              ([.provides[].providerId] | sort) == ($provider_ids | sort)
-            ' "$manifest" >/dev/null
-            jq -e '
-              all(.files[];
-                .path == "manifest/sunder-package.json" or
-                (.path | startswith("payload/shared/")) or
-                (.path | startswith("payload/app/")) or
-                (.path | startswith("payload/runtime/"))) and
-              all(.files[] | select(.path | startswith("payload/app/"));
-                (.path | contains("Sunder.Sdk.Worker")) == false and
-                (.path | test("/[^/]+\\.runtimeconfig\\.json$")) == false) and
-              all(.files[] | select(.path | startswith("payload/runtime/"));
-                (.path | test("/[^/]+\\.App\\.(dll|pdb|deps\\.json)$")) == false)
-            ' "$content_index" >/dev/null
-          done < <(jq -r '.packages | map(select(.artifactType == "sunderpkg")) | sort_by(.key)[] | [.packageId, (.providerIds | tojson)] | @tsv' packages.json)
-
-          SUNDER_REQUIRE_TEST_PREREQUISITES=1 \
-          SUNDER_AGENT_PACKAGE_ARCHIVE_DIR="$output" \
-            dotnet test tests/Sunder.Package.Agent.Tests/Sunder.Package.Agent.Tests.csproj \
-              -c Release --no-build --no-restore -m:1 \
-              --filter "FullyQualifiedName~PackageFamilyArchiveContractTests"
-
-      - name: Build Core validation and smoke paths
-        working-directory: sunder-core
-        shell: bash
-        run: |
-          set -euo pipefail
-          dotnet restore languages/csharp/dotnet/host/Sunder.Cli/Sunder.Cli.csproj --locked-mode
-          dotnet restore languages/csharp/dotnet/tests/Sunder.Runtime.Host.Tests/Sunder.Runtime.Host.Tests.csproj --locked-mode
-          dotnet restore languages/csharp/dotnet/tests/Sunder.App.Tests/Sunder.App.Tests.csproj --locked-mode
-          dotnet build languages/csharp/dotnet/host/Sunder.Cli/Sunder.Cli.csproj -c Release --no-restore
-          dotnet build languages/csharp/dotnet/tests/Sunder.Runtime.Host.Tests/Sunder.Runtime.Host.Tests.csproj -c Release --no-restore
-          dotnet build languages/csharp/dotnet/tests/Sunder.App.Tests/Sunder.App.Tests.csproj -c Release --no-restore
-
-      - name: Validate exact family archives through Package Format
-        working-directory: sunder-agent-package
-        shell: bash
-        run: |
-          set -euo pipefail
-          while IFS= read -r archive; do
-            dotnet ../sunder-core/languages/csharp/dotnet/host/Sunder.Cli/bin/Release/net10.0/sunder.dll dev package validate "$archive"
-          done < <(find artifacts/family -maxdepth 1 -name '*.sunderpkg' -type f | sort)
-
-      - name: Runtime clean lifecycle smoke for exact family bytes
-        working-directory: sunder-core
-        shell: bash
-        env:
-          SUNDER_AGENT_PACKAGE_ARCHIVE_DIR: ${{ github.workspace }}/sunder-agent-package/artifacts/family
-          SUNDER_AGENT_UI_SNAPSHOT_DIR: ${{ github.workspace }}/agent-ui-snapshot
-        run: |
-          set -euo pipefail
-          mkdir -p "$SUNDER_AGENT_UI_SNAPSHOT_DIR"
-          test_fqn="Sunder.Runtime.Host.Tests.AgentPackageReleaseSmokeTests.ReleaseArchives_InstallActivateUnloadReloadAndReinstallAsOneFamily"
-          discovered="$(dotnet test languages/csharp/dotnet/tests/Sunder.Runtime.Host.Tests/Sunder.Runtime.Host.Tests.csproj -c Release --no-build --no-restore --list-tests --filter "FullyQualifiedName=$test_fqn")"
-          grep -Fqx "    $test_fqn" <<< "$discovered"
-          dotnet test languages/csharp/dotnet/tests/Sunder.Runtime.Host.Tests/Sunder.Runtime.Host.Tests.csproj -c Release --no-build --no-restore --filter "FullyQualifiedName=$test_fqn"
-
-      - name: App activation smoke for Runtime-produced snapshot
-        working-directory: sunder-core
-        shell: bash
-        env:
-          SUNDER_AGENT_UI_SNAPSHOT_DIR: ${{ github.workspace }}/agent-ui-snapshot
-        run: |
-          set -euo pipefail
-          test_fqn="Sunder.App.Tests.AgentPackageReleaseSmokeTests.RuntimeProducedAgentSnapshot_MaterializesAndActivatesInApp"
-          discovered="$(dotnet test languages/csharp/dotnet/tests/Sunder.App.Tests/Sunder.App.Tests.csproj -c Release --no-build --no-restore --list-tests --filter "FullyQualifiedName=$test_fqn")"
-          grep -Fqx "    $test_fqn" <<< "$discovered"
-          dotnet test languages/csharp/dotnet/tests/Sunder.App.Tests/Sunder.App.Tests.csproj -c Release --no-build --no-restore --filter "FullyQualifiedName=$test_fqn"
-
-      - name: Refresh Protocol retirement evidence
-        working-directory: sunder-agent-package
-        shell: bash
-        run: node scripts/compatibility/check-protocol-retirement.mjs
-
-      - name: Upload verified family artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: sunder-agent-family-smoke
-          path: sunder-agent-package/artifacts/family/*
-          if-no-files-found: error
-          retention-days: 7

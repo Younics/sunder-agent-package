@@ -3,14 +3,14 @@ extern alias LocalWorker;
 using System.Runtime.Versioning;
 using LocalWorker::Sunder.Package.Agent.Execution.Local;
 using Xunit;
-using AgentFileDeleteRequest = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileDeleteRequest;
-using AgentFileReadRequest = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileReadRequest;
-using AgentFileSearchKind = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileSearchKind;
-using AgentFileSearchRequest = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileSearchRequest;
-using AgentFileWriteRequest = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileWriteRequest;
+using AgentFileDeleteRequest = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentFileDeleteRequest;
+using AgentFileReadRequest = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentFileReadRequest;
+using AgentFileSearchKind = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentFileSearchKind;
+using AgentFileSearchRequest = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentFileSearchRequest;
+using AgentFileWriteRequest = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentFileWriteRequest;
 using AgentFileSearchErrorCodes = Sunder.Package.Agent.Contracts.Models.AgentFileSearchErrorCodes;
-using AgentScopedInstructionDiscoveryRequest = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentScopedInstructionDiscoveryRequest;
-using AgentScopedInstructionProbe = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentScopedInstructionProbe;
+using AgentScopedInstructionDiscoveryRequest = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentScopedInstructionDiscoveryRequest;
+using AgentScopedInstructionProbe = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentScopedInstructionProbe;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
 

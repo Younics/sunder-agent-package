@@ -33,7 +33,7 @@ public sealed class SkillImportReplacementTests
     }
 
     [Fact]
-    public void Store_ReadsReleasedArrayIndexAndWritesCurrentSchemaEnvelope()
+    public void Store_RoundTripsCurrentSchemaEnvelope()
     {
         var root = Path.Combine(Path.GetTempPath(), "sunder-skill-index-schema-tests", Guid.NewGuid().ToString("N"));
         try
@@ -41,10 +41,10 @@ public sealed class SkillImportReplacementTests
             var context = new TestPackageContext(root);
             var indexPath = context.Storage.RoleLocalWorkspace.GetLocalPath("skills/skills.json");
             Directory.CreateDirectory(Path.GetDirectoryName(indexPath)!);
-            File.WriteAllText(indexPath, JsonSerializer.Serialize(new[] { CreateRecord("legacy") }));
+            new SkillStore(context).SaveSkill(CreateRecord("first"));
             var store = new SkillStore(context);
 
-            Assert.Equal("legacy", Assert.Single(store.ListSkills()).SkillId);
+            Assert.Equal("first", Assert.Single(store.ListSkills()).SkillId);
             store.SaveSkill(CreateRecord("current"));
 
             using var document = JsonDocument.Parse(File.ReadAllBytes(indexPath));
@@ -58,8 +58,12 @@ public sealed class SkillImportReplacementTests
         }
     }
 
-    [Fact]
-    public void Store_RejectsFutureIndexSchemaWithoutOverwritingIt()
+    [Theory]
+    [InlineData("[]")]
+    [InlineData("{\"SchemaId\":\"sunder.agent.skills.index\",\"SchemaVersion\":1,\"Skills\":[]}")]
+    [InlineData("{\"SchemaId\":\"younics.ai.agent.skills.index\",\"SchemaVersion\":2,\"Skills\":[]}")]
+    [InlineData("{\"SchemaId\":\"younics.ai.agent.skills.index\",\"SchemaVersion\":\"1\",\"Skills\":[]}")]
+    public void Store_RejectsOldOrUnsupportedIndexWithoutOverwritingIt(string json)
     {
         var root = Path.Combine(Path.GetTempPath(), "sunder-skill-index-future-tests", Guid.NewGuid().ToString("N"));
         try
@@ -67,12 +71,7 @@ public sealed class SkillImportReplacementTests
             var context = new TestPackageContext(root);
             var indexPath = context.Storage.RoleLocalWorkspace.GetLocalPath("skills/skills.json");
             Directory.CreateDirectory(Path.GetDirectoryName(indexPath)!);
-            var payload = JsonSerializer.SerializeToUtf8Bytes(new
-            {
-                SchemaId = SkillPersistenceSchemas.IndexId,
-                SchemaVersion = SkillPersistenceSchemas.CurrentVersion + 1,
-                Skills = new[] { CreateRecord("future") },
-            });
+            var payload = System.Text.Encoding.UTF8.GetBytes(json);
             File.WriteAllBytes(indexPath, payload);
             var store = new SkillStore(context);
 
@@ -704,12 +703,10 @@ public sealed class SkillImportReplacementTests
             File.WriteAllText(Path.Combine(staging, "resource.txt"), "replacement");
             Directory.Move(target, backup);
             Directory.Move(staging, target);
-            var journal = new
-            {
-                Phase = "Prepared",
-                IndexSnapshotBase64 = Convert.ToBase64String(snapshot!),
-                Entries = new[] { new SkillImportJournalEntry(staging, target, backup, true, true, true) },
-            };
+            var journal = new SkillImportJournal(
+                "Prepared",
+                Convert.ToBase64String(snapshot!),
+                [new SkillImportJournalEntry(staging, target, backup, true, true, true)]);
             File.WriteAllBytes(store.ImportJournalPath, JsonSerializer.SerializeToUtf8Bytes(journal));
 
             var recoveredStore = new SkillStore(context);
@@ -725,8 +722,11 @@ public sealed class SkillImportReplacementTests
         }
     }
 
-    [Fact]
-    public void StoreStartup_RejectsFutureJournalSchemaWithoutRecoveryMutation()
+    [Theory]
+    [InlineData(null, 1)]
+    [InlineData("sunder.agent.skills.import-journal", 1)]
+    [InlineData("younics.ai.agent.skills.import-journal", 2)]
+    public void StoreStartup_RejectsOldOrUnsupportedJournalWithoutRecoveryMutation(string? schemaId, int schemaVersion)
     {
         var root = Path.Combine(Path.GetTempPath(), "sunder-skill-journal-future-tests", Guid.NewGuid().ToString("N"));
         try
@@ -743,9 +743,16 @@ public sealed class SkillImportReplacementTests
                 null,
                 [new SkillImportJournalEntry(staging, target, backup, false, false, false)]) with
             {
-                SchemaVersion = SkillPersistenceSchemas.CurrentVersion + 1,
+                SchemaId = schemaId!,
+                SchemaVersion = schemaVersion,
             };
-            var payload = JsonSerializer.SerializeToUtf8Bytes(journal);
+            var document = JsonSerializer.SerializeToNode(journal)!.AsObject();
+            if (schemaId is null)
+            {
+                document.Remove(nameof(SkillImportJournal.SchemaId));
+                document.Remove(nameof(SkillImportJournal.SchemaVersion));
+            }
+            var payload = JsonSerializer.SerializeToUtf8Bytes(document);
             File.WriteAllBytes(store.ImportJournalPath, payload);
 
             Assert.Throws<InvalidDataException>(() => new SkillStore(context).Activate());
@@ -1056,7 +1063,7 @@ public sealed class SkillImportReplacementTests
 
     private sealed class TestPackageContext(string rootPath) : IPackageContext
     {
-        public string PackageId => "sunder.package.agent.skills";
+        public string PackageId => "younics.ai.agent.skills";
 
         public string Version { get; } = "1.0.0";
 

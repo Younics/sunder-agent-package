@@ -5,7 +5,7 @@ using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Execution.Docker;
 
-[SunderService(Key = "management", ContractId = "sunder.package.agent.execution.docker.presentation", ServiceId = "presentation")]
+[SunderService(Key = "management", ContractId = "younics.ai.agent.execution.docker.presentation", ServiceId = "presentation")]
 [SunderServiceProvider(ProviderId = "docker.presentation")]
 internal sealed partial class DockerExecutionPresentationService(
     IPackageContext packageContext, DockerCliRunner dockerCliRunner, DockerImageCatalogService imageCatalog)
@@ -130,7 +130,7 @@ internal sealed partial class DockerExecutionPresentationService(
         var reference = value ?? throw new DockerExecutionDomainException("docker.image-reference.required", "Docker image reference is required.");
         try { return DockerImageCatalogService.NormalizeImageReference(reference); }
         catch (DockerExecutionDomainException exception) when (exception.Code == "docker.image-reference.unpinned")
-        { return DockerImageCatalogService.NormalizeLegacyImageReference(reference); }
+        { return DockerImageCatalogService.NormalizeAttentionImageReference(reference); }
     }
 
     private static string BoundForLog(string? value)

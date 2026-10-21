@@ -15,23 +15,24 @@ using MemoryWorker::Sunder.Package.Agent.Contracts.Contracts;
 using MemoryWorker::Sunder.Package.Agent.Contracts.Models;
 using MemoryWorker::Sunder.Package.Agent.Memory.Semantic;
 using MemoryWorker::Sunder.Package.Agent.Memory.Semantic.Services;
-using AgentEmbeddingGenerationResult = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentEmbeddingGenerationResult;
-using AgentEmbeddingModelDescriptor = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentEmbeddingModelDescriptor;
-using AgentEmbeddingProviderDescriptor = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentEmbeddingProviderDescriptor;
-using AgentEmbeddingProviderReadiness = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentEmbeddingProviderReadiness;
-using AgentLifecycleEventKind = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentLifecycleEventKind;
-using AgentMessageRole = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentMessageRole;
-using AgentProfileModelBindingRecord = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentProfileModelBindingRecord;
-using AgentProfileRecord = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentProfileRecord;
-using AgentRunCheckpointRecord = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentRunCheckpointRecord;
-using AgentSessionContextCheckpointRecord = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionContextCheckpointRecord;
-using AgentSessionRecord = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionRecord;
-using AgentSessionState = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionState;
-using AgentTurnRecord = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnRecord;
-using AgentWorkingSummaryRecord = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentWorkingSummaryRecord;
-using AgentWorkspaceRecord = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentWorkspaceRecord;
-using MemoryModels = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
-using MemoryServices = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentEmbeddingGenerationResult = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentEmbeddingGenerationResult;
+using AgentEmbeddingModelDescriptor = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentEmbeddingModelDescriptor;
+using AgentEmbeddingProviderDescriptor = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentEmbeddingProviderDescriptor;
+using AgentEmbeddingProviderReadiness = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentEmbeddingProviderReadiness;
+using AgentLifecycleEventKind = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentLifecycleEventKind;
+using AgentMessageRole = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentMessageRole;
+using AgentProfileModelBindingRecord = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentProfileModelBindingRecord;
+using AgentProfileRecord = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentProfileRecord;
+using AgentRunCheckpointRecord = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentRunCheckpointRecord;
+using AgentSessionContextCheckpointRecord = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentSessionContextCheckpointRecord;
+using AgentSessionRecord = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentSessionRecord;
+using AgentSessionState = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentSessionState;
+using AgentTurnRecord = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTurnRecord;
+using AgentWorkingSummaryRecord = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentWorkingSummaryRecord;
+using AgentWorkspaceRecord = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentWorkspaceRecord;
+using MemoryModels = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models;
+using IEmbeddingProviderService = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Embedding_Provider.IEmbeddingProviderService;
+using IRuntimeCatalogService = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Runtime_Catalog.IRuntimeCatalogService;
 
 public sealed class MemoryEvaluationTests
 {
@@ -340,8 +341,8 @@ public sealed class MemoryEvaluationTests
 
     private sealed class MemoryEvaluationHarness : IAsyncDisposable
     {
-        private readonly FakeServiceCatalog<MemoryServices.IRuntimeCatalogService> _runtimeServices;
-        private readonly FakeServiceCatalog<MemoryServices.IEmbeddingProviderService> _embeddingServices;
+        private readonly FakeServiceCatalog<IRuntimeCatalogService> _runtimeServices;
+        private readonly FakeServiceCatalog<IEmbeddingProviderService> _embeddingServices;
         private readonly EvaluationRuntimeCatalog _runtimeCatalog;
         private readonly EvaluationPackageContext _packageContext;
         private readonly SemanticMemoryIndexingBackgroundService _indexingBackgroundService;
@@ -355,9 +356,9 @@ public sealed class MemoryEvaluationTests
             SessionId = Guid.NewGuid();
             ProfileId = "profile-eval";
             _runtimeCatalog = new EvaluationRuntimeCatalog(CreateProfile(enableEmbeddings), SessionId, ProfileId);
-            _runtimeServices = new FakeServiceCatalog<MemoryServices.IRuntimeCatalogService>(
+            _runtimeServices = new FakeServiceCatalog<IRuntimeCatalogService>(
                 CurrentPublicRpcDescriptors.Get(RegressionTestBindings.RuntimeCatalog));
-            _embeddingServices = new FakeServiceCatalog<MemoryServices.IEmbeddingProviderService>(
+            _embeddingServices = new FakeServiceCatalog<IEmbeddingProviderService>(
                 CurrentPublicRpcDescriptors.Get(RegressionTestBindings.EmbeddingProviders));
             _packageContext = new EvaluationPackageContext(
                 Path.Combine(Path.GetTempPath(), "sunder-memory-eval", Guid.NewGuid().ToString("N")));
@@ -526,7 +527,7 @@ public sealed class MemoryEvaluationTests
             => new() { RunId = Guid.NewGuid(), Revision = _nextRevision++, Status = MemoryModels.AgentRunStatus.Running, IsInterrupted = false, StartedAtUtc = RpcTimestamp(DateTimeOffset.UtcNow) };
     }
 
-    private sealed class EvaluationRuntimeCatalog(AgentProfileRecord profile, Guid sessionId, string profileId) : MemoryServices.IRuntimeCatalogService
+    private sealed class EvaluationRuntimeCatalog(AgentProfileRecord profile, Guid sessionId, string profileId) : IRuntimeCatalogService
     {
         private readonly AgentSessionRecord _session = new()
         {
@@ -610,64 +611,64 @@ public sealed class MemoryEvaluationTests
 
         public AgentProfileModelBindingRecord? GetModelBinding(string profileId, string capabilityKind) => null;
 
-        ValueTask<AgentRunCheckpointRecord?> MemoryServices.IRuntimeCatalogService.GetLatestCheckpointAsync(Guid request, CancellationToken token)
+        ValueTask<AgentRunCheckpointRecord?> IRuntimeCatalogService.GetLatestCheckpointAsync(Guid request, CancellationToken token)
             => ValueTask.FromResult<AgentRunCheckpointRecord?>(null);
-        ValueTask<AgentProfileModelBindingRecord?> MemoryServices.IRuntimeCatalogService.GetModelBindingAsync(
-            MemoryModels.CSunder_Agent_Runtime_Catalog_RuntimeCatalogGetModelBindingRequest request, CancellationToken token)
+        ValueTask<AgentProfileModelBindingRecord?> IRuntimeCatalogService.GetModelBindingAsync(
+            MemoryModels.CYounics_Ai_Agent_Runtime_Catalog_RuntimeCatalogGetModelBindingRequest request, CancellationToken token)
             => ValueTask.FromResult(GetModelBinding(request.ProfileId, request.CapabilityKind));
-        ValueTask<AgentProfileRecord?> MemoryServices.IRuntimeCatalogService.GetProfileAsync(string request, CancellationToken token)
+        ValueTask<AgentProfileRecord?> IRuntimeCatalogService.GetProfileAsync(string request, CancellationToken token)
             => ValueTask.FromResult(GetProfile(request));
-        ValueTask<AgentSessionRecord?> MemoryServices.IRuntimeCatalogService.GetSessionAsync(Guid request, CancellationToken token)
+        ValueTask<AgentSessionRecord?> IRuntimeCatalogService.GetSessionAsync(Guid request, CancellationToken token)
             => ValueTask.FromResult(GetSession(request));
-        ValueTask<AgentSessionContextCheckpointRecord?> MemoryServices.IRuntimeCatalogService.GetSessionContextCheckpointAsync(Guid request, CancellationToken token)
+        ValueTask<AgentSessionContextCheckpointRecord?> IRuntimeCatalogService.GetSessionContextCheckpointAsync(Guid request, CancellationToken token)
             => ValueTask.FromResult(GetLatestSessionContextCheckpoint(request));
-        ValueTask<AgentProfileModelBindingRecord?> MemoryServices.IRuntimeCatalogService.GetSessionModelBindingAsync(
-            MemoryModels.CSunder_Agent_Runtime_Catalog_RuntimeCatalogGetSessionModelBindingRequest request, CancellationToken token)
+        ValueTask<AgentProfileModelBindingRecord?> IRuntimeCatalogService.GetSessionModelBindingAsync(
+            MemoryModels.CYounics_Ai_Agent_Runtime_Catalog_RuntimeCatalogGetSessionModelBindingRequest request, CancellationToken token)
             => ValueTask.FromResult(GetSessionModelBinding(request.SessionId, request.CapabilityKind));
-        ValueTask<AgentProfileRecord?> MemoryServices.IRuntimeCatalogService.GetSessionProfileAsync(Guid request, CancellationToken token)
+        ValueTask<AgentProfileRecord?> IRuntimeCatalogService.GetSessionProfileAsync(Guid request, CancellationToken token)
             => ValueTask.FromResult(GetSessionProfile(request));
-        ValueTask<AgentWorkingSummaryRecord?> MemoryServices.IRuntimeCatalogService.GetWorkingSummaryAsync(Guid request, CancellationToken token)
+        ValueTask<AgentWorkingSummaryRecord?> IRuntimeCatalogService.GetWorkingSummaryAsync(Guid request, CancellationToken token)
             => ValueTask.FromResult(GetWorkingSummary(request));
-        ValueTask<AgentWorkspaceRecord?> MemoryServices.IRuntimeCatalogService.GetWorkspaceAsync(string request, CancellationToken token)
+        ValueTask<AgentWorkspaceRecord?> IRuntimeCatalogService.GetWorkspaceAsync(string request, CancellationToken token)
             => GetWorkspaceAsync(request, token);
-        ValueTask<IReadOnlyList<AgentProfileRecord>> MemoryServices.IRuntimeCatalogService.ListProfilesAsync(CancellationToken token)
+        ValueTask<IReadOnlyList<AgentProfileRecord>> IRuntimeCatalogService.ListProfilesAsync(CancellationToken token)
             => ValueTask.FromResult(ListProfiles());
-        ValueTask<IReadOnlyList<AgentSessionRecord>> MemoryServices.IRuntimeCatalogService.ListSessionsAsync(CancellationToken token)
+        ValueTask<IReadOnlyList<AgentSessionRecord>> IRuntimeCatalogService.ListSessionsAsync(CancellationToken token)
             => ValueTask.FromResult(ListSessions());
-        ValueTask<IReadOnlyList<AgentSessionRecord>> MemoryServices.IRuntimeCatalogService.ListSessionsForProfileAsync(string request, CancellationToken token)
+        ValueTask<IReadOnlyList<AgentSessionRecord>> IRuntimeCatalogService.ListSessionsForProfileAsync(string request, CancellationToken token)
             => ValueTask.FromResult(ListSessionsForProfile(request));
-        ValueTask<IReadOnlyList<AgentSessionRecord>> MemoryServices.IRuntimeCatalogService.ListSessionsForWorkspaceAsync(string request, CancellationToken token)
+        ValueTask<IReadOnlyList<AgentSessionRecord>> IRuntimeCatalogService.ListSessionsForWorkspaceAsync(string request, CancellationToken token)
             => ValueTask.FromResult(ListSessionsForWorkspace(request));
-        async IAsyncEnumerable<MemoryModels.AgentRuntimeCatalogEvent> MemoryServices.IRuntimeCatalogService.WatchAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken token)
+        async IAsyncEnumerable<MemoryModels.AgentRuntimeCatalogEvent> IRuntimeCatalogService.WatchAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken token)
         {
             await Task.CompletedTask;
             yield break;
         }
-        ValueTask<MemoryModels.AgentTranscriptToolDetailRecord?> MemoryServices.IRuntimeCatalogService.GetTranscriptToolDetailAsync(
+        ValueTask<MemoryModels.AgentTranscriptToolDetailRecord?> IRuntimeCatalogService.GetTranscriptToolDetailAsync(
             MemoryModels.AgentTranscriptToolDetailRequest request, CancellationToken token) => ValueTask.FromResult<MemoryModels.AgentTranscriptToolDetailRecord?>(null);
-        ValueTask<IReadOnlyList<AgentTurnRecord>> MemoryServices.IRuntimeCatalogService.ListRecentTranscriptHeadersAsync(
-            MemoryModels.CSunder_Agent_Runtime_Catalog_RuntimeCatalogListRecentTranscriptHeadersRequest request, CancellationToken token)
+        ValueTask<IReadOnlyList<AgentTurnRecord>> IRuntimeCatalogService.ListRecentTranscriptHeadersAsync(
+            MemoryModels.CYounics_Ai_Agent_Runtime_Catalog_RuntimeCatalogListRecentTranscriptHeadersRequest request, CancellationToken token)
             => ValueTask.FromResult<IReadOnlyList<AgentTurnRecord>>([]);
-        ValueTask<IReadOnlyList<AgentTurnRecord>> MemoryServices.IRuntimeCatalogService.ListRecentTurnsAsync(
-            MemoryModels.CSunder_Agent_Runtime_Catalog_RuntimeCatalogListRecentTurnsRequest request, CancellationToken token)
+        ValueTask<IReadOnlyList<AgentTurnRecord>> IRuntimeCatalogService.ListRecentTurnsAsync(
+            MemoryModels.CYounics_Ai_Agent_Runtime_Catalog_RuntimeCatalogListRecentTurnsRequest request, CancellationToken token)
             => ValueTask.FromResult(ListRecentTurns(request.SessionId, checked((int)request.Limit)));
-        ValueTask<IReadOnlyList<AgentTurnRecord>> MemoryServices.IRuntimeCatalogService.ListTranscriptHeadersAfterAsync(
-            MemoryModels.CSunder_Agent_Runtime_Catalog_RuntimeCatalogListTranscriptHeadersAfterRequest request, CancellationToken token)
+        ValueTask<IReadOnlyList<AgentTurnRecord>> IRuntimeCatalogService.ListTranscriptHeadersAfterAsync(
+            MemoryModels.CYounics_Ai_Agent_Runtime_Catalog_RuntimeCatalogListTranscriptHeadersAfterRequest request, CancellationToken token)
             => ValueTask.FromResult<IReadOnlyList<AgentTurnRecord>>([]);
-        ValueTask<IReadOnlyList<AgentTurnRecord>> MemoryServices.IRuntimeCatalogService.ListTranscriptHeadersBeforeAsync(
-            MemoryModels.CSunder_Agent_Runtime_Catalog_RuntimeCatalogListTranscriptHeadersBeforeRequest request, CancellationToken token)
+        ValueTask<IReadOnlyList<AgentTurnRecord>> IRuntimeCatalogService.ListTranscriptHeadersBeforeAsync(
+            MemoryModels.CYounics_Ai_Agent_Runtime_Catalog_RuntimeCatalogListTranscriptHeadersBeforeRequest request, CancellationToken token)
             => ValueTask.FromResult<IReadOnlyList<AgentTurnRecord>>([]);
-        ValueTask<IReadOnlyList<AgentTurnRecord>> MemoryServices.IRuntimeCatalogService.ListTurnsAfterAsync(
-            MemoryModels.CSunder_Agent_Runtime_Catalog_RuntimeCatalogListTurnsAfterRequest request, CancellationToken token)
+        ValueTask<IReadOnlyList<AgentTurnRecord>> IRuntimeCatalogService.ListTurnsAfterAsync(
+            MemoryModels.CYounics_Ai_Agent_Runtime_Catalog_RuntimeCatalogListTurnsAfterRequest request, CancellationToken token)
             => ValueTask.FromResult<IReadOnlyList<AgentTurnRecord>>([]);
-        ValueTask<IReadOnlyList<AgentTurnRecord>> MemoryServices.IRuntimeCatalogService.ListTurnsBeforeAsync(
-            MemoryModels.CSunder_Agent_Runtime_Catalog_RuntimeCatalogListTurnsBeforeRequest request, CancellationToken token)
+        ValueTask<IReadOnlyList<AgentTurnRecord>> IRuntimeCatalogService.ListTurnsBeforeAsync(
+            MemoryModels.CYounics_Ai_Agent_Runtime_Catalog_RuntimeCatalogListTurnsBeforeRequest request, CancellationToken token)
             => ValueTask.FromResult<IReadOnlyList<AgentTurnRecord>>([]);
-        ValueTask<IReadOnlyList<AgentWorkspaceRecord>> MemoryServices.IRuntimeCatalogService.ListWorkspacesAsync(CancellationToken token)
+        ValueTask<IReadOnlyList<AgentWorkspaceRecord>> IRuntimeCatalogService.ListWorkspacesAsync(CancellationToken token)
             => ListWorkspacesAsync(token);
     }
 
-    private sealed class EvaluationEmbeddingProvider(string providerId) : MemoryServices.IEmbeddingProviderService
+    private sealed class EvaluationEmbeddingProvider(string providerId) : IEmbeddingProviderService
     {
         private AgentEmbeddingProviderDescriptor Descriptor { get; } = new()
         {
@@ -695,12 +696,12 @@ public sealed class MemoryEvaluationTests
             });
 
         public ValueTask<AgentEmbeddingGenerationResult?> GenerateAsync(
-            MemoryModels.CSunder_Agent_Embedding_Provider_EmbeddingProviderGenerateRequest request,
+            MemoryModels.CYounics_Ai_Agent_Embedding_Provider_EmbeddingProviderGenerateRequest request,
             CancellationToken cancellationToken = default)
             => ValueTask.FromResult<AgentEmbeddingGenerationResult?>(new() { ModelId = request.ModelId, Values = CreateVector(request.Text) });
 
         public ValueTask<IReadOnlyList<AgentEmbeddingGenerationResult?>> GenerateBatchAsync(
-            MemoryModels.CSunder_Agent_Embedding_Provider_EmbeddingProviderGenerateBatchRequest request,
+            MemoryModels.CYounics_Ai_Agent_Embedding_Provider_EmbeddingProviderGenerateBatchRequest request,
             CancellationToken cancellationToken = default)
             => ValueTask.FromResult<IReadOnlyList<AgentEmbeddingGenerationResult?>>(request.Texts.Select(text =>
                 (AgentEmbeddingGenerationResult?)new AgentEmbeddingGenerationResult { ModelId = request.ModelId, Values = CreateVector(text) }).ToArray());

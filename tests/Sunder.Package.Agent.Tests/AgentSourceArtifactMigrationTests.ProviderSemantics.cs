@@ -6,8 +6,8 @@ namespace Sunder.Package.Agent.Tests;
 
 public sealed partial class AgentSourceArtifactMigrationTests
 {
-    private const string ImportedModels = "Sunder.Generated.Packages.Sunder_Package_Agent_Models.";
-    private const string ImportedServices = "Sunder.Generated.Packages.Sunder_Package_Agent_Services.";
+    private const string ImportedModels = "Sunder.Generated.Packages.Younics_Ai_Agent_Models.";
+    private const string ImportedServices = "Sunder.Generated.Packages.Younics_Ai_Agent_Services.";
 
     private static Type AssertImportedRoleModel(Assembly assembly, string name)
     {
@@ -26,7 +26,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.DoesNotContain(assembly.GetReferencedAssemblies(), reference => reference.Name == "Sunder.Package.Agent.Protocol");
             AssertImportedRoleModel(assembly, "AgentModelDescriptor");
             AssertImportedRoleModel(assembly, "AgentChatStreamEvent");
-            Assert.Same(assembly, assembly.GetType(ImportedServices + "IChatProviderService", true)!.Assembly);
+            Assert.Same(assembly, assembly.GetType(ImportedServices + "CYounics_Ai_Agent_Chat_Provider.IChatProviderService", true)!.Assembly);
             Assert.Null(assembly.GetType("Sunder.Package.Agent.Contracts.Contracts.IAgentChatProvider"));
             Assert.Null(assembly.GetType("Sunder.Package.Agent.Protocol.AgentChatStreamEvent"));
         }

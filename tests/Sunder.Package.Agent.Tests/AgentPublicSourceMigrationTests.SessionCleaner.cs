@@ -9,7 +9,7 @@ using Sunder.Package.Agent.Storage;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Worker;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -49,7 +49,7 @@ public sealed partial class AgentPublicSourceMigrationTests
         Assert.True(Directory.Exists(keptFolder));
 
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
+        var rpc = new RegressionTestRpcClient(state, "younics.ai.agent");
         await using var receiver = new GeneratedServiceTestScope(rpc);
         var baseType = assembly.GetType("Sunder.Package.Agent.Rpc.Public.SessionCleanerService", true)!;
         Assert.True(baseType.IsInterface);
@@ -95,7 +95,7 @@ public sealed partial class AgentPublicSourceMigrationTests
             Assert.Equal(expectedId, registration.ProviderId);
             Assert.Equal(descriptor.Sha256, registration.DescriptorSha256);
             Assert.Equal(descriptor.AbiSha256, registration.AbiSha256);
-            state.Add("sunder.package.agent", descriptor, implementation, registration.Handler, EmptyDisposable.Instance, registration.ProviderId, "2.0.0");
+            state.Add("younics.ai.agent", descriptor, implementation, registration.Handler, EmptyDisposable.Instance, registration.ProviderId, "2.0.0");
         }
     }
 
@@ -104,11 +104,11 @@ public sealed partial class AgentPublicSourceMigrationTests
         var cleaner = new BlockingSourceCleaner();
         var implementation = cleaner;
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
+        var rpc = new RegressionTestRpcClient(state, "younics.ai.agent");
         await using var receiver = new GeneratedServiceTestScope(rpc);
         using var sources = new RegressionTestSourceProviders();
         var registration = sources.Create(descriptor.ContractId, implementation, receiver);
-        state.Add("sunder.package.agent", descriptor, implementation, registration.Handler, EmptyDisposable.Instance, registration.ProviderId, "2.0.0");
+        state.Add("younics.ai.agent", descriptor, implementation, registration.Handler, EmptyDisposable.Instance, registration.ProviderId, "2.0.0");
         var client = Assert.Single((await receiver.Providers<AgentServices.ISessionCleanerService>().ListAsync()).Providers).Service;
         using var cancellation = new CancellationTokenSource();
         var invocation = Task.Run(() => client.DeleteSessionAsync(Guid.NewGuid(), cancellation.Token).AsTask());

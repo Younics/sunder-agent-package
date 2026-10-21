@@ -1,5 +1,5 @@
-using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using Sunder.Generated.Packages.Younics_Ai_Agent_Models;
+using ISystemPromptContributorService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_System_Prompt_Contributor.ISystemPromptContributorService;
 using Sunder.Sdk.Services;
 
 namespace RegressionTestGeneratedProviders;

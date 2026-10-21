@@ -110,14 +110,14 @@ jq -n \
     }
   ' > "$artifact_dir/release-provenance.json"
 
-if [[ "${GITHUB_WORKFLOW:-}" == 'Sunder Agent Family Release' ]]; then
+if [[ "${GITHUB_WORKFLOW:-}" == 'AI Agent Family Release' ]]; then
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   python3 -B "$script_dir/agent_release.py" complete-provenance \
     "${SUNDER_AGENT_RELEASE_SOURCE_DIRECTORY:-$PWD}" "$artifact_dir"
 fi
 
 {
-  printf '{"spdxVersion":"SPDX-2.3","dataLicense":"CC0-1.0","SPDXID":"SPDXRef-DOCUMENT","name":"Sunder Agent release artifacts","documentNamespace":"https://sunderapp.io/spdx/%s","creationInfo":{"created":"%s","creators":["Tool: sunder-release-evidence-1"]},"files":[' "$(hash_file "$artifact_dir/SHA256SUMS")" "$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+  printf '{"spdxVersion":"SPDX-2.3","dataLicense":"CC0-1.0","SPDXID":"SPDXRef-DOCUMENT","name":"AI Agent release artifacts","documentNamespace":"https://sunderapp.io/spdx/%s","creationInfo":{"created":"%s","creators":["Tool: sunder-release-evidence-1"]},"files":[' "$(hash_file "$artifact_dir/SHA256SUMS")" "$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
   separator=''
   index=0
   for file in "${artifacts[@]}"; do

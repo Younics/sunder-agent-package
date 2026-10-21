@@ -1,5 +1,4 @@
-using Avalonia;
-using Avalonia.Threading;
+using Sunder.Package.Agent.Shared.Presentation;
 
 namespace Sunder.Package.Agent.Builder;
 
@@ -10,28 +9,66 @@ public interface IBuilderUiDispatcher
     Task InvokeAsync(Action action);
 
     Task<T> InvokeAsync<T>(Func<T> action);
+
+    CancellationToken ShutdownToken => default;
+
+    Task InvokeAsync(Action action, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+        PresentationCancellation.ThrowIfStopped(cancellationToken, ShutdownToken);
+        return InvokeAsync(() =>
+        {
+            PresentationCancellation.ThrowIfStopped(cancellationToken, ShutdownToken);
+            AvaloniaBuilderUiDispatcher.InvokeCallback(action);
+        });
+    }
+
+    Task<T> InvokeAsync<T>(Func<T> action, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+        PresentationCancellation.ThrowIfStopped(cancellationToken, ShutdownToken);
+        return InvokeAsync(() =>
+        {
+            PresentationCancellation.ThrowIfStopped(cancellationToken, ShutdownToken);
+            try { return action(); }
+            catch (Exception error) { throw new PresentationCallbackException(error); }
+        });
+    }
 }
 
 public sealed class AvaloniaBuilderUiDispatcher : IBuilderUiDispatcher
 {
+    private readonly IPresentationDispatcher _dispatcher = PresentationDispatcher.Capture();
+
+    public CancellationToken ShutdownToken => _dispatcher.ShutdownToken;
+
     public bool CheckAccess()
-        => Application.Current is null || Dispatcher.UIThread.CheckAccess();
+        => _dispatcher.CheckAccess();
 
     public Task InvokeAsync(Action action)
-        => InvokeAsync(() =>
-        {
-            action();
-            return true;
-        });
+        => InvokeAsync(action, default);
 
-    public async Task<T> InvokeAsync<T>(Func<T> action)
+    public Task InvokeAsync(Action action, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(action);
-        if (CheckAccess())
-        {
-            return action();
-        }
+        return _dispatcher.InvokeAsync(() => InvokeCallback(action), cancellationToken);
+    }
 
-        return await Dispatcher.UIThread.InvokeAsync(action, DispatcherPriority.Background);
+    internal static void InvokeCallback(Action action)
+    {
+        // Builder's job recovery must distinguish UI callback faults from backend failures.
+        // Keep that operation-specific boundary out of the shared presentation dispatcher.
+        try { action(); }
+        catch (Exception error) { throw new PresentationCallbackException(error); }
+    }
+
+    public Task<T> InvokeAsync<T>(Func<T> action) => InvokeAsync(action, default);
+
+    public async Task<T> InvokeAsync<T>(Func<T> action, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+        T result = default!;
+        await InvokeAsync(() => { result = action(); }, cancellationToken).ConfigureAwait(false);
+        return result;
     }
 }

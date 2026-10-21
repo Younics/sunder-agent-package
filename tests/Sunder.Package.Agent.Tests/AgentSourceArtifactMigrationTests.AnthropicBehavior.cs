@@ -34,7 +34,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 Assert.DoesNotContain(assembly.GetReferencedAssemblies(), reference => reference.Name == "Sunder.Package.Agent.Provider.Anthropic.Protocol");
             Assert.DoesNotContain(presentation.GetReferencedAssemblies(), reference => reference.Name is "Sunder.Package.Agent.Provider.Anthropic" or "Sunder.Sdk.Worker" or "Anthropic");
             using var package = RegressionTestPackageScope.Create();
-            var context = new TestPackageContext("sunder.package.agent.provider.anthropic", package.RootPath, version: "2.0.0", storage: package.Context.Storage);
+            var context = new TestPackageContext("younics.ai.agent.provider.anthropic", package.RootPath, version: "2.0.0", storage: package.Context.Storage);
             using var handler = new AnthropicArtifactHttp();
             using var http = new HttpClient(handler);
             var factoryKeys = new List<string>();
@@ -52,7 +52,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.NotNull(options.SettingsSchema); Assert.Empty(factoryKeys);
             var registrations = options.Providers.ToDictionary(value => value.ProviderId);
             Assert.Equal(new[] { "anthropic.chat", "anthropic.credentials" }, registrations.Keys.Order(StringComparer.Ordinal));
-            var credentialDescriptor = CurrentPrivateRpcDescriptors.Get("sunder.package.agent.provider.anthropic.credentials");
+            var credentialDescriptor = CurrentPrivateRpcDescriptors.Get("younics.ai.agent.provider.anthropic.credentials");
             foreach (var provider in options.Providers)
             {
                 var descriptor = provider.ProviderId == "anthropic.credentials" ? credentialDescriptor : CurrentPublicRpcDescriptors.Get(provider.ContractId);
@@ -60,10 +60,10 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 state.Add(context.PackageId, descriptor, provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, "2.0.0");
             }
             await using var appServices = CreateGeneratedApp(presentation, context, rpc);
-            var credentials = appServices.GetRequiredService(presentation.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Provider_Anthropic_Services.ICredentialSettingsService", true)!);
+            var credentials = appServices.GetRequiredService(presentation.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Provider_Anthropic_Services.ICredentialSettingsService", true)!);
             var selectedChat = Assert.Single((await rpc.DiscoverAsync(RegressionTestBindings.ChatProviders)).Providers);
             var endpoint = selectedChat.Endpoint;
-            var chatProvider = await CreateAgentChatProvider(agentOwner, rpc.ForCaller("sunder.package.agent"), selectedChat);
+            var chatProvider = await CreateAgentChatProvider(agentOwner, rpc.ForCaller("younics.ai.agent"), selectedChat);
             await using var chatLifetime = (IAsyncDisposable)chatProvider;
             using var chat = await CreateAgentChatClientAsync(chatProvider, new("anthropic", "anthropic/claude-opus-4-8"));
             Assert.False(await Credential("GetStatusAsync", [CancellationToken.None]));

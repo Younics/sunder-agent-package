@@ -115,11 +115,21 @@ public sealed class LocalShellCatalogService
         try
         {
             using var document = JsonDocument.Parse(json);
-            if (document.RootElement.ValueKind == JsonValueKind.Array)
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
             {
-                var legacy = JsonSerializer.Deserialize<IReadOnlyList<LocalShellDefinition>>(json, JsonOptions)
-                    ?? throw new JsonException("The legacy shell list is null.");
-                return new LocalShellCatalogState(CurrentSchemaVersion, 0, NormalizeCustomShells(legacy));
+                throw new JsonException("The shell catalog must be a versioned object.");
+            }
+            var properties = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var property in document.RootElement.EnumerateObject())
+            {
+                if (!properties.Add(property.Name))
+                {
+                    throw new JsonException("The shell catalog contains duplicate or case-colliding properties.");
+                }
+            }
+            if (!properties.SetEquals(["schemaVersion", "revision", "shells"]))
+            {
+                throw new JsonException("The shell catalog has missing or unsupported properties.");
             }
 
             var state = JsonSerializer.Deserialize<LocalShellCatalogState>(json, JsonOptions)

@@ -12,11 +12,6 @@ internal static class OpenAiModelIds
             return modelId;
         }
 
-        var normalized = ProviderModelId.RemovePrefix(modelId, "openai");
-
-        const string fastSuffix = "-fast";
-        return normalized.EndsWith(fastSuffix, StringComparison.OrdinalIgnoreCase)
-            ? normalized[..^fastSuffix.Length]
-            : normalized;
+        return ProviderModelId.RemovePrefix(modelId, "openai");
     }
 }

@@ -20,7 +20,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var canonical = await BuildCanonicalFamily(root, "Tools.Web", "WebWorker", cache, ownerArchive);
         var worker = canonical.Directory;
         var selected = File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.lock.json"));
-        var owned = File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.owned.json"));
+        var owned = CanonicalPackageRoles.ReadOwnedBaseline(worker);
         AssertHeadlessRoleOutput(worker);
         using (var plan = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(worker, "obj/Debug/net10.0/sunder-analysis",
             System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier, "sunder-rpc/package-role-plan.v1.json"))))
@@ -42,7 +42,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         await VerifyWebBehavior(root, worker);
         await canonical.Pack();
         Assert.Equal(selected, File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.lock.json")));
-        Assert.Equal(owned, File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.owned.json")));
+        Assert.Equal(owned, CanonicalPackageRoles.ReadOwnedBaseline(worker));
         using var archive = ZipFile.OpenRead(Path.Combine(worker, "bin/agent-source.sunderpkg"));
         Assert.DoesNotContain(archive.Entries, entry => entry.FullName.EndsWith("/Sunder.Package.Agent.Protocol.dll", StringComparison.Ordinal)
             || entry.FullName.EndsWith("/Sunder.Agent.Execution.Common.dll", StringComparison.Ordinal));
@@ -55,16 +55,16 @@ public sealed partial class AgentSourceArtifactMigrationTests
         using var stream = archive.GetEntry("manifest/sunder-package.json")!.Open();
         using var manifest = JsonDocument.Parse(stream);
         var value = manifest.RootElement;
-        Assert.Equal("sunder.package.agent.tools.web", value.GetProperty("id").GetString());
+        Assert.Equal("younics.ai.agent.tools.web", value.GetProperty("id").GetString());
         using var inventory = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(repository, "packages.json")));
-        Assert.Equal(inventory.RootElement.GetProperty("capabilities").GetProperty("sunder.package.agent.tools.web").EnumerateArray().Select(item => item.GetString()).Order(StringComparer.Ordinal),
+        Assert.Equal(inventory.RootElement.GetProperty("capabilities").GetProperty("younics.ai.agent.tools.web").EnumerateArray().Select(item => item.GetString()).Order(StringComparer.Ordinal),
             value.GetProperty("targets").EnumerateArray().SelectMany(target => target.GetProperty("requiredHostCapabilities").EnumerateArray())
                 .Select(item => item.GetString()).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal));
-        Assert.Equal(new[] { "sunder.agent.execution.target", "sunder.agent.tool.source" },
+        Assert.Equal(new[] { "younics.ai.agent.execution.target", "younics.ai.agent.tool.source" },
             value.GetProperty("contractBundles").EnumerateArray().Select(bundle => bundle.GetProperty("contractId").GetString()).Order(StringComparer.Ordinal));
         Assert.Single(value.GetProperty("provides").EnumerateArray());
         var use = Assert.Single(value.GetProperty("usesContracts").EnumerateArray());
-        Assert.Equal("sunder.agent.execution.target", use.GetProperty("contractId").GetString());
+        Assert.Equal("younics.ai.agent.execution.target", use.GetProperty("contractId").GetString());
         Assert.Equal("runtime", use.GetProperty("role").GetString());
         Assert.False(use.GetProperty("required").GetBoolean());
         Assert.Equal("discover", Assert.Single(use.GetProperty("actions").EnumerateArray()).GetString());

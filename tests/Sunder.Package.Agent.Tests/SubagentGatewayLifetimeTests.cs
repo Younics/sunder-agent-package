@@ -5,8 +5,8 @@ using SubagentsApp::Sunder.Package.Agent.Subagents.PackageViews;
 using SubagentsApp::Sunder.Package.Agent.Subagents.Models;
 using Sunder.Sdk.Services;
 using Xunit;
-using SubagentManagementServices = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Subagents_Services;
-using AgentTranscriptToolDetailRequest = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTranscriptToolDetailRequest;
+using SubagentManagementServices = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Subagents_Services;
+using AgentTranscriptToolDetailRequest = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTranscriptToolDetailRequest;
 
 namespace Sunder.Package.Agent.Tests;
 

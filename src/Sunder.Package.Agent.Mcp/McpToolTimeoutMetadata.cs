@@ -6,16 +6,16 @@ namespace Sunder.Package.Agent.Mcp;
 
 internal static class McpToolTimeoutMetadata
 {
-    internal const string MetadataMarkerPropertyName = "__sunder_mcp_metadata_version";
-    internal const string MetadataMarkerValue = "sunder.mcp.call/1";
-    internal const string TimeoutPropertyName = "__sunder_expected_timeout_seconds";
-    internal const string EnvelopePropertyName = "__sunder_mcp_call";
+    internal const string MetadataMarkerPropertyName = "__younics_mcp_metadata_version";
+    internal const string MetadataMarkerValue = "younics.ai.agent.mcp.call/1";
+    internal const string TimeoutPropertyName = "__younics_expected_timeout_seconds";
+    internal const string EnvelopePropertyName = "__younics_mcp_call";
     internal const string EnvelopeArgumentsPropertyName = "arguments";
     internal const int MinimumSeconds = 1;
     internal const int MaximumSeconds = 1800;
 
-    private const string EmbeddedArgumentsSchemaId = "urn:sunder:mcp:arguments:1";
-    private const string EmbeddedArgumentsSchemaMarker = "sunder:mcp-arguments:1";
+    private const string EmbeddedArgumentsSchemaId = "urn:younics:ai:agent:mcp:arguments:1";
+    private const string EmbeddedArgumentsSchemaMarker = "younics:ai:agent:mcp-arguments:1";
     private const string TimeoutDescription =
         "Optional Sunder-only expected execution limit for this MCP call, in whole seconds (1-1800). "
         + "Use null or omit it when no expected per-call limit is needed. Sunder never forwards this field to the MCP server.";

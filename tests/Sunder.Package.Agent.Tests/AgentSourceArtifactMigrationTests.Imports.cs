@@ -31,23 +31,23 @@ public sealed partial class AgentSourceArtifactMigrationTests
             await Run(directory, "msbuild", "Imported.csproj", "-t:FixtureOperation", "-p:Operation=Freeze");
             File.WriteAllText(Path.Combine(directory, "Source.cs"), isProvider ? ProviderSource : ConsumerSource);
             await Run(directory, "msbuild", "Imported.csproj", "-t:FixtureOperation", "-p:Operation=" + (isProvider ? "Implement" : "Add"));
-            if (!isProvider) await Run(directory, "msbuild", "Imported.csproj", "-t:FixtureOperation", "-p:Operation=Require", "-p:ContractId=sunder.agent.runtime.catalog");
+            if (!isProvider) await Run(directory, "msbuild", "Imported.csproj", "-t:FixtureOperation", "-p:Operation=Require", "-p:ContractId=younics.ai.agent.runtime.catalog");
             var selected = File.ReadAllBytes(Path.Combine(directory, "sunder-contracts.lock.json"));
             await Run(directory, "build", "Imported.csproj", "--no-restore");
             await Run(directory, "msbuild", "Imported.csproj", "-t:FixtureOperation", "-p:Operation=Check");
             Assert.Equal(selected, File.ReadAllBytes(Path.Combine(directory, "sunder-contracts.lock.json")));
             using var locked = JsonDocument.Parse(selected);
-            var artifact = locked.RootElement.GetProperty("packageArtifacts").GetProperty("sunder.package.agent");
-            Assert.Equal(20, artifact.GetProperty("publicContractCount").GetInt32());
-            Assert.Equal(20, artifact.GetProperty("contracts").EnumerateObject().Count());
-            Assert.False(artifact.GetProperty("contracts").TryGetProperty("sunder.agent.owner.runtime", out _));
+            var artifact = locked.RootElement.GetProperty("packageArtifacts").GetProperty("younics.ai.agent");
+            Assert.Equal(19, artifact.GetProperty("publicContractCount").GetInt32());
+            Assert.Equal(19, artifact.GetProperty("contracts").EnumerateObject().Count());
+            Assert.False(artifact.GetProperty("contracts").TryGetProperty("younics.ai.agent.owner.runtime", out _));
             Assert.Equal("platform", artifact.GetProperty("contracts").GetProperty("sunder.stack.contributor").GetProperty("authorityKind").GetString());
             using var receipt = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(directory, "obj/Debug/net10.0/sunder-rpc/authoring-receipt.v1.json")));
-            Assert.Equal(isProvider ? 1 : 19, receipt.RootElement.GetProperty("bundles").GetArrayLength());
+            Assert.Equal(isProvider ? 1 : 18, receipt.RootElement.GetProperty("bundles").GetArrayLength());
             Assert.Equal(isProvider ? 1 : 0, receipt.RootElement.GetProperty("providers").GetArrayLength());
-            Assert.Equal(isProvider ? 0 : 19, receipt.RootElement.GetProperty("uses").GetArrayLength());
+            Assert.Equal(isProvider ? 0 : 18, receipt.RootElement.GetProperty("uses").GetArrayLength());
             Assert.Empty(receipt.RootElement.GetProperty("platformImports").EnumerateArray());
-            Assert.DoesNotContain(receipt.RootElement.GetProperty("contracts").EnumerateArray(), contract => contract.GetProperty("contractId").GetString() is "sunder.stack.contributor" or "sunder.agent.owner.runtime");
+            Assert.DoesNotContain(receipt.RootElement.GetProperty("contracts").EnumerateArray(), contract => contract.GetProperty("contractId").GetString() is "sunder.stack.contributor" or "younics.ai.agent.owner.runtime");
             if (!isProvider) Assert.Single(receipt.RootElement.GetProperty("uses").EnumerateArray(), use => use.GetProperty("required").GetBoolean());
         }
         await VerifyControlledReferenceParticipantsAsync(root, core, driver, archive, cache);
@@ -71,7 +71,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         await VerifyLMStudioArtifact(root, core, driver, archive, cache);
         var memoryProvider = Path.Combine(root, "MemoryProvider");
         Directory.CreateDirectory(memoryProvider);
-        WriteImportProject(memoryProvider, core, driver, cache, archive, provider: true, packageId: "sunder.package.agent.memory.semantic");
+        WriteImportProject(memoryProvider, core, driver, cache, archive, provider: true, packageId: "younics.ai.agent.memory.semantic");
         File.Copy(Path.Combine(core, "specs/rpc/v1/authoring/conformance/valid/minimal-contract-lock.json"), Path.Combine(memoryProvider, "sunder-contracts.lock.json"));
         File.WriteAllText(Path.Combine(memoryProvider, "Source.cs"), "public sealed class Seed;");
         await Run(memoryProvider, "restore", "Imported.csproj", "--disable-parallel");
@@ -90,7 +90,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             var catalogs = consumerAssembly.GetTypes().Where(type => type.IsClass && !type.IsAbstract
                 && !type.ContainsGenericParameters && type.GetInterfaces().Any(contract => contract.IsGenericType
                     && contract.GetGenericTypeDefinition() == typeof(IServiceProviders<>))).ToArray();
-            Assert.Equal(19, catalogs.Length);
+            Assert.Equal(18, catalogs.Length);
             Assert.All(catalogs, catalog => Assert.Single(catalog.GetInterfaces(), contract => contract.IsGenericType
                 && contract.GetGenericTypeDefinition() == typeof(IServiceProviders<>)));
             var instance = Activator.CreateInstance(providerAssembly.GetType("ExternalCleaner", true)!)!;
@@ -122,7 +122,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             var memoryRegistration = Assert.IsType<SunderWorkerProviderRegistration>(cleaner.GetType().GetMethod("CreateSunderRpcProviderRegistration")!.Invoke(cleaner, null));
             Assert.Equal("semantic.memory.session.cleaner", memoryRegistration.ProviderId);
             using var memoryState = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-            memoryState.Add("sunder.package.agent.memory.semantic", descriptor, cleaner, memoryRegistration.Handler, Noop.Instance, memoryRegistration.ProviderId, "2.0.0");
+            memoryState.Add("younics.ai.agent.memory.semantic", descriptor, cleaner, memoryRegistration.Handler, Noop.Instance, memoryRegistration.ProviderId, "2.0.0");
             var memoryRpc = new RegressionTestRpcClient(memoryState, "example.agent.consumer");
             var targetSession = Guid.NewGuid();
             var retainedSession = Guid.NewGuid();
@@ -163,7 +163,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
               </ItemGroup>
               <UsingTask TaskName="Sunder.Package.Build.Tests.AgentSourceArtifactTestTask" AssemblyFile="{{Escape(driver)}}" />
               <Target Name="FixtureOperation" BeforeTargets="CoreCompile" DependsOnTargets="ResolveReferences;GenerateGlobalUsings">
-                <PropertyGroup><Operation Condition="'$(Operation)' == ''">Generate</Operation><ContractId Condition="'$(Operation)' == 'Implement' and '$(ContractId)' == ''">sunder.agent.session.cleaner</ContractId><ProviderKey Condition="'$(ProviderKey)' == ''">cleaner</ProviderKey><Candidate Condition="'$(Candidate)' == ''">{{Escape(archive)}}</Candidate></PropertyGroup>
+                <PropertyGroup><Operation Condition="'$(Operation)' == ''">Generate</Operation><ContractId Condition="'$(Operation)' == 'Implement' and '$(ContractId)' == ''">younics.ai.agent.session.cleaner</ContractId><ProviderKey Condition="'$(ProviderKey)' == ''">cleaner</ProviderKey><Candidate Condition="'$(Candidate)' == ''">{{Escape(archive)}}</Candidate></PropertyGroup>
                 <ItemGroup><_Source Include="@(Compile)" Condition="'%(Compile.AutoGen)' != 'true'" /></ItemGroup>
                 <AgentSourceArtifactTestTask Operation="$(Operation)" ProjectDirectory="$(MSBuildProjectDirectory)"
                     IntermediateOutputPath="$(IntermediateOutputPath)" AssemblyName="$(AssemblyName)" ProjectIdentity="Imported.csproj" OutputType="Library"
@@ -181,8 +181,11 @@ public sealed partial class AgentSourceArtifactMigrationTests
         using Sunder.Sdk.Services;
         using System.Text.Json;
         using System.Text.Json.Serialization;
-        using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
-        using Models = Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+        using IDurableLifecycleObserverService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Durable_Lifecycle_Observer.IDurableLifecycleObserverService;
+        using IProfileCapabilityConsumerService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Profile_Capability_Consumer.IProfileCapabilityConsumerService;
+        using IPromptContextContributorService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Prompt_Context_Contributor.IPromptContextContributorService;
+        using ISessionCleanerService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Session_Cleaner.ISessionCleanerService;
+        using Models = Sunder.Generated.Packages.Younics_Ai_Agent_Models;
         public static class Consumer
         {
             private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
@@ -212,7 +215,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 var api = receiver.Providers<IDurableLifecycleObserverService>();
                 var provider = (await api.ListAsync(token)).Providers.Single();
                 await provider.Service.HandleAsync(
-                    JsonSerializer.Deserialize<Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentDurableLifecycleEventEnvelope>(json, Json)!, token);
+                    JsonSerializer.Deserialize<Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentDurableLifecycleEventEnvelope>(json, Json)!, token);
             }
             public static async Task<string> ContributeAsync(ISunderRpcClient rpc, string json, CancellationToken token)
             {
@@ -251,7 +254,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 var api = receiver.Providers<IPromptContextContributorService>();
                 var provider = (await api.ListAsync(token)).Providers.Single();
                 await provider.Service.AcknowledgeAsync(
-                    JsonSerializer.Deserialize<Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentPromptContextReceipt>(json, Json)!, token);
+                    JsonSerializer.Deserialize<Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentPromptContextReceipt>(json, Json)!, token);
             }
         }
         internal sealed class ConsumerScope(ISunderRpcClient rpc) : IServiceProvider, IAsyncDisposable
@@ -278,8 +281,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
         """;
 
     private const string ProviderSource = """
-        using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
-        using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+        using Sunder.Generated.Packages.Younics_Ai_Agent_Models;
+        using ISessionCleanerService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Session_Cleaner.ISessionCleanerService;
         using Sunder.Sdk.Services;
         [SunderServiceProvider(typeof(ISessionCleanerService), ProviderId = "example.agent.cleaner")]
         public sealed partial class ExternalCleaner : ISessionCleanerService
@@ -293,8 +296,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
         """;
 
     private const string MemoryCleanerProviderSource = """
-        using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
-        using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+        using Sunder.Generated.Packages.Younics_Ai_Agent_Models;
+        using ISessionCleanerService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Session_Cleaner.ISessionCleanerService;
         using Sunder.Sdk.Services;
         [SunderServiceProvider(typeof(ISessionCleanerService), ProviderId = "semantic.memory.session.cleaner")]
         public sealed partial class MemoryCleanerProvider(string id, Func<Guid, CancellationToken, ValueTask> delete) : ISessionCleanerService

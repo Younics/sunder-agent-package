@@ -11,7 +11,7 @@ using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Runtime;
 using Sunder.Sdk.Rpc;
 using Xunit;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -153,14 +153,14 @@ public sealed class AgentRpcWireCompatibilityTests
             argumentsJson.Length,
             client.LastRequest.GetProperty("request").GetProperty("argumentsJson").GetString()!.Length);
         AssertSchemaValid(
-            "sunder.agent.tool.execution.observed",
+            "younics.ai.agent.tool.execution.observed",
             CurrentPublicRpcDescriptors.Get(RegressionTestBindings.ObservedToolExecutions)
                 .FindService("tool-execution-observed")!.FindMethod("execute")!.RequestSchemaReference,
             client.LastRequest);
         Assert.False(response.TryGetProperty("payloadJson", out _));
         Assert.Equal("test_tool", response.GetProperty("result").GetProperty("toolId").GetString());
         AssertSchemaValid(
-            "sunder.agent.tool.execution.observed",
+            "younics.ai.agent.tool.execution.observed",
             CurrentPublicRpcDescriptors.Get(RegressionTestBindings.ObservedToolExecutions)
                 .FindService("tool-execution-observed")!.FindMethod("execute")!.OutputSchemaReference,
             response);
@@ -185,7 +185,7 @@ public sealed class AgentRpcWireCompatibilityTests
     {
         using var providers = new RegressionTestSourceProviders();
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        await using var receiver = new GeneratedServiceTestScope(new RegressionTestRpcClient(state, "sunder.package.agent.tests"));
+        await using var receiver = new GeneratedServiceTestScope(new RegressionTestRpcClient(state, "younics.ai.agent.tests"));
         var registration = providers.Create(RegressionTestBindings.ChatProviders, new ChatProviderProbe(), receiver);
         var snapshot = state.AddGenerated("test.package", registration, registration, providers, registration.ProviderId);
         var response = await new RegressionTestRpcClient(state, "test.caller").InvokeAsync(
@@ -232,7 +232,7 @@ public sealed class AgentRpcWireCompatibilityTests
         var provider = new ChatProviderProbe();
         using var providers = new RegressionTestSourceProviders();
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        await using var receiver = new GeneratedServiceTestScope(new RegressionTestRpcClient(state, "sunder.package.agent.tests"));
+        await using var receiver = new GeneratedServiceTestScope(new RegressionTestRpcClient(state, "younics.ai.agent.tests"));
         await DrainAsync(state, providers.Create(RegressionTestBindings.ChatProviders, provider, receiver), providers, request);
 
         Assert.Equal(1, provider.Client.CallCount);
@@ -260,7 +260,7 @@ public sealed class AgentRpcWireCompatibilityTests
         var provider = new ChatProviderProbe();
         using var providers = new RegressionTestSourceProviders();
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        await using var receiver = new GeneratedServiceTestScope(new RegressionTestRpcClient(state, "sunder.package.agent.tests"));
+        await using var receiver = new GeneratedServiceTestScope(new RegressionTestRpcClient(state, "younics.ai.agent.tests"));
         await DrainAsync(state, providers.Create(RegressionTestBindings.ChatProviders, provider, receiver), providers, request);
 
         Assert.Equal(1, provider.Client.CallCount);
@@ -303,7 +303,7 @@ public sealed class AgentRpcWireCompatibilityTests
         var optionsJson = await marshal.SerializeAsync(options);
         Assert.Equal(JsonValueKind.Number, optionsJson.GetProperty("additionalProperties").GetProperty("count").ValueKind);
         Assert.Equal("AAH/", optionsJson.GetProperty("continuationHandle").GetString());
-        AssertSchemaValid("sunder.agent.chat.provider", "#/$defs/AgentChatOptions", optionsJson);
+        AssertSchemaValid("younics.ai.agent.chat.provider", "#/$defs/AgentChatOptions", optionsJson);
 
         var absent = await marshal.SerializeAsync(new AgentChatContent("text"));
         var explicitNull = await marshal.SerializeAsync(new AgentChatContent(
@@ -349,7 +349,7 @@ public sealed class AgentRpcWireCompatibilityTests
         Assert.Equal("error", json.GetProperty("kind").GetString());
         Assert.Equal("context-window-exceeded", json.GetProperty("errorFailureKind").GetString());
         Assert.False(json.TryGetProperty("contentItems", out _));
-        AssertSchemaValid("sunder.agent.chat.provider", "#/$defs/AgentChatStreamEvent", json);
+        AssertSchemaValid("younics.ai.agent.chat.provider", "#/$defs/AgentChatStreamEvent", json);
     }
 
     [Fact]
@@ -372,7 +372,7 @@ public sealed class AgentRpcWireCompatibilityTests
         Assert.Equal(session.SessionId, json.GetProperty("sessionId").GetGuid());
         Assert.False(json.TryGetProperty("profileId", out _));
         Assert.False(json.TryGetProperty("turn", out _));
-        AssertSchemaValid("sunder.agent.runtime.catalog", "#/$defs/AgentRuntimeCatalogEvent", json);
+        AssertSchemaValid("younics.ai.agent.runtime.catalog", "#/$defs/AgentRuntimeCatalogEvent", json);
     }
 
     [Fact]
@@ -385,7 +385,7 @@ public sealed class AgentRpcWireCompatibilityTests
         var registration = services.GetRequiredService<Runtime.AgentOwnerRuntimeProvider>().CreateSunderRpcProviderRegistration();
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
         using var providers = new RegressionTestSourceProviders();
-        var snapshot = state.AddGenerated("sunder.package.agent", registration, registration, providers, registration.ProviderId);
+        var snapshot = state.AddGenerated("younics.ai.agent", registration, registration, providers, registration.ProviderId);
         var client = new RegressionTestRpcClient(state, "test.caller");
 
         var workspaceResult = await client.InvokeAsync(
@@ -463,7 +463,7 @@ public sealed class AgentRpcWireCompatibilityTests
             BitConverter.SingleToInt32Bits(Assert.IsType<float>(actual)));
 
     private static void AssertChatRequestIsSchemaValid(JsonElement request)
-        => AssertSchemaValid("sunder.agent.chat.provider", "#/$defs/AgentChatStreamRequest", request);
+        => AssertSchemaValid("younics.ai.agent.chat.provider", "#/$defs/AgentChatStreamRequest", request);
 
     private static void AssertSchemaValid(string contractId, string schemaReference, JsonElement value)
     {
@@ -473,7 +473,7 @@ public sealed class AgentRpcWireCompatibilityTests
 
     private static void AssertOwnerSchemaValid(string schemaReference, JsonElement value)
         => Assert.True(
-            CurrentPrivateRpcDescriptors.Get("sunder.agent.owner.runtime").IsValid(schemaReference, value, out var error),
+            CurrentPrivateRpcDescriptors.Get("younics.ai.agent.owner.runtime").IsValid(schemaReference, value, out var error),
             error);
 
     private static JsonElement CompleteChatRequest(JsonElement request)

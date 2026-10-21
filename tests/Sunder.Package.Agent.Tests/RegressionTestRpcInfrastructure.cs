@@ -474,6 +474,9 @@ internal sealed partial class RegressionTestRpcState(bool workerStyleProviderBou
 
     internal int InvocationAttemptCount => Volatile.Read(ref _invocationAttemptCount);
     internal int StreamInvocationAttemptCount => Volatile.Read(ref _streamInvocationAttemptCount);
+    // Passive fixture readiness: signalled only after the real provider produced
+    // and passed validation for a stream item. Invocation entry is too early.
+    internal event Action<string, SunderRpcProviderSnapshot, string, string>? ProviderStreamItemObserved;
     internal JsonElement LastInvocationRequest { get { lock (_gate) return _lastInvocationRequest; } }
     internal JsonElement LastStreamInvocationRequest { get { lock (_gate) return _lastStreamInvocationRequest; } }
     private SunderRpcEndpointReference? _lastInvariantViolationEndpoint;
@@ -620,7 +623,7 @@ internal sealed partial class RegressionTestRpcState(bool workerStyleProviderBou
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (!string.Equals(callerPackageId, "sunder.package.agent", StringComparison.Ordinal))
+        if (!string.Equals(callerPackageId, "younics.ai.agent", StringComparison.Ordinal))
         {
             return ValueTask.FromResult(false);
         }
@@ -825,6 +828,7 @@ internal sealed partial class RegressionTestRpcState(bool workerStyleProviderBou
             {
                 var item = enumerator.Current;
                 ValidateProviderOutput(entry, serviceId, methodId, item);
+                ProviderStreamItemObserved?.Invoke(callerPackageId, entry.Snapshot, serviceId, methodId);
                 yield return item;
             }
         }

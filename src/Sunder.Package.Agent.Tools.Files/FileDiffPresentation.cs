@@ -7,7 +7,7 @@ internal static class FileDiffPresentation
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
     public static string BuildPayload(IReadOnlyList<FileDiffPayloadFile> files)
-        => JsonSerializer.Serialize(new FileDiffPresentationPayload("sunder.file-diff.v1", files), JsonOptions);
+        => JsonSerializer.Serialize(new FileDiffPresentationPayload("younics.ai.agent.tools.files.diff.v1", files), JsonOptions);
 
     public static string? BuildEditPayload(FileEditArgs args, string currentContent)
     {

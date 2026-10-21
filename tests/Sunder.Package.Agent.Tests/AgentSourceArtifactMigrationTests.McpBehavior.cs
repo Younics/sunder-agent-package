@@ -17,7 +17,7 @@ using Xunit;
 namespace Sunder.Package.Agent.Tests;
 
 extern alias McpWorker;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 using McpWorker::Sunder.Package.Agent.Mcp.Runtime;
 
 public sealed partial class AgentSourceArtifactMigrationTests
@@ -42,25 +42,25 @@ public sealed partial class AgentSourceArtifactMigrationTests
             var presentation = load.LoadFromStream(appStream);
             AssertMcpSemanticOwnership(runtime, app: false);
             AssertMcpSemanticOwnership(presentation, app: true);
-            Assert.NotSame(runtime.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentToolDescriptor", true), presentation.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentToolDescriptor", true));
+            Assert.NotSame(runtime.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentToolDescriptor", true), presentation.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentToolDescriptor", true));
             foreach (var assembly in new[] { runtime, presentation })
             {
                 Assert.DoesNotContain(assembly.GetReferencedAssemblies(), reference => reference.Name == "Sunder.Package.Agent.Mcp.Shared");
-                foreach (var name in new[] { "Sunder.Package.Agent.Mcp.ConfiguredMcpServerRecord", "Sunder.Generated.Packages.Sunder_Package_Agent_Mcp_Services.IManagementService", "Sunder.Package.Agent.Mcp.Runtime.McpManagementContent" })
+                foreach (var name in new[] { "Sunder.Package.Agent.Mcp.ConfiguredMcpServerRecord", "Sunder.Generated.Packages.Younics_Ai_Agent_Mcp_Services.IManagementService", "Sunder.Package.Agent.Mcp.Runtime.McpManagementContent" })
                     Assert.Same(assembly, assembly.GetType(name, true)!.Assembly);
             }
             Assert.DoesNotContain(presentation.GetReferencedAssemblies(), reference => reference.Name is "Sunder.Package.Agent.Mcp" or "Sunder.Sdk.Worker"
                 or "ModelContextProtocol" or "ModelContextProtocol.Core");
             using var workspace = RegressionTestPackageScope.Create();
-            var callbacks = new AppCallbackProbe("sunder.package.agent.mcp", "mcp.oauth.v1", new Dictionary<string, string> { ["serverId"] = "artifact-mcp" });
-            var context = new TestPackageContext("sunder.package.agent.mcp", workspace.RootPath, version: "2.0.0", storage: workspace.Context.Storage, callbacks: callbacks);
+            var callbacks = new AppCallbackProbe("younics.ai.agent.mcp", "mcp.oauth.v1", new Dictionary<string, string> { ["serverId"] = "artifact-mcp" });
+            var context = new TestPackageContext("younics.ai.agent.mcp", workspace.RootPath, version: "2.0.0", storage: workspace.Context.Storage, callbacks: callbacks);
             using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-            var rpc = new RegressionTestRpcClient(state, "sunder.package.agent.mcp");
+            var rpc = new RegressionTestRpcClient(state, "younics.ai.agent.mcp");
             var syncType = runtime.GetType("Sunder.Package.Agent.Mcp.Services.McpSunderConfigurationSyncService", true)!;
             Action<IServiceCollection> isolatePaths = services => services.AddSingleton(syncType, services => Activator.CreateInstance(syncType,
                 services.GetRequiredService(runtime.GetType("Sunder.Package.Agent.Mcp.Services.McpEcosystemConfigurationImporter", true)!),
                 services.GetRequiredService(typeof(Sunder.Sdk.Services.IServiceProviders<>).MakeGenericType(
-                    runtime.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Services.IRuntimeCatalogService", true)!)), workspace.RootPath, workspace.RootPath)!);
+                    runtime.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Runtime_Catalog.IRuntimeCatalogService", true)!)), workspace.RootPath, workspace.RootPath)!);
             var options = CreateControlledGeneratedWorker(comparison, context, rpc, isolatePaths).Options;
             await using var composition = Assert.IsType<SunderWorkerComposition>(options.Composition);
             Assert.Null(runtime.GetType("Sunder.Package.Agent.Mcp.Runtime.LegacyMcpWorkspaceCatalog"));
@@ -71,12 +71,12 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.Equal(new[] { "mcp.management", "mcp.selectable.capabilities", "mcp.session.cleaner", "mcp.stack", "mcp.tools", "mcp.tools.observed" }, registrations.Keys.Order(StringComparer.Ordinal));
             foreach (var provider in options.Providers)
             {
-                var descriptor = provider.ProviderId == "mcp.management" ? CurrentPrivateRpcDescriptors.Get("sunder.package.agent.mcp.management")
+                var descriptor = provider.ProviderId == "mcp.management" ? CurrentPrivateRpcDescriptors.Get("younics.ai.agent.mcp.management")
                     : provider.ProviderId == "mcp.stack" ? SunderRpcContractDescriptor.Parse(File.ReadAllBytes(Path.Combine(BuilderSourceMigrationTests.FindRepository(),
                         "../sunder-core/languages/csharp/dotnet/packages/Sunder.Sdk.Stacks/Contracts/sunder.stack.contributor.rpc.json")))
                     : CurrentPublicRpcDescriptors.Get(provider.ContractId);
                 Assert.Equal(descriptor.Sha256, provider.DescriptorSha256); Assert.Equal(descriptor.AbiSha256, provider.AbiSha256);
-                state.Add("sunder.package.agent.mcp", descriptor, provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, "2.0.0");
+                state.Add("younics.ai.agent.mcp", descriptor, provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, "2.0.0");
             }
             await using var appProvider = CreateGeneratedApp(presentation, context, rpc);
             var gateway = appProvider.GetRequiredService(presentation.GetType("Sunder.Package.Agent.Mcp.Runtime.McpAppRuntimeGateway", true)!);
@@ -142,7 +142,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 Assert.Equal("dispatched", abandoned.Current.GetProperty("kind").GetString());
             }
             Assert.Equal(before, peer.ToolCalls);
-            var agentRpc = new RegressionTestRpcClient(state, "sunder.package.agent");
+            var agentRpc = new RegressionTestRpcClient(state, "younics.ai.agent");
             await using var generatedReceiver = new GeneratedServiceTestScope(agentRpc);
             var generatedTools = Assert.Single((await generatedReceiver.Providers<AgentServices.IToolSourceService>().ListAsync()).Providers,
                 provider => provider.ProviderId == "mcp.tools").Service;
@@ -204,7 +204,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             var manager = composition.Services.GetRequiredService(managerType);
             await Rpc("mcp.session.cleaner", "session-cleaner", "delete-session", session);
             Assert.Equal(0, managerType.GetProperty("CachedConnectionCount", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(manager));
-            var items = await Rpc("mcp.stack", "stack-contributor", "list-export-items", new { packageId = "sunder.package.agent.mcp" });
+            var items = await Rpc("mcp.stack", "stack-contributor", "list-export-items", new { packageId = "younics.ai.agent.mcp" });
             Assert.Single(items.GetProperty("items").EnumerateArray());
             using (var cancellation = new CancellationTokenSource())
             {

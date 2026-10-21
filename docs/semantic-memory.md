@@ -1,6 +1,6 @@
 # Semantic Memory
 
-`sunder.package.agent.memory.semantic` is the first-party durable recall package. It is optional and independently installable. The base Agent owns live transcript projection and working continuity summaries; semantic memory owns durable, recallable facts. A memory extension must not replace active-session context management.
+`younics.ai.agent.memory.semantic` is the first-party durable recall package. It is optional and independently installable. The base Agent owns live transcript projection and working continuity summaries; semantic memory owns durable, recallable facts. A memory extension must not replace active-session context management.
 
 ## Composition
 
@@ -86,15 +86,17 @@ The rendered first-party recall block explicitly tells the model not to follow r
 
 Use public Agent contracts rather than referencing `MemoryLocalStore` or other first-party implementation types:
 
-1. Observe direct user, rollback, and deletion events through `IAgentDurableLifecycleObserver`.
+1. Select and implement `IDurableLifecycleObserverService` for direct user, rollback and deletion events.
 2. Store package-owned durable records through `IPackageContext.Storage`.
-3. Queue bounded indexing through `IPackageBackgroundService` when needed.
-4. Declare embedding consumption with `IAgentProfileCapabilityConsumer` if applicable.
+3. Run bounded indexing in a package-owned Worker lifecycle service when needed.
+4. Declare embedding consumption through `IProfileCapabilityConsumerService` if applicable.
 5. Recall only when `AgentPromptContextPlan.ShouldContribute` is true.
-6. Return provenance-labeled `AgentPromptContextBlock` values through `IAgentPromptContextContributor`.
-7. Delete package-owned data through `IAgentSessionDataCleaner`.
+6. Return provenance-labeled `AgentPromptContextBlock` values through `IPromptContextContributorService`.
+7. Delete package-owned data through `ISessionCleanerService`.
 
-Do not register a competing `RuntimeCatalogs` contribution. Consume the base `IAgentRuntimeCatalog` to read profile bindings and immutable session/turn projections.
+Use the selected base-Agent runtime-catalog API for profile bindings and immutable
+session/turn projections. See [extension setup](extension-quickstart.md) for generated
+Services/Models and provider registration; do not reference first-party implementation assemblies.
 
 ## Storage And Privacy
 

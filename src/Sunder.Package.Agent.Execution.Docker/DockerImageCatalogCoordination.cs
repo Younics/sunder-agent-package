@@ -8,7 +8,7 @@ internal sealed class DockerImageCatalogCoordinator
 
     internal SemaphoreSlim MutationGate { get; } = new(1, 1);
 
-    internal SemaphoreSlim MigrationGate { get; } = new(1, 1);
+    internal SemaphoreSlim ValidationGate { get; } = new(1, 1);
 
     internal long BeginStatus(string imageReference)
         => checked(++_nextStatusRevision);

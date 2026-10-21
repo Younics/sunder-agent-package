@@ -570,7 +570,7 @@ public sealed class CodexConnectedAuthStrategyTests
         }));
         var eventLogger = new RecordingEventLogger();
         var context = new ProviderTestPackageContext(
-            "sunder.package.agent.provider.openai",
+            "younics.ai.agent.provider.openai",
             logging: new TestPackageLogging(eventLogger));
         var oauthClient = new CodexOAuthClient(
             () => new HttpClient(handler, disposeHandler: false),
@@ -639,7 +639,7 @@ public sealed class CodexConnectedAuthStrategyTests
         }));
         var eventLogger = new RecordingEventLogger();
         var context = new ProviderTestPackageContext(
-            "sunder.package.agent.provider.openai",
+            "younics.ai.agent.provider.openai",
             logging: new TestPackageLogging(eventLogger));
         var oauthClient = new CodexOAuthClient(
             () => new HttpClient(handler, disposeHandler: false),
@@ -670,7 +670,7 @@ public sealed class CodexConnectedAuthStrategyTests
         var handler = new StubHttpMessageHandler((_, _) =>
             Task.FromResult(CreateTokenResponse("access-token", "refresh-token")));
         var context = new ProviderTestPackageContext(
-            "sunder.package.agent.provider.openai",
+            "younics.ai.agent.provider.openai",
             logging: new TestPackageLogging(new ThrowingEventLogger()));
         var oauthClient = new CodexOAuthClient(
             () => new HttpClient(handler, disposeHandler: false),
@@ -693,7 +693,7 @@ public sealed class CodexConnectedAuthStrategyTests
         var handler = new StubHttpMessageHandler((_, _) =>
             Task.FromResult(CreateTokenResponse("access-token", "refresh-token")));
         var context = new ProviderTestPackageContext(
-            "sunder.package.agent.provider.openai",
+            "younics.ai.agent.provider.openai",
             logging: new TestPackageLogging(new NeverCompletingEventLogger()));
         using var strategy = CreateStrategy(
             context,
@@ -849,7 +849,7 @@ public sealed class CodexConnectedAuthStrategyTests
         var handler = new StubHttpMessageHandler((_, _) =>
             Task.FromResult(CreateTokenResponse("access-token", "refresh-token")));
         var context = new ProviderTestPackageContext(
-            "sunder.package.agent.provider.openai",
+            "younics.ai.agent.provider.openai",
             secrets: secrets);
         using var strategy = CreateStrategy(context, handler);
         var authHandler = new OpenAiPackageAuthHandler(context, strategy);
@@ -884,7 +884,7 @@ public sealed class CodexConnectedAuthStrategyTests
         var handler = new StubHttpMessageHandler((_, _) =>
             Task.FromResult(CreateTokenResponse("new-access", "new-refresh")));
         var context = new ProviderTestPackageContext(
-            "sunder.package.agent.provider.openai",
+            "younics.ai.agent.provider.openai",
             secrets: secrets);
         using var strategy = CreateStrategy(context, handler);
         var authHandler = new OpenAiPackageAuthHandler(context, strategy);
@@ -919,7 +919,7 @@ public sealed class CodexConnectedAuthStrategyTests
         var handler = new StubHttpMessageHandler((_, _) =>
             Task.FromResult(CreateTokenResponse("new-access", "new-refresh")));
         var context = new ProviderTestPackageContext(
-            "sunder.package.agent.provider.openai",
+            "younics.ai.agent.provider.openai",
             secrets: secrets);
         using var strategy = CreateStrategy(context, handler);
         var authHandler = new OpenAiPackageAuthHandler(context, strategy);
@@ -1061,12 +1061,13 @@ public sealed class CodexConnectedAuthStrategyTests
 
     private static ProviderTestPackageContext CreateContext(OpenAiCodexSession? session = null)
         => new(
-            "sunder.package.agent.provider.openai",
+            "younics.ai.agent.provider.openai",
             secretValues: session is null
                 ? null
                 : new Dictionary<string, string>
                 {
-                    ["auth.codex.session"] = JsonSerializer.Serialize(session),
+                    ["auth.codex.session"] = JsonSerializer.Serialize(new CodexSessionDocument(
+                        CodexSessionStore.DocumentSchemaId, CodexSessionStore.DocumentSchemaVersion, session)),
                 });
 
     private static OpenAiCodexSession CreateExpiredSession()
@@ -1228,7 +1229,8 @@ public sealed class CodexConnectedAuthStrategyTests
                 ? null
                 : new Dictionary<string, string>
                 {
-                    ["auth.codex.session"] = JsonSerializer.Serialize(initialSession),
+                    ["auth.codex.session"] = JsonSerializer.Serialize(new CodexSessionDocument(
+                        CodexSessionStore.DocumentSchemaId, CodexSessionStore.DocumentSchemaVersion, initialSession)),
                 });
         }
 

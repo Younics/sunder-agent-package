@@ -28,6 +28,10 @@ internal static class AgentToolSuspensionCompatibility
             try
             {
                 using var document = JsonDocument.Parse(toolResult.StructuredPayloadJson);
+                if (document.RootElement.ValueKind != JsonValueKind.Object)
+                {
+                    return false;
+                }
                 if (document.RootElement.TryGetProperty("tasks", out var tasks)
                     && tasks.ValueKind == JsonValueKind.Array)
                 {
@@ -43,14 +47,8 @@ internal static class AgentToolSuspensionCompatibility
             }
             catch (JsonException)
             {
-                // Fall back to the legacy BackendId adapter below.
+                return false;
             }
-        }
-
-        if (outstanding.Count == 0
-            && Guid.TryParse(toolResult.BackendId, out var legacyChildSessionId))
-        {
-            outstanding.Add(new AgentChildJoinTask(legacyChildSessionId, toolCall.CallId));
         }
 
         if (outstanding.Count == 0)
@@ -73,9 +71,11 @@ internal static class AgentToolSuspensionCompatibility
         ICollection<AgentChildJoinTask> outstanding,
         ICollection<AgentChildJoinTaskResult> completed)
     {
-        if (!task.TryGetProperty("childSessionId", out var sessionIdElement)
+        if (task.ValueKind != JsonValueKind.Object
+            || !task.TryGetProperty("childSessionId", out var sessionIdElement)
             || sessionIdElement.ValueKind != JsonValueKind.String
-            || !Guid.TryParse(sessionIdElement.GetString(), out var childSessionId))
+            || !Guid.TryParse(sessionIdElement.GetString(), out var childSessionId)
+            || childSessionId == Guid.Empty)
         {
             return;
         }

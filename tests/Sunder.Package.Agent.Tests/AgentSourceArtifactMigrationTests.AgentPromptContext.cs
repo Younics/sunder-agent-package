@@ -7,7 +7,7 @@ using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Services;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -23,13 +23,13 @@ public sealed partial class AgentSourceArtifactMigrationTests
     private static async Task VerifyAgentPromptMapping(Assembly owner)
     {
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
+        var rpc = new RegressionTestRpcClient(state, "younics.ai.agent");
         var observed = new FilesRpcObserver(rpc, "contribute");
         var receiver = new GeneratedServiceTestScope(observed);
         using var providers = new RegressionTestSourceProviders();
         var peer = new AgentPromptPeer();
         var registration = providers.Create(RegressionTestBindings.PromptContextContributors, peer, receiver);
-        var handler = AddSurfaceProvider(state, "sunder.package.agent", registration);
+        var handler = AddSurfaceProvider(state, "younics.ai.agent", registration);
         var client = Assert.Single((await receiver.Providers<AgentServices.IPromptContextContributorService>().ListAsync()).Providers).Service;
         var description = await client.DescribeAsync();
         Assert.Equal(peer.ContributorId, description.ContributorId); Assert.Equal(peer.DisplayName, description.DisplayName);
@@ -170,7 +170,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var retired = await Assert.ThrowsAsync<SunderRpcException>(() => retiring);
         Assert.Equal(SunderRpcErrorKind.StaleEndpoint, retired.Error.Kind);
         await retiringReceiver.DisposeAsync();
-        handler = AddSurfaceProvider(state, "sunder.package.agent", registration);
+        handler = AddSurfaceProvider(state, "younics.ai.agent", registration);
         Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => client.AcknowledgeAsync(receipt).AsTask())).Error.Kind);
         var (nextReceiver, replacement) = await SelectAsync();
         await replacement.ContributeAsync(request);

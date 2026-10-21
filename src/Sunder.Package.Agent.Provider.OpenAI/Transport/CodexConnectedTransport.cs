@@ -280,7 +280,7 @@ public sealed class CodexConnectedTransport(CodexConnectedAuthStrategy codexConn
     private static AgentChatProviderException CreateAuthRequiredException()
         => new(
             "codex-auth-required",
-            "### Codex authorization required\n\nYour saved Codex session could not be refreshed silently. Open **Settings -> Packages -> Sunder Agent Provider OpenAI**, click **Authorize**, and then retry.",
+            "### Codex authorization required\n\nYour saved Codex session could not be refreshed silently. Open **Settings -> Packages -> AI Agent - OpenAI**, click **Authorize**, and then retry.",
             "codex-auth-required");
 
     private static ValueTask LogAsync(

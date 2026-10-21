@@ -25,7 +25,7 @@ public sealed partial class AgentOwnerSourceMigrationTests
         Assert.Empty(receipt.GetProperty("packageArtifactImports").EnumerateArray());
         using var export = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(CanonicalAgentRoles.AnalysisRoot, "package-export.v1.json")));
         Assert.Equal("2.0.0", export.RootElement.GetProperty("packageVersion").GetString());
-        Assert.Equal(21, export.RootElement.GetProperty("contracts").GetArrayLength());
+        Assert.Equal(20, export.RootElement.GetProperty("contracts").GetArrayLength());
         Assert.DoesNotContain(export.RootElement.GetProperty("contracts").EnumerateArray(), value => value.GetProperty("contractId").GetString() == "sunder.stack.contributor");
 
         var catalog = Environment.GetEnvironmentVariable("SUNDER_AGENT_SOURCE_PLATFORM_CATALOG");
@@ -34,6 +34,10 @@ public sealed partial class AgentOwnerSourceMigrationTests
         Assert.Equal(Convert.ToHexStringLower(SHA256.HashData(catalogBytes)), platform.GetProperty("selectedAuthorityContentIdentity").GetString());
         var repository = RegressionTestRpcDescriptors.RepositoryRoot;
         var core = Path.GetFullPath(Path.Combine(repository, "../sunder-core"));
+        var producerLocks = Directory.EnumerateFiles(Path.Combine(core, "languages/csharp/dotnet"), "packages.lock.json", SearchOption.AllDirectories)
+            .Where(path => !Path.GetRelativePath(core, path).Split(Path.DirectorySeparatorChar)
+                .Any(part => part is "bin" or "obj" or "artifacts"))
+            .ToDictionary(path => path, File.ReadAllBytes, StringComparer.Ordinal);
         var sandbox = Directory.CreateTempSubdirectory("sunder-agent-canonical-inputs-").FullName;
         // Use one physical identity for the cloned project and its resource
         // inputs; macOS exposes the temporary directory through /var as well.
@@ -68,7 +72,7 @@ public sealed partial class AgentOwnerSourceMigrationTests
                 "-p:SunderPackageBuildTaskShadowStamp=" + Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(taskAssembly))),
                 "-nodeReuse:false", "-nologo",
             };
-            await Command("restore", ["--disable-parallel"]);
+            await Command("restore", ["--disable-parallel", "--no-dependencies"]);
             await Command("msbuild", ["-t:RestoreSunderContracts", "-p:SunderPlatformCatalogPath=" + Path.GetFullPath(catalog!)]);
             await Command("build", ["--no-restore"]);
             var generatedRoot = Path.Combine(projectRoot, "obj/Debug/net10.0/sunder-analysis", RuntimeInformation.RuntimeIdentifier, "sunder-rpc");
@@ -100,7 +104,8 @@ public sealed partial class AgentOwnerSourceMigrationTests
             }
             async Task Command(string command, string[] arguments, string? expectedError = null)
             {
-                var start = new ProcessStartInfo("dotnet") { WorkingDirectory = projectRoot, RedirectStandardOutput = true, RedirectStandardError = true };
+                TraceOwnerPhase("stack-evidence:start:" + command + " " + string.Join(" ", arguments));
+                var start = new ProcessStartInfo(BuilderSourceMigrationTests.DotnetBuildHost) { WorkingDirectory = projectRoot, RedirectStandardOutput = true, RedirectStandardError = true };
                 foreach (var argument in new[] { command, project }.Concat(arguments).Concat(common)) start.ArgumentList.Add(argument);
                 if (command == "msbuild")
                 {
@@ -114,6 +119,10 @@ public sealed partial class AgentOwnerSourceMigrationTests
                 try { await process.WaitForExitAsync(timeout.Token); }
                 catch { if (!process.HasExited) process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); throw; }
                 var text = await output + await error;
+                TraceOwnerPhase("stack-evidence:complete:" + command + ":" + process.ExitCode);
+                foreach (var (path, bytes) in producerLocks)
+                    Assert.True(bytes.AsSpan().SequenceEqual(File.ReadAllBytes(path)),
+                        "Consumer command changed a Core producer lock: " + Path.GetRelativePath(core, path));
                 if (expectedError is null) Assert.True(process.ExitCode == 0, text);
                 else { Assert.NotEqual(0, process.ExitCode); Assert.Contains(expectedError, text, StringComparison.OrdinalIgnoreCase); }
             }

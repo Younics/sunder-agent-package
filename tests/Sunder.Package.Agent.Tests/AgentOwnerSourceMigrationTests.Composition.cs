@@ -22,7 +22,7 @@ public sealed partial class AgentOwnerSourceMigrationTests
         using var scope = RegressionTestPackageScope.Create();
         using var rpcState = new RegressionTestRpcState();
         await using var runtime = RegressionTestRuntime.Create(scope.Context,
-            new RegressionTestRpcClient(rpcState, "sunder.package.agent"));
+            new RegressionTestRpcClient(rpcState, "younics.ai.agent"));
         var options = runtime.Options;
         var services = runtime;
         var providers = options.Providers;
@@ -31,7 +31,7 @@ public sealed partial class AgentOwnerSourceMigrationTests
         foreach (var registration in providers)
         {
             var original = registration.ContractId == "sunder.stack.contributor" ? Sunder.Sdk.Stacks.SunderStackContributorRpc.Descriptor
-                : registration.ContractId == "sunder.package.agent.agent.profile"
+                : registration.ContractId == "younics.ai.agent.agent.profile"
                     ? ProfileDescriptor() : CurrentPrivateRpcDescriptors.Get(registration.ContractId);
             Assert.Equal(original.ContractId, registration.ContractId);
             Assert.Equal(original.Version, registration.ContractVersion);
@@ -63,14 +63,14 @@ public sealed partial class AgentOwnerSourceMigrationTests
                 foreach (var registration in providers)
                 {
                     var descriptor = registration.ContractId == "sunder.stack.contributor" ? Sunder.Sdk.Stacks.SunderStackContributorRpc.Descriptor
-                        : registration.ContractId == "sunder.package.agent.agent.profile" ? ProfileDescriptor()
+                        : registration.ContractId == "younics.ai.agent.agent.profile" ? ProfileDescriptor()
                         : CurrentPrivateRpcDescriptors.Get(registration.ContractId);
-                    rpcState.Add("sunder.package.agent", descriptor, registration.Handler, registration.Handler, Noop.Instance,
+                    rpcState.Add("younics.ai.agent", descriptor, registration.Handler, registration.Handler, Noop.Instance,
                         registration.ProviderId, "2.0.0");
                 }
                 var stack = providers.Single(provider => provider.ProviderId == "agent.stack.profiles");
                 var metadata = await stack.Handler.InvokeUnaryAsync(null!, "stack-contributor", "metadata", JsonSerializer.SerializeToElement(new { }));
-                Assert.Equal("sunder.package.agent.profiles", metadata.GetProperty("contributorId").GetString());
+                Assert.Equal("younics.ai.agent.profiles", metadata.GetProperty("contributorId").GetString());
             }
         }
         finally { await lifecycle.StopAsync(default); }
@@ -79,7 +79,7 @@ public sealed partial class AgentOwnerSourceMigrationTests
         {
             using var receipt = CanonicalAgentRoles.Receipt();
             var value = Assert.Single(receipt.RootElement.GetProperty("contracts").EnumerateArray(),
-                contract => contract.GetProperty("contractId").GetString() == "sunder.package.agent.agent.profile");
+                contract => contract.GetProperty("contractId").GetString() == "younics.ai.agent.agent.profile");
             Assert.Equal("2.0.0", value.GetProperty("contractVersion").GetString());
             var descriptor = SunderRpcContractDescriptor.Parse(System.Text.Encoding.UTF8.GetBytes(value.GetProperty("canonicalDescriptor").GetString()!));
             Assert.Equal(15, descriptor.Services.Single().Methods.Count);

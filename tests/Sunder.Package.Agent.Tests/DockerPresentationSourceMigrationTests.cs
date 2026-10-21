@@ -22,13 +22,13 @@ public sealed class DockerPresentationSourceMigrationTests
     [AgentPublicSourceMigrationFact]
     public async Task PresentationSource_UsesNaturalManagementOperationsAndBoundedContent()
     {
-        using var source = PrivateManagementSourceFixture.Load("Execution.Docker", CurrentPrivateRpcDescriptors.Get("sunder.package.agent.execution.docker.presentation"));
+        using var source = PrivateManagementSourceFixture.Load("Execution.Docker", CurrentPrivateRpcDescriptors.Get("younics.ai.agent.execution.docker.presentation"));
         using var package = RegressionTestPackageScope.Create();
-        var context = new TestPackageContext("sunder.package.agent.execution.docker", package.RootPath, storage: package.Context.Storage);
+        var context = new TestPackageContext("younics.ai.agent.execution.docker", package.RootPath, storage: package.Context.Storage);
         var runner = new TestDockerCli(context);
         var catalog = new DockerImageCatalogService(context, runner);
         var service = new DockerExecutionPresentationService(context, runner, catalog);
-        var descriptor = CurrentPrivateRpcDescriptors.Get("sunder.package.agent.execution.docker.presentation");
+        var descriptor = CurrentPrivateRpcDescriptors.Get("younics.ai.agent.execution.docker.presentation");
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
         var rpc = new RegressionTestRpcClient(state, context.PackageId);
         await using var generated = new GeneratedServiceTestScope(rpc);
@@ -36,7 +36,7 @@ public sealed class DockerPresentationSourceMigrationTests
         Assert.Equal("docker.presentation", registration.ProviderId);
         state.Add(context.PackageId, descriptor, service, registration.Handler, Noop.Instance, registration.ProviderId, "2.0.0");
         await using var app = AgentSourceArtifactMigrationTests.CreateGeneratedApp(source.App, context, rpc);
-        var client = app.GetRequiredService(source.App.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Execution_Docker_Services.IPresentationService", true)!);
+        var client = app.GetRequiredService(source.App.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Execution_Docker_Services.IPresentationService", true)!);
         Assert.Same(source.App, client.GetType().Assembly);
         var initial = await ReadAsync(AgentRoleBoundary.Call(client, "GetSettingsAsync", CancellationToken.None)!);
         Assert.Equal("300", initial.TimeoutSeconds);

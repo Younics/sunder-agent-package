@@ -15,7 +15,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
     internal static async Task VerifySubagentRuntimeConsumers(Assembly worker, Assembly agentOwner)
     {
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        var rpc = new MemoryConsumerRpc(new RegressionTestRpcClient(state, "sunder.package.agent.subagents"));
+        var rpc = new MemoryConsumerRpc(new RegressionTestRpcClient(state, "younics.ai.agent.subagents"));
         Assert.Null(worker.GetType("Sunder.Package.Agent.Subagents.Rpc.SubagentRuntimeBindings"));
         await using var owned = new GeneratedServiceTestScope(rpc);
         Assert.Equal(0, rpc.DiscoveryCount);
@@ -107,7 +107,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             finally { rpc.LookupFailure = null; }
         }
         rpc.LookupFailure = null;
-        var staleTransport = new FilesRpcObserver(new RegressionTestRpcClient(state, "sunder.package.agent.subagents"), "run-child");
+        var staleTransport = new FilesRpcObserver(new RegressionTestRpcClient(state, "younics.ai.agent.subagents"), "run-child");
         await using (var staleReceiver = new GeneratedServiceTestScope(staleTransport))
         {
             var staleReference = Assert.Single(await ProjectedProviders(staleReceiver, worker, "IChildRunExecutorService"));
@@ -172,14 +172,14 @@ public sealed partial class AgentSourceArtifactMigrationTests
 
     private static void AddSubagentSourceProvider(RegressionTestRpcState state, Assembly owner, string typeName, object implementation, string contractId)
     {
-        Assert.True(owner.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Services.I" + typeName, true)!.IsInterface);
-        var receiver = new GeneratedServiceTestScope(new RegressionTestRpcClient(state, "sunder.package.agent"));
+        Assert.True(owner.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Services.I" + typeName, true)!.IsInterface);
+        var receiver = new GeneratedServiceTestScope(new RegressionTestRpcClient(state, "younics.ai.agent"));
         using var providers = new RegressionTestSourceProviders();
         var registration = providers.Create(contractId, implementation, receiver);
         var descriptor = CurrentPublicRpcDescriptors.Get(contractId);
         Assert.Equal(descriptor.Sha256, registration.DescriptorSha256);
         Assert.Equal(descriptor.AbiSha256, registration.AbiSha256);
-        state.Add("sunder.package.agent", descriptor, implementation, registration.Handler, new GeneratedPeerLifetime(receiver), registration.ProviderId, "2.0.0");
+        state.Add("younics.ai.agent", descriptor, implementation, registration.Handler, new GeneratedPeerLifetime(receiver), registration.ProviderId, "2.0.0");
     }
     private sealed class SubagentTranscriptRuntime : MemoryConsumerRuntime, IAgentTranscriptCatalog
     {

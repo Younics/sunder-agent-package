@@ -172,13 +172,6 @@ public sealed partial class AgentChatViewModel
                 authority.WorkspaceId,
                 null,
                 cancellationToken).ConfigureAwait(false);
-            if (!await IsFinalSessionDeletionAuthorityCurrentAsync(authority).ConfigureAwait(false))
-            {
-                return;
-            }
-            await _selectionState.SaveSelectedSessionIdAsync(
-                (Guid?)null,
-                cancellationToken).ConfigureAwait(false);
         }
         finally
         {

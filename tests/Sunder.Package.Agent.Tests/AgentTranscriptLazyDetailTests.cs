@@ -16,8 +16,8 @@ namespace Sunder.Package.Agent.Tests;
 extern alias SubagentsApp;
 extern alias SubagentsWorker;
 using SubagentsWorker::Sunder.Package.Agent.Subagents.Runtime;
-using SubagentServices = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
-using SubagentModels = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using IRuntimeCatalogService = SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Runtime_Catalog.IRuntimeCatalogService;
+using SubagentModels = SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models;
 
 public sealed class AgentTranscriptLazyDetailTests
 {
@@ -28,7 +28,7 @@ public sealed class AgentTranscriptLazyDetailTests
         await using var extensions = new RegressionTestExtensionCatalog();
         var store = new AgentLocalStore(scope.Context);
         var sessions = new AgentSessionService(store, extensions.SessionCleaners);
-        var workspaces = new AgentWorkspaceService(store, extensions.SessionCleaners, sessions, extensions.WorkspacePathMigrators);
+        var workspaces = new AgentWorkspaceService(store, extensions.SessionCleaners, sessions);
         var toolService = new AgentToolService(
             sessions,
             workspaces,
@@ -76,7 +76,7 @@ public sealed class AgentTranscriptLazyDetailTests
             1)));
 
         var subsessions = Assert.Single((await extensions.Subagents()
-            .Providers<SubagentServices.IRuntimeCatalogService>()
+            .Providers<IRuntimeCatalogService>()
             .ListAsync()).Providers).Service;
         var recent = await SubsessionTranscriptReader.RecentAsync(
             subsessions, session.SessionId, 1, CancellationToken.None);
@@ -316,7 +316,7 @@ public sealed class AgentTranscriptLazyDetailTests
         await using var extensions = new RegressionTestExtensionCatalog();
         var store = new AgentLocalStore(scope.Context);
         var sessions = new AgentSessionService(store, extensions.SessionCleaners);
-        var workspaces = new AgentWorkspaceService(store, extensions.SessionCleaners, sessions, extensions.WorkspacePathMigrators);
+        var workspaces = new AgentWorkspaceService(store, extensions.SessionCleaners, sessions);
         var toolService = new AgentToolService(
             sessions,
             workspaces,

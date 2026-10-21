@@ -1,10 +1,11 @@
 extern alias OpenAiApp;
 
 using Microsoft.Extensions.DependencyInjection;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using IChatProviderService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Chat_Provider.IChatProviderService;
+using IEmbeddingProviderService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Embedding_Provider.IEmbeddingProviderService;
 using OpenAiSettingsViewModel = OpenAiApp::Sunder.Package.Agent.Provider.OpenAI.OpenAiSettingsViewModel;
 using OpenAiSettingsView = OpenAiApp::Sunder.Package.Agent.Provider.OpenAI.OpenAiSettingsView;
-using IManagementService = OpenAiApp::Sunder.Generated.Packages.Sunder_Package_Agent_Provider_Openai_Services.IManagementService;
+using IManagementService = OpenAiApp::Sunder.Generated.Packages.Younics_Ai_Agent_Provider_Openai_Services.IManagementService;
 using Sunder.Package.Agent.Provider.OpenAI.Auth;
 using Sunder.Package.Agent.Provider.OpenAI.Transport;
 using Sunder.Package.Agent.Provider.Shared;
@@ -23,7 +24,7 @@ public sealed class OpenAiPackageCompositionTests
     [Trait("Lane", "PackageCompatibility")]
     public async Task WorkerAndAppComposition_KeepProvidersCredentialsAndAuthWorkerOnly()
     {
-        var context = new ProviderTestPackageContext("sunder.package.agent.provider.openai");
+        var context = new ProviderTestPackageContext("younics.ai.agent.provider.openai");
         var options = GeneratedProviderComposition.Worker(typeof(OpenAiAgentProvider).Assembly, context);
         await using var composition = Assert.IsType<Sunder.Sdk.Worker.SunderWorkerComposition>(options.Composition);
         var workerServices = composition.Services;
@@ -80,7 +81,7 @@ public sealed class OpenAiPackageCompositionTests
     [Fact]
     public async Task AuthStatusOperation_UsesRuntimeOwnedAuthState()
     {
-        var context = new ProviderTestPackageContext("sunder.package.agent.provider.openai");
+        var context = new ProviderTestPackageContext("younics.ai.agent.provider.openai");
         using var strategy = new CodexConnectedAuthStrategy(context);
         var handler = new OpenAiAuthOperationHandler(strategy);
 
@@ -95,7 +96,7 @@ public sealed class OpenAiPackageCompositionTests
     [Fact]
     public async Task AuthStatusOperation_RestoresPersistedActiveSessionWithFreshStrategy()
     {
-        var context = new ProviderTestPackageContext("sunder.package.agent.provider.openai");
+        var context = new ProviderTestPackageContext("younics.ai.agent.provider.openai");
         var persistedSession = new OpenAiCodexSession(
             "persisted-access-token",
             "persisted-refresh-token",
@@ -116,7 +117,7 @@ public sealed class OpenAiPackageCompositionTests
     [Fact]
     public async Task CodexSessionStore_WritesVersionedDocumentAndRoundTrips()
     {
-        var context = new ProviderTestPackageContext("sunder.package.agent.provider.openai");
+        var context = new ProviderTestPackageContext("younics.ai.agent.provider.openai");
         var session = new OpenAiCodexSession(
             "access-token",
             "refresh-token",
@@ -134,7 +135,7 @@ public sealed class OpenAiPackageCompositionTests
     }
 
     [Fact]
-    public async Task CodexSessionStore_ReadsReleasedUnversionedDocument()
+    public async Task CodexSessionStore_RejectsUnversionedDocumentWithoutDeletingIt()
     {
         var session = new OpenAiCodexSession(
             "legacy-access-token",
@@ -142,17 +143,20 @@ public sealed class OpenAiPackageCompositionTests
             DateTimeOffset.UtcNow.AddHours(1),
             "legacy-account-id");
         var context = new ProviderTestPackageContext(
-            "sunder.package.agent.provider.openai",
+            "younics.ai.agent.provider.openai",
             secrets: new ProviderTestSecrets(new Dictionary<string, string>
             {
                 ["auth.codex.session"] = JsonSerializer.Serialize(session),
             }));
 
-        Assert.Equal(session, await new CodexSessionStore(context.Secrets).GetAsync());
+        Assert.Null(await new CodexSessionStore(context.Secrets).GetAsync());
+        Assert.Equal(JsonSerializer.Serialize(session), await context.Secrets.GetSecretAsync("auth.codex.session"));
     }
 
-    [Fact]
-    public async Task CodexSessionStore_FailsClosedOnFutureDocumentWithoutDeletingIt()
+    [Theory]
+    [InlineData("younics.ai.agent.provider.openai.codex-session", 2)]
+    [InlineData("sunder.agent.openai.codex-session", 1)]
+    public async Task CodexSessionStore_FailsClosedOnUnsupportedDocumentWithoutDeletingIt(string schemaId, int schemaVersion)
     {
         var session = new OpenAiCodexSession(
             "future-access-token",
@@ -161,8 +165,8 @@ public sealed class OpenAiPackageCompositionTests
             "future-account-id");
         var payload = JsonSerializer.Serialize(new
         {
-            SchemaId = CodexSessionStore.DocumentSchemaId,
-            SchemaVersion = CodexSessionStore.DocumentSchemaVersion + 1,
+            SchemaId = schemaId,
+            SchemaVersion = schemaVersion,
             Session = session,
         });
         var secrets = new ProviderTestSecrets(new Dictionary<string, string>

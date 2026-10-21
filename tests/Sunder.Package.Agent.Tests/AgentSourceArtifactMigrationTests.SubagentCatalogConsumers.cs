@@ -15,7 +15,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
     {
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
         var peers = AddCatalogPeers(state);
-        var scoped = new FilesRpcObserver(new RegressionTestRpcClient(state, "sunder.package.agent.subagents"));
+        var scoped = new FilesRpcObserver(new RegressionTestRpcClient(state, "younics.ai.agent.subagents"));
         var rpc = new MemoryConsumerRpc(scoped);
         Assert.Null(worker.GetType("Sunder.Package.Agent.Subagents.Rpc.SubagentRuntimeBindings"));
         await using var owned = new GeneratedServiceTestScope(rpc);

@@ -3,17 +3,17 @@ extern alias SubagentsWorker;
 
 using Sunder.Package.Agent.Tests;
 using Sunder.Sdk.Abstractions;
-using SubagentManagementServices = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Subagents_Services;
+using SubagentManagementServices = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Subagents_Services;
 using SubagentsApp::Sunder.Package.Agent.Subagents.Models;
 using SubagentsApp::Sunder.Package.Agent.Subagents.Runtime;
 using SubagentsApp::Sunder.Package.Agent.Shared.Presentation;
 using WorkerService = SubagentsWorker::Sunder.Package.Agent.Subagents.Services.SubagentService;
-using AgentProfileSelectableCapabilityDescriptor = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentProfileSelectableCapabilityDescriptor;
-using AgentRunCheckpointRecord = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentRunCheckpointRecord;
-using AgentToolDescriptor = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentToolDescriptor;
-using AgentTranscriptToolDetailRecord = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTranscriptToolDetailRecord;
-using AgentTranscriptToolDetailRequest = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTranscriptToolDetailRequest;
-using AgentTurnRecord = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnRecord;
+using AgentProfileSelectableCapabilityDescriptor = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentProfileSelectableCapabilityDescriptor;
+using AgentRunCheckpointRecord = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentRunCheckpointRecord;
+using AgentToolDescriptor = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentToolDescriptor;
+using AgentTranscriptToolDetailRecord = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTranscriptToolDetailRecord;
+using AgentTranscriptToolDetailRequest = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTranscriptToolDetailRequest;
+using AgentTurnRecord = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTurnRecord;
 
 namespace Sunder.Package.Agent.TestSupport.Avalonia;
 
@@ -23,7 +23,7 @@ internal sealed class WorkerBackedSubagentManagementGateway : ISubagentManagemen
     ISubsessionSessionReader, ISubsessionCheckpointReader, ISubsessionTranscriptPageReader,
     ISubsessionChangeNotifications, ISubagentPresentationInitialization, IDisposable, IAsyncDisposable
 {
-    private const string PackageId = "sunder.package.agent.subagents";
+    private const string PackageId = "younics.ai.agent.subagents";
     private readonly RegressionTestExtensionCatalog _catalog;
     private readonly RegressionSubagentManagement _management;
     private readonly SubagentAppRuntimeGateway _app;
@@ -39,7 +39,7 @@ internal sealed class WorkerBackedSubagentManagementGateway : ISubagentManagemen
         _catalog = catalog;
         _management = catalog.CreateSubagentRuntimeManagementAsync(service).AsTask().GetAwaiter().GetResult();
         var receiver = catalog.Receiver(PackageId);
-        var registration = receiver.Register(_management.Service, "sunder.package.agent.subagents.owner");
+        var registration = receiver.Register(_management.Service, "younics.ai.agent.subagents.owner");
         catalog.AddGeneratedProvider(PackageId, _management.Service, registration);
         var providers = receiver
             .Providers<SubagentManagementServices.ISubagentsManagementService>()

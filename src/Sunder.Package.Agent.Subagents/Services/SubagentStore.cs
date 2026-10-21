@@ -114,40 +114,20 @@ public sealed class SubagentStore
             throw new InvalidDataException($"The subagent store '{_filePath}' contains malformed JSON.", ex);
         }
 
-        JsonObject root;
-        JsonArray items;
-        if (rootNode is JsonArray legacyItems)
+        if (rootNode is not JsonObject root)
         {
-            var migrated = CreateEmptyDocument();
-            foreach (var item in legacyItems)
-            {
-                migrated.Items.Add(item?.DeepClone());
-            }
-
-            root = migrated.Root;
-            items = migrated.Items;
+            throw new InvalidDataException($"The subagent store '{_filePath}' must contain a versioned object.");
         }
-        else if (rootNode is JsonObject versionedRoot)
+        var version = ReadVersion(root);
+        if (version > CurrentVersion)
         {
-            root = versionedRoot;
-            var version = ReadVersion(root);
-            if (version > CurrentVersion)
-            {
-                throw new NotSupportedException(
-                    $"The subagent store uses version {version}, but this runtime supports up to version {CurrentVersion}. The file was not modified.");
-            }
-
-            if (version != CurrentVersion || root["subagents"] is not JsonArray storedItems)
-            {
-                throw new InvalidDataException(
-                    $"The subagent store '{_filePath}' does not contain a valid version {CurrentVersion} document.");
-            }
-
-            items = storedItems;
+            throw new NotSupportedException(
+                $"The subagent store uses version {version}, but this runtime supports version {CurrentVersion}. The file was not modified.");
         }
-        else
+        if (version != CurrentVersion || root["subagents"] is not JsonArray items)
         {
-            throw new InvalidDataException($"The subagent store '{_filePath}' must contain an object or a legacy array.");
+            throw new InvalidDataException(
+                $"The subagent store '{_filePath}' does not contain a valid version {CurrentVersion} document.");
         }
 
         var records = items.Select(DeserializeRecord).ToArray();

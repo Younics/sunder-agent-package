@@ -1,56 +1,57 @@
 # Agent Extension Author Guide
 
-> **Pre-cutover guide:** examples on this page describe the current
-> descriptor-first migration tree so it remains testable. They are not a final V1
-> release contract. Final V1 authoring derives descriptors and role-local bindings
-> from ordinary source and ships no `Sunder.Package.Agent.Protocol` artifact. See
-> [`../compatibility/README.md`](../compatibility/README.md).
-
-This is the canonical guide for packages that integrate with `sunder.package.agent` 2.x through the schema-first contracts in `Sunder.Package.Agent.Protocol`.
-
-Use the Protocol package and the Sunder SDK only. Extensions must not reference `Sunder.Package.Agent`, `Sunder.App`, or `Sunder.Runtime.Host` implementation assemblies. Runtime capabilities are declared in manifests and published only as schema-validated RPC providers; package-local CLR objects never cross an activation boundary.
+Build extensions as single-project Sunder packages. Select reviewed Agent APIs from
+an exact local archive or explicit Registry; the lock generates dependencies and
+package-local service/model bindings. Extensions use the Sunder SDK and generated
+APIs rather than referencing Agent, App or Runtime Host implementation assemblies.
 
 ## Start Here
 
 | Goal | Guide |
 | --- | --- |
-| Create and build a first extension | [Extension quickstart](extension-quickstart.md) |
-| Choose an RPC contract | [RPC contract catalog](extension-points.md) |
-| Implement chat or embedding models | [Chat and embedding providers](providers.md) |
+| Create and build an extension | [Extension quickstart](extension-quickstart.md) |
+| Choose an API | [Contract catalog](extension-points.md) |
+| Implement chat or embedding models | [Providers](providers.md) |
 | Publish tools and permission surfaces | [Tools and permissions](tools-and-permissions.md) |
-| Add an execution target | [Execution targets, paths, and security](execution-targets.md) |
-| Add prompt context or lifecycle handling | [Prompts, context, lifecycle, and trust](prompts-context-lifecycle.md) |
+| Add an execution target | [Execution targets](execution-targets.md) |
+| Add prompt context or lifecycle handling | [Prompts, context and lifecycle](prompts-context-lifecycle.md) |
 | Customize orchestration or child runs | [Behavior loops and subagents](behavior-loops-and-subagents.md) |
-| Test an extension | [Testing extensions](testing-extensions.md) |
-| Release or troubleshoot a package | [Release, compatibility, and troubleshooting](release-compatibility-troubleshooting.md) |
+| Test an extension | [Testing](testing-extensions.md) |
+| Release or troubleshoot | [Release/compatibility troubleshooting](release-compatibility-troubleshooting.md) |
 
+## Ownership
 
-## Public API Map
+The base Agent Worker owns profiles, workspaces, sessions, transcripts, approvals and
+runs. Provider packages own credentials/continuations; execution packages own target
+configuration; tools, Memory, MCP, Skills and Subagents own their own durable data.
+App roles own presentation and transient editor state. They call generated APIs for
+Worker behavior and never open another package's database or exchange state through
+static objects/shared files.
 
-| Namespace | Contents |
-| --- | --- |
-| `Sunder.Package.Agent.Protocol` | Contract ids, discovery/catalog adapters, bounded wire adapters, and embedded descriptors |
-| `Sunder.Package.Agent.Protocol.Generated.*` | Deterministically generated DTO, client, and provider ABI for each descriptor |
-| `Sunder.Package.Agent.Contracts.Contracts` | Local implementation interfaces accepted by the first-party RPC adapters |
-| `Sunder.Package.Agent.Contracts.Models` | Immutable domain requests, descriptors, results, and enums used by those adapters |
-| `Sunder.Sdk.Rpc` | Host RPC registration, discovery, invocation, endpoint, and error contracts |
+Use settings for preferences, secrets for credentials and package storage for opaque
+state/files. Package-owned migrations/checksums protect durable state. Host-stamped
+provider ownership and exact activation identity determine authority; display metadata
+does not. Stack dependencies derive from the actual owning package of each contribution.
 
-The central generated namespace is intentionally public because extension
-authors implement providers and construct typed clients with its complete wire
-vocabulary. Generated bindings in package-local/owner Protocol assemblies are
-internal implementation details exposed only through maintained wrappers or to
-explicit first-party friend assemblies.
+## Public Surface
 
-Most Agent capabilities belong in an exact-RID Worker V1 executable. Pass activation-owned handlers to `SunderWorker.RunAsync` as immutable `SunderWorkerProviderRegistration` entries. Add an `ISunderAppPackageModule` only for presentation or an App-side client over owner-only RPC.
+- `Sunder.Generated.Packages.Younics_Ai_Agent_Services.<ContractSymbol>`:
+  imported service interfaces and contract-scoped `IPackageApi`, for example
+  `CYounics_Ai_Agent_Chat_Provider.IChatProviderService`. See the
+  [C# name map](ordinary-service-refactor.md#imported-c-name-map).
+- `Sunder.Generated.Packages.Younics_Ai_Agent_Services`: Agent's own
+  source-shaped service interfaces.
+- `Sunder.Generated.Packages.Younics_Ai_Agent_Models`: imported business values.
+- `Sunder.Sdk.Services`: authoring, typed references/catalogs and content.
+- `Sunder.Sdk.Rpc`: advanced transport contracts and authenticated invocation context.
 
-`Sunder.Package.Agent.Protocol` is the shipped NuGet and assembly identity. The repository retains source folder `src/Sunder.Package.Agent.Contracts` and the `Sunder.Package.Agent.Contracts.*` namespaces for the package-local implementation interfaces and stable API types already carried by that artifact. The path and namespace do not identify another package or a cross-package CLR ABI. The Protocol identity bundles 19 descriptors: 18 supported third-party extension points and one reserved first-party observed-execution bridge.
+AI Agent has 18 public contracts: four owned implementation-first services and 14
+declaration-only extension contracts. All 18 `younics.ai.agent.*` API identities
+start at `1.0.0`; the package and its private contracts remain `2.0.0`.
+The platform-owned `sunder.stack.contributor` also remains `2.0.0`. There is no
+Protocol NuGet artifact or authored App/Worker helper project.
 
-## Compatibility Baseline
-
-| Dependency kind | Required range |
-| --- | --- |
-| NuGet: `Sunder.Package.Agent.Protocol` | `[2.0.0,3.0.0)` |
-| Runtime package: `sunder.package.agent` | `>=2.0.0 <3.0.0` |
-| NuGet: `Sunder.Sdk`, `Sunder.Package.Build` | The independent Core SDK minor supported by the Protocol package |
-
-Contract descriptors have independent versions, currently `1.0.0`. Package-family versions and descriptor versions serve different compatibility boundaries.
+For current expectations, byte-record review and inert historical evidence, see
+[compatibility](../compatibility/README.md). Release/native/cold-input requirements
+are maintained in [Releases](RELEASES.md), [native inputs](native-release-inputs.md)
+and [cold inputs](cold-release-inputs.md).

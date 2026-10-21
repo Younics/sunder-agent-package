@@ -13,28 +13,28 @@ using Sunder.Sdk.Rpc;
 using SubagentsApp::Sunder.Package.Agent.Subagents.PackageViews;
 using SubagentsWorker::Sunder.Package.Agent.Subagents.Runtime;
 using SubagentsWorker::Sunder.Package.Agent.Subagents.Services;
-using AgentTranscriptToolDetailRequest = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTranscriptToolDetailRequest;
-using AppAgentRunCheckpointRecord = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentRunCheckpointRecord;
-using AppAgentTurnRecord = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnRecord;
-using AppAgentTurnItemKind = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnItemKind;
-using AppAgentTurnItemRecord = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnItemRecord;
-using AppAgentTurnKind = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnKind;
-using AppAgentMessageRole = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentMessageRole;
-using AppAgentSessionRecord = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionRecord;
-using AppAgentSessionState = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionState;
+using AgentTranscriptToolDetailRequest = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTranscriptToolDetailRequest;
+using AppAgentRunCheckpointRecord = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentRunCheckpointRecord;
+using AppAgentTurnRecord = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTurnRecord;
+using AppAgentTurnItemKind = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTurnItemKind;
+using AppAgentTurnItemRecord = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTurnItemRecord;
+using AppAgentTurnKind = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTurnKind;
+using AppAgentMessageRole = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentMessageRole;
+using AppAgentSessionRecord = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentSessionRecord;
+using AppAgentSessionState = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentSessionState;
 using SubagentSaveRequest = SubagentsApp::Sunder.Package.Agent.Subagents.Runtime.SubagentSaveRequest;
 using SubagentAppRuntimeGateway = SubagentsApp::Sunder.Package.Agent.Subagents.Runtime.SubagentAppRuntimeGateway;
 using AppRuntime = SubagentsApp::Sunder.Package.Agent.Subagents.Runtime;
-using SubagentManagementServices = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Subagents_Services;
+using SubagentManagementServices = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Subagents_Services;
 using WorkerAgentRunCheckpointRecord = AgentWorker::Sunder.Package.Agent.Contracts.Models.AgentRunCheckpointRecord;
 using WorkerAgentTurnRecord = AgentWorker::Sunder.Package.Agent.Contracts.Models.AgentTurnRecord;
-using WorkerGeneratedAgentMessageRole = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentMessageRole;
-using WorkerGeneratedAgentSessionRecord = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionRecord;
-using WorkerGeneratedAgentSessionState = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionState;
-using WorkerGeneratedAgentTurnItemKind = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnItemKind;
-using WorkerGeneratedAgentTurnItemRecord = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnItemRecord;
-using WorkerGeneratedAgentTurnKind = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnKind;
-using WorkerGeneratedAgentTurnRecord = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnRecord;
+using WorkerGeneratedAgentMessageRole = SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentMessageRole;
+using WorkerGeneratedAgentSessionRecord = SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentSessionRecord;
+using WorkerGeneratedAgentSessionState = SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentSessionState;
+using WorkerGeneratedAgentTurnItemKind = SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTurnItemKind;
+using WorkerGeneratedAgentTurnItemRecord = SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTurnItemRecord;
+using WorkerGeneratedAgentTurnKind = SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTurnKind;
+using WorkerGeneratedAgentTurnRecord = SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTurnRecord;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -296,6 +296,40 @@ public sealed class SubagentRuntimeChangeTests
     }
 
     [Fact]
+    public async Task DetachedTranscript_LateBootstrapResetReconcilesTheExactLivePage()
+    {
+        var gateway = new ResnapshotSubsessionGateway();
+        var initial = ResnapshotSubsessionGateway.CreateTurn(gateway.ChildSessionId, "initial");
+        var live = ResnapshotSubsessionGateway.CreateTurn(gateway.ChildSessionId, "live during reset");
+        gateway.RecentTurns = [initial];
+        var dispatcher = new ResetProbeDispatcher();
+        using var viewModel = new SubsessionsViewModel(gateway, gateway, gateway, gateway, dispatcher);
+        await viewModel.InitializeAsync();
+        var initialRow = Assert.Single(viewModel.Messages.OfType<SubsessionTextTranscriptRowViewModel>());
+        await dispatcher.InvokeAsync(() => Assert.True(viewModel.DetachTranscriptFromLatest()));
+        var read = gateway.HoldNextRecentRead();
+        gateway.RaiseResnapshotRequired();
+        await read.Entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        gateway.RaiseTurnChanged(live);
+        var loop = typeof(SubsessionsViewModel).GetField("_runtimeRefresh", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(viewModel)!;
+        var drained = (Task)loop.GetType().GetProperty("WhenIdle")!.GetValue(loop)!;
+        gateway.RecentTurns = [initial, live]; // Exact IDs, not equivalent text under new identities.
+        read.Release.TrySetResult();
+        await drained.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.False(viewModel.IsTranscriptFollowingLatest);
+        Assert.False(viewModel.IsTranscriptLoading);
+        Assert.False(viewModel.HasLoadError, viewModel.StatusText);
+        Assert.Equal(2, viewModel.Messages.OfType<SubsessionTextTranscriptRowViewModel>().Count());
+        Assert.Same(initialRow, viewModel.Messages.OfType<SubsessionTextTranscriptRowViewModel>().First());
+
+        // A reset intentionally reconciles an authoritative page, including the
+        // live record it contains. It is not the ordinary detached-live path.
+        // The diagnostic two-second rejection is retained under its own frame.
+        Assert.False(viewModel.HasNewerTranscriptRows);
+        Assert.Contains(viewModel.Messages.OfType<SubsessionTextTranscriptRowViewModel>(), row => row.RowId == live.TurnId);
+    }
+
+    [Fact]
     public async Task InitialTranscriptTransportFailureSurfacesActionableStatus()
     {
         using var gateway = new SubagentAppRuntimeGateway(new MissingPageSubagentRuntimeClient());
@@ -306,6 +340,103 @@ public sealed class SubagentRuntimeChangeTests
         Assert.Contains("Unable to load subsession transcript", viewModel.StatusText, StringComparison.Ordinal);
         Assert.Contains("did not return the recent subsession transcript page", viewModel.StatusText, StringComparison.Ordinal);
         Assert.Empty(viewModel.Messages);
+    }
+
+    [Theory]
+    [InlineData(SunderRpcErrorKind.Unavailable, "runtime.v1.unavailable")]
+    [InlineData(SunderRpcErrorKind.Unavailable, "rpc.transport.unavailable")]
+    [InlineData(SunderRpcErrorKind.StaleEndpoint, "rpc.caller-retired")]
+    public async Task AppGateway_RuntimeSnapshotRecoversKnownPublicationAvailabilityAsOneSharedRead(SunderRpcErrorKind kind, string code)
+    {
+        var failure = new SunderRpcException(new(kind, code, "The publication is still in progress.",
+            SunderRpcDispatchState.PossiblyDispatched, SunderRpcRetrySafety.Unsafe));
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var client = new PublicationSnapshotClient(async (count, _) =>
+        {
+            if (count == 1) { await release.Task; throw failure; }
+            return SubagentProjectionContent.Create(new SubagentProjection(Sessions: []));
+        });
+        await using var gateway = new SubagentAppRuntimeGateway(client);
+        var first = gateway.ListSessionsAsync();
+        var second = gateway.ListSessionsAsync();
+        release.SetResult();
+        Assert.Empty((await first.WaitAsync(TimeSpan.FromSeconds(5))).Sessions);
+        Assert.Empty((await second.WaitAsync(TimeSpan.FromSeconds(5))).Sessions);
+        Assert.Equal(2, client.Reads); // Retry the known read, never each waiting presentation operation.
+    }
+
+    [Theory]
+    [InlineData(SunderRpcErrorKind.PermissionDenied, "rpc.permission-denied")]
+    [InlineData(SunderRpcErrorKind.Protocol, "rpc.binding.invalid-catalog")]
+    [InlineData(SunderRpcErrorKind.Unavailable, "package.policy.security-blocked")]
+    [InlineData(SunderRpcErrorKind.StaleEndpoint, "rpc.unrelated-stale-endpoint")]
+    public async Task AppGateway_RuntimeSnapshotDoesNotRetrySecurityProtocolOrUnrelatedFailures(SunderRpcErrorKind kind, string code)
+    {
+        var failure = new SunderRpcException(new(kind, code, "Do not replace this failure."));
+        var client = new PublicationSnapshotClient((_, _) => Task.FromException<SunderContent>(failure));
+        await using var gateway = new SubagentAppRuntimeGateway(client);
+        Assert.Same(failure, await Assert.ThrowsAsync<SunderRpcException>(() => gateway.ListSessionsAsync()));
+        Assert.Equal(1, client.Reads);
+    }
+
+    [Fact]
+    public async Task AppGateway_PublicationReadRecoveryNeverReplaysCreateMutation()
+    {
+        var failure = new SunderRpcException(new(SunderRpcErrorKind.Unavailable, "rpc.transport.unavailable", "Uncertain mutation.",
+            SunderRpcDispatchState.PossiblyDispatched, SunderRpcRetrySafety.Unsafe));
+        var client = new PublicationSnapshotClient((_, _) => throw new InvalidOperationException("No metadata read was requested.")) { CreateFailure = failure };
+        await using var gateway = new SubagentAppRuntimeGateway(client);
+        Assert.Same(failure, await Assert.ThrowsAsync<SunderRpcException>(() => gateway.CreateSubagentAsync("A subagent")));
+        Assert.Equal(1, client.Creates);
+        Assert.Equal(0, client.Reads);
+    }
+
+    [Fact]
+    public async Task AppGateway_RuntimeSnapshotPersistentAvailabilityFailureRemainsBoundedAndActionable()
+    {
+        var failure = new SunderRpcException(new(SunderRpcErrorKind.Unavailable, "runtime.v1.unavailable", "Still unavailable."));
+        var client = new PublicationSnapshotClient((_, _) => Task.FromException<SunderContent>(failure));
+        await using var gateway = new SubagentAppRuntimeGateway(client);
+        Assert.Same(failure, await Assert.ThrowsAsync<SunderRpcException>(() => gateway.ListSessionsAsync().WaitAsync(TimeSpan.FromSeconds(5))));
+        Assert.InRange(client.Reads, 2, 6);
+    }
+
+    [Fact]
+    public async Task AppGateway_RuntimeSnapshotCancelsOnlyTheWaiterAndDisposalCancelsOwnedRecovery()
+    {
+        using var caller = new CancellationTokenSource();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var client = new PublicationSnapshotClient(async (count, token) =>
+        {
+            if (count == 1) throw new SunderRpcException(new(SunderRpcErrorKind.Unavailable, "runtime.v1.unavailable", "Publishing."));
+            entered.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            return SubagentProjectionContent.Create(new SubagentProjection(Sessions: []));
+        });
+        var gateway = new SubagentAppRuntimeGateway(client);
+        var cancelledWaiter = gateway.ListSessionsAsync(caller.Token);
+        var remainingWaiter = gateway.ListSessionsAsync();
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        caller.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => cancelledWaiter);
+        Assert.False(remainingWaiter.IsCompleted);
+        await gateway.DisposeAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => remainingWaiter.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(2, client.Reads);
+    }
+
+    private sealed class PublicationSnapshotClient(Func<int, CancellationToken, Task<SunderContent>> read) : SubagentManagementClientStub
+    {
+        internal int Reads;
+        internal int Creates;
+        internal Exception? CreateFailure { get; init; }
+        public override ValueTask<SunderContent> RuntimeCatalogAsync(CancellationToken cancellationToken = default)
+            => new(read(Interlocked.Increment(ref Reads), cancellationToken));
+        public override ValueTask<SunderContent> CreateAsync(string displayName, CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref Creates);
+            return ValueTask.FromException<SunderContent>(CreateFailure ?? new InvalidOperationException("No mutation was requested."));
+        }
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition)
@@ -564,6 +695,8 @@ public sealed class SubagentRuntimeChangeTests
         private readonly Guid _otherChildSessionId = Guid.NewGuid();
         private int _catalogReadCount;
         private int _recentReadCount;
+        private RecentReadGate? _nextRecentRead;
+        internal IReadOnlyList<AppAgentTurnRecord>? RecentTurns { get; set; }
 
         internal Guid ChildSessionId { get; } = Guid.NewGuid();
         internal int RecentReadCount => Volatile.Read(ref _recentReadCount);
@@ -622,15 +755,19 @@ public sealed class SubagentRuntimeChangeTests
             CancellationToken cancellationToken = default)
             => Task.FromResult<IReadOnlyList<AppAgentRunCheckpointRecord>>([]);
 
-        public Task<AppRuntime.SubsessionTranscriptPage> ListRecentTurnsAsync(
+        public async Task<AppRuntime.SubsessionTranscriptPage> ListRecentTurnsAsync(
             Guid sessionId,
             int limit,
             CancellationToken cancellationToken = default)
         {
             var read = Interlocked.Increment(ref _recentReadCount);
-            return Task.FromResult(new AppRuntime.SubsessionTranscriptPage(
-                [CreateTurn(sessionId, read == 1 ? "initial" : "resnapshot")],
-                false));
+            if (Interlocked.Exchange(ref _nextRecentRead, null) is { } gate)
+            {
+                gate.Entered.TrySetResult();
+                await gate.Release.Task.WaitAsync(cancellationToken);
+            }
+            return new AppRuntime.SubsessionTranscriptPage(
+                RecentTurns ?? [CreateTurn(sessionId, read == 1 ? "initial" : "resnapshot")], false);
         }
 
         public Task<AppRuntime.SubsessionTranscriptPage> ListTurnsBeforeAsync(
@@ -660,11 +797,13 @@ public sealed class SubagentRuntimeChangeTests
             => Task.FromResult(new AppRuntime.SubsessionAroundTurnPage([], false, false, turnId));
 
         internal void RaiseResnapshotRequired() => ResnapshotRequired?.Invoke();
+        internal RecentReadGate HoldNextRecentRead() => _nextRecentRead = new();
 
         internal void RaiseTurnChanged(string content)
             => TurnChanged?.Invoke(ChildSessionId, CreateTurn(ChildSessionId, content));
+        internal void RaiseTurnChanged(AppAgentTurnRecord turn) => TurnChanged?.Invoke(ChildSessionId, turn);
 
-        private static AppAgentTurnRecord CreateTurn(Guid sessionId, string content)
+        internal static AppAgentTurnRecord CreateTurn(Guid sessionId, string content)
         {
             var turnId = Guid.NewGuid();
             var now = DateTimeOffset.UtcNow;
@@ -695,6 +834,19 @@ public sealed class SubagentRuntimeChangeTests
                 UpdatedAtUtc = RpcTimestamp(now),
             };
         }
+    }
+
+    private sealed class RecentReadGate
+    {
+        internal TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
+    private sealed class ResetProbeDispatcher : SubagentsApp::Sunder.Package.Agent.Shared.Presentation.IPresentationDispatcher
+    {
+        private readonly object _gate = new();
+        public bool CheckAccess() => Monitor.IsEntered(_gate);
+        public Task InvokeAsync(Action action) { lock (_gate) action(); return Task.CompletedTask; }
     }
 
     private sealed class TestRuntimeCatalog : IAgentRuntimeCatalog

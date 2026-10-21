@@ -141,7 +141,7 @@ def read_trx(root: Path, trx_path: Path) -> tuple[list[dict[str, object]], dict[
 
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Generate and optionally verify exact Sunder Agent TRX evidence."
+        description="Generate and optionally verify exact AI Agent TRX evidence."
     )
     parser.add_argument("trx_directory", type=Path)
     parser.add_argument("--inventory", type=Path)

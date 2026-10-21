@@ -49,7 +49,7 @@ agent_commit="$(jq -er '.agentCommit' "$native_evidence")"
 core_tag="$(jq -er '.core.tag' "$native_evidence")"
 core_commit="$(jq -er '.core.commit' "$native_evidence")"
 core_package_version="$(jq -er '.core.packageVersion' "$native_evidence")"
-bash "$script_dir/verify-native-family-evidence.sh" \
+python3 -B "$script_dir/native-family.py" verify \
   "$native_evidence" "$archive_directory" "$repository_root/packages.json" \
   "$version" "$agent_commit" "$core_tag" "$core_commit" "$core_package_version" >/dev/null
 

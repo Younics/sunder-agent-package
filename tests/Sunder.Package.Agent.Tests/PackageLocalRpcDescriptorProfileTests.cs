@@ -6,26 +6,16 @@ namespace Sunder.Package.Agent.Tests;
 
 public sealed class PackageLocalRpcDescriptorProfileTests
 {
-    public static TheoryData<string> DescriptorPaths => new()
-    {
-        "src/Sunder.Package.Agent.Builder/Protocol/Contracts/builder-runtime.rpc.json",
-        "src/Sunder.Package.Agent.Mcp/Shared/Contracts/mcp-management.rpc.json",
-        "src/Sunder.Package.Agent.Memory.Semantic/Protocol/Contracts/memory-inspector.rpc.json",
-        "src/Sunder.Package.Agent.Execution.Local/Protocol/Contracts/local-execution-presentation.rpc.json",
-        "src/Sunder.Package.Agent.Execution.Docker/Protocol/Contracts/docker-execution-presentation.rpc.json",
-        "src/Sunder.Package.Agent.Provider.OpenAI/Shared/Contracts/openai-management.rpc.json",
-        "src/Sunder.Package.Agent.Provider.Gemini/Protocol/Contracts/credential-settings.rpc.json",
-        "src/Sunder.Package.Agent.Provider.Anthropic/Protocol/Contracts/credential-settings.rpc.json",
-        "src/Sunder.Package.Agent.Provider.LMStudio/Protocol/Contracts/credential-settings.rpc.json",
-        "src/Sunder.Package.Agent.Skills/Protocol/Contracts/skills-owner.rpc.json",
-        "src/Sunder.Package.Agent.Subagents/Protocol/Contracts/subagents-owner.rpc.json",
-    };
+    public static TheoryData<string> ContractIds => new(CurrentContractInventory.Contracts
+        .Where(value => value.Exposure == "package" && value.PackageId != CurrentContractInventory.AgentId)
+        .Select(value => value.ContractId));
 
     [Theory]
-    [MemberData(nameof(DescriptorPaths))]
-    public void Descriptor_UsesStrictSemanticValueProfile(string relativePath)
+    [MemberData(nameof(ContractIds))]
+    public void Descriptor_UsesStrictSemanticValueProfile(string contractId)
     {
-        var descriptor = Assert.Single(CanonicalDescriptorInventory.Read(), value => value.HistoricalPath == relativePath).Descriptor;
+        var relativePath = CurrentContractInventory.Find(contractId).Source;
+        var descriptor = CurrentPrivateRpcDescriptors.Get(contractId);
         var bytes = descriptor.GetCanonicalUtf8();
         using var document = JsonDocument.Parse(bytes);
         var root = document.RootElement;
@@ -54,7 +44,7 @@ public sealed class PackageLocalRpcDescriptorProfileTests
     [Fact]
     public void DockerPresentationDescriptor_PreservesApprovedNumericStatusAndImageReferenceBounds()
     {
-        var descriptor = CurrentPrivateRpcDescriptors.Get("sunder.package.agent.execution.docker.presentation");
+        var descriptor = CurrentPrivateRpcDescriptors.Get("younics.ai.agent.execution.docker.presentation");
         const string statusReference = "#/$defs/DockerImageStatus";
         const string imageDefinitionReference = "#/$defs/DockerImageDefinition";
 
@@ -76,7 +66,7 @@ public sealed class PackageLocalRpcDescriptorProfileTests
         var descriptors = CanonicalDescriptorInventory.Read();
         var retainedMaximums = new List<string>();
 
-        Assert.Equal(32, descriptors.Count);
+        Assert.Equal(31, descriptors.Count);
         foreach (var entry in descriptors)
         {
             var descriptor = entry.Descriptor;
@@ -95,36 +85,36 @@ public sealed class PackageLocalRpcDescriptorProfileTests
         Assert.Equal(
             new[]
             {
-                "sunder.agent.behavior.loop:#/$defs/CSunder_Agent_Run_Control_RunControl_ServiceReference/properties/activationEpoch=9007199254740991",
-                "sunder.agent.behavior.loop:#/$defs/CSunder_Agent_Run_Control_RunControl_ServiceReference/properties/sessionGeneration=9007199254740991",
-                "sunder.agent.execution.target:#/$defs/AgentFileReadRequest/properties/limit/oneOf/1=2000",
-                "sunder.agent.owner.runtime:#/$defs/AgentChatSnapshotRequest/properties/initialTranscriptLimit=500",
-                "sunder.agent.owner.runtime:#/$defs/AgentTranscriptAroundTurnRequest/properties/afterLimit=30",
-                "sunder.agent.owner.runtime:#/$defs/AgentTranscriptAroundTurnRequest/properties/beforeLimit=30",
-                "sunder.agent.owner.runtime:#/$defs/AgentTranscriptPageRequest/properties/limit=500",
-                "sunder.agent.owner.runtime:#/$defs/HistorySearchRequest/properties/limit=100",
-                "sunder.agent.owner.runtime:#/$defs/HistorySearchStateRequest/properties/limit=200",
-                "sunder.agent.prompt.context.contributor:#/$defs/CSunder_Agent_Execution_Target_ExecutionTarget_ServiceReference/properties/activationEpoch=9007199254740991",
-                "sunder.agent.prompt.context.contributor:#/$defs/CSunder_Agent_Execution_Target_ExecutionTarget_ServiceReference/properties/sessionGeneration=9007199254740991",
-                "sunder.agent.run.control:#/$defs/RunControlListRecentTurnsRequest/properties/limit=100",
-                "sunder.agent.runtime.catalog:#/$defs/RuntimeCatalogListRecentTranscriptHeadersRequest/properties/limit=1000",
-                "sunder.agent.runtime.catalog:#/$defs/RuntimeCatalogListRecentTurnsRequest/properties/limit=1000",
-                "sunder.agent.runtime.catalog:#/$defs/RuntimeCatalogListTranscriptHeadersAfterRequest/properties/limit=1000",
-                "sunder.agent.runtime.catalog:#/$defs/RuntimeCatalogListTranscriptHeadersBeforeRequest/properties/limit=1000",
-                "sunder.agent.runtime.catalog:#/$defs/RuntimeCatalogListTurnsAfterRequest/properties/limit=1000",
-                "sunder.agent.runtime.catalog:#/$defs/RuntimeCatalogListTurnsBeforeRequest/properties/limit=1000",
-                "sunder.agent.tool.execution.observed:#/$defs/CSunder_Agent_Execution_Target_ExecutionTarget_ServiceReference/properties/activationEpoch=9007199254740991",
-                "sunder.agent.tool.execution.observed:#/$defs/CSunder_Agent_Execution_Target_ExecutionTarget_ServiceReference/properties/sessionGeneration=9007199254740991",
-                "sunder.agent.tool.source:#/$defs/CSunder_Agent_Execution_Target_ExecutionTarget_ServiceReference/properties/activationEpoch=9007199254740991",
-                "sunder.agent.tool.source:#/$defs/CSunder_Agent_Execution_Target_ExecutionTarget_ServiceReference/properties/sessionGeneration=9007199254740991",
-                "sunder.agent.workspace.execution.resolver:#/$defs/CSunder_Agent_Execution_Target_ExecutionTarget_ServiceReference/properties/activationEpoch=9007199254740991",
-                "sunder.agent.workspace.execution.resolver:#/$defs/CSunder_Agent_Execution_Target_ExecutionTarget_ServiceReference/properties/sessionGeneration=9007199254740991",
-                "sunder.package.agent.subagents.owner:#/$defs/ManagementAroundTurnRequest/properties/afterLimit=30",
-                "sunder.package.agent.subagents.owner:#/$defs/ManagementAroundTurnRequest/properties/beforeLimit=30",
-                "sunder.package.agent.subagents.owner:#/$defs/ManagementRecentTurnsRequest/properties/limit=500",
-                "sunder.package.agent.subagents.owner:#/$defs/ManagementTurnsAfterRequest/properties/limit=500",
-                "sunder.package.agent.subagents.owner:#/$defs/ManagementTurnsBeforeRequest/properties/limit=500",
-            },
+                "younics.ai.agent.behavior.loop:#/$defs/CYounics_Ai_Agent_Run_Control_RunControl_ServiceReference/properties/activationEpoch=9007199254740991",
+                "younics.ai.agent.behavior.loop:#/$defs/CYounics_Ai_Agent_Run_Control_RunControl_ServiceReference/properties/sessionGeneration=9007199254740991",
+                "younics.ai.agent.execution.target:#/$defs/AgentFileReadRequest/properties/limit/oneOf/1=2000",
+                "younics.ai.agent.owner.runtime:#/$defs/AgentChatSnapshotRequest/properties/initialTranscriptLimit=500",
+                "younics.ai.agent.owner.runtime:#/$defs/AgentTranscriptAroundTurnRequest/properties/afterLimit=30",
+                "younics.ai.agent.owner.runtime:#/$defs/AgentTranscriptAroundTurnRequest/properties/beforeLimit=30",
+                "younics.ai.agent.owner.runtime:#/$defs/AgentTranscriptPageRequest/properties/limit=500",
+                "younics.ai.agent.owner.runtime:#/$defs/HistorySearchRequest/properties/limit=100",
+                "younics.ai.agent.owner.runtime:#/$defs/HistorySearchStateRequest/properties/limit=200",
+                "younics.ai.agent.prompt.context.contributor:#/$defs/CYounics_Ai_Agent_Execution_Target_ExecutionTarget_ServiceReference/properties/activationEpoch=9007199254740991",
+                "younics.ai.agent.prompt.context.contributor:#/$defs/CYounics_Ai_Agent_Execution_Target_ExecutionTarget_ServiceReference/properties/sessionGeneration=9007199254740991",
+                "younics.ai.agent.run.control:#/$defs/RunControlListRecentTurnsRequest/properties/limit=100",
+                "younics.ai.agent.runtime.catalog:#/$defs/RuntimeCatalogListRecentTranscriptHeadersRequest/properties/limit=1000",
+                "younics.ai.agent.runtime.catalog:#/$defs/RuntimeCatalogListRecentTurnsRequest/properties/limit=1000",
+                "younics.ai.agent.runtime.catalog:#/$defs/RuntimeCatalogListTranscriptHeadersAfterRequest/properties/limit=1000",
+                "younics.ai.agent.runtime.catalog:#/$defs/RuntimeCatalogListTranscriptHeadersBeforeRequest/properties/limit=1000",
+                "younics.ai.agent.runtime.catalog:#/$defs/RuntimeCatalogListTurnsAfterRequest/properties/limit=1000",
+                "younics.ai.agent.runtime.catalog:#/$defs/RuntimeCatalogListTurnsBeforeRequest/properties/limit=1000",
+                "younics.ai.agent.tool.execution.observed:#/$defs/CYounics_Ai_Agent_Execution_Target_ExecutionTarget_ServiceReference/properties/activationEpoch=9007199254740991",
+                "younics.ai.agent.tool.execution.observed:#/$defs/CYounics_Ai_Agent_Execution_Target_ExecutionTarget_ServiceReference/properties/sessionGeneration=9007199254740991",
+                "younics.ai.agent.tool.source:#/$defs/CYounics_Ai_Agent_Execution_Target_ExecutionTarget_ServiceReference/properties/activationEpoch=9007199254740991",
+                "younics.ai.agent.tool.source:#/$defs/CYounics_Ai_Agent_Execution_Target_ExecutionTarget_ServiceReference/properties/sessionGeneration=9007199254740991",
+                "younics.ai.agent.workspace.execution.resolver:#/$defs/CYounics_Ai_Agent_Execution_Target_ExecutionTarget_ServiceReference/properties/activationEpoch=9007199254740991",
+                "younics.ai.agent.workspace.execution.resolver:#/$defs/CYounics_Ai_Agent_Execution_Target_ExecutionTarget_ServiceReference/properties/sessionGeneration=9007199254740991",
+                "younics.ai.agent.subagents.owner:#/$defs/ManagementAroundTurnRequest/properties/afterLimit=30",
+                "younics.ai.agent.subagents.owner:#/$defs/ManagementAroundTurnRequest/properties/beforeLimit=30",
+                "younics.ai.agent.subagents.owner:#/$defs/ManagementRecentTurnsRequest/properties/limit=500",
+                "younics.ai.agent.subagents.owner:#/$defs/ManagementTurnsAfterRequest/properties/limit=500",
+                "younics.ai.agent.subagents.owner:#/$defs/ManagementTurnsBeforeRequest/properties/limit=500",
+            }.Order(StringComparer.Ordinal),
             retainedMaximums.Order(StringComparer.Ordinal));
     }
 
@@ -247,7 +237,7 @@ public sealed class PackageLocalRpcDescriptorProfileTests
         string contractId,
         string schemaPath)
     {
-        if (contractId == "sunder.package.agent.execution.docker.presentation"
+        if (contractId == "younics.ai.agent.execution.docker.presentation"
             && schemaPath == "#/$defs/DockerImageStatus")
         {
             Assert.Equal("integer", value.GetProperty("type").GetString());
@@ -267,16 +257,16 @@ public sealed class PackageLocalRpcDescriptorProfileTests
         JsonElement maximumLength)
     {
         var expected = (Minimum: 64, Maximum: 64);
-        if (contractId == "sunder.package.agent.execution.docker.presentation"
+        if (contractId == "younics.ai.agent.execution.docker.presentation"
             && schemaPath == "#/$defs/DockerImageDefinition/properties/imageReference")
             expected = (1, 512);
         if (schemaPath.Contains("_ServiceReference/properties/", StringComparison.Ordinal))
         {
-            Assert.Contains(contractId, new[] { "sunder.agent.behavior.loop", "sunder.agent.prompt.context.contributor",
-                "sunder.agent.tool.execution.observed", "sunder.agent.tool.source", "sunder.agent.workspace.execution.resolver" });
-            var reference = contractId == "sunder.agent.behavior.loop"
-                ? "CSunder_Agent_Run_Control_RunControl_ServiceReference"
-                : "CSunder_Agent_Execution_Target_ExecutionTarget_ServiceReference";
+            Assert.Contains(contractId, new[] { "younics.ai.agent.behavior.loop", "younics.ai.agent.prompt.context.contributor",
+                "younics.ai.agent.tool.execution.observed", "younics.ai.agent.tool.source", "younics.ai.agent.workspace.execution.resolver" });
+            var reference = contractId == "younics.ai.agent.behavior.loop"
+                ? "CYounics_Ai_Agent_Run_Control_RunControl_ServiceReference"
+                : "CYounics_Ai_Agent_Execution_Target_ExecutionTarget_ServiceReference";
             Assert.StartsWith("#/$defs/" + reference + "/properties/", schemaPath, StringComparison.Ordinal);
             expected = schemaPath.Split('/').Last() switch
             {

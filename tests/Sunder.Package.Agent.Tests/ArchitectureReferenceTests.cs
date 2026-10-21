@@ -25,7 +25,7 @@ public sealed class ArchitectureReferenceTests
         services.AddSingleton<IPackageContext>(packageScope.Context);
         using var rpcState = new RegressionTestRpcState();
         services.AddSingleton<Sunder.Sdk.Rpc.ISunderRpcClient>(
-            new RegressionTestRpcClient(rpcState, "sunder.package.agent"));
+            new RegressionTestRpcClient(rpcState, "younics.ai.agent"));
         var module = (ISunderAppPackageModule)Activator.CreateInstance(
             Assembly.Load("Sunder.Package.Agent.App").GetType("Sunder.Generated.Package.AppModule", true)!)!;
         module.ConfigureAppServices(services, packageScope.Context);
@@ -140,7 +140,7 @@ public sealed class ArchitectureReferenceTests
     }
 
     [Fact]
-    public void AgentExtensionPackages_SelectAgentApiWithoutProtocolProjectReferences()
+    public void AgentExtensionPackages_SelectAgentApiWhileBuilderRemainsIndependent()
     {
         var protocolProjectPath = Path.Combine(
             AgentPackageRepositoryInventory.RepositoryRoot.FullName,
@@ -154,7 +154,10 @@ public sealed class ArchitectureReferenceTests
         {
             Assert.DoesNotContain(protocolProjectPath, GetProjectReferencePaths(projectPath), StringComparer.OrdinalIgnoreCase);
             using var locked = System.Text.Json.JsonDocument.Parse(File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(projectPath)!, "sunder-contracts.lock.json")));
-            Assert.True(locked.RootElement.GetProperty("packageArtifacts").TryGetProperty("sunder.package.agent", out _));
+            if (Path.GetFileNameWithoutExtension(projectPath) == "Sunder.Package.Agent.Builder")
+                foreach (var section in new[] { "packageArtifacts", "packageImports", "providerImports", "platformImports" })
+                    Assert.Empty(locked.RootElement.GetProperty(section).EnumerateObject());
+            else Assert.True(locked.RootElement.GetProperty("packageArtifacts").TryGetProperty("younics.ai.agent", out _));
         }
     }
 
@@ -188,10 +191,22 @@ public sealed class ArchitectureReferenceTests
             .ToArray();
 
         Assert.NotEmpty(sourceLinks);
-        var reviewedPublicLinks = AgentSourceMigrationProjectChanges.ReviewedCentralRelocations.Select(pair => pair.Value)
-            .Concat(AgentSourceMigrationProjectChanges.AgentSemanticHelpers)
-            .Concat(["src/Sunder.Package.Agent.Provider.Shared/Models/ProviderChatModels.cs", "src/Sunder.Package.Agent.Shared/Execution/AgentExecutionFacetIds.cs"])
-            .ToHashSet(StringComparer.Ordinal);
+        var reviewedPublicLinks = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "src/Sunder.Package.Agent/Models/Providers/AgentChatClientContext.cs",
+            "src/Sunder.Package.Agent/Models/Providers/AgentChatProviderException.cs",
+            "src/Sunder.Package.Agent/Models/Providers/AgentChatModelOptionKeys.cs",
+            "src/Sunder.Package.Agent/Models/Tools/AgentToolArgumentObject.cs",
+            "src/Sunder.Package.Agent/Models/Tools/AgentToolCallRequest.cs",
+            "src/Sunder.Package.Agent/Models/Tools/AgentPayloadLimits.cs",
+            "src/Sunder.Package.Agent/Models/Tools/AgentPermissionBoundaryIds.cs",
+            "src/Sunder.Package.Agent/Models/Tools/AgentFileReadErrorCodes.cs",
+            "src/Sunder.Package.Agent/Models/Tools/AgentToolResultErrorCodes.cs",
+            "src/Sunder.Package.Agent/Models/Execution/AgentFileSearchErrorCodes.cs",
+            "src/Sunder.Package.Agent/Models/Execution/AgentShellSyntaxKinds.cs",
+            "src/Sunder.Package.Agent.Provider.Shared/Models/ProviderChatModels.cs",
+            "src/Sunder.Package.Agent.Shared/Execution/AgentExecutionFacetIds.cs",
+        };
         foreach (var sourceLink in sourceLinks)
         {
             Assert.True(
@@ -206,7 +221,12 @@ public sealed class ArchitectureReferenceTests
             if (!string.Equals(declarationOwner, sourceOwner, StringComparison.OrdinalIgnoreCase))
             {
                 var relative = "src/" + Path.GetRelativePath(sourceRoot, sourceLink.SourcePath).Replace('\\', '/');
-                if (reviewedPublicLinks.Contains(relative)) continue; // Reviewed role-local semantic source; identity is checked by the frozen oracle.
+                if (reviewedPublicLinks.Contains(relative)) continue; // Current role-local shared algorithms and policy constants.
+                if (declarationOwner == "Sunder.Agent.Execution.Common")
+                {
+                    Assert.Contains(relative, ExecutionCommonDomainSources);
+                    continue;
+                }
                 Assert.Contains(sourceOwner, AllowedCrossFamilySourceOwners);
                 Assert.DoesNotMatch(PublicTypeDeclarationPattern, File.ReadAllText(sourceLink.SourcePath));
             }
@@ -425,11 +445,10 @@ public sealed class ArchitectureReferenceTests
         }
     }
 
-    private static string[] CurrentDomainSources() => AgentSourceMigrationProjectChanges.ReviewedCentralRelocations
-        .Where(pair => pair.Value.StartsWith("src/", StringComparison.Ordinal))
-        .Select(pair => Path.Combine(AgentPackageRepositoryInventory.RepositoryRoot.FullName, pair.Value))
-        .Where(File.Exists)
-        .Distinct(StringComparer.Ordinal)
+    private static string[] CurrentDomainSources() => Directory.EnumerateFiles(
+            Path.Combine(AgentPackageRepositoryInventory.RepositoryRoot.FullName, "src/Sunder.Package.Agent"), "*.cs", SearchOption.AllDirectories)
+        .Where(AgentPackageRepositoryInventory.IsSourceFile)
+        .Where(path => Regex.IsMatch(File.ReadAllText(path), @"^namespace Sunder\.Package\.Agent\.(?:Contracts(?:\.[\w.]+)?|Protocol);", RegexOptions.Multiline | RegexOptions.CultureInvariant))
         .ToArray();
 
     private static readonly Regex PublicTypeDeclarationPattern = new(
@@ -464,12 +483,30 @@ public sealed class ArchitectureReferenceTests
         ],
         StringComparer.OrdinalIgnoreCase);
 
+    private static readonly IReadOnlySet<string> ExecutionCommonDomainSources = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "src/Sunder.Package.Agent/Models/AgentWorkspaceRecord.cs",
+        "src/Sunder.Package.Agent/Models/Execution/AgentWorkspaceBindingRecord.cs",
+        "src/Sunder.Package.Agent/Models/Execution/AgentExecutionTargetContext.cs",
+        "src/Sunder.Package.Agent/Models/Execution/AgentExecutionTargetDescriptor.cs",
+        "src/Sunder.Package.Agent/Models/Execution/AgentFileSearchModels.cs",
+        "src/Sunder.Package.Agent/Models/Execution/AgentScopedInstructionDiscoveryModels.cs",
+        "src/Sunder.Package.Agent/Models/Tools/AgentResourceClaim.cs",
+        "src/Sunder.Package.Agent/Models/Tools/AgentResolvedResource.cs",
+        "src/Sunder.Package.Agent/Models/Tools/AgentFileReadRequest.cs",
+        "src/Sunder.Package.Agent/Models/Tools/AgentFileReadResult.cs",
+        "src/Sunder.Package.Agent/Models/Tools/AgentFileWriteRequest.cs",
+        "src/Sunder.Package.Agent/Models/Tools/AgentFileDeleteRequest.cs",
+        "src/Sunder.Package.Agent/Models/Tools/AgentFileMutationResult.cs",
+    };
+
     private static readonly IReadOnlySet<string> AllowedFriendAssemblies = new HashSet<string>(
         [
             "Sunder.Package.Agent -> Sunder.Package.Agent.Tests",
             "Sunder.Package.Agent -> Sunder.Package.Agent.Presentation.State.Tests",
             "Sunder.Package.Agent -> Sunder.Package.Agent.Presentation.Tests",
             "Sunder.Package.Agent.Builder -> Sunder.Package.Agent.Tests",
+            "Sunder.Package.Agent.Builder -> Sunder.Package.Agent.Presentation.Tests",
             "Sunder.Package.Agent.Execution.Docker -> Sunder.Package.Agent.Execution.Local.Tests",
             "Sunder.Package.Agent.Execution.Docker -> Sunder.Package.Agent.Tests",
             "Sunder.Package.Agent.Execution.Local -> Sunder.Package.Agent.Execution.Local.Tests",
@@ -526,6 +563,7 @@ public sealed class ArchitectureReferenceTests
     {
         var projectDirectory = Path.GetDirectoryName(projectPath)!;
         var includes = GetReferenceIncludes(projectPath, "Compile")
+            .SelectMany(static include => include.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             .Where(static include => include.StartsWith("..", StringComparison.Ordinal)
                                      || include.Contains("$(MSBuildThisFileDirectory)", StringComparison.Ordinal));
 

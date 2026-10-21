@@ -1,7 +1,7 @@
 using Microsoft.Extensions.AI;
 using OpenAI;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using Sunder.Generated.Packages.Younics_Ai_Agent_Models;
+using IChatProviderService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Chat_Provider.IChatProviderService;
 using Sunder.Package.Agent.Provider.OpenAI.Auth;
 using Sunder.Package.Agent.Provider.OpenAI.Transport;
 using Sunder.Package.Agent.Provider.Shared;
@@ -78,7 +78,7 @@ public sealed partial class OpenAiAgentProvider(
                 Status = configured ? AgentProviderReadinessStatus.Ready : AgentProviderReadinessStatus.NeedsConfiguration,
                 Message = configured
                     ? "API-key mode is active and an OpenAI API key is stored."
-                    : "API-key mode is active, but no OpenAI API key is stored. Open Settings -> Packages -> Sunder Agent Provider OpenAI and store an API key.",
+                    : "API-key mode is active, but no OpenAI API key is stored. Open Settings -> Packages -> AI Agent - OpenAI and store an API key.",
             };
         }
 
@@ -89,7 +89,7 @@ public sealed partial class OpenAiAgentProvider(
             Status = session is not null ? AgentProviderReadinessStatus.Ready : AgentProviderReadinessStatus.NeedsConfiguration,
             Message = session is not null
                 ? $"Codex-connected mode is active and authenticated until {session.ExpiresAtUtc:O}."
-                : "Codex-connected mode is active, but ChatGPT Plus/Pro is not authorized. Open Settings -> Packages -> Sunder Agent Provider OpenAI and authorize.",
+                : "Codex-connected mode is active, but ChatGPT Plus/Pro is not authorized. Open Settings -> Packages -> AI Agent - OpenAI and authorize.",
         };
     }
 
@@ -126,7 +126,7 @@ public sealed partial class OpenAiAgentProvider(
             {
                 throw new AgentChatProviderException(
                     "openai-auth-required",
-                    "### OpenAI API key required\n\nAPI-key mode is active. Open **Settings -> Packages -> Sunder Agent Provider OpenAI** and store an API key.",
+                    "### OpenAI API key required\n\nAPI-key mode is active. Open **Settings -> Packages -> AI Agent - OpenAI** and store an API key.",
                     "openai-auth-required");
             }
 
@@ -157,7 +157,7 @@ public sealed partial class OpenAiAgentProvider(
         {
             throw new AgentChatProviderException(
                 "openai-codex-auth-required",
-                "### Codex authorization required\n\nCodex-connected mode is active. Open **Settings -> Packages -> Sunder Agent Provider OpenAI**, click **Authorize**, and then retry.",
+                "### Codex authorization required\n\nCodex-connected mode is active. Open **Settings -> Packages -> AI Agent - OpenAI**, click **Authorize**, and then retry.",
                 "openai-codex-auth-required");
         }
 

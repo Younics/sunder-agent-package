@@ -282,7 +282,7 @@ public sealed class SkillRuntimeTransferTests
         Assert.Equal("skills.owner.operation-failed", error.Error.Code);
     }
 
-    private sealed class HandlerRuntimeClient(SkillRuntimeHandler handler) : SkillsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Skills_Services.ISkillsManagementService
+    private sealed class HandlerRuntimeClient(SkillRuntimeHandler handler) : SkillsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Skills_Services.ISkillsManagementService
     {
         public string? LastTransferId { get; private set; }
         public ValueTask<SunderContent> QueryAsync(CancellationToken cancellationToken = default)
@@ -307,7 +307,7 @@ public sealed class SkillRuntimeTransferTests
         IPackageFileStore files,
         IPackageKeyValueStore? state = null) : IPackageContext
     {
-        public string PackageId => "sunder.package.agent.skills";
+        public string PackageId => "younics.ai.agent.skills";
         public string Version => "1.0.0";
         public string ContentRootPath => AppContext.BaseDirectory;
         public IPackageStorageContext Storage { get; } = new TestStorage(

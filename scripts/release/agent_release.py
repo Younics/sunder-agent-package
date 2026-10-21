@@ -17,6 +17,27 @@ import sys
 import zipfile
 
 
+# Explicit runtime identities; project/NuGet names and the agent/v* tag are separate.
+# Package Maker intentionally belongs to this family without the AI Agent prefix.
+FAMILY_PACKAGE_IDS = (
+    "younics.ai.agent",
+    "younics.sunder.package.maker",
+    "younics.ai.agent.execution.docker",
+    "younics.ai.agent.execution.local",
+    "younics.ai.agent.mcp",
+    "younics.ai.agent.memory.semantic",
+    "younics.ai.agent.provider.anthropic",
+    "younics.ai.agent.provider.gemini",
+    "younics.ai.agent.provider.lmstudio",
+    "younics.ai.agent.provider.openai",
+    "younics.ai.agent.skills",
+    "younics.ai.agent.subagents",
+    "younics.ai.agent.tools.files",
+    "younics.ai.agent.tools.shell",
+    "younics.ai.agent.tools.web",
+)
+
+
 class Invalid(ValueError):
     pass
 
@@ -170,6 +191,7 @@ def inventory(source):
     packages = value["packages"]
     require(len(packages) == 15 and all(p["artifactType"] == "sunderpkg" for p in packages), "Expected 15 archives")
     require(len({p["packageId"] for p in packages}) == 15, "Duplicate family identity")
+    require({p["packageId"] for p in packages} == set(FAMILY_PACKAGE_IDS), "Expected the exact AI Agent runtime family")
     for package in packages:
         require(re.fullmatch(r"[a-z0-9]+(?:[.-][a-z0-9]+)*", package["packageId"]), "Invalid package ID")
         safe_relative(package["projectPath"])
@@ -211,7 +233,115 @@ def package_imports(lock):
     return imports
 
 
-def verify_consumer_projection(lock, manifest):
+def use_policy(value):
+    actions = value.get("actions")
+    require(type(value.get("required")) is bool and type(actions) is list and actions
+            and actions == [action for action in ("discover", "invoke", "subscribe") if action in actions],
+            "Invalid contract use policy")
+    return value["required"], tuple(actions)
+
+
+def validate_role_uses(role_uses):
+    require(type(role_uses) in (list, tuple) and len(role_uses) <= 128, "Invalid source role-use evidence")
+    keys = []
+    for use in role_uses:
+        closed(use, "role contractId contractVersion descriptorSha256 abiSha256 serviceId serviceType required actions")
+        require(use["role"] == "runtime", "Source role uses grant Runtime only")
+        require(all(type(use[field]) is str and use[field] for field in ("contractId", "serviceId", "serviceType")),
+                "Incomplete source service identity")
+        version(use["contractVersion"])
+        digest(use["descriptorSha256"])
+        digest(use["abiSha256"])
+        use_policy(use)
+        keys.append((use["contractId"], use["serviceId"]))
+    require(keys == sorted(set(keys)), "Source role uses must be unique and ordered")
+
+
+def source_role_use_evidence(qualification):
+    """Project Core's source-backed Worker receipt, never infer grants from a manifest.
+
+    The caller authenticates the qualified role-input bytes/source frame. Native
+    capture and transport bind this projection to those exact qualification bytes;
+    Core's prebuilt Pack remains the source/receipt validation authority.
+    """
+    frame, plan = qualification["inputs"], qualification["rolePlan"]
+    workers = [role for role in plan["roles"] if role["role"] == "worker"]
+    require(len(workers) == 1, "Source use evidence requires one qualified Worker receipt")
+    receipt = decode(workers[0]["receipt"].encode("utf-8"))
+    require(type(receipt["schemaVersion"]) is int and receipt["schemaVersion"] == 1
+            and receipt["producer"]["name"] == "Sunder.Package.Build" and receipt["producer"]["language"] == "csharp"
+            and "role" not in receipt and receipt["packageId"] == frame["packageId"]
+            and receipt["packageVersion"] == frame["packageVersion"]
+            and receipt["lockSha256"] == frame["contractLockSha256"]
+            and receipt["inputFingerprint"] == plan["inputFingerprint"], "Source role-use receipt identity differs from qualification")
+    digest(receipt["lockSha256"])
+    digest(receipt["inputFingerprint"])
+    role_uses = receipt.get("roleUses", [])
+    validate_role_uses(role_uses)
+    return {"lockSha256": receipt["lockSha256"], "roleUses": role_uses}
+
+
+def qualified_owned_baseline(source_root, frame):
+    """Read Core's exact baseline-presence proof without inventing an empty file."""
+    relative = frame["ownedBaseline"]
+    path = source_file(source_root, relative, optional=True)
+    markers = [item for item in frame["externalInputs"] if item["path"] == "baseline-absent:" + relative]
+    if path is None:
+        require(markers == [dict(path="baseline-absent:" + relative, bytes=0, sha256=sha(b""))]
+                and frame["ownedBaselineSha256"] == sha(b""), "Missing owned baseline lacks exact qualified absence proof")
+    else:
+        require(not markers, "Qualified absent owned baseline appeared")
+    return path
+
+
+def source_use_policies(lock, manifest, bundles, role_uses):
+    validate_role_uses(role_uses)
+    policies = {}
+    if not role_uses:
+        return policies
+
+    def matches(record, bundle):
+        return (bundle.get("source") == "imported" and bundle.get("authorityKind") == "package"
+                and bundle.get("exposure") == "public" and bundle["version"] == record["resolvedContractVersion"]
+                and all(bundle.get(field) == record.get(field) for field in
+                        ("authorityKind", "authorityId", "selectedAuthorityRelease", "selectedAuthorityContentIdentity", "descriptorSha256", "abiSha256")))
+
+    # A provider selection authenticates metadata closure, not consumer grants.
+    # Require a reviewed, actually bound Runtime provider before using its closure.
+    provider_artifacts = set()
+    for group in manifest.get("providerImports", []):
+        reviewed = lock.get("providerImports", {}).get(group["key"])
+        if reviewed is None or any(group[field] != reviewed[field] for field in ("packageId", "contractId")):
+            continue
+        artifact = lock["packageArtifacts"].get(group["packageId"], {})
+        record = artifact.get("contracts", {}).get(group["contractId"])
+        root = bundles.get((group["contractId"], group["contractVersion"]))
+        if record is None or root is None or not matches(record, root):
+            continue
+        if group["bundleRef"] != {"contractId": group["contractId"], "contractVersion": group["contractVersion"]}:
+            continue
+        if any(reference.get("role") == "runtime" and reference.get("contractId") == group["contractId"]
+               and reference.get("contractVersion") == group["contractVersion"]
+               and any(all(provider.get(field) == reference.get(field) for field in
+                           ("role", "providerId", "contractId", "contractVersion")) for provider in manifest.get("provides", []))
+               for reference in group.get("providerRefs", [])):
+            provider_artifacts.add(group["packageId"])
+    for use in role_uses:
+        identity = (use["role"], use["contractId"], use["contractVersion"])
+        bundle = bundles.get(identity[1:])
+        require(bundle is not None and any(
+            (record := lock["packageArtifacts"][package_id]["contracts"].get(use["contractId"])) is not None
+            and matches(record, bundle) for package_id in provider_artifacts),
+            "Source role use is outside the reviewed provider artifact closure")
+        require(all(use[field] == bundle[field] for field in ("descriptorSha256", "abiSha256")),
+                "Source role use differs from its exact imported descriptor")
+        policy = use_policy(use)
+        require(identity not in policies or policies[identity] == policy, "Conflicting source role-use policies")
+        policies[identity] = policy
+    return policies
+
+
+def verify_consumer_projection(lock, manifest, *, role_uses=()):
     imports = package_imports(lock)
     groups = {item["packageId"]: item for item in manifest.get("packageApiImports", [])}
     require(len(groups) == len(manifest.get("packageApiImports", [])) and set(groups) == set(imports),
@@ -233,16 +363,28 @@ def verify_consumer_projection(lock, manifest):
             for key, version in bundles:
                 identity = (role, key, version)
                 readiness[identity] = readiness.get(identity, False) or key in entry["requiredContracts"]
-    imported = {(bundle["contractId"], bundle["version"]) for bundle in manifest.get("contractBundles", [])
-                if bundle["source"] == "imported"}
+    bundles = {(bundle["contractId"], bundle["version"]): bundle for bundle in manifest.get("contractBundles", [])}
+    require(len(bundles) == len(manifest.get("contractBundles", [])), "Duplicate contract bundle identity")
+    source_policies = source_use_policies(lock, manifest, bundles, role_uses)
     actual = {}
     for use in manifest.get("usesContracts", []):
-        if (use["contractId"], use["contractVersion"]) not in imported:
+        bundle = bundles.get((use["contractId"], use["contractVersion"]))
+        require(bundle is not None and use["role"] in present, "Orphan contract use or unavailable role")
+        if bundle["source"] != "imported":
             continue
         identity = (use["role"], use["contractId"], use["contractVersion"])
-        require(identity not in actual and type(use["required"]) is bool, "Invalid duplicate imported use/readiness")
-        actual[identity] = use["required"]
-    require(actual == readiness, "Packed imported uses/readiness differ from role-scoped reviewed intent")
+        require(identity not in actual and bundle.get("authorityKind") != "platform", "Duplicate or platform consumer use")
+        require("abiSha256" not in bundle or use.get("abiSha256") == bundle["abiSha256"], "Imported use ABI differs from its bundle")
+        actual[identity] = use_policy(use)
+    require(set(actual) == set(readiness) | set(source_policies),
+            "Packed imported uses/readiness differ from role-scoped reviewed intent")
+    for identity, (required, actions) in actual.items():
+        # Package imports still own required-wins readiness; source evidence is
+        # a separate exact policy and cannot broaden/narrow a group's role set.
+        if identity in readiness:
+            require(required == readiness[identity], "Packed imported uses/readiness differ from role-scoped reviewed intent")
+        if identity in source_policies:
+            require((required, actions) == source_policies[identity], "Packed use differs from reviewed source role-use policy")
 
 
 def snapshots(contract):
@@ -332,10 +474,45 @@ def publication(record, owner):
             "initialAvailability": "Yanked"}
 
 
-def family_plan(source, assets, registry, owner):
-    origin(registry)
+def native_source_role_uses(assets, records):
+    """Read the projection retained from each qualified native Worker receipt."""
+    path = Path(assets) / "native-test-evidence.json"
+    if not path.exists():
+        return {}
+    from native_release_inputs import RIDS, json_file
+    regular(path)
+    evidence = json_file(path.parent.resolve() / path.name, 256 * 1024 * 1024, 4 * 1024 * 1024)
+    require(type(evidence["schemaVersion"]) is int and evidence["schemaVersion"] == 3, "Expected native source-use evidence schema 3")
+    expected = {item["path"]: {field: item[field] for field in ("path", "size", "sha256")} for item in records}
+    final = evidence["finalArtifacts"]
+    require(len(final) == len(expected) and {item["path"]: item for item in final} == expected,
+            "Source role-use evidence belongs to different final archives")
+    runs = evidence["nativeRuns"]
+    require(len(runs) == len(RIDS) and {run["rid"] for run in runs} == set(RIDS), "Incomplete native source-use RID evidence")
+    package_ids = {item["packageId"] for item in records}
+    result = {}
+    for run in runs:
+        require(len(run["packages"]) == len(package_ids) and {item["packageId"] for item in run["packages"]} == package_ids,
+                "Incomplete native source-use package evidence")
+        for package in run["packages"]:
+            package_id, reviewed = package["packageId"], package.get("sourceRoleUses")
+            require(package_id not in result or result[package_id] == reviewed, "Source role-use evidence differs across native RIDs")
+            result[package_id] = reviewed
+    return {key: value for key, value in result.items() if value is not None}
+
+
+def verify_family(source, assets, registry=None, *, source_role_uses=None):
+    """Verify retained metadata without publication. None means local unpublished authority.
+
+    Explicit source_role_uses must come from authenticated Core qualifications;
+    release callers normally use the projection in retained native evidence.
+    """
+    if registry is not None:
+        origin(registry)
     family = inventory(source)
     records = artifact_records(source, assets)
+    reviewed_uses = native_source_role_uses(assets, records) if source_role_uses is None else source_role_uses
+    require(type(reviewed_uses) is dict and set(reviewed_uses) <= {item["packageId"] for item in records}, "Unknown source role-use package")
     metadata = {r["packageId"]: archive_metadata(Path(assets) / r["path"]) for r in records}
     graph = {}
     for package in family["packages"]:
@@ -349,14 +526,19 @@ def family_plan(source, assets, registry, owner):
             require(target in metadata, "Dependency outside retained Agent cohort requires separately reviewed candidates")
             require(satisfies(metadata[target][0]["version"], dependency["versionRange"]), "Retained dependency fails ordinary range")
         relative = str(PurePosixPath(package["projectPath"]).parent / "sunder-contracts.lock.json")
-        lock = load(source_file(source, relative))
-        verify_consumer_projection(lock, manifest)
+        lock_path = source_file(source, relative)
+        lock = load(lock_path)
+        evidence = reviewed_uses.get(package_id)
+        if evidence is not None:
+            closed(evidence, "lockSha256 roleUses")
+            require(evidence["lockSha256"] == file_sha(lock_path), "Source role-use evidence differs from the committed lock")
+        verify_consumer_projection(lock, manifest, role_uses=evidence["roleUses"] if evidence is not None else ())
         imports = {i["packageId"]: i for i in manifest.get("packageArtifactImports", [])}
         require(len(imports) == len(manifest.get("packageArtifactImports", [])), "Duplicate artifact import")
         require(set(imports) == set(lock["packageArtifacts"]), "Archive/committed lock import set differs")
         for selected_id, entry in lock["packageArtifacts"].items():
             require(selected_id in graph[package_id], "An API selection is missing its ordinary dependency")
-            require("registryOrigin" not in entry or authoring_origin(entry["registryOrigin"]) == origin(registry) + "/", "Lock origin differs")
+            require("registryOrigin" not in entry or registry is not None and authoring_origin(entry["registryOrigin"]) == origin(registry) + "/", "Lock origin differs from selected authority scope")
             selected, public, public_sha = metadata[selected_id]
             require(entry["selectedPackageVersion"] == selected["version"]
                     and entry["selectedPackageContentIdentity"] == public["packageContentIdentity"]
@@ -381,7 +563,7 @@ def family_plan(source, assets, registry, owner):
         platform = {i["key"]: i for i in manifest.get("platformImports", [])}
         require(set(platform) == set(lock["platformImports"]), "Packed platform import set differs")
         for key, entry in lock["platformImports"].items():
-            require("registryOrigin" not in entry or authoring_origin(entry["registryOrigin"]) == origin(registry) + "/", "Platform origin differs")
+            require("registryOrigin" not in entry or registry is not None and authoring_origin(entry["registryOrigin"]) == origin(registry) + "/", "Platform origin differs from selected authority scope")
             for field in ("authorityKind", "authorityId", "authorityReleaseRange", "includePrerelease",
                           "selectedAuthorityRelease", "selectedAuthorityContentIdentity", "contractId"):
                 require(platform[key][field] == entry[field], "Packed platform selection differs")
@@ -391,9 +573,15 @@ def family_plan(source, assets, registry, owner):
         ready = sorted(p for p, deps in graph.items() if p not in order and deps <= set(order))
         require(ready, "Family contains a dependency cycle")
         order.append(ready[0])
-    require(order[0] == "sunder.package.agent", "The retained base owner must publish first")
-    return {"lockSetSha256": locks(source), "order": order,
-            "publications": [publication(r, owner) for r in records]}
+    require(order[0] == "younics.ai.agent", "The retained base owner must publish first")
+    return {"lockSetSha256": locks(source), "order": order, "artifacts": records}
+
+
+def family_plan(source, assets, registry, owner):
+    origin(registry)
+    verified = verify_family(source, assets, registry)
+    return {"lockSetSha256": verified["lockSetSha256"], "order": verified["order"],
+            "publications": [publication(record, owner) for record in verified["artifacts"]]}
 
 
 def validate_provenance(source, assets):
@@ -417,7 +605,7 @@ def validate_provenance(source, assets):
     require(str(control["runId"]) == inv["runId"] and control["event"] == "push"
             and control["workflowPath"] == ".github/workflows/sunder-package-release.yml"
             and control["workflowSha"] == value["artifactSourceCommit"], "Control-plane source/run differs")
-    require(inv["repository"] == "Younics/sunder-agent-package" and inv["workflow"] == "Sunder Agent Family Release"
+    require(inv["repository"] == "Younics/sunder-agent-package" and inv["workflow"] == "AI Agent Family Release"
             and inv["refName"] == "agent/v" + inventory(source)["releaseVersion"]
             and inv["ref"] == "refs/tags/" + inv["refName"]
             and inv["workflowRef"] == inv["repository"] + "/" + control["workflowPath"] + "@" + inv["ref"], "Workflow identity differs")

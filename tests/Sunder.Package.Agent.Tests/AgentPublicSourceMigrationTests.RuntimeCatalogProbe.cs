@@ -4,7 +4,7 @@ using System.Text.Json;
 using System.Threading.Channels;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 using Sunder.Package.Agent.Services;
 using Sunder.Sdk.Rpc;
 

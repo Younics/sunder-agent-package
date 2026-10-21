@@ -10,7 +10,7 @@ using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.PackageViews;
 
-[Sunder.Sdk.Packaging.SunderPackageView("sunder.package.agent.history", "History",
+[Sunder.Sdk.Packaging.SunderPackageView("younics.ai.agent.history", "History",
     IconPath = "Assets/session-icon.png", DefaultPlacement = PackageViewPlacement.RightTop)]
 public partial class AgentHistorySearchView : UserControl, IDisposable,
     IPackageViewWarmupTarget, IPackageViewNavigationTarget

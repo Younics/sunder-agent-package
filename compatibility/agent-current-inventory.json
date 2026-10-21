@@ -1,0 +1,112 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Current-only test expectations reviewed against authored services and clean-slate intent. Artifact receipts are observations, never the source of these expectations.",
+  "packageVersion": "2.0.0",
+  "publicVersion": "1.0.0",
+  "platform": { "contractId": "sunder.stack.contributor", "authorityKind": "platform", "authorityId": "sunder.core", "version": "2.0.0" },
+  "packages": [
+    { "key": "agent", "packageId": "younics.ai.agent", "projectPath": "src/Sunder.Package.Agent/Sunder.Package.Agent.csproj", "hasApp": true, "packageApi": false, "requiredRuntime": ["younics.ai.agent.behavior.loop", "younics.ai.agent.run.control", "younics.ai.agent.runtime.catalog"], "providers": {
+      "agent.attachment.cleaner": "younics.ai.agent.session.cleaner",
+      "agent.behavior.loop": "younics.ai.agent.behavior.loop",
+      "agent.child.runs": "younics.ai.agent.child.run.executor",
+      "agent.history.cleaner": "younics.ai.agent.session.cleaner",
+      "agent.owner.runtime": "younics.ai.agent.owner.runtime",
+      "agent.run.control": "younics.ai.agent.run.control",
+      "agent.runtime.catalog": "younics.ai.agent.runtime.catalog",
+      "agent.stack.profiles": "sunder.stack.contributor",
+      "agent.stack.workspaces": "sunder.stack.contributor",
+      "agent.workspace.documentation": "younics.ai.agent.prompt.context.contributor",
+      "agent.workspace.execution.resolver": "younics.ai.agent.workspace.execution.resolver",
+      "younics.ai.agent.agent.profile.provider": "younics.ai.agent.agent.profile"
+    } },
+    { "key": "agent-builder", "packageId": "younics.sunder.package.maker", "projectPath": "src/Sunder.Package.Agent.Builder/Sunder.Package.Agent.Builder.csproj", "hasApp": true, "packageApi": false, "requiredRuntime": [], "providers": {
+      "builder.runtime": "younics.sunder.package.maker.runtime"
+    } },
+    { "key": "agent-execution-docker", "packageId": "younics.ai.agent.execution.docker", "projectPath": "src/Sunder.Package.Agent.Execution.Docker/Sunder.Package.Agent.Execution.Docker.csproj", "hasApp": true, "packageApi": false, "requiredRuntime": [], "providers": {
+      "docker.execution.target": "younics.ai.agent.execution.target",
+      "docker.presentation": "younics.ai.agent.execution.docker.presentation",
+      "docker.stack": "sunder.stack.contributor",
+      "docker.workspace.editor": "younics.ai.agent.workspace.editor"
+    } },
+    { "key": "agent-execution-local", "packageId": "younics.ai.agent.execution.local", "projectPath": "src/Sunder.Package.Agent.Execution.Local/Sunder.Package.Agent.Execution.Local.csproj", "hasApp": true, "packageApi": false, "requiredRuntime": [], "providers": {
+      "local.execution.target": "younics.ai.agent.execution.target",
+      "local.presentation": "younics.ai.agent.execution.local.presentation",
+      "local.workspace.editor": "younics.ai.agent.workspace.editor"
+    } },
+    { "key": "agent-mcp", "packageId": "younics.ai.agent.mcp", "projectPath": "src/Sunder.Package.Agent.Mcp/Sunder.Package.Agent.Mcp.csproj", "hasApp": true, "packageApi": true, "requiredRuntime": [], "providers": {
+      "mcp.management": "younics.ai.agent.mcp.management",
+      "mcp.selectable.capabilities": "younics.ai.agent.selectable.capability.provider",
+      "mcp.session.cleaner": "younics.ai.agent.session.cleaner",
+      "mcp.stack": "sunder.stack.contributor",
+      "mcp.tools": "younics.ai.agent.tool.source",
+      "mcp.tools.observed": "younics.ai.agent.tool.execution.observed"
+    } },
+    { "key": "agent-memory-semantic", "packageId": "younics.ai.agent.memory.semantic", "projectPath": "src/Sunder.Package.Agent.Memory.Semantic/Sunder.Package.Agent.Memory.Semantic.csproj", "hasApp": true, "packageApi": true, "requiredRuntime": ["younics.ai.agent.runtime.catalog"], "providers": {
+      "semantic.memory.inspector": "younics.ai.agent.memory.semantic.inspector",
+      "semantic.memory.lifecycle": "younics.ai.agent.durable.lifecycle.observer",
+      "semantic.memory.profile.capabilities": "younics.ai.agent.profile.capability.consumer",
+      "semantic.memory.prompt.context": "younics.ai.agent.prompt.context.contributor",
+      "semantic.memory.session.cleaner": "younics.ai.agent.session.cleaner"
+    } },
+    { "key": "agent-provider-anthropic", "packageId": "younics.ai.agent.provider.anthropic", "projectPath": "src/Sunder.Package.Agent.Provider.Anthropic/Sunder.Package.Agent.Provider.Anthropic.csproj", "hasApp": true, "packageApi": false, "requiredRuntime": [], "providers": {
+      "anthropic.chat": "younics.ai.agent.chat.provider", "anthropic.credentials": "younics.ai.agent.provider.anthropic.credentials"
+    } },
+    { "key": "agent-provider-gemini", "packageId": "younics.ai.agent.provider.gemini", "projectPath": "src/Sunder.Package.Agent.Provider.Gemini/Sunder.Package.Agent.Provider.Gemini.csproj", "hasApp": true, "packageApi": false, "requiredRuntime": [], "providers": {
+      "gemini.chat": "younics.ai.agent.chat.provider", "gemini.credentials": "younics.ai.agent.provider.gemini.credentials", "gemini.embedding": "younics.ai.agent.embedding.provider"
+    } },
+    { "key": "agent-provider-lmstudio", "packageId": "younics.ai.agent.provider.lmstudio", "projectPath": "src/Sunder.Package.Agent.Provider.LMStudio/Sunder.Package.Agent.Provider.LMStudio.csproj", "hasApp": true, "packageApi": false, "requiredRuntime": [], "providers": {
+      "lmstudio.chat": "younics.ai.agent.chat.provider", "lmstudio.credentials": "younics.ai.agent.provider.lmstudio.credentials", "lmstudio.embedding": "younics.ai.agent.embedding.provider"
+    } },
+    { "key": "agent-provider-openai", "packageId": "younics.ai.agent.provider.openai", "projectPath": "src/Sunder.Package.Agent.Provider.OpenAI/Sunder.Package.Agent.Provider.OpenAI.csproj", "hasApp": true, "packageApi": false, "requiredRuntime": [], "providers": {
+      "openai.chat": "younics.ai.agent.chat.provider", "openai.continuation.cleaner": "younics.ai.agent.session.cleaner", "openai.embedding": "younics.ai.agent.embedding.provider", "openai.management": "younics.ai.agent.provider.openai.management"
+    } },
+    { "key": "agent-skills", "packageId": "younics.ai.agent.skills", "projectPath": "src/Sunder.Package.Agent.Skills/Sunder.Package.Agent.Skills.csproj", "hasApp": true, "packageApi": true, "requiredRuntime": ["younics.ai.agent.runtime.catalog"], "providers": {
+      "skills.management": "younics.ai.agent.skills.owner", "skills.prompt.context": "younics.ai.agent.prompt.context.contributor", "skills.selectable.capabilities": "younics.ai.agent.selectable.capability.provider", "skills.stack": "sunder.stack.contributor", "skills.tools": "younics.ai.agent.tool.source"
+    } },
+    { "key": "agent-subagents", "packageId": "younics.ai.agent.subagents", "projectPath": "src/Sunder.Package.Agent.Subagents/Sunder.Package.Agent.Subagents.csproj", "hasApp": true, "packageApi": true, "requiredRuntime": ["younics.ai.agent.behavior.loop", "younics.ai.agent.child.run.executor", "younics.ai.agent.run.control", "younics.ai.agent.runtime.catalog"], "providers": {
+      "subagents.behavior.loop": "younics.ai.agent.behavior.loop", "subagents.management": "younics.ai.agent.subagents.owner", "subagents.prompt.context": "younics.ai.agent.prompt.context.contributor", "subagents.selectable.capabilities": "younics.ai.agent.selectable.capability.provider", "subagents.stack": "sunder.stack.contributor", "subagents.tools": "younics.ai.agent.tool.source"
+    } },
+    { "key": "agent-tools-files", "packageId": "younics.ai.agent.tools.files", "projectPath": "src/Sunder.Package.Agent.Tools.Files/Sunder.Package.Agent.Tools.Files.csproj", "hasApp": false, "packageApi": true, "requiredRuntime": [], "providers": {
+      "files.permissions": "younics.ai.agent.permission.surface", "files.prompt.context": "younics.ai.agent.prompt.context.contributor", "files.session.cleaner": "younics.ai.agent.session.cleaner", "files.tools": "younics.ai.agent.tool.source"
+    } },
+    { "key": "agent-tools-shell", "packageId": "younics.ai.agent.tools.shell", "projectPath": "src/Sunder.Package.Agent.Tools.Shell/Sunder.Package.Agent.Tools.Shell.csproj", "hasApp": false, "packageApi": true, "requiredRuntime": [], "providers": {
+      "shell.permissions": "younics.ai.agent.permission.surface", "shell.prompt.context": "younics.ai.agent.prompt.context.contributor", "shell.tools": "younics.ai.agent.tool.source"
+    } },
+    { "key": "agent-tools-web", "packageId": "younics.ai.agent.tools.web", "projectPath": "src/Sunder.Package.Agent.Tools.Web/Sunder.Package.Agent.Tools.Web.csproj", "hasApp": false, "packageApi": false, "requiredRuntime": [], "providers": {
+      "web.tools": "younics.ai.agent.tool.source"
+    } }
+  ],
+  "contracts": [
+    { "contractId": "younics.ai.agent.behavior.loop", "packageId": "younics.ai.agent", "exposure": "public", "source": "src/Sunder.Package.Agent/Rpc/Public/BehaviorLoop.cs", "service": "behavior-loop", "methods": ["describe", "run"], "streams": [], "runtime": true, "app": false },
+    { "contractId": "younics.ai.agent.chat.provider", "packageId": "younics.ai.agent", "exposure": "public", "source": "src/Sunder.Package.Agent/Rpc/Public/ChatProvider.cs", "service": "chat-provider", "methods": ["describe", "get-capabilities", "get-readiness", "list-models", "resolve-utility-model", "stream-chat"], "streams": ["stream-chat"], "runtime": true, "app": false },
+    { "contractId": "younics.ai.agent.child.run.executor", "packageId": "younics.ai.agent", "exposure": "public", "source": "src/Sunder.Package.Agent/Services/AgentChildRunExecutor.cs", "service": "child-run-executor", "methods": ["run-child"], "streams": [], "runtime": false, "app": true },
+    { "contractId": "younics.ai.agent.durable.lifecycle.observer", "packageId": "younics.ai.agent", "exposure": "public", "source": "src/Sunder.Package.Agent/Rpc/Public/DurableLifecycleObserver.cs", "service": "durable-lifecycle-observer", "methods": ["describe", "handle"], "streams": [], "runtime": true, "app": false },
+    { "contractId": "younics.ai.agent.embedding.provider", "packageId": "younics.ai.agent", "exposure": "public", "source": "src/Sunder.Package.Agent/Rpc/Public/EmbeddingProvider.cs", "service": "embedding-provider", "methods": ["describe", "generate", "generate-batch", "get-readiness", "list-models", "space-identity"], "streams": [], "runtime": true, "app": false },
+    { "contractId": "younics.ai.agent.execution.target", "packageId": "younics.ai.agent", "exposure": "public", "source": "src/Sunder.Package.Agent/Rpc/Public/ExecutionTarget.cs", "service": "execution-target", "methods": ["add-path", "configuration-generation", "delete-file", "describe", "discover-instructions", "execute-process", "execute-shell", "execution-scope", "list-path", "map-path", "read-file", "readiness", "release-resource-authority", "resolve-file", "resolve-resources", "shell", "structured-file-search", "validate-resource-authority", "write-file"], "streams": [], "runtime": true, "app": false },
+    { "contractId": "younics.ai.agent.permission.surface", "packageId": "younics.ai.agent", "exposure": "public", "source": "src/Sunder.Package.Agent/Rpc/Public/PermissionSurface.cs", "service": "permission-surface", "methods": ["describe"], "streams": [], "runtime": true, "app": false },
+    { "contractId": "younics.ai.agent.profile.capability.consumer", "packageId": "younics.ai.agent", "exposure": "public", "source": "src/Sunder.Package.Agent/Rpc/Public/ProfileCapabilityConsumer.cs", "service": "profile-capability-consumer", "methods": ["describe"], "streams": [], "runtime": true, "app": false },
+    { "contractId": "younics.ai.agent.prompt.context.contributor", "packageId": "younics.ai.agent", "exposure": "public", "source": "src/Sunder.Package.Agent/Rpc/Public/PromptContextContributor.cs", "service": "prompt-context-contributor", "methods": ["acknowledge", "contribute", "describe"], "streams": [], "runtime": true, "app": false },
+    { "contractId": "younics.ai.agent.run.control", "packageId": "younics.ai.agent", "exposure": "public", "source": "src/Sunder.Package.Agent/Services/AgentRunControlService.cs", "service": "run-control", "methods": ["acknowledge-prompt-context", "build-instruction-context", "charge-run-budget", "complete-assistant-turn", "discard-prompt-context", "get-run-budget", "invoke-tool", "invoke-tools", "is-current", "list-ready-tools", "list-recent-turns", "list-turns", "log-event", "publish-lifecycle", "report-activity", "run-default", "save-checkpoint", "select-session-context", "stream-chat", "upsert-assistant-turn"], "streams": ["stream-chat"], "runtime": true, "app": false },
+    { "contractId": "younics.ai.agent.runtime.catalog", "packageId": "younics.ai.agent", "exposure": "public", "source": "src/Sunder.Package.Agent/Services/AgentRuntimeCatalog.cs", "service": "runtime-catalog", "methods": ["get-latest-checkpoint", "get-model-binding", "get-profile", "get-session", "get-session-context-checkpoint", "get-session-model-binding", "get-session-profile", "get-transcript-tool-detail", "get-working-summary", "get-workspace", "list-profiles", "list-recent-transcript-headers", "list-recent-turns", "list-sessions", "list-sessions-for-profile", "list-sessions-for-workspace", "list-transcript-headers-after", "list-transcript-headers-before", "list-turns-after", "list-turns-before", "list-workspaces", "watch"], "streams": ["watch"], "runtime": true, "app": true },
+    { "contractId": "younics.ai.agent.selectable.capability.provider", "packageId": "younics.ai.agent", "exposure": "public", "source": "src/Sunder.Package.Agent/Rpc/Public/SelectableCapabilityProvider.cs", "service": "selectable-capability-provider", "methods": ["describe", "list", "watch"], "streams": ["watch"], "runtime": true, "app": false },
+    { "contractId": "younics.ai.agent.session.cleaner", "packageId": "younics.ai.agent", "exposure": "public", "source": "src/Sunder.Package.Agent/Rpc/Public/SessionCleaner.cs", "service": "session-cleaner", "methods": ["delete-session", "describe"], "streams": [], "runtime": true, "app": false },
+    { "contractId": "younics.ai.agent.system.prompt.contributor", "packageId": "younics.ai.agent", "exposure": "public", "source": "src/Sunder.Package.Agent/Rpc/Public/SystemPromptContributor.cs", "service": "system-prompt-contributor", "methods": ["contribute", "describe"], "streams": [], "runtime": true, "app": false },
+    { "contractId": "younics.ai.agent.tool.execution.observed", "packageId": "younics.ai.agent", "exposure": "public", "source": "src/Sunder.Package.Agent/Rpc/Public/ToolExecutionObserved.cs", "service": "tool-execution-observed", "methods": ["describe", "execute"], "streams": ["execute"], "runtime": true, "app": false },
+    { "contractId": "younics.ai.agent.tool.source", "packageId": "younics.ai.agent", "exposure": "public", "source": "src/Sunder.Package.Agent/Rpc/Public/ToolSource.cs", "service": "tool-source", "methods": ["describe", "execute", "get-readiness", "list-tools", "permission", "preflight", "presentation"], "streams": [], "runtime": true, "app": false },
+    { "contractId": "younics.ai.agent.workspace.editor", "packageId": "younics.ai.agent", "exposure": "public", "source": "src/Sunder.Package.Agent/Rpc/Public/WorkspaceEditor.cs", "service": "workspace-editor", "methods": ["can-edit", "describe", "get-sections", "save-section"], "streams": [], "runtime": false, "app": true },
+    { "contractId": "younics.ai.agent.workspace.execution.resolver", "packageId": "younics.ai.agent", "exposure": "public", "source": "src/Sunder.Package.Agent/Services/AgentWorkspaceExecutionResolver.cs", "service": "workspace-execution-resolver", "methods": ["list-workspaces", "resolve"], "streams": [], "runtime": false, "app": false },
+    { "contractId": "younics.ai.agent.agent.profile", "packageId": "younics.ai.agent", "exposure": "package", "source": "src/Sunder.Package.Agent/Services/AgentProfileService.cs", "service": "agent-profile", "methods": ["create-profile", "delete-profile", "get-chat-provider-readiness", "get-embedding-provider-readiness", "get-profile", "has-profile-capability-consumers", "list-behavior-loop-descriptors", "list-chat-models", "list-chat-provider-descriptors", "list-embedding-models", "list-embedding-provider-descriptors", "list-installed-local-tools", "list-profiles", "list-selectable-profile-capabilities", "save-profile"], "streams": [], "runtime": false, "app": true },
+    { "contractId": "younics.ai.agent.owner.runtime", "packageId": "younics.ai.agent", "exposure": "package", "source": "src/Sunder.Package.Agent/Runtime/AgentOwnerRuntimeProvider.cs", "service": "agent-runtime", "methods": ["attachment-discard", "attachment-download", "attachment-upload", "catalog", "changes", "chat-snapshot", "dashboard", "history-command", "history-search", "history-state", "history-status", "permission-command", "profile-command", "run-command", "run-status", "session-command", "tool-presentation", "transcript-around", "transcript-page", "transcript-tool-detail", "transport-profile", "workspace-command"], "streams": ["changes", "history-status"], "runtime": false, "app": true },
+    { "contractId": "younics.ai.agent.execution.docker.presentation", "packageId": "younics.ai.agent.execution.docker", "exposure": "package", "source": "src/Sunder.Package.Agent.Execution.Docker/DockerExecutionPresentationService.cs", "service": "presentation", "methods": ["add-image", "delete-image", "get-settings", "pull-image", "refresh-image", "refresh-images", "save-settings", "test-docker"], "streams": [], "runtime": false, "app": true },
+    { "contractId": "younics.ai.agent.execution.local.presentation", "packageId": "younics.ai.agent.execution.local", "exposure": "package", "source": "src/Sunder.Package.Agent.Execution.Local/LocalExecutionPresentationService.cs", "service": "presentation", "methods": ["get-settings", "save-settings", "save-shells"], "streams": [], "runtime": false, "app": true },
+    { "contractId": "younics.ai.agent.mcp.management", "packageId": "younics.ai.agent.mcp", "exposure": "package", "source": "src/Sunder.Package.Agent.Mcp/Runtime/McpManagementService.cs", "service": "management", "methods": ["catalog", "changes", "clear-authorization", "delete", "disconnect", "discover", "document", "import-common", "import-document", "initialize", "presentation", "save"], "streams": ["changes"], "runtime": false, "app": true },
+    { "contractId": "younics.ai.agent.memory.semantic.inspector", "packageId": "younics.ai.agent.memory.semantic", "exposure": "package", "source": "src/Sunder.Package.Agent.Memory.Semantic/MemoryInspectorService.Service.cs", "service": "memory-inspector", "methods": ["changes", "contest", "correct", "details", "forget", "index-status", "memories", "metrics", "pin", "reindex", "semantic-state", "session-checkpoint", "sessions", "supersede", "update", "worker-status", "working-summary"], "streams": ["changes"], "runtime": false, "app": true },
+    { "contractId": "younics.ai.agent.provider.anthropic.credentials", "packageId": "younics.ai.agent.provider.anthropic", "exposure": "package", "source": "src/Sunder.Package.Agent.Provider.Anthropic/Rpc/CredentialSettings.cs", "service": "credential-settings", "methods": ["clear", "get-status", "set"], "streams": [], "runtime": false, "app": true },
+    { "contractId": "younics.ai.agent.provider.gemini.credentials", "packageId": "younics.ai.agent.provider.gemini", "exposure": "package", "source": "src/Sunder.Package.Agent.Provider.Gemini/Rpc/CredentialSettings.cs", "service": "credential-settings", "methods": ["clear", "get-status", "set"], "streams": [], "runtime": false, "app": true },
+    { "contractId": "younics.ai.agent.provider.lmstudio.credentials", "packageId": "younics.ai.agent.provider.lmstudio", "exposure": "package", "source": "src/Sunder.Package.Agent.Provider.LMStudio/Rpc/CredentialSettings.cs", "service": "credential-settings", "methods": ["clear", "get-status", "set"], "streams": [], "runtime": false, "app": true },
+    { "contractId": "younics.ai.agent.provider.openai.management", "packageId": "younics.ai.agent.provider.openai", "exposure": "package", "source": "src/Sunder.Package.Agent.Provider.OpenAI/Management/OpenAiManagementService.cs", "service": "management", "methods": ["clear-credential", "disconnect-auth", "get-auth-status", "get-credential-status", "set-credential"], "streams": [], "runtime": false, "app": true },
+    { "contractId": "younics.ai.agent.skills.owner", "packageId": "younics.ai.agent.skills", "exposure": "package", "source": "src/Sunder.Package.Agent.Skills/Runtime/SkillRuntimeGateway.cs", "service": "skills-management", "methods": ["changes", "delete", "import-common", "import-git-hub", "import-transfer", "query"], "streams": ["changes"], "runtime": false, "app": true },
+    { "contractId": "younics.ai.agent.subagents.owner", "packageId": "younics.ai.agent.subagents", "exposure": "package", "source": "src/Sunder.Package.Agent.Subagents/Runtime/SubagentManagementService.cs", "service": "subagents-management", "methods": ["around-turn", "changes", "create", "delete", "management", "provider-models", "recent-turns", "runtime-catalog", "save", "tool-detail", "turns-after", "turns-before"], "streams": ["changes"], "runtime": false, "app": true },
+    { "contractId": "younics.sunder.package.maker.runtime", "packageId": "younics.sunder.package.maker", "exposure": "package", "source": "src/Sunder.Package.Agent.Builder/Runtime/BuilderRuntimeService.cs", "service": "builder-runtime", "methods": ["cancel-job", "discover", "get-backend-id", "get-job", "get-toolchains", "inspect", "start-job"], "streams": [], "runtime": false, "app": true }
+  ]
+}

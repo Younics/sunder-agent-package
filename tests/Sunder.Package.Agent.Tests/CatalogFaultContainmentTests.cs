@@ -18,6 +18,131 @@ namespace Sunder.Package.Agent.Tests;
 
 public sealed class CatalogFaultContainmentTests
 {
+    [Theory]
+    [InlineData(1)]
+    [InlineData(6)]
+    public async Task AgentCatalog_DescribesEachProviderOncePerRequestIncludingConcurrentRequests(int requestCount)
+    {
+        var chat = new CatalogChatProvider("z-chat");
+        var otherChat = new CatalogChatProvider("a-chat");
+        var embedding = new CatalogEmbeddingProvider("z-embedding");
+        var otherEmbedding = new CatalogEmbeddingProvider("a-embedding");
+        using var runtime = new AgentCatalogRuntime(catalog =>
+        {
+            catalog.AddProvider(RegressionTestBindings.ChatProviders, chat, "package.z.chat");
+            catalog.AddProvider(RegressionTestBindings.ChatProviders, otherChat, "package.a.chat");
+            catalog.AddProvider(RegressionTestBindings.EmbeddingProviders, embedding, "package.z.embedding");
+            catalog.AddProvider(RegressionTestBindings.EmbeddingProviders, otherEmbedding, "package.a.embedding");
+        });
+        var chatDescriptions = chat.DescribeCount;
+        var otherChatDescriptions = otherChat.DescribeCount;
+        var embeddingDescriptions = embedding.DescribeCount;
+        var otherEmbeddingDescriptions = otherEmbedding.DescribeCount;
+
+        var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var requests = Enumerable.Range(0, requestCount).Select(async index =>
+        {
+            await start.Task;
+            return await runtime.Handler.HandleAsync(new AgentCatalogRequest(
+                ChatProviderId: index % 2 == 0 ? "Z-CHAT" : "z-chat",
+                EmbeddingProviderId: index % 2 == 0 ? "Z-EMBEDDING" : "z-embedding"));
+        }).ToArray();
+        start.SetResult();
+        var projections = await Task.WhenAll(requests);
+
+        Assert.Equal(requestCount, chat.DescribeCount - chatDescriptions);
+        Assert.Equal(requestCount, otherChat.DescribeCount - otherChatDescriptions);
+        Assert.Equal(requestCount, embedding.DescribeCount - embeddingDescriptions);
+        Assert.Equal(requestCount, otherEmbedding.DescribeCount - otherEmbeddingDescriptions);
+        Assert.Equal(requestCount, chat.ModelsCount);
+        Assert.Equal(requestCount, chat.ReadinessCount);
+        Assert.Equal(requestCount, embedding.ModelsCount);
+        Assert.Equal(requestCount, embedding.ReadinessCount);
+        Assert.Equal(0, otherChat.ModelsCount);
+        Assert.Equal(0, otherChat.ReadinessCount);
+        Assert.Equal(0, otherEmbedding.ModelsCount);
+        Assert.Equal(0, otherEmbedding.ReadinessCount);
+        Assert.All(projections, projection =>
+        {
+            Assert.Equal(new[] { "a-chat", "z-chat" }, projection.ChatProviders.Select(provider => provider.ProviderId));
+            Assert.Equal(new[] { "a-embedding", "z-embedding" }, projection.EmbeddingProviders.Select(provider => provider.ProviderId));
+            Assert.Equal("z-chat-model", Assert.Single(projection.ChatModels).ModelId);
+            Assert.Equal("z-embedding-model", Assert.Single(projection.EmbeddingModels).ModelId);
+            Assert.Equal("z-chat", projection.ChatReadiness?.ProviderId);
+            Assert.Equal("z-embedding", projection.EmbeddingReadiness?.ProviderId);
+        });
+    }
+
+    [Theory]
+    [InlineData("chat-describe")]
+    [InlineData("chat-models")]
+    [InlineData("chat-readiness")]
+    [InlineData("embedding-describe")]
+    [InlineData("embedding-models")]
+    [InlineData("embedding-readiness")]
+    public async Task AgentCatalog_PropagatesPressureAndRediscoversFreshMetadataOnTheNextRequest(string operation)
+    {
+        var chat = new CatalogChatProvider("chat");
+        var embedding = new CatalogEmbeddingProvider("embedding");
+        using var runtime = new AgentCatalogRuntime(catalog =>
+        {
+            catalog.AddProvider(RegressionTestBindings.ChatProviders, chat, "package.chat");
+            catalog.AddProvider(RegressionTestBindings.EmbeddingProviders, embedding, "package.embedding");
+        });
+        var request = new AgentCatalogRequest(ChatProviderId: "chat", EmbeddingProviderId: "embedding");
+        if (operation == "chat-describe") chat.DescriptorFailure = SunderRpcErrorKind.ResourceExhausted;
+        if (operation == "chat-models") chat.ModelsFailure = SunderRpcErrorKind.ResourceExhausted;
+        if (operation == "chat-readiness") chat.ReadinessFailure = SunderRpcErrorKind.ResourceExhausted;
+        if (operation == "embedding-describe") embedding.DescriptorFailure = SunderRpcErrorKind.ResourceExhausted;
+        if (operation == "embedding-models") embedding.ModelsFailure = SunderRpcErrorKind.ResourceExhausted;
+        if (operation == "embedding-readiness") embedding.ReadinessFailure = SunderRpcErrorKind.ResourceExhausted;
+
+        var failure = await Assert.ThrowsAsync<SunderRpcException>(() => runtime.Handler.HandleAsync(request).AsTask());
+
+        Assert.Equal(SunderRpcErrorKind.ResourceExhausted, failure.Error.Kind);
+        chat.DescriptorFailure = chat.ModelsFailure = chat.ReadinessFailure = null;
+        embedding.DescriptorFailure = embedding.ModelsFailure = embedding.ReadinessFailure = null;
+        chat.DisplayName = "Recovered chat";
+        embedding.DisplayName = "Recovered embedding";
+        var projection = await runtime.Handler.HandleAsync(request);
+
+        Assert.Equal("Recovered chat", Assert.Single(projection.ChatProviders).DisplayName);
+        Assert.Equal("Recovered embedding", Assert.Single(projection.EmbeddingProviders).DisplayName);
+        Assert.Single(projection.ChatModels);
+        Assert.Single(projection.EmbeddingModels);
+        Assert.Equal(AgentProviderReadinessStatus.Ready, projection.ChatReadiness?.Status);
+        Assert.Equal(AgentProviderReadinessStatus.Ready, projection.EmbeddingReadiness?.Status);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(" ")]
+    [InlineData("missing")]
+    public async Task AgentCatalog_DoesNotQueryModelsOrReadinessWithoutASelectedProvider(string? providerId)
+    {
+        var chat = new CatalogChatProvider("chat");
+        var embedding = new CatalogEmbeddingProvider("embedding");
+        using var runtime = new AgentCatalogRuntime(catalog =>
+        {
+            catalog.AddProvider(RegressionTestBindings.ChatProviders, chat, "package.chat");
+            catalog.AddProvider(RegressionTestBindings.EmbeddingProviders, embedding, "package.embedding");
+        });
+
+        var projection = await runtime.Handler.HandleAsync(new AgentCatalogRequest(
+            ChatProviderId: providerId, EmbeddingProviderId: providerId));
+
+        Assert.Single(projection.ChatProviders);
+        Assert.Single(projection.EmbeddingProviders);
+        Assert.Empty(projection.ChatModels);
+        Assert.Empty(projection.EmbeddingModels);
+        Assert.Null(projection.ChatReadiness);
+        Assert.Null(projection.EmbeddingReadiness);
+        Assert.Equal(0, chat.ModelsCount);
+        Assert.Equal(0, chat.ReadinessCount);
+        Assert.Equal(0, embedding.ModelsCount);
+        Assert.Equal(0, embedding.ReadinessCount);
+    }
+
     [Fact]
     public async Task AgentCatalog_OmitsUnavailableContributorsAndKeepsHealthyProjection()
     {
@@ -149,6 +274,7 @@ public sealed class CatalogFaultContainmentTests
     [InlineData(SunderRpcErrorKind.PermissionDenied)]
     [InlineData(SunderRpcErrorKind.Validation)]
     [InlineData(SunderRpcErrorKind.DeadlineExceeded)]
+    [InlineData(SunderRpcErrorKind.ResourceExhausted)]
     public async Task AgentCatalog_DoesNotSuppressStrictRpcFailures(SunderRpcErrorKind errorKind)
     {
         using var runtime = new AgentCatalogRuntime(catalog => catalog.AddProvider(
@@ -160,6 +286,9 @@ public sealed class CatalogFaultContainmentTests
             runtime.Profiles.ListChatModelsAsync("strict-chat"));
 
         Assert.Equal(errorKind, exception.Error.Kind);
+        var catalogException = await Assert.ThrowsAsync<SunderRpcException>(() =>
+            runtime.Handler.HandleAsync(new AgentCatalogRequest(ChatProviderId: "strict-chat")).AsTask());
+        Assert.Equal(errorKind, catalogException.Error.Kind);
     }
 
     [Theory]
@@ -289,22 +418,30 @@ public sealed class CatalogFaultContainmentTests
         var provider = new BlockingCancelledChatProvider("retired");
         catalog.AddProvider(RegressionTestBindings.ChatProviders, provider, "package.retired");
         var reference = await catalog.GetRequiredProviderAsync(catalog.ChatProviders);
+        var referenceRetired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var referenceRetirement = reference.RetirementToken.Register(() => referenceRetired.TrySetResult());
         await using var managementFixture = await catalog.CreateSubagentRuntimeManagementAsync(
             new SubagentService(new SubagentStore(scope.Context)));
         var invocation = SubagentProjectionContent.ReadAsync<SubagentProjection>(
             managementFixture.Service.ProviderModelsAsync(provider.ProviderId), CancellationToken.None).AsTask();
-        await provider.Started.Task;
+        try
+        {
+            await provider.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var retirement = catalog.RetireProviderAsync(RegressionTestBindings.ChatProviders, provider);
+            // The independent receiver observers need not process withdrawal in the
+            // same order. Provider cancellation does not prove this exact reference
+            // has observed it; wait for both instead of racing their callbacks.
+            await Task.WhenAll(provider.CancellationObserved.Task, referenceRetired.Task).WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.True(reference.RetirementToken.IsCancellationRequested);
+            provider.ReleaseCancellation.TrySetResult();
 
-        var retirement = catalog.RetireProviderAsync(RegressionTestBindings.ChatProviders, provider);
-        await provider.CancellationObserved.Task;
-        Assert.True(reference.RetirementToken.IsCancellationRequested);
-        provider.ReleaseCancellation.TrySetResult();
-
-        var projection = await invocation;
-        await retirement;
-        var unavailable = Assert.Single(projection.Providers ?? []);
-        Assert.Empty(unavailable.Models ?? []);
-        Assert.Equal(AgentProviderReadinessStatus.Failed.ToString(), unavailable.Readiness?.Status.ToString());
+            var projection = await invocation.WaitAsync(TimeSpan.FromSeconds(5));
+            await retirement.WaitAsync(TimeSpan.FromSeconds(5));
+            var unavailable = Assert.Single(projection.Providers ?? []);
+            Assert.Empty(unavailable.Models ?? []);
+            Assert.Equal(AgentProviderReadinessStatus.Failed.ToString(), unavailable.Readiness?.Status.ToString());
+        }
+        finally { provider.ReleaseCancellation.TrySetResult(); }
     }
 
     [Fact]
@@ -369,7 +506,7 @@ public sealed class CatalogFaultContainmentTests
             configure(_catalog);
             var store = new AgentLocalStore(_scope.Context);
             var sessions = new AgentSessionService(store, _catalog.SessionCleaners);
-            var workspaces = new AgentWorkspaceService(store, _catalog.SessionCleaners, sessions, _catalog.WorkspacePathMigrators);
+            var workspaces = new AgentWorkspaceService(store, _catalog.SessionCleaners, sessions);
             var targets = new AgentExecutionTargetService(_catalog.ExecutionTargets);
             Tools = new AgentToolService(sessions, workspaces, targets, _catalog.ToolSources, _catalog.ObservedToolExecutions);
             Profiles = _catalog.CreateProfileService(store, Tools);
@@ -396,6 +533,16 @@ public sealed class CatalogFaultContainmentTests
         SunderRpcErrorKind? modelsFailure = null,
         SunderRpcErrorKind? readinessFailure = null) : IAgentChatProvider
     {
+        private int _describeCount;
+        private int _modelsCount;
+        private int _readinessCount;
+        public int DescribeCount => Volatile.Read(ref _describeCount);
+        public int ModelsCount => Volatile.Read(ref _modelsCount);
+        public int ReadinessCount => Volatile.Read(ref _readinessCount);
+        public string? DisplayName { get; set; }
+        public SunderRpcErrorKind? DescriptorFailure { get; set; } = descriptorFailure;
+        public SunderRpcErrorKind? ModelsFailure { get; set; } = modelsFailure;
+        public SunderRpcErrorKind? ReadinessFailure { get; set; } = readinessFailure;
         private readonly AgentProviderDescriptor _descriptor = new(
             providerId,
             providerId,
@@ -404,24 +551,36 @@ public sealed class CatalogFaultContainmentTests
             SupportsInterruptibleRuns: true);
 
         public AgentProviderDescriptor Descriptor
-            => descriptorFailure is { } failure ? throw RpcFailure(failure) : _descriptor;
+        {
+            get
+            {
+                Interlocked.Increment(ref _describeCount);
+                return DescriptorFailure is { } failure ? throw RpcFailure(failure) : _descriptor with { DisplayName = DisplayName ?? _descriptor.DisplayName };
+            }
+        }
 
         public ValueTask<IReadOnlyList<AgentModelDescriptor>> GetAvailableModelsAsync(
             CancellationToken cancellationToken = default)
-            => modelsFailure is { } failure
+        {
+            Interlocked.Increment(ref _modelsCount);
+            return ModelsFailure is { } failure
                 ? ValueTask.FromException<IReadOnlyList<AgentModelDescriptor>>(RpcFailure(failure))
                 : ValueTask.FromResult<IReadOnlyList<AgentModelDescriptor>>([
                     new($"{providerId}-model", $"{providerId} model", 8_192, 1_024),
                 ]);
+        }
 
         public ValueTask<AgentProviderReadiness> GetReadinessAsync(
             CancellationToken cancellationToken = default)
-            => readinessFailure is { } failure
+        {
+            Interlocked.Increment(ref _readinessCount);
+            return ReadinessFailure is { } failure
                 ? ValueTask.FromException<AgentProviderReadiness>(RpcFailure(failure))
                 : ValueTask.FromResult(new AgentProviderReadiness(
                     providerId,
                     AgentProviderReadinessStatus.Ready,
                     "Ready."));
+        }
 
         public ValueTask<AgentProviderRunCapabilities> GetRunCapabilitiesAsync(
             string? modelId,
@@ -431,6 +590,53 @@ public sealed class CatalogFaultContainmentTests
         public ValueTask<IChatClient> CreateChatClientAsync(
             AgentChatClientContext context,
             CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+    }
+
+    private sealed class CatalogEmbeddingProvider(string providerId) : IAgentEmbeddingProvider
+    {
+        private int _describeCount;
+        private int _modelsCount;
+        private int _readinessCount;
+        public int DescribeCount => Volatile.Read(ref _describeCount);
+        public int ModelsCount => Volatile.Read(ref _modelsCount);
+        public int ReadinessCount => Volatile.Read(ref _readinessCount);
+        public string? DisplayName { get; set; }
+        public SunderRpcErrorKind? DescriptorFailure { get; set; }
+        public SunderRpcErrorKind? ModelsFailure { get; set; }
+        public SunderRpcErrorKind? ReadinessFailure { get; set; }
+
+        public AgentEmbeddingProviderDescriptor Descriptor
+        {
+            get
+            {
+                Interlocked.Increment(ref _describeCount);
+                return DescriptorFailure is { } failure ? throw RpcFailure(failure) : new(providerId, DisplayName ?? providerId, []);
+            }
+        }
+
+        public ValueTask<IReadOnlyList<AgentEmbeddingModelDescriptor>> GetAvailableModelsAsync(CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _modelsCount);
+            return ModelsFailure is { } failure
+                ? ValueTask.FromException<IReadOnlyList<AgentEmbeddingModelDescriptor>>(RpcFailure(failure))
+                : ValueTask.FromResult<IReadOnlyList<AgentEmbeddingModelDescriptor>>([new($"{providerId}-model", "Embedding model", 128)]);
+        }
+
+        public ValueTask<AgentEmbeddingProviderReadiness> GetReadinessAsync(CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _readinessCount);
+            return ReadinessFailure is { } failure
+                ? ValueTask.FromException<AgentEmbeddingProviderReadiness>(RpcFailure(failure))
+                : ValueTask.FromResult(new AgentEmbeddingProviderReadiness(providerId, AgentProviderReadinessStatus.Ready, "Ready."));
+        }
+
+        public ValueTask<AgentEmbeddingGenerationResult?> GenerateEmbeddingAsync(
+            string modelId, string text, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public ValueTask<IReadOnlyList<AgentEmbeddingGenerationResult?>> GenerateEmbeddingsAsync(
+            string modelId, IReadOnlyList<string> texts, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
     }
 

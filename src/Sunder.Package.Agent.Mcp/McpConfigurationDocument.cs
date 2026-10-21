@@ -103,7 +103,7 @@ internal static class McpConfigurationDocument
             CommandParts = parsed.CommandParts,
             WorkingDirectory = string.IsNullOrWhiteSpace(parsed.WorkingDirectory) ? null : parsed.WorkingDirectory.Trim(),
             EndpointUrl = string.IsNullOrWhiteSpace(parsed.EndpointUrl) ? null : parsed.EndpointUrl.Trim(),
-            TimeoutMilliseconds = parsed.LegacyTimeoutMilliseconds,
+            TimeoutMilliseconds = parsed.SharedTimeoutMilliseconds,
             DiscoveryTimeoutMilliseconds = parsed.DiscoveryTimeoutMilliseconds,
             ToolTimeoutMilliseconds = parsed.ToolTimeoutMilliseconds,
             HeaderNames = [.. parsed.Headers.Names],
@@ -137,7 +137,7 @@ internal static class McpConfigurationDocument
         var displayName = string.Equals(server.DisplayName, server.Name, StringComparison.OrdinalIgnoreCase)
             ? null
             : server.DisplayName;
-        var legacyTimeout = server.TimeoutMilliseconds is not null
+        var sharedTimeout = server.TimeoutMilliseconds is not null
                             && server.DiscoveryTimeoutMilliseconds is null
                             && server.ToolTimeoutMilliseconds is null
             ? server.TimeoutMilliseconds
@@ -151,7 +151,7 @@ internal static class McpConfigurationDocument
                 enabled = server.IsEnabled,
                 command = server.CommandParts,
                 env = editorEnvironment.Count == 0 ? null : editorEnvironment,
-                timeout = legacyTimeout,
+                timeout = sharedTimeout,
                 discoveryTimeout = server.DiscoveryTimeoutMilliseconds,
                 toolTimeout = server.ToolTimeoutMilliseconds,
                 workingDirectory = server.WorkingDirectory,
@@ -164,7 +164,7 @@ internal static class McpConfigurationDocument
                 url = server.EndpointUrl,
                 enabled = server.IsEnabled,
                 headers = editorHeaders.Count == 0 ? null : editorHeaders,
-                timeout = legacyTimeout,
+                timeout = sharedTimeout,
                 discoveryTimeout = server.DiscoveryTimeoutMilliseconds,
                 toolTimeout = server.ToolTimeoutMilliseconds,
                 displayName,
@@ -191,6 +191,10 @@ internal static class McpConfigurationDocument
 
     private static ParsedEditorDocument ParseLocal(JsonElement root)
     {
+        if (root.TryGetProperty("environment", out _))
+        {
+            throw new McpManagementOperationException("Use 'env' for local MCP environment variables.");
+        }
         var commandElement = ReadRequiredProperty(root, "command");
         if (commandElement.ValueKind != JsonValueKind.Array)
         {
@@ -216,9 +220,9 @@ internal static class McpConfigurationDocument
                 "Local MCP configuration requires at least one command segment.");
         }
 
-        var legacyTimeoutMilliseconds = ReadOptionalInt(root, "timeout");
-        var discoveryTimeoutMilliseconds = ReadOptionalInt(root, "discoveryTimeout") ?? legacyTimeoutMilliseconds;
-        var toolTimeoutMilliseconds = ReadOptionalInt(root, "toolTimeout") ?? legacyTimeoutMilliseconds;
+        var sharedTimeoutMilliseconds = ReadOptionalInt(root, "timeout");
+        var discoveryTimeoutMilliseconds = ReadOptionalInt(root, "discoveryTimeout") ?? sharedTimeoutMilliseconds;
+        var toolTimeoutMilliseconds = ReadOptionalInt(root, "toolTimeout") ?? sharedTimeoutMilliseconds;
 
         return new ParsedEditorDocument(
             ConfiguredMcpTransportType.Stdio,
@@ -227,8 +231,8 @@ internal static class McpConfigurationDocument
             ReadOptionalString(root, "workingDirectory"),
             EndpointUrl: null,
             Headers: ParsedEditorSecretMap.Empty,
-            EnvironmentVariables: ReadSecretMap(root, "env", "environment"),
-            legacyTimeoutMilliseconds,
+            EnvironmentVariables: ReadSecretMap(root, "env"),
+            sharedTimeoutMilliseconds,
             discoveryTimeoutMilliseconds,
             toolTimeoutMilliseconds,
             ReadOptionalString(root, "displayName"),
@@ -247,9 +251,9 @@ internal static class McpConfigurationDocument
                 "Remote MCP configuration requires 'url' to be an absolute URL.");
         }
 
-        var legacyTimeoutMilliseconds = ReadOptionalInt(root, "timeout");
-        var discoveryTimeoutMilliseconds = ReadOptionalInt(root, "discoveryTimeout") ?? legacyTimeoutMilliseconds;
-        var toolTimeoutMilliseconds = ReadOptionalInt(root, "toolTimeout") ?? legacyTimeoutMilliseconds;
+        var sharedTimeoutMilliseconds = ReadOptionalInt(root, "timeout");
+        var discoveryTimeoutMilliseconds = ReadOptionalInt(root, "discoveryTimeout") ?? sharedTimeoutMilliseconds;
+        var toolTimeoutMilliseconds = ReadOptionalInt(root, "toolTimeout") ?? sharedTimeoutMilliseconds;
         var oauth = ReadOAuth(root);
 
         return new ParsedEditorDocument(
@@ -260,7 +264,7 @@ internal static class McpConfigurationDocument
             endpointUrl,
             ReadSecretMap(root, "headers"),
             EnvironmentVariables: ParsedEditorSecretMap.Empty,
-            legacyTimeoutMilliseconds,
+            sharedTimeoutMilliseconds,
             discoveryTimeoutMilliseconds,
             toolTimeoutMilliseconds,
             ReadOptionalString(root, "displayName"),
@@ -313,7 +317,11 @@ internal static class McpConfigurationDocument
 
         var enabled = ReadOptionalBool(value, "enabled") ?? true;
         var scopes = ReadOptionalStringArray(value, "scopes");
-        var clientId = ReadOptionalString(value, "clientId") ?? ReadOptionalString(value, "client_id");
+        if (value.TryGetProperty("client_id", out _))
+        {
+            throw new McpManagementOperationException("Use 'clientId' for the MCP OAuth client id.");
+        }
+        var clientId = ReadOptionalString(value, "clientId");
         return new ParsedOAuthDocument(
             enabled,
             scopes,
@@ -391,17 +399,11 @@ internal static class McpConfigurationDocument
 
     private static ParsedEditorSecretMap ReadSecretMap(
         JsonElement root,
-        string propertyName,
-        string? legacyPropertyName = null)
+        string propertyName)
     {
         if (!root.TryGetProperty(propertyName, out var value))
         {
-            if (legacyPropertyName is null || !root.TryGetProperty(legacyPropertyName, out value))
-            {
-                return ParsedEditorSecretMap.Empty;
-            }
-
-            propertyName = legacyPropertyName;
+            return ParsedEditorSecretMap.Empty;
         }
 
         if (value.ValueKind != JsonValueKind.Object)
@@ -513,7 +515,7 @@ internal static class McpConfigurationDocument
         string? EndpointUrl,
         ParsedEditorSecretMap Headers,
         ParsedEditorSecretMap EnvironmentVariables,
-        int? LegacyTimeoutMilliseconds,
+        int? SharedTimeoutMilliseconds,
         int? DiscoveryTimeoutMilliseconds,
         int? ToolTimeoutMilliseconds,
         string? DisplayName,

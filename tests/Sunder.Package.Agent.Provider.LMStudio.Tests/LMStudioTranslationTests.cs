@@ -27,7 +27,7 @@ public sealed class LMStudioTranslationTests
             Content = new StringContent(stream, Encoding.UTF8, "text/event-stream"),
         }));
         var context = new ProviderTestPackageContext(
-            "sunder.package.agent.provider.lmstudio",
+            "younics.ai.agent.provider.lmstudio",
             new Dictionary<string, string>
             {
                 [LMStudioProviderConfiguration.BaseUrlKey] = "http://127.0.0.1:1234/v1",
@@ -110,7 +110,7 @@ public sealed class LMStudioTranslationTests
             Content = new StringContent(stream, Encoding.UTF8, "text/event-stream"),
         }));
         var context = new ProviderTestPackageContext(
-            "sunder.package.agent.provider.lmstudio",
+            "younics.ai.agent.provider.lmstudio",
             new Dictionary<string, string>
             {
                 [LMStudioProviderConfiguration.BaseUrlKey] = "http://lmstudio.test/v1",
@@ -196,7 +196,7 @@ public sealed class LMStudioTranslationTests
             Content = new StringContent(stream, Encoding.UTF8, "text/event-stream"),
         }));
         var context = new ProviderTestPackageContext(
-            "sunder.package.agent.provider.lmstudio",
+            "younics.ai.agent.provider.lmstudio",
             new Dictionary<string, string>
             {
                 [LMStudioProviderConfiguration.BaseUrlKey] = "http://lmstudio.test/v1",
@@ -228,7 +228,7 @@ public sealed class LMStudioTranslationTests
             Content = new StringContent(stream, Encoding.UTF8, "text/event-stream"),
         }));
         var context = new ProviderTestPackageContext(
-            "sunder.package.agent.provider.lmstudio",
+            "younics.ai.agent.provider.lmstudio",
             new Dictionary<string, string>
             {
                 [LMStudioProviderConfiguration.BaseUrlKey] = "http://lmstudio.test/v1",
@@ -257,7 +257,7 @@ public sealed class LMStudioTranslationTests
             throw new InvalidOperationException("unreachable");
         });
         var context = new ProviderTestPackageContext(
-            "sunder.package.agent.provider.lmstudio",
+            "younics.ai.agent.provider.lmstudio",
             new Dictionary<string, string>
             {
                 [LMStudioProviderConfiguration.BaseUrlKey] = "http://lmstudio.test/v1",
@@ -285,7 +285,7 @@ public sealed class LMStudioTranslationTests
             "{\"error\":{\"message\":\"This model's maximum context length is 4096 tokens. However, your messages resulted in 5000 tokens.\",\"type\":\"invalid_request_error\",\"param\":\"messages\",\"code\":\"context_length_exceeded\"}}",
             HttpStatusCode.BadRequest));
         var context = new ProviderTestPackageContext(
-            "sunder.package.agent.provider.lmstudio",
+            "younics.ai.agent.provider.lmstudio",
             new Dictionary<string, string>
             {
                 [LMStudioProviderConfiguration.BaseUrlKey] = "http://lmstudio.test/v1",

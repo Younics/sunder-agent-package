@@ -1,7 +1,7 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Provider_Openai_Services;
+using Sunder.Generated.Packages.Younics_Ai_Agent_Provider_Openai_Services;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Abstractions;
@@ -503,8 +503,6 @@ public sealed partial class OpenAiSettingsViewModel : ObservableObject,
             ? OpenAiAuthMode.ApiKey
             : OpenAiAuthMode.CodexConnected));
 
-    internal static string? NormalizeLegacyUtilityModelId(string? modelId)
-        => OpenAiProviderConfiguration.NormalizeLegacyUtilityModelId(modelId);
 }
 
 public sealed record OpenAiAuthModeOption(string ModeId, string DisplayName);

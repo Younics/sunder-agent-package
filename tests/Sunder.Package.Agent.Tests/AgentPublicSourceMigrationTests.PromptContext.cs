@@ -7,7 +7,7 @@ using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Worker;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -150,10 +150,10 @@ public sealed partial class AgentPublicSourceMigrationTests
         };
 
     private static async Task<PromptFixture> CreatePromptFixture(Assembly assembly, SunderRpcContractDescriptor descriptor,
-        IAgentPromptContextContributor contributor, string packageId = "sunder.package.agent", bool includeCatalog = true)
+        IAgentPromptContextContributor contributor, string packageId = "younics.ai.agent", bool includeCatalog = true)
     {
         var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
+        var rpc = new RegressionTestRpcClient(state, "younics.ai.agent");
         var receiver = new GeneratedServiceTestScope(rpc.ForCaller(packageId));
         var type = assembly.GetType("Sunder.Package.Agent.Rpc.Public.PromptContextContributorService", true)!;
         Assert.True(type.IsInterface);

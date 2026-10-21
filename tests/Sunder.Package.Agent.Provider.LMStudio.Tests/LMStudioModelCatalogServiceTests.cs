@@ -1,5 +1,5 @@
 using System.Net;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using Sunder.Generated.Packages.Younics_Ai_Agent_Models;
 using Sunder.Package.Agent.Provider.TestSupport;
 using Xunit;
 
@@ -258,7 +258,7 @@ public sealed class LMStudioModelCatalogServiceTests
     private static ProviderTestPackageContext CreateContext(
         string baseUrl = "http://lmstudio.test/v1")
         => new(
-            "sunder.package.agent.provider.lmstudio",
+            "younics.ai.agent.provider.lmstudio",
             new Dictionary<string, string>
             {
                 [LMStudioProviderConfiguration.BaseUrlKey] = baseUrl,

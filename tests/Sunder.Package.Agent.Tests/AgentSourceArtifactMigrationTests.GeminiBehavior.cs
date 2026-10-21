@@ -38,12 +38,12 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 Assert.DoesNotContain(assembly.GetReferencedAssemblies(), reference => reference.Name == "Sunder.Package.Agent.Provider.Gemini.Protocol");
             Assert.DoesNotContain(presentation.GetReferencedAssemblies(), reference => reference.Name is "Sunder.Package.Agent.Provider.Gemini" or "Sunder.Sdk.Worker" or "Google.GenAI");
             using var package = RegressionTestPackageScope.Create();
-            var context = new TestPackageContext("sunder.package.agent.provider.gemini", package.RootPath, version: "2.0.0", storage: package.Context.Storage);
+            var context = new TestPackageContext("younics.ai.agent.provider.gemini", package.RootPath, version: "2.0.0", storage: package.Context.Storage);
             await using var peer = new GeminiLoopbackPeer();
             var factoryCalls = new List<string>();
             Func<string, Client> factory = key => { factoryCalls.Add(key); return new(apiKey: key, httpOptions: new HttpOptions { BaseUrl = peer.Endpoint }); };
             using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-            var rpc = new RegressionTestRpcClient(state, "sunder.package.agent.provider.gemini");
+            var rpc = new RegressionTestRpcClient(state, "younics.ai.agent.provider.gemini");
             var generated = CreateControlledGeneratedWorker(probes, context, rpc,
                 services => ConfigureProviderFactory(runtime, services, context, "Gemini", factory));
             await using var lifetime = generated.Lifetime;
@@ -51,7 +51,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.NotNull(options.SettingsSchema); Assert.Empty(factoryCalls);
             var registrations = options.Providers.ToDictionary(value => value.ProviderId);
             Assert.Equal(new[] { "gemini.chat", "gemini.credentials", "gemini.embedding" }, registrations.Keys.Order(StringComparer.Ordinal));
-            var credentialDescriptor = CurrentPrivateRpcDescriptors.Get("sunder.package.agent.provider.gemini.credentials");
+            var credentialDescriptor = CurrentPrivateRpcDescriptors.Get("younics.ai.agent.provider.gemini.credentials");
             foreach (var provider in options.Providers)
             {
                 var descriptor = provider.ProviderId == "gemini.credentials" ? credentialDescriptor : CurrentPublicRpcDescriptors.Get(provider.ContractId);
@@ -59,7 +59,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 state.Add(context.PackageId, descriptor, provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, "2.0.0");
             }
             await using var appServices = CreateGeneratedApp(presentation, context, rpc);
-            var credentials = appServices.GetRequiredService(presentation.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Provider_Gemini_Services.ICredentialSettingsService", true)!);
+            var credentials = appServices.GetRequiredService(presentation.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Provider_Gemini_Services.ICredentialSettingsService", true)!);
             Assert.False(await Credential("GetStatusAsync", [CancellationToken.None]));
             foreach (var id in new[] { "gemini.chat", "gemini.embedding" })
                 Assert.Equal("needs-configuration", (await Rpc(id, "get-readiness", new { })).GetProperty("status").GetString());
@@ -82,7 +82,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.Equal(3, batch[0].GetProperty("values").GetArrayLength()); Assert.Equal(0.25, batch[2].GetProperty("values")[0].GetDouble());
             Assert.False(batch[0].TryGetProperty("dimensions", out _));
             Assert.Equal("gemini/text-embedding-004", batch[0].GetProperty("modelId").GetString());
-            var embeddingCatalog = CreateAgentEmbeddingCatalog(agentOwner, new RegressionTestRpcClient(state, "sunder.package.agent"));
+            var embeddingCatalog = CreateAgentEmbeddingCatalog(agentOwner, new RegressionTestRpcClient(state, "younics.ai.agent"));
             await using var embeddingLifetime = (IAsyncDisposable)embeddingCatalog;
             var generatedEmbedding = EmbeddingService(await SingleAgentEmbeddingProvider(embeddingCatalog));
             Assert.Equal(AgentProviderReadinessStatus.Ready, (await generatedEmbedding.GetReadinessAsync()).Status);
@@ -90,7 +90,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.Equal(3, generatedBatch.Count); Assert.Null(generatedBatch[1]);
             Assert.Equal(3, generatedBatch[0]!.Values.Count);
             Assert.Equal(0.25, generatedBatch[2]!.Values[0]);
-            var chatProvider = await CreateAgentChatProvider(agentOwner, rpc.ForCaller("sunder.package.agent"), Assert.Single((await rpc.DiscoverAsync(RegressionTestBindings.ChatProviders)).Providers));
+            var chatProvider = await CreateAgentChatProvider(agentOwner, rpc.ForCaller("younics.ai.agent"), Assert.Single((await rpc.DiscoverAsync(RegressionTestBindings.ChatProviders)).Providers));
             await using var chatLifetime = (IAsyncDisposable)chatProvider;
             using var chat = await CreateAgentChatClientAsync(chatProvider, new("gemini", "gemini/gemini-3-flash-preview"));
             var updates = new List<ChatResponseUpdate>();

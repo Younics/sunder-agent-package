@@ -5,7 +5,7 @@ using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Services;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -22,16 +22,16 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var observer = new CleanupObserver();
         var lifecycle = AddCleanupLifecycleProvider(state, observer);
         lifecycle.FailuresRemaining = 1;
-        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
+        var rpc = new RegressionTestRpcClient(state, "younics.ai.agent");
         await using var receiver = new GeneratedServiceTestScope(rpc);
-        var cleaners = receiver.Providers(owner.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Services.ISessionCleanerService", true)!);
-        var observers = receiver.Providers(owner.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Services.IDurableLifecycleObserverService", true)!);
+        var cleaners = receiver.Providers(owner.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Services.ISessionCleanerService", true)!);
+        var observers = receiver.Providers(owner.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Services.IDurableLifecycleObserverService", true)!);
         var storeType = owner.GetType("Sunder.Package.Agent.Storage.AgentLocalStore", true)!;
         var store = Activator.CreateInstance(storeType, package.Context)!;
         await using var initialStoreLifetime = (IAsyncDisposable)store;
         var sessions = AgentRoleBoundary.Create(owner.GetType("Sunder.Package.Agent.Services.AgentSessionService", true)!, store, cleaners);
         var workspaces = AgentRoleBoundary.Create(owner.GetType("Sunder.Package.Agent.Services.AgentWorkspaceService", true)!, store,
-            cleaners, sessions, null);
+            cleaners, sessions);
         var sessionId = await CreateAndDelete("First cleanup");
         var job = Assert.Single(Values(Call(store, "ListSessionCleanupJobs")));
         Assert.Equal("Pending", Property<string>(job, "Status")); Assert.Equal(1, Property<int>(job, "AttemptCount"));
@@ -60,7 +60,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             observers, null);
         await using var dispatcherLifetime = (IAsyncDisposable)dispatcher;
         var subscription = (string)storeType.GetMethod("BuildLifecycleSubscriptionId", BindingFlags.Static | BindingFlags.NonPublic)!
-            .Invoke(null, ["sunder.package.agent.memory.semantic", observer.ObserverId, "Durable"])!;
+            .Invoke(null, ["younics.ai.agent.memory.semantic", observer.ObserverId, "Durable"])!;
         await Flush(dispatcher);
         var delivery = Call(store, "GetLifecycleDeliveryState", subscription, envelope.Sequence)!;
         Assert.Equal("Pending", Property<string>(delivery, "Status")); Assert.Equal(1, Property<int>(delivery, "AttemptCount"));
@@ -74,7 +74,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         sessions = AgentRoleBoundary.Create(owner.GetType("Sunder.Package.Agent.Services.AgentSessionService", true)!, store,
             cleaners);
         workspaces = AgentRoleBoundary.Create(owner.GetType("Sunder.Package.Agent.Services.AgentWorkspaceService", true)!, store,
-            cleaners, sessions, null);
+            cleaners, sessions);
         var secondSession = await CreateAndDelete("Cancellation cleanup");
         var second = Events().Single(item => item.Payload.DeletedSessionIds.Contains(secondSession));
         lifecycle.Gate = new();

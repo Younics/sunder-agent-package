@@ -30,7 +30,7 @@ public sealed class ProcessExecutionHardeningTests : IDisposable
         using var catalog = new RegressionTestExtensionCatalog();
         catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target);
         var targetProvider = await catalog.GetRequiredProviderAsync(catalog.ExecutionTargets);
-        using var source = new GeneratedToolSourceProbe(catalog, new ShellToolSource(), "sunder.package.agent.tools.shell");
+        using var source = new GeneratedToolSourceProbe(catalog, new ShellToolSource(), "younics.ai.agent.tools.shell");
         var now = DateTimeOffset.UtcNow;
         var workspace = new AgentWorkspaceRecord("workspace", "Workspace", null, now, now);
         var binding = new AgentWorkspaceBindingRecord(

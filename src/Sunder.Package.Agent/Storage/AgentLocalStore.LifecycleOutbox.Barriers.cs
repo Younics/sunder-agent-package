@@ -28,18 +28,16 @@ public sealed partial class AgentLocalStore
                 ? ComputeLowerHash($"agent-workspace-incarnation-v1\n{workspaceId}\n{reader.GetString(2)}")
                 : null;
             var orderingKey = BuildOrderingKey(workspaceId, workspaceIncarnationId, rootSessionId);
-            var legacyOrderingKey = BuildLegacyOrderingKey(workspaceId, rootSessionId);
             reader.Close();
             command.CommandText = """
                 SELECT EventId, PayloadHash
                 FROM AgentLifecycleOutbox
                 WHERE EventType = 'TranscriptRolledBack'
-                  AND OrderingKey IN ($orderingKey, $legacyOrderingKey)
+                  AND OrderingKey = $orderingKey
                 ORDER BY Sequence DESC
                 LIMIT 1;
                 """;
             command.Parameters.AddWithValue("$orderingKey", orderingKey);
-            command.Parameters.AddWithValue("$legacyOrderingKey", legacyOrderingKey);
             using var outboxReader = command.ExecuteReader();
             if (outboxReader.Read())
             {

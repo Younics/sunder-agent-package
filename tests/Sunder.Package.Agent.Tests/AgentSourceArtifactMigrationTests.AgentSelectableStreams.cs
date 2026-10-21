@@ -9,7 +9,7 @@ using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
 
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 
 public sealed partial class AgentSourceArtifactMigrationTests
 {
@@ -20,9 +20,9 @@ public sealed partial class AgentSourceArtifactMigrationTests
             using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
             var peer = new SelectablePeer();
             var registered = AddSelectableProvider(state, peer, mode);
-            var rpc = new FilesRpcObserver(new RegressionTestRpcClient(state, "sunder.package.agent"), "list");
+            var rpc = new FilesRpcObserver(new RegressionTestRpcClient(state, "younics.ai.agent"), "list");
             await using var receiver = new GeneratedServiceTestScope(rpc);
-            var selected = Assert.Single(await ProjectedProviders(receiver, owner, "ISelectableCapabilityProviderService"));
+            var selected = Assert.Single(await ProjectedProviders(receiver, owner, "ISelectableCapabilityProviderService", imported: false));
             using var client = selected.Service;
             await using var watch = new ProjectedArtifactWatch(client.Value);
             Task<AgentProfileSelectableCapabilityDescriptor[]> List(CancellationToken token = default)

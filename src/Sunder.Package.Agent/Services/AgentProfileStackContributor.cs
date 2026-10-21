@@ -14,15 +14,15 @@ public sealed partial class AgentProfileStackContributor(
     AgentProfileService profileService,
     IPackageContext packageContext) : IPackageStackExporter, IPackageStackImporter, IPackageStackImportAppliedHandler
 {
-    private const string PackageId = "sunder.package.agent";
-    private const string SchemaId = "sunder.package.agent/profile";
+    private const string PackageId = "younics.ai.agent";
+    private const string SchemaId = "younics.ai.agent/profile";
     private const string DetailDescription = "description";
     private const string DetailInstructions = "instructions";
     private const string DetailProviders = "provider-connections";
     private const string DetailModels = "model-choices";
     private const string DetailBehaviorLoop = "behavior-loop";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
-    public string ContributorId => "sunder.package.agent.profiles";
+    public string ContributorId => "younics.ai.agent.profiles";
 
     public string DisplayName => "Agent Profiles";
 
@@ -159,6 +159,14 @@ public sealed partial class AgentProfileStackContributor(
 
     private static bool TryReadPayload(StackFragmentImport fragment, ICollection<string> warnings, out AgentProfileStackPayload? payload)
     {
+        payload = null;
+        if (!string.Equals(fragment.OwnerPackageId, PackageId, StringComparison.Ordinal)
+            || !string.Equals(fragment.SchemaId, SchemaId, StringComparison.Ordinal)
+            || fragment.SchemaVersion != 1)
+        {
+            warnings.Add($"Stack fragment '{fragment.FragmentId}' has an unsupported owner or profile schema.");
+            return false;
+        }
         try
         {
             payload = JsonSerializer.Deserialize<AgentProfileStackPayload>(fragment.JsonPayload, JsonOptions);

@@ -5,7 +5,7 @@ using System.Text.Json.Nodes;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Sdk.Rpc;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -18,7 +18,7 @@ public sealed partial class AgentPublicSourceMigrationTests
     {
         var probe = new ExecutionTargetProbe();
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent.builder");
+        var rpc = new RegressionTestRpcClient(state, "younics.sunder.package.maker");
         await using var receiver = new GeneratedServiceTestScope(rpc);
         var implementation = probe;
         using var sources = new RegressionTestSourceProviders();

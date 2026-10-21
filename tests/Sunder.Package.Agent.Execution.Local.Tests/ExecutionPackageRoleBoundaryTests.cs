@@ -13,8 +13,8 @@ using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using DockerWorker::Sunder.Package.Agent.Execution.Docker;
 using LocalWorker::Sunder.Package.Agent.Execution.Local;
-using LocalModels = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
-using DockerModels = DockerWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using LocalModels = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models;
+using DockerModels = DockerWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models;
 using DockerUi = DockerApp::Sunder.Package.Agent.Execution.Docker;
 using LocalUi = LocalApp::Sunder.Package.Agent.Execution.Local;
 using DockerExecutionSettingsViewModel = DockerApp::Sunder.Package.Agent.Execution.Docker.DockerExecutionSettingsViewModel;
@@ -28,8 +28,8 @@ using Sunder.Sdk.Settings;
 using Sunder.Sdk.Services;
 using Sunder.Sdk.Storage;
 using Xunit;
-using DockerPresentationService = DockerApp::Sunder.Generated.Packages.Sunder_Package_Agent_Execution_Docker_Services.IPresentationService;
-using LocalPresentationService = LocalApp::Sunder.Generated.Packages.Sunder_Package_Agent_Execution_Local_Services.IPresentationService;
+using DockerPresentationService = DockerApp::Sunder.Generated.Packages.Younics_Ai_Agent_Execution_Docker_Services.IPresentationService;
+using LocalPresentationService = LocalApp::Sunder.Generated.Packages.Younics_Ai_Agent_Execution_Local_Services.IPresentationService;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
 
@@ -192,7 +192,7 @@ public sealed class ExecutionPackageRoleBoundaryTests
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await target.ExecutionScopeAsync(ToLocalContext(staleContext)));
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await target.AddPathAsync(new LocalModels.CSunder_Agent_Execution_Target_ExecutionTargetAddPathRequest
+            await target.AddPathAsync(new LocalModels.CYounics_Ai_Agent_Execution_Target_ExecutionTargetAddPathRequest
             {
                 Context = ToLocalContext(staleContext),
                 Path = Path.Combine(scope.RootPath, "rejected-bin"),
@@ -241,7 +241,7 @@ public sealed class ExecutionPackageRoleBoundaryTests
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await target.ShellAsync(ToLocalContext(staleContext)));
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await target.AddPathAsync(new LocalModels.CSunder_Agent_Execution_Target_ExecutionTargetAddPathRequest
+            await target.AddPathAsync(new LocalModels.CYounics_Ai_Agent_Execution_Target_ExecutionTargetAddPathRequest
             {
                 Context = ToLocalContext(staleContext),
                 Path = "/rejected",
@@ -305,7 +305,7 @@ public sealed class ExecutionPackageRoleBoundaryTests
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await target.ShellAsync(ToDockerContext(staleContext)));
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await target.AddPathAsync(new DockerModels.CSunder_Agent_Execution_Target_ExecutionTargetAddPathRequest
+            await target.AddPathAsync(new DockerModels.CYounics_Ai_Agent_Execution_Target_ExecutionTargetAddPathRequest
             {
                 Context = ToDockerContext(staleContext),
                 Path = "/rejected",
@@ -355,7 +355,7 @@ public sealed class ExecutionPackageRoleBoundaryTests
             }));
         Assert.Contains("image identity is not available", missingIdentity.Message, StringComparison.OrdinalIgnoreCase);
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await target.AddPathAsync(new DockerModels.CSunder_Agent_Execution_Target_ExecutionTargetAddPathRequest
+            await target.AddPathAsync(new DockerModels.CYounics_Ai_Agent_Execution_Target_ExecutionTargetAddPathRequest
             {
                 Context = targetContext with { ExpectedConfigurationGeneration = generation },
                 Path = "/rejected-before-readiness",
@@ -416,10 +416,10 @@ public sealed class ExecutionPackageRoleBoundaryTests
         using var scope = RegressionTestPackageScope.Create();
         const string json = "{\"schemaVersion\":3,\"revision\":1,\"images\":[],\"unknownPolicy\":true}";
         await scope.Context.Storage.State.SetValueAsync(DockerImageCatalogService.ImagesKey, json);
-        var migration = new DockerPackageStorageMigration(scope.Context);
+        var validation = new DockerPackageStorageValidation(scope.Context);
 
         var exception = await Assert.ThrowsAsync<DockerExecutionDomainException>(
-            () => migration.StartAsync());
+            () => validation.StartAsync());
 
         Assert.Equal("docker.catalog.unknown-data", exception.Code);
         Assert.Equal(json, await scope.Context.Storage.State.GetValueAsync(DockerImageCatalogService.ImagesKey));
@@ -442,7 +442,7 @@ public sealed class ExecutionPackageRoleBoundaryTests
         using var viewModel = provider.GetRequiredService<DockerExecutionSettingsViewModel>();
 
         var prepared = await viewModel.PrepareNavigationAsync(new PackageViewNavigationContext(
-            "settings:sunder.package.agent.execution.docker",
+            "settings:younics.ai.agent.execution.docker",
             new Dictionary<string, string?>()));
 
         Assert.True(prepared);

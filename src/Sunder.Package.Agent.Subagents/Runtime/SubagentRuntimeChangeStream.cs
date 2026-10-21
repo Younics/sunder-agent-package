@@ -1,6 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using IRuntimeCatalogService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Runtime_Catalog.IRuntimeCatalogService;
 using Sunder.Package.Agent.Subagents.Services;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Services;

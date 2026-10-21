@@ -4,7 +4,7 @@ using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Stacks;
 using Sunder.Sdk.Services;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 
 namespace Sunder.Package.Agent.Services;
 
@@ -14,14 +14,14 @@ public sealed partial class AgentWorkspaceStackContributor(
     IPackageContext packageContext,
     IServiceProviders<AgentServices.IExecutionTargetService> executionTargets) : IPackageStackExporter, IPackageStackImporter, IPackageStackImportAppliedHandler
 {
-    private const string PackageId = "sunder.package.agent";
-    private const string SchemaId = "sunder.package.agent/workspace";
+    private const string PackageId = "younics.ai.agent";
+    private const string SchemaId = "younics.ai.agent/workspace";
     private const string DetailDescription = "description";
     private const string DetailPaths = "paths";
     private const string DetailDocuments = "documents";
     private const string DetailPrimaryExecutionTarget = "primary-execution-target";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
-    public string ContributorId => "sunder.package.agent.workspaces";
+    public string ContributorId => "younics.ai.agent.workspaces";
 
     public string DisplayName => "Agent Workspaces";
 
@@ -400,6 +400,13 @@ public sealed partial class AgentWorkspaceStackContributor(
     private static bool TryReadPayload(StackFragmentImport fragment, ICollection<string> warnings, out AgentWorkspaceStackPayload? payload)
     {
         payload = null;
+        if (!string.Equals(fragment.OwnerPackageId, PackageId, StringComparison.Ordinal)
+            || !string.Equals(fragment.SchemaId, SchemaId, StringComparison.Ordinal)
+            || fragment.SchemaVersion != 1)
+        {
+            warnings.Add($"Stack fragment '{fragment.FragmentId}' has an unsupported owner or workspace schema.");
+            return false;
+        }
         try
         {
             payload = JsonSerializer.Deserialize<AgentWorkspaceStackPayload>(fragment.JsonPayload, JsonOptions);
@@ -521,7 +528,24 @@ public sealed partial class AgentWorkspaceStackContributor(
 
 internal static class AgentStackPackageRequirements
 {
-    private const string CoordinatedFamilyPrefix = "sunder.package.agent";
+    private static readonly HashSet<string> CoordinatedFamilyPackageIds = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "younics.ai.agent",
+        "younics.sunder.package.maker",
+        "younics.ai.agent.execution.docker",
+        "younics.ai.agent.execution.local",
+        "younics.ai.agent.mcp",
+        "younics.ai.agent.memory.semantic",
+        "younics.ai.agent.provider.anthropic",
+        "younics.ai.agent.provider.gemini",
+        "younics.ai.agent.provider.lmstudio",
+        "younics.ai.agent.provider.openai",
+        "younics.ai.agent.skills",
+        "younics.ai.agent.subagents",
+        "younics.ai.agent.tools.files",
+        "younics.ai.agent.tools.shell",
+        "younics.ai.agent.tools.web",
+    };
 
     public static StackPackageRequirement Create(
         string packageId,
@@ -538,8 +562,5 @@ internal static class AgentStackPackageRequirements
             MinimumVersion: IsCoordinatedFamilyPackage(packageId) ? "1.1.0" : null);
 
     private static bool IsCoordinatedFamilyPackage(string packageId)
-        => string.Equals(packageId, CoordinatedFamilyPrefix, StringComparison.OrdinalIgnoreCase)
-           || packageId.StartsWith(
-               CoordinatedFamilyPrefix + ".",
-               StringComparison.OrdinalIgnoreCase);
+        => CoordinatedFamilyPackageIds.Contains(packageId);
 }

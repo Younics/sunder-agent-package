@@ -20,6 +20,14 @@ internal sealed class RecordingPackageContributionRegistry : IAvaloniaPackageCon
         => _registrations.Add($"{kind}:{implementationType.FullName}");
 }
 
+internal sealed class CompositionDevelopmentHost : IPackageDevelopmentService, IPackageLogNavigationService
+{
+    public Task<IPackageDevelopmentSession> LoadAsync(string developmentFolder, bool watch, CancellationToken cancellationToken = default)
+        => throw new InvalidOperationException("Composition must not load a development package.");
+    public Task OpenPackageLogsAsync(string packageId, CancellationToken cancellationToken = default)
+        => throw new InvalidOperationException("Composition must not navigate to package logs.");
+}
+
 internal sealed class CompositionBackgroundProcessQueue : IBackgroundProcessQueue
 {
     public event EventHandler<BackgroundProcessChangedEventArgs>? ProcessChanged

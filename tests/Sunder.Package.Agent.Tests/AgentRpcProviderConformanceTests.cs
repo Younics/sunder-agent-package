@@ -33,7 +33,7 @@ public sealed class AgentRpcProviderConformanceTests
         using var scope = RegressionTestPackageScope.Create();
         using var rpcCatalog = new RegressionTestExtensionCatalog();
         var generated = AgentSourceArtifactMigrationTests.CreateGeneratedWorker(typeof(Services.AgentRunControlService).Assembly,
-            scope.Context, rpcCatalog.RpcForCaller("sunder.package.agent"));
+            scope.Context, rpcCatalog.RpcForCaller("younics.ai.agent"));
         await using var lifetime = generated.Lifetime;
         var serviceProvider = generated.Services;
         var registrations = generated.Options.Providers;
@@ -84,10 +84,10 @@ public sealed class AgentRpcProviderConformanceTests
     {
         using var package = RegressionTestPackageScope.Create();
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent.tests");
+        var rpc = new RegressionTestRpcClient(state, "younics.ai.agent.tests");
         await using var generated = new GeneratedServiceTestScope(rpc);
-        var localDescriptor = CurrentPrivateRpcDescriptors.Get("sunder.package.agent.execution.local.presentation");
-        var dockerDescriptor = CurrentPrivateRpcDescriptors.Get("sunder.package.agent.execution.docker.presentation");
+        var localDescriptor = CurrentPrivateRpcDescriptors.Get("younics.ai.agent.execution.local.presentation");
+        var dockerDescriptor = CurrentPrivateRpcDescriptors.Get("younics.ai.agent.execution.docker.presentation");
         var localService = new LocalExecutionPresentationService(package.Context, new LocalShellCatalogService(package.Context));
         var runner = new ConformanceDockerCli(package.Context);
         var dockerService = new DockerExecutionPresentationService(package.Context, runner,
@@ -110,7 +110,7 @@ public sealed class AgentRpcProviderConformanceTests
     {
         using var providers = new RegressionTestSourceProviders();
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        await using var receiver = new GeneratedServiceTestScope(new RegressionTestRpcClient(state, "sunder.package.agent.tests"));
+        await using var receiver = new GeneratedServiceTestScope(new RegressionTestRpcClient(state, "younics.ai.agent.tests"));
         var registration = providers.Create(RegressionTestBindings.ObservedToolExecutions, new ToolSourceProbe(), receiver);
         var descriptor = CurrentPublicRpcDescriptors.Get(registration.ContractId);
         Assert.Equal(SunderRpcMethodKind.ServerStream, descriptor.FindService("tool-execution-observed")!.FindMethod("execute")!.Kind);
@@ -168,7 +168,7 @@ public sealed class AgentRpcProviderConformanceTests
                     ErrorCode: null,
                     BackendId: "files",
                     AgentToolExecutionStatus.Completed,
-                    ToolOwnerPackageId: "sunder.package.agent.tools.files",
+                    ToolOwnerPackageId: "younics.ai.agent.tools.files",
                     ToolSchemaId: "read-file",
                     ToolSchemaVersion: "1.0.0",
                     Revision: 7)
@@ -192,14 +192,14 @@ public sealed class AgentRpcProviderConformanceTests
                 RuntimeInstanceId: "runtime-1"));
         var toolDetail = JsonSerializer.SerializeToElement(provider.ToolDetail, CurrentPrivateRpcDescriptors.OwnerJson);
         AssertMethodOutputSchemaValid(
-            CurrentPrivateRpcDescriptors.Get("sunder.agent.owner.runtime"),
+            CurrentPrivateRpcDescriptors.Get("younics.ai.agent.owner.runtime"),
             "agent-runtime",
             "transcript-tool-detail",
             toolDetail);
         Assert.Equal("read_file", toolDetail.GetProperty("detail").GetProperty("toolId").GetString());
 
         var change = JsonSerializer.SerializeToElement(provider.Change, CurrentPrivateRpcDescriptors.OwnerJson);
-        AssertMethodOutputSchemaValid(CurrentPrivateRpcDescriptors.Get("sunder.agent.owner.runtime"), "agent-runtime", "changes", change);
+        AssertMethodOutputSchemaValid(CurrentPrivateRpcDescriptors.Get("younics.ai.agent.owner.runtime"), "agent-runtime", "changes", change);
         Assert.Equal(" world", change.GetProperty("turnMutation").GetProperty("text").GetString());
         Assert.Equal("2026-08-20T12:34:56Z", change.GetProperty("turnMutation").GetProperty("updatedAtUtc").GetString());
     }
@@ -211,7 +211,7 @@ public sealed class AgentRpcProviderConformanceTests
         { DefaultIgnoreCondition = JsonIgnoreCondition.Never };
         using var providers = new RegressionTestSourceProviders();
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent.tests");
+        var rpc = new RegressionTestRpcClient(state, "younics.ai.agent.tests");
         await using var receiver = new GeneratedServiceTestScope(rpc);
         var chatRegistration = providers.Create(RegressionTestBindings.ChatProviders, new ChatProviderProbe(), receiver);
         var chatProvider = state.AddGenerated("schema.chat", chatRegistration, chatRegistration, providers, chatRegistration.ProviderId);
@@ -496,23 +496,6 @@ public sealed class AgentRpcProviderConformanceTests
             AgentFileDeleteRequest request,
             CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
-    }
-
-    private sealed class WorkspacePathMigratorProbe : IAgentWorkspacePathMigrationContributor
-    {
-        public string ContributorId => "test.workspace.path.migrator";
-
-        public bool CanMigrate(AgentWorkspacePathMigrationContext context) => false;
-
-        public Task<IReadOnlyList<AgentWorkspacePathMigrationItem>> GetLegacyWorkspacePathsAsync(
-            AgentWorkspacePathMigrationContext context,
-            CancellationToken cancellationToken = default)
-            => Task.FromResult<IReadOnlyList<AgentWorkspacePathMigrationItem>>([]);
-
-        public Task CompleteWorkspacePathMigrationAsync(
-            AgentWorkspacePathMigrationContext context,
-            CancellationToken cancellationToken = default)
-            => Task.CompletedTask;
     }
 
     private sealed class WorkspaceEditorProbe : IAgentWorkspaceEditorContributor

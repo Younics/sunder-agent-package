@@ -4,8 +4,8 @@ using System.Text.Json;
 using SubagentsWorker::Sunder.Package.Agent.Subagents.Models;
 using SubagentsWorker::Sunder.Package.Agent.Subagents.Services;
 using Xunit;
-using AgentModels = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
-using SubagentServices = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentModels = SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models;
+using IToolSourceService = SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Tool_Source.IToolSourceService;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -20,7 +20,7 @@ public sealed class SubagentPayloadBoundaryTests
             new SubagentService(new SubagentStore(scope.Context)),
             new SubagentRequestParser(),
             new SubagentPermissionStatusAdapter(
-                catalog.Receiver("sunder.package.agent.subagents").Providers<SubagentServices.IToolSourceService>()));
+                catalog.Receiver("younics.ai.agent.subagents").Providers<IToolSourceService>()));
         var childSessionId = Guid.NewGuid();
         var now = DateTimeOffset.UtcNow;
         var subagent = new SubagentRecord(

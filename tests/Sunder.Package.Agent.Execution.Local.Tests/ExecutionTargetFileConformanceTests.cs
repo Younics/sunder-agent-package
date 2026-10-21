@@ -16,10 +16,10 @@ using LocalWorker::Sunder.Package.Agent.Execution.Local;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Tests;
 using FilesWorker::Sunder.Package.Agent.Tools.Files;
-using DockerModels = DockerWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
-using DockerServices = DockerWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
-using LocalModels = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
-using LocalServices = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using DockerModels = DockerWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models;
+using DockerExecutionTargetService = DockerWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Execution_Target.IExecutionTargetService;
+using LocalModels = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models;
+using LocalExecutionTargetService = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Execution_Target.IExecutionTargetService;
 using HostSecurePathEngine = DockerWorker::Sunder.Agent.Execution.Common.HostSecurePathEngine;
 using Sunder.Sdk.Abstractions;
 using Xunit;
@@ -412,7 +412,7 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
         using var catalog = new RegressionTestExtensionCatalog();
         catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target);
         var targetProvider = await catalog.GetRequiredProviderAsync(catalog.ExecutionTargets);
-        using var source = new GeneratedToolSourceProbe(catalog, new FilesToolSource(packageScope.Context), "sunder.package.agent.tools.files");
+        using var source = new GeneratedToolSourceProbe(catalog, new FilesToolSource(packageScope.Context), "younics.ai.agent.tools.files");
         var now = DateTimeOffset.UtcNow;
         var workspace = new AgentWorkspaceRecord("workspace", "Workspace", null, now, now);
         var binding = new AgentWorkspaceBindingRecord(
@@ -750,9 +750,9 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
     public void EveryRangedExecutionTarget_IsCoveredByConformanceData()
     {
         var implementations = typeof(LocalExecutionTarget).Assembly.GetTypes()
-            .Where(type => !type.IsAbstract && typeof(LocalServices.IExecutionTargetService).IsAssignableFrom(type))
+            .Where(type => !type.IsAbstract && typeof(LocalExecutionTargetService).IsAssignableFrom(type))
             .Concat(typeof(DockerExecutionTarget).Assembly.GetTypes()
-                .Where(type => !type.IsAbstract && typeof(DockerServices.IExecutionTargetService).IsAssignableFrom(type)))
+                .Where(type => !type.IsAbstract && typeof(DockerExecutionTargetService).IsAssignableFrom(type)))
             .Select(type => type.FullName!)
             .OrderBy(name => name, StringComparer.Ordinal)
             .ToArray();

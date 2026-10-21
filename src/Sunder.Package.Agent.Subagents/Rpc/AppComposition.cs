@@ -3,7 +3,7 @@ using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Package.Agent.Subagents.Runtime;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Notifications;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Subagents_Services;
+using Sunder.Generated.Packages.Younics_Ai_Agent_Subagents_Services;
 
 namespace Sunder.Package.Agent.Subagents.PackageViews
 {

@@ -3,7 +3,7 @@ using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Services;
 
-[SunderService(SunderServiceExposure.Public, Key = "child-run-executor", ContractId = "sunder.agent.child.run.executor", ServiceId = "child-run-executor", IncludeSchemaDialect = true)]
+[SunderService(SunderServiceExposure.Public, Key = "child-run-executor", ContractId = "younics.ai.agent.child.run.executor", ServiceId = "child-run-executor", IncludeSchemaDialect = true)]
 [SunderServiceProvider(ProviderId = "agent.child.runs")]
 [SunderAppUse(Actions = ["discover", "invoke"])]
 public sealed partial class AgentChildRunExecutor(

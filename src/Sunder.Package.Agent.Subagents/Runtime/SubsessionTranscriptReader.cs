@@ -1,4 +1,4 @@
-using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using IRuntimeCatalogService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Runtime_Catalog.IRuntimeCatalogService;
 using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Subagents.Runtime;

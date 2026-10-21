@@ -4,10 +4,10 @@ using MemoryApp::Sunder.Package.Agent.Memory.Semantic;
 using MemoryApp::Sunder.Package.Agent.Memory.Semantic.PackageViews;
 using MemoryApp::Sunder.Package.Agent.Memory.Semantic.Runtime;
 using MemoryApp::Sunder.Package.Agent.Memory.Semantic.Services;
-using AgentSessionContextCheckpointRecord = MemoryApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionContextCheckpointRecord;
-using AgentSessionRecord = MemoryApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionRecord;
-using AgentSessionState = MemoryApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionState;
-using AgentWorkingSummaryRecord = MemoryApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentWorkingSummaryRecord;
+using AgentSessionContextCheckpointRecord = MemoryApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentSessionContextCheckpointRecord;
+using AgentSessionRecord = MemoryApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentSessionRecord;
+using AgentSessionState = MemoryApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentSessionState;
+using AgentWorkingSummaryRecord = MemoryApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentWorkingSummaryRecord;
 using Sunder.Sdk.Rpc;
 using Xunit;
 

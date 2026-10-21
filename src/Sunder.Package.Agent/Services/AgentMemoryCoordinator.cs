@@ -4,7 +4,7 @@ using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Services;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 
 namespace Sunder.Package.Agent.Services;
 
@@ -106,7 +106,7 @@ public sealed class AgentMemoryCoordinator(
                 "Profile Instructions",
                 profile.Instructions.Trim(),
                 Priority: 300,
-                SourceId: "sunder.package.agent.profile",
+                SourceId: "younics.ai.agent.profile",
                 Provenance: AgentContextProvenance.User,
                 Trust: AgentContextTrust.UserProvided));
             promptContextBlocks[^1] = promptContextBlocks[^1] with
@@ -123,7 +123,7 @@ public sealed class AgentMemoryCoordinator(
                 "Session Continuity Summary",
                 workingSummary,
                 Priority: 200,
-                SourceId: "sunder.package.agent.session-context",
+                SourceId: "younics.ai.agent.session-context",
                 Provenance: AgentContextProvenance.TranscriptSummary,
                 Trust: AgentContextTrust.Untrusted));
         }
@@ -477,10 +477,10 @@ public sealed class AgentMemoryCoordinator(
 
 internal static class AgentPromptContextHostPolicy
 {
-    internal const string ScopedInstructionPackageId = "sunder.package.agent.tools.files";
+    internal const string ScopedInstructionPackageId = "younics.ai.agent.tools.files";
     internal const string ScopedInstructionContributorId = "workspace-files";
-    internal const string ScopedInstructionIdentity = "sunder.host.scoped-instruction.v1";
-    internal const string ProfileInstructionIdentity = "sunder.host.profile-standing-instruction.v1";
+    internal const string ScopedInstructionIdentity = "younics.ai.agent.scoped-instruction.v1";
+    internal const string ProfileInstructionIdentity = "younics.ai.agent.profile-standing-instruction.v1";
 
     public static bool IsRequiredScopedInstructionContributor(
         string packageId,

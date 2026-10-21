@@ -15,7 +15,7 @@ internal sealed record OpenAiUtilityModelSelection(
         => Resolve(await settings.GetValueAsync(ConfigurationKey, cancellationToken));
 
     internal string? Normalize(string? configuredModelId)
-        => OpenAiProviderConfiguration.NormalizeLegacyUtilityModelId(configuredModelId);
+        => configuredModelId?.Trim();
 
     internal string Resolve(string? configuredModelId)
     {

@@ -4,7 +4,7 @@ using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Rpc.Public;
 
-[SunderService(SunderServiceExposure.Public, ContractId = "sunder.agent.chat.provider", ServiceId = "chat-provider", IncludeSchemaDialect = true)]
+[SunderService(SunderServiceExposure.Public, ContractId = "younics.ai.agent.chat.provider", ServiceId = "chat-provider", IncludeSchemaDialect = true)]
 [SunderRuntimeUse(Actions = ["discover", "invoke", "subscribe"])]
 public interface ChatProviderService
 {

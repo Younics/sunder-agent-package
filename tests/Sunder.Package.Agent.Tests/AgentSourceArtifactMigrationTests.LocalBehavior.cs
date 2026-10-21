@@ -18,7 +18,7 @@ using Xunit;
 namespace Sunder.Package.Agent.Tests;
 
 extern alias LocalWorker;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 using LocalWorker::Sunder.Package.Agent.Execution.Local;
 
 public sealed partial class AgentSourceArtifactMigrationTests
@@ -30,7 +30,6 @@ public sealed partial class AgentSourceArtifactMigrationTests
         {
             using var workerStream = File.OpenRead(Path.Combine(SingleProjectRoleOutput(worker, "worker"), "Sunder.Package.Agent.Execution.Local.dll"));
             var runtime = load.LoadFromStream(workerStream);
-            await BuildRoleProbes(worker, runtime, "ExecutionRoleLocalProbes.cs.txt", output: SingleProjectRoleOutput(worker, "worker"));
             var owner = LoadExecutionOwner(worker, load);
             var agentApp = LoadAgentEditorOwner(worker, load);
             using var appStream = File.OpenRead(Path.Combine(SingleProjectRoleOutput(worker, "app"), "Sunder.Package.Agent.Execution.Local.App.dll"));
@@ -48,9 +47,9 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.DoesNotContain(presentation.GetReferencedAssemblies(), reference => reference.Name is "Sunder.Package.Agent.Execution.Local" or "Sunder.Sdk.Worker");
             using var package = RegressionTestPackageScope.Create();
             var physicalRoot = OperatingSystem.IsMacOS() && package.RootPath.StartsWith("/var/", StringComparison.Ordinal) ? "/private" + package.RootPath : package.RootPath;
-            var context = new TestPackageContext("sunder.package.agent.execution.local", physicalRoot, version: "2.0.0", storage: package.Context.Storage);
+            var context = new TestPackageContext("younics.ai.agent.execution.local", physicalRoot, version: "2.0.0", storage: package.Context.Storage);
             using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-            var rpc = new RegressionTestRpcClient(state, "sunder.package.agent.execution.local");
+            var rpc = new RegressionTestRpcClient(state, "younics.ai.agent.execution.local");
             var (options, lifetime, runtimeServices) = CreateGeneratedWorker(runtime, context, rpc);
             await using var owned = lifetime;
             Assert.Null(runtime.GetType("Sunder.Package.Agent.Execution.Local.LocalWorkerConfiguration"));
@@ -66,15 +65,15 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.Same(runtimeServices.GetRequiredService(runtime.GetType("Sunder.Package.Agent.Execution.Local.LocalExecutionWorkspaceConfigService", true)!),
                 targetService.GetType().GetField("_configService", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(targetService));
             var registrations = options.Providers.ToDictionary(value => value.ProviderId);
-            Assert.Equal(new[] { "local.execution.target", "local.presentation", "local.workspace.editor", "local.workspace.path.migrator" }, registrations.Keys.Order(StringComparer.Ordinal));
+            Assert.Equal(new[] { "local.execution.target", "local.presentation", "local.workspace.editor" }, registrations.Keys.Order(StringComparer.Ordinal));
             foreach (var provider in options.Providers)
             {
-                var descriptor = provider.ProviderId == "local.presentation" ? CurrentPrivateRpcDescriptors.Get("sunder.package.agent.execution.local.presentation") : CurrentPublicRpcDescriptors.Get(provider.ContractId);
+                var descriptor = provider.ProviderId == "local.presentation" ? CurrentPrivateRpcDescriptors.Get("younics.ai.agent.execution.local.presentation") : CurrentPublicRpcDescriptors.Get(provider.ContractId);
                 Assert.Equal(descriptor.Sha256, provider.DescriptorSha256); Assert.Equal(descriptor.AbiSha256, provider.AbiSha256);
-                state.Add("sunder.package.agent.execution.local", descriptor, provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, "2.0.0");
+                state.Add("younics.ai.agent.execution.local", descriptor, provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, "2.0.0");
             }
             await using var appServices = CreateGeneratedApp(presentation, context, rpc);
-            var presentationContract = presentation.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Execution_Local_Services.IPresentationService", true)!;
+            var presentationContract = presentation.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Execution_Local_Services.IPresentationService", true)!;
             var client = appServices.GetRequiredService(presentationContract);
             Assert.Null(presentation.GetType("Sunder.Package.Agent.Execution.Local.App.LocalExecutionSourceClient"));
             var initial = await Present(new { kind = "get-settings" });
@@ -108,23 +107,12 @@ public sealed partial class AgentSourceArtifactMigrationTests
             var targetContext = new AgentExecutionTargetContext(Guid.NewGuid(), "profile.local", workspace, binding);
             var editorContext = new AgentWorkspaceEditorContext(
                 AgentRoleBoundary.As<AgentApp::Sunder.Package.Agent.Contracts.Models.AgentWorkspaceRecord>(workspace), "local", binding.BindingId);
-            var editorClient = CreateAgentWorkspaceEditor(agentApp, rpc.ForCaller("sunder.package.agent"), Assert.Single(state.Discover(RegressionTestBindings.WorkspaceEditors).Providers));
+            var editorClient = CreateAgentWorkspaceEditor(agentApp, rpc.ForCaller("younics.ai.agent"), Assert.Single(state.Discover(RegressionTestBindings.WorkspaceEditors).Providers));
             await using var editorLifetime = (IAsyncDisposable)editorClient;
             Assert.True(await editorClient.CanEditAsync(editorContext)); Assert.Single(await editorClient.GetSectionsAsync(editorContext));
             Assert.True((await editorClient.SaveSectionAsync(editorContext,
                 new("local-execution-settings", new Dictionary<string, AgentEditorFieldValue> { ["shell"] = new("artifact.shell") }))).Success);
-            var migration = new AgentWorkspacePathMigrationContext(workspace, binding);
-            await using var migrationReceiver = new GeneratedServiceTestScope(rpc.ForCaller("sunder.package.agent"));
-            var migrator = Assert.Single((await migrationReceiver.Providers<AgentServices.IWorkspacePathMigratorService>().ListAsync()).Providers).Service;
-            Assert.True(await migrator.CanMigrateAsync(migration));
-            var key = (string)runtime.GetType("Sunder.Package.Agent.Execution.Local.LocalExecutionWorkspaceConfigService", true)!
-                .GetMethod("BuildKey", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, [binding.BindingId])!;
-            await context.Storage.State.SetValueAsync(key, JsonSerializer.Serialize(new { SelectedShellId = "artifact.shell", PathEntries = Array.Empty<string>(), AllowedRoots = new[] { workspaceRoot }, DefaultWorkingDirectory = workspaceRoot }));
-            var paths = await migrator.ListLegacyPathsAsync(migration);
-            Assert.Equal(workspaceRoot, Assert.Single(paths).HostPath);
-            await migrator.CompleteAsync(migration);
-            Assert.Empty(await migrator.ListLegacyPathsAsync(migration));
-            var executionRpc = new FilesRpcObserver(new RegressionTestRpcClient(state, "sunder.package.agent"));
+            var executionRpc = new FilesRpcObserver(new RegressionTestRpcClient(state, "younics.ai.agent"));
             await using var executionReceiver = new GeneratedServiceTestScope(executionRpc);
             var executionClient = Assert.Single((await executionReceiver.Providers<AgentServices.IExecutionTargetService>().ListAsync()).Providers,
                 provider => provider.ProviderId == "local.execution.target").Service;
@@ -188,7 +176,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var denied = Json(await client.ReadFileAsync(context, new AgentFileReadRequest(outsideFile)));
         Assert.True(denied.GetProperty("isError").GetBoolean());
         var operation = new AgentResourceOperationContext(Guid.NewGuid(), 7, "call.local", "files.mutate", 0, "workspace-generation", "binding-generation",
-            "sunder.package.agent.tools.files", "sunder.package.agent.execution.local", Guid.NewGuid().ToString("N"), 1, true);
+            "younics.ai.agent.tools.files", "younics.ai.agent.execution.local", Guid.NewGuid().ToString("N"), 1, true);
         var planning = context with { AllowOutsideConfiguredScope = true, ResourceOperation = operation, ExpectedConfigurationGeneration = generation };
         var planned = await client.ResolveFileAsync(planning, outsideFile);
         Assert.NotNull(planned.ResourceClaim); Assert.NotEmpty(planned.AuthorityReferences);

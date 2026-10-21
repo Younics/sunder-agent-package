@@ -2,7 +2,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
 using Sunder.Package.Agent.Provider.Shared;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Provider_Lmstudio_Services;
+using Sunder.Generated.Packages.Younics_Ai_Agent_Provider_Lmstudio_Services;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Rpc;
 

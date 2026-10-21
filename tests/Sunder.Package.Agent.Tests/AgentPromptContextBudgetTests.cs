@@ -16,7 +16,7 @@ public sealed class AgentPromptContextBudgetTests
         int maxChars,
         bool expectedValid)
     {
-        var descriptor = CurrentPublicRpcDescriptors.Get("sunder.agent.prompt.context.contributor");
+        var descriptor = CurrentPublicRpcDescriptors.Get("younics.ai.agent.prompt.context.contributor");
         var plan = JsonSerializer.SerializeToElement(new
         {
             intent = "lookup",

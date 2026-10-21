@@ -6,7 +6,7 @@ using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.Services;
 using Sunder.Sdk.Logging;
 using Sunder.Sdk.Services;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 
 namespace Sunder.Package.Agent.Services.BehaviorLoops;
 
@@ -14,7 +14,7 @@ namespace Sunder.Package.Agent.Services.BehaviorLoops;
 public sealed partial class DefaultAgentBehaviorLoop : IAgentBehaviorLoop, Rpc.Public.BehaviorLoopService
 {
     public const string LoopId = AgentBehaviorLoopIds.Default;
-    internal const string BuiltInSourceId = "sunder.package.agent";
+    internal const string BuiltInSourceId = "younics.ai.agent";
     private const int MaxRequestCompactionPasses = 3;
 
     private readonly AgentPromptPreparationPipeline _promptPreparationPipeline;

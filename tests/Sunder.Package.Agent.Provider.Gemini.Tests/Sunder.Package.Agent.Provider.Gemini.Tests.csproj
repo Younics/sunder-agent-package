@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <SunderTestOwner>sunder.package.agent.provider.gemini</SunderTestOwner>
+    <SunderTestOwner>younics.ai.agent.provider.gemini</SunderTestOwner>
     <SunderTestCategory>Conformance</SunderTestCategory>
     <SunderTestCapabilities>HTTP;Worker</SunderTestCapabilities>
     <SunderTestOS>Any</SunderTestOS>

@@ -6,7 +6,7 @@ using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Stacks;
 using Sunder.Sdk.Services;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -16,7 +16,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
     private static async Task VerifyAgentExecutionSelection(Assembly owner, RegressionTestRpcState state, AgentWorkspaceRecord workspace)
     {
         using var package = RegressionTestPackageScope.Create();
-        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
+        var rpc = new RegressionTestRpcClient(state, "younics.ai.agent");
         await using var host = new AgentPromptHost(owner, package.Context, rpc, workspace, "LOCAL");
         var service = host.Services.GetRequiredService(owner.GetType("Sunder.Package.Agent.Services.AgentExecutionTargetService", true)!);
         var listed = await AgentRoleBoundary.As<ValueTask<IReadOnlyList<AgentExecutionTargetDescriptor>>>(
@@ -48,7 +48,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.Contains((IEnumerable<string>)scope.GetType().GetProperty("WorkspacePaths")!.GetValue(scope)!, path => path == workspace.Paths[0].HostPath);
         var stack = (IPackageStackExporter)host.Services.GetRequiredService(owner.GetType("Sunder.Package.Agent.Services.AgentWorkspaceStackContributor", true)!);
         Assert.Contains((await stack.ExportAsync(new([new(host.Workspace.WorkspaceId)]))).PackageRequirements,
-             requirement => requirement.PackageId == "sunder.package.agent.execution.local");
+             requirement => requirement.PackageId == "younics.ai.agent.execution.local");
 
         static JsonElement ReferenceJson(object value)
         {

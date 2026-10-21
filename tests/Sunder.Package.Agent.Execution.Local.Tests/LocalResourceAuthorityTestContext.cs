@@ -3,7 +3,7 @@ extern alias LocalWorker;
 using LocalWorker::Sunder.Package.Agent.Execution.Local;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Rpc;
-using LocalModels = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using LocalModels = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
 
@@ -61,8 +61,8 @@ internal static class LocalResourceAuthorityTestContext
             ResourceIndex = resourceIndex,
             WorkspaceGeneration = "workspace-generation",
             BindingGeneration = "binding-generation",
-            ToolOwnerPackageId = "sunder.package.agent.tools.files",
-            ExecutionTargetOwnerPackageId = "sunder.package.agent.execution.local",
+            ToolOwnerPackageId = "younics.ai.agent.tools.files",
+            ExecutionTargetOwnerPackageId = "younics.ai.agent.execution.local",
             AuthorityActivationId = Guid.NewGuid().ToString("N"),
             AuthorityUseCount = authorityUseCount,
             CanIssueOutsideAuthority = true,

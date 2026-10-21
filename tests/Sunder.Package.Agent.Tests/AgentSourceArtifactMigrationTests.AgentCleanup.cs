@@ -5,7 +5,7 @@ using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Rpc;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -19,7 +19,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var cleaned = new ConcurrentQueue<Guid>();
         var cleanerHandler = AddCleanupCleaner(state, "fixture.cleaner", cleaned.Enqueue);
         var lifecycleHandler = AddCleanupLifecycleProvider(state, peer);
-        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
+        var rpc = new RegressionTestRpcClient(state, "younics.ai.agent");
         var observed = new FilesRpcObserver(rpc, "handle");
         var primary = await SelectAsync(observed);
         await using var primaryScope = primary.Scope;
@@ -118,7 +118,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var completed = 0;
         var handler = AddCleanupCleaner(state, "drained.cleaner", _ =>
         { entered.Set(); if (!release.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException("Cleanup release was not signalled."); Interlocked.Increment(ref completed); });
-        var rpc = new FilesRpcObserver(new RegressionTestRpcClient(state, "sunder.package.agent"));
+        var rpc = new FilesRpcObserver(new RegressionTestRpcClient(state, "younics.ai.agent"));
         var receiver = await SelectCleanerAsync(rpc);
         await using var lifetime = receiver.Scope;
         var cleaner = receiver.Cleaner;
@@ -150,12 +150,12 @@ public sealed partial class AgentSourceArtifactMigrationTests
     }
 
     private static CleanupHandlerProbe AddCleanupCleaner(RegressionTestRpcState state, string cleanerId, Action<Guid> delete)
-        => (CleanupHandlerProbe)AddGeneratedPeer(state, "sunder.package.agent.memory.semantic",
+        => (CleanupHandlerProbe)AddGeneratedPeer(state, "younics.ai.agent.memory.semantic",
             RegressionTestBindings.SessionCleaners, new RegressionTestSessionCleanerProvider(new CleanupCleaner(cleanerId, delete)),
             cleanerId, inner => new CleanupHandlerProbe(inner));
 
     private static CleanupHandlerProbe AddCleanupLifecycleProvider(RegressionTestRpcState state, CleanupObserver observer)
-        => (CleanupHandlerProbe)AddGeneratedPeer(state, "sunder.package.agent.memory.semantic",
+        => (CleanupHandlerProbe)AddGeneratedPeer(state, "younics.ai.agent.memory.semantic",
             RegressionTestBindings.DurableLifecycleObservers, new RegressionTestDurableLifecycleProvider(observer),
             "semantic.memory.lifecycle", inner => new CleanupHandlerProbe(inner));
 

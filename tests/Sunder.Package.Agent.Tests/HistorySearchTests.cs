@@ -16,7 +16,7 @@ namespace Sunder.Package.Agent.Tests;
 
 extern alias SubagentsWorker;
 using SubagentsWorker::Sunder.Package.Agent.Subagents.Runtime;
-using SubagentServices = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using IRuntimeCatalogService = SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Runtime_Catalog.IRuntimeCatalogService;
 
 public sealed class HistorySearchTests
 {
@@ -248,7 +248,7 @@ public sealed class HistorySearchTests
             text: null,
             toolId: "apply_patch",
             argumentsJson: JsonSerializer.Serialize(new { patchText = patch }),
-            toolOwnerPackageId: "sunder.package.agent.tools.files");
+            toolOwnerPackageId: "younics.ai.agent.tools.files");
         var activity = Assert.Single(HistorySearchExtractor.Extract(
             session,
             patchTurn));
@@ -407,7 +407,7 @@ public sealed class HistorySearchTests
 
         extensionCatalog.AddRuntimeCatalog(provider.GetRequiredService<AgentRuntimeCatalog>());
         var runtime = Assert.Single((await extensionCatalog.Subagents()
-            .Providers<SubagentServices.IRuntimeCatalogService>()
+            .Providers<IRuntimeCatalogService>()
             .ListAsync()).Providers).Service;
         var childAround = await SubsessionTranscriptReader.AroundAsync(
                 runtime,

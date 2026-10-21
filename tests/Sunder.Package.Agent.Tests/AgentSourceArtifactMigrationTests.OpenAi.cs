@@ -39,7 +39,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         using var manifestStream = archive.GetEntry("manifest/sunder-package.json")!.Open();
         using var manifest = JsonDocument.Parse(manifestStream);
         var value = manifest.RootElement;
-        Assert.Equal("sunder.package.agent.provider.openai", value.GetProperty("id").GetString());
+        Assert.Equal("younics.ai.agent.provider.openai", value.GetProperty("id").GetString());
         Assert.Equal(4, value.GetProperty("contractBundles").GetArrayLength()); Assert.Equal(4, value.GetProperty("provides").GetArrayLength());
         var use = Assert.Single(value.GetProperty("usesContracts").EnumerateArray());
         Assert.Equal("app", use.GetProperty("role").GetString()); Assert.True(use.GetProperty("required").GetBoolean());
@@ -57,7 +57,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             await active.Activate();
             Assert.Equal("openai", (await active.Invoke("openai.chat", "chat-provider", "describe", new { })).GetProperty("providerId").GetString());
             Assert.Equal("openai", (await active.Invoke("openai.embedding", "embedding-provider", "describe", new { })).GetProperty("providerId").GetString());
-            Assert.Equal("sunder.package.agent.provider.openai:codex-response-continuation", (await active.Invoke("openai.continuation.cleaner", "session-cleaner", "describe", new { })).GetProperty("id").GetString());
+            Assert.Equal("younics.ai.agent.provider.openai:codex-response-continuation", (await active.Invoke("openai.continuation.cleaner", "session-cleaner", "describe", new { })).GetProperty("id").GetString());
             await active.Shutdown();
         }
     }

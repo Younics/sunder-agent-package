@@ -57,8 +57,8 @@ using AgentChatSelectionStateService = AgentCore::Sunder.Package.Agent.Services.
 using AgentToolPresentationService = AgentCore::Sunder.Package.Agent.Services.AgentToolPresentationService;
 using AppRuntime = AgentCore::Sunder.Package.Agent.Runtime;
 using AppModels = AgentCore::Sunder.Package.Agent.Contracts.Models;
-using AnthropicReasoningEffort = AnthropicWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentReasoningEffort;
-using GeminiReasoningEffort = GeminiWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentReasoningEffort;
+using AnthropicReasoningEffort = AnthropicWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentReasoningEffort;
+using GeminiReasoningEffort = GeminiWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentReasoningEffort;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -1278,7 +1278,7 @@ public sealed partial class AgentRunCoordinatorTests
         var provider = new MutableSelectableCapabilityProvider();
         var store = new AgentLocalStore(scope.Context);
         var sessions = new AgentSessionService(store, catalog.SessionCleaners);
-        var workspaces = new AgentWorkspaceService(store, catalog.SessionCleaners, sessions, catalog.WorkspacePathMigrators);
+        var workspaces = new AgentWorkspaceService(store, catalog.SessionCleaners, sessions);
         var tools = new AgentToolService(
             sessions,
             workspaces,

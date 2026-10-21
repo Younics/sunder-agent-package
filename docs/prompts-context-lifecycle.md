@@ -4,15 +4,17 @@ Agent 2.x has a hard boundary between privileged system policy, host-reserved us
 
 | Channel | Contract | Intended content |
 | --- | --- | --- |
-| System instructions | `IAgentSystemPromptContributor` and base Runtime policy | Trusted, package-owned policy and capability instructions |
+| System instructions | `ISystemPromptContributorService` and base Runtime policy | Trusted, package-owned policy and capability instructions |
 | Reserved supplementary instructions | Selected profile plus owner-verified first-party Files context | User standing instructions and canonical directory-scoped `AGENTS.md` instructions |
-| Supplementary reference context | `IAgentPromptContextContributor` | Retrieved, external, transcript-derived, assistant-produced, tool-produced, or ordinary reference data |
+| Supplementary reference context | `IPromptContextContributorService` | Retrieved, external, transcript-derived, assistant-produced, tool-produced, or ordinary reference data |
 
 Supplementary context is always serialized into a user-role JSON message. The Runtime overwrites effective authority from catalog ownership and host-controlled provenance. An extension cannot gain behavioral authority by setting `Usage`, `Authority`, `HostIdentity`, `SourceId`, or scope metadata. No supplementary block grants permission.
 
 ## System Prompt Contributors
 
-Implement `IAgentSystemPromptContributor`, adapt it with `AgentSystemPromptContributorRpc.CreateHandler`, and publish it under `sunder.agent.system.prompt.contributor`.
+Select `younics.ai.agent.system.prompt.contributor`, implement generated
+`ISystemPromptContributorService` and bind it with `SunderServiceProvider`.
+Use imported Models, as in the [quickstart](extension-quickstart.md).
 
 ```csharp
 public ValueTask<IReadOnlyList<AgentSystemPromptBlock>> ContributeAsync(
@@ -22,13 +24,17 @@ public ValueTask<IReadOnlyList<AgentSystemPromptBlock>> ContributeAsync(
     cancellationToken.ThrowIfCancellationRequested();
     return ValueTask.FromResult<IReadOnlyList<AgentSystemPromptBlock>>(
     [
-        new(
-            "acme-tool-policy",
-            "Acme Tool Policy",
-            "Use Acme lookup before attempting an Acme mutation.",
-            Priority: 100,
-            Required: true,
-            SourceId: "com.acme.sunder.agent.tools"),
+        new AgentSystemPromptBlock
+        {
+            BlockId = "acme-tool-policy",
+            Title = "Acme Tool Policy",
+            Content = "Use Acme lookup before attempting an Acme mutation.",
+            Priority = 100,
+            Required = true,
+            MaxChars = null,
+            SourceId = "com.acme.sunder.agent.tools",
+            Metadata = null,
+        },
     ]);
 }
 ```
@@ -61,7 +67,9 @@ The base Agent also adds mandatory trust-boundary, visible-response, tool-priori
 
 ## Prompt Context Contributors
 
-Implement `IAgentPromptContextContributor`, adapt it with `AgentPromptContextContributorRpc.CreateHandler`, and publish it under `sunder.agent.prompt.context.contributor`.
+Select `younics.ai.agent.prompt.context.contributor` and implement generated
+`IPromptContextContributorService`. It includes description, contribution and exact
+retained-context acknowledgement; registration is generated from `SunderServiceProvider`.
 
 `AgentPromptContextRequest` exposes bounded snapshots:
 
@@ -73,19 +81,22 @@ Implement `IAgentPromptContextContributor`, adapt it with `AgentPromptContextCon
 Respect `ContextPlan.ShouldContribute`, `MaxEntryCount`, and `MaxChars`. A contributor should return `null` when no relevant context exists. Generic recall suppression skips optional contributors; host-reserved profile and scoped safety instructions are standing context and enforce separate fixed bounds.
 
 ```csharp
-return new AgentPromptContextContribution(
-[
-    new AgentPromptContextBlock(
-        "Acme Search Result",
-        boundedExternalText,
-        Priority: 50,
-        SourceId: "com.acme.search",
-        Provenance: AgentContextProvenance.Tool,
-        Trust: AgentContextTrust.Untrusted)
+return new AgentPromptContextContribution
+{
+    Blocks = [new AgentPromptContextBlock
     {
+        Title = "Acme Search Result",
+        Content = boundedExternalText,
+        Priority = 50,
+        SourceId = "com.acme.search",
+        Provenance = AgentContextProvenance.Tool,
+        Trust = AgentContextTrust.Untrusted,
         Usage = AgentPromptContextUsage.Reference,
-    },
-]);
+        Scope = null,
+        Authority = AgentPromptContextAuthority.Reference,
+        HostIdentity = null,
+    }],
+};
 ```
 
 ### Usage
@@ -133,7 +144,9 @@ Non-cancellation failures from optional reference contributors are ignored. The 
 
 ## Lifecycle Observers
 
-Use `AgentDurableLifecycleObserverRpc.CreateHandler(observer)` under `sunder.agent.durable.lifecycle.observer` for durable package-owned effects. Agent 2.x does not retain the old process-local lifecycle projection.
+Select `younics.ai.agent.durable.lifecycle.observer`, implement generated
+`IDurableLifecycleObserverService` and bind it with `SunderServiceProvider` for
+durable package-owned effects. Process-local lifecycle projections are not the public boundary.
 
 Durable events are:
 
@@ -170,15 +183,22 @@ This is observation, not a transactional mutation hook:
 - Persist durable intent before queueing background work.
 - Never treat assistant/tool event content as user-confirmed memory or privileged instruction.
 - Never log raw payloads, prompts, tool arguments/results, sources, summaries, or callback exceptions.
-- If payload-derived data is retained, minimize and encrypt it as appropriate and implement `IAgentSessionDataCleaner` so Agent deletion also removes package-owned copies.
+- If payload-derived data is retained, minimize and encrypt it as appropriate and implement the session-cleaner service so Agent deletion also removes package-owned copies.
 
 For substantial indexing, commit bounded package-owned work with the event receipt, then let a bounded package background service process it. Returning before that durable intent commits can lose work; performing unbounded indexing in the callback can delay replay and hold ordering barriers.
 
 ## Session Data Cleanup
 
-An extension that stores session-keyed data should also implement `IAgentSessionDataCleaner` and publish `AgentSessionCleanerRpc.CreateHandler(cleaner)` under `sunder.agent.session.cleaner`.
+An extension that stores session-keyed data should select `younics.ai.agent.session.cleaner`,
+implement generated `ISessionCleanerService` and bind it with `SunderServiceProvider`.
+The [quickstart](extension-quickstart.md) includes a complete example.
 
-`DeleteSessionData(Guid sessionId)` must be synchronous, bounded, idempotent, and limited to package-owned state. Agent persists one ids-only job per owning package id, stable `CleanerId`, and deleted session in the same transaction as authoritative deletion. A worker acquires the exact package activation before invocation. Failure or package retirement leaves the job pending with redacted diagnostics; startup and package reactivation retry it until success without rolling back or surfacing an error from the already-committed Agent deletion. If cleanup requires remote work, delete or tombstone local authority in this callback and schedule best-effort remote cleanup separately.
+`DeleteSessionAsync(Guid sessionId, CancellationToken)` must be bounded, idempotent
+and limited to package-owned state. Agent persists an ids-only job keyed by owning
+package, stable cleaner ID and deleted session in the authoritative deletion transaction.
+An exact activation executes it. Failure/retirement leaves the job pending with
+redacted diagnostics; startup/reactivation retries until success without undoing
+the committed deletion. Tombstone local authority before scheduling remote cleanup.
 
 ## Trust Review Checklist
 

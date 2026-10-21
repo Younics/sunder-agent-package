@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a reproducible problem in Sunder Agent packages
+description: Report a reproducible problem in AI Agent packages
 title: "Bug: "
 labels: ["bug"]
 body:
@@ -20,9 +20,9 @@ body:
       label: Installed Agent packages
       description: List the Agent packages and versions involved.
       placeholder: |
-        sunder.package.agent 2.0.0
-        sunder.package.agent.provider.openai 2.0.0
-        sunder.package.agent.tools.files 2.0.0
+        younics.ai.agent 2.0.0
+        younics.ai.agent.provider.openai 2.0.0
+        younics.ai.agent.tools.files 2.0.0
     validations:
       required: true
   - type: textarea

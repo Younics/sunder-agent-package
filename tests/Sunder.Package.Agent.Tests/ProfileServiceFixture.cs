@@ -2,7 +2,7 @@ extern alias AgentApp;
 using AgentApp::Sunder.Package.Agent.Contracts.Models;
 using AgentApp::Sunder.Package.Agent.Runtime;
 using AgentApp::Sunder.Package.Agent.Services;
-using AgentServices = AgentApp::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = AgentApp::Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 
 namespace Sunder.Package.Agent.Tests;
 

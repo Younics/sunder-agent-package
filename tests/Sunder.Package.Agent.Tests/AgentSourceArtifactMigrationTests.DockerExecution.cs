@@ -5,7 +5,7 @@ using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
 
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 
 public sealed partial class AgentSourceArtifactMigrationTests
 {
@@ -46,7 +46,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.True((await Call("read-file", () => client.ReadFileAsync(context,
             new AgentFileReadRequest("/container-private/secret.txt")))).IsError);
         var operation = new AgentResourceOperationContext(Guid.NewGuid(), 3, "call.docker", "files.mutate", 0, "workspace-generation", "binding-generation",
-            "sunder.package.agent.tools.files", "sunder.package.agent.execution.docker", Guid.NewGuid().ToString("N"));
+            "younics.ai.agent.tools.files", "younics.ai.agent.execution.docker", Guid.NewGuid().ToString("N"));
         var planning = context with { ResourceOperation = operation };
         var resource = await Call("resolve-file", () => client.ResolveFileAsync(planning, path));
         Assert.NotNull(resource.ResourceClaim); Assert.Empty(resource.AuthorityReferences);

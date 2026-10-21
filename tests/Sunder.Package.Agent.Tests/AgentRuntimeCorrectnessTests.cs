@@ -50,13 +50,31 @@ public sealed class AgentRuntimeCorrectnessTests
     }
 
     [Fact]
+    public async Task ChatSelection_IsWorkspaceScopedIncludingUnassignedAndNeverWritesGlobalSession()
+    {
+        Assert.Equal(AgentWorkspaceService.UnassignedSessionsWorkspaceId, AgentWorkspaceDefaults.UnassignedSessionsWorkspaceId);
+        using var scope = RegressionTestPackageScope.Create();
+        var selections = new AgentChatSelectionStateService(scope.Context);
+        var first = Guid.NewGuid();
+        var unassigned = Guid.NewGuid();
+        await selections.SaveSelectedSessionIdAsync("workspace", first);
+        await selections.SaveSelectedSessionIdAsync(AgentWorkspaceService.UnassignedSessionsWorkspaceId, unassigned);
+        await selections.SaveSelectedSessionIdAsync((string?)null, Guid.NewGuid());
+
+        Assert.Equal(first, await selections.GetSelectedSessionIdAsync("workspace"));
+        Assert.Equal(unassigned, await selections.GetSelectedSessionIdAsync(AgentWorkspaceService.UnassignedSessionsWorkspaceId));
+        Assert.Null(await selections.GetSelectedSessionIdAsync((string?)null));
+        Assert.Null(await scope.Context.Storage.State.GetValueAsync("agent.chat.selectedSessionId"));
+    }
+
+    [Fact]
     public async Task ChatSnapshotHandler_ResolvesExplicitSelectionsWithoutReadingAppState()
     {
         using var scope = RegressionTestPackageScope.Create();
         var catalog = new RegressionTestExtensionCatalog();
         var store = new AgentLocalStore(scope.Context);
         var sessions = new AgentSessionService(store, catalog.SessionCleaners);
-        var workspaces = new AgentWorkspaceService(store, catalog.SessionCleaners, sessions, catalog.WorkspacePathMigrators);
+        var workspaces = new AgentWorkspaceService(store, catalog.SessionCleaners, sessions);
         var executionTargets = new AgentExecutionTargetService(catalog.ExecutionTargets);
         var tools = new AgentToolService(
             sessions,
@@ -120,7 +138,7 @@ public sealed class AgentRuntimeCorrectnessTests
         var catalog = new RegressionTestExtensionCatalog();
         var store = new AgentLocalStore(scope.Context);
         var sessions = new AgentSessionService(store, catalog.SessionCleaners);
-        var workspaces = new AgentWorkspaceService(store, catalog.SessionCleaners, sessions, catalog.WorkspacePathMigrators);
+        var workspaces = new AgentWorkspaceService(store, catalog.SessionCleaners, sessions);
         var executionTargets = new AgentExecutionTargetService(catalog.ExecutionTargets);
         var tools = new AgentToolService(
             sessions,
@@ -163,7 +181,7 @@ public sealed class AgentRuntimeCorrectnessTests
         var catalog = new RegressionTestExtensionCatalog();
         var store = new AgentLocalStore(scope.Context);
         var sessions = new AgentSessionService(store, catalog.SessionCleaners);
-        var workspaces = new AgentWorkspaceService(store, catalog.SessionCleaners, sessions, catalog.WorkspacePathMigrators);
+        var workspaces = new AgentWorkspaceService(store, catalog.SessionCleaners, sessions);
         var executionTargets = new AgentExecutionTargetService(catalog.ExecutionTargets);
         var tools = new AgentToolService(
             sessions,
@@ -203,7 +221,7 @@ public sealed class AgentRuntimeCorrectnessTests
         var catalog = new RegressionTestExtensionCatalog();
         var store = new AgentLocalStore(scope.Context);
         var sessions = new AgentSessionService(store, catalog.SessionCleaners);
-        var workspaces = new AgentWorkspaceService(store, catalog.SessionCleaners, sessions, catalog.WorkspacePathMigrators);
+        var workspaces = new AgentWorkspaceService(store, catalog.SessionCleaners, sessions);
         var executionTargets = new AgentExecutionTargetService(catalog.ExecutionTargets);
         var tools = new AgentToolService(
             sessions,
@@ -2105,10 +2123,12 @@ public sealed class AgentRuntimeCorrectnessTests
         Assert.Equal(AgentRuntimeConnectionState.Disposed, gateway.ConnectionState);
     }
 
-    [Fact]
-    public async Task Gateway_NestedProviderFailuresDoNotChangeOwnerRuntimeAvailability()
+    [Theory]
+    [InlineData(SunderRpcErrorKind.ProviderFaulted)]
+    [InlineData(SunderRpcErrorKind.Cancelled)]
+    public async Task Gateway_OperationFailuresDoNotChangeOwnerRuntimeAvailability(SunderRpcErrorKind errorKind)
     {
-        var client = new ProviderFaultRuntimeClient();
+        var client = new ProviderFaultRuntimeClient(errorKind);
         await using var gateway = new AgentAppRuntimeGateway(client);
         await gateway.InitializeAsync();
         await WaitUntilAsync(() => gateway.ConnectionState == AgentRuntimeConnectionState.Connected);
@@ -2117,28 +2137,35 @@ public sealed class AgentRuntimeCorrectnessTests
             () => gateway.LoadCatalogAsync(new AgentCatalogRequest()));
         var unavailablePackage = new AgentPackageUnavailableException("nested-provider");
 
-        Assert.Equal(SunderRpcErrorKind.ProviderFaulted, providerFault.Error.Kind);
+        Assert.Equal(errorKind, providerFault.Error.Kind);
         Assert.False(gateway.IsRetryableRuntimeFailure(providerFault));
         Assert.False(gateway.IsRetryableRuntimeFailure(unavailablePackage));
+        Assert.Equal(1, client.CatalogInvocationCount);
         Assert.Equal(AgentRuntimeConnectionState.Connected, gateway.ConnectionState);
     }
 
-    [Fact]
-    public async Task Gateway_DisconnectReplaysMissedChangesFromLastRevision()
+    [Theory]
+    [InlineData(null)]
+    [InlineData(SunderRpcErrorKind.Cancelled)]
+    [InlineData(SunderRpcErrorKind.StaleEndpoint)]
+    [InlineData(SunderRpcErrorKind.Unavailable)]
+    public async Task Gateway_DisconnectReplaysMissedChangesFromLastRevision(SunderRpcErrorKind? errorKind)
     {
-        var client = new DisconnectingRuntimeClient();
+        var client = new DisconnectingRuntimeClient(errorKind);
         using var gateway = new AgentAppRuntimeGateway(client);
         var workspaceChanges = 0;
         gateway.WorkspacesChanged += () => Interlocked.Increment(ref workspaceChanges);
 
         await gateway.InitializeAsync();
-        await WaitUntilAsync(() => client.LastDeliveredRevision == 2);
+        await WaitUntilAsync(() => client.LastDeliveredRevision == 2
+            && Volatile.Read(ref workspaceChanges) == 2
+            && gateway.ConnectionState == AgentRuntimeConnectionState.Connected);
 
-        Assert.True(client.AfterRevisions.Count >= 2);
+        Assert.Equal(2, client.AfterRevisions.Count);
         Assert.Equal(0, client.AfterRevisions[0]);
-        Assert.Equal(0, client.AfterRevisions[1]);
+        Assert.Equal(1, client.AfterRevisions[1]);
         Assert.Equal(2, client.LastDeliveredRevision);
-        Assert.True(Volatile.Read(ref workspaceChanges) >= 2);
+        Assert.Equal(2, Volatile.Read(ref workspaceChanges));
     }
 
     [Fact]
@@ -2451,7 +2478,7 @@ public sealed class AgentRuntimeCorrectnessTests
         catalog ??= new RegressionTestExtensionCatalog();
         var store = new AgentLocalStore(context);
         var sessions = new AgentSessionService(store, catalog.SessionCleaners);
-        var workspaces = new AgentWorkspaceService(store, catalog.SessionCleaners, sessions, catalog.WorkspacePathMigrators);
+        var workspaces = new AgentWorkspaceService(store, catalog.SessionCleaners, sessions);
         var executionTargets = new AgentExecutionTargetService(catalog.ExecutionTargets);
         var tools = new AgentToolService(
             sessions,
@@ -2578,7 +2605,7 @@ public sealed class AgentRuntimeCorrectnessTests
         Assert.False(viewModel.IsUnrestrictedModeEnabled);
         Assert.Null(await selections.GetSelectedSessionIdAsync(
             snapshot.SelectedWorkspace!.WorkspaceId));
-        Assert.Null(await selections.GetSelectedSessionIdAsync());
+        Assert.Null(await scope.Context.Storage.State.GetValueAsync("agent.chat.selectedSessionId"));
     }
 
     [Fact]
@@ -3180,7 +3207,7 @@ public sealed class AgentRuntimeCorrectnessTests
             var catalog = new RegressionTestExtensionCatalog();
             var store = new AgentLocalStore(scope.Context);
             var sessions = new AgentSessionService(store, catalog.SessionCleaners);
-            var workspaces = new AgentWorkspaceService(store, catalog.SessionCleaners, sessions, catalog.WorkspacePathMigrators);
+            var workspaces = new AgentWorkspaceService(store, catalog.SessionCleaners, sessions);
             var executionTargets = new AgentExecutionTargetService(catalog.ExecutionTargets);
             var tools = new AgentToolService(
                 sessions,
@@ -3471,8 +3498,11 @@ public sealed class AgentRuntimeCorrectnessTests
         }
     }
 
-    private sealed class ProviderFaultRuntimeClient : OwnerServiceStub
+    private sealed class ProviderFaultRuntimeClient(SunderRpcErrorKind errorKind) : OwnerServiceStub
     {
+        private int _catalogInvocationCount;
+        public int CatalogInvocationCount => Volatile.Read(ref _catalogInvocationCount);
+
         public override ValueTask<TResponse> RespondAsync<TRequest, TResponse>(
             TRequest request,
             CancellationToken cancellationToken = default)
@@ -3486,10 +3516,11 @@ public sealed class AgentRuntimeCorrectnessTests
             }
             if (request is AgentCatalogRequest)
             {
+                Interlocked.Increment(ref _catalogInvocationCount);
                 return ValueTask.FromException<TResponse>(new SunderRpcException(new SunderRpcError(
-                    SunderRpcErrorKind.ProviderFaulted,
-                    "rpc.provider.handler-fault",
-                    "The nested provider faulted.")));
+                    errorKind,
+                    errorKind == SunderRpcErrorKind.Cancelled ? "rpc.call.cancelled" : "rpc.provider.handler-fault",
+                    "The operation failed.")));
             }
             return ValueTask.FromException<TResponse>(new NotSupportedException(typeof(TRequest).Name));
         }
@@ -4570,7 +4601,7 @@ public sealed class AgentRuntimeCorrectnessTests
         }
     }
 
-    private sealed class DisconnectingRuntimeClient : OwnerServiceStub
+    private sealed class DisconnectingRuntimeClient(SunderRpcErrorKind? errorKind) : OwnerServiceStub
     {
         private int _subscriptionCount;
         private long _lastDeliveredRevision;
@@ -4602,7 +4633,15 @@ public sealed class AgentRuntimeCorrectnessTests
             AfterRevisions.Add(afterRevision);
             if (Interlocked.Increment(ref _subscriptionCount) == 1)
             {
-                yield return (TEvent)(object)new AgentRuntimeChange(0, AgentRuntimeChangeKind.Connected);
+                yield return (TEvent)(object)new AgentRuntimeChange(0, AgentRuntimeChangeKind.Connected,
+                    RuntimeInstanceId: "runtime-retained");
+                yield return (TEvent)(object)new AgentRuntimeChange(1, AgentRuntimeChangeKind.Workspace);
+                if (errorKind is { } kind)
+                {
+                    throw new SunderRpcException(new SunderRpcError(kind,
+                        kind == SunderRpcErrorKind.Cancelled ? "rpc.call.cancelled" : "rpc.app-session.retired",
+                        "The previous caller session retired during publication."));
+                }
                 yield break;
             }
 

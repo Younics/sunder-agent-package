@@ -4,6 +4,7 @@ extern alias McpWorker;
 using System.Collections.Concurrent;
 using System.Reflection;
 using Avalonia.Headless.XUnit;
+using Avalonia.Threading;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using McpWorker::Sunder.Package.Agent.Mcp;
@@ -238,13 +239,21 @@ public sealed class McpSettingsRaceTests
 
         await AdaptiveEditorLifecycleContract.RetiredWorkCannotPublishAsync(
             Adapt(viewModel),
-            () =>
+            async () =>
             {
                 viewModel.BackToServerListCommand.Execute(null);
                 viewModel.CreateServerCommand.Execute(null);
+                // Retirement must finish while the non-cooperative read is still blocked.
+                await load.WaitAsync(TimeSpan.FromSeconds(2));
+                // Back/Create publish the new draft through queued operation notifications.
+                // Drain those before measuring publications caused by the old read's release.
+                await Dispatcher.UIThread.InvokeAsync(static () => { }, DispatcherPriority.Background);
+                Assert.False(read.Release.Task.IsCompleted);
+                Assert.True(viewModel.IsDocumentReady);
+                Assert.Equal("mcp_server", viewModel.Name);
             },
             () => read.Release.TrySetResult(),
-            load.WaitAsync(TimeSpan.FromSeconds(2)));
+            read.Completed.Task.WaitAsync(TimeSpan.FromSeconds(2)));
 
         Assert.True(viewModel.IsDocumentReady);
         Assert.False(viewModel.IsDocumentLoading);
@@ -406,6 +415,7 @@ public sealed class McpSettingsRaceTests
                 block.Started.TrySetResult();
                 await block.Release.Task.ConfigureAwait(false);
                 Interlocked.CompareExchange(ref _readBlock, null, block);
+                block.Completed.TrySetResult();
             }
 
             return _values.GetValueOrDefault(key);
@@ -462,6 +472,7 @@ public sealed class McpSettingsRaceTests
         public string Key { get; } = key;
         public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Completed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
     private sealed class WriteBlock

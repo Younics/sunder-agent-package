@@ -104,12 +104,12 @@ public sealed class OpenAiStrictToolSchemaNormalizerTests
             {
               "type": "object",
               "properties": {
-                "__sunder_mcp_call": {
+                "__younics_mcp_call": {
                   "type": "object",
                   "properties": {
-                    "__sunder_mcp_metadata_version": { "type": "string", "const": "sunder.mcp.call/1" },
+                    "__younics_mcp_metadata_version": { "type": "string", "const": "younics.ai.agent.mcp.call/1" },
                     "arguments": {
-                      "$id": "urn:sunder:mcp:arguments:1",
+                      "$id": "urn:younics:ai:agent:mcp:arguments:1",
                       "$ref": "#/$defs/args",
                       "$defs": {
                         "args": {
@@ -119,31 +119,31 @@ public sealed class OpenAiStrictToolSchemaNormalizerTests
                         }
                       }
                     },
-                    "__sunder_expected_timeout_seconds": {
+                    "__younics_expected_timeout_seconds": {
                       "type": ["integer", "null"],
                       "minimum": 1,
                       "maximum": 1800
                     }
                   },
-                  "required": ["__sunder_mcp_metadata_version", "arguments"],
+                  "required": ["__younics_mcp_metadata_version", "arguments"],
                   "additionalProperties": false
                 }
               },
-              "required": ["__sunder_mcp_call"],
+              "required": ["__younics_mcp_call"],
               "additionalProperties": false
             }
             """;
 
         var schema = OpenAiStrictToolSchemaNormalizer.NormalizeFunctionParameters(schemaJson);
 
-        var envelope = schema.GetProperty("properties").GetProperty("__sunder_mcp_call");
+        var envelope = schema.GetProperty("properties").GetProperty("__younics_mcp_call");
         Assert.Equal(
-            ["__sunder_mcp_metadata_version", "arguments", "__sunder_expected_timeout_seconds"],
+            ["__younics_mcp_metadata_version", "arguments", "__younics_expected_timeout_seconds"],
             envelope.GetProperty("required").EnumerateArray().Select(item => item.GetString()));
         Assert.Equal(
             ["integer", "null"],
             envelope.GetProperty("properties")
-                .GetProperty("__sunder_expected_timeout_seconds")
+                .GetProperty("__younics_expected_timeout_seconds")
                 .GetProperty("type")
                 .EnumerateArray()
                 .Select(item => item.GetString()));
@@ -162,12 +162,12 @@ public sealed class OpenAiStrictToolSchemaNormalizerTests
             {
               "type": "object",
               "properties": {
-                "__sunder_mcp_call": {
+                "__younics_mcp_call": {
                   "type": "object",
                   "properties": {
-                    "__sunder_mcp_metadata_version": { "type": "string", "const": "sunder.mcp.call/1" },
+                    "__younics_mcp_metadata_version": { "type": "string", "const": "younics.ai.agent.mcp.call/1" },
                     "arguments": {
-                      "$id": "urn:sunder:mcp:arguments:1",
+                      "$id": "urn:younics:ai:agent:mcp:arguments:1",
                       "oneOf": [
                         { "type": "object", "properties": { "a": { "type": "string" } }, "additionalProperties": false },
                         { "allOf": [
@@ -177,18 +177,18 @@ public sealed class OpenAiStrictToolSchemaNormalizerTests
                       ]
                     }
                   },
-                  "required": ["__sunder_mcp_metadata_version", "arguments"],
+                  "required": ["__younics_mcp_metadata_version", "arguments"],
                   "additionalProperties": false
                 }
               },
-              "required": ["__sunder_mcp_call"],
+              "required": ["__younics_mcp_call"],
               "additionalProperties": false
             }
             """;
 
         var schema = OpenAiStrictToolSchemaNormalizer.NormalizeFunctionParameters(schemaJson);
         var arguments = schema.GetProperty("properties")
-            .GetProperty("__sunder_mcp_call")
+            .GetProperty("__younics_mcp_call")
             .GetProperty("properties")
             .GetProperty("arguments");
 
@@ -206,12 +206,12 @@ public sealed class OpenAiStrictToolSchemaNormalizerTests
             {
               "type": "object",
               "properties": {
-                "__sunder_mcp_call": {
+                "__younics_mcp_call": {
                   "type": "object",
                   "properties": {
-                    "__sunder_mcp_metadata_version": { "type": "string", "const": "sunder.mcp.call/1" },
+                    "__younics_mcp_metadata_version": { "type": "string", "const": "younics.ai.agent.mcp.call/1" },
                     "arguments": {
-                      "$comment": "sunder:mcp-arguments:1",
+                      "$comment": "younics:ai:agent:mcp-arguments:1",
                       "allOf": [{
                         "$id": "https://example.test/arguments",
                         "$ref": "#/$defs/args",
@@ -221,18 +221,18 @@ public sealed class OpenAiStrictToolSchemaNormalizerTests
                       }]
                     }
                   },
-                  "required": ["__sunder_mcp_metadata_version", "arguments"],
+                  "required": ["__younics_mcp_metadata_version", "arguments"],
                   "additionalProperties": false
                 }
               },
-              "required": ["__sunder_mcp_call"],
+              "required": ["__younics_mcp_call"],
               "additionalProperties": false
             }
             """;
 
         var schema = OpenAiStrictToolSchemaNormalizer.NormalizeFunctionParameters(schemaJson);
         var originalResource = schema.GetProperty("properties")
-            .GetProperty("__sunder_mcp_call")
+            .GetProperty("__younics_mcp_call")
             .GetProperty("properties")
             .GetProperty("arguments")
             .GetProperty("allOf")[0];
@@ -242,7 +242,7 @@ public sealed class OpenAiStrictToolSchemaNormalizerTests
         Assert.False(originalResource.TryGetProperty("$defs", out _));
         Assert.False(originalResource.TryGetProperty("$id", out _));
         Assert.False(schema.GetProperty("properties")
-            .GetProperty("__sunder_mcp_call")
+            .GetProperty("__younics_mcp_call")
             .GetProperty("properties")
             .GetProperty("arguments")
             .TryGetProperty("$comment", out _));
@@ -255,12 +255,12 @@ public sealed class OpenAiStrictToolSchemaNormalizerTests
             {
               "type": "object",
               "properties": {
-                "__sunder_mcp_call": {
+                "__younics_mcp_call": {
                   "type": "object",
                   "properties": {
-                    "__sunder_mcp_metadata_version": { "type": "string", "const": "sunder.mcp.call/1" },
+                    "__younics_mcp_metadata_version": { "type": "string", "const": "younics.ai.agent.mcp.call/1" },
                     "arguments": {
-                      "$id": "urn:sunder:mcp:arguments:1",
+                      "$id": "urn:younics:ai:agent:mcp:arguments:1",
                       "$ref": "#/$defs/base",
                       "$defs": {
                         "base": {
@@ -278,19 +278,19 @@ public sealed class OpenAiStrictToolSchemaNormalizerTests
                       "minProperties": 2,
                       "additionalProperties": true
                     },
-                    "__sunder_expected_timeout_seconds": { "type": ["integer", "null"], "minimum": 1, "maximum": 1800 }
+                    "__younics_expected_timeout_seconds": { "type": ["integer", "null"], "minimum": 1, "maximum": 1800 }
                   },
-                  "required": ["__sunder_mcp_metadata_version", "arguments"],
+                  "required": ["__younics_mcp_metadata_version", "arguments"],
                   "additionalProperties": false
                 }
               },
-              "required": ["__sunder_mcp_call"],
+              "required": ["__younics_mcp_call"],
               "additionalProperties": false
             }
             """;
 
         var schema = OpenAiStrictToolSchemaNormalizer.NormalizeFunctionParameters(schemaJson);
-        var envelope = schema.GetProperty("properties").GetProperty("__sunder_mcp_call");
+        var envelope = schema.GetProperty("properties").GetProperty("__younics_mcp_call");
         var arguments = envelope.GetProperty("properties").GetProperty("arguments");
         var branches = arguments.GetProperty("allOf");
         Assert.Equal(2, branches.GetArrayLength());
@@ -311,7 +311,7 @@ public sealed class OpenAiStrictToolSchemaNormalizerTests
         Assert.Equal(
             ["integer", "null"],
             envelope.GetProperty("properties")
-                .GetProperty("__sunder_expected_timeout_seconds")
+                .GetProperty("__younics_expected_timeout_seconds")
                 .GetProperty("type")
                 .EnumerateArray()
                 .Select(item => item.GetString()));
@@ -324,12 +324,12 @@ public sealed class OpenAiStrictToolSchemaNormalizerTests
             {
               "type": "object",
               "properties": {
-                "__sunder_mcp_call": {
+                "__younics_mcp_call": {
                   "type": "object",
                   "properties": {
-                    "__sunder_mcp_metadata_version": { "type": "string", "const": "sunder.mcp.call/1" },
+                    "__younics_mcp_metadata_version": { "type": "string", "const": "younics.ai.agent.mcp.call/1" },
                     "arguments": {
-                      "$id": "urn:sunder:mcp:arguments:1",
+                      "$id": "urn:younics:ai:agent:mcp:arguments:1",
                       "$dynamicRef": "#node",
                       "$defs": {
                         "node": {
@@ -340,23 +340,23 @@ public sealed class OpenAiStrictToolSchemaNormalizerTests
                       }
                     }
                   },
-                  "required": ["__sunder_mcp_metadata_version", "arguments"],
+                  "required": ["__younics_mcp_metadata_version", "arguments"],
                   "additionalProperties": false
                 }
               },
-              "required": ["__sunder_mcp_call"],
+              "required": ["__younics_mcp_call"],
               "additionalProperties": false
             }
             """;
 
         var schema = OpenAiStrictToolSchemaNormalizer.NormalizeFunctionParameters(schemaJson);
         var arguments = schema.GetProperty("properties")
-            .GetProperty("__sunder_mcp_call")
+            .GetProperty("__younics_mcp_call")
             .GetProperty("properties")
             .GetProperty("arguments");
 
         Assert.Equal("#node", arguments.GetProperty("$dynamicRef").GetString());
-        Assert.Equal("urn:sunder:mcp:arguments:1", arguments.GetProperty("$id").GetString());
+        Assert.Equal("urn:younics:ai:agent:mcp:arguments:1", arguments.GetProperty("$id").GetString());
         Assert.Equal("node", arguments.GetProperty("$defs").GetProperty("node").GetProperty("$dynamicAnchor").GetString());
     }
 

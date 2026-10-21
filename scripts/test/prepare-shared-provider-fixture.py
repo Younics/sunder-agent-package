@@ -30,7 +30,6 @@ FAMILIES = [
     ('ProfileCapability', 'profile.capability.consumer', 'profileCapability'),
     ('SelectableCapability', 'selectable.capability.provider', 'selectableCapability'),
     ('WorkspaceEditor', 'workspace.editor', 'workspaceEditor'),
-    ('WorkspacePath', 'workspace.path.migrator', 'workspacePath'),
     ('BehaviorLoop', 'behavior.loop', 'behaviorLoop'),
     ('ChildRun', 'child.run.executor', 'childRun'),
     ('ObservedTool', 'tool.execution.observed', 'observedTool'),
@@ -162,7 +161,7 @@ def main():
     <PropertyGroup><ApiPresence Condition="'$(Operation)' == 'Add'">required</ApiPresence></PropertyGroup>
     <ItemGroup><_Source Include="@(Compile)" Condition="'%(Compile.AutoGen)' != 'true'" /></ItemGroup>
     <ManageSunderPackageApiTask Condition="'$(Operation)' == 'Add' or '$(Operation)' == 'Implement'"
-      Operation="$(Operation)" ProjectDirectory="$(MSBuildProjectDirectory)" PackageId="sunder.package.agent"
+      Operation="$(Operation)" ProjectDirectory="$(MSBuildProjectDirectory)" PackageId="younics.ai.agent"
       PackageVersion="2.0.0" VersionRange="&gt;=2.0.0 &lt;3.0.0" Presence="$(ApiPresence)"
       Candidate={quoteattr(str(args.candidate))} PlatformCatalogPath={quoteattr(str(args.platform_catalog))}
       ContractCacheRoot={quoteattr(str(output / 'cache'))} ContractId="$(ContractId)" LocalName="$(ProviderKey)"
@@ -190,7 +189,7 @@ def main():
     for number, (name, contract, key) in enumerate(FAMILIES, 4):
         source.write_bytes(sources[name].read_bytes())
         run(f'{number:02d}-implement-{name}', 'msbuild', 'Imported.csproj', '-t:FixtureOperation',
-            '-p:Operation=Implement', '-p:ContractId=sunder.agent.' + contract, '-p:ProviderKey=' + key)
+            '-p:Operation=Implement', '-p:ContractId=younics.ai.agent.' + contract, '-p:ProviderKey=' + key)
     source.unlink()
     for name, path in sources.items():
         (output / (name + '.cs')).write_bytes(path.read_bytes())

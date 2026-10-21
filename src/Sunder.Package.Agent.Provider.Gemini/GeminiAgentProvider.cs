@@ -1,6 +1,6 @@
 using Microsoft.Extensions.AI;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using Sunder.Generated.Packages.Younics_Ai_Agent_Models;
+using IChatProviderService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Chat_Provider.IChatProviderService;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Services;
@@ -74,7 +74,7 @@ public sealed partial class GeminiAgentProvider : IChatProviderService
             Status = configured ? AgentProviderReadinessStatus.Ready : AgentProviderReadinessStatus.NeedsConfiguration,
             Message = configured
                 ? "Gemini API-key mode is configured."
-                : "A Gemini API key is required. Open Settings -> Packages -> Sunder Agent Provider Gemini and enter an API key.",
+                : "A Gemini API key is required. Open Settings -> Packages -> AI Agent - Gemini and enter an API key.",
         };
     }
 

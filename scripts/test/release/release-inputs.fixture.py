@@ -32,8 +32,9 @@ class ColdInputsTests(unittest.TestCase):
         self.bundle = self.root / "inputs"
         self.bundle.mkdir()
         self.source_sha, self.core_sha = "a" * 40, "b" * 40
-        rows = [{"packageId": "sunder.package.agent" if i == 0 else f"sunder.package.agent.fixture{i:02}",
-                 "artifactType": "sunderpkg", "projectPath": f"src/P{i}/P{i}.csproj"} for i in range(15)]
+        rows = [{"packageId": package_id,
+                 "artifactType": "sunderpkg", "projectPath": f"src/P{i}/P{i}.csproj"}
+                for i, package_id in enumerate(release.FAMILY_PACKAGE_IDS)]
         write(self.source / "packages.json", {"releaseVersion": "2.0.0", "packages": rows})
         self.rows = rows
         descriptor = release.canonical({"contractId": "sunder.fixture.api", "version": "1.0.0"})
@@ -45,11 +46,11 @@ class ColdInputsTests(unittest.TestCase):
         self.catalog_path = self.bundle / "sunder-platform-contracts.v1.json"
         self.catalog_path.write_bytes(release.encoded(catalog))
         catalog_sha = release.file_sha(self.catalog_path)
-        self.archive = self.bundle / "Sunder.Package.Agent.2.0.0.sunderpkg"
+        self.archive = self.bundle / "younics.ai.agent.2.0.0.sunderpkg"
         with zipfile.ZipFile(self.archive, "w") as archive:
             archive.writestr("manifest/sunder-package.json", release.encoded({
-                "id": "sunder.package.agent", "version": "2.0.0", "contractBundles": [
-                    {"contractId": "sunder.fixture.api", "version": "1.0.0", "source": "owned", "authorityKind": "package", "authorityId": "sunder.package.agent",
+                "id": "younics.ai.agent", "version": "2.0.0", "contractBundles": [
+                    {"contractId": "sunder.fixture.api", "version": "1.0.0", "source": "owned", "authorityKind": "package", "authorityId": "younics.ai.agent",
                      "descriptorPath": "contracts/api.json", "descriptorSha256": release.sha(descriptor), "abiSha256": "d" * 64, "exposure": "public"},
                     {"contractId": "sunder.stack.contributor", "version": "2.0.0", "source": "imported", "authorityKind": "platform", "authorityId": "sunder.core",
                      "selectedAuthorityRelease": "1.1.0", "selectedAuthorityContentIdentity": catalog_sha,
@@ -68,8 +69,8 @@ class ColdInputsTests(unittest.TestCase):
             write(parent / "sunder-contracts.owned.json", {"contracts": {}})
             write(parent / "packages.release.lock.json", {"version": 1})
             write(parent / "sunder-contracts.lock.json", {"lockVersion": 1, "packageImports": {} if not i else {
-                  "sunder.package.agent": {"localName": "agent", "presence": "required", "requiredContracts": [], "consumerRoles": ["runtime"]}}, "providerImports": {},
-                  "packageArtifacts": {} if not i else {"sunder.package.agent": {"requestedVersionRange": ">=2.0.0 <3.0.0", "includePrerelease": False,
+                  "younics.ai.agent": {"localName": "agent", "presence": "required", "requiredContracts": [], "consumerRoles": ["runtime"]}}, "providerImports": {},
+                  "packageArtifacts": {} if not i else {"younics.ai.agent": {"requestedVersionRange": ">=2.0.0 <3.0.0", "includePrerelease": False,
                       "selectedPackageVersion": "2.0.0", "selectedPackageContentIdentity": public["packageContentIdentity"],
                       "publicContractCount": 2, "publicInventorySha256": public_sha, "contracts": contracts}},
                   "platformImports": {"stack": {**contracts["sunder.stack.contributor"], "contractId": "sunder.stack.contributor"}} if not i else {}})
@@ -78,7 +79,7 @@ class ColdInputsTests(unittest.TestCase):
                     "sha256": release.file_sha(path), "size": path.stat().st_size}
         self.manifest = {"schemaVersion": 1, "artifactSourceCommit": self.source_sha, "lockSetSha256": release.locks(self.source),
                          "core": {"artifactSourceCommit": self.core_sha, "sdkVersion": "1.1.0"},
-                         "candidates": [{"packageId": "sunder.package.agent", "version": "2.0.0", "packageContentIdentity": public["packageContentIdentity"],
+                         "candidates": [{"packageId": "younics.ai.agent", "version": "2.0.0", "packageContentIdentity": public["packageContentIdentity"],
                                          "publicInventorySha256": public_sha, "asset": asset(self.archive, "Younics/sunder-agent-package", 2)}],
                          "platformCatalog": {"authorityId": "sunder.core", "releaseVersion": "1.1.0", "catalogSha256": catalog_sha,
                                              "asset": asset(self.catalog_path, "Younics/sunder-core", 3)}}
@@ -207,7 +208,7 @@ class ColdInputsTests(unittest.TestCase):
     def test_unmigrated_role_intent_is_rejected_before_any_restore(self):
         path = self.source / "src/P1/sunder-contracts.lock.json"
         lock = release.load(path)
-        del lock["packageImports"]["sunder.package.agent"]["consumerRoles"]
+        del lock["packageImports"]["younics.ai.agent"]["consumerRoles"]
         write(path, lock)
         self.manifest["lockSetSha256"] = release.locks(self.source)
         with self.assertRaisesRegex(release.Invalid, "consumer-roles-migration-required"):
@@ -244,7 +245,7 @@ class ColdInputsTests(unittest.TestCase):
         with patch.object(inputs, "clean_source"), patch.object(inputs, "offline_prefix", return_value=["deny-network", "--"]), \
                 patch.object(inputs, "verify_network_denial"), patch.object(inputs, "run", side_effect=capture):
             inputs.execute(self.work / "cold-state.json", ["dotnet", "build", "P0.csproj", "--no-restore"])
-            inputs.execute(self.work / "cold-state.json", ["bash", "scripts/release/assemble-native-family.sh"])
+            inputs.execute(self.work / "cold-state.json", ["python3", "-B", "scripts/release/native-family.py", "assemble"])
         self.assertTrue(all(command[:2] == ["deny-network", "--"] for command in executed))
         self.assertIn("-p:Configuration=Release", executed[0])
         self.assertIn("-p:SunderAgentVersion=2.0.0", executed[0])

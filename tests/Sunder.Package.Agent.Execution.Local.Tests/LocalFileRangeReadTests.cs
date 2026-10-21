@@ -2,10 +2,10 @@ extern alias LocalWorker;
 
 using LocalWorker::Sunder.Package.Agent.Execution.Local;
 using Xunit;
-using AgentFileReadRequest = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileReadRequest;
-using AgentFileSearchKind = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileSearchKind;
-using AgentFileSearchRequest = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileSearchRequest;
-using AgentFileWriteRequest = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileWriteRequest;
+using AgentFileReadRequest = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentFileReadRequest;
+using AgentFileSearchKind = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentFileSearchKind;
+using AgentFileSearchRequest = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentFileSearchRequest;
+using AgentFileWriteRequest = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentFileWriteRequest;
 using AgentFileReadErrorCodes = Sunder.Package.Agent.Contracts.Models.AgentFileReadErrorCodes;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;

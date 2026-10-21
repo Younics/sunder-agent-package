@@ -1,121 +1,64 @@
-# Agent Compatibility Freeze
+# Current Agent compatibility inputs
 
-`agent-compatibility-candidate.json` is the generated Agent 2.0 compatibility
-ledger. It is derived from source declarations, descriptor bytes, package
-metadata, release locks, public API files, live SQLite schemas, document schema
-policies, configuration/environment/telemetry vocabulary, and the checked-in
-public release evidence.
+`agent-current-inventory.json` is the independently reviewed expectation for the
+current product: **15 package/project pairs, 12 App / 15 Worker roles, 18 public
+APIs, 13 package-private APIs and 62 providers**. Runtime identities use Younics,
+including `younics.sunder.package.maker`; authored C# names remain stable.
+`packages.json` owns the reviewed release titles, artifact names and capability sets.
 
-`agent-rpc-migration-baseline.json` is the implementation-first migration
-oracle. It freezes canonical descriptor and ABI bytes, service/method/error
-inventories, bindings, providers, uses, audiences, bundles, and the exhaustive
-source disposition for the central Contracts boundary plus all twelve local
-Protocol/Shared boundaries. It is evidence only, never a package build input or
-publication authorization.
+Public APIs start at `1.0.0`; package/private versions are `2.0.0`. The external
+`sunder.stack.contributor` API is owned by platform `sunder.core`, version `2.0.0`.
+Workspace path migration is absent from the current API and provider inventory.
 
-Regenerate it only after reviewing the intended compatibility delta:
+## Current contract byte records
+
+`agent-current-contracts.json` is the separately reviewed current input. The initial
+record was qualified from current source, normal Core public Accept/Freeze,
+dependency selection and exact-RID artifacts. It contains all 18 public and 13
+private descriptors, bound to the independent inventory. Public owned history starts
+empty; private-only packages have no owned baseline file. The local record does not
+claim publication or SDK freeze: the SDK ledger remains UNFROZEN / UNRELEASED.
+
+Normal tests never refresh these expected bytes. Future changes require current
+source/intent review and the normal owning lifecycle; old 19-API receipts cannot
+qualify the current inventory.
+
+The read-only verifier checks current qualified artifacts against the independent
+inventory. `--propose` prints candidate records without writing expectations:
 
 ```sh
-./scripts/compatibility/update-agent-compatibility-candidate.sh --write
-./scripts/compatibility/update-agent-compatibility-candidate.sh --check
+python3 -B scripts/test/verify-current-contracts.py --source-only
+python3 -B scripts/test/verify-current-contracts.fixture.py
+python3 -B scripts/test/verify-current-contracts.py --evidence artifacts/current/inputs.json --propose
+python3 -B scripts/test/verify-current-contracts.py --evidence artifacts/current/inputs.json
 ```
 
-Normal test runs regenerate the same bytes in memory and fail when the checked-in
-candidate differs. The generator also asserts the architectural inventory:
+Review method/value shapes, authority, stream kinds, policies and source intent
+before accepting candidate bytes. A generator output is an observation, not its
+own expected result. See [current test baseline](../docs/current-test-baseline.md)
+for the input format, coverage transfer and qualification prerequisites.
 
-- 31 Agent RPC descriptors: 19 public bundled descriptors and 12 package-local
-  owner descriptors;
-- descriptor schema version 1 and current Agent contract semantic version
-  `1.0.0`;
-- 18 supported third-party extension points plus the reserved first-party
-  `sunder.agent.tool.execution.observed` bridge;
-- 63 provider declarations and 46 consumer declarations;
-- exactly 15 Worker V1 runtime package families. The obsolete Protocol project is
-  physically removed and is not a sixteenth Agent runtime or release artifact.
+Current public owned-baseline evolution, projection reviews and generic SDK future
+release compatibility remain supported. Local unpublished selections use exact
+candidates/catalogs; published selections use an explicit pinned Registry.
+Native/cold/artifact checks and the required all-family behavioral gate remain
+mandatory in their owning lanes. The Protocol boundary check enforces absence of
+dependencies/artifacts; remote feed absence is not a release prerequisite.
 
-The unchanged migration baseline records the original 19 central public bindings
-and 12 package-local bindings. Phase 5 relocated genuine business source to its
-owner and physically removed the exact 26 obsolete projects and authorized support/
-wrapper files. Historical source is authenticated data under
-[`PreCanonicalProjects`](../tests/Sunder.Package.Agent.Tests/Fixtures/PreCanonicalProjects/RETIREMENT.md),
-never compiled replacement code. Current history guards/inverses and the final full
-required Main/source run pass (**1,835/0/6 scoped skips**, including actual all-family
-artifact acceptance), and all 26 project retirements are recorded. Final source-SDK
-artifacts, parallel workspace Build/Rebuild and three isolated local NuGet-mode
-representatives also pass. These local results do not constitute remote Core release,
-Registry publication, native or performance acceptance.
+## Inert protected history
 
-The obsolete `verify-packed-protocol.sh` and `PackedProtocolConsumer` fixture are
-physically removed with their authenticated captures retained. Smoke/release
-workflows target fifteen canonical archives and no Protocol NuGet. Keep the actual
-`check-protocol-retirement.mjs` feed/residue gate. Physical cleanup and passing
-historical oracles do not imply final integration or publication qualification.
+These files retain their original bytes and identities solely as historical data:
 
-Release and Windows CI run the complete unfiltered source-mode behavioral
-solution before the focused package-mode compatibility lane. Package identity
-counts describe only that focused lane. Artifact-backed archive and native lanes
-remain separate and fail instead of skipping whenever their lane is selected.
-Test evidence freezes platform-neutral fully qualified and parameterized display
-identities plus the complete skip-capable declaration policy; each observed skip
-must match its exact project, owner, fully qualified and display identities, and
-TRX reason.
+- `agent-compatibility-candidate.json`, `agent-rpc-migration-baseline.json`,
+  `agent-release-evidence.json`;
+- `agent-service-public-successors.json`, `agent-ordinary-private-successors.json`
+  (the former 19-public/13-private checkpoint);
+- `identity-migration/v1/` captured maps, manifests, inverse data and proof records;
+- `identity-migration/v1/fork-receipts/` (byte-identical receipts relocated from
+  `src/<project>/sunder-identity-fork.receipt.json`);
+- `tests/Sunder.Package.Agent.Tests/Fixtures/PreCanonicalProjects/`.
 
-The Stack contributor is a separate Core contract at semantic version `2.0.0`.
-Agent packages use one authored project with generated, isolated Worker and optional
-App roles. Local archives and a local Core catalog support unpublished-family API
-selection without Registry access; local selections omit `registryOrigin` and do
-not supply publication evidence.
-
-## Release Evidence
-
-`agent-release-evidence.json` records the hash-bound public artifact inspection
-used for B1-B4 decisions. In particular, the removed process-based file-search
-facet was absent from every inspected public Agent Contracts artifact. Released
-workspace-path migration and Working Summary surfaces remain supported.
-
-The explicit Registry source-adoption operation remains supported for a current
-unmanaged package. Agent does not infer provenance, scan historical roots, or
-adopt pre-V1 package records.
-
-## Persistence Policies
-
-- Agent and semantic-memory SQLite stores are durable and bound to their exact
-  migration-ledger checksums and normalized live schema fingerprints.
-- History search is a derived projection and may be explicitly rebuilt after
-  confirmed schema corruption.
-- Skills index/import-journal, MCP server records, and Codex session secrets
-  write named versioned envelopes while retaining the documented released
-  predecessor reader. Malformed or future documents are preserved and rejected
-  according to the policy recorded in the candidate.
-
-## Stable Boundary
-
-These ledgers are pre-cutover migration evidence. They do not authorize tagging,
-publication, or retention of a public Protocol package. Existing public API
-snapshots remain inputs only until the feed audit and implementation-first parity
-gate determine their historical disposition.
-Release preparation must still resolve the exact immutable Core `sdk/v*` tag
-and package provenance; smoke tracking of a mutable Core branch is not release
-evidence.
-
-The coordinated Core package policy includes authored managed PDBs and excludes
-host/framework PDBs and XML documentation from runtime archives. No Agent future
-delta is currently approved. Finer-grained generated-type accessibility is not
-listed as a delta because the whole-binding public/internal split already hides
-every package-local transport type without removing central extension-authoring
-types. Any later concrete reduction requires a new explicit compatibility
-decision and invalidates this freeze.
-
-## B1-B5 Decisions
-
-- B1: retain workspace-path migration because Agent 1.0.5-1.0.7 released it and
-  durable workspace paths require it.
-- B2: remove legacy process-based file search as an approved clean break; it was
-  never released and structured Local/Docker search is authoritative.
-- B3: retain Working Summary because every released Agent Contracts artifact
-  carried it and durable projections use it.
-- B4: retain released durable readers, normalize released `-fast` model ids,
-  reset only the obsolete global selected-session key, preserve/diagnose Docker
-  remediation state, and reject ambiguous aliases.
-- B5: retain only explicit current unmanaged-package Registry source adoption;
-  reject inferred provenance and historical-layout scanning.
+Historical documentation inside those captures describes its original checkpoint.
+Its reconstruction/capture executables have been removed. Normal tests, builds,
+product discovery and release neither reconstruct nor consume these captures.
+Their preservation does not authorize a pre-V1 reader or migration policy override.

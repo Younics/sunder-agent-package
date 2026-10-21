@@ -5,7 +5,7 @@ using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Storage;
 using Sunder.Package.Agent.Runtime;
 using Sunder.Sdk.Services;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 
 namespace Sunder.Package.Agent.Services;
 
@@ -17,20 +17,16 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
     private readonly AgentLocalStore _store;
     private readonly IServiceProviders<AgentServices.ISessionCleanerService>? _cleaners;
     private readonly AgentSessionService? _sessionService;
-    private readonly IServiceProviders<AgentServices.IWorkspacePathMigratorService>? _pathMigrators;
     private readonly ConcurrentDictionary<string, object> _executionContextSyncRoots = new(StringComparer.Ordinal);
-    private bool _isMigratingWorkspacePaths;
 
     public AgentWorkspaceService(
         AgentLocalStore store,
         IServiceProviders<AgentServices.ISessionCleanerService>? cleaners = null,
-        AgentSessionService? sessionService = null,
-        IServiceProviders<AgentServices.IWorkspacePathMigratorService>? pathMigrators = null)
+        AgentSessionService? sessionService = null)
     {
         _store = store;
         _cleaners = cleaners;
         _sessionService = sessionService;
-        _pathMigrators = pathMigrators;
     }
 
     public event Action? WorkspacesChanged;
@@ -312,86 +308,11 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
     public static string BuildPrimaryBindingId(string workspaceId, string role = AgentWorkspaceBindingRoles.PrimaryExecutionTarget)
         => $"{workspaceId}:{role}";
 
-    public async Task InitializeAsync(CancellationToken cancellationToken = default)
+    public Task InitializeAsync(CancellationToken cancellationToken = default)
     {
-        if (_isMigratingWorkspacePaths || _pathMigrators is null)
-        {
-            return;
-        }
-
-        var migrators = (await _pathMigrators.ListAsync(cancellationToken).ConfigureAwait(false)).Providers
-            .Where(provider => provider.State == ServiceProviderState.Active).ToArray();
-        if (migrators.Length == 0)
-        {
-            return;
-        }
-
-        _isMigratingWorkspacePaths = true;
-        try
-        {
-            foreach (var workspace in _store.ListWorkspaces())
-            {
-                if (workspace.Paths.Count > 0)
-                {
-                    continue;
-                }
-
-                var binding = _store.ListWorkspaceBindings(workspace.WorkspaceId)
-                    .FirstOrDefault(item => item.IsEnabled
-                                            && string.Equals(item.Role, AgentWorkspaceBindingRoles.PrimaryExecutionTarget, StringComparison.OrdinalIgnoreCase));
-                if (binding is null)
-                {
-                    continue;
-                }
-
-                var context = new AgentWorkspacePathMigrationContext(workspace, binding);
-                var completedMigrators = new List<ServiceProvider<AgentServices.IWorkspacePathMigratorService>>();
-                var migrationItems = new List<AgentWorkspacePathMigrationItem>();
-                foreach (var migrator in migrators)
-                {
-                    try
-                    {
-                        if (!await migrator.Service.CanMigrateAsync(context, cancellationToken).ConfigureAwait(false)) continue;
-                        var items = (await migrator.Service.ListLegacyPathsAsync(context, cancellationToken).ConfigureAwait(false))
-                            .Where(item => !string.IsNullOrWhiteSpace(item.HostPath))
-                            .ToArray();
-                        if (items.Length == 0)
-                        {
-                            continue;
-                        }
-
-                        migrationItems.AddRange(items);
-                        completedMigrators.Add(migrator);
-                    }
-                    catch
-                    {
-                        // Legacy migration should never prevent the workspace list from loading.
-                    }
-                }
-
-                if (migrationItems.Count == 0)
-                {
-                    continue;
-                }
-
-                SaveWorkspacePathsCore(workspace.WorkspaceId, BuildPathRecords(workspace.WorkspaceId, migrationItems));
-                foreach (var migrator in completedMigrators)
-                {
-                    try
-                    {
-                        await migrator.Service.CompleteAsync(context, cancellationToken).ConfigureAwait(false);
-                    }
-                    catch
-                    {
-                        // A completed path migration is still valid if cleanup of legacy config fails.
-                    }
-                }
-            }
-        }
-        finally
-        {
-            _isMigratingWorkspacePaths = false;
-        }
+        // The in-process gateway is ready immediately; App gateways load and observe their dashboard here.
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.CompletedTask;
     }
 
     private void SaveWorkspacePathsCore(string workspaceId, IReadOnlyList<AgentWorkspacePathRecord> paths)
@@ -408,24 +329,6 @@ public sealed class AgentWorkspaceService : IAgentWorkspaceGateway
         {
             _store.SaveWorkspaceDocuments(workspaceId, NormalizeDocumentRecords(workspaceId, documents));
         }
-    }
-
-    private static IReadOnlyList<AgentWorkspacePathRecord> BuildPathRecords(
-        string workspaceId,
-        IReadOnlyList<AgentWorkspacePathMigrationItem> items)
-    {
-        var now = DateTimeOffset.UtcNow;
-        return items
-            .OrderBy(item => item.SortOrder)
-            .Select((item, index) => new AgentWorkspacePathRecord(
-                Guid.NewGuid().ToString("N"),
-                workspaceId,
-                item.HostPath,
-                item.IsDefault,
-                index,
-                now,
-                now))
-            .ToArray();
     }
 
     private static IReadOnlyList<AgentWorkspacePathRecord> NormalizePathRecords(

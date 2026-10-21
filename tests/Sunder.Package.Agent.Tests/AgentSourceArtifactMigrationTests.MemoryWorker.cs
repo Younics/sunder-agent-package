@@ -21,7 +21,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var canonical = await BuildCanonicalFamily(root, "Memory.Semantic", "MemoryWorker", cache, Path.Combine(root, "Worker/bin/agent-source.sunderpkg"));
         var worker = canonical.Directory;
         var selected = File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.lock.json"));
-        var baseline = File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.owned.json"));
+        var baseline = CanonicalPackageRoles.ReadOwnedBaseline(worker);
         Assert.DoesNotContain(Directory.EnumerateFiles(SingleProjectRoleOutput(worker, "app"), "*", SearchOption.AllDirectories),
             file => Path.GetFileName(file).Contains("sqlite", StringComparison.OrdinalIgnoreCase));
         using (var plan = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(worker, "obj/Debug/net10.0/sunder-analysis", RuntimeInformation.RuntimeIdentifier,
@@ -42,7 +42,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         await VerifyFullMemoryApp(worker);
         await canonical.Pack();
         Assert.Equal(selected, File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.lock.json")));
-        Assert.Equal(baseline, File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.owned.json")));
+        Assert.Equal(baseline, CanonicalPackageRoles.ReadOwnedBaseline(worker));
         var archive = Path.Combine(worker, "bin/agent-source.sunderpkg");
         using (var contents = ZipFile.OpenRead(archive))
         {
@@ -59,13 +59,13 @@ public sealed partial class AgentSourceArtifactMigrationTests
         ZipFile.ExtractToDirectory(archive, extracted);
         using var manifest = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(extracted, "manifest/sunder-package.json")));
         var value = manifest.RootElement;
-        Assert.Equal("sunder.package.agent.memory.semantic", value.GetProperty("id").GetString());
-        Assert.Equal(20, value.GetProperty("contractBundles").GetArrayLength());
+        Assert.Equal("younics.ai.agent.memory.semantic", value.GetProperty("id").GetString());
+        Assert.Equal(19, value.GetProperty("contractBundles").GetArrayLength());
         Assert.Equal(5, value.GetProperty("provides").GetArrayLength());
-        Assert.Equal(20, value.GetProperty("usesContracts").GetArrayLength());
+        Assert.Equal(19, value.GetProperty("usesContracts").GetArrayLength());
         Assert.Equal(4, value.GetProperty("providerImports").GetArrayLength());
         var dependency = Assert.Single(value.GetProperty("dependsOn").EnumerateArray());
-        Assert.Equal("sunder.package.agent", dependency.GetProperty("packageId").GetString());
+        Assert.Equal("younics.ai.agent", dependency.GetProperty("packageId").GetString());
         Assert.Equal(">=2.0.0 <3.0.0", dependency.GetProperty("versionRange").GetString());
         Assert.Equal("required", dependency.GetProperty("presence").GetString());
         Assert.Equal(2, value.GetProperty("targets").GetArrayLength());

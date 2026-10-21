@@ -1,12 +1,12 @@
-using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using Sunder.Generated.Packages.Younics_Ai_Agent_Models;
+using IExecutionTargetService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Execution_Target.IExecutionTargetService;
+using IToolSourceService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Tool_Source.IToolSourceService;
 using Sunder.Sdk.Services;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
 
 namespace Sunder.Package.Agent.Tools.Web.Services;
 
 [SunderServiceProvider(typeof(IToolSourceService), ProviderId = "web.tools")]
-[SunderRuntimeUse(typeof(AgentServices.IExecutionTargetService), Actions = ["discover"])]
+[SunderRuntimeUse(typeof(IExecutionTargetService), Actions = ["discover"])]
 internal sealed partial class WebToolSource(WebFetchTool fetch, WebSearchTool search) : IToolSourceService, IAsyncDisposable
 {
     private readonly object _gate = new();
@@ -23,16 +23,16 @@ internal sealed partial class WebToolSource(WebFetchTool fetch, WebSearchTool se
     { cancellationToken.ThrowIfCancellationRequested(); return ValueTask.FromResult(new AgentToolSourceDescriptor { SourceId = SourceId, DisplayName = DisplayName, SourceKind = SourceKind }); }
     public ValueTask<IReadOnlyList<AgentToolDescriptor>> ListToolsAsync(AgentToolSourceContext context, CancellationToken cancellationToken = default)
     { cancellationToken.ThrowIfCancellationRequested(); return ValueTask.FromResult<IReadOnlyList<AgentToolDescriptor>>([fetch.Descriptor, search.Descriptor]); }
-    public ValueTask<AgentToolReadiness?> GetReadinessAsync(CSunder_Agent_Tool_Source_ToolSourceGetReadinessRequest request, CancellationToken cancellationToken = default)
+    public ValueTask<AgentToolReadiness?> GetReadinessAsync(CYounics_Ai_Agent_Tool_Source_ToolSourceGetReadinessRequest request, CancellationToken cancellationToken = default)
         => InvokeAsync<AgentToolReadiness?>(async token => request.ToolId.ToLowerInvariant() switch
         {
             "web_fetch" => await fetch.GetReadinessAsync(token).ConfigureAwait(false),
             "web_search" => await search.GetReadinessAsync(token).ConfigureAwait(false),
             _ => null,
         }, cancellationToken);
-    public ValueTask<AgentToolResult?> PreflightAsync(CSunder_Agent_Tool_Source_ToolSourcePreflightRequest request, CancellationToken cancellationToken = default)
+    public ValueTask<AgentToolResult?> PreflightAsync(CYounics_Ai_Agent_Tool_Source_ToolSourcePreflightRequest request, CancellationToken cancellationToken = default)
     { cancellationToken.ThrowIfCancellationRequested(); return ValueTask.FromResult<AgentToolResult?>(null); }
-    public ValueTask<AgentToolResult> ExecuteAsync(CSunder_Agent_Tool_Source_ToolSourceExecuteRequest request, CancellationToken cancellationToken = default)
+    public ValueTask<AgentToolResult> ExecuteAsync(CYounics_Ai_Agent_Tool_Source_ToolSourceExecuteRequest request, CancellationToken cancellationToken = default)
         => InvokeAsync(token => request.Request.ToolId.ToLowerInvariant() switch
         {
             "web_fetch" => fetch.ExecuteAsync(request.Context, request.Request, token),
@@ -44,7 +44,7 @@ internal sealed partial class WebToolSource(WebFetchTool fetch, WebSearchTool se
                 PresentationPayloadJson = null, RequiresPromptContextRefresh = false,
             }),
         }, cancellationToken);
-    public ValueTask<AgentPermissionRequest?> PermissionAsync(CSunder_Agent_Tool_Source_ToolSourcePermissionRequest request, CancellationToken cancellationToken = default)
+    public ValueTask<AgentPermissionRequest?> PermissionAsync(CYounics_Ai_Agent_Tool_Source_ToolSourcePermissionRequest request, CancellationToken cancellationToken = default)
         => InvokeAsync(_ => ValueTask.FromResult<AgentPermissionRequest?>(null), cancellationToken);
     public ValueTask<AgentToolPresentation?> PresentationAsync(AgentToolPresentationRequest request, CancellationToken cancellationToken = default)
     {

@@ -12,7 +12,7 @@ using MemoryWorker::Sunder.Package.Agent.Memory.Semantic;
 using MemoryWorker::Sunder.Package.Agent.Memory.Semantic.Runtime;
 using MemoryWorker::Sunder.Package.Agent.Memory.Semantic.Services;
 using MemoryAppGateway = MemoryApp::Sunder.Package.Agent.Memory.Semantic.Runtime.IMemoryInspectorGateway;
-using MemoryAppServices = MemoryApp::Sunder.Generated.Packages.Sunder_Package_Agent_Memory_Semantic_Services;
+using MemoryAppServices = MemoryApp::Sunder.Generated.Packages.Younics_Ai_Agent_Memory_Semantic_Services;
 using AppMemoryChanged = MemoryApp::Sunder.Package.Agent.Memory.Semantic.Runtime.MemoryChanged;
 using AppMemoryChangeKind = MemoryApp::Sunder.Package.Agent.Memory.Semantic.Runtime.MemoryChangeKind;
 using AppSemanticEmbeddingContext = MemoryApp::Sunder.Package.Agent.Memory.Semantic.Services.SemanticEmbeddingContext;
@@ -27,7 +27,7 @@ namespace Sunder.Package.Agent.Memory.Semantic.Tests;
 public sealed class MemorySemanticWorkerTopologyTests
 {
     private const string InspectorProviderId = "semantic.memory.inspector";
-    private static SunderRpcContractDescriptor Inspector => CurrentPrivateRpcDescriptors.Get("sunder.agent.memory.semantic.inspector");
+    private static SunderRpcContractDescriptor Inspector => CurrentPrivateRpcDescriptors.Get("younics.ai.agent.memory.semantic.inspector");
 
     [Fact]
     [Trait("Lane", "PackageCompatibility")]

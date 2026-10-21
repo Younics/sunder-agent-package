@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Sdk.Rpc;
 
 namespace Sunder.Package.Agent.Runtime;
 
@@ -116,8 +117,13 @@ internal sealed partial class AgentAppRuntimeGateway
                 reconnectDelay = NextReconnectDelay(reconnectDelay);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
-            catch (Exception exception) when (IsRuntimeAvailabilityFailure(exception, cancellationToken))
+            catch (Exception exception) when (IsRuntimeAvailabilityFailure(exception, cancellationToken)
+                || (!cancellationToken.IsCancellationRequested
+                    && exception is SunderRpcException { Error.Kind: SunderRpcErrorKind.Cancelled }))
             {
+                // Publication retires the previous caller session and cancels its streams.
+                // This activation-owned subscription resumes from its cursor; commands
+                // still surface cancellation without being replayed.
                 if (!observedRuntimeIdentity && !HasKnownRuntimeInstance())
                 {
                     resnapshotPending = true;

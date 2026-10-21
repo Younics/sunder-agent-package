@@ -17,10 +17,11 @@ def gh(route):
 
 
 def check(value):
-    closed(value, "schemaVersion registryOrigin preVisibilityAcceptanceSha256 request result")
-    require(type(value["schemaVersion"]) is int and value["schemaVersion"] == 1, "Unknown cohort receipt schema")
+    closed(value, "schemaVersion registryOrigin artifactSourceCommit releaseId request result")
+    require(type(value["schemaVersion"]) is int and value["schemaVersion"] == 2, "Unknown cohort receipt schema")
     origin(value["registryOrigin"])
-    digest(value["preVisibilityAcceptanceSha256"])
+    digest(value["artifactSourceCommit"], 40)
+    positive(value["releaseId"])
     cohort.result(value["result"], value["request"])
     return cohort.request_hash(value["request"])
 
@@ -47,22 +48,20 @@ def download_bytes(repository, release_id, tag, request_sha):
     data = subprocess.check_output(["gh", "api", "-H", "Accept: application/octet-stream", route])
     require(len(data) == asset["size"] and asset["digest"] == "sha256:" + sha(data), "Cohort receipt bytes differ")
     value = decode(data)
-    require(check(value) == request_sha and data == canonical(value) + b"\n", "Cohort receipt request/canonical bytes differ")
+    require(check(value) == request_sha and data == canonical(value) + b"\n"
+            and value["releaseId"] == int(release_id) and value["artifactSourceCommit"] == info["target_commitish"],
+            "Cohort receipt request/source/canonical bytes differ")
     return value
 
 
-def upload(repository, release_id, tag, registry, acceptance_path, result_path):
-    acceptance = load(acceptance_path)
-    require(acceptance["schemaVersion"] == 4 and acceptance["phase"] == "pre-visibility"
-            and acceptance["draftRelease"]["id"] == int(release_id) and acceptance["tag"] == tag,
-            "Cohort storage requires the accepted pre-visibility identity")
-    value = {"schemaVersion": 1, "registryOrigin": origin(registry),
-             "preVisibilityAcceptanceSha256": file_sha(acceptance_path),
-             "request": acceptance["cohort"]["request"], "result": load(result_path)}
+def upload(repository, release_id, tag, registry, source, request_path, result_path):
+    value = {"schemaVersion": 2, "registryOrigin": origin(registry),
+             "artifactSourceCommit": digest(source, 40), "releaseId": int(release_id),
+             "request": load(request_path), "result": load(result_path)}
     request_sha = check(value)
     name = f"agent-family-cohort-{request_sha}.json"
     info = release_info(repository, release_id, tag)
-    require(info["draft"] is True, "Cohort cannot be stored after announcement")
+    require(info["draft"] is True and info["target_commitish"] == source, "Cohort requires its exact unannounced source")
     existing = [a for a in info["assets"] if a["name"] == name]
     if not existing:
         token = os.environ["GH_TOKEN"]

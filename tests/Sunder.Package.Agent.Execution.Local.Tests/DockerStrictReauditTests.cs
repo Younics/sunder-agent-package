@@ -2,9 +2,9 @@ extern alias DockerWorker;
 
 using DockerWorker::Sunder.Package.Agent.Execution.Docker;
 using Sunder.Sdk.Rpc;
-using AgentFileDeleteRequest = DockerWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileDeleteRequest;
-using AgentFileReadRequest = DockerWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileReadRequest;
-using DockerModels = DockerWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using AgentFileDeleteRequest = DockerWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentFileDeleteRequest;
+using AgentFileReadRequest = DockerWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentFileReadRequest;
+using DockerModels = DockerWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models;
 using Xunit;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
@@ -157,8 +157,8 @@ public sealed class DockerStrictReauditTests : IDisposable
                 ResourceIndex = 0,
                 WorkspaceGeneration = "workspace-generation",
                 BindingGeneration = "binding-generation",
-                ToolOwnerPackageId = "sunder.package.agent.tools.files",
-                ExecutionTargetOwnerPackageId = "sunder.package.agent.execution.docker",
+                ToolOwnerPackageId = "younics.ai.agent.tools.files",
+                ExecutionTargetOwnerPackageId = "younics.ai.agent.execution.docker",
                 AuthorityActivationId = Guid.NewGuid().ToString("N"),
                 AuthorityUseCount = 1,
                 CanIssueOutsideAuthority = false,

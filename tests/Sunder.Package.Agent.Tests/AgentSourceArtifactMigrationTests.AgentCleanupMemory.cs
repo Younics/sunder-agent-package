@@ -3,7 +3,7 @@ using System.Reflection;
 using System.Text.Json;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -12,7 +12,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
 {
     private static async Task VerifyAgentMemoryCleanup(Assembly owner, object store, RegressionTestRpcState state)
     {
-        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
+        var rpc = new RegressionTestRpcClient(state, "younics.ai.agent");
         await using var receiver = new GeneratedServiceTestScope(rpc);
         var observer = Assert.Single((await receiver.Providers<AgentServices.IDurableLifecycleObserverService>().ListAsync()).Providers).Service;
         var cleaner = Assert.Single((await receiver.Providers<AgentServices.ISessionCleanerService>().ListAsync()).Providers).Service;

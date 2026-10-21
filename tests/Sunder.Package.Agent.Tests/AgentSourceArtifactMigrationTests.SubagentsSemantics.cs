@@ -11,7 +11,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         foreach (var name in new[] { "AgentSessionRecord", "AgentTurnRecord", "AgentTranscriptToolDetailRecord", "AgentProfileRecord", "AgentModelDescriptor" })
             AssertImportedRoleModel(assembly, name);
         Assert.Null(assembly.GetType("Sunder.Package.Agent.Contracts.Contracts.IAgentChildRunExecutor"));
-        Assert.Same(assembly, assembly.GetType(ImportedServices + "IChildRunExecutorService", true)!.Assembly);
+        Assert.Same(assembly, assembly.GetType(ImportedServices + "CYounics_Ai_Agent_Child_Run_Executor.IChildRunExecutorService", true)!.Assembly);
         AssertImportedRoleModel(assembly, "AgentBehaviorLoopContext");
         if (app)
         {

@@ -83,22 +83,22 @@ public sealed partial class AgentSourceArtifactMigrationTests
         using var manifestStream = Assert.Single(archive.Entries, entry => entry.FullName == "manifest/sunder-package.json").Open();
         using var manifest = JsonDocument.Parse(manifestStream);
         var root = manifest.RootElement;
-        Assert.Equal("sunder.package.agent", root.GetProperty("id").GetString());
-        Assert.Equal(22, root.GetProperty("contractBundles").GetArrayLength());
+        Assert.Equal("younics.ai.agent", root.GetProperty("id").GetString());
+        Assert.Equal(21, root.GetProperty("contractBundles").GetArrayLength());
         Assert.Equal(12, root.GetProperty("provides").GetArrayLength());
         Assert.Equal(new[]
         {
-            "app:sunder.agent.child.run.executor", "app:sunder.agent.owner.runtime",
-            "app:sunder.agent.runtime.catalog", "app:sunder.agent.workspace.editor",
-            "app:sunder.package.agent.agent.profile",
-            "runtime:sunder.agent.behavior.loop", "runtime:sunder.agent.chat.provider",
-            "runtime:sunder.agent.durable.lifecycle.observer", "runtime:sunder.agent.embedding.provider",
-            "runtime:sunder.agent.execution.target", "runtime:sunder.agent.permission.surface",
-            "runtime:sunder.agent.profile.capability.consumer", "runtime:sunder.agent.prompt.context.contributor",
-            "runtime:sunder.agent.run.control", "runtime:sunder.agent.runtime.catalog",
-            "runtime:sunder.agent.selectable.capability.provider", "runtime:sunder.agent.session.cleaner",
-            "runtime:sunder.agent.system.prompt.contributor", "runtime:sunder.agent.tool.execution.observed",
-            "runtime:sunder.agent.tool.source", "runtime:sunder.agent.workspace.path.migrator"
+            "app:younics.ai.agent.agent.profile",
+            "app:younics.ai.agent.child.run.executor", "app:younics.ai.agent.owner.runtime",
+            "app:younics.ai.agent.runtime.catalog", "app:younics.ai.agent.workspace.editor",
+            "runtime:younics.ai.agent.behavior.loop", "runtime:younics.ai.agent.chat.provider",
+            "runtime:younics.ai.agent.durable.lifecycle.observer", "runtime:younics.ai.agent.embedding.provider",
+            "runtime:younics.ai.agent.execution.target", "runtime:younics.ai.agent.permission.surface",
+            "runtime:younics.ai.agent.profile.capability.consumer", "runtime:younics.ai.agent.prompt.context.contributor",
+            "runtime:younics.ai.agent.run.control", "runtime:younics.ai.agent.runtime.catalog",
+            "runtime:younics.ai.agent.selectable.capability.provider", "runtime:younics.ai.agent.session.cleaner",
+            "runtime:younics.ai.agent.system.prompt.contributor", "runtime:younics.ai.agent.tool.execution.observed",
+            "runtime:younics.ai.agent.tool.source"
         }, root.GetProperty("usesContracts").EnumerateArray()
             .Select(use => use.GetProperty("role").GetString() + ":" + use.GetProperty("contractId").GetString())
             .Order(StringComparer.Ordinal).ToArray());

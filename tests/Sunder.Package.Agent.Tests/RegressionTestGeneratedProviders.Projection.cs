@@ -147,7 +147,7 @@ internal sealed class RegressionTestGeneratedProviderProjection
     }
 
     private bool IsAdmitted(Type type)
-        => _models.Contains(type.Name) && (type.Namespace == "Sunder.Generated.Packages.Sunder_Package_Agent_Models"
+        => _models.Contains(type.Name) && (type.Namespace == "Sunder.Generated.Packages.Younics_Ai_Agent_Models"
             // This retained domain result is declared beside its authority port,
             // rather than in Models. Its name must still be in this contract's
             // authenticated candidate model inventory.

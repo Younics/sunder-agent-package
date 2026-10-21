@@ -11,8 +11,8 @@ using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Worker;
 using Xunit;
-using McpAppManagementService = McpApp::Sunder.Generated.Packages.Sunder_Package_Agent_Mcp_Services.IManagementService;
-using McpServices = McpWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using McpAppManagementService = McpApp::Sunder.Generated.Packages.Younics_Ai_Agent_Mcp_Services.IManagementService;
+using IRuntimeCatalogService = McpWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Runtime_Catalog.IRuntimeCatalogService;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -72,7 +72,7 @@ public sealed class McpWorkerCompositionTests
         var importer = new McpEcosystemConfigurationImporter(new McpServerCatalogService(scope.Context));
         var sync = new McpSunderConfigurationSyncService(
             importer,
-            receiver.Providers<McpServices.IRuntimeCatalogService>(),
+            receiver.Providers<IRuntimeCatalogService>(),
             userProfilePath: scope.RootPath);
         await using var coordinator = new McpConfigurationCoordinator(importer, sync);
 

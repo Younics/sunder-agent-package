@@ -29,7 +29,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
             || Path.GetFileName(path).StartsWith("Avalonia", StringComparison.Ordinal));
     }
 
-    internal static ServiceProvider CreateGeneratedApp(Assembly app, IPackageContext context, ISunderRpcClient rpc, IBackgroundProcessQueue? background = null)
+    internal static ServiceProvider CreateGeneratedApp(Assembly app, IPackageContext context, ISunderRpcClient rpc,
+        IBackgroundProcessQueue? background = null, IPackageWorkerExecutionObservations? executionObservations = null)
     {
         Assert.DoesNotContain(app.GetTypes(), type => type.Name == "AppPackageModule");
         var module = (ISunderAppPackageModule)Activator.CreateInstance(app.GetType("Sunder.Generated.Package.AppModule", true)!)!;
@@ -37,11 +38,17 @@ public sealed partial class AgentSourceArtifactMigrationTests
         module.ConfigureAppServices(services, context);
         Assert.DoesNotContain(services, service => service.ServiceType == typeof(IPackageContext) || service.ServiceType == typeof(ISunderRpcClient)
             || service.ServiceType == typeof(IPackageNotificationService) || service.ServiceType == typeof(IBackgroundProcessQueue)
-            || service.ServiceType == typeof(IPackageSettingsNavigationService) || service.ServiceType == typeof(IPackageShellViewService));
+            || service.ServiceType == typeof(IPackageSettingsNavigationService) || service.ServiceType == typeof(IPackageShellViewService)
+            || service.ServiceType == typeof(IPackageDevelopmentService) || service.ServiceType == typeof(IPackageLogNavigationService)
+            || service.ServiceType == typeof(IPackageAppStateUpdates) || service.ServiceType == typeof(IPackageWorkerExecutionObservations));
         services.AddSingleton(context); services.AddSingleton(rpc);
         services.AddSingleton<IPackageNotificationService>(NullPackageNotificationService.Instance);
         services.AddSingleton<IPackageSettingsNavigationService>(NullPackageSettingsNavigationService.Instance);
         services.AddSingleton<IPackageShellViewService>(new CapturingHistoryShellViewService());
+        services.AddSingleton<IPackageDevelopmentService>(new CompositionDevelopmentHost());
+        services.AddSingleton<IPackageLogNavigationService>(new CompositionDevelopmentHost());
+        services.AddSingleton<IPackageAppStateUpdates, BuilderUiStateUpdates>();
+        if (executionObservations is not null) services.AddSingleton(executionObservations);
         if (background is not null) services.AddSingleton(background);
         return services.BuildServiceProvider(new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true });
     }
@@ -67,7 +74,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
             </Project>
             """);
         await Run(probe, "restore", "Probe.csproj", "--disable-parallel");
-        await Run(probe, "run", "--project", "Probe.csproj", "--no-restore", "--no-launch-profile", "--", name);
+        await Run(probe, "run", "--project", "Probe.csproj", "--no-restore", "--no-launch-profile", "--", name,
+            AgentPackageRepositoryInventory.GetRuntimePackageId(name[..^4]));
     }
 
     private sealed class AppCallbackProbe(string packageId, string handlerId, IReadOnlyDictionary<string, string>? expectedParameters = null) : IPackageCallbackClient

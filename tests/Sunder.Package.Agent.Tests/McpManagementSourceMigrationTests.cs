@@ -12,7 +12,7 @@ using Sunder.Sdk.Worker;
 using Xunit;
 using McpAppManagementGateway = McpApp::Sunder.Package.Agent.Mcp.Runtime.IMcpManagementGateway;
 using McpAppRuntimeGateway = McpApp::Sunder.Package.Agent.Mcp.Runtime.McpAppRuntimeGateway;
-using McpAppManagementService = McpApp::Sunder.Generated.Packages.Sunder_Package_Agent_Mcp_Services.IManagementService;
+using McpAppManagementService = McpApp::Sunder.Generated.Packages.Younics_Ai_Agent_Mcp_Services.IManagementService;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -28,8 +28,8 @@ public sealed class McpManagementSourceMigrationTests
     [AgentPublicSourceMigrationFact]
     public async Task ManagementSource_PreservesContractAndContentOperationsAcrossIsolatedApp()
     {
-        var descriptor = CurrentPrivateRpcDescriptors.Get("sunder.package.agent.mcp.management");
-        Assert.Equal("sunder.package.agent.mcp.management", descriptor.ContractId);
+        var descriptor = CurrentPrivateRpcDescriptors.Get("younics.ai.agent.mcp.management");
+        Assert.Equal("younics.ai.agent.mcp.management", descriptor.ContractId);
         await Verify();
     }
 
@@ -48,9 +48,9 @@ public sealed class McpManagementSourceMigrationTests
         var registration = service.CreateSunderRpcProviderRegistration();
         Assert.Equal("mcp.management", registration.ProviderId);
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent.mcp");
+        var rpc = new RegressionTestRpcClient(state, "younics.ai.agent.mcp");
         await using var receiver = new GeneratedServiceTestScope(rpc);
-        state.AddGenerated("sunder.package.agent.mcp", service, registration, Noop.Instance, registration.ProviderId);
+        state.AddGenerated("younics.ai.agent.mcp", service, registration, Noop.Instance, registration.ProviderId);
         var selected = Assert.Single((await receiver.Providers<McpAppManagementService>().ListAsync()).Providers);
         var appClient = selected.Service;
         await using var gatewayLifetime = new McpAppRuntimeGateway(

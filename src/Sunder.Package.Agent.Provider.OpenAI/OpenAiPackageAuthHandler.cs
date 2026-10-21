@@ -19,7 +19,7 @@ public sealed class OpenAiPackageAuthHandler(
         if (!string.Equals(mode, _codexConnectedAuthStrategy.ModeId, StringComparison.OrdinalIgnoreCase))
         {
             return new PackageAuthStatus(
-                "sunder.package.agent.provider.openai",
+                "younics.ai.agent.provider.openai",
                 PackageAuthStatusKind.Unavailable,
                 "API-key mode is active. Codex authorization is not required.",
                 CanAuthorize: false,
@@ -29,13 +29,13 @@ public sealed class OpenAiPackageAuthHandler(
         var session = await _codexConnectedAuthStrategy.TryEnsureAuthenticatedSilentlyAsync(cancellationToken);
         return session is null
             ? new PackageAuthStatus(
-                "sunder.package.agent.provider.openai",
+                "younics.ai.agent.provider.openai",
                 PackageAuthStatusKind.NotConnected,
-                "Not connected. Open Settings -> Packages -> Sunder Agent Provider OpenAI and click Authorize with ChatGPT Plus/Pro.",
+                "Not connected. Open Settings -> Packages -> AI Agent - OpenAI and click Authorize with ChatGPT Plus/Pro.",
                 CanAuthorize: true,
                 CanDisconnect: false)
             : new PackageAuthStatus(
-                "sunder.package.agent.provider.openai",
+                "younics.ai.agent.provider.openai",
                 PackageAuthStatusKind.Connected,
                 $"Connected. Session expires at {session.ExpiresAtUtc:O}.",
                 CanAuthorize: true,
@@ -54,7 +54,7 @@ public sealed class OpenAiPackageAuthHandler(
 
         var launchUrl = _codexConnectedAuthStrategy.CreateAuthorizationUrl(context.AuthSessionId, context.CallbackUri);
         return new PackageAuthSessionStartResult(
-            "sunder.package.agent.provider.openai",
+            "younics.ai.agent.provider.openai",
             context.AuthSessionId,
             PackageAuthFlowKind.Browser,
             launchUrl,
@@ -68,7 +68,7 @@ public sealed class OpenAiPackageAuthHandler(
         {
             var session = await _codexConnectedAuthStrategy.CompleteAuthorizationAsync(context.AuthSessionId, context.QueryValues, cancellationToken);
             return new PackageAuthStatus(
-                "sunder.package.agent.provider.openai",
+                "younics.ai.agent.provider.openai",
                 PackageAuthStatusKind.Connected,
                 $"Connected. Session expires at {session.ExpiresAtUtc:O}.",
                 CanAuthorize: true,
@@ -81,7 +81,7 @@ public sealed class OpenAiPackageAuthHandler(
         catch (Exception ex)
         {
             return new PackageAuthStatus(
-                "sunder.package.agent.provider.openai",
+                "younics.ai.agent.provider.openai",
                 PackageAuthStatusKind.Failed,
                 ex.Message,
                 CanAuthorize: true,
@@ -103,7 +103,7 @@ public sealed class OpenAiPackageAuthHandler(
         cancellationToken.ThrowIfCancellationRequested();
         await _codexConnectedAuthStrategy.ClearSessionAsync(cancellationToken);
         return new PackageAuthStatus(
-            "sunder.package.agent.provider.openai",
+            "younics.ai.agent.provider.openai",
             PackageAuthStatusKind.NotConnected,
             "ChatGPT Plus/Pro OAuth session removed.",
             CanAuthorize: true,

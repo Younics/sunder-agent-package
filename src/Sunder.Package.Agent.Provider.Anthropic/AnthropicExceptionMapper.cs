@@ -9,7 +9,7 @@ internal static class AnthropicExceptionMapper
     internal static AgentChatProviderException MissingApiKey()
         => new(
             "missing-api-key",
-            "### Missing Anthropic API key\n\nOpen **Settings -> Packages -> Sunder Agent Provider Anthropic** and enter an API key before sending messages.",
+            "### Missing Anthropic API key\n\nOpen **Settings -> Packages -> AI Agent - Anthropic** and enter an API key before sending messages.",
             "missing-api-key");
 
     internal static AgentChatProviderException MultipleToolCalls()

@@ -53,13 +53,13 @@ public sealed partial class AgentPermissionsViewModel : ObservableObject,
         _globalPermissionGateway = permissionService as IAgentGlobalPermissionGateway;
         _runtimeAvailability = permissionService as IAgentRuntimeAvailability;
         _uiDispatcher = uiDispatcher;
-        _tasks = new PresentationTaskScope(exception => _uiDispatcher.InvokeAsync(() =>
+        _tasks = new PresentationTaskScope((exception, token) => _uiDispatcher.InvokeAsync(() =>
         {
             if (!_disposed)
             {
                 StatusText = $"Agent Runtime operation failed: {exception.Message}";
             }
-        }));
+        }, token), _uiDispatcher.ShutdownToken);
         _operations = operationObserver
             ?? PresentationOperationObserver.CreateUnreported("Agent permissions");
         _lifetimeToken = _tasks.CancellationToken;

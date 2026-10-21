@@ -28,7 +28,13 @@ public sealed partial class AgentSourceArtifactMigrationTests
             else if (mode == "retire")
             {
                 var retirement = retireAndReplace();
-                Assert.Equal(AgentToolResultErrorCodes.PackageUnavailable, (await pending).ErrorCode);
+                var error = await Assert.ThrowsAsync<SunderRpcException>(() => pending);
+                // The process was already running. Retirement must drain it,
+                // but cannot turn that dispatched command into safe no-Start.
+                Assert.Equal(SunderRpcErrorKind.ProviderFaulted, error.Error.Kind);
+                Assert.Equal(SunderRpcDispatchState.PossiblyDispatched, error.Error.DispatchState);
+                Assert.Equal(SunderRpcRetrySafety.Unsafe, error.Error.RetrySafety);
+                Assert.False(SunderRpcException.HasTrustedNoDispatchEvidence(error));
                 await retirement.WaitAsync(TimeSpan.FromSeconds(10));
             }
             else

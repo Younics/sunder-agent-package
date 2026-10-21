@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agent runtime identity migration map v1",
+  "description": "Agent-owned planning schema. Does not extend an SDK baseline, lock, descriptor, artifact or Registry schema. Semantic cross-checks are in check_identity_migration.py.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "identityMapVersion", "migrationId", "status", "scope", "packageVersion", "newPublicContractVersion", "privateContractVersion", "authoredProjectFolderAssemblyNamespacePolicy", "historicalIdentityAndVersionPolicy", "newArtifactEvidencePolicy", "predecessor", "packages", "publicContractOwnerPackageKey", "publicContracts", "privateContracts", "providerAutoIds", "explicitProviderServiceMethodKeyPolicy", "generatedCode", "preservedExternalAuthorities"],
+  "properties": {
+    "$schema": { "const": "map.schema.json" },
+    "schemaVersion": { "const": 1 },
+    "identityMapVersion": { "const": 1 },
+    "migrationId": { "const": "agent-runtime-identity-v1" },
+    "status": { "const": "planned-captured" },
+    "scope": { "const": "runtime-package-and-public-private-rpc-identities" },
+    "packageVersion": { "const": "2.0.0" },
+    "newPublicContractVersion": { "const": "1.0.0" },
+    "privateContractVersion": { "const": "2.0.0" },
+    "authoredProjectFolderAssemblyNamespacePolicy": { "const": "preserve" },
+    "historicalIdentityAndVersionPolicy": { "const": "preserve-exact-predecessor-bytes" },
+    "newArtifactEvidencePolicy": { "const": "owning-tools-and-real-artifacts-required-no-placeholder-hashes" },
+    "predecessor": {
+      "type": "object", "additionalProperties": false, "required": ["manifestPath", "sha256"],
+      "properties": {
+        "manifestPath": { "const": "predecessor/manifest.json" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "packages": { "type": "array", "minItems": 15, "maxItems": 15, "items": { "$ref": "#/$defs/package" } },
+    "publicContractOwnerPackageKey": { "const": "agent" },
+    "publicContracts": { "type": "array", "minItems": 19, "maxItems": 19, "items": { "$ref": "#/$defs/publicContract" } },
+    "privateContracts": { "type": "array", "minItems": 13, "maxItems": 13, "items": { "$ref": "#/$defs/privateContract" } },
+    "providerAutoIds": {
+      "type": "array", "minItems": 1, "maxItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["packageKey", "oldProviderId", "newProviderId", "derivedFromNewContractId", "suffix"],
+        "properties": {
+          "packageKey": { "const": "agent" },
+          "oldProviderId": { "const": "sunder.package.agent.agent.profile.provider" },
+          "newProviderId": { "const": "younics.ai.agent.agent.profile.provider" },
+          "derivedFromNewContractId": { "const": "younics.ai.agent.agent.profile" },
+          "suffix": { "const": ".provider" }
+        }
+      }
+    },
+    "explicitProviderServiceMethodKeyPolicy": { "const": "preserve" },
+    "generatedCode": {
+      "type": "object", "additionalProperties": false,
+      "required": ["packageNamespacePrefix", "packageNamespaceAreaSuffixes", "contractSymbolRule", "ownedServiceInterfacePlacement", "importedServiceInterfacePlacement", "transportPlacement", "oldModuleNamespace", "newModuleNamespace", "appModuleType", "workerEntryPointType", "authoredNamespacePolicy"],
+      "properties": {
+        "packageNamespacePrefix": { "const": "Sunder.Generated.Packages." },
+        "packageNamespaceAreaSuffixes": { "const": ["_Services", "_Models", "_Internal"] },
+        "contractSymbolRule": { "const": "C-plus-dot-segments-first-character-uppercase-joined-with-underscore" },
+        "ownedServiceInterfacePlacement": { "const": "package-services-namespace" },
+        "importedServiceInterfacePlacement": { "const": "package-services-namespace.contract-symbol" },
+        "transportPlacement": { "const": "package-internal-namespace.contract-symbol" },
+        "oldModuleNamespace": { "const": "Sunder.Generated.Package" },
+        "newModuleNamespace": { "const": "Sunder.Generated.Package" },
+        "appModuleType": { "const": "Sunder.Generated.Package.AppModule" },
+        "workerEntryPointType": { "const": "Sunder.Generated.Package.WorkerEntryPoint" },
+        "authoredNamespacePolicy": { "const": "preserve" }
+      }
+    },
+    "preservedExternalAuthorities": {
+      "const": [{ "authorityId": "sunder.core", "contractId": "sunder.stack.contributor", "contractVersion": "2.0.0" }]
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9]+(?:\\.[a-z0-9]+)+$" },
+    "symbol": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_]+$" },
+    "key": { "type": "string", "pattern": "^agent(?:-[a-z]+)*$" },
+    "package": {
+      "type": "object", "additionalProperties": false,
+      "required": ["key", "oldPackageId", "newPackageId", "projectPath", "oldDisplayName", "newDisplayName", "oldGeneratedNamespaceStem", "newGeneratedNamespaceStem"],
+      "properties": {
+        "key": { "$ref": "#/$defs/key" },
+        "oldPackageId": { "$ref": "#/$defs/id" },
+        "newPackageId": { "$ref": "#/$defs/id" },
+        "projectPath": { "type": "string", "pattern": "^src/Sunder\\.Package\\.Agent(?:\\.[A-Za-z]+)*/Sunder\\.Package\\.Agent(?:\\.[A-Za-z]+)*\\.csproj$" },
+        "oldDisplayName": { "type": "string", "pattern": "^Sunder Agent(?: .+)?$" },
+        "newDisplayName": { "type": "string", "pattern": "^(AI Agent(?: - .+)?|Sunder Package Maker)$" },
+        "oldGeneratedNamespaceStem": { "$ref": "#/$defs/symbol" },
+        "newGeneratedNamespaceStem": { "$ref": "#/$defs/symbol" }
+      }
+    },
+    "publicContract": {
+      "type": "object", "additionalProperties": false,
+      "required": ["oldContractId", "newContractId", "oldVersion", "newVersion", "sourcePath", "oldContractSymbol", "newContractSymbol"],
+      "properties": {
+        "oldContractId": { "$ref": "#/$defs/id" },
+        "newContractId": { "$ref": "#/$defs/id" },
+        "oldVersion": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+        "newVersion": { "const": "1.0.0" },
+        "sourcePath": { "type": "string", "pattern": "^src/Sunder\\.Package\\.Agent/(?:Rpc/Public|Services)/[A-Za-z]+\\.cs$" },
+        "oldContractSymbol": { "$ref": "#/$defs/symbol" },
+        "newContractSymbol": { "$ref": "#/$defs/symbol" }
+      }
+    },
+    "privateContract": {
+      "type": "object", "additionalProperties": false,
+      "required": ["packageKey", "oldContractId", "newContractId", "kind"],
+      "properties": {
+        "packageKey": { "$ref": "#/$defs/key" },
+        "oldContractId": { "$ref": "#/$defs/id" },
+        "newContractId": { "$ref": "#/$defs/id" },
+        "kind": { "enum": ["explicit-contract-id", "automatic-package-service-id"] }
+      }
+    }
+  }
+}

@@ -6,7 +6,7 @@ using AgentApp::Sunder.Package.Agent.Services;
 using AgentApp::Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Notifications;
-using AgentServices = AgentApp::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = AgentApp::Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 
 namespace Sunder.Package.Agent.Tests;
 

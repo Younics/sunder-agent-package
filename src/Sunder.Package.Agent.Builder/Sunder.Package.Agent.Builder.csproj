@@ -1,17 +1,16 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <SunderPackageFamilyId>sunder.package.agent.builder</SunderPackageFamilyId>
+    <SunderPackageFamilyId>younics.sunder.package.maker</SunderPackageFamilyId>
     <SunderSdkAvaloniaReference>true</SunderSdkAvaloniaReference>
   </PropertyGroup>
 
   <Import Project="$(MSBuildThisFileDirectory)..\..\Sunder.Agent.Worker.props" />
-  <Import Project="..\Sunder.Package.Agent\Models\AgentExtensionSources.props" />
 
   <ItemGroup>
     <PackageReference Include="Avalonia" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
-    <Compile Include="..\Sunder.Package.Agent.Shared\Execution\AgentExecutionFacetIds.cs" LinkBase="Execution" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
   </ItemGroup>
 
   <Import Project="..\Sunder.Package.Agent.Shared\Sunder.Package.Agent.Shared.props" />

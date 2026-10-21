@@ -1,5 +1,5 @@
-using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using IEmbeddingProviderService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Embedding_Provider.IEmbeddingProviderService;
+using Sunder.Generated.Packages.Younics_Ai_Agent_Models;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Services;
@@ -108,7 +108,7 @@ public sealed partial class LMStudioEmbeddingProvider :
     }
 
     public async ValueTask<AgentEmbeddingGenerationResult?> GenerateAsync(
-        CSunder_Agent_Embedding_Provider_EmbeddingProviderGenerateRequest request,
+        CYounics_Ai_Agent_Embedding_Provider_EmbeddingProviderGenerateRequest request,
         CancellationToken cancellationToken = default)
     {
         var results = await GenerateBatchAsync(new() { ModelId = request.ModelId, Texts = [request.Text] }, cancellationToken).ConfigureAwait(false);
@@ -116,7 +116,7 @@ public sealed partial class LMStudioEmbeddingProvider :
     }
 
     public async ValueTask<IReadOnlyList<AgentEmbeddingGenerationResult?>> GenerateBatchAsync(
-        CSunder_Agent_Embedding_Provider_EmbeddingProviderGenerateBatchRequest request,
+        CYounics_Ai_Agent_Embedding_Provider_EmbeddingProviderGenerateBatchRequest request,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();

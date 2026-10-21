@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Threading;
+using Sunder.Package.Agent.Shared.Presentation;
 
 namespace Sunder.Package.Agent.PackageViews;
 
@@ -53,13 +54,13 @@ public partial class AgentChatView
                         _workspacePathLayoutDirty = false;
                     }
 
-                    await Dispatcher.UIThread.InvokeAsync(() =>
+                    await PresentationDispatcher.QueueAsync(() =>
                     {
                         if (!cancellationToken.IsCancellationRequested)
                         {
                             UpdateWorkspacePathChipLayout();
                         }
-                    }, DispatcherPriority.Loaded);
+                    }, DispatcherPriority.Loaded, cancellationToken).ConfigureAwait(false);
 
                     lock (_workspacePathLayoutSyncRoot)
                     {
@@ -96,7 +97,7 @@ public partial class AgentChatView
     private void QueueRestoreComposerEditorState()
         => _tasks.Run(async cancellationToken =>
         {
-            await Dispatcher.UIThread.InvokeAsync(() =>
+            await PresentationDispatcher.QueueAsync(() =>
             {
                 if (cancellationToken.IsCancellationRequested
                     || !_editorStateCache.TryRestore(_usesWideLayout, _lastComposerExpanded, out var state))
@@ -113,7 +114,7 @@ public partial class AgentChatView
                 {
                     textBox.Focus();
                 }
-            }, DispatcherPriority.Loaded);
+            }, DispatcherPriority.Loaded, cancellationToken).ConfigureAwait(false);
         });
 
     private void UpdateWorkspacePathChipLayout()

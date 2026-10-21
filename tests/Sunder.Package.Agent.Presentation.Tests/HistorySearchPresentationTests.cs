@@ -22,7 +22,7 @@ using AgentApp::Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Tests;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Notifications;
-using AgentServices = AgentApp::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = AgentApp::Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Presentation.Tests;

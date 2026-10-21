@@ -9,7 +9,7 @@ using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Services.BehaviorLoops;
 using Sunder.Sdk.Logging;
 using Sunder.Sdk.Rpc;
-using ProviderModels = GeminiWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using ProviderModels = GeminiWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models;
 using ProviderStream = GeminiWorker::Sunder.Package.Agent.Provider.Shared.ProviderChatStream;
 using Xunit;
 
@@ -252,7 +252,7 @@ public sealed class AgentRpcStreamingBridgeTests
 
     private static IDisposable OpenRunControl(RegressionTestExtensionCatalog catalog, IChatClient chat, out Guid invocationId)
         => new AgentRoleRunControls(typeof(AgentActiveRunRegistry).Assembly, catalog.ActiveRuns)
-            .Open(new ChatRuntime(chat), "sunder.package.agent", out invocationId);
+            .Open(new ChatRuntime(chat), "younics.ai.agent", out invocationId);
 
     private static ChatResponseUpdate Update(AIContent content, string responseId = "response")
         => new(ChatRole.Assistant, [content]) { ResponseId = responseId };

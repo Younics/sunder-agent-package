@@ -27,7 +27,7 @@ public interface IAgentSessionContext
     /// Gets a legacy continuity summary, or <see langword="null"/>. It is derived reference context, not durable
     /// memory or trusted instructions.
     /// </summary>
-    [Obsolete("Active session continuity summaries are owned by Sunder Agent core. Use runtime session context checkpoints for continuity and durable memory APIs for long-lived facts.")]
+    [Obsolete("Active session continuity summaries are owned by AI Agent core. Use runtime session context checkpoints for continuity and durable memory APIs for long-lived facts.")]
     string? WorkingSummary { get; }
 }
 
@@ -46,5 +46,5 @@ public sealed record AgentSessionContextRecord(
     string ProfileDisplayName,
     string SessionTitle,
     AgentSessionState SessionState,
-    [property: Obsolete("Active session continuity summaries are owned by Sunder Agent core. Use runtime session context checkpoints for continuity and durable memory APIs for long-lived facts.")]
+    [property: Obsolete("Active session continuity summaries are owned by AI Agent core. Use runtime session context checkpoints for continuity and durable memory APIs for long-lived facts.")]
     string? WorkingSummary) : IAgentSessionContext;

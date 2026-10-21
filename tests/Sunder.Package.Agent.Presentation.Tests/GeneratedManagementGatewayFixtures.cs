@@ -12,9 +12,9 @@ using SkillsWorker::Sunder.Package.Agent.Skills.Services;
 using Sunder.Package.Agent.Tests;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Rpc;
-using McpAppManagementService = McpApp::Sunder.Generated.Packages.Sunder_Package_Agent_Mcp_Services.IManagementService;
+using McpAppManagementService = McpApp::Sunder.Generated.Packages.Younics_Ai_Agent_Mcp_Services.IManagementService;
 using McpAppRuntimeGateway = McpApp::Sunder.Package.Agent.Mcp.Runtime.McpAppRuntimeGateway;
-using SkillsAppManagementService = SkillsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Skills_Services.ISkillsManagementService;
+using SkillsAppManagementService = SkillsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Skills_Services.ISkillsManagementService;
 using SkillsAppRuntimeGateway = SkillsApp::Sunder.Package.Agent.Skills.Runtime.SkillAppRuntimeGateway;
 
 namespace Sunder.Package.Agent.Presentation.Tests;
@@ -55,11 +55,11 @@ internal sealed class McpManagementGatewayFixture : IAsyncDisposable
             new McpOAuthCoordinator(oauth, connections), context);
         McpFixturePhaseLog.Mark("CreateRuntime:service-created");
         var extensions = new RegressionTestExtensionCatalog();
-        var receiver = new GeneratedServiceTestScope(extensions.RpcForCaller("sunder.package.agent.mcp"));
+        var receiver = new GeneratedServiceTestScope(extensions.RpcForCaller("younics.ai.agent.mcp"));
         try
         {
             McpFixturePhaseLog.Mark("CreateRuntime:before-provider-registration");
-            extensions.AddGeneratedProvider("sunder.package.agent.mcp", service, service.CreateSunderRpcProviderRegistration());
+            extensions.AddGeneratedProvider("younics.ai.agent.mcp", service, service.CreateSunderRpcProviderRegistration());
             McpFixturePhaseLog.Mark("CreateRuntime:after-provider-registration");
             McpFixturePhaseLog.Mark("CreateRuntime:before-client-discovery");
             var client = receiver.Providers<McpAppManagementService>().ListAsync().AsTask().GetAwaiter().GetResult()
@@ -150,11 +150,11 @@ internal sealed class SkillManagementGatewayFixture : IAsyncDisposable
         SkillImportService importer)
     {
         var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        var receiver = new GeneratedServiceTestScope(new RegressionTestRpcClient(state, "sunder.package.agent.skills"));
+        var receiver = new GeneratedServiceTestScope(new RegressionTestRpcClient(state, "younics.ai.agent.skills"));
         try
         {
             var handler = new SkillRuntimeHandler(store, importer, context);
-            state.AddGenerated("sunder.package.agent.skills", handler, handler.CreateSunderRpcProviderRegistration(), EmptyLifetime.Instance);
+            state.AddGenerated("younics.ai.agent.skills", handler, handler.CreateSunderRpcProviderRegistration(), EmptyLifetime.Instance);
             var client = receiver.Providers<SkillsAppManagementService>().ListAsync().AsTask().GetAwaiter().GetResult()
                 .Providers.Single().Service;
             return new(state, receiver, client, new SkillsAppRuntimeGateway(client, context));

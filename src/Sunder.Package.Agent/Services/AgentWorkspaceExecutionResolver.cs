@@ -5,7 +5,7 @@ using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Services;
 
-[SunderService(SunderServiceExposure.Public, Key = "workspace-execution-resolver", ContractId = "sunder.agent.workspace.execution.resolver", ServiceId = "workspace-execution-resolver", IncludeSchemaDialect = true)]
+[SunderService(SunderServiceExposure.Public, Key = "workspace-execution-resolver", ContractId = "younics.ai.agent.workspace.execution.resolver", ServiceId = "workspace-execution-resolver", IncludeSchemaDialect = true)]
 [SunderServiceProvider(ProviderId = "agent.workspace.execution.resolver")]
 [SunderAppUse(Enabled = false)]
 public sealed partial class AgentWorkspaceExecutionResolver(

@@ -245,6 +245,12 @@ script = pathlib.Path(sys.argv[1])
 spec = importlib.util.spec_from_file_location("test_evidence", script)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
+current_owner = {"project": "sunder.package.agent.execution.local.tests", "owner": "younics.ai.agent.execution.local",
+                 "fullyQualifiedName": "Fixture.ExactCase", "attribute": "PlatformFact", "platform": "Windows", "capability": None, "reason": "Exact platform requirement."}
+for field, value in (("project", "other.tests"), ("fullyQualifiedName", "Fixture.OtherCase"),
+                     ("reason", "relaxed reason"), ("platform", "Any"), ("owner", "sunder.package.agent.execution.local")):
+    assert module.evidence_hash([dict(current_owner, **{field: value})]) != module.evidence_hash([current_owner]), field
+assert module.evidence_hash([current_owner, current_owner]) != module.evidence_hash([current_owner])
 policy = {
     "project": "fixture.tests",
     "owner": "fixture-owner",

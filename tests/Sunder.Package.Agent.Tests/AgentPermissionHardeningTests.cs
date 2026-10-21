@@ -11,7 +11,7 @@ using Sunder.Package.Agent.Services.BehaviorLoops;
 using Sunder.Package.Agent.Storage;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Services;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -570,8 +570,8 @@ public sealed class AgentPermissionHardeningTests
             "binding-generation",
             "call-1",
             0,
-            "sunder.package.agent.tools.files",
-            "sunder.package.agent.execution.local");
+            "younics.ai.agent.tools.files",
+            "younics.ai.agent.execution.local");
         var first = new AgentPermissionRequest(
             "files.read",
             AgentPermissionBoundaryIds.ConfiguredScope,
@@ -666,8 +666,8 @@ public sealed class AgentPermissionHardeningTests
             0,
             "workspace-generation",
             "binding-generation",
-            "sunder.package.agent.tools.files",
-            "sunder.package.agent.execution.local",
+            "younics.ai.agent.tools.files",
+            "younics.ai.agent.execution.local",
             "authority-activation-secret"));
         var resolvedJson = JsonSerializer.Serialize(new AgentResolvedResource(
             "file",
@@ -823,7 +823,7 @@ internal sealed class PermissionHardeningRuntime : IAsyncDisposable
 
             var store = new AgentLocalStore(scope.Context);
             var sessionService = new AgentSessionService(store, catalog.SessionCleaners);
-            var workspaceService = new AgentWorkspaceService(store, catalog.SessionCleaners, sessionService, catalog.WorkspacePathMigrators);
+            var workspaceService = new AgentWorkspaceService(store, catalog.SessionCleaners, sessionService);
             var permissionService = new AgentPermissionService(store, catalog.PermissionSurfaces);
             var executionTargetService = new AgentExecutionTargetService(catalog.ExecutionTargets);
             var toolService = new AgentToolService(

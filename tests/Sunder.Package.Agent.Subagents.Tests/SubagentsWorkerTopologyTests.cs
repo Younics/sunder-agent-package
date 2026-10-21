@@ -70,10 +70,10 @@ public sealed class SubagentsWorkerTopologyTests
         var owner = Assert.Single(root.GetProperty("provides").EnumerateArray(), static provider =>
             provider.GetProperty("providerId").GetString() == "subagents.management");
         Assert.Equal("owner", owner.GetProperty("audience").GetString());
-        Assert.Equal("sunder.package.agent.subagents.owner", owner.GetProperty("contractId").GetString());
+        Assert.Equal("younics.ai.agent.subagents.owner", owner.GetProperty("contractId").GetString());
         var appImport = Assert.Single(root.GetProperty("usesContracts").EnumerateArray(), static contract =>
             contract.GetProperty("role").GetString() == "app");
-        Assert.Equal("sunder.package.agent.subagents.owner", appImport.GetProperty("contractId").GetString());
+        Assert.Equal("younics.ai.agent.subagents.owner", appImport.GetProperty("contractId").GetString());
 
         var runtimeRoot = Path.Combine(composedRoot, "payload", "runtime");
         var workerRoot = Path.Combine(runtimeRoot, RuntimeInformation.RuntimeIdentifier, "lib");
@@ -110,7 +110,7 @@ public sealed class SubagentsWorkerTopologyTests
 
     private sealed class TestPackageContext(string root) : IPackageContext
     {
-        public string PackageId => "sunder.package.agent.subagents";
+        public string PackageId => "younics.ai.agent.subagents";
         public string Version => "2.0.0";
         public string ContentRootPath => AppContext.BaseDirectory;
         public IPackageStorageContext Storage { get; } = new TestStorageContext(root);

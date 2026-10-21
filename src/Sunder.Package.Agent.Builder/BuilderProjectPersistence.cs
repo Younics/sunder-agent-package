@@ -1,4 +1,6 @@
+using System.Runtime.ExceptionServices;
 using Microsoft.Extensions.DependencyInjection;
+using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Builder;
 
@@ -10,242 +12,147 @@ public sealed class BuilderPersistenceFailedEventArgs(Exception exception) : Eve
 public sealed class BuilderProjectPersistence : IAsyncDisposable
 {
     private static readonly TimeSpan DefaultDebounceDelay = TimeSpan.FromMilliseconds(300);
-
     private readonly object _syncRoot = new();
     private readonly IBuilderProjectStore _store;
+    private readonly IPackageAppStateUpdates _updates;
     private readonly TimeSpan _debounceDelay;
-    private readonly CancellationTokenSource _shutdown = new();
-    private readonly SemaphoreSlim _changed = new(0);
+    private readonly CancellationTokenSource _flush = new();
     private readonly SemaphoreSlim _writeGate = new(1, 1);
-    private readonly Task _worker;
+    private readonly HashSet<Task> _pending = [];
     private IReadOnlyList<BuilderProjectRecord> _latestProjects = [];
     private long _generation;
     private long _persistedGeneration;
-    private int _activeSaves;
-    private TaskCompletionSource? _activeSavesCompleted;
+    private Exception? _lastFailure;
     private bool _disposed;
     private Task? _disposeTask;
 
     [ActivatorUtilitiesConstructor]
-    public BuilderProjectPersistence(IBuilderProjectStore store)
-        : this(store, DefaultDebounceDelay)
-    {
-    }
+    public BuilderProjectPersistence(IBuilderProjectStore store, IPackageAppStateUpdates updates)
+        : this(store, updates, DefaultDebounceDelay) { }
 
-    public BuilderProjectPersistence(IBuilderProjectStore store, TimeSpan debounceDelay)
+    public BuilderProjectPersistence(IBuilderProjectStore store, IPackageAppStateUpdates updates, TimeSpan debounceDelay)
     {
         _store = store;
+        _updates = updates;
         _debounceDelay = debounceDelay < TimeSpan.Zero ? TimeSpan.Zero : debounceDelay;
-        _worker = RunWorkerAsync();
     }
 
     public event EventHandler<BuilderPersistenceFailedEventArgs>? SaveFailed;
+    public event EventHandler? SaveSucceeded;
 
     public void RequestSave(IReadOnlyList<BuilderProjectRecord> projects)
+        => Accept(projects, immediate: false, reportFailure: true);
+
+    public async Task SaveNowAsync(IReadOnlyList<BuilderProjectRecord> projects, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        // Caller cancellation abandons only the wait, not an already accepted save.
+        await Accept(projects, immediate: true, reportFailure: false).WaitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private Task Accept(IReadOnlyList<BuilderProjectRecord> projects, bool immediate, bool reportFailure)
     {
         ArgumentNullException.ThrowIfNull(projects);
+        var snapshot = projects.ToArray();
         lock (_syncRoot)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            _latestProjects = projects.ToArray();
-            _generation++;
-        }
-
-        _changed.Release();
-    }
-
-    public async Task SaveNowAsync(
-        IReadOnlyList<BuilderProjectRecord> projects,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(projects);
-        long generation;
-        lock (_syncRoot)
-        {
-            ObjectDisposedException.ThrowIf(_disposed, this);
-            _latestProjects = projects.ToArray();
-            generation = ++_generation;
-            _activeSaves++;
-        }
-
-        try
-        {
-            // If the caller is cancelled while waiting for the writer, the owned worker still persists this generation.
-            _changed.Release();
-            await PersistAsync(generation, reportFailure: false, cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            CompleteActiveSave();
+            var generation = _generation + 1;
+            // Admission is synchronous and the callback is asynchronous. If the App
+            // has closed admission, no new dirty generation is accepted locally.
+            var work = _updates.RunAsync("builder.bookmarks", context => PersistAcceptedAsync(generation, immediate, context));
+            _latestProjects = snapshot;
+            _generation = generation;
+            var observed = ObserveAsync(work, generation, reportFailure);
+            _pending.Add(observed);
+            _ = observed.ContinueWith(completed =>
+            {
+                lock (_syncRoot) _pending.Remove(completed);
+            }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            return work;
         }
     }
 
-    public ValueTask DisposeAsync()
+    private async Task PersistAcceptedAsync(long generation, bool immediate, PackageAppStateUpdateContext context)
     {
-        Task disposeTask;
-        lock (_syncRoot)
+        if (!immediate)
         {
-            if (_disposeTask is not null)
-            {
-                return new ValueTask(_disposeTask);
-            }
-
-            _disposed = true;
-            disposeTask = _disposeTask = DisposeCoreAsync();
+            using var delay = CancellationTokenSource.CreateLinkedTokenSource(context.SettlementRequested, _flush.Token, context.CancellationToken);
+            try { await Task.Delay(_debounceDelay, delay.Token).ConfigureAwait(false); }
+            catch (OperationCanceledException error) when (error.CancellationToken == delay.Token
+                && !context.CancellationToken.IsCancellationRequested
+                && (context.SettlementRequested.IsCancellationRequested || _flush.IsCancellationRequested)) { }
         }
-
-        return new ValueTask(disposeTask);
-    }
-
-    private async Task DisposeCoreAsync()
-    {
-        Task activeSaves;
-        lock (_syncRoot)
-        {
-            activeSaves = _activeSaves == 0
-                ? Task.CompletedTask
-                : (_activeSavesCompleted ??= new TaskCompletionSource(
-                    TaskCreationOptions.RunContinuationsAsynchronously)).Task;
-        }
-
-        _shutdown.Cancel();
-        try
-        {
-            try
-            {
-                await _worker.ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
-            {
-            }
-
-            await activeSaves.ConfigureAwait(false);
-
-            long generation;
-            lock (_syncRoot)
-            {
-                generation = _generation;
-            }
-
-            if (generation > Volatile.Read(ref _persistedGeneration))
-            {
-                await PersistAsync(generation, reportFailure: false, CancellationToken.None).ConfigureAwait(false);
-            }
-        }
-        finally
-        {
-            _shutdown.Dispose();
-            _changed.Dispose();
-            _writeGate.Dispose();
-        }
-    }
-
-    private async Task RunWorkerAsync()
-    {
-        while (true)
-        {
-            await _changed.WaitAsync(_shutdown.Token).ConfigureAwait(false);
-            DrainChanges();
-
-            long generation;
-            while (true)
-            {
-                lock (_syncRoot)
-                {
-                    generation = _generation;
-                }
-
-                await Task.Delay(_debounceDelay, _shutdown.Token).ConfigureAwait(false);
-                DrainChanges();
-                lock (_syncRoot)
-                {
-                    if (generation == _generation)
-                    {
-                        break;
-                    }
-                }
-            }
-
-            try
-            {
-                await PersistAsync(generation, reportFailure: true, CancellationToken.None).ConfigureAwait(false);
-            }
-            catch
-            {
-                // Autosave failures are reported through SaveFailed; the worker remains available for later generations.
-            }
-        }
-    }
-
-    private async Task PersistAsync(long generation, bool reportFailure, CancellationToken cancellationToken)
-    {
-        await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        context.CancellationToken.ThrowIfCancellationRequested();
+        await _writeGate.WaitAsync(context.CancellationToken).ConfigureAwait(false);
         try
         {
             IReadOnlyList<BuilderProjectRecord> projects;
             lock (_syncRoot)
             {
-                if (generation != _generation || generation <= Volatile.Read(ref _persistedGeneration))
-                {
-                    return;
-                }
-
+                if (generation != _generation || generation <= _persistedGeneration) return;
                 projects = _latestProjects;
             }
-
-            try
+            await _store.SaveAsync(projects, context.CancellationToken).ConfigureAwait(false);
+            lock (_syncRoot)
             {
-                await _store.SaveAsync(projects, cancellationToken).ConfigureAwait(false);
+                if (generation != _generation) return;
+                _persistedGeneration = generation;
+                _lastFailure = null;
             }
-            catch (Exception ex)
+            SaveSucceeded?.Invoke(this, EventArgs.Empty);
+        }
+        finally { _writeGate.Release(); }
+    }
+
+    private async Task ObserveAsync(Task work, long generation, bool reportFailure)
+    {
+        await Task.Yield();
+        try { await work.ConfigureAwait(false); }
+        catch (Exception error)
+        {
+            lock (_syncRoot)
             {
-                if (reportFailure && IsCurrentGeneration(generation))
+                if (generation != _generation) return;
+                _lastFailure = error;
+            }
+            if (reportFailure)
+            {
+                try { SaveFailed?.Invoke(this, new(error)); }
+                catch (Exception callbackError)
                 {
-                    SaveFailed?.Invoke(this, new BuilderPersistenceFailedEventArgs(ex));
+                    lock (_syncRoot)
+                        if (generation == _generation) _lastFailure = new AggregateException(error, callbackError);
                 }
-
-                throw;
             }
-
-            if (IsCurrentGeneration(generation))
-            {
-                Volatile.Write(ref _persistedGeneration, generation);
-            }
-        }
-        finally
-        {
-            _writeGate.Release();
         }
     }
 
-    private bool IsCurrentGeneration(long generation)
+    public ValueTask DisposeAsync()
     {
         lock (_syncRoot)
         {
-            return generation == _generation;
+            if (_disposeTask is not null) return new(_disposeTask);
+            _disposed = true;
+            var pending = _pending.ToArray();
+            return new(_disposeTask = Task.Run(() => DisposeCoreAsync(pending)));
         }
     }
 
-    private void CompleteActiveSave()
+    private async Task DisposeCoreAsync(Task[] pending)
     {
-        TaskCompletionSource? completed = null;
-        lock (_syncRoot)
+        try
         {
-            _activeSaves--;
-            if (_activeSaves == 0)
-            {
-                completed = _activeSavesCompleted;
-                _activeSavesCompleted = null;
-            }
+            await _flush.CancelAsync().ConfigureAwait(false);
+            await Task.WhenAll(pending).ConfigureAwait(false);
+            Exception? failure;
+            bool dirty;
+            lock (_syncRoot) { failure = _lastFailure; dirty = _generation > _persistedGeneration; }
+            if (failure is not null) ExceptionDispatchInfo.Capture(failure).Throw();
+            if (dirty) throw new InvalidOperationException("The final accepted Builder bookmark update did not confirm persistence.");
         }
-
-        completed?.TrySetResult();
-    }
-
-    private void DrainChanges()
-    {
-        while (_changed.Wait(0))
-        {
-        }
+        finally { _flush.Dispose(); _writeGate.Dispose(); }
+        // All writes belonged to work registered at acceptance. Disposal never
+        // starts a new storage mutation or invents post-revocation authority.
     }
 }

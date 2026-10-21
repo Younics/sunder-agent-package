@@ -4,7 +4,7 @@ using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Provider.Anthropic.Rpc;
 
-[SunderService(ContractId = "sunder.package.agent.provider.anthropic.credentials", ServiceId = "credential-settings", IncludeSchemaDialect = true)]
+[SunderService(ContractId = "younics.ai.agent.provider.anthropic.credentials", ServiceId = "credential-settings", IncludeSchemaDialect = true)]
 [SunderServiceProvider(ProviderId = "anthropic.credentials")]
 [SunderServiceError("provider.credential.required", Description = "A non-empty credential is required.")]
 internal sealed partial class CredentialSettingsService(ProviderCredentialAccessor credentials)

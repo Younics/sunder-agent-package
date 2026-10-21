@@ -4,7 +4,7 @@ using LocalApp::Sunder.Package.Agent.Execution.Local;
 using Sunder.Package.Agent.TestSupport.Avalonia;
 using Sunder.Sdk.Abstractions;
 using Xunit;
-using LocalPresentationService = LocalApp::Sunder.Generated.Packages.Sunder_Package_Agent_Execution_Local_Services.IPresentationService;
+using LocalPresentationService = LocalApp::Sunder.Generated.Packages.Younics_Ai_Agent_Execution_Local_Services.IPresentationService;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
 

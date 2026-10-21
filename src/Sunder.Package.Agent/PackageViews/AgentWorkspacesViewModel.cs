@@ -10,7 +10,7 @@ using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Services;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 
 namespace Sunder.Package.Agent.PackageViews;
 
@@ -83,13 +83,13 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
         _catalogNotifications = workspaceService as IAgentProfileGateway;
         _settingsNavigationService = settingsNavigationService;
         _uiDispatcher = uiDispatcher;
-        _tasks = new PresentationTaskScope(exception => _uiDispatcher.InvokeAsync(() =>
+        _tasks = new PresentationTaskScope((exception, token) => _uiDispatcher.InvokeAsync(() =>
         {
             if (!_disposed)
             {
                 ReportPresentationFailure(exception);
             }
-        }));
+        }, token), _uiDispatcher.ShutdownToken);
         _statusClear = new TimedStatusController(dispatcher: _uiDispatcher);
         _listDetail = new KeyedAdaptiveListDetailState<string, AgentWorkspaceRecord>(
             Workspaces,

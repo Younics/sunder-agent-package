@@ -31,9 +31,15 @@ public sealed partial class AgentSourceArtifactMigrationTests
             + "This required-input lane never substitutes Registry or conformance-catalog evidence.");
         var fixture = Directory.CreateDirectory(Path.Combine(root, fixtureDirectory)).FullName;
         var evidence = new[] { "sunder-contracts.lock.json", "sunder-contracts.owned.json" }
-            .ToDictionary(file => file, file => File.ReadAllBytes(Path.Combine(source, file)), StringComparer.Ordinal);
-        using (var selection = JsonDocument.Parse(evidence["sunder-contracts.lock.json"]))
+            .ToDictionary(file => file, file => file == "sunder-contracts.owned.json"
+                ? CanonicalPackageRoles.ReadOwnedBaseline(source) : File.ReadAllBytes(Path.Combine(source, file)), StringComparer.Ordinal);
+        bool hasImports;
+        using (var selection = JsonDocument.Parse(evidence["sunder-contracts.lock.json"]!))
+        {
             AssertLocalSelection(selection.RootElement);
+            hasImports = selection.RootElement.GetProperty("packageArtifacts").EnumerateObject().Any()
+                || selection.RootElement.GetProperty("platformImports").EnumerateObject().Any();
+        }
         var build = new CanonicalFamilyBuild(project, source, fixture, cache, evidence);
         // Imported props participate in the authored configuration. Raw XML is
         // not authoritative for whether the canonical root is a package project.
@@ -42,15 +48,20 @@ public sealed partial class AgentSourceArtifactMigrationTests
         {
             var properties = evaluation.RootElement.GetProperty("Properties");
             Assert.Equal("true", properties.GetProperty("SunderPackageProject").GetString(), ignoreCase: true);
-            Assert.Equal(name.ToLowerInvariant(), properties.GetProperty("SunderPackageFamilyId").GetString());
+            Assert.Equal(AgentPackageRepositoryInventory.GetRuntimePackageId(name), properties.GetProperty("SunderPackageFamilyId").GetString());
             Assert.Equal("Library", properties.GetProperty("OutputType").GetString(), ignoreCase: true);
             Assert.Equal(string.Empty, properties.GetProperty("SunderPackageAppProject").GetString());
             Assert.Equal(string.Empty, properties.GetProperty("SunderPackageRole").GetString());
             Assert.Equal(Path.GetFullPath(project), properties.GetProperty("MSBuildProjectFullPath").GetString());
         }
-        await build.Run("restore", "--disable-parallel");
+        // Core's producer closure is a required parent input. Restoring this
+        // exact-RID consumer must not rewrite its referenced Core lock files.
+        await build.Run("restore", "--disable-parallel", "--no-dependencies");
         if (ownerArchive is not null) await build.SelectFixtureOwner(ownerArchive, catalog!);
-        var restore = new List<string> { "-t:RestoreSunderContracts", "-p:SunderPlatformCatalogPath=" + Path.GetFullPath(catalog!) };
+        var restore = new List<string> { "-t:RestoreSunderContracts" };
+        // An independent local family still exercises restore, but has no platform
+        // constraints for an offline catalog to satisfy. Core rejects such an override.
+        if (hasImports) restore.Add("-p:SunderPlatformCatalogPath=" + Path.GetFullPath(catalog!));
         if (ownerArchive is not null) restore.Add("-p:SunderPackageCandidatePath=" + ownerArchive);
         await build.Run("msbuild", denyNetwork: true, arguments: restore.ToArray());
         await build.Run("build", "--no-restore");
@@ -72,7 +83,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
     }
 
     private sealed class CanonicalFamilyBuild(
-        string project, string source, string fixture, string cache, IReadOnlyDictionary<string, byte[]> evidence)
+        string project, string source, string fixture, string cache, IReadOnlyDictionary<string, byte[]?> evidence)
     {
         private string? _fixtureLockPath;
         private byte[]? _fixtureLock;
@@ -92,25 +103,25 @@ public sealed partial class AgentSourceArtifactMigrationTests
             // instead of weakening the source-root fence to include all of /tmp.
             var selection = System.IO.Directory.CreateDirectory(Path.Combine(source, "obj", "source-artifact-selections", candidateSha)).FullName;
             _fixtureLockPath = Path.Combine(selection, "sunder-contracts.lock.json");
-            File.WriteAllBytes(_fixtureLockPath, evidence["sunder-contracts.lock.json"]);
+            File.WriteAllBytes(_fixtureLockPath, evidence["sunder-contracts.lock.json"]!);
             await Run("msbuild", denyNetwork: true, arguments:
-                ["-t:UpdateSunderPackageApi", "-p:SunderPackageId=sunder.package.agent", "-p:SunderPackageCandidatePath=" + archive,
+                ["-t:UpdateSunderPackageApi", "-p:SunderPackageId=younics.ai.agent", "-p:SunderPackageCandidatePath=" + archive,
                     "-p:SunderPlatformCatalogPath=" + Path.GetFullPath(catalog)]);
             _fixtureLock = File.ReadAllBytes(_fixtureLockPath);
-            using var before = JsonDocument.Parse(evidence["sunder-contracts.lock.json"]);
+            using var before = JsonDocument.Parse(evidence["sunder-contracts.lock.json"]!);
             using var after = JsonDocument.Parse(_fixtureLock);
             AssertLocalSelection(after.RootElement);
             foreach (var property in new[] { "packageImports", "providerImports", "platformImports" })
                 Assert.True(JsonElement.DeepEquals(before.RootElement.GetProperty(property), after.RootElement.GetProperty(property)), property + " intent changed");
-            var oldArtifact = before.RootElement.GetProperty("packageArtifacts").GetProperty("sunder.package.agent");
-            var newArtifact = after.RootElement.GetProperty("packageArtifacts").GetProperty("sunder.package.agent");
+            var oldArtifact = before.RootElement.GetProperty("packageArtifacts").GetProperty("younics.ai.agent");
+            var newArtifact = after.RootElement.GetProperty("packageArtifacts").GetProperty("younics.ai.agent");
             foreach (var property in new[] { "requestedVersionRange", "includePrerelease", "selectedPackageVersion", "publicContractCount" })
                 Assert.True(JsonElement.DeepEquals(oldArtifact.GetProperty(property), newArtifact.GetProperty(property)), property + " changed");
         }
 
         internal async Task<string> Run(string command, bool denyNetwork, params string[] arguments)
         {
-            var start = new ProcessStartInfo("dotnet")
+            var start = new ProcessStartInfo(BuilderSourceMigrationTests.DotnetBuildHost)
             {
                 WorkingDirectory = source,
                 RedirectStandardOutput = true,
@@ -169,7 +180,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
 
         internal void AssertEvidenceUnchanged()
         {
-            foreach (var (file, bytes) in evidence) Assert.Equal(bytes, File.ReadAllBytes(Path.Combine(source, file)));
+            foreach (var (file, bytes) in evidence)
+                Assert.Equal(bytes, file == "sunder-contracts.owned.json" ? CanonicalPackageRoles.ReadOwnedBaseline(source) : File.ReadAllBytes(Path.Combine(source, file)));
             if (_fixtureLock is not null) Assert.Equal(_fixtureLock, File.ReadAllBytes(_fixtureLockPath!));
         }
 
@@ -178,7 +190,9 @@ public sealed partial class AgentSourceArtifactMigrationTests
             CopyDirectory(Path.Combine(source, "bin/Debug/net10.0"), Path.Combine(fixture, "bin/Debug/net10.0"));
             CopyDirectory(Path.Combine(source, "obj/Debug/net10.0/sunder-analysis"), Path.Combine(fixture, "obj/Debug/net10.0/sunder-analysis"));
             foreach (var (file, bytes) in evidence)
-                File.WriteAllBytes(Path.Combine(fixture, file), file == "sunder-contracts.lock.json" ? _fixtureLock ?? bytes : bytes);
+                if (bytes is not null)
+                    File.WriteAllBytes(Path.Combine(fixture, file), file == "sunder-contracts.lock.json" ? _fixtureLock ?? bytes : bytes);
+                else Assert.False(File.Exists(Path.Combine(fixture, file)), "An absent owned baseline must remain absent in the fixture.");
         }
     }
 

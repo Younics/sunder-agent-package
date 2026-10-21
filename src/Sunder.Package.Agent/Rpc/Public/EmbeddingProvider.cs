@@ -3,7 +3,7 @@ using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Rpc.Public;
 
-[SunderService(SunderServiceExposure.Public, ContractId = "sunder.agent.embedding.provider",
+[SunderService(SunderServiceExposure.Public, ContractId = "younics.ai.agent.embedding.provider",
     ServiceId = "embedding-provider", IncludeSchemaDialect = true)]
 [SunderRuntimeUse(Actions = ["discover", "invoke"])]
 public interface EmbeddingProviderService

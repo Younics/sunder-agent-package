@@ -15,13 +15,13 @@ public sealed partial class AgentSourceArtifactMigrationTests
     private static async Task VerifyMcpWorkspaceConsumer(Assembly worker, Assembly owner)
     {
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        var rpc = new McpWorkspaceRpc(new RegressionTestRpcClient(state, "sunder.package.agent.mcp"));
+        var rpc = new McpWorkspaceRpc(new RegressionTestRpcClient(state, "younics.ai.agent.mcp"));
         Assert.Null(worker.GetType("Sunder.Package.Agent.Mcp.Rpc.RuntimeWorkspaceCatalog"));
         using var package = RegressionTestPackageScope.Create();
         var home = Directory.CreateDirectory(Path.Combine(package.RootPath, "home")).FullName;
         var project = Directory.CreateDirectory(Path.Combine(package.RootPath, "project")).FullName;
         var retiredProject = Directory.CreateDirectory(Path.Combine(package.RootPath, "retired-project")).FullName;
-        var context = new TestPackageContext("sunder.package.agent.mcp", package.RootPath, version: "2.0.0", storage: package.Context.Storage);
+        var context = new TestPackageContext("younics.ai.agent.mcp", package.RootPath, version: "2.0.0", storage: package.Context.Storage);
         var catalogType = worker.GetType("Sunder.Package.Agent.Mcp.Services.McpServerCatalogService", true)!;
         var catalog = Activator.CreateInstance(catalogType, context)!;
         var importer = Activator.CreateInstance(worker.GetType("Sunder.Package.Agent.Mcp.Services.McpEcosystemConfigurationImporter", true)!, catalog)!;
@@ -34,7 +34,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.Empty(rpc.Scopes);
         foreach (var failure in new[] { SunderRpcErrorKind.Unavailable, SunderRpcErrorKind.PermissionDenied })
         {
-            var faultRpc = new McpWorkspaceRpc(new RegressionTestRpcClient(state, "sunder.package.agent.mcp")) { DiscoveryFailure = failure };
+            var faultRpc = new McpWorkspaceRpc(new RegressionTestRpcClient(state, "younics.ai.agent.mcp")) { DiscoveryFailure = failure };
             await using var faultReceiver = new GeneratedServiceTestScope(faultRpc);
             var faultSync = NewSync(faultReceiver);
             if (failure == SunderRpcErrorKind.Unavailable) Assert.Empty(await DiscoverFrom(faultSync, default));
@@ -53,7 +53,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.Equal(2, Assert.Single(await discover(default)).Paths.Count);
         foreach (var failure in new[] { SunderRpcErrorKind.Unavailable, SunderRpcErrorKind.PermissionDenied })
         {
-            var faultRpc = new McpWorkspaceRpc(new RegressionTestRpcClient(state, "sunder.package.agent.mcp")) { LookupFailure = failure };
+            var faultRpc = new McpWorkspaceRpc(new RegressionTestRpcClient(state, "younics.ai.agent.mcp")) { LookupFailure = failure };
             await using var faultReceiver = new GeneratedServiceTestScope(faultRpc);
             var faultSync = NewSync(faultReceiver);
             if (failure == SunderRpcErrorKind.Unavailable) Assert.Empty(await DiscoverFrom(faultSync, default));
@@ -78,7 +78,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         await Synchronize();
         Assert.Equal(2, (await Servers()).Length);
         domain.Workspaces = [workspace with { WorkspaceId = "retired", Paths = [workspace.Paths[0] with { WorkspaceId = "retired", HostPath = retiredProject }] }];
-        var staleRpc = new McpWorkspaceRpc(new RegressionTestRpcClient(state, "sunder.package.agent.mcp"));
+        var staleRpc = new McpWorkspaceRpc(new RegressionTestRpcClient(state, "younics.ai.agent.mcp"));
         await using (var staleReceiver = new GeneratedServiceTestScope(staleRpc))
         {
             domain.AfterReply = () => staleRpc.LookupTransform = snapshot => snapshot with { SessionGeneration = snapshot.SessionGeneration + 1 };
@@ -123,7 +123,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         await Assert.ThrowsAsync<ObjectDisposedException>(() => discover(default));
 
         object NewSync(GeneratedServiceTestScope receiver) => Activator.CreateInstance(syncType, importer,
-            receiver.Providers(worker.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Services.IRuntimeCatalogService", true)!), home, home)!;
+            receiver.Providers(worker.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Runtime_Catalog.IRuntimeCatalogService", true)!), home, home)!;
         Task<IReadOnlyList<AgentWorkspaceRecord>> discover(CancellationToken token) => DiscoverFrom(instance, token);
         async Task<IReadOnlyList<AgentWorkspaceRecord>> DiscoverFrom(object consumer, CancellationToken token)
         {

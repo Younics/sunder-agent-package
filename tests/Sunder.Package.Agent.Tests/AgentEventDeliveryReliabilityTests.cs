@@ -12,8 +12,8 @@ using McpWorker::Sunder.Package.Agent.Mcp.Runtime;
 using MemoryWorker::Sunder.Package.Agent.Memory.Semantic.Runtime;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Rpc;
-using RuntimeCatalogServices = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
-using RuntimeCatalogModels = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using IRuntimeCatalogService = SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Runtime_Catalog.IRuntimeCatalogService;
+using RuntimeCatalogModels = SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -218,9 +218,9 @@ public sealed class AgentEventDeliveryReliabilityTests
             delivered.Select(static change => change.Kind));
     }
 
-    private static async ValueTask<RuntimeCatalogServices.IRuntimeCatalogService> ResolveRuntimeCatalogClientAsync(
+    private static async ValueTask<IRuntimeCatalogService> ResolveRuntimeCatalogClientAsync(
         GeneratedServiceTestScope services)
-        => Assert.Single((await services.Providers<RuntimeCatalogServices.IRuntimeCatalogService>().ListAsync()).Providers,
+        => Assert.Single((await services.Providers<IRuntimeCatalogService>().ListAsync()).Providers,
             static provider => provider.ProviderId == "agent.runtime.catalog").Service;
 
     private sealed class RetryingRuntimeCatalogRpcClient(Guid sessionId) : ISunderRpcCallScope
@@ -241,7 +241,7 @@ public sealed class AgentEventDeliveryReliabilityTests
         private static SunderRpcProviderSnapshot CreateProvider()
         {
             var descriptor = CurrentPublicRpcDescriptors.Get(RegressionTestBindings.RuntimeCatalog);
-            return new("sunder.package.agent", "2.0.0", "agent.runtime.catalog", descriptor.ContractId,
+            return new("younics.ai.agent", "2.0.0", "agent.runtime.catalog", descriptor.ContractId,
                 descriptor.Version, descriptor.Sha256, descriptor.AbiSha256!, Guid.NewGuid(), 1, 1,
                 new("rpc1_runtime_catalog_reliability"), 1, SunderRpcProviderState.Active);
         }

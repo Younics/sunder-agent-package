@@ -1,7 +1,8 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using Sunder.Generated.Packages.Younics_Ai_Agent_Models;
+using IDurableLifecycleObserverService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Durable_Lifecycle_Observer.IDurableLifecycleObserverService;
+using IProfileCapabilityConsumerService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Profile_Capability_Consumer.IProfileCapabilityConsumerService;
 using Sunder.Sdk.Rpc;
 
 public sealed class RoleLocalLifecycleProbe(string observerId, string displayName, Func<string, CancellationToken, ValueTask> handle)

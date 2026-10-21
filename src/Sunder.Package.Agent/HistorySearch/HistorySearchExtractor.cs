@@ -21,20 +21,20 @@ internal static partial class HistorySearchExtractor
     private static readonly IReadOnlyDictionary<string, TrustedToolRule> TrustedTools =
         new Dictionary<string, TrustedToolRule>(StringComparer.OrdinalIgnoreCase)
         {
-            ["read"] = Rule("sunder.package.agent.tools.files", HistoryActivityKind.Read, ("path", SafeArgumentKind.Path)),
-            ["write"] = Rule("sunder.package.agent.tools.files", HistoryActivityKind.Edit, ("path", SafeArgumentKind.Path)),
-            ["edit"] = Rule("sunder.package.agent.tools.files", HistoryActivityKind.Edit, ("path", SafeArgumentKind.Path)),
-            ["apply_patch"] = new("sunder.package.agent.tools.files", HistoryActivityKind.Edit, IsPatch: true, Fields: EmptyFields),
-            ["grep"] = Rule("sunder.package.agent.tools.files", HistoryActivityKind.Search, ("path", SafeArgumentKind.Path)),
-            ["glob"] = Rule("sunder.package.agent.tools.files", HistoryActivityKind.Search, ("path", SafeArgumentKind.Path)),
-            ["shell"] = Rule("sunder.package.agent.tools.shell", HistoryActivityKind.Execute, ("workingDirectory", SafeArgumentKind.WorkingDirectory)),
-            ["bash"] = Rule("sunder.package.agent.tools.shell", HistoryActivityKind.Execute, ("workingDirectory", SafeArgumentKind.WorkingDirectory)),
-            ["web_fetch"] = Rule("sunder.package.agent.tools.web", HistoryActivityKind.Use, ("url", SafeArgumentKind.Url)),
-            ["web_search"] = Rule("sunder.package.agent.tools.web", HistoryActivityKind.Search),
-            ["task"] = Rule("sunder.package.agent.subagents", HistoryActivityKind.Use),
-            ["delegate_tasks"] = Rule("sunder.package.agent.subagents", HistoryActivityKind.Use),
-            ["skill"] = Rule("sunder.package.agent.skills", HistoryActivityKind.Use),
-            ["skill_resource"] = Rule("sunder.package.agent.skills", HistoryActivityKind.Use),
+            ["read"] = Rule("younics.ai.agent.tools.files", HistoryActivityKind.Read, ("path", SafeArgumentKind.Path)),
+            ["write"] = Rule("younics.ai.agent.tools.files", HistoryActivityKind.Edit, ("path", SafeArgumentKind.Path)),
+            ["edit"] = Rule("younics.ai.agent.tools.files", HistoryActivityKind.Edit, ("path", SafeArgumentKind.Path)),
+            ["apply_patch"] = new("younics.ai.agent.tools.files", HistoryActivityKind.Edit, IsPatch: true, Fields: EmptyFields),
+            ["grep"] = Rule("younics.ai.agent.tools.files", HistoryActivityKind.Search, ("path", SafeArgumentKind.Path)),
+            ["glob"] = Rule("younics.ai.agent.tools.files", HistoryActivityKind.Search, ("path", SafeArgumentKind.Path)),
+            ["shell"] = Rule("younics.ai.agent.tools.shell", HistoryActivityKind.Execute, ("workingDirectory", SafeArgumentKind.WorkingDirectory)),
+            ["bash"] = Rule("younics.ai.agent.tools.shell", HistoryActivityKind.Execute, ("workingDirectory", SafeArgumentKind.WorkingDirectory)),
+            ["web_fetch"] = Rule("younics.ai.agent.tools.web", HistoryActivityKind.Use, ("url", SafeArgumentKind.Url)),
+            ["web_search"] = Rule("younics.ai.agent.tools.web", HistoryActivityKind.Search),
+            ["task"] = Rule("younics.ai.agent.subagents", HistoryActivityKind.Use),
+            ["delegate_tasks"] = Rule("younics.ai.agent.subagents", HistoryActivityKind.Use),
+            ["skill"] = Rule("younics.ai.agent.skills", HistoryActivityKind.Use),
+            ["skill_resource"] = Rule("younics.ai.agent.skills", HistoryActivityKind.Use),
         };
 
     internal static IReadOnlyList<HistoryProjectionDocument> Extract(
@@ -105,10 +105,9 @@ internal static partial class HistorySearchExtractor
         }
 
         var isKnown = TrustedTools.TryGetValue(toolId, out var rule)
-                      && string.Equals(
+                      && HasExpectedHistoricalOwner(
                           item.ToolOwnerPackageId,
-                          rule.ExpectedPackageId,
-                          StringComparison.Ordinal);
+                          rule.ExpectedPackageId);
         var activity = isKnown ? rule!.Activity : HistoryActivityKind.Use;
         var facets = new List<HistoryProjectionFacet>
         {
@@ -395,6 +394,12 @@ internal static partial class HistorySearchExtractor
         }
         return Math.Min(upperBound, Math.Max(lowerBound, preferredEnd));
     }
+
+    private static bool HasExpectedHistoricalOwner(string? recordedPackageId, string expectedPackageId)
+        => string.Equals(
+            recordedPackageId,
+            expectedPackageId,
+            StringComparison.Ordinal);
 
     private static TrustedToolRule Rule(
         string expectedPackageId,

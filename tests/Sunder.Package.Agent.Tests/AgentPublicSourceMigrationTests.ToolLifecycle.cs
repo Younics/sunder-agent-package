@@ -25,7 +25,7 @@ public sealed partial class AgentPublicSourceMigrationTests
         const string toolResult = """
             {"isError":false,"requiresPromptContextRefresh":false,"summary":"Done 漢字","toolId":"tool.one","wasTruncated":false,"structuredPayloadJson":"{opaque","content":null,"errorCode":null,"backendId":null,"presentationPayloadJson":null,"sources":null}
             """;
-        await using (var fixture = await CreateExtension(root, loadContext, assembly, "ToolSource", descriptors["sunder.agent.tool.source"]))
+        await using (var fixture = await CreateExtension(root, loadContext, assembly, "ToolSource", descriptors["younics.ai.agent.tool.source"]))
         {
             fixture.Probe.Replies["DescribeAsync"] = "{\"displayName\":\"Tools\",\"sourceId\":\"tools\",\"sourceKind\":\"local\"}";
             Assert.Equal("local", (await fixture.Call("DescribeAsync", EmptyRequest())).GetProperty("sourceKind").GetString());
@@ -54,7 +54,7 @@ public sealed partial class AgentPublicSourceMigrationTests
                 JsonSerializer.SerializeToElement(new { argumentsJson = "{broken", isError = false, toolId = "tool.one" }))).ValueKind);
         }
 
-        await using (var fixture = await CreateExtension(root, loadContext, assembly, "ToolExecutionObserved", descriptors["sunder.agent.tool.execution.observed"]))
+        await using (var fixture = await CreateExtension(root, loadContext, assembly, "ToolExecutionObserved", descriptors["younics.ai.agent.tool.execution.observed"]))
         {
             fixture.Probe.Replies["DescribeAsync"] = "\"tools\"";
             Assert.Equal("tools", (await fixture.Call("DescribeAsync", EmptyRequest())).GetString());
@@ -82,7 +82,7 @@ public sealed partial class AgentPublicSourceMigrationTests
                 itemId = Guid.NewGuid(), kind = "tool-result", sequenceNumber = 0, toolDetailRevision = 0, turnId, wasTruncated = false } },
             kind = "message", role = "assistant", sessionId, turnId, updatedAtUtc = timestamp,
         };
-        await using (var fixture = await CreateExtension(root, loadContext, assembly, "DurableLifecycleObserver", descriptors["sunder.agent.durable.lifecycle.observer"]))
+        await using (var fixture = await CreateExtension(root, loadContext, assembly, "DurableLifecycleObserver", descriptors["younics.ai.agent.durable.lifecycle.observer"]))
         {
             var request = JsonSerializer.SerializeToElement(new
             {
@@ -113,7 +113,7 @@ public sealed partial class AgentPublicSourceMigrationTests
             Assert.Equal(calls, fixture.Probe.Calls);
             var invalidWire = JsonNode.Parse(validLifecycleRequest.GetRawText())!;
             invalidWire["payloadHash"] = "short";
-            var endpoint = Assert.Single(fixture.State.Discover("sunder.agent.durable.lifecycle.observer").Providers).Endpoint;
+            var endpoint = Assert.Single(fixture.State.Discover("younics.ai.agent.durable.lifecycle.observer").Providers).Endpoint;
             var rejected = await Assert.ThrowsAsync<SunderRpcException>(() => fixture.Rpc.InvokeAsync(endpoint,
                 "durable-lifecycle-observer", "handle", JsonSerializer.SerializeToElement(invalidWire)).AsTask());
             Assert.Equal(SunderRpcErrorKind.Validation, rejected.Error.Kind);
@@ -121,7 +121,7 @@ public sealed partial class AgentPublicSourceMigrationTests
             Assert.Equal(calls, fixture.Probe.Calls);
         }
 
-        await using (var fixture = await CreateExtension(root, loadContext, assembly, "SystemPromptContributor", descriptors["sunder.agent.system.prompt.contributor"]))
+        await using (var fixture = await CreateExtension(root, loadContext, assembly, "SystemPromptContributor", descriptors["younics.ai.agent.system.prompt.contributor"]))
         {
             var request = JsonSerializer.SerializeToElement(new
             {

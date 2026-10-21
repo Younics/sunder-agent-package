@@ -18,7 +18,7 @@ internal sealed class InlineRenameFocusCoordinator<TItem> : IDisposable where TI
     private readonly Func<Control?> _dropDownProvider;
     private readonly string _textBoxClass;
     private readonly PresentationTaskScope _tasks = new(
-        PresentationTaskScope.IgnoreExpectedFailure);
+        PresentationTaskScope.IgnoreExpectedFailure, PresentationDispatcher.Capture().ShutdownToken);
     private object? _pendingKey;
     private bool _disposed;
 
@@ -138,16 +138,7 @@ internal sealed class InlineRenameFocusCoordinator<TItem> : IDisposable where TI
     }
 
     private void Queue(Action action, DispatcherPriority priority)
-        => _tasks.Run(async cancellationToken =>
-        {
-            await Dispatcher.UIThread.InvokeAsync(() =>
-            {
-                if (!cancellationToken.IsCancellationRequested)
-                {
-                    action();
-                }
-            }, priority);
-        });
+        => _tasks.Run(token => PresentationDispatcher.QueueAsync(action, priority, token));
 
     private TextBox? FindTextBox(TItem item)
     {

@@ -9,14 +9,14 @@ using Xunit;
 namespace Sunder.Package.Agent.Provider.OpenAI.Tests;
 
 using OpenAiAuthOperationResult = OpenAiApp::Sunder.Package.Agent.Provider.OpenAI.OpenAiAuthOperationResult;
-using IManagementService = OpenAiApp::Sunder.Generated.Packages.Sunder_Package_Agent_Provider_Openai_Services.IManagementService;
+using IManagementService = OpenAiApp::Sunder.Generated.Packages.Younics_Ai_Agent_Provider_Openai_Services.IManagementService;
 
 public sealed class OpenAiSettingsViewModelTests
 {
     [Fact]
     public async Task AuthMode_DefaultsToCodexConnectedAndPersistsSelection()
     {
-        var context = new ProviderTestPackageContext("sunder.package.agent.provider.openai");
+        var context = new ProviderTestPackageContext("younics.ai.agent.provider.openai");
         var viewModel = new OpenAiSettingsViewModel(
             context,
             new StubOwnerManagementClient(new OpenAiAuthOperationResult(false, false, null)));
@@ -32,7 +32,7 @@ public sealed class OpenAiSettingsViewModelTests
     [Fact]
     public async Task RuntimeExpiredSession_IsNotReportedAsConnected()
     {
-        var context = new ProviderTestPackageContext("sunder.package.agent.provider.openai");
+        var context = new ProviderTestPackageContext("younics.ai.agent.provider.openai");
         using var viewModel = new OpenAiSettingsViewModel(
             context,
             new StubOwnerManagementClient(new OpenAiAuthOperationResult(
@@ -236,7 +236,7 @@ public sealed class OpenAiSettingsViewModelTests
     }
 
     private static ProviderTestPackageContext Context(FakePackageCallbackClient callbacks)
-        => new("sunder.package.agent.provider.openai", callbacks: callbacks);
+        => new("younics.ai.agent.provider.openai", callbacks: callbacks);
 
     private static OpenAiSettingsViewModel CreateViewModel(
         ProviderTestPackageContext context,
@@ -265,7 +265,7 @@ public sealed class OpenAiSettingsViewModelTests
         PackageCallbackSessionState state,
         string message = "Continue in browser.")
         => new(
-            "sunder.package.agent.provider.openai",
+            "younics.ai.agent.provider.openai",
             PackageCallbackHandlerIds.Authentication,
             "openai-session",
             state,

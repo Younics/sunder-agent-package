@@ -17,13 +17,13 @@ public sealed class AgentWorkspacesViewContext : IDisposable
     internal AgentWorkspacesViewContext(IPresentationDispatcher uiDispatcher)
     {
         _uiDispatcher = uiDispatcher;
-        _tasks = new PresentationTaskScope(exception => _uiDispatcher.InvokeAsync(() =>
+        _tasks = new PresentationTaskScope((exception, token) => _uiDispatcher.InvokeAsync(() =>
         {
             if (!_disposed)
             {
                 Failed?.Invoke(exception);
             }
-        }));
+        }, token), _uiDispatcher.ShutdownToken);
     }
 
     internal event Action<Exception>? Failed;
@@ -35,16 +35,7 @@ public sealed class AgentWorkspacesViewContext : IDisposable
     internal void Run(Func<CancellationToken, Task> operation) => _tasks.Run(operation);
 
     internal void Queue(Action action, DispatcherPriority priority)
-        => _tasks.Run(async cancellationToken =>
-        {
-            await Dispatcher.UIThread.InvokeAsync(() =>
-            {
-                if (!cancellationToken.IsCancellationRequested)
-                {
-                    action();
-                }
-            }, priority);
-        });
+        => _tasks.Run(token => PresentationDispatcher.QueueAsync(action, priority, token));
 
     public void Dispose()
     {

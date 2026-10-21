@@ -39,13 +39,13 @@ public sealed partial class SkillSettingsViewModel : ObservableObject,
         _ownerAvailability = gateway as IOwnerStreamAvailability;
         _uiDispatcher = PresentationDispatcher.Capture();
         _successStatus = new TimedStatusController(timeProvider, _uiDispatcher);
-        _tasks = new PresentationTaskScope(exception => _uiDispatcher.InvokeAsync(() =>
+        _tasks = new PresentationTaskScope((exception, token) => _uiDispatcher.InvokeAsync(() =>
         {
             if (!_disposed)
             {
                 SetStatus(exception.Message, SkillStatusKind.Error);
             }
-        }));
+        }, token), _uiDispatcher.ShutdownToken);
         _listDetail = new KeyedAdaptiveListDetailState<string, InstalledSkillItemViewModel>(
             Skills,
             static skill => skill.SkillId,

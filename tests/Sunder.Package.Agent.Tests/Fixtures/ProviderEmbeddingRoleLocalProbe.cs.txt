@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using Sunder.Generated.Packages.Younics_Ai_Agent_Models;
+using IEmbeddingProviderService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Embedding_Provider.IEmbeddingProviderService;
 
 public sealed class RoleLocalEmbeddingProbe(Func<string, string, CancellationToken, ValueTask<string>> call)
     : IEmbeddingProviderService
@@ -15,7 +15,7 @@ public sealed class RoleLocalEmbeddingProbe(Func<string, string, CancellationTok
     public async ValueTask<IReadOnlyList<AgentEmbeddingModelDescriptor>> ListModelsAsync(CancellationToken cancellationToken = default) => await Invoke<AgentEmbeddingModelDescriptor[]>("models", new { }, cancellationToken);
     public ValueTask<AgentEmbeddingProviderReadiness> GetReadinessAsync(CancellationToken cancellationToken = default) => Invoke<AgentEmbeddingProviderReadiness>("readiness", new { }, cancellationToken);
     public ValueTask<string> SpaceIdentityAsync(string modelId, CancellationToken cancellationToken = default) => Invoke<string>("space", new { modelId }, cancellationToken);
-    public ValueTask<AgentEmbeddingGenerationResult?> GenerateAsync(CSunder_Agent_Embedding_Provider_EmbeddingProviderGenerateRequest request, CancellationToken cancellationToken = default) => Invoke<AgentEmbeddingGenerationResult?>("generate", new { modelId = request.ModelId, text = request.Text }, cancellationToken);
-    public async ValueTask<IReadOnlyList<AgentEmbeddingGenerationResult?>> GenerateBatchAsync(CSunder_Agent_Embedding_Provider_EmbeddingProviderGenerateBatchRequest request, CancellationToken cancellationToken = default) => await Invoke<AgentEmbeddingGenerationResult?[]>("batch", new { modelId = request.ModelId, texts = request.Texts }, cancellationToken);
+    public ValueTask<AgentEmbeddingGenerationResult?> GenerateAsync(CYounics_Ai_Agent_Embedding_Provider_EmbeddingProviderGenerateRequest request, CancellationToken cancellationToken = default) => Invoke<AgentEmbeddingGenerationResult?>("generate", new { modelId = request.ModelId, text = request.Text }, cancellationToken);
+    public async ValueTask<IReadOnlyList<AgentEmbeddingGenerationResult?>> GenerateBatchAsync(CYounics_Ai_Agent_Embedding_Provider_EmbeddingProviderGenerateBatchRequest request, CancellationToken cancellationToken = default) => await Invoke<AgentEmbeddingGenerationResult?[]>("batch", new { modelId = request.ModelId, texts = request.Texts }, cancellationToken);
     private async ValueTask<T> Invoke<T>(string operation, object request, CancellationToken token) => JsonSerializer.Deserialize<T>(await call(operation, JsonSerializer.Serialize(request, Json), token), Json)!;
 }

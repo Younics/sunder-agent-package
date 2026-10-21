@@ -1,1377 +1,696 @@
-extern alias BuilderWorker;
 extern alias BuilderApp;
 
 using System.Text.Json;
 using BuilderApp::Sunder.Package.Agent.Builder;
-using Sunder.Package.Agent.Contracts;
-using Sunder.Package.Agent.Contracts.Contracts;
-using Sunder.Package.Agent.Contracts.Models;
-using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Logging;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Services;
 using Xunit;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
-using BuilderRuntimeModels = BuilderApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
-using BuilderRuntimeServices = BuilderApp::Sunder.Generated.Packages.Sunder_Package_Agent_Builder_Services;
+using BuilderServices = BuilderApp::Sunder.Generated.Packages.Younics_Sunder_Package_Maker_Services;
 
 namespace Sunder.Package.Agent.Tests;
 
-public sealed class BuilderServiceTests
+public sealed partial class BuilderServiceTests
 {
     [Fact]
-    public async Task WorkspaceExecutionService_RejectsInconsistentContentLength()
+    public async Task BackendAdapterRejectsInconsistentContentLength()
     {
-        var service = new BuilderWorkspaceExecutionService(new InconsistentContentRuntimeService());
-
-        await Assert.ThrowsAsync<InvalidDataException>(() => service.ListWorkspacesAsync());
+        var backend = new BuilderBackendGateway(new BuilderRuntimeCatalog(new InconsistentContentRuntime()));
+        await Assert.ThrowsAsync<InvalidDataException>(() => backend.DiscoverAsync(Path.GetTempPath()));
     }
 
     [Fact]
-    public async Task Persistence_OverlappingAutosaves_DebouncesToLatestGeneration()
+    public async Task UncertainStartReadsExactJobWithoutReplayingItsMutation()
     {
-        var store = new RecordingProjectStore();
-        await using var persistence = new BuilderProjectPersistence(store, TimeSpan.FromMilliseconds(25));
-
-        persistence.RequestSave([CreateRecord("one")]);
-        persistence.RequestSave([CreateRecord("two")]);
-
-        await store.WaitForSaveCountAsync(1);
-        Assert.Equal("two", Assert.Single(Assert.Single(store.Saves)).Id);
-        await Task.Delay(50);
-        Assert.Single(store.Saves);
+        await using var fixture = new BuilderUiFixture(new() { LoseFirstStartResponse = true });
+        var result = await fixture.Application.RunJobAsync(new() { Operation = "ensure-sdk", Kind = BuilderProjectKind.Node });
+        var starts = fixture.Backend.Starts.ToArray();
+        Assert.Single(starts);
+        Assert.False(string.IsNullOrEmpty(starts[0].Id));
+        Assert.Single(fixture.Backend.Jobs);
+        Assert.Equal("succeeded", result.State);
     }
 
     [Fact]
-    public async Task Persistence_StaleCompletion_DoesNotSuppressNewerGeneration()
+    public async Task CancellationCompletedDuringBackendLookupDoesNotAttemptStartOrCreateUnconfirmedOwnership()
     {
-        var store = new RecordingProjectStore(blockFirstSave: true);
-        await using var persistence = new BuilderProjectPersistence(store, TimeSpan.FromMilliseconds(5));
-        persistence.RequestSave([CreateRecord("one")]);
-        await store.FirstSaveStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-
-        persistence.RequestSave([CreateRecord("two")]);
-        store.ReleaseFirstSave.TrySetResult();
-
-        await store.WaitForSaveCountAsync(2);
-        Assert.Equal(["one", "two"], store.Saves.Select(save => Assert.Single(save).Id).ToArray());
-    }
-
-    [Fact]
-    public async Task Persistence_DisposalFlushesPendingSave()
-    {
-        var store = new RecordingProjectStore();
-        var persistence = new BuilderProjectPersistence(store, TimeSpan.FromMinutes(1));
-        persistence.RequestSave([CreateRecord("pending")]);
-
-        await persistence.DisposeAsync();
-
-        Assert.Equal("pending", Assert.Single(Assert.Single(store.Saves)).Id);
-    }
-
-    [Fact]
-    public async Task Persistence_ConcurrentDisposalSharesFinalFlush()
-    {
-        var store = new RecordingProjectStore(blockFirstSave: true);
-        var persistence = new BuilderProjectPersistence(store, TimeSpan.FromMinutes(1));
-        persistence.RequestSave([CreateRecord("pending")]);
-
-        var firstDisposal = persistence.DisposeAsync().AsTask();
-        await store.FirstSaveStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        var secondDisposal = persistence.DisposeAsync().AsTask();
-
-        Assert.False(firstDisposal.IsCompleted);
-        Assert.False(secondDisposal.IsCompleted);
-        store.ReleaseFirstSave.TrySetResult();
-        await Task.WhenAll(firstDisposal, secondDisposal);
-
-        Assert.Equal("pending", Assert.Single(Assert.Single(store.Saves)).Id);
-    }
-
-    [Fact]
-    public async Task Persistence_DisposalWaitsForSaveAlreadyInProgress()
-    {
-        var store = new RecordingProjectStore(blockFirstSave: true);
-        var persistence = new BuilderProjectPersistence(store, TimeSpan.FromMinutes(1));
-        var save = persistence.SaveNowAsync([CreateRecord("saving")]);
-        await store.FirstSaveStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-
-        var disposal = persistence.DisposeAsync().AsTask();
-        Assert.False(disposal.IsCompleted);
-        store.ReleaseFirstSave.TrySetResult();
-        await Task.WhenAll(save, disposal);
-
-        Assert.Equal("saving", Assert.Single(Assert.Single(store.Saves)).Id);
-    }
-
-    [Fact]
-    public async Task ViewModel_DisposalAfterFailedLoad_DoesNotFlushEmptyProjects()
-    {
-        var root = CreateProjectFolder();
-        try
-        {
-            var store = new FailingLoadProjectStore(new InvalidDataException("Corrupt builder state."));
-            var viewModel = CreateViewModelForLoadTest(root, store);
-
-            await viewModel.InitializeAsync();
-            await viewModel.DisposeAsync();
-
-            Assert.Equal(0, store.SaveCount);
-            Assert.Contains("Corrupt builder state.", viewModel.StatusText, StringComparison.Ordinal);
-        }
-        finally
-        {
-            Directory.Delete(root, recursive: true);
-        }
-    }
-
-    [Fact]
-    public async Task ViewModel_DisposalDuringCanceledLoad_DoesNotFlushEmptyProjects()
-    {
-        var root = CreateProjectFolder();
-        try
-        {
-            var store = new CancelableLoadProjectStore();
-            var viewModel = CreateViewModelForLoadTest(root, store);
-            var initialization = viewModel.InitializeAsync();
-            await store.LoadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-
-            await viewModel.DisposeAsync();
-
-            await initialization;
-            Assert.Equal(0, store.SaveCount);
-        }
-        finally
-        {
-            Directory.Delete(root, recursive: true);
-        }
-    }
-
-    [Fact]
-    public async Task ViewModel_DisposalAfterUnchangedLoad_DoesNotRewriteProjects()
-    {
-        var root = CreateProjectFolder();
-        try
-        {
-            var store = new RecordingProjectStore();
-            var viewModel = CreateViewModelForLoadTest(root, store);
-
-            await viewModel.InitializeAsync();
-            await viewModel.DisposeAsync();
-
-            Assert.Empty(store.Saves);
-        }
-        finally
-        {
-            Directory.Delete(root, recursive: true);
-        }
-    }
-
-    [Theory]
-    [InlineData("{broken")]
-    [InlineData("{\"version\":2,\"projects\":[]}")]
-    public async Task Store_CorruptOrFutureDocument_SurfacesAndRemainsUntouched(string persisted)
-    {
-        using var scope = RegressionTestPackageScope.Create();
-        const string key = "builder.projects.v1";
-        await scope.Context.Storage.State.SetValueAsync(key, persisted);
-        var store = new BuilderProjectStore(scope.Context);
-
-        await Assert.ThrowsAnyAsync<Exception>(() => store.LoadAsync());
-
-        Assert.Equal(persisted, await scope.Context.Storage.State.GetValueAsync(key));
-    }
-
-    [FileSystemFact(
-        TestFileSystemCapability.DirectorySymbolicLinks,
-        "Builder host-path containment requires directory symbolic links.")]
-    public void PathService_ResolveContainedHostPath_RejectsDirectorySymlinkEscape()
-    {
-        var root = Path.Combine(Path.GetTempPath(), "sunder-builder-containment", Guid.NewGuid().ToString("N"));
-        var workspace = Path.Combine(root, "workspace");
-        var outside = Path.Combine(root, "outside");
-        Directory.CreateDirectory(workspace);
-        Directory.CreateDirectory(outside);
-        Directory.CreateSymbolicLink(Path.Combine(workspace, "escape"), outside);
-
-        try
-        {
-            var service = new BuilderPathService();
-
-            Assert.Throws<InvalidOperationException>(() => service.ResolveContainedHostPath(
-                Path.Combine(workspace, "escape", "project"),
-                workspace));
-        }
-        finally
-        {
-            Directory.Delete(root, recursive: true);
-        }
-    }
-
-    [FileSystemFact(
-        TestFileSystemCapability.DirectorySymbolicLinks,
-        "Builder project validation requires directory symbolic links.")]
-    public void ValidateProject_RejectsHostProjectFolderSymlinkEscape()
-    {
-        var root = Path.Combine(Path.GetTempPath(), "sunder-builder-validation", Guid.NewGuid().ToString("N"));
-        var workspaceRoot = Path.Combine(root, "workspace");
-        var outside = Path.Combine(root, "outside");
-        Directory.CreateDirectory(workspaceRoot);
-        Directory.CreateDirectory(outside);
-        File.WriteAllText(Path.Combine(outside, "Outside.csproj"), "<Project />");
-        var projectLink = Path.Combine(workspaceRoot, "project");
-        Directory.CreateSymbolicLink(projectLink, outside);
-        var workspace = CreateWorkspace(workspaceRoot);
-        var service = CreateApplicationService(workspace, new TestExecutionTarget(), new RecordingProjectStore());
-
-        try
-        {
-            var result = service.ValidateProject(
-                CreateInitializedRecord(projectLink),
-                [ToBuilderWorkspace(workspace)],
-                requireExistingFolder: true,
-                requireInitializedPaths: true);
-
-            Assert.False(result.IsValid);
-            Assert.Contains("outside the selected workspace path", result.Error, StringComparison.Ordinal);
-        }
-        finally
-        {
-            Directory.Delete(root, recursive: true);
-        }
-    }
-
-    [Fact]
-    public async Task RuntimeBridge_RoutesWorkspaceResolutionAndProcessExecution()
-    {
-        var workspace = CreateWorkspace(Path.GetTempPath());
-        var target = new TestExecutionTarget(output: "Runtime output");
-        using var runtime = CreateBuilderRpcClient(workspace, target);
-        var service = new BuilderWorkspaceExecutionService(runtime);
-
-        Assert.Equal(
-            workspace.WorkspaceId,
-            Assert.Single(await service.ListWorkspacesAsync()).WorkspaceId);
-        var execution = await service.ResolveAsync(workspace.WorkspaceId);
-        var result = await execution.RunProcessAsync("dotnet", ["build"]);
-
-        Assert.Equal("Runtime output", result.CombinedOutput);
-        Assert.Equal("build", target.LastProjectOperation);
-        Assert.Equal(
-            [
-                "ListWorkspaces",
-                "ResolveWorkspace",
-                "ExecuteProcess",
-            ],
-            runtime.RequestKinds);
-    }
-
-    [Fact]
-    public async Task RunProcess_RejectsShellOnlyTargetWithoutSynthesizingCommandText()
-    {
-        var workspace = CreateWorkspace(Path.GetTempPath());
-        var target = new ShellOnlyExecutionTarget();
-        using var runtime = new LoopbackBuilderRpcClient(
-            new ShellOnlyWorkspaceExecutionResolver(workspace, target));
-        var execution = await new BuilderWorkspaceExecutionService(runtime)
-            .ResolveAsync(workspace.WorkspaceId);
-
-        var exception = await Assert.ThrowsAsync<NotSupportedException>(() => execution.RunProcessAsync(
-            "tool & attacker",
-            ["value; Remove-Item -Recurse *", "value & del /s *"])
-            .AsTask());
-
-        Assert.Contains("structured process-execution facet", exception.Message, StringComparison.Ordinal);
-        Assert.Equal(0, target.ShellInvocations);
-        Assert.Equal(["ResolveWorkspace"], runtime.RequestKinds);
-    }
-
-    [Fact]
-    public async Task RuntimeBridge_TruncatesProcessOutputBeforeTransport()
-    {
-        var workspace = CreateWorkspace(Path.GetTempPath());
-        var target = new TestExecutionTarget(output: new string('x', (512 * 1024) + 1));
-        using var runtime = CreateBuilderRpcClient(workspace, target);
-        var execution = await new BuilderWorkspaceExecutionService(runtime).ResolveAsync(workspace.WorkspaceId);
-
-        var result = await execution.RunShellAsync("dotnet build");
-
-        Assert.Equal(512 * 1024, result.CombinedOutput.Length);
-        Assert.True(result.WasTruncated);
-    }
-
-    [Fact]
-    public async Task RuntimeBridge_ReturnsCompleteWorkspaceListWithoutSilentProjection()
-    {
-        var now = DateTimeOffset.UtcNow;
-        var longDisplayName = new string('n', 257);
-        var longDescription = new string('d', 1025);
-        var longPath = "/" + new string('x', 2048);
-        var workspaces = Enumerable.Range(0, 101)
-            .Select(index => new AgentWorkspaceRecord(
-                $"workspace-{index}",
-                index == 0 ? longDisplayName : $"Workspace {index}",
-                index == 0 ? longDescription : null,
-                now,
-                now,
-                Enumerable.Range(0, 65)
-                    .Select(pathIndex => new AgentWorkspacePathRecord(
-                        $"path-{index}-{pathIndex}",
-                        $"workspace-{index}",
-                        index == 0 && pathIndex == 0 ? longPath : $"/workspace/{index}/{pathIndex}",
-                        pathIndex == 0,
-                        pathIndex,
-                        now,
-                        now))
-                    .ToArray(),
-                [new AgentWorkspaceDocumentRecord(
-                    $"document-{index}",
-                    $"workspace-{index}",
-                    $"instructions-{index}.md",
-                    0,
-                    now,
-                    now)]))
-            .ToArray();
-        using var runtime = new LoopbackBuilderRpcClient(
-            new ListOnlyWorkspaceExecutionResolver(workspaces));
-
-        var projected = await new BuilderWorkspaceExecutionService(runtime).ListWorkspacesAsync();
-
-        Assert.Equal(workspaces.Length, projected.Count);
-        var first = projected[0];
-        Assert.Equal(longDisplayName, first.DisplayName);
-        Assert.Equal(longDescription, first.Description);
-        Assert.Equal(65, first.Paths.Count);
-        Assert.Equal(longPath, first.Paths[0].HostPath);
-        Assert.Single(first.Documents);
-        Assert.True(runtime.MaximumResponseBytes > 900_000);
-    }
-
-    [Fact]
-    public async Task WorkspaceList_RunsSynchronousResolverOffCallingThreadAndSupportsCallerCancellation()
-    {
-        var resolver = new BlockingWorkspaceExecutionResolver();
-        using var runtime = new LoopbackBuilderRpcClient(resolver);
-        var service = new BuilderWorkspaceExecutionService(runtime);
+        await using var fixture = new BuilderUiFixture();
         using var cancellation = new CancellationTokenSource();
-        using var allowCallerToExit = new ManualResetEventSlim();
-        var callReturned = new TaskCompletionSource<Task<IReadOnlyList<BuilderRuntimeModels.AgentWorkspaceRecord>>>(
-            TaskCreationOptions.RunContinuationsAsynchronously);
-        var callerThread = new Thread(() =>
+        fixture.Backend.BeforeGetBackendId = _ =>
         {
-            try
-            {
-                callReturned.TrySetResult(service.ListWorkspacesAsync(cancellation.Token));
-            }
-            catch (Exception exception)
-            {
-                callReturned.TrySetException(exception);
-            }
-            finally
-            {
-                allowCallerToExit.Wait();
-            }
-        })
-        {
-            IsBackground = true,
-            Name = nameof(WorkspaceList_RunsSynchronousResolverOffCallingThreadAndSupportsCallerCancellation),
-        };
-
-        callerThread.Start();
-        try
-        {
-            await Task.WhenAll(resolver.Started.Task, callReturned.Task)
-                .WaitAsync(TimeSpan.FromSeconds(2));
-            var listing = await callReturned.Task;
-            var invocationThread = Assert.IsType<Thread>(resolver.InvocationThread);
-            Assert.NotSame(callerThread, invocationThread);
-            Assert.False(resolver.Release.Task.IsCompleted);
-            Assert.False(listing.IsCompleted);
-
-            await cancellation.CancelAsync();
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => listing)
-                .WaitAsync(TimeSpan.FromSeconds(2));
-            Assert.False(resolver.Release.Task.IsCompleted);
-        }
-        finally
-        {
-            resolver.Release.TrySetResult();
-            allowCallerToExit.Set();
-            Assert.True(callerThread.Join(TimeSpan.FromSeconds(2)));
-            if (resolver.Started.Task.IsCompletedSuccessfully)
-            {
-                await resolver.Completed.Task.WaitAsync(TimeSpan.FromSeconds(2));
-            }
-        }
-    }
-
-    [Fact]
-    public async Task WorkspaceList_PropagatesCallerCancellationThroughResolverRpcRoute()
-    {
-        var resolver = new CancellationAwareWorkspaceExecutionResolver();
-        using var runtime = new LoopbackBuilderRpcClient(resolver);
-        var service = new BuilderWorkspaceExecutionService(runtime);
-        using var cancellation = new CancellationTokenSource();
-
-        var listing = service.ListWorkspacesAsync(cancellation.Token);
-        await resolver.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        await cancellation.CancelAsync();
-
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => listing)
-            .WaitAsync(TimeSpan.FromSeconds(2));
-        await resolver.CancellationObserved.Task.WaitAsync(TimeSpan.FromSeconds(2));
-    }
-
-    [Fact]
-    public async Task OperationQueue_OverlappingRequests_AreMutuallyExclusive()
-    {
-        var backgroundProcesses = new CapturingBackgroundProcessQueue();
-        var queue = new BuilderOperationQueue(backgroundProcesses);
-        var firstEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var secondEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var active = 0;
-        var maximumActive = 0;
-
-        queue.Enqueue("first", async _ =>
-        {
-            maximumActive = Math.Max(maximumActive, Interlocked.Increment(ref active));
-            firstEntered.TrySetResult();
-            await releaseFirst.Task;
-            Interlocked.Decrement(ref active);
-        });
-        queue.Enqueue("second", _ =>
-        {
-            maximumActive = Math.Max(maximumActive, Interlocked.Increment(ref active));
-            secondEntered.TrySetResult();
-            Interlocked.Decrement(ref active);
+            cancellation.Cancel();
+            // A completed lookup task can win WaitAsync despite an already
+            // cancelled token. The mutation boundary must recheck cancellation.
             return Task.CompletedTask;
-        });
-
-        var first = backgroundProcesses.Requests[0].ExecuteAsync(CreateContext());
-        await firstEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        var second = backgroundProcesses.Requests[1].ExecuteAsync(CreateContext());
-        await Task.Delay(30);
-        Assert.False(secondEntered.Task.IsCompleted);
-
-        releaseFirst.TrySetResult();
-        await Task.WhenAll(first, second);
-        Assert.Equal(1, maximumActive);
+        };
+        var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => fixture.Application.RunJobAsync(
+            new() { Operation = "watch", Kind = BuilderProjectKind.Dotnet }, cancellationToken: cancellation.Token));
+        Assert.Equal(cancellation.Token, error.CancellationToken);
+        Assert.Empty(fixture.Backend.Starts);
+        fixture.Backend.BeforeGetBackendId = null;
+        var next = await fixture.Application.RunJobAsync(new() { Operation = "ensure-sdk", Kind = BuilderProjectKind.Dotnet });
+        Assert.Equal("succeeded", next.State);
+        Assert.Single(fixture.Backend.Starts);
     }
 
-    [Theory]
-    [InlineData(null)]
-    [InlineData("create")]
-    [InlineData("restore")]
-    public async Task InitializeProject_CreatesAndRestoresOneRootBeforeOrdinaryBuild(string? failStep)
+    [Fact]
+    public async Task BackendIdentityLookupCanReconnectBeforeTheOnlyStart()
     {
-        var root = CreateProjectFolder();
+        await using var fixture = new BuilderUiFixture();
+        var reads = 0;
+        fixture.Backend.BeforeGetBackendId = _ =>
+        {
+            Assert.Empty(fixture.Backend.Starts);
+            return Interlocked.Increment(ref reads) <= 4
+                ? Task.FromException(new SunderRpcException(new(SunderRpcErrorKind.StaleEndpoint, "rpc.caller-retired", "Caller handoff is pending.")))
+                : Task.CompletedTask;
+        };
+        var result = await fixture.Application.RunJobAsync(new() { Operation = "ensure-sdk", Kind = BuilderProjectKind.Dotnet });
+        Assert.Equal("succeeded", result.State);
+        Assert.Equal(5, reads);
+        Assert.Single(fixture.Backend.Starts);
+    }
+
+    [Fact]
+    public async Task CallerHandoffReconcilesAcceptedWatchWithoutCancellingOrStartingAnotherProducer()
+    {
+        await using var fixture = new BuilderUiFixture();
+        var reads = 0;
+        var cancels = 0;
+        List<BuilderJobSnapshot> observations = [];
+        fixture.Backend.BeforeCancel = (_, _) => { Interlocked.Increment(ref cancels); return Task.CompletedTask; };
+        fixture.Backend.BeforeGet = (request, _) =>
+        {
+            var read = Interlocked.Increment(ref reads);
+            if (read is > 1 and <= 5)
+                throw new SunderRpcException(new(SunderRpcErrorKind.StaleEndpoint, "rpc.caller-retired", "Caller handoff is pending."));
+            if (read > 5) fixture.Backend.Jobs[request.Id!] = fixture.Backend.Jobs[request.Id!] with { State = "succeeded" };
+            return Task.CompletedTask;
+        };
         try
         {
-            var target = new TestExecutionTarget(prerequisitesInstalled: true, failInitializationStep: failStep);
-            var workspace = CreateWorkspace(root);
-            var service = CreateApplicationService(workspace, target, new RecordingProjectStore());
-            var project = CreateRecord("sample") with { WorkspacePathId = "workspace.path" };
-            var progress = new List<string>();
-            var context = new BackgroundProcessContext(CancellationToken.None, _ => { }, (_, _) => { }, progress.Add);
-            var initialize = service.InitializeProjectAsync(project,
-                ToBuilderWorkspacePath(Assert.Single(workspace.Paths)), context);
-            if (failStep is null)
-            {
-                var initialized = await initialize;
-                Assert.EndsWith("sample", initialized.Project.ExecutionProjectFolder, StringComparison.Ordinal);
-                await service.BuildProjectAsync(initialized.Project, context);
-            }
-            else
-            {
-                var error = await Assert.ThrowsAsync<InvalidOperationException>(() => initialize);
-                Assert.Contains(failStep + " failed", error.Message, StringComparison.Ordinal);
-            }
-            var create = Assert.Single(target.Requests, request => request.Arguments.Count > 1 && request.Arguments[1] == "sunder-package");
-            Assert.DoesNotContain("--createInPlace", create.Arguments);
-            var projectFolder = create.Arguments[create.Arguments.ToList().IndexOf("--output") + 1];
-            Assert.Equal(root, create.WorkingDirectory);
-            var operations = target.Requests.Where(request => request.Arguments[0] is "restore" or "build" or "msbuild").ToArray();
-            string[] expectedOperations = failStep switch { "create" => [], "restore" => ["restore"], _ => ["restore", "build"] };
-            Assert.Equal(expectedOperations, operations.Select(request => request.Arguments[0]).ToArray());
-            Assert.All(operations, request =>
-            {
-                Assert.Equal("dotnet", request.FileName);
-                Assert.Equal(new[] { request.Arguments[0], projectFolder }, request.Arguments);
-                Assert.Equal(projectFolder, request.WorkingDirectory);
-            });
-            Assert.DoesNotContain(progress, message => message.Contains("contract", StringComparison.OrdinalIgnoreCase));
+            var result = await fixture.Application.RunJobAsync(new() { Operation = "watch", Kind = BuilderProjectKind.Dotnet },
+                snapshot => { observations.Add(snapshot); return Task.CompletedTask; })
+                .WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal("succeeded", result.State);
+            Assert.Equal(6, reads);
+            Assert.Equal(0, cancels);
+            Assert.Single(fixture.Backend.Starts);
+            var reconnecting = Assert.Single(observations, value => value.ConnectionState == BuilderJobConnectionState.Reconnecting);
+            Assert.Equal("running", reconnecting.State);
+            Assert.Equal(result.BackendId, reconnecting.BackendId);
+            Assert.Equal(BuilderJobConnectionState.Connected, observations.Last().ConnectionState);
         }
-        finally { Directory.Delete(root, recursive: true); }
+        finally
+        {
+            fixture.Backend.BeforeGet = null;
+            if (fixture.Backend.Starts.TryPeek(out var request)) await fixture.Application.StopJobAsync(request.Id!);
+        }
     }
 
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task BuildAndPublish_PropagateProcessCancellation(bool publish)
+    public async Task BackendReplacementCannotReplayOrAcknowledgeOldJobAndKeepsProjectExcluded(bool nestedOtherTechnology)
     {
-        var root = CreateProjectFolder();
+        await using var fixture = new BuilderUiFixture();
+        var original = fixture.Backend.BackendId;
+        var reads = 0;
+        var cancels = 0;
+        var project = BuilderUiFixture.Project("backend-replaced");
+        fixture.Backend.BeforeCancel = (_, _) => { Interlocked.Increment(ref cancels); return Task.CompletedTask; };
         try
         {
-            var target = new TestExecutionTarget(blockProjectOperations: true);
-            var workspace = CreateWorkspace(root);
-            var service = CreateApplicationService(workspace, target, new RecordingProjectStore());
-            using var cancellation = new CancellationTokenSource();
-            var context = CreateContext(cancellation.Token);
-            var project = CreateInitializedRecord(root);
-
-            var operation = publish
-                ? service.PublishProjectAsync(project, context)
-                : service.BuildProjectAsync(project, context);
-            await target.ProjectOperationStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            cancellation.Cancel();
-
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await operation);
-            Assert.Equal(publish ? "msbuild" : "build", target.LastProjectOperation);
-            if (publish)
-                Assert.Equal(new[] { "msbuild", "-t:CheckSunderContracts;FreezeSunderContracts;PackSunderPackage", "-p:Configuration=Release" }, target.LastProjectArguments);
+            await Assert.ThrowsAsync<BuilderJobCleanupException>(() => fixture.Application.RunJobAsync(new()
+            {
+                Operation = "watch", Kind = project.Kind, ProjectFolder = project.ProjectFolder,
+            }, _ =>
+            {
+                if (Interlocked.Increment(ref reads) == 1) fixture.Backend.BackendId = new('b', 32);
+                return Task.CompletedTask;
+            }));
+            var request = Assert.Single(fixture.Backend.Starts);
+            Assert.Equal(original, request.BackendId);
+            Assert.Equal("running", fixture.Backend.Jobs[request.Id!].State);
+            await Assert.ThrowsAsync<IOException>(() => fixture.Application.RunJobAsync(new()
+            {
+                Operation = "build", Kind = nestedOtherTechnology ? BuilderProjectKind.Node : project.Kind,
+                ProjectFolder = nestedOtherTechnology ? Path.Combine(project.ProjectFolder, "nested") : project.ProjectFolder,
+            }));
+            Assert.Single(fixture.Backend.Starts);
+            Assert.Equal(0, cancels); // The replacement rejected before job mutation.
         }
         finally
         {
-            Directory.Delete(root, recursive: true);
+            fixture.Backend.BackendId = original;
+            if (fixture.Backend.Starts.TryPeek(out var request)) await fixture.Application.StopJobAsync(request.Id!);
         }
     }
 
     [Fact]
-    public async Task BackgroundBuildCallback_UpdatesBoundStateThroughUiDispatcher()
+    public async Task ExplicitStartRejectionOnBackendReplacementDoesNotInventUnconfirmedOwnership()
     {
-        var root = CreateProjectFolder();
+        await using var fixture = new BuilderUiFixture();
+        fixture.Backend.OnStart = _ => fixture.Backend.BackendId = new('b', 32);
+        var failure = await Assert.ThrowsAsync<SunderRpcException>(() => fixture.Application.RunJobAsync(new()
+        {
+            Operation = "watch", Kind = BuilderProjectKind.Dotnet,
+        }));
+        Assert.Equal("agent.builder.backend-changed", failure.Error.Code);
+        Assert.Empty(fixture.Backend.Jobs);
+        fixture.Backend.OnStart = null;
+        var result = await fixture.Application.RunJobAsync(new() { Operation = "ensure-sdk", Kind = BuilderProjectKind.Dotnet });
+        Assert.Equal("succeeded", result.State);
+        Assert.Equal(fixture.Backend.BackendId, result.BackendId);
+    }
+
+    [Fact]
+    public async Task ApplicationCannotReuseACompletedJobIdentityOnAnotherBackend()
+    {
+        await using var fixture = new BuilderUiFixture();
+        var request = new BuilderJobRequest { Id = Guid.NewGuid().ToString("N"), Operation = "ensure-sdk", Kind = BuilderProjectKind.Dotnet };
+        Assert.Equal("succeeded", (await fixture.Application.RunJobAsync(request)).State);
+        fixture.Backend.BackendId = new('b', 32);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Application.RunJobAsync(request));
+        Assert.Single(fixture.Backend.Starts);
+        Assert.Equal("succeeded", (await fixture.Application.StopJobAsync(request.Id)).TerminalSnapshot?.State); // Previously proven, not a new-backend acknowledgement.
+    }
+
+    [Theory]
+    [InlineData(SunderRpcErrorKind.PermissionDenied)]
+    [InlineData(SunderRpcErrorKind.Protocol)]
+    public async Task JobReadDoesNotRetryOrHideSecurityAndProtocolFailures(SunderRpcErrorKind kind)
+    {
+        await using var fixture = new BuilderUiFixture();
+        var reads = 0;
+        var failure = new SunderRpcException(new(kind, "test.denied", "This is not a caller reconnect."));
+        fixture.Backend.BeforeGet = (_, _) => Interlocked.Increment(ref reads) == 1 ? Task.FromException(failure) : Task.CompletedTask;
+        var actual = await Assert.ThrowsAsync<SunderRpcException>(() => fixture.Application.RunJobAsync(new()
+        {
+            Operation = "watch", Kind = BuilderProjectKind.Dotnet,
+        }));
+        Assert.Same(failure, actual);
+        Assert.Equal(2, reads); // One rejected read, then exact stop acknowledgement, no read retry.
+        Assert.Equal("cancelled", Assert.Single(fixture.Backend.Jobs.Values).State);
+        Assert.Single(fixture.Backend.Starts);
+    }
+
+    [Fact]
+    public async Task CancellationUsesIndependentCleanupTokenAndReturnsPartialSourceSnapshot()
+    {
+        await using var fixture = new BuilderUiFixture();
+        var started = BuilderUiFixture.Signal();
+        var polls = 0;
+        fixture.Backend.Result = request => fixture.Backend.DefaultResult(request) with { State = "running" };
+        fixture.Backend.BeforeGet = async (_, token) =>
+        {
+            if (Interlocked.Increment(ref polls) == 1)
+            {
+                started.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            }
+        };
+        using var cancellation = new CancellationTokenSource();
+        var job = fixture.Application.RunJobAsync(new()
+        {
+            Operation = "create", Kind = BuilderProjectKind.Dotnet, ProjectFolder = Path.Combine(Path.GetTempPath(), "partial"),
+            DisplayName = "Partial", PackageId = "local.partial",
+        }, cancellationToken: cancellation.Token);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        cancellation.Cancel();
+        var result = await job.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.True(fixture.Backend.CleanupUsedIndependentToken);
+        Assert.Equal("cancelled", result.State);
+        Assert.Equal("local.partial", result.Project?.PackageId);
+        Assert.True(polls > 1);
+    }
+
+    [Fact]
+    public async Task UnconfirmedShutdownPreservesPartialSourceButRequiresReconciliationBeforeMutation()
+    {
+        await using var fixture = new BuilderUiFixture();
+        var source = BuilderUiFixture.Project("uncertain");
+        fixture.Backend.Projects[source.EntryPoint] = source;
+        var observed = BuilderUiFixture.Signal();
+        var polls = 0;
+        fixture.Backend.BeforeGet = (_, _) => Interlocked.Increment(ref polls) > 1
+            ? Task.FromException(new IOException("Transport disconnected")) : Task.CompletedTask;
+        using var cancellation = new CancellationTokenSource();
+        BuilderJobSnapshot? partial = null;
+        var running = fixture.Application.RunJobAsync(new()
+        {
+            Operation = "watch", Kind = source.Kind, EntryPoint = source.EntryPoint, ProjectFolder = source.ProjectFolder,
+        }, snapshot => { partial = snapshot; observed.TrySetResult(); return Task.CompletedTask; }, cancellation.Token);
+        await observed.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        cancellation.Cancel();
+        await Assert.ThrowsAsync<BuilderJobCleanupException>(() => running);
+        Assert.Equal(source, partial?.Project);
+        Assert.Equal("running", partial?.State); // Missing stop proof is not a backend failure outcome.
+        Assert.Equal(BuilderJobConnectionState.StopUnconfirmed, partial?.ConnectionState);
+        await Assert.ThrowsAsync<IOException>(() => fixture.Application.RunJobAsync(new()
+        {
+            Operation = "build", Kind = source.Kind, EntryPoint = source.EntryPoint, ProjectFolder = source.ProjectFolder,
+        }));
+        Assert.Single(fixture.Backend.Starts);
+        fixture.Backend.BeforeGet = null;
+        var reconciled = await fixture.Application.StopJobAsync(fixture.Backend.Starts.Single().Id!);
+        Assert.Equal(BuilderJobStopOutcome.KnownTerminal, reconciled.Outcome);
+        Assert.Equal("cancelled", reconciled.TerminalSnapshot?.State);
+    }
+
+    [Fact]
+    public async Task FiniteOperationQueueIsMutuallyExclusive()
+    {
+        var queue = new BuilderOperationQueue(new BuilderUiBackgroundQueue());
+        var entered = BuilderUiFixture.Signal();
+        var release = BuilderUiFixture.Signal();
+        var secondEntered = false;
+        var first = queue.RunAsync(async () => { entered.TrySetResult(); await release.Task; });
+        await entered.Task;
+        var second = queue.RunAsync(() => { secondEntered = true; return Task.CompletedTask; });
+        Assert.False(secondEntered);
+        release.TrySetResult();
+        await Task.WhenAll(first, second);
+        Assert.True(secondEntered);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task QueuedCancellationBeforeEnqueueReturnsCompletesAndSealsStaleDelegate(bool publishEvents)
+    {
+        var queue = new BuilderUiBackgroundQueue { AutoStart = false, PublishEvents = publishEvents };
+        queue.BeforeEnqueueReturns = snapshot => queue.Cancel(snapshot.ProcessId);
+        await using var fixture = new BuilderUiFixture(queue: queue);
+        List<BuilderJobSnapshot> notifications = [];
+        var result = await fixture.Application.RunJobAsync(new()
+        { Operation = "ensure-sdk", Kind = BuilderProjectKind.Dotnet }, snapshot =>
+        {
+            notifications.Add(snapshot);
+            return Task.CompletedTask;
+        }).WaitAsync(TimeSpan.FromSeconds(3));
+        var activity = Assert.Single(queue.ListProcesses());
+        Assert.Equal(BackgroundProcessState.Cancelled, activity.State);
+        AssertCancellationBeforeBackend(result, activity, notifications);
+        Assert.Empty(fixture.Backend.Starts);
+        Assert.Equal(0, queue.SubscriberCount);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => queue.InvokeStaleDelegateAsync(activity.ProcessId));
+        Assert.Empty(fixture.Backend.Starts);
+    }
+
+    [Fact]
+    public async Task HostCancellationAfterDelegateAdmissionDrainsWithoutStartingBackendOrWaitingForFiniteGate()
+    {
+        var queue = new BuilderUiBackgroundQueue();
+        var operations = new BuilderOperationQueue(queue);
+        var backend = new BuilderUiBackend();
+        await using var application = new BuilderProjectApplicationService(backend, new BuilderUiStore(), operations, BuilderTestJournal.Create());
+        var entered = BuilderUiFixture.Signal();
+        var release = BuilderUiFixture.Signal();
+        var blocking = operations.RunAsync(async () => { entered.TrySetResult(); await release.Task; });
         try
         {
-            var target = new TestExecutionTarget();
-            var workspace = CreateWorkspace(root);
-            var store = new RecordingProjectStore();
-            var backgroundProcesses = new CapturingBackgroundProcessQueue();
-            var dispatcher = new RecordingUiDispatcher();
-            var pathService = new BuilderPathService();
-            var applicationService = CreateApplicationService(workspace, target, store, pathService);
-            var persistence = new BuilderProjectPersistence(store, TimeSpan.FromMilliseconds(5));
-            var viewModel = new BuilderViewModel(
-                applicationService,
-                new BuilderOperationQueue(backgroundProcesses),
-                persistence,
-                pathService,
-                dispatcher);
-            var project = new BuilderProjectViewModel(CreateInitializedRecord(root));
-            viewModel.Workspaces.Add(ToBuilderWorkspace(workspace));
-            viewModel.Projects.Add(project);
-            viewModel.ActivateProject(project);
-            await viewModel.BuildSelectedProjectAsync();
-            var request = Assert.Single(backgroundProcesses.Requests);
-            dispatcher.Reset();
-            var offDispatcherUpdates = 0;
-            viewModel.PropertyChanged += (_, _) =>
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            List<BuilderJobSnapshot> notifications = [];
+            var pending = application.RunJobAsync(new() { Operation = "create", Kind = BuilderProjectKind.Node }, snapshot =>
             {
-                if (!dispatcher.IsDispatching)
-                {
-                    Interlocked.Increment(ref offDispatcherUpdates);
-                }
-            };
-            project.PropertyChanged += (_, _) =>
-            {
-                if (!dispatcher.IsDispatching)
-                {
-                    Interlocked.Increment(ref offDispatcherUpdates);
-                }
-            };
-
-            await request.ExecuteAsync(CreateContext());
-
-            Assert.Equal(0, offDispatcherUpdates);
-            Assert.True(dispatcher.InvocationCount > 0);
-            Assert.StartsWith("Build completed.", viewModel.StatusText, StringComparison.Ordinal);
-            await viewModel.DisposeAsync();
-        }
-        finally
-        {
-            Directory.Delete(root, recursive: true);
-        }
-    }
-
-    private static BuilderProjectApplicationService CreateApplicationService(
-        AgentWorkspaceRecord workspace,
-        TestExecutionTarget target,
-        IBuilderProjectStore store,
-        BuilderPathService? pathService = null)
-    {
-        pathService ??= new BuilderPathService();
-        return new BuilderProjectApplicationService(
-            new BuilderSetupService(),
-            new BuilderWorkspaceExecutionService(CreateBuilderRpcClient(workspace, target)),
-            store,
-            pathService);
-    }
-
-    private static BuilderViewModel CreateViewModelForLoadTest(string root, IBuilderProjectStore store)
-    {
-        var workspace = CreateWorkspace(root);
-        var pathService = new BuilderPathService();
-        return new BuilderViewModel(
-            CreateApplicationService(workspace, new TestExecutionTarget(), store, pathService),
-            new BuilderOperationQueue(new CapturingBackgroundProcessQueue()),
-            new BuilderProjectPersistence(store, TimeSpan.FromMinutes(1)),
-            pathService,
-            new RecordingUiDispatcher());
-    }
-
-    private static BuilderProjectRecord CreateRecord(string id)
-    {
-        var now = DateTimeOffset.UtcNow;
-        return new BuilderProjectRecord(id, id, $"local.{id}", "workspace.local", string.Empty, string.Empty, now, now);
-    }
-
-    private static BuilderProjectRecord CreateInitializedRecord(string root)
-    {
-        var now = DateTimeOffset.UtcNow;
-        return new BuilderProjectRecord(
-            "project",
-            "Builder Project",
-            "local.builder.project",
-            "workspace.local",
-            root,
-            root,
-            now,
-            now)
-        {
-            WorkspacePathId = "workspace.path",
-        };
-    }
-
-    private static string CreateProjectFolder()
-    {
-        var root = Path.Combine(Path.GetTempPath(), "sunder-builder-services", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(root);
-        File.WriteAllText(Path.Combine(root, "BuilderProject.csproj"), "<Project />");
-        return root;
-    }
-
-    private static AgentWorkspaceRecord CreateWorkspace(string root)
-    {
-        var now = DateTimeOffset.UtcNow;
-        return new AgentWorkspaceRecord(
-            "workspace.local",
-            "Local workspace",
-            null,
-            now,
-            now,
-            [new AgentWorkspacePathRecord("workspace.path", "workspace.local", root, true, 0, now, now)]);
-    }
-
-    private static BuilderRuntimeModels.AgentWorkspaceRecord ToBuilderWorkspace(AgentWorkspaceRecord workspace)
-        => new()
-        {
-            WorkspaceId = workspace.WorkspaceId,
-            DisplayName = workspace.DisplayName,
-            Description = workspace.Description,
-            CreatedAtUtc = ToWireTimestamp(workspace.CreatedAtUtc),
-            UpdatedAtUtc = ToWireTimestamp(workspace.UpdatedAtUtc),
-            Paths = workspace.Paths.Select(ToBuilderWorkspacePath).ToArray(),
-            Documents = workspace.Documents.Select(document => new BuilderRuntimeModels.AgentWorkspaceDocumentRecord
-            {
-                DocumentId = document.DocumentId,
-                WorkspaceId = document.WorkspaceId,
-                FilePath = document.FilePath,
-                SortOrder = document.SortOrder,
-                CreatedAtUtc = ToWireTimestamp(document.CreatedAtUtc),
-                UpdatedAtUtc = ToWireTimestamp(document.UpdatedAtUtc),
-            }).ToArray(),
-        };
-
-    private static BuilderRuntimeModels.AgentWorkspacePathRecord ToBuilderWorkspacePath(AgentWorkspacePathRecord path)
-        => new()
-        {
-            PathId = path.PathId,
-            WorkspaceId = path.WorkspaceId,
-            HostPath = path.HostPath,
-            IsDefault = path.IsDefault,
-            SortOrder = path.SortOrder,
-            CreatedAtUtc = ToWireTimestamp(path.CreatedAtUtc),
-            UpdatedAtUtc = ToWireTimestamp(path.UpdatedAtUtc),
-        };
-
-    private static SunderRpcOffsetDateTime ToWireTimestamp(DateTimeOffset value)
-        => new(value.ToString("O"));
-
-    private static LoopbackBuilderRpcClient CreateBuilderRpcClient(
-        AgentWorkspaceRecord workspace,
-        TestExecutionTarget target)
-        => new(new TestWorkspaceExecutionResolver(workspace, target));
-
-    private static BackgroundProcessContext CreateContext(CancellationToken cancellationToken = default)
-        => new(cancellationToken, _ => { }, (_, _) => { }, _ => { });
-
-    private sealed class InconsistentContentRuntimeService : BuilderRuntimeServices.IBuilderRuntimeService
-    {
-        public ValueTask<SunderContent> ListWorkspacesAsync(CancellationToken cancellationToken = default)
-            => ValueTask.FromResult(new SunderContent(
-                "application/json",
-                "builder-result.json",
-                length: 1,
-                sha256: new string('0', 64),
-                expiresAtUtc: null,
-                isRepeatable: true,
-                _ => ValueTask.FromResult<Stream>(new MemoryStream([0, 1]))));
-
-        public ValueTask AddPathEntryAsync(string workspaceId, string executionPath, CancellationToken cancellationToken = default)
-            => throw new NotSupportedException();
-        public ValueTask<SunderContent> ExecuteProcessAsync(string workspaceId, BuilderRuntimeModels.AgentProcessCommandRequest request,
-            CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public ValueTask<SunderContent> ExecuteShellAsync(string workspaceId, BuilderRuntimeModels.AgentShellCommandRequest request,
-            CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public ValueTask<BuilderRuntimeModels.AgentExecutionPathMapping> MapToHostPathAsync(string workspaceId, string executionPath,
-            CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public ValueTask<SunderContent> ResolveWorkspaceAsync(string workspaceId, CancellationToken cancellationToken = default)
-            => throw new NotSupportedException();
-    }
-
-    private sealed class RecordingProjectStore(bool blockFirstSave = false) : IBuilderProjectStore
-    {
-        private readonly object _syncRoot = new();
-        private readonly bool _blockFirstSave = blockFirstSave;
-        private readonly List<IReadOnlyList<BuilderProjectRecord>> _saves = [];
-        private int _saveCount;
-
-        public TaskCompletionSource FirstSaveStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        public TaskCompletionSource ReleaseFirstSave { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        public IReadOnlyList<IReadOnlyList<BuilderProjectRecord>> Saves
-        {
-            get
-            {
-                lock (_syncRoot)
-                {
-                    return _saves.ToArray();
-                }
-            }
-        }
-
-        public Task<IReadOnlyList<BuilderProjectRecord>> LoadAsync(CancellationToken cancellationToken = default)
-            => Task.FromResult<IReadOnlyList<BuilderProjectRecord>>([]);
-
-        public async Task SaveAsync(IReadOnlyList<BuilderProjectRecord> projects, CancellationToken cancellationToken = default)
-        {
-            var saveNumber = Interlocked.Increment(ref _saveCount);
-            lock (_syncRoot)
-            {
-                _saves.Add(projects.ToArray());
-            }
-
-            if (saveNumber == 1)
-            {
-                FirstSaveStarted.TrySetResult();
-                if (_blockFirstSave)
-                {
-                    await ReleaseFirstSave.Task.WaitAsync(cancellationToken);
-                }
-            }
-        }
-
-        public async Task WaitForSaveCountAsync(int count)
-        {
-            var timeout = DateTime.UtcNow + TimeSpan.FromSeconds(5);
-            while (Volatile.Read(ref _saveCount) < count)
-            {
-                if (DateTime.UtcNow >= timeout)
-                {
-                    throw new TimeoutException($"Timed out waiting for {count} saves.");
-                }
-
-                await Task.Delay(5);
-            }
-        }
-    }
-
-    private sealed class FailingLoadProjectStore(Exception error) : IBuilderProjectStore
-    {
-        public int SaveCount { get; private set; }
-
-        public Task<IReadOnlyList<BuilderProjectRecord>> LoadAsync(CancellationToken cancellationToken = default)
-            => Task.FromException<IReadOnlyList<BuilderProjectRecord>>(error);
-
-        public Task SaveAsync(IReadOnlyList<BuilderProjectRecord> projects, CancellationToken cancellationToken = default)
-        {
-            SaveCount++;
-            return Task.CompletedTask;
-        }
-    }
-
-    private sealed class CancelableLoadProjectStore : IBuilderProjectStore
-    {
-        public TaskCompletionSource LoadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        public int SaveCount { get; private set; }
-
-        public async Task<IReadOnlyList<BuilderProjectRecord>> LoadAsync(CancellationToken cancellationToken = default)
-        {
-            LoadStarted.TrySetResult();
-            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
-            return [];
-        }
-
-        public Task SaveAsync(IReadOnlyList<BuilderProjectRecord> projects, CancellationToken cancellationToken = default)
-        {
-            SaveCount++;
-            return Task.CompletedTask;
-        }
-    }
-
-    private sealed class CapturingBackgroundProcessQueue : IBackgroundProcessQueue
-    {
-        public event EventHandler<BackgroundProcessChangedEventArgs>? ProcessChanged
-        {
-            add { }
-            remove { }
-        }
-
-        public List<BackgroundProcessRequest> Requests { get; } = [];
-
-        public BackgroundProcessSnapshot Enqueue(BackgroundProcessRequest request)
-        {
-            Requests.Add(request);
-            return new BackgroundProcessSnapshot(
-                Guid.NewGuid(),
-                request.Title,
-                request.GroupKey,
-                request.Indicator,
-                request.ConcurrencyMode,
-                BackgroundProcessState.Queued,
-                string.Empty,
-                null,
-                request.CanCancel,
-                request.Metadata ?? new Dictionary<string, string>(),
-                null,
-                DateTimeOffset.UtcNow,
-                null,
-                null);
-        }
-
-        public IReadOnlyList<BackgroundProcessSnapshot> ListProcesses(string? groupKey = null) => [];
-
-        public bool Cancel(Guid processId) => false;
-    }
-
-    private sealed class RecordingUiDispatcher : IBuilderUiDispatcher
-    {
-        private int _dispatchDepth;
-
-        public bool IsDispatching => Volatile.Read(ref _dispatchDepth) > 0;
-
-        public int InvocationCount { get; private set; }
-
-        public bool CheckAccess() => IsDispatching;
-
-        public void Post(Action action) => Invoke(action);
-
-        public Task InvokeAsync(Action action)
-        {
-            Invoke(action);
-            return Task.CompletedTask;
-        }
-
-        public Task<T> InvokeAsync<T>(Func<T> action)
-        {
-            Interlocked.Increment(ref _dispatchDepth);
-            InvocationCount++;
-            try
-            {
-                return Task.FromResult(action());
-            }
-            finally
-            {
-                Interlocked.Decrement(ref _dispatchDepth);
-            }
-        }
-
-        public void Reset() => InvocationCount = 0;
-
-        private void Invoke(Action action)
-        {
-            Interlocked.Increment(ref _dispatchDepth);
-            InvocationCount++;
-            try
-            {
-                action();
-            }
-            finally
-            {
-                Interlocked.Decrement(ref _dispatchDepth);
-            }
-        }
-    }
-
-    private sealed class TestWorkspaceExecutionResolver :
-        IAgentWorkspaceExecutionResolver,
-        ITestWorkspaceExecutionResolverBinding,
-        IAsyncDisposable
-    {
-        private readonly AgentWorkspaceRecord _workspace;
-        private readonly TestExecutionTarget _target;
-        private readonly FakeServiceCatalog<AgentServices.IExecutionTargetService> _targetCatalog = new(
-            CurrentPublicRpcDescriptors.Get(RegressionTestBindings.ExecutionTargets));
-        private ServiceReference<AgentServices.IExecutionTargetService> _targetReference;
-
-        public TestWorkspaceExecutionResolver(AgentWorkspaceRecord workspace, TestExecutionTarget target)
-        {
-            _workspace = workspace;
-            _target = target;
-            _targetReference = _targetCatalog.Add(new RegressionTestExecutionProvider(target), "test.execution.target").Reference;
-        }
-
-        public TestExecutionTarget Target => _target;
-
-        IAgentExecutionTarget ITestWorkspaceExecutionResolverBinding.Target => _target;
-
-        public void BindTargetReference(ServiceReference<AgentServices.IExecutionTargetService> targetReference)
-            => _targetReference = targetReference;
-
-        public ValueTask DisposeAsync() => _targetCatalog.DisposeAsync();
-
-        public ValueTask<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesAsync(
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromResult<IReadOnlyList<AgentWorkspaceRecord>>([_workspace]);
-
-        public ValueTask<AgentWorkspaceExecutionResolution> ResolveAsync(
-            string workspaceId,
-            CancellationToken cancellationToken = default)
-        {
-            var now = DateTimeOffset.UtcNow;
-            var binding = new AgentWorkspaceBindingRecord(
-                "binding.local",
-                _workspace.WorkspaceId,
-                RegressionTestBindings.ExecutionTargets,
-                "local",
-                "primary",
-                true,
-                0,
-                now,
-                now);
-            var scope = new AgentExecutionScopeDescriptor(
-                "Local",
-                [_workspace.Paths[0].HostPath],
-                _workspace.Paths[0].HostPath);
-            return ValueTask.FromResult(new AgentWorkspaceExecutionResolution(
-                _workspace,
-                binding,
-                _target.Descriptor,
-                scope,
-                _targetReference));
-        }
-    }
-
-    private sealed class ListOnlyWorkspaceExecutionResolver(
-        IReadOnlyList<AgentWorkspaceRecord> workspaces) : IAgentWorkspaceExecutionResolver
-    {
-        public ValueTask<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesAsync(
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromResult(workspaces);
-
-        public ValueTask<AgentWorkspaceExecutionResolution> ResolveAsync(
-            string workspaceId,
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromException<AgentWorkspaceExecutionResolution>(new NotSupportedException());
-    }
-
-    private sealed class BlockingWorkspaceExecutionResolver : IAgentWorkspaceExecutionResolver
-    {
-        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public TaskCompletionSource Completed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public Thread? InvocationThread { get; private set; }
-
-        public ValueTask<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesAsync(
-            CancellationToken cancellationToken = default)
-        {
-            InvocationThread = Thread.CurrentThread;
-            Started.TrySetResult();
-            try
-            {
-                Release.Task.GetAwaiter().GetResult();
-                return ValueTask.FromResult<IReadOnlyList<AgentWorkspaceRecord>>([]);
-            }
-            finally
-            {
-                Completed.TrySetResult();
-            }
-        }
-
-        public ValueTask<AgentWorkspaceExecutionResolution> ResolveAsync(
-            string workspaceId,
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromException<AgentWorkspaceExecutionResolution>(new NotSupportedException());
-    }
-
-    private sealed class CancellationAwareWorkspaceExecutionResolver : IAgentWorkspaceExecutionResolver
-    {
-        public TaskCompletionSource Started { get; } =
-            new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public TaskCompletionSource CancellationObserved { get; } =
-            new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        public async ValueTask<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesAsync(
-            CancellationToken cancellationToken = default)
-        {
-            Started.TrySetResult();
-            try
-            {
-                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
-                return [];
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                CancellationObserved.TrySetResult();
-                throw;
-            }
-        }
-
-        public ValueTask<AgentWorkspaceExecutionResolution> ResolveAsync(
-            string workspaceId,
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromException<AgentWorkspaceExecutionResolution>(new NotSupportedException());
-    }
-
-    private sealed class TestExecutionTarget(
-        bool blockProjectOperations = false,
-        string output = "",
-        bool prerequisitesInstalled = false,
-        string? failInitializationStep = null) : IAgentProcessExecutionTarget
-    {
-        public AgentExecutionTargetDescriptor Descriptor { get; } = new(
-            "local",
-            "local",
-            "Local",
-            null,
-            SupportsShell: true,
-            SupportsFiles: true)
-        {
-            Facets = [AgentExecutionFacetIds.ProcessExecution],
-        };
-
-        public TaskCompletionSource ProjectOperationStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        public string? LastProjectOperation { get; private set; }
-        public IReadOnlyList<string>? LastProjectArguments { get; private set; }
-        public List<AgentProcessCommandRequest> Requests { get; } = [];
-
-        public ValueTask<AgentExecutionTargetReadiness> GetReadinessAsync(
-            AgentExecutionTargetContext context,
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromResult(new AgentExecutionTargetReadiness("local", "local", AgentExecutionTargetReadinessStatus.Ready, "Ready"));
-
-        public ValueTask<AgentExecutionShellDescriptor> GetShellAsync(
-            AgentExecutionTargetContext context,
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromResult(new AgentExecutionShellDescriptor("sh", "Shell", "/bin/sh", AgentShellSyntaxKinds.PosixSh, "Shell"));
-
-        public ValueTask<AgentResolvedResource> ResolveFileResourceAsync(
-            AgentExecutionTargetContext context,
-            string path,
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromResult(new AgentResolvedResource("file", path, path, AgentPermissionBoundaryIds.ConfiguredScope, true));
-
-        public ValueTask<AgentShellCommandResult> ExecuteShellAsync(
-            AgentExecutionTargetContext context,
-            AgentShellCommandRequest request,
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromResult(new AgentShellCommandResult(0, output));
-
-        public async ValueTask<AgentShellCommandResult> ExecuteProcessAsync(
-            AgentExecutionTargetContext context,
-            AgentProcessCommandRequest request,
-            CancellationToken cancellationToken = default)
-        {
-            Requests.Add(request);
-            if (prerequisitesInstalled && request.Arguments.SequenceEqual(["--list-sdks"]))
-                return new AgentShellCommandResult(0, "10.0.100 [test-sdk]");
-            if (prerequisitesInstalled && request.Arguments.SequenceEqual(["new", "list", "sunder-package"]))
-                return new AgentShellCommandResult(0, "sunder-package");
-            if (failInitializationStep == "restore" && request.Arguments[0] == "restore")
-                return new AgentShellCommandResult(1, "restore failed");
-            if (failInitializationStep == "create" && request.Arguments.Take(2).SequenceEqual(["new", "sunder-package"]))
-                return new AgentShellCommandResult(1, "create failed");
-            LastProjectOperation = request.Arguments.FirstOrDefault();
-            LastProjectArguments = request.Arguments.ToArray();
-            ProjectOperationStarted.TrySetResult();
-            if (blockProjectOperations && LastProjectOperation is "build" or "msbuild")
-            {
-                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
-            }
-
-            return new AgentShellCommandResult(0, output);
-        }
-
-        public ValueTask<AgentFileReadResult> ReadFileAsync(
-            AgentExecutionTargetContext context,
-            AgentFileReadRequest request,
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromResult(new AgentFileReadResult(request.Path, string.Empty));
-
-        public ValueTask<AgentFileMutationResult> WriteFileAsync(
-            AgentExecutionTargetContext context,
-            AgentFileWriteRequest request,
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromResult(new AgentFileMutationResult(request.Path, "Written"));
-
-        public ValueTask<AgentFileMutationResult> DeleteFileAsync(
-            AgentExecutionTargetContext context,
-            AgentFileDeleteRequest request,
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromResult(new AgentFileMutationResult(request.Path, "Deleted"));
-    }
-
-    private sealed class ShellOnlyWorkspaceExecutionResolver :
-        IAgentWorkspaceExecutionResolver,
-        ITestWorkspaceExecutionResolverBinding,
-        IAsyncDisposable
-    {
-        private readonly AgentWorkspaceRecord _workspace;
-        private readonly ShellOnlyExecutionTarget _target;
-        private readonly FakeServiceCatalog<AgentServices.IExecutionTargetService> _targetCatalog = new(
-            CurrentPublicRpcDescriptors.Get(RegressionTestBindings.ExecutionTargets));
-        private ServiceReference<AgentServices.IExecutionTargetService> _targetReference;
-
-        public ShellOnlyWorkspaceExecutionResolver(AgentWorkspaceRecord workspace, ShellOnlyExecutionTarget target)
-        {
-            _workspace = workspace;
-            _target = target;
-            _targetReference = _targetCatalog.Add(new RegressionTestExecutionProvider(target), "test.shellonly.execution.target").Reference;
-        }
-
-        IAgentExecutionTarget ITestWorkspaceExecutionResolverBinding.Target => _target;
-
-        public void BindTargetReference(ServiceReference<AgentServices.IExecutionTargetService> targetReference)
-            => _targetReference = targetReference;
-
-        public ValueTask DisposeAsync() => _targetCatalog.DisposeAsync();
-
-        public ValueTask<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesAsync(
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromResult<IReadOnlyList<AgentWorkspaceRecord>>([_workspace]);
-
-        public ValueTask<AgentWorkspaceExecutionResolution> ResolveAsync(
-            string workspaceId,
-            CancellationToken cancellationToken = default)
-        {
-            var now = DateTimeOffset.UtcNow;
-            var binding = new AgentWorkspaceBindingRecord(
-                "binding.shell-only",
-                _workspace.WorkspaceId,
-                RegressionTestBindings.ExecutionTargets,
-                "shell-only",
-                "primary",
-                true,
-                0,
-                now,
-                now);
-            return ValueTask.FromResult(new AgentWorkspaceExecutionResolution(
-                _workspace,
-                binding,
-                _target.Descriptor,
-                new AgentExecutionScopeDescriptor(
-                    "Shell only",
-                    [_workspace.Paths[0].HostPath],
-                    _workspace.Paths[0].HostPath),
-                _targetReference));
-        }
-    }
-
-    private sealed class ShellOnlyExecutionTarget : IAgentExecutionTarget
-    {
-        private int _shellInvocations;
-
-        public int ShellInvocations => Volatile.Read(ref _shellInvocations);
-
-        public AgentExecutionTargetDescriptor Descriptor { get; } = new(
-            "shell-only",
-            "shell-only",
-            "Shell only",
-            null,
-            SupportsShell: true,
-            SupportsFiles: false);
-
-        public ValueTask<AgentExecutionTargetReadiness> GetReadinessAsync(
-            AgentExecutionTargetContext context,
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromResult(new AgentExecutionTargetReadiness(
-                "shell-only",
-                "shell-only",
-                AgentExecutionTargetReadinessStatus.Ready,
-                "Ready"));
-
-        public ValueTask<AgentExecutionShellDescriptor> GetShellAsync(
-            AgentExecutionTargetContext context,
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromResult(new AgentExecutionShellDescriptor(
-                "powershell",
-                "PowerShell",
-                "pwsh",
-                AgentShellSyntaxKinds.PowerShell,
-                "PowerShell"));
-
-        public ValueTask<AgentResolvedResource> ResolveFileResourceAsync(
-            AgentExecutionTargetContext context,
-            string path,
-            CancellationToken cancellationToken = default)
-            => throw new NotSupportedException();
-
-        public ValueTask<AgentShellCommandResult> ExecuteShellAsync(
-            AgentExecutionTargetContext context,
-            AgentShellCommandRequest request,
-            CancellationToken cancellationToken = default)
-        {
-            Interlocked.Increment(ref _shellInvocations);
-            return ValueTask.FromResult(new AgentShellCommandResult(0, string.Empty));
-        }
-
-        public ValueTask<AgentFileReadResult> ReadFileAsync(
-            AgentExecutionTargetContext context,
-            AgentFileReadRequest request,
-            CancellationToken cancellationToken = default)
-            => throw new NotSupportedException();
-
-        public ValueTask<AgentFileMutationResult> WriteFileAsync(
-            AgentExecutionTargetContext context,
-            AgentFileWriteRequest request,
-            CancellationToken cancellationToken = default)
-            => throw new NotSupportedException();
-
-        public ValueTask<AgentFileMutationResult> DeleteFileAsync(
-            AgentExecutionTargetContext context,
-            AgentFileDeleteRequest request,
-            CancellationToken cancellationToken = default)
-            => throw new NotSupportedException();
-    }
-
-    internal sealed class LoopbackBuilderRpcClient : BuilderRuntimeServices.IBuilderRuntimeService, IDisposable
-    {
-        private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
-        {
-            Converters = { new SunderRpcJsonConverterFactory() },
-        };
-        private readonly IAgentWorkspaceExecutionResolver _resolver;
-        private readonly IAgentExecutionTarget? _target;
-
-        public LoopbackBuilderRpcClient(IAgentWorkspaceExecutionResolver resolver)
-        {
-            _resolver = resolver;
-            if (resolver is ITestWorkspaceExecutionResolverBinding testResolver)
-            {
-                _target = testResolver.Target;
-            }
-        }
-
-        public List<string> RequestKinds { get; } = [];
-
-        public int MaximumResponseBytes { get; private set; }
-
-        public async ValueTask<Sunder.Sdk.Services.SunderContent> ListWorkspacesAsync(CancellationToken cancellationToken = default)
-        {
-            RequestKinds.Add("ListWorkspaces");
-            return Content(await _resolver.ListWorkspacesAsync(cancellationToken));
-        }
-
-        public async ValueTask<Sunder.Sdk.Services.SunderContent> ResolveWorkspaceAsync(string workspaceId, CancellationToken cancellationToken = default)
-        {
-            RequestKinds.Add("ResolveWorkspace");
-            var resolution = await _resolver.ResolveAsync(workspaceId, cancellationToken);
-            var target = RequireTarget();
-            var context = new AgentExecutionTargetContext(null, null, resolution.Workspace, resolution.Binding);
-            var shell = await target.GetShellAsync(context, cancellationToken);
-            return Content(new
-            {
-                resolution.Workspace,
-                resolution.Binding,
-                resolution.Target,
-                resolution.Scope,
-                Shell = shell,
-                SupportsPathMapping = target is IAgentExecutionPathMapper,
-                SupportsPathEnvironment = target is IAgentExecutionPathEnvironment,
+                notifications.Add(snapshot);
+                return Task.CompletedTask;
             });
-        }
+            await BuilderUiFixture.WaitAsync(() => Volatile.Read(ref queue.DelegateInvocations) == 1);
+            var activity = Assert.Single(queue.ListProcesses());
+            Assert.Equal(BackgroundProcessState.Running, activity.State);
+            queue.Cancel(activity.ProcessId);
 
-        public async ValueTask<Sunder.Sdk.Services.SunderContent> ExecuteProcessAsync(
-            string workspaceId,
-            BuilderRuntimeModels.AgentProcessCommandRequest request,
-            CancellationToken cancellationToken = default)
-        {
-            RequestKinds.Add("ExecuteProcess");
-            var resolution = await _resolver.ResolveAsync(workspaceId, cancellationToken);
-            var target = RequireTarget() as IAgentProcessExecutionTarget
-                ?? throw new NotSupportedException("Package Builder requires the execution target's structured process-execution facet.");
-            var result = await target.ExecuteProcessAsync(new AgentExecutionTargetContext(null, null, resolution.Workspace, resolution.Binding),
-                new AgentProcessCommandRequest(request.FileName, request.Arguments, request.WorkingDirectory,
-                    request.TimeoutSeconds is { } timeout ? checked((int)timeout) : null), cancellationToken);
-            return Content(ProcessResult(result));
-        }
+            var result = await pending.WaitAsync(TimeSpan.FromSeconds(3));
 
-        public async ValueTask<Sunder.Sdk.Services.SunderContent> ExecuteShellAsync(
-            string workspaceId,
-            BuilderRuntimeModels.AgentShellCommandRequest request,
-            CancellationToken cancellationToken = default)
-        {
-            RequestKinds.Add("ExecuteShell");
-            var resolution = await _resolver.ResolveAsync(workspaceId, cancellationToken);
-            var result = await RequireTarget().ExecuteShellAsync(new AgentExecutionTargetContext(null, null, resolution.Workspace, resolution.Binding),
-                new AgentShellCommandRequest(request.Command, request.WorkingDirectory,
-                    request.TimeoutSeconds is { } timeout ? checked((int)timeout) : null), cancellationToken);
-            return Content(ProcessResult(result));
+            Assert.False(blocking.IsCompleted);
+            activity = Assert.Single(queue.ListProcesses());
+            Assert.Equal(BackgroundProcessState.Cancelled, activity.State);
+            AssertCancellationBeforeBackend(result, activity, notifications);
+            Assert.Empty(backend.Starts);
+            Assert.Equal(0, queue.SubscriberCount);
         }
-
-        public async ValueTask<BuilderRuntimeModels.AgentExecutionPathMapping> MapToHostPathAsync(
-            string workspaceId,
-            string executionPath,
-            CancellationToken cancellationToken = default)
-        {
-            var resolution = await _resolver.ResolveAsync(workspaceId, cancellationToken);
-            var mapping = await (RequireTarget() as IAgentExecutionPathMapper
-                ?? throw new NotSupportedException()).MapToHostPathAsync(new AgentExecutionTargetContext(null, null, resolution.Workspace, resolution.Binding), executionPath, cancellationToken);
-            return JsonSerializer.Deserialize<BuilderRuntimeModels.AgentExecutionPathMapping>(JsonSerializer.SerializeToUtf8Bytes(mapping, Json), Json)!;
-        }
-
-        public async ValueTask AddPathEntryAsync(string workspaceId, string executionPath, CancellationToken cancellationToken = default)
-        {
-            var resolution = await _resolver.ResolveAsync(workspaceId, cancellationToken);
-            await (RequireTarget() as IAgentExecutionPathEnvironment
-                ?? throw new NotSupportedException()).AddPathEntryAsync(new AgentExecutionTargetContext(null, null, resolution.Workspace, resolution.Binding), executionPath, cancellationToken);
-        }
-
-        public void Dispose()
-        {
-            if (_resolver is IAsyncDisposable disposable)
-            {
-                disposable.DisposeAsync().AsTask().GetAwaiter().GetResult();
-            }
-        }
-
-        private IAgentExecutionTarget RequireTarget()
-            => _target ?? throw new InvalidOperationException("The workspace execution target was not bound.");
-
-        private static BuilderProcessResult ProcessResult(AgentShellCommandResult result)
-        {
-            const int maximum = 512 * 1024;
-            return new BuilderProcessResult(result.ExitCode,
-                result.Output.Length <= maximum ? result.Output : result.Output[..maximum],
-                string.Empty,
-                result.WasTruncated || result.Output.Length > maximum);
-        }
-
-        private Sunder.Sdk.Services.SunderContent Content<T>(T value)
-        {
-            var bytes = JsonSerializer.SerializeToUtf8Bytes(value, Json);
-            MaximumResponseBytes = Math.Max(MaximumResponseBytes, bytes.Length);
-            return Sunder.Sdk.Services.SunderContent.FromBytes(bytes, "application/json", "builder-result.json");
-        }
+        finally { release.TrySetResult(); await blocking.WaitAsync(TimeSpan.FromSeconds(3)); }
     }
-}
 
-internal interface ITestWorkspaceExecutionResolverBinding
-{
-    IAgentExecutionTarget Target { get; }
+    private static void AssertCancellationBeforeBackend(BuilderJobSnapshot result, BackgroundProcessSnapshot activity,
+        IReadOnlyList<BuilderJobSnapshot> notifications)
+    {
+        Assert.Same(result, Assert.Single(notifications));
+        Assert.Equal(activity.Metadata["builder.jobId"], result.Id);
+        Assert.Equal(activity.Metadata["builder.operation"], result.Operation);
+        Assert.Equal("cancelled", result.State);
+        Assert.Contains("cancelled", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(result.Output);
+        Assert.Null(result.Project);
+        Assert.Null(result.Installation);
+        Assert.Null(result.DevelopmentFolder);
+        Assert.Null(result.ArchivePath);
+    }
 
-    void BindTargetReference(ServiceReference<AgentServices.IExecutionTargetService> targetReference);
+    [Fact]
+    public async Task CallerAndActivationCancellationCompleteJobsThatNeverStart()
+    {
+        var queue = new BuilderUiBackgroundQueue { AutoStart = false, PublishEvents = false };
+        await using var fixture = new BuilderUiFixture(queue: queue);
+        using var cancellation = new CancellationTokenSource();
+        var pending = fixture.Application.RunJobAsync(new() { Operation = "ensure-sdk", Kind = BuilderProjectKind.Node }, cancellationToken: cancellation.Token);
+        await BuilderUiFixture.WaitAsync(() => queue.ListProcesses().Count == 1);
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending).WaitAsync(TimeSpan.FromSeconds(3));
+        var owned = fixture.Application.RunJobAsync(new() { Operation = "ensure-sdk", Kind = BuilderProjectKind.Dotnet });
+        await BuilderUiFixture.WaitAsync(() => queue.ListProcesses().Count == 2);
+        await fixture.Application.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(3));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => owned);
+        Assert.All(queue.ListProcesses(), item => Assert.Equal(BackgroundProcessState.Cancelled, item.State));
+        Assert.Empty(fixture.Backend.Starts);
+        Assert.Equal(0, queue.SubscriberCount);
+    }
+
+    [Theory]
+    [InlineData("succeeded", BackgroundProcessState.Completed)]
+    [InlineData("failed", BackgroundProcessState.Failed)]
+    [InlineData("cancelled", BackgroundProcessState.Cancelled)]
+    public async Task ShellTracksBackendOutcomeProgressAndProjectMetadata(string state, BackgroundProcessState shellState)
+    {
+        await using var fixture = new BuilderUiFixture();
+        var project = BuilderUiFixture.Project("activity");
+        fixture.Backend.Projects[project.EntryPoint] = project;
+        fixture.Backend.Result = request => fixture.Backend.DefaultResult(request) with { State = "running", Message = "Compiling source" };
+        var job = fixture.Application.RunJobAsync(new()
+        {
+            Operation = "build", Kind = project.Kind, EntryPoint = project.EntryPoint, ProjectFolder = project.ProjectFolder,
+            DisplayName = project.DisplayName, PackageId = project.PackageId,
+        }, projectId: "bookmark-activity");
+        await BuilderUiFixture.WaitAsync(() => fixture.Queue.ListProcesses().Any(item => item.StatusText == "Compiling source"));
+        var activity = Assert.Single(fixture.Queue.ListProcesses());
+        Assert.True(activity.IsIndeterminate);
+        Assert.Equal(BackgroundProcessIndicator.Main, activity.Indicator);
+        Assert.Equal("bookmark-activity", activity.Metadata["builder.projectId"]);
+        Assert.Equal(project.PackageId, activity.Metadata["builder.packageId"]);
+        Assert.Equal("build", activity.Metadata["builder.operation"]);
+        var id = activity.Metadata["builder.jobId"];
+        fixture.Backend.Jobs[id] = fixture.Backend.Jobs[id] with { State = state, Message = "Build " + state, Error = state == "failed" ? "Compilation failed" : null };
+        var result = await job.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Equal(state, result.State);
+        Assert.Equal(project, result.Project);
+        activity = Assert.Single(fixture.Queue.ListProcesses());
+        Assert.Equal(shellState, activity.State);
+        Assert.Equal(state == "succeeded" ? 100d : (double?)null, activity.ProgressPercent);
+        Assert.Equal(0, fixture.Queue.SubscriberCount);
+
+        fixture.Backend.Result = null;
+        await fixture.Application.RunJobAsync(new() { Operation = "ensure-sdk", Kind = BuilderProjectKind.Node });
+        Assert.Equal(BackgroundProcessIndicator.Settings, fixture.Queue.ListProcesses().Single(item => item.Metadata["builder.operation"] == "ensure-sdk").Indicator);
+    }
+
+    [Fact]
+    public async Task EnqueueAcknowledgementFailureCancelsAcceptedWorkAndUnsubscribes()
+    {
+        var queue = new BuilderUiBackgroundQueue { AutoStart = false, PublishEvents = false,
+            BeforeEnqueueReturns = _ => throw new IOException("Lost queue acknowledgement") };
+        await using var fixture = new BuilderUiFixture(queue: queue);
+        await Assert.ThrowsAsync<IOException>(() => fixture.Application.RunJobAsync(new() { Operation = "ensure-sdk", Kind = BuilderProjectKind.Node }));
+        Assert.Equal(BackgroundProcessState.Cancelled, Assert.Single(queue.ListProcesses()).State);
+        Assert.Equal(0, queue.SubscriberCount);
+        Assert.Empty(fixture.Backend.Starts);
+    }
+
+    [Fact]
+    public async Task RunningCancellationDrainsBackendCleanupBeforeReleasingFiniteQueue()
+    {
+        await using var fixture = new BuilderUiFixture();
+        var polled = BuilderUiFixture.Signal();
+        var cleanup = BuilderUiFixture.Signal();
+        var release = BuilderUiFixture.Signal();
+        var polls = 0;
+        fixture.Backend.Result = request => fixture.Backend.DefaultResult(request) with { State = request.Kind == BuilderProjectKind.Dotnet ? "running" : "succeeded" };
+        fixture.Backend.BeforeGet = async (request, token) =>
+        {
+            if (request.Kind == BuilderProjectKind.Dotnet && Interlocked.Increment(ref polls) == 1)
+            { polled.TrySetResult(); await Task.Delay(Timeout.InfiniteTimeSpan, token); }
+        };
+        fixture.Backend.BeforeCancel = async (_, _) => { cleanup.TrySetResult(); await release.Task; };
+        var first = fixture.Application.RunJobAsync(new() { Operation = "ensure-sdk", Kind = BuilderProjectKind.Dotnet });
+        await polled.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        var second = fixture.Application.RunJobAsync(new() { Operation = "ensure-sdk", Kind = BuilderProjectKind.Node });
+        fixture.Queue.Cancel(fixture.Queue.ListProcesses().Single(item => item.Metadata["builder.kind"] == "dotnet").ProcessId);
+        await cleanup.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.False(first.IsCompleted);
+        Assert.False(second.IsCompleted);
+        Assert.Single(fixture.Backend.Starts);
+        release.TrySetResult();
+        Assert.Equal("cancelled", (await first).State);
+        Assert.Equal("succeeded", (await second).State);
+        Assert.True(fixture.Backend.CleanupUsedIndependentToken);
+    }
+
+    [Fact]
+    public async Task PersistenceOverlappingAutosavesDebouncesToLatestGeneration()
+    {
+        var store = new BuilderUiStore();
+        await using var persistence = new BuilderProjectPersistence(store, new BuilderUiStateUpdates(), TimeSpan.FromMilliseconds(25));
+        persistence.RequestSave([Record("one")]);
+        persistence.RequestSave([Record("two")]);
+        await BuilderUiFixture.WaitAsync(() => store.Saves.Count > 0);
+        Assert.Equal("two", Assert.Single(Assert.Single(store.Saves)).Id);
+    }
+
+    [Fact]
+    public async Task PersistenceStaleCompletionDoesNotSuppressNewerGeneration()
+    {
+        var started = BuilderUiFixture.Signal();
+        var release = BuilderUiFixture.Signal();
+        var store = new BuilderUiStore { Save = async (records, _) => { if (records[0].Id == "one") { started.TrySetResult(); await release.Task; } } };
+        await using var persistence = new BuilderProjectPersistence(store, new BuilderUiStateUpdates(), TimeSpan.FromMilliseconds(5));
+        persistence.RequestSave([Record("one")]);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        persistence.RequestSave([Record("two")]);
+        release.TrySetResult();
+        await BuilderUiFixture.WaitAsync(() => store.Saves.Count == 2);
+        Assert.Equal(["one", "two"], store.Saves.Select(records => records[0].Id).ToArray());
+    }
+
+    [Fact]
+    public async Task PersistenceConcurrentDisposalSharesFinalFlush()
+    {
+        var started = BuilderUiFixture.Signal();
+        var release = BuilderUiFixture.Signal();
+        var store = new BuilderUiStore { Save = async (_, _) => { started.TrySetResult(); await release.Task; } };
+        var persistence = new BuilderProjectPersistence(store, new BuilderUiStateUpdates(), TimeSpan.FromMinutes(1));
+        persistence.RequestSave([Record("pending")]);
+        var first = persistence.DisposeAsync().AsTask();
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        var second = persistence.DisposeAsync().AsTask();
+        Assert.False(first.IsCompleted);
+        Assert.False(second.IsCompleted);
+        release.TrySetResult();
+        await Task.WhenAll(first, second);
+        Assert.Equal("pending", Assert.Single(Assert.Single(store.Saves)).Id);
+    }
+
+    [Fact]
+    public async Task PersistenceDisposalWaitsForSaveAlreadyInProgress()
+    {
+        var started = BuilderUiFixture.Signal();
+        var release = BuilderUiFixture.Signal();
+        var store = new BuilderUiStore { Save = async (_, _) => { started.TrySetResult(); await release.Task; } };
+        var persistence = new BuilderProjectPersistence(store, new BuilderUiStateUpdates(), TimeSpan.FromMinutes(1));
+        var save = persistence.SaveNowAsync([Record("saving")]);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        var disposal = persistence.DisposeAsync().AsTask();
+        Assert.False(disposal.IsCompleted);
+        release.TrySetResult();
+        await Task.WhenAll(save, disposal);
+        Assert.Single(store.Saves);
+    }
+
+    [Fact]
+    public async Task AppSettlementExpeditesDebounceWithoutDisposingOrStartingAnUnregisteredFinalSave()
+    {
+        using var settlement = new CancellationTokenSource();
+        var updates = new BuilderUiStateUpdates { SettlementRequested = settlement.Token };
+        var store = new BuilderUiStore();
+        await using var persistence = new BuilderProjectPersistence(store, updates, TimeSpan.FromMinutes(1));
+        persistence.RequestSave([Record("accepted")]);
+        updates.Accepting = false;
+        settlement.Cancel();
+        await BuilderUiFixture.WaitAsync(() => store.Saves.Count == 1);
+        await persistence.DisposeAsync();
+        Assert.Equal("accepted", Assert.Single(Assert.Single(store.Saves)).Id);
+    }
+
+    [Fact]
+    public async Task RejectedAdmissionDoesNotReplaceAnAlreadyAcceptedBookmarkSnapshot()
+    {
+        var updates = new BuilderUiStateUpdates();
+        var store = new BuilderUiStore();
+        await using var persistence = new BuilderProjectPersistence(store, updates, TimeSpan.FromMinutes(1));
+        persistence.RequestSave([Record("accepted")]);
+        updates.Accepting = false;
+        Assert.Throws<InvalidOperationException>(() => persistence.RequestSave([Record("not-accepted")]));
+        await persistence.DisposeAsync();
+        Assert.Equal("accepted", Assert.Single(Assert.Single(store.Saves)).Id);
+    }
+
+    [Fact]
+    public async Task LatestSaveFailureRemainsVisibleAtDisposalWithoutAnUnregisteredRetry()
+    {
+        var error = new IOException("Save did not acknowledge persistence.");
+        var attempts = 0;
+        var store = new BuilderUiStore { Save = (_, _) => { attempts++; return Task.FromException(error); } };
+        var persistence = new BuilderProjectPersistence(store, new BuilderUiStateUpdates(), TimeSpan.Zero);
+        var failed = BuilderUiFixture.Signal();
+        persistence.SaveFailed += (_, args) => { Assert.Same(error, args.Exception); failed.TrySetResult(); };
+        persistence.RequestSave([Record("accepted")]);
+        await failed.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Same(error, await Assert.ThrowsAsync<IOException>(() => persistence.DisposeAsync().AsTask()));
+        Assert.Equal(1, attempts);
+        Assert.Empty(store.Saves);
+    }
+
+    [Fact]
+    public async Task CancelledSaveWaitLeavesItsAcceptedWorkOwnedUntilActualCompletion()
+    {
+        var started = BuilderUiFixture.Signal();
+        var release = BuilderUiFixture.Signal();
+        var store = new BuilderUiStore { Save = async (_, token) => { started.SetResult(); await release.Task.WaitAsync(token); } };
+        var persistence = new BuilderProjectPersistence(store, new BuilderUiStateUpdates(), TimeSpan.Zero);
+        using var cancellation = new CancellationTokenSource();
+        var save = persistence.SaveNowAsync([Record("accepted")], cancellation.Token);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        cancellation.Cancel();
+        var failure = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => save);
+        Assert.Equal(cancellation.Token, failure.CancellationToken);
+        var disposal = persistence.DisposeAsync().AsTask();
+        try { Assert.False(disposal.IsCompleted); }
+        finally { release.TrySetResult(); }
+        await disposal.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Single(store.Saves);
+    }
+
+    [Fact]
+    public async Task DisposalDuringCanceledLoadDrainsCleanupAndNeverFlushesEmptyState()
+    {
+        var started = BuilderUiFixture.Signal();
+        var canceled = BuilderUiFixture.Signal();
+        var cleanup = BuilderUiFixture.Signal();
+        var store = new BuilderUiStore { Load = async token =>
+        {
+            started.TrySetResult();
+            try { await Task.Delay(Timeout.InfiniteTimeSpan, token); }
+            catch (OperationCanceledException) { canceled.TrySetResult(); await cleanup.Task; throw; }
+            return [];
+        } };
+        var fixture = new BuilderUiFixture(store: store);
+        var initialization = fixture.Model.InitializeAsync();
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        var disposal = fixture.DisposeAsync().AsTask();
+        await canceled.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.False(disposal.IsCompleted);
+        cleanup.TrySetResult();
+        await Task.WhenAll(disposal, initialization);
+        Assert.Empty(store.Saves);
+    }
+
+    [Fact]
+    public async Task UnchangedLoadAndDisposalDoNotRewriteBookmarks()
+    {
+        var fixture = new BuilderUiFixture();
+        await fixture.Model.InitializeAsync();
+        await fixture.DisposeAsync();
+        Assert.Empty(fixture.Store.Saves);
+    }
+
+    [Theory]
+    [InlineData("{broken")]
+    [InlineData("{\"version\":3,\"projects\":[]}")]
+    [InlineData("{\"version\":2,\"projects\":[null]}")]
+    public async Task StoreCorruptionAndFutureDocumentsRemainUntouchedEvenAfterSaveAttempt(string persisted)
+    {
+        var context = new BuilderStateContext();
+        context.Value = persisted;
+        var store = new BuilderProjectStore(context);
+        await Assert.ThrowsAnyAsync<Exception>(() => store.LoadAsync());
+        await Assert.ThrowsAnyAsync<Exception>(() => store.SaveAsync([]));
+        Assert.Equal(persisted, context.Value);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LegacyBookmarksMigrateToV2AndNeverTreatRemoteExecutionPathsAsLocal(bool array)
+    {
+        var context = new BuilderStateContext();
+        object[] rows = [new { id = "local", displayName = "Local", packageId = "local.one", projectFolder = Path.GetTempPath(), workspaceId = "obsolete", executionProjectFolder = "/remote/one" },
+            new { id = "unresolved", displayName = "Unresolved", packageId = "local.two", projectFolder = "", workspaceId = "remote", executionProjectFolder = "/remote/two" }];
+        context.Value = array ? JsonSerializer.Serialize(rows) : JsonSerializer.Serialize(new { version = 1, projects = rows });
+        var store = new BuilderProjectStore(context);
+        var migrated = await store.LoadAsync();
+        Assert.Equal(Path.GetTempPath(), migrated[0].ProjectFolder);
+        Assert.Empty(migrated[1].ProjectFolder);
+        Assert.Null(migrated[1].EntryPoint);
+        Assert.Null(migrated[1].Kind);
+        await store.SaveAsync(migrated);
+        using var document = JsonDocument.Parse(context.Value!);
+        Assert.Equal(2, document.RootElement.GetProperty("version").GetInt32());
+        Assert.Equal(migrated, await store.LoadAsync());
+        Assert.DoesNotContain("workspaceId", context.Value, StringComparison.Ordinal);
+    }
+
+    [FileSystemFact(TestFileSystemCapability.DirectorySymbolicLinks, "Builder creation path containment requires directory symbolic links.")]
+    public void CreationFolderRejectsSymlinkEscapeAndCanonicalEntryPointDeduplicatesAliases()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "sunder-builder-containment", Guid.NewGuid().ToString("N"));
+        var parent = Path.Combine(root, "parent");
+        var outside = Path.Combine(root, "outside");
+        Directory.CreateDirectory(parent);
+        Directory.CreateDirectory(outside);
+        Directory.CreateSymbolicLink(Path.Combine(parent, "escape"), outside);
+        try
+        {
+            var paths = new BuilderPathService();
+            Assert.Throws<InvalidOperationException>(() => paths.ResolveCreationFolder(parent, "escape"));
+            Assert.True(paths.SameEntryPoint(Path.Combine(parent, "escape", "package.json"), Path.Combine(outside, "package.json")));
+            Assert.Throws<ArgumentException>(() => paths.ResolveCreationFolder(parent, "../outside"));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    private static BuilderProjectRecord Record(string id) => BuilderUiFixture.Record(BuilderUiFixture.Project(id)) with { Id = id };
+
+    private sealed class InconsistentContentRuntime : BuilderServices.IBuilderRuntimeService
+    {
+        public ValueTask<string> GetBackendIdAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public ValueTask<SunderContent> DiscoverAsync(string folder, CancellationToken cancellationToken = default) => ValueTask.FromResult(new SunderContent(
+            "application/json", "builder-result.json", 1, new string('0', 64), null, true,
+            _ => ValueTask.FromResult<Stream>(new MemoryStream([0, 1]))));
+        public ValueTask<SunderContent> InspectAsync(string entryPoint, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public ValueTask<SunderContent> GetToolchainsAsync(string kind, bool checkUpdates, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public ValueTask<string> StartJobAsync(string requestJson, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public ValueTask<SunderContent> GetJobAsync(string jobId, string expectedBackendId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public ValueTask CancelJobAsync(string jobId, string expectedBackendId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    }
+
+    private sealed class BuilderStateContext : IPackageContext, IPackageStorageContext, IPackageKeyValueStore
+    {
+        public string? Value { get; set; }
+        public string PackageId => "younics.sunder.package.maker";
+        public string Version => "2.0.0";
+        public string ContentRootPath => Path.GetTempPath();
+        public IPackageStorageContext Storage => this;
+        public IPackageKeyValueStore State => this;
+        public IPackageSettings Settings => throw new NotSupportedException();
+        public IPackageSecrets Secrets => throw new NotSupportedException();
+        public IPackageLogging Logging => throw new NotSupportedException();
+        public IPackageFileStore Files => throw new NotSupportedException();
+        public IPackageRoleLocalWorkspace RoleLocalWorkspace => throw new NotSupportedException();
+        public Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default) => Task.FromResult(Value);
+        public Task SetValueAsync(string key, string value, CancellationToken cancellationToken = default) { Value = value; return Task.CompletedTask; }
+        public Task<bool> ContainsKeyAsync(string key, CancellationToken cancellationToken = default) => Task.FromResult(Value is not null);
+        public Task DeleteValueAsync(string key, CancellationToken cancellationToken = default) { Value = null; return Task.CompletedTask; }
+        public Task<IReadOnlyList<string>> ListKeysAsync(string? prefix = null, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<string>>([]);
+    }
 }

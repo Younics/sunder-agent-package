@@ -17,7 +17,7 @@ public static partial class AgentVisibleResponseGuard
             VisibleResponseInstructions,
             Priority: 120,
             Required: true,
-            SourceId: "sunder.package.agent");
+            SourceId: "younics.ai.agent");
 
     public static bool ContainsProtocolLeak(string? markdown)
     {

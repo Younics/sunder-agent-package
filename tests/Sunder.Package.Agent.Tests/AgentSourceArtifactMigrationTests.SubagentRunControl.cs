@@ -5,7 +5,7 @@ using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Services;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Worker;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -15,17 +15,17 @@ public sealed partial class AgentSourceArtifactMigrationTests
     private static async Task VerifySubagentRunControlConsumer(System.Reflection.Assembly agentOwner)
     {
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        var transport = new RunControlConsumerRpc(new RegressionTestRpcClient(state, "sunder.package.agent.subagents"));
+        var transport = new RunControlConsumerRpc(new RegressionTestRpcClient(state, "younics.ai.agent.subagents"));
         var activeRuns = new AgentActiveRunRegistry();
         var registry = new AgentRoleRunControls(agentOwner, activeRuns);
         var implementation = new AgentRunControlService(activeRuns);
         await using var receiver = new GeneratedServiceTestScope(transport);
         var registration = receiver.Register(implementation, RegressionTestBindings.RunControls);
         var descriptor = CurrentPublicRpcDescriptors.Get(RegressionTestBindings.RunControls);
-        state.Add("sunder.package.agent", descriptor, implementation, registration.Handler, Noop.Instance, registration.ProviderId, "2.0.0");
+        state.Add("younics.ai.agent", descriptor, implementation, registration.Handler, Noop.Instance, registration.ProviderId, "2.0.0");
         var client = Assert.Single((await receiver.Providers<AgentServices.IRunControlService>().ListAsync()).Providers).Service;
         var host = new AgentPublicSourceMigrationTests.FullRunControlProbe();
-        using var lease = registry.Open(host, "sunder.package.agent.subagents", out var invocationId);
+        using var lease = registry.Open(host, "younics.ai.agent.subagents", out var invocationId);
 
         var before = DateTimeOffset.UtcNow;
         var result = await client.RunDefaultAsync(invocationId, host.Context);
@@ -43,10 +43,10 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.Equal(SunderRpcErrorKind.ProviderFaulted, error.Error.Kind);
             Assert.Equal("agent.run-control.invalid-invocation", Assert.IsType<SunderRpcException>(state.LastInvocationFailure).Error.Code);
         }
-        var closed = registry.Open(host, "sunder.package.agent.subagents", out var closedId);
+        var closed = registry.Open(host, "younics.ai.agent.subagents", out var closedId);
         closed.Dispose();
         await Assert.ThrowsAsync<SunderRpcException>(() => client.RunDefaultAsync(closedId, host.Context).AsTask());
-        using (registry.Open(new AgentPublicSourceMigrationTests.RunControlProbe(), "sunder.package.agent.subagents", out var unsupported))
+        using (registry.Open(new AgentPublicSourceMigrationTests.RunControlProbe(), "younics.ai.agent.subagents", out var unsupported))
         {
             var error = await Assert.ThrowsAsync<SunderRpcException>(() => client.RunDefaultAsync(unsupported, host.Context).AsTask());
             Assert.Equal(SunderRpcErrorKind.Domain, error.Error.Kind);

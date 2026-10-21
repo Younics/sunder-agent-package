@@ -1,7 +1,10 @@
 using System.Text;
 using Sunder.Agent.Execution.Common;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using Sunder.Generated.Packages.Younics_Ai_Agent_Models;
+using IExecutionTargetService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Execution_Target.IExecutionTargetService;
+using IPermissionSurfaceService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Permission_Surface.IPermissionSurfaceService;
+using IPromptContextContributorService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Prompt_Context_Contributor.IPromptContextContributorService;
+using IToolSourceService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Tool_Source.IToolSourceService;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Shared.Presentation;
@@ -120,7 +123,7 @@ public sealed partial class ShellToolSource : IToolSourceService, IPermissionSur
     }
 
     public async ValueTask<AgentToolReadiness?> GetReadinessAsync(
-        CSunder_Agent_Tool_Source_ToolSourceGetReadinessRequest request,
+        CYounics_Ai_Agent_Tool_Source_ToolSourceGetReadinessRequest request,
         CancellationToken cancellationToken = default)
     {
         var (toolId, context) = (request.ToolId, request.Context);
@@ -168,7 +171,7 @@ public sealed partial class ShellToolSource : IToolSourceService, IPermissionSur
     }
 
     public async ValueTask<AgentToolResult> ExecuteAsync(
-        CSunder_Agent_Tool_Source_ToolSourceExecuteRequest invocation,
+        CYounics_Ai_Agent_Tool_Source_ToolSourceExecuteRequest invocation,
         CancellationToken cancellationToken = default)
     {
         var (context, request) = (invocation.Context, invocation.Request);
@@ -235,7 +238,7 @@ public sealed partial class ShellToolSource : IToolSourceService, IPermissionSur
     }
 
     public ValueTask<AgentPermissionRequest?> PermissionAsync(
-        CSunder_Agent_Tool_Source_ToolSourcePermissionRequest invocation,
+        CYounics_Ai_Agent_Tool_Source_ToolSourcePermissionRequest invocation,
         CancellationToken cancellationToken = default)
     {
         var (context, request) = (invocation.Context, invocation.Request);
@@ -271,7 +274,7 @@ public sealed partial class ShellToolSource : IToolSourceService, IPermissionSur
             },
         ];
 
-    public ValueTask<AgentToolResult?> PreflightAsync(CSunder_Agent_Tool_Source_ToolSourcePreflightRequest request, CancellationToken token = default)
+    public ValueTask<AgentToolResult?> PreflightAsync(CYounics_Ai_Agent_Tool_Source_ToolSourcePreflightRequest request, CancellationToken token = default)
     { token.ThrowIfCancellationRequested(); return ValueTask.FromResult<AgentToolResult?>(null); }
 
     public ValueTask AcknowledgeAsync(AgentPromptContextReceipt request, CancellationToken token = default)

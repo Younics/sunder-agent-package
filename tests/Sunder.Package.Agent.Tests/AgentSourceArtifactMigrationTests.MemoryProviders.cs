@@ -38,19 +38,19 @@ public sealed partial class AgentSourceArtifactMigrationTests
     {
         var directory = Path.Combine(root, "MemoryWorker");
         var selected = File.ReadAllBytes(Path.Combine(directory, "sunder-contracts.lock.json"));
-        var baseline = File.ReadAllBytes(Path.Combine(directory, "sunder-contracts.owned.json"));
+        var baseline = CanonicalPackageRoles.ReadOwnedBaseline(directory);
         using var receipt = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(CanonicalPackageRoles.Analysis(directory), "authoring-receipt.v1.json")));
-        Assert.Equal(20, receipt.RootElement.GetProperty("bundles").GetArrayLength());
+        Assert.Equal(19, receipt.RootElement.GetProperty("bundles").GetArrayLength());
         Assert.Equal(5, receipt.RootElement.GetProperty("providers").GetArrayLength());
-        Assert.Equal(19, receipt.RootElement.GetProperty("uses").GetArrayLength());
+        Assert.Equal(18, receipt.RootElement.GetProperty("uses").GetArrayLength());
         Assert.Equal(4, receipt.RootElement.GetProperty("providerImports").GetArrayLength());
         Assert.Empty(receipt.RootElement.GetProperty("platformImports").EnumerateArray());
         var required = Assert.Single(receipt.RootElement.GetProperty("uses").EnumerateArray(), use => use.GetProperty("required").GetBoolean());
-        Assert.Equal("sunder.agent.runtime.catalog", required.GetProperty("contractKey").GetString());
+        Assert.Equal("younics.ai.agent.runtime.catalog", required.GetProperty("contractKey").GetString());
         var descriptors = receipt.RootElement.GetProperty("contracts").EnumerateArray().ToDictionary(
             contract => contract.GetProperty("contractId").GetString()!,
             contract => SunderRpcContractDescriptor.Parse(Encoding.UTF8.GetBytes(contract.GetProperty("canonicalDescriptor").GetString()!)));
-        Assert.Equal(CurrentPrivateRpcDescriptors.Get("sunder.agent.memory.semantic.inspector").GetCanonicalUtf8(), descriptors["sunder.agent.memory.semantic.inspector"].GetCanonicalUtf8());
+        Assert.Equal(CurrentPrivateRpcDescriptors.Get("younics.ai.agent.memory.semantic.inspector").GetCanonicalUtf8(), descriptors["younics.ai.agent.memory.semantic.inspector"].GetCanonicalUtf8());
         using var roles = new CanonicalPackageRoles();
         var providers = roles.Load("Memory.Semantic", "worker", directory);
         var app = roles.Load("Memory.Semantic", "app", directory);
@@ -65,7 +65,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 assemblyName: "Sunder.Package.Agent.Tests", output: SingleProjectRoleOutput(directory, "worker"), controlledComposition: true);
             await ExerciseMemoryProviders(providers, probes, client, descriptors, app);
             Assert.Equal(selected, File.ReadAllBytes(Path.Combine(directory, "sunder-contracts.lock.json")));
-            Assert.Equal(baseline, File.ReadAllBytes(Path.Combine(directory, "sunder-contracts.owned.json")));
+            Assert.Equal(baseline, CanonicalPackageRoles.ReadOwnedBaseline(directory));
         }
         finally { load.Unload(); }
     }
@@ -75,7 +75,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var inputJson = new JsonSerializerOptions(MemoryProviderJson) { DefaultIgnoreCondition = JsonIgnoreCondition.Never };
         using var package = RegressionTestPackageScope.Create();
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        var context = new TestPackageContext("sunder.package.agent.memory.semantic", package.RootPath, version: "2.0.0", storage: package.Context.Storage);
+        var context = new TestPackageContext("younics.ai.agent.memory.semantic", package.RootPath, version: "2.0.0", storage: package.Context.Storage);
         var ownerRpc = new RegressionTestRpcClient(state, context.PackageId);
         Type Type(string name) => assembly.GetType("Sunder.Package.Agent.Memory.Semantic." + name, true)!;
         Assert.Null(assembly.GetType("Sunder.Package.Agent.Memory.Semantic.Rpc.MemoryProviderCatalog"));
@@ -92,7 +92,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         foreach (var registration in registrations)
         {
             var transport = transports[registration.ProviderId];
-            state.Add("sunder.package.agent.memory.semantic", descriptors[registration.ContractId], transport, transport, Noop.Instance, registration.ProviderId, "2.0.0");
+            state.Add("younics.ai.agent.memory.semantic", descriptors[registration.ContractId], transport, transport, Noop.Instance, registration.ProviderId, "2.0.0");
         }
         var rpc = new RegressionTestRpcClient(state, "example.agent.consumer");
         await using var appServices = CreateGeneratedApp(app, context, ownerRpc);

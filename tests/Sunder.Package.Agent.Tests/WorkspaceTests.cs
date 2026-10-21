@@ -23,6 +23,7 @@ using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Services.BehaviorLoops;
 using Sunder.Package.Agent.Storage;
+using Sunder.Package.Agent.TestSupport;
 using FilesWorker::Sunder.Package.Agent.Tools.Files;
 using ShellWorker::Sunder.Package.Agent.Tools.Shell;
 using WebWorker::Sunder.Package.Agent.Tools.Web;
@@ -32,8 +33,8 @@ using AppRuntime = AgentApp::Sunder.Package.Agent.Runtime;
 using AppModels = AgentApp::Sunder.Package.Agent.Contracts.Models;
 using AgentAppServiceIdentity = AgentApp::Sunder.Package.Agent.Contracts.Models.AgentServiceIdentity;
 using AgentToolPresentationService = AgentApp::Sunder.Package.Agent.Services.AgentToolPresentationService;
-using DockerWorkerModels = DockerWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
-using LocalWorkerModels = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using DockerWorkerModels = DockerWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models;
+using LocalWorkerModels = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Services;
@@ -240,10 +241,22 @@ public sealed class WorkspaceTests
             [new StackExportItemSelection("profile.stack")]));
 
         Assert.All(item.Details ?? [], detail => Assert.NotNull(detail.Sensitivity));
-        Assert.Single(contribution.Fragments);
+        var fragment = Assert.Single(contribution.Fragments);
         var requirement = Assert.Single(contribution.PackageRequirements);
-        Assert.Equal("sunder.package.agent", requirement.PackageId);
+        Assert.Equal("younics.ai.agent", requirement.PackageId);
         Assert.Equal("1.1.0", requirement.MinimumVersion);
+
+        using var targetScope = TestScope.Create();
+        using var targetServices = CreateWorkspaceViewServices(targetScope.Context);
+        var target = new AgentProfileStackContributor(targetServices.ProfileService, targetScope.Context);
+        var importFragment = ToImportFragment(fragment, contributor.ContributorId);
+        var preview = await target.PreviewImportAsync(new StackImportPreviewRequest([importFragment], new Dictionary<string, string>(), new Dictionary<string, string>()));
+        var action = Assert.Single(preview.Actions);
+        await AssertStackRejectsOldIdentityAsync(target, importFragment, action.ActionId);
+        Assert.Null(targetServices.ProfileService.GetProfile("profile.stack"));
+        var imported = await target.ImportAsync(new StackImportRequest([importFragment], new Dictionary<string, string>(), new Dictionary<string, string>(), [action.ActionId]));
+        Assert.Single(imported.ImportedItems);
+        Assert.Equal("Use concise responses.", targetServices.ProfileService.GetProfile("profile.stack")?.Instructions);
     }
 
     [Fact]
@@ -278,14 +291,67 @@ public sealed class WorkspaceTests
         Assert.Throws<NotSupportedException>(() => ((IList<StackFragmentExport>)contribution.Fragments).Clear());
         Assert.All(item.Details ?? [], detail => Assert.NotNull(detail.Sensitivity));
         var requirement = Assert.Single(contribution.PackageRequirements);
-        Assert.Equal("sunder.package.agent", requirement.PackageId);
+        Assert.Equal("younics.ai.agent", requirement.PackageId);
         Assert.Equal("1.1.0", requirement.MinimumVersion);
-        Assert.Equal("sunder.package.agent.workspaces", contributor.ContributorId);
+        Assert.Equal("younics.ai.agent.workspaces", contributor.ContributorId);
         Assert.Empty(fragment.RequiredInputs ?? []);
         Assert.Contains(workspaceRoot, fragment.JsonPayload, StringComparison.Ordinal);
         Assert.Contains(documentPath, fragment.JsonPayload, StringComparison.Ordinal);
         Assert.Contains("Stack Workspace", fragment.JsonPayload, StringComparison.Ordinal);
         Assert.Contains("local", fragment.JsonPayload, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AgentWorkspaceStackContributor_ExportAsync_UsesCurrentStoredDiscriminator()
+    {
+        using var scope = TestScope.Create();
+        var workspace = CreateWorkspace();
+        var now = DateTimeOffset.UtcNow;
+        // Seed the current stored value independently of the production constant.
+        var binding = new AgentWorkspaceBindingRecord(
+            "binding.persisted", workspace.WorkspaceId, "younics.ai.agent.execution.target", "local",
+            "primary-execution-target", true, 0, now, now);
+        using (var initialStore = new AgentLocalStore(scope.Context))
+        {
+            initialStore.SaveWorkspace(workspace);
+            initialStore.SaveWorkspaceBinding(binding);
+        }
+
+        using var store = new AgentLocalStore(scope.Context);
+        var service = new AgentWorkspaceService(store);
+        var persisted = Assert.Single(service.ListBindings(workspace.WorkspaceId));
+        Assert.Equal(binding, persisted);
+        using var catalog = new TestExtensionCatalog();
+        catalog.AddProvider(
+            RegressionTestBindings.ExecutionTargets,
+            new CountingExecutionTarget("local"),
+            packageId: "younics.ai.agent.execution.local");
+        var executionTargets = new AgentExecutionTargetService(catalog.ExecutionTargets);
+        var provider = await executionTargets.ResolveTargetAsync(persisted);
+        Assert.NotNull(provider);
+        Assert.Equal("younics.ai.agent.execution.target", provider.ContractId);
+        Assert.Equal("younics.ai.agent.execution.local", provider.PackageId);
+        Assert.Empty((await catalog.RpcForCaller("younics.ai.agent")
+            .DiscoverAsync("sunder.agent.execution.target")).Providers);
+
+        var contributor = new AgentWorkspaceStackContributor(service, scope.Context, catalog.ExecutionTargets);
+        var item = Assert.Single(await contributor.ListExportItemsAsync(
+            new StackExportDiscoveryContext(scope.Context.PackageId)));
+        var detail = Assert.Single(item.Details ?? [], value => value.DetailId == "primary-execution-target");
+        Assert.Equal("local", detail.Value);
+
+        var contribution = await contributor.ExportAsync(new StackExportRequest(
+            [new StackExportItemSelection(workspace.WorkspaceId)]));
+        var fragment = Assert.Single(contribution.Fragments);
+        Assert.Equal("younics.ai.agent.workspaces", contributor.ContributorId);
+        Assert.Equal("younics.ai.agent/workspace", fragment.SchemaId);
+        using var payload = JsonDocument.Parse(fragment.JsonPayload);
+        Assert.Equal("local", payload.RootElement.GetProperty("primaryExecutionBinding")
+            .GetProperty("contributionId").GetString());
+        Assert.Equal(
+            new[] { "younics.ai.agent", "younics.ai.agent.execution.local" },
+            contribution.PackageRequirements.Select(requirement => requirement.PackageId));
+        Assert.Equal(binding, Assert.Single(service.ListBindings(workspace.WorkspaceId)));
     }
 
     [Fact]
@@ -308,7 +374,7 @@ public sealed class WorkspaceTests
 
         var core = Assert.Single(
             contribution.PackageRequirements,
-            requirement => requirement.PackageId == "sunder.package.agent");
+            requirement => requirement.PackageId == "younics.ai.agent");
         var thirdParty = Assert.Single(
             contribution.PackageRequirements,
             requirement => requirement.PackageId == "contoso.execution");
@@ -345,6 +411,9 @@ public sealed class WorkspaceTests
             new Dictionary<string, string>()));
         var action = Assert.Single(preview.Actions);
         Assert.Empty(preview.RequiredInputs);
+
+        await AssertStackRejectsOldIdentityAsync(targetContributor, importFragment, action.ActionId);
+        Assert.Null(targetService.GetWorkspace("workspace.stack"));
 
         var result = await targetContributor.ImportAsync(new StackImportRequest(
             [importFragment],
@@ -768,7 +837,7 @@ public sealed class WorkspaceTests
         var store = new AgentLocalStore(scope.Context);
         var sessionService = new AgentSessionService(store);
         var workspace = CreateWorkspace();
-        var payloadJson = JsonSerializer.Serialize(new { schema = "sunder.file-diff.v1" });
+        var payloadJson = JsonSerializer.Serialize(new { schema = "younics.ai.agent.tools.files.diff.v1" });
         store.SaveWorkspace(workspace);
         var session = store.CreateSession("Tool Payload", workspaceId: workspace.WorkspaceId);
 
@@ -800,7 +869,7 @@ public sealed class WorkspaceTests
         var sessionService = new AgentSessionService(store);
         var workspace = CreateWorkspace();
         var argumentsJson = JsonSerializer.Serialize(new { path = "src/App.cs" });
-        var presentationJson = JsonSerializer.Serialize(new { schema = "sunder.file-diff.v1" });
+        var presentationJson = JsonSerializer.Serialize(new { schema = "younics.ai.agent.tools.files.diff.v1" });
         store.SaveWorkspace(workspace);
         var session = store.CreateSession("Tool detail", workspaceId: workspace.WorkspaceId);
         var callTurn = sessionService.AppendToolCallTurn(
@@ -932,7 +1001,7 @@ public sealed class WorkspaceTests
         var (workspace, binding) = await CreateLocalWorkspaceAsync(root, configService);
 
         var result = await target.ReadFileAsync(
-            new LocalWorkerModels.CSunder_Agent_Execution_Target_ExecutionTargetReadFileRequest
+            new LocalWorkerModels.CYounics_Ai_Agent_Execution_Target_ExecutionTargetReadFileRequest
             {
                 Context = ToLocalExecutionContext(new AgentExecutionTargetContext(null, null, workspace, binding)),
                 Request = new() { Path = Path.Combine(scope.RootPath, "outside.txt"), Offset = null, Limit = null },
@@ -957,7 +1026,7 @@ public sealed class WorkspaceTests
         var (workspace, binding) = await CreateLocalWorkspaceAsync(root, configService);
 
         var result = await target.ReadFileAsync(
-            new LocalWorkerModels.CSunder_Agent_Execution_Target_ExecutionTargetReadFileRequest
+            new LocalWorkerModels.CYounics_Ai_Agent_Execution_Target_ExecutionTargetReadFileRequest
             {
                 Context = ToLocalExecutionContext(new AgentExecutionTargetContext(null, null, workspace, binding)),
                 Request = new() { Path = binaryPath, Offset = null, Limit = null },
@@ -1009,7 +1078,7 @@ public sealed class WorkspaceTests
         const string missingExecutable = "sunder-missing-executable-for-test";
 
         var result = await target.ExecuteProcessAsync(
-            new LocalWorkerModels.CSunder_Agent_Execution_Target_ExecutionTargetExecuteProcessRequest
+            new LocalWorkerModels.CYounics_Ai_Agent_Execution_Target_ExecutionTargetExecuteProcessRequest
             {
                 Context = ToLocalExecutionContext(new AgentExecutionTargetContext(null, null, workspace, binding)),
                 Request = new()
@@ -1171,12 +1240,18 @@ public sealed class WorkspaceTests
         using var targetScope = TestScope.Create();
         var targetCatalog = new DockerImageCatalogService(targetScope.Context);
         var targetContributor = new DockerImageStackContributor(targetCatalog, targetScope.Context);
-        var importFragment = ToImportFragment(fragment, sourceContributor.ContributorId);
+        var importFragment = ToImportFragment(fragment, sourceContributor.ContributorId) with
+        {
+            OwnerPackageId = "younics.ai.agent.execution.docker",
+        };
         var preview = await targetContributor.PreviewImportAsync(new StackImportPreviewRequest(
             [importFragment],
             new Dictionary<string, string>(),
             new Dictionary<string, string>()));
         var action = Assert.Single(preview.Actions);
+
+        await AssertStackRejectsOldIdentityAsync(targetContributor, importFragment, action.ActionId);
+        Assert.Empty(await targetCatalog.ListImagesAsync());
 
         var result = await targetContributor.ImportAsync(new StackImportRequest(
             [importFragment],
@@ -1582,6 +1657,7 @@ public sealed class WorkspaceTests
             if (args.Count > 0 && args[0] == "inspect")
             {
                 inspectCount++;
+                Assert.Contains("younics.ai.agent.execution.docker.resources.signature", args[2], StringComparison.Ordinal);
                 return Task.FromResult(inspectCount == 1
                     ? new DockerCliRunResult(1, string.Empty, false, false)
                     : new DockerCliRunResult(0, $"{runningOnSecondAcquire.ToString().ToLowerInvariant()} {signature}", false, false));
@@ -1590,6 +1666,7 @@ public sealed class WorkspaceTests
             {
                 runArgs = args.ToArray();
                 var labelIndex = args.ToList().IndexOf("--label");
+                Assert.StartsWith("younics.ai.agent.execution.docker.resources.signature=", args[labelIndex + 1], StringComparison.Ordinal);
                 signature = args[labelIndex + 1].Split('=', 2)[1];
             }
             return Task.FromResult(new DockerCliRunResult(0, string.Empty, false, false));
@@ -1849,7 +1926,7 @@ public sealed class WorkspaceTests
         Assert.Empty(imageField.Options!);
         Assert.Contains("Pull at least one", imageField.Description, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(imageField.Actions!, action => action.Kind.ToString() == nameof(AgentEditorActionKind.OpenPackageSettings)
-                                                      && action.PackageId == "sunder.package.agent.execution.docker"
+                                                      && action.PackageId == "younics.ai.agent.execution.docker"
                                                       && action.Label == "Open Settings");
         Assert.Contains(imageField.Actions!, action => action.Kind.ToString() == nameof(AgentEditorActionKind.RefreshField)
                                                       && action.ActionId == "refresh-docker-images");
@@ -1865,7 +1942,7 @@ public sealed class WorkspaceTests
         var workspace = CreateWorkspace();
 
         var result = await contributor.SaveSectionAsync(
-            new DockerWorkerModels.CSunder_Agent_Workspace_Editor_WorkspaceEditorSaveSectionRequest
+            new DockerWorkerModels.CYounics_Ai_Agent_Workspace_Editor_WorkspaceEditorSaveSectionRequest
             {
                 Context = CreateDockerEditorContext(
                     workspace,
@@ -1899,7 +1976,7 @@ public sealed class WorkspaceTests
         var workspace = CreateWorkspace();
 
         var result = await contributor.SaveSectionAsync(
-            new DockerWorkerModels.CSunder_Agent_Workspace_Editor_WorkspaceEditorSaveSectionRequest
+            new DockerWorkerModels.CYounics_Ai_Agent_Workspace_Editor_WorkspaceEditorSaveSectionRequest
             {
                 Context = CreateDockerEditorContext(
                     workspace,
@@ -2319,10 +2396,10 @@ public sealed class WorkspaceTests
         using var catalog = new TestExtensionCatalog();
         await using var runtime = RegressionTestRuntime.Create(scope.Context, catalog);
         var owner = (AgentOwnerRuntimeProvider)runtime.GetService(typeof(AgentOwnerRuntimeProvider))!;
-        catalog.AddGeneratedProvider("sunder.package.agent", owner, owner.CreateSunderRpcProviderRegistration());
-        var rpc = catalog.RpcForCaller("sunder.package.agent");
+        catalog.AddGeneratedProvider("younics.ai.agent", owner, owner.CreateSunderRpcProviderRegistration());
+        var rpc = catalog.RpcForCaller("younics.ai.agent");
         await using var receiver = new GeneratedServiceTestScope(rpc);
-        var owners = receiver.Providers<AgentApp::Sunder.Generated.Packages.Sunder_Package_Agent_Services.IAgentRuntimeService>();
+        var owners = receiver.Providers<AgentApp::Sunder.Generated.Packages.Younics_Ai_Agent_Services.IAgentRuntimeService>();
         using var gateway = new AppRuntime.AgentAppRuntimeGateway(Assert.Single((await owners.ListAsync()).Providers).Service,
             new AppRuntime.AgentOwnerResources(owners, rpc));
         using var viewModel = new AgentWorkspacesViewModel(gateway, gateway, catalog.WorkspaceEditors);
@@ -2349,13 +2426,13 @@ public sealed class WorkspaceTests
         using var catalog = new TestExtensionCatalog();
         await using var runtime = RegressionTestRuntime.Create(scope.Context, catalog);
         var owner = (AgentOwnerRuntimeProvider)runtime.GetService(typeof(AgentOwnerRuntimeProvider))!;
-        catalog.AddGeneratedProvider("sunder.package.agent", owner, owner.CreateSunderRpcProviderRegistration());
-        var rpc = catalog.RpcForCaller("sunder.package.agent");
+        catalog.AddGeneratedProvider("younics.ai.agent", owner, owner.CreateSunderRpcProviderRegistration());
+        var rpc = catalog.RpcForCaller("younics.ai.agent");
         await using var receiver = new GeneratedServiceTestScope(rpc);
-        var owners = receiver.Providers<AgentApp::Sunder.Generated.Packages.Sunder_Package_Agent_Services.IAgentRuntimeService>();
+        var owners = receiver.Providers<AgentApp::Sunder.Generated.Packages.Younics_Ai_Agent_Services.IAgentRuntimeService>();
         using var gateway = new AppRuntime.AgentAppRuntimeGateway(Assert.Single((await owners.ListAsync()).Providers).Service,
             new AppRuntime.AgentOwnerResources(owners, rpc));
-        var editorCatalog = new ObservedServiceProviders<AgentApp::Sunder.Generated.Packages.Sunder_Package_Agent_Services.IWorkspaceEditorService>(catalog.WorkspaceEditors);
+        var editorCatalog = new ObservedServiceProviders<AgentApp::Sunder.Generated.Packages.Younics_Ai_Agent_Services.IWorkspaceEditorService>(catalog.WorkspaceEditors);
         using var viewModel = new AgentWorkspacesViewModel(gateway, gateway, editorCatalog);
         await viewModel.InitializeAsync();
         await editorCatalog.WatchStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
@@ -3151,7 +3228,7 @@ public sealed class WorkspaceTests
         var workspace = CreateWorkspace();
         var binding = CreateBinding(workspace.WorkspaceId);
 
-        catalog.AddProvider(RegressionTestBindings.ToolSources, source, "sunder.package.agent.tools.files");
+        catalog.AddProvider(RegressionTestBindings.ToolSources, source, "younics.ai.agent.tools.files");
         var sourceProvider = await catalog.GetRequiredProviderAsync(catalog.ToolSources);
         var result = await sourceProvider.Service.ExecuteAsync(
             CreateToolExecutionContext(catalog, workspace, binding),
@@ -3178,7 +3255,7 @@ public sealed class WorkspaceTests
         var workspace = CreateWorkspace();
         var binding = CreateBinding(workspace.WorkspaceId);
 
-        using var sourceProbe = new GeneratedToolSourceProbe(catalog, source, "sunder.package.agent.tools.files");
+        using var sourceProbe = new GeneratedToolSourceProbe(catalog, source, "younics.ai.agent.tools.files");
         var permission = await sourceProbe.BuildPermissionRequestAsync(
             CreateToolExecutionContext(catalog, workspace, binding) with
             {
@@ -3203,7 +3280,7 @@ public sealed class WorkspaceTests
         var workspace = CreateWorkspace();
         var binding = CreateBinding(workspace.WorkspaceId);
 
-        catalog.AddProvider(RegressionTestBindings.ToolSources, source, "sunder.package.agent.tools.files");
+        catalog.AddProvider(RegressionTestBindings.ToolSources, source, "younics.ai.agent.tools.files");
         var sourceProvider = await catalog.GetRequiredProviderAsync(catalog.ToolSources);
         var result = await sourceProvider.Service.ExecuteAsync(
             CreateToolExecutionContext(catalog, workspace, binding),
@@ -3230,7 +3307,7 @@ public sealed class WorkspaceTests
             newString = "new\nsame",
         });
 
-        catalog.AddProvider(RegressionTestBindings.ToolSources, source, "sunder.package.agent.tools.files");
+        catalog.AddProvider(RegressionTestBindings.ToolSources, source, "younics.ai.agent.tools.files");
         var sourceProvider = await catalog.GetRequiredProviderAsync(catalog.ToolSources);
         var result = await sourceProvider.Service.ExecuteAsync(
             CreateToolExecutionContext(catalog, workspace, binding),
@@ -3238,6 +3315,12 @@ public sealed class WorkspaceTests
 
         Assert.False(result.IsError, result.Content);
         Assert.NotNull(result.PresentationPayloadJson);
+
+        Assert.NotNull(AgentApp::Sunder.Package.Agent.Shared.PackageViews.ToolDiffViewModel.TryCreate(
+            "edit", "{}", null, null, false, result.PresentationPayloadJson));
+        Assert.Null(AgentApp::Sunder.Package.Agent.Shared.PackageViews.ToolDiffViewModel.TryCreate(
+            "edit", "{}", null, null, false,
+            result.PresentationPayloadJson.Replace("younics.ai.agent.tools.files.diff.v1", "sunder.file-diff.v1", StringComparison.Ordinal)));
 
         using var row = TranscriptToolTestHarness.CreateAgentRow(
             CreateToolTurn(),
@@ -3275,7 +3358,7 @@ public sealed class WorkspaceTests
             """;
         var argumentsJson = ApplyPatchArgs(patchText);
 
-        catalog.AddProvider(RegressionTestBindings.ToolSources, source, "sunder.package.agent.tools.files");
+        catalog.AddProvider(RegressionTestBindings.ToolSources, source, "younics.ai.agent.tools.files");
         var sourceProvider = await catalog.GetRequiredProviderAsync(catalog.ToolSources);
         var result = await sourceProvider.Service.ExecuteAsync(
             CreateToolExecutionContext(catalog, workspace, binding),
@@ -3313,7 +3396,7 @@ public sealed class WorkspaceTests
         var workspace = CreateWorkspace();
         var binding = CreateBinding(workspace.WorkspaceId);
 
-        catalog.AddProvider(RegressionTestBindings.ToolSources, source, "sunder.package.agent.tools.files");
+        catalog.AddProvider(RegressionTestBindings.ToolSources, source, "younics.ai.agent.tools.files");
         var sourceProvider = await catalog.GetRequiredProviderAsync(catalog.ToolSources);
         var result = await sourceProvider.Service.ExecuteAsync(
             CreateToolExecutionContext(catalog, workspace, binding),
@@ -3334,7 +3417,7 @@ public sealed class WorkspaceTests
         var workspace = CreateWorkspace();
         var binding = CreateBinding(workspace.WorkspaceId);
 
-        using var sourceProbe = new GeneratedToolSourceProbe(catalog, source, "sunder.package.agent.tools.files");
+        using var sourceProbe = new GeneratedToolSourceProbe(catalog, source, "younics.ai.agent.tools.files");
         var result = await sourceProbe.ExecuteAsync(
             CreateToolExecutionContext(catalog, workspace, binding),
             new AgentToolRequest("read", "{\"path\":\"notes.txt\",\"offset\":\"2\",\"limit\":\"1\"}"));
@@ -3353,7 +3436,7 @@ public sealed class WorkspaceTests
         var workspace = CreateWorkspace();
         var binding = CreateBinding(workspace.WorkspaceId);
 
-        catalog.AddProvider(RegressionTestBindings.ToolSources, source, "sunder.package.agent.tools.shell");
+        catalog.AddProvider(RegressionTestBindings.ToolSources, source, "younics.ai.agent.tools.shell");
         var sourceProvider = await catalog.GetRequiredProviderAsync(catalog.ToolSources);
         var result = await sourceProvider.Service.ExecuteAsync(
             CreateToolExecutionContext(catalog, workspace, binding),
@@ -3390,7 +3473,7 @@ public sealed class WorkspaceTests
             binding.BindingId,
             new DockerExecutionWorkspaceConfig("test-image:1.0", null, "/bin/sh"));
 
-        using var sourceProbe = new GeneratedToolSourceProbe(catalog, source, "sunder.package.agent.tools.files");
+        using var sourceProbe = new GeneratedToolSourceProbe(catalog, source, "younics.ai.agent.tools.files");
         var permission = await sourceProbe.BuildPermissionRequestAsync(
             CreateToolExecutionContext(catalog, workspace, binding),
             new AgentToolRequest(toolId, argumentsJson));
@@ -3416,7 +3499,7 @@ public sealed class WorkspaceTests
         var source = new FilesToolSource(scope.Context);
         var (workspace, binding) = await CreateLocalWorkspaceAsync(root, configService);
 
-        using var sourceProbe = new GeneratedToolSourceProbe(catalog, source, "sunder.package.agent.tools.files");
+        using var sourceProbe = new GeneratedToolSourceProbe(catalog, source, "younics.ai.agent.tools.files");
         var permission = await sourceProbe.BuildPermissionRequestAsync(
             CreateToolExecutionContext(catalog, workspace, binding),
             new AgentToolRequest("apply_patch", ApplyPatchArgs("""
@@ -3446,7 +3529,7 @@ public sealed class WorkspaceTests
         var source = new FilesToolSource(scope.Context);
         var (workspace, binding) = await CreateLocalWorkspaceAsync(root, configService);
 
-        using var sourceProbe = new GeneratedToolSourceProbe(catalog, source, "sunder.package.agent.tools.files");
+        using var sourceProbe = new GeneratedToolSourceProbe(catalog, source, "younics.ai.agent.tools.files");
         var permission = await sourceProbe.BuildPermissionRequestAsync(
             CreateToolExecutionContext(catalog, workspace, binding),
             new AgentToolRequest("apply_patch", ApplyPatchArgs("""
@@ -3479,7 +3562,7 @@ public sealed class WorkspaceTests
         var source = new FilesToolSource(scope.Context);
         var (workspace, binding) = await CreateLocalWorkspaceAsync(root, configService);
 
-        using var sourceProbe = new GeneratedToolSourceProbe(catalog, source, "sunder.package.agent.tools.files");
+        using var sourceProbe = new GeneratedToolSourceProbe(catalog, source, "younics.ai.agent.tools.files");
         var permission = await sourceProbe.BuildPermissionRequestAsync(
             CreateToolExecutionContext(catalog, workspace, binding),
             new AgentToolRequest("apply_patch", ApplyPatchArgs($"""
@@ -3511,7 +3594,7 @@ public sealed class WorkspaceTests
         var source = new FilesToolSource(scope.Context);
         var (workspace, binding) = await CreateLocalWorkspaceAsync(root, configService);
 
-        using var sourceProbe = new GeneratedToolSourceProbe(catalog, source, "sunder.package.agent.tools.files");
+        using var sourceProbe = new GeneratedToolSourceProbe(catalog, source, "younics.ai.agent.tools.files");
         var permission = await sourceProbe.BuildPermissionRequestAsync(
             CreateToolExecutionContext(catalog, workspace, binding),
             new AgentToolRequest("apply_patch", ApplyPatchArgs("not a patch")));
@@ -3533,7 +3616,7 @@ public sealed class WorkspaceTests
         var workspace = CreateWorkspace();
         var binding = CreateBinding(workspace.WorkspaceId);
 
-        using var sourceProbe = new GeneratedToolSourceProbe(catalog, source, "sunder.package.agent.tools.files");
+        using var sourceProbe = new GeneratedToolSourceProbe(catalog, source, "younics.ai.agent.tools.files");
         var permission = await sourceProbe.BuildPermissionRequestAsync(
             CreateToolExecutionContext(catalog, workspace, binding),
             new AgentToolRequest("apply_patch", ApplyPatchArgs("""
@@ -3558,7 +3641,7 @@ public sealed class WorkspaceTests
         var workspace = CreateWorkspace();
         var binding = CreateBinding(workspace.WorkspaceId);
 
-        using var sourceProbe = new GeneratedToolSourceProbe(catalog, source, "sunder.package.agent.tools.files");
+        using var sourceProbe = new GeneratedToolSourceProbe(catalog, source, "younics.ai.agent.tools.files");
         var permission = await sourceProbe.BuildPermissionRequestAsync(
             CreateToolExecutionContext(catalog, workspace, binding),
             new AgentToolRequest("apply_patch", ApplyPatchArgs("""
@@ -3608,7 +3691,7 @@ public sealed class WorkspaceTests
         using var scope = TestScope.Create();
         using var catalog = new TestExtensionCatalog();
         var source = new FilesToolSource(scope.Context);
-        using var sourceProbe = new GeneratedToolSourceProbe(catalog, source, "sunder.package.agent.tools.files");
+        using var sourceProbe = new GeneratedToolSourceProbe(catalog, source, "younics.ai.agent.tools.files");
 
         var tools = await sourceProbe.ListToolsAsync(new(null, null));
 
@@ -3622,7 +3705,7 @@ public sealed class WorkspaceTests
     {
         using var catalog = new TestExtensionCatalog();
         var source = new ShellToolSource();
-        using var sourceProbe = new GeneratedToolSourceProbe(catalog, source, "sunder.package.agent.tools.shell");
+        using var sourceProbe = new GeneratedToolSourceProbe(catalog, source, "younics.ai.agent.tools.shell");
 
         var tools = await sourceProbe.ListToolsAsync(new(null, null));
         var shell = Assert.Single(tools);
@@ -3638,7 +3721,7 @@ public sealed class WorkspaceTests
         using var scope = TestScope.Create();
         using var catalog = new TestExtensionCatalog();
         var source = new FilesToolSource(scope.Context);
-        using var sourceProbe = new GeneratedToolSourceProbe(catalog, source, "sunder.package.agent.tools.files");
+        using var sourceProbe = new GeneratedToolSourceProbe(catalog, source, "younics.ai.agent.tools.files");
         var patchText = """
             *** Begin Patch
             *** Add File: first.txt
@@ -3866,7 +3949,7 @@ public sealed class WorkspaceTests
     {
         using var catalog = new TestExtensionCatalog();
         var source = new ShellToolSource();
-        using var sourceProbe = new GeneratedToolSourceProbe(catalog, source, "sunder.package.agent.tools.shell");
+        using var sourceProbe = new GeneratedToolSourceProbe(catalog, source, "younics.ai.agent.tools.shell");
         var command = string.Join('\n', Enumerable.Range(1, 8).Select(index => $"echo line-{index}"));
         var argumentsJson = JsonSerializer.Serialize(new { command });
 
@@ -4116,8 +4199,8 @@ public sealed class WorkspaceTests
             0,
             "workspace-generation",
             "binding-generation",
-            "sunder.package.agent.tools.files",
-            "sunder.package.agent.execution.docker",
+            "younics.ai.agent.tools.files",
+            "younics.ai.agent.execution.docker",
             Guid.NewGuid().ToString("N"),
             CanIssueOutsideAuthority: true);
 
@@ -4635,10 +4718,31 @@ public sealed class WorkspaceTests
         return new AgentWorkspaceBindingRecord("binding-test", workspaceId, RegressionTestBindings.ExecutionTargets, contributionId, "primary-execution-target", true, 0, now, now);
     }
 
+    private static async Task AssertStackRejectsOldIdentityAsync(
+        IPackageStackImporter importer,
+        StackFragmentImport current,
+        string selectedActionId)
+    {
+        foreach (var invalid in new[]
+                 {
+                     current with { OwnerPackageId = current.OwnerPackageId.Replace("younics.ai.agent", "sunder.package.agent", StringComparison.Ordinal) },
+                     current with { SchemaId = current.SchemaId.Replace("younics.ai.agent", "sunder.package.agent", StringComparison.Ordinal) },
+                     current with { SchemaVersion = 0 },
+                 })
+        {
+            var preview = await importer.PreviewImportAsync(new StackImportPreviewRequest([invalid], new Dictionary<string, string>(), new Dictionary<string, string>()));
+            Assert.Empty(preview.Actions);
+            Assert.NotEmpty(preview.Warnings);
+            var rejected = await importer.ImportAsync(new StackImportRequest([invalid], new Dictionary<string, string>(), new Dictionary<string, string>(), [selectedActionId]));
+            Assert.Empty(rejected.ImportedItems);
+            Assert.NotEmpty(rejected.Warnings);
+        }
+    }
+
     private static StackFragmentImport ToImportFragment(StackFragmentExport fragment, string contributorId)
         => new(
             fragment.FragmentId,
-            "sunder.package.agent",
+            "younics.ai.agent",
             contributorId,
             fragment.SchemaId,
             fragment.SchemaVersion,
@@ -4778,10 +4882,13 @@ public sealed class WorkspaceTests
 
     private sealed class TestScope : IDisposable
     {
-        private TestScope(string rootPath)
+        private readonly TemporaryDirectory _directory;
+
+        private TestScope(TemporaryDirectory directory)
         {
-            RootPath = rootPath;
-            Context = new TestPackageContext(rootPath);
+            _directory = directory;
+            RootPath = directory.Path;
+            Context = new TestPackageContext(RootPath);
         }
 
         public string RootPath { get; }
@@ -4789,28 +4896,9 @@ public sealed class WorkspaceTests
         public TestPackageContext Context { get; }
 
         public static TestScope Create()
-        {
-            var temporaryRoot = OperatingSystem.IsMacOS()
-                ? "/private" + Path.GetTempPath().TrimEnd(Path.DirectorySeparatorChar)
-                : Path.GetTempPath();
-            var rootPath = Path.Combine(temporaryRoot, "sunder-execution-tests", Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(rootPath);
-            return new TestScope(rootPath);
-        }
+            => new(TemporaryDirectory.Create("sunder-execution-tests"));
 
-        public void Dispose()
-        {
-            try
-            {
-                if (Directory.Exists(RootPath))
-                {
-                    Directory.Delete(RootPath, recursive: true);
-                }
-            }
-            catch
-            {
-            }
-        }
+        public void Dispose() => _directory.Dispose();
     }
 
     private sealed class TestExtensionCatalog : RegressionTestExtensionCatalog;

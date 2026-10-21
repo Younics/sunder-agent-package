@@ -427,17 +427,11 @@ internal sealed class SkillBatchReplacementCommitter(
 
         var hasSchemaId = root.TryGetProperty(nameof(SkillImportJournal.SchemaId), out var schemaId);
         var hasSchemaVersion = root.TryGetProperty(nameof(SkillImportJournal.SchemaVersion), out var schemaVersion);
-        if (!hasSchemaId && !hasSchemaVersion)
-        {
-            var legacy = JsonSerializer.Deserialize<LegacySkillImportJournal>(bytes, JournalJsonOptions)
-                         ?? throw new InvalidDataException("Skill import journal is empty.");
-            return new SkillImportJournal(legacy.Phase, legacy.IndexSnapshotBase64, legacy.Entries);
-        }
-
         if (!hasSchemaId
             || !hasSchemaVersion
             || schemaId.ValueKind != JsonValueKind.String
             || !string.Equals(schemaId.GetString(), SkillPersistenceSchemas.ImportJournalId, StringComparison.Ordinal)
+            || schemaVersion.ValueKind != JsonValueKind.Number
             || !schemaVersion.TryGetInt32(out var version)
             || version != SkillPersistenceSchemas.CurrentVersion)
         {
@@ -487,11 +481,6 @@ internal sealed record SkillImportJournal(
     IReadOnlyList<SkillImportJournalEntry> Entries,
     string SchemaId = SkillPersistenceSchemas.ImportJournalId,
     int SchemaVersion = SkillPersistenceSchemas.CurrentVersion);
-
-internal sealed record LegacySkillImportJournal(
-    string Phase,
-    string? IndexSnapshotBase64,
-    IReadOnlyList<SkillImportJournalEntry> Entries);
 
 internal sealed record SkillImportJournalEntry(
     string StagingRoot,

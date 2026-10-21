@@ -1,7 +1,7 @@
 using Sunder.Sdk.Packaging;
 
 [assembly: SunderPackage(
-    Id = "sunder.package.agent.tools.files",
-    Name = "Sunder Agent Tools Files",
-    Summary = "Adds file-system tools to Sunder Agent.",
+    Id = "younics.ai.agent.tools.files",
+    Name = "AI Agent - Files",
+    Summary = "Adds file-system tools to AI Agent.",
     Icon = "assets/icon.png")]

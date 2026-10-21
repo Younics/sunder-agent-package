@@ -4,7 +4,7 @@ using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Provider.OpenAI;
 
-[SunderService(Key = "management", ContractId = "sunder.package.agent.provider.openai.management", ServiceId = "management")]
+[SunderService(Key = "management", ContractId = "younics.ai.agent.provider.openai.management", ServiceId = "management")]
 [SunderServiceProvider(ProviderId = "openai.management")]
 [SunderServiceError("openai.management.failed", Description = "The OpenAI management request failed.")]
 internal sealed partial class OpenAiManagementService(OpenAiAuthOperationHandler auth, ProviderCredentialAccessor credentials)

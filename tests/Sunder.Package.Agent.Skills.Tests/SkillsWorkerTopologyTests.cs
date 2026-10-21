@@ -12,7 +12,7 @@ using Xunit;
 namespace Sunder.Package.Agent.Skills.Tests;
 
 using SkillAppRuntimeGateway = SkillsApp::Sunder.Package.Agent.Skills.Runtime.SkillAppRuntimeGateway;
-using ISkillsManagementService = SkillsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Skills_Services.ISkillsManagementService;
+using ISkillsManagementService = SkillsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Skills_Services.ISkillsManagementService;
 
 public sealed class SkillsWorkerTopologyTests
 {
@@ -146,10 +146,10 @@ public sealed class SkillsWorkerTopologyTests
         var owner = Assert.Single(root.GetProperty("provides").EnumerateArray(), static provider =>
             provider.GetProperty("providerId").GetString() == "skills.management");
         Assert.Equal("owner", owner.GetProperty("audience").GetString());
-        Assert.Equal("sunder.package.agent.skills.owner", owner.GetProperty("contractId").GetString());
+        Assert.Equal("younics.ai.agent.skills.owner", owner.GetProperty("contractId").GetString());
         var appImport = Assert.Single(root.GetProperty("usesContracts").EnumerateArray(), static contract =>
             contract.GetProperty("role").GetString() == "app");
-        Assert.Equal("sunder.package.agent.skills.owner", appImport.GetProperty("contractId").GetString());
+        Assert.Equal("younics.ai.agent.skills.owner", appImport.GetProperty("contractId").GetString());
 
         var runtimeRoot = Path.Combine(composedRoot, "payload", "runtime");
         var workerRoot = Path.Combine(runtimeRoot, RuntimeInformation.RuntimeIdentifier, "lib");

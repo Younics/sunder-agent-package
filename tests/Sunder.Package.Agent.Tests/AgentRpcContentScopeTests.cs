@@ -6,7 +6,7 @@ using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Services;
 using Sunder.Sdk.Rpc;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -246,7 +246,7 @@ public sealed class AgentRpcContentScopeTests
 
     private static async ValueTask<JsonElement> ResponseEventAsync(SunderRpcProviderSnapshot provider, CancellationToken cancellationToken)
     {
-        var invocation = new SunderRpcInvocationContext("sunder.package.agent", "2.0.0", provider,
+        var invocation = new SunderRpcInvocationContext("younics.ai.agent", "2.0.0", provider,
             DateTimeOffset.UtcNow.AddMinutes(1), 1, cancellationToken);
         await using var response = SunderRpcMarshallingContext.ForInvocation(invocation);
         try

@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <SunderSdkReference>true</SunderSdkReference>
-    <SunderTestOwner>sunder.package.agent.memory.semantic</SunderTestOwner>
+    <SunderTestOwner>younics.ai.agent.memory.semantic</SunderTestOwner>
     <SunderTestCategory>Component</SunderTestCategory>
     <SunderTestCapabilities>Filesystem;SQLite;Worker</SunderTestCapabilities>
     <SunderTestOS>Any</SunderTestOS>

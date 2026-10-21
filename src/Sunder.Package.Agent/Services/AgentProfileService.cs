@@ -7,7 +7,7 @@ using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Services;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 
 namespace Sunder.Package.Agent.Services;
 
@@ -422,14 +422,21 @@ public sealed partial class AgentProfileService : IDisposable, IAsyncDisposable,
             x.Descriptor.ProviderId,
             providerId,
             StringComparison.OrdinalIgnoreCase));
-        if (provider.Provider is null)
+        return await ListChatModelsAsync(provider.Provider, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<IReadOnlyList<AgentModelDescriptor>> ListChatModelsAsync(
+        ServiceProvider<AgentServices.IChatProviderService>? provider,
+        CancellationToken cancellationToken)
+    {
+        if (provider is null)
         {
             return [];
         }
 
         try
         {
-            return (await provider.Provider.Service.ListModelsAsync(cancellationToken).ConfigureAwait(false))
+            return (await provider.Service.ListModelsAsync(cancellationToken).ConfigureAwait(false))
                 .OrderNewestFirst()
                 .ToArray();
         }
@@ -451,14 +458,21 @@ public sealed partial class AgentProfileService : IDisposable, IAsyncDisposable,
             x.Descriptor.ProviderId,
             providerId,
             StringComparison.OrdinalIgnoreCase));
-        if (provider.Provider is null)
+        return await ListEmbeddingModelsAsync(provider.Provider, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<IReadOnlyList<AgentEmbeddingModelDescriptor>> ListEmbeddingModelsAsync(
+        ServiceProvider<AgentServices.IEmbeddingProviderService>? provider,
+        CancellationToken cancellationToken)
+    {
+        if (provider is null)
         {
             return [];
         }
 
         try
         {
-            return (await provider.Provider.Service.ListModelsAsync(cancellationToken).ConfigureAwait(false))
+            return (await provider.Service.ListModelsAsync(cancellationToken).ConfigureAwait(false))
                 .OrderBy(model => model.DisplayName, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
         }
@@ -481,20 +495,28 @@ public sealed partial class AgentProfileService : IDisposable, IAsyncDisposable,
             x.Descriptor.ProviderId,
             providerId,
             StringComparison.OrdinalIgnoreCase));
-        if (provider.Provider is null)
+        return await GetChatProviderReadinessAsync(provider.Provider, provider.Descriptor?.ProviderId, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<AgentProviderReadiness?> GetChatProviderReadinessAsync(
+        ServiceProvider<AgentServices.IChatProviderService>? provider,
+        string? providerId,
+        CancellationToken cancellationToken)
+    {
+        if (provider is null)
         {
             return null;
         }
 
         try
         {
-            return await provider.Provider.Service.GetReadinessAsync(cancellationToken).ConfigureAwait(false);
+            return await provider.Service.GetReadinessAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (SunderRpcException exception) when (!cancellationToken.IsCancellationRequested
             && exception.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable)
         {
             return new AgentProviderReadiness(
-                provider.Descriptor.ProviderId,
+                providerId!,
                 AgentProviderReadinessStatus.Failed,
                 ProviderUnavailableMessage);
         }
@@ -511,21 +533,29 @@ public sealed partial class AgentProfileService : IDisposable, IAsyncDisposable,
             x.Descriptor.ProviderId,
             providerId,
             StringComparison.OrdinalIgnoreCase));
-        if (provider.Provider is null)
+        return await GetEmbeddingProviderReadinessAsync(provider.Provider, provider.Descriptor?.ProviderId, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<AgentEmbeddingProviderReadiness?> GetEmbeddingProviderReadinessAsync(
+        ServiceProvider<AgentServices.IEmbeddingProviderService>? provider,
+        string? providerId,
+        CancellationToken cancellationToken)
+    {
+        if (provider is null)
         {
             return null;
         }
 
         try
         {
-            return await provider.Provider.Service.GetReadinessAsync(cancellationToken).ConfigureAwait(false);
+            return await provider.Service.GetReadinessAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (SunderRpcException exception) when (
             !cancellationToken.IsCancellationRequested
             && exception.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable)
         {
             return new AgentEmbeddingProviderReadiness(
-                provider.Descriptor.ProviderId,
+                providerId!,
                 AgentProviderReadinessStatus.Failed,
                 ProviderUnavailableMessage);
         }

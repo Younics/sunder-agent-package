@@ -1,4 +1,4 @@
-using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using IWorkspaceEditorService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Workspace_Editor.IWorkspaceEditorService;
 using Sunder.Sdk.Services;
 using Sunder.Package.Agent.Contracts.Models;
 
@@ -13,7 +13,7 @@ public sealed partial class LocalExecutionWorkspaceEditorContributor(
     private const string SectionId = "local-execution-settings";
     private const string ShellFieldId = "shell";
 
-    public string ContributorId => "sunder.package.agent.execution.local.workspace-editor";
+    public string ContributorId => "younics.ai.agent.execution.local.workspace-editor";
 
     public ValueTask<AgentServiceIdentity> DescribeAsync(CancellationToken token = default)
     { token.ThrowIfCancellationRequested(); return ValueTask.FromResult(new AgentServiceIdentity { Id = ContributorId, DisplayName = ContributorId }); }
@@ -54,7 +54,7 @@ public sealed partial class LocalExecutionWorkspaceEditorContributor(
     }
 
     public async ValueTask<AgentEditorSaveResult> SaveSectionAsync(
-        CSunder_Agent_Workspace_Editor_WorkspaceEditorSaveSectionRequest invocation,
+        CYounics_Ai_Agent_Workspace_Editor_WorkspaceEditorSaveSectionRequest invocation,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();

@@ -31,7 +31,7 @@ internal static class LMStudioExceptionMapper
     public static AgentChatProviderException InvalidConfiguration(string detail)
         => new(
             detail,
-            $"### LM Studio base URL is invalid\n\n{detail}\n\nOpen **Settings -> Packages -> Sunder Agent Provider LM Studio** and enter a valid URL.",
+            $"### LM Studio base URL is invalid\n\n{detail}\n\nOpen **Settings -> Packages -> AI Agent - LM Studio** and enter a valid URL.",
             "lmstudio-base-url-invalid");
 
     public static AgentChatProviderException MultipleToolCalls()

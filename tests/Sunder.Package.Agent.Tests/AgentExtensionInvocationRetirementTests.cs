@@ -15,8 +15,11 @@ namespace Sunder.Package.Agent.Tests;
 extern alias SubagentsWorker;
 using SubagentsWorker::Sunder.Package.Agent.Subagents.Models;
 using SubagentsWorker::Sunder.Package.Agent.Subagents.Services;
-using SubagentServices = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using IBehaviorLoopService = SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Behavior_Loop.IBehaviorLoopService;
+using IChildRunExecutorService = SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Child_Run_Executor.IChildRunExecutorService;
+using IRuntimeCatalogService = SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Runtime_Catalog.IRuntimeCatalogService;
+using IToolSourceService = SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Tool_Source.IToolSourceService;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 
 public sealed class AgentExtensionInvocationRetirementTests
 {
@@ -69,7 +72,7 @@ public sealed class AgentExtensionInvocationRetirementTests
     }
 
     [Fact]
-    public async Task ToolRetirement_DoesNotDispatchPreparedCallToSameIdReplacement()
+    public async Task ToolRetirement_PreservesDispatchedUncertaintyWithoutFollowingSameIdReplacement()
     {
         using var scope = RegressionTestPackageScope.Create();
         var catalog = new RegressionTestExtensionCatalog();
@@ -91,8 +94,12 @@ public sealed class AgentExtensionInvocationRetirementTests
 
         var result = await execution;
         Assert.True(result.IsError);
-        Assert.Equal(AgentToolResultErrorCodes.PackageUnavailable, result.ErrorCode);
+        // Started witnessed the original callback, so retirement cannot attest
+        // that this operation had no effects or make it safe to replay.
+        Assert.Equal(AgentToolResultErrorCodes.ToolOutcomeAmbiguous, result.ErrorCode);
+        Assert.Contains("Effects may have occurred", result.Content, StringComparison.Ordinal);
         await retirement;
+        Assert.Equal(1, first.ExecutionCount);
         Assert.Equal(0, replacement.ExecutionCount);
 
         var retriedOldInvocation = await toolService.ExecuteAsync(
@@ -102,6 +109,7 @@ public sealed class AgentExtensionInvocationRetirementTests
             advertisedOwnerPackageId: advertised.OwnerPackageId,
             advertisedInvocation: advertised.Invocation);
         Assert.Equal(AgentToolResultErrorCodes.PackageUnavailable, retriedOldInvocation.ErrorCode);
+        Assert.Equal(1, first.ExecutionCount);
         Assert.Equal(0, replacement.ExecutionCount);
     }
 
@@ -193,29 +201,29 @@ public sealed class AgentExtensionInvocationRetirementTests
         var executor = new BlockingChildRunExecutor();
         catalog.AddChildRunExecutor(executor, "package.child");
         var bindings = catalog.Subagents();
-        var runtimeCatalogs = bindings.Providers<SubagentServices.IRuntimeCatalogService>();
+        var runtimeCatalogs = bindings.Providers<IRuntimeCatalogService>();
         var executorReference = await catalog.GetRequiredProviderAsync(
-            bindings.Providers<SubagentServices.IChildRunExecutorService>());
+            bindings.Providers<IChildRunExecutorService>());
         var subagentService = new SubagentService(new SubagentStore(scope.Context));
         var permissionAdapter = new SubagentPermissionStatusAdapter(
-            bindings.Providers<SubagentServices.IToolSourceService>());
+            bindings.Providers<IToolSourceService>());
         var descriptors = new SubagentDescriptorSchema(
             subagentService,
             permissionAdapter,
             runtimeCatalogs,
-            bindings.Providers<SubagentServices.IBehaviorLoopService>());
+            bindings.Providers<IBehaviorLoopService>());
         var renderer = new SubagentBatchResultRenderer(
             subagentService,
             new SubagentRequestParser(),
             permissionAdapter);
         var coordinator = new SubagentChildRunCoordinator(
             runtimeCatalogs,
-            bindings.Providers<SubagentServices.IChildRunExecutorService>(),
+            bindings.Providers<IChildRunExecutorService>(),
             descriptors,
             permissionAdapter,
             renderer);
         var now = DateTimeOffset.UtcNow;
-        var profile = new SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentProfileRecord
+        var profile = new SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentProfileRecord
         {
             ProfileId = "profile",
             DisplayName = "Profile",
@@ -225,7 +233,7 @@ public sealed class AgentExtensionInvocationRetirementTests
             SelectableCapabilityAssignments = [],
             IsInternal = false,
         };
-        var workspace = new SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentWorkspaceRecord
+        var workspace = new SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentWorkspaceRecord
         {
             WorkspaceId = "workspace",
             DisplayName = "Workspace",
@@ -235,7 +243,7 @@ public sealed class AgentExtensionInvocationRetirementTests
             Paths = [],
         };
         var environment = new SubagentChildRunEnvironment(
-            new SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentToolExecutionContext
+            new SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentToolExecutionContext
             {
                 SessionId = Guid.NewGuid(),
                 ProfileId = profile.ProfileId,
@@ -301,7 +309,7 @@ public sealed class AgentExtensionInvocationRetirementTests
     {
         var store = new AgentLocalStore(packageContext);
         var sessions = new AgentSessionService(store, catalog.SessionCleaners);
-        var workspaces = new AgentWorkspaceService(store, catalog.SessionCleaners, sessions, catalog.WorkspacePathMigrators);
+        var workspaces = new AgentWorkspaceService(store, catalog.SessionCleaners, sessions);
         return new AgentToolService(
             sessions,
             workspaces,

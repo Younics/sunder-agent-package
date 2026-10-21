@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <SunderTestOwner>sunder.package.agent.provider.openai</SunderTestOwner>
+    <SunderTestOwner>younics.ai.agent.provider.openai</SunderTestOwner>
     <SunderTestCategory>Conformance</SunderTestCategory>
     <SunderTestCapabilities>HTTP;Worker</SunderTestCapabilities>
     <SunderTestOS>Any</SunderTestOS>
@@ -29,4 +29,5 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
   </ItemGroup>
+  <Import Project="../CurrentContractFixtures.props" />
 </Project>

@@ -3,7 +3,7 @@ using Microsoft.Extensions.Logging;
 using Sunder.Package.Agent.Shared.Presentation;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Execution_Docker_Services;
+using Sunder.Generated.Packages.Younics_Ai_Agent_Execution_Docker_Services;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Execution.Docker;
@@ -21,7 +21,7 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
     private readonly ILogger? _logger;
     private const string ImageListChannel = "docker-images";
     private const string FullSettingsChannel = "docker-settings";
-    internal const string ImagePullGroupKey = "sunder.package.agent.execution.docker:image-pulls";
+    internal const string ImagePullGroupKey = "younics.ai.agent.execution.docker:image-pulls";
     internal const string ImageReferenceMetadataKey = "imageReference";
 
     internal static IReadOnlyCollection<string> OwnedConfigurationKeys { get; } =
@@ -50,7 +50,7 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
         _backgroundProcessQueue = backgroundProcessQueue;
         _logger = logger;
         _uiDispatcher = uiDispatcher ?? PresentationDispatcher.Capture();
-        _tasks = new PresentationTaskScope(ReportBackgroundTaskFailureAsync);
+        _tasks = new PresentationTaskScope(ReportBackgroundTaskFailureAsync, _uiDispatcher.ShutdownToken);
         _imageRefresh = new SerializedRefreshLoop(
             cancellationToken => ReloadImagesAsync(cancellationToken: cancellationToken),
             ReportImageRefreshFailure);
@@ -533,7 +533,7 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
         }));
     }
 
-    private Task ReportBackgroundTaskFailureAsync(Exception exception)
+    private Task ReportBackgroundTaskFailureAsync(Exception exception, CancellationToken token)
     {
         var correlationId = Guid.NewGuid().ToString("N");
         _logger?.LogError(
@@ -542,15 +542,16 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
             correlationId);
         return _disposed
             ? Task.CompletedTask
-            : InvokePresentationAsync(() =>
+            : _uiDispatcher.InvokeAsync(() =>
             {
+                if (_disposed) return;
                 RuntimeErrorCode = "docker.presentation.background-task-failed";
                 RuntimeCorrelationId = correlationId;
                 StatusText = FormatError(
                     "Docker presentation background task failed.",
                     "docker.presentation.background-task-failed",
                     correlationId);
-            });
+            }, token);
     }
 
     private static bool IsDockerImagePull(BackgroundProcessSnapshot snapshot)

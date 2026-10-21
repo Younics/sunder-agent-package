@@ -8,7 +8,7 @@ using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Package.Agent.Provider.TestSupport;
 using Sunder.Sdk.Logging;
 using Xunit;
-using AgentReasoningEffort = Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentReasoningEffort;
+using AgentReasoningEffort = Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentReasoningEffort;
 
 namespace Sunder.Package.Agent.Provider.Anthropic.Tests;
 
@@ -733,7 +733,7 @@ public sealed class AnthropicProviderTests
     [Fact]
     public async Task Readiness_SatisfiesCommonLifecycleConformance()
     {
-        var context = new ProviderTestPackageContext("sunder.package.agent.provider.anthropic");
+        var context = new ProviderTestPackageContext("younics.ai.agent.provider.anthropic");
         var provider = new AnthropicAgentProvider(context);
         var transitions = new List<string>
         {
@@ -751,7 +751,7 @@ public sealed class AnthropicProviderTests
     [Fact]
     public async Task ProviderCatalog_PreservesReasoningAndFastContracts()
     {
-        var context = new ProviderTestPackageContext("sunder.package.agent.provider.anthropic");
+        var context = new ProviderTestPackageContext("younics.ai.agent.provider.anthropic");
         var provider = new AnthropicAgentProvider(context);
 
         var models = await provider.ListModelsAsync();

@@ -1,5 +1,5 @@
-using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using Sunder.Generated.Packages.Younics_Ai_Agent_Models;
+using IEmbeddingProviderService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Embedding_Provider.IEmbeddingProviderService;
 using Sunder.Sdk.Services;
 
 namespace RegressionTestGeneratedProviders;
@@ -12,6 +12,6 @@ public sealed partial class EmbeddingProvider(Func<string, Type, object?[], Canc
     public ValueTask<IReadOnlyList<AgentEmbeddingModelDescriptor>> ListModelsAsync(CancellationToken token = default) => Reply<IReadOnlyList<AgentEmbeddingModelDescriptor>>(nameof(ListModelsAsync), [], token);
     public ValueTask<AgentEmbeddingProviderReadiness> GetReadinessAsync(CancellationToken token = default) => Reply<AgentEmbeddingProviderReadiness>(nameof(GetReadinessAsync), [], token);
     public ValueTask<string> SpaceIdentityAsync(string modelId, CancellationToken token = default) => Reply<string>(nameof(SpaceIdentityAsync), [modelId], token);
-    public ValueTask<AgentEmbeddingGenerationResult?> GenerateAsync(CSunder_Agent_Embedding_Provider_EmbeddingProviderGenerateRequest request, CancellationToken token = default) => Reply<AgentEmbeddingGenerationResult?>(nameof(GenerateAsync), [request], token);
-    public ValueTask<IReadOnlyList<AgentEmbeddingGenerationResult?>> GenerateBatchAsync(CSunder_Agent_Embedding_Provider_EmbeddingProviderGenerateBatchRequest request, CancellationToken token = default) => Reply<IReadOnlyList<AgentEmbeddingGenerationResult?>>(nameof(GenerateBatchAsync), [request], token);
+    public ValueTask<AgentEmbeddingGenerationResult?> GenerateAsync(CYounics_Ai_Agent_Embedding_Provider_EmbeddingProviderGenerateRequest request, CancellationToken token = default) => Reply<AgentEmbeddingGenerationResult?>(nameof(GenerateAsync), [request], token);
+    public ValueTask<IReadOnlyList<AgentEmbeddingGenerationResult?>> GenerateBatchAsync(CYounics_Ai_Agent_Embedding_Provider_EmbeddingProviderGenerateBatchRequest request, CancellationToken token = default) => Reply<IReadOnlyList<AgentEmbeddingGenerationResult?>>(nameof(GenerateBatchAsync), [request], token);
 }

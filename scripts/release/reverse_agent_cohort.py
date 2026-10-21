@@ -20,7 +20,7 @@ def guard(repository, release_id, tag, source, source_sha, forward_path, request
     digest(source_sha, 40)
     require(tag == "agent/v" + inventory(source)["releaseVersion"], "Rollback tag/version differs")
     info = receipts.release_info(repository, release_id, tag)
-    require(info["draft"] is True and ("Agent source commit: " + source_sha) in info["body"].splitlines(),
+    require(info["draft"] is True and info["target_commitish"] == source_sha,
             "Non-security reverse requires the exact unannounced draft")
     ref = decode(receipts.gh(f"repos/{repository}/git/ref/tags/{quote(tag, safe='')}"))
     require(ref["ref"] == "refs/tags/" + tag, "Rollback tag ref differs")
@@ -33,6 +33,7 @@ def guard(repository, release_id, tag, source, source_sha, forward_path, request
         target = decode(receipts.gh(f"repos/{repository}/git/tags/{target['sha']}"))["object"]
     require(target["type"] == "commit" and target["sha"] == source_sha, "Rollback tag no longer selects artifact source")
     forward = load(forward_path)
+    require(forward["artifactSourceCommit"] == source_sha and forward["releaseId"] == int(release_id), "Forward receipt source differs")
     require(forward["registryOrigin"] == origin(os.environ["REGISTRY_API_URL"].rstrip("/")), "Rollback Registry differs from protected configuration")
     request_sha = receipts.check(forward)
     require(receipts.download_bytes(repository, release_id, tag, request_sha) == forward, "Retained forward cohort changed")

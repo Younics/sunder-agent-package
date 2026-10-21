@@ -5,7 +5,7 @@ using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Services;
 
-[SunderService(SunderServiceExposure.Public, Key = "runtime-catalog", ContractId = "sunder.agent.runtime.catalog", ServiceId = "runtime-catalog", IncludeSchemaDialect = true)]
+[SunderService(SunderServiceExposure.Public, Key = "runtime-catalog", ContractId = "younics.ai.agent.runtime.catalog", ServiceId = "runtime-catalog", IncludeSchemaDialect = true)]
 [SunderServiceProvider(ProviderId = "agent.runtime.catalog")]
 [SunderAppUse(Actions = ["discover", "invoke", "subscribe"])]
 [SunderRuntimeUse(Required = true, Actions = ["discover", "invoke", "subscribe"])]

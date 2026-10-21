@@ -14,7 +14,7 @@ using McpWorker::Sunder.Package.Agent.Mcp.Services;
 using MemoryWorker::Sunder.Package.Agent.Memory.Semantic;
 using MemoryWorker::Sunder.Package.Agent.Memory.Semantic.Runtime;
 using MemoryWorker::Sunder.Package.Agent.Memory.Semantic.Services;
-using IAgentOwnerRuntimeProvider = AgentApp::Sunder.Generated.Packages.Sunder_Package_Agent_Services.IAgentRuntimeService;
+using IAgentOwnerRuntimeProvider = AgentApp::Sunder.Generated.Packages.Younics_Ai_Agent_Services.IAgentRuntimeService;
 using Sunder.Package.Agent.Protocol;
 using AgentApp::Sunder.Package.Agent.Runtime;
 using AgentOwnerRuntimeProvider = Sunder.Package.Agent.Runtime.AgentOwnerRuntimeProvider;
@@ -25,9 +25,9 @@ using System.Reflection;
 using System.Text.Json;
 using Xunit;
 using BuilderRuntimeService = BuilderWorker::Sunder.Package.Agent.Builder.BuilderRuntimeService;
-using BuilderServices = BuilderWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
-using MemoryServices = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using IEmbeddingProviderService = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Embedding_Provider.IEmbeddingProviderService;
+using IRuntimeCatalogService = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Runtime_Catalog.IRuntimeCatalogService;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 using SkillOwnerJson = SkillsWorker::Sunder.Package.Agent.Skills.Runtime.OwnerJson;
 using SkillOwnerOperationException = SkillsWorker::Sunder.Package.Agent.Skills.Runtime.SkillOwnerOperationException;
 using SubagentOwnerJson = SubagentsWorker::Sunder.Package.Agent.Subagents.Runtime.SubagentOwnerJson;
@@ -48,36 +48,35 @@ public sealed class OwnerRpcFaultMappingTests
         Assert.True(SkillOwnerJson.ShouldMap(new SkillOwnerOperationException("expected")));
         Assert.True(SubagentOwnerJson.ShouldMap(new SubagentOwnerOperationException("expected")));
 
-        await using var builderResolvers = new FakeServiceCatalog<BuilderServices.IWorkspaceExecutionResolverService>(
-            CurrentPublicRpcDescriptors.Get(RegressionTestBindings.WorkspaceExecutionResolver));
-        var builderResolver = ThrowingBusinessService.Create<BuilderServices.IWorkspaceExecutionResolverService>(unexpected);
-        builderResolvers.Add(builderResolver);
-        var builder = new BuilderRuntimeService(builderResolvers);
+        using var package = RegressionTestPackageScope.Create();
+        await using var builder = new BuilderRuntimeService(package.Context);
         var builderRegistration = builder.CreateSunderRpcProviderRegistration();
 
         var builderAuthored = await Assert.ThrowsAsync<SunderRpcException>(() => InvokeAsync(
-            "sunder.package.agent.builder",
+            "younics.sunder.package.maker",
             builder,
             builderRegistration,
-            "resolve-workspace",
+            "inspect",
             "\"\""));
         Assert.Equal(SunderRpcErrorKind.Domain, builderAuthored.Error.Kind);
         Assert.Equal("agent.builder.invalid-request", builderAuthored.Error.Code);
         Assert.DoesNotContain(UnexpectedMessage, builderAuthored.Error.Message, StringComparison.Ordinal);
 
-        Assert.Same(unexpected, await Assert.ThrowsAsync<InvalidOperationException>(() => InvokeAsync(
-            "sunder.package.agent.builder",
+        var builderBackendId = await builder.GetBackendIdAsync();
+        var builderMissing = await Assert.ThrowsAsync<SunderRpcException>(() => InvokeAsync(
+            "younics.sunder.package.maker",
             builder,
             builderRegistration,
-            "list-workspaces",
-            "{}")));
+            "get-job",
+            JsonSerializer.Serialize(new { jobId = "absent-job", expectedBackendId = builderBackendId })));
+        Assert.Equal("agent.builder.job-not-found", builderMissing.Error.Code);
+        Assert.Equal(SunderRpcErrorKind.Domain, builderMissing.Error.Kind);
 
-        using var package = RegressionTestPackageScope.Create();
-        await using var runtimeCatalogs = new FakeServiceCatalog<MemoryServices.IRuntimeCatalogService>(
+        await using var runtimeCatalogs = new FakeServiceCatalog<IRuntimeCatalogService>(
             CurrentPublicRpcDescriptors.Get(RegressionTestBindings.RuntimeCatalog));
-        await using var embeddings = new FakeServiceCatalog<MemoryServices.IEmbeddingProviderService>(
+        await using var embeddings = new FakeServiceCatalog<IEmbeddingProviderService>(
             CurrentPublicRpcDescriptors.Get(RegressionTestBindings.EmbeddingProviders));
-        var runtimeCatalog = ThrowingBusinessService.Create<MemoryServices.IRuntimeCatalogService>(unexpected);
+        var runtimeCatalog = ThrowingBusinessService.Create<IRuntimeCatalogService>(unexpected);
         runtimeCatalogs.Add(runtimeCatalog);
         using var store = new MemoryLocalStore(package.Context);
         var settings = new MemorySemanticSettingsService(package.Context);
@@ -90,7 +89,7 @@ public sealed class OwnerRpcFaultMappingTests
 
         ThrowingBusinessService.Set(runtimeCatalog, new MemoryInspectorOperationException("expected"));
         var memoryAuthored = await Assert.ThrowsAsync<SunderRpcException>(() => InvokeAsync(
-            "sunder.package.agent.memory.semantic",
+            "younics.ai.agent.memory.semantic",
             memory,
             memoryRegistration,
             "sessions",
@@ -102,7 +101,7 @@ public sealed class OwnerRpcFaultMappingTests
 
         ThrowingBusinessService.Set(runtimeCatalog, unexpected);
         Assert.Same(unexpected, await Assert.ThrowsAsync<InvalidOperationException>(() => InvokeAsync(
-            "sunder.package.agent.memory.semantic",
+            "younics.ai.agent.memory.semantic",
             memory,
             memoryRegistration,
             "sessions",
@@ -123,7 +122,7 @@ public sealed class OwnerRpcFaultMappingTests
             new McpOAuthCoordinator(oauthService: null, mcpConnections),
             package.Context);
         var mcpFailure = await Assert.ThrowsAsync<SunderRpcException>(() => InvokeAsync(
-            "sunder.package.agent.mcp",
+            "younics.ai.agent.mcp",
             mcp,
             mcp.CreateSunderRpcProviderRegistration(),
             "delete",
@@ -372,7 +371,7 @@ public sealed class OwnerRpcFaultMappingTests
             Client = _catalog.AddOwnerRuntimeProvider(owner);
             Resources = new AgentOwnerResources(
                 _catalog.GetServiceProviders<IAgentOwnerRuntimeProvider>(),
-                _catalog.RpcForCaller("sunder.package.agent"));
+                _catalog.RpcForCaller("younics.ai.agent"));
         }
 
         public RegressionTestRuntime Services { get; }

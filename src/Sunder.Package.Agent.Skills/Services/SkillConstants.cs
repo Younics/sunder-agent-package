@@ -2,7 +2,7 @@ namespace Sunder.Package.Agent.Skills.Services;
 
 internal static class SkillConstants
 {
-    public const string PackageId = "sunder.package.agent.skills";
+    public const string PackageId = "younics.ai.agent.skills";
     public const string CapabilityKind = "skill";
     public const string SkillsRelativeRoot = "skills";
     public const string SkillToolId = "skill";

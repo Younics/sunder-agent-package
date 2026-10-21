@@ -4,7 +4,7 @@ using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Execution.Local;
 
-[SunderService(Key = "management", ContractId = "sunder.package.agent.execution.local.presentation", ServiceId = "presentation")]
+[SunderService(Key = "management", ContractId = "younics.ai.agent.execution.local.presentation", ServiceId = "presentation")]
 [SunderServiceProvider(ProviderId = "local.presentation")]
 internal sealed partial class LocalExecutionPresentationService(IPackageContext packageContext, LocalShellCatalogService shellCatalog)
 {

@@ -11,12 +11,10 @@ internal sealed partial class McpServerStackContributor(
     McpServerCatalogService serverCatalog,
     IPackageContext packageContext) : IPackageStackExporter, IPackageStackImporter, IPackageStackImportAppliedHandler
 {
-    private const string PackageId = "sunder.package.agent.mcp";
-    private const string SchemaId = "sunder.package.agent.mcp/server";
     private const string SecretPlaceholder = "Value not exported";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
-    public string ContributorId => "sunder.package.agent.mcp.servers";
+    public string ContributorId => "younics.ai.agent.mcp.servers";
 
     public string DisplayName => "MCP Servers";
 
@@ -334,6 +332,8 @@ internal sealed partial class McpServerStackContributor(
 
 internal static class McpServerStackPayloadCodec
 {
+    internal const string PackageId = "younics.ai.agent.mcp";
+    internal const string SchemaId = "younics.ai.agent.mcp/server";
     private const string SecretPlaceholder = "Value not exported";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
@@ -466,6 +466,13 @@ internal static class McpServerStackPayloadCodec
     internal static bool TryReadPayload(StackFragmentImport fragment, ICollection<string> warnings, out McpServerStackPayload? payload)
     {
         payload = null;
+        if (!string.Equals(fragment.OwnerPackageId, PackageId, StringComparison.Ordinal)
+            || !string.Equals(fragment.SchemaId, SchemaId, StringComparison.Ordinal)
+            || fragment.SchemaVersion != 1)
+        {
+            warnings.Add($"Stack fragment '{fragment.FragmentId}' has an unsupported owner or MCP server schema.");
+            return false;
+        }
         try
         {
             if (fragment.JsonPayload.Length > McpConfigurationSourceReader.MaxDocumentBytes)

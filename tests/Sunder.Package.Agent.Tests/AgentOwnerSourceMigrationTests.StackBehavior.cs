@@ -66,7 +66,7 @@ public sealed partial class AgentOwnerSourceMigrationTests
                 pair => Assert.Equal(new[] { "stack.method.unsupported" }, pair.Value));
             using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
             var rpc = new RegressionTestRpcClient(state, "sunder.core");
-            state.Add("sunder.package.agent", descriptor, implementation, registration.Handler, Noop.Instance, providerId, "2.0.0");
+            state.Add("younics.ai.agent", descriptor, implementation, registration.Handler, Noop.Instance, providerId, "2.0.0");
             var sourceEndpoint = Assert.Single((await rpc.DiscoverAsync(descriptor.ContractId)).Providers).Endpoint;
 
             var metadata = await Call(sourceEndpoint, "metadata", new { });
@@ -75,7 +75,7 @@ public sealed partial class AgentOwnerSourceMigrationTests
             Assert.True(metadata.GetProperty("supportsImport").GetBoolean());
             Assert.True(metadata.GetProperty("supportsImportApplied").GetBoolean());
             var itemId = isProfile ? profile.ProfileId : workspace.WorkspaceId;
-            var discoveryRequest = new StackExportDiscoveryContext("sunder.package.agent");
+            var discoveryRequest = new StackExportDiscoveryContext("younics.ai.agent");
             var items = await Call(sourceEndpoint, "list-export-items", discoveryRequest);
             Assert.Contains(items.GetProperty("items").EnumerateArray(), item => item.GetProperty("itemId").GetString() == itemId);
             Assert.DoesNotContain(items.GetProperty("items").EnumerateArray(), item => item.GetProperty("itemId").GetString() is "internal.profile" or AgentWorkspaceService.UnassignedSessionsWorkspaceId);
@@ -95,7 +95,7 @@ public sealed partial class AgentOwnerSourceMigrationTests
                 Assert.True(JsonElement.DeepEquals(expected, await Call(sourceEndpoint, route, parityRequest)), route);
             }
             var requirement = Assert.Single(exported.GetProperty("packageRequirements").EnumerateArray());
-            Assert.Equal("sunder.package.agent", requirement.GetProperty("packageId").GetString());
+            Assert.Equal("younics.ai.agent", requirement.GetProperty("packageId").GetString());
             Assert.Equal("1.1.0", requirement.GetProperty("minimumVersion").GetString());
             var fragment = Assert.Single(exported.GetProperty("fragments").EnumerateArray());
             Assert.Contains(isProfile ? "Preserved instructions" : source.RootPath, fragment.GetProperty("jsonPayload").GetString()!, StringComparison.Ordinal);
@@ -103,7 +103,7 @@ public sealed partial class AgentOwnerSourceMigrationTests
                 fragment.GetProperty("schemaId").GetString()!, fragment.GetProperty("schemaVersion").GetInt32(), fragment.GetProperty("displayName").GetString()!,
                 fragment.GetProperty("jsonPayload").GetString()!);
             await state.RetireAsync(implementation);
-            state.Add("sunder.package.agent", descriptor, targetImplementation, targetRegistration.Handler, Noop.Instance, providerId, "2.0.0");
+            state.Add("younics.ai.agent", descriptor, targetImplementation, targetRegistration.Handler, Noop.Instance, providerId, "2.0.0");
             var targetEndpoint = Assert.Single((await rpc.DiscoverAsync(descriptor.ContractId)).Providers).Endpoint;
             Assert.NotEqual(sourceEndpoint, targetEndpoint);
             var stale = await Assert.ThrowsAsync<SunderRpcException>(() => Call(sourceEndpoint, "metadata", new { }));
@@ -113,7 +113,7 @@ public sealed partial class AgentOwnerSourceMigrationTests
             var preview = await Call(targetEndpoint, "preview-import", previewRequest);
             var action = Assert.Single(preview.GetProperty("actions").EnumerateArray());
             Assert.Equal((int)StackImportActionKind.Create, action.GetProperty("kind").GetInt32());
-            Assert.Equal("sunder.package.agent", probe.LastFragment!.OwnerPackageId);
+            Assert.Equal("younics.ai.agent", probe.LastFragment!.OwnerPackageId);
             Assert.Equal(targetDomain.ContributorId, probe.LastFragment.ContributorId);
             if (isProfile) Assert.Null(targetServices.GetRequiredService<AgentProfileService>().GetProfile("imported.profile"));
             else Assert.Null(targetServices.GetRequiredService<AgentWorkspaceService>().GetWorkspace(workspace.WorkspaceId));
@@ -151,7 +151,7 @@ public sealed partial class AgentOwnerSourceMigrationTests
             var applied = new StackImportAppliedContext("forged.owner", "forged.contributor", [imported.FragmentId],
                 result.GetProperty("importedItems").Deserialize<StackImportedItem[]>(StackJson)!);
             Assert.Empty((await Call(targetEndpoint, "import-applied", applied)).EnumerateObject());
-            Assert.Equal("sunder.package.agent", probe.Applied!.OwnerPackageId);
+            Assert.Equal("younics.ai.agent", probe.Applied!.OwnerPackageId);
             Assert.Equal(targetDomain.ContributorId, probe.Applied.ContributorId);
             Assert.True(notifications > 0);
             var malformed = await Call(targetEndpoint, "preview-import", previewRequest with

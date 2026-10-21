@@ -5,7 +5,7 @@ using Sunder.Package.Agent.Memory.Semantic.Services;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Services;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Memory_Semantic_Services;
+using Sunder.Generated.Packages.Younics_Ai_Agent_Memory_Semantic_Services;
 
 namespace Sunder.Package.Agent.Memory.Semantic;
 

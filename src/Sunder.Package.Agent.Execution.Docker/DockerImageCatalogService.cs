@@ -23,11 +23,6 @@ public sealed class DockerImageCatalogService
         "revision",
         "images",
     };
-    private static readonly HashSet<string> LegacyCatalogProperties = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "version",
-        "images",
-    };
     private static readonly HashSet<string> ImageProperties = new(StringComparer.OrdinalIgnoreCase)
     {
         "imageReference",
@@ -38,7 +33,7 @@ public sealed class DockerImageCatalogService
     private static readonly ConditionalWeakTable<IPackageKeyValueStore, DockerImageCatalogCoordinator> Coordinators = new();
     private readonly IPackageContext _packageContext;
     private readonly DockerCliRunner _dockerCliRunner;
-    private readonly DockerPackageStorageMigration _storageMigration;
+    private readonly DockerPackageStorageValidation _storageValidation;
     private readonly DockerImageCatalogCoordinator _coordinator;
     private readonly SemaphoreSlim _mutationGate;
 
@@ -46,7 +41,7 @@ public sealed class DockerImageCatalogService
         : this(
             packageContext,
             dockerCliRunner ?? new DockerCliRunner(packageContext),
-            new DockerPackageStorageMigration(packageContext))
+            new DockerPackageStorageValidation(packageContext))
     {
     }
 
@@ -54,11 +49,11 @@ public sealed class DockerImageCatalogService
     internal DockerImageCatalogService(
         IPackageContext packageContext,
         DockerCliRunner dockerCliRunner,
-        DockerPackageStorageMigration storageMigration)
+        DockerPackageStorageValidation storageValidation)
     {
         _packageContext = packageContext;
         _dockerCliRunner = dockerCliRunner;
-        _storageMigration = storageMigration;
+        _storageValidation = storageValidation;
         _coordinator = GetCoordinator(packageContext.Storage.State);
         _mutationGate = _coordinator.MutationGate;
     }
@@ -72,7 +67,7 @@ public sealed class DockerImageCatalogService
     internal async Task<DockerImageCatalogSnapshot> GetSnapshotAsync(
         CancellationToken cancellationToken = default)
     {
-        await _storageMigration.EnsureAsync(cancellationToken).ConfigureAwait(false);
+        await _storageValidation.EnsureAsync(cancellationToken).ConfigureAwait(false);
         var state = await LoadStateAsync(cancellationToken).ConfigureAwait(false);
         return new DockerImageCatalogSnapshot(state.Revision, state.Images);
     }
@@ -110,7 +105,7 @@ public sealed class DockerImageCatalogService
         var normalized = NormalizeImageReference(imageReference);
         DockerImageCatalogMutationResult result;
         var changed = false;
-        await _storageMigration.EnsureAsync(cancellationToken).ConfigureAwait(false);
+        await _storageValidation.EnsureAsync(cancellationToken).ConfigureAwait(false);
         await _mutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -163,7 +158,7 @@ public sealed class DockerImageCatalogService
         var normalized = NormalizeExistingReference(imageReference);
         DockerImageCatalogSnapshot result;
         var changed = false;
-        await _storageMigration.EnsureAsync(cancellationToken).ConfigureAwait(false);
+        await _storageValidation.EnsureAsync(cancellationToken).ConfigureAwait(false);
         await _mutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -222,7 +217,7 @@ public sealed class DockerImageCatalogService
         {
             return new DockerImageReadiness(
                 false,
-                "This workspace uses a legacy tagless Docker image reference. Select an explicit tag or sha256 digest.",
+                "This workspace uses a Docker image reference that needs attention. Select an explicit tag or sha256 digest.",
                 image);
         }
 
@@ -352,7 +347,7 @@ public sealed class DockerImageCatalogService
         ArgumentNullException.ThrowIfNull(images);
         var normalized = NormalizeImages(images);
         var changed = false;
-        await _storageMigration.EnsureAsync(cancellationToken).ConfigureAwait(false);
+        await _storageValidation.EnsureAsync(cancellationToken).ConfigureAwait(false);
         await _mutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -422,7 +417,7 @@ public sealed class DockerImageCatalogService
         return normalized;
     }
 
-    internal static string NormalizeLegacyImageReference(string imageReference)
+    internal static string NormalizeAttentionImageReference(string imageReference)
     {
         var normalized = imageReference?.Trim() ?? string.Empty;
         if (normalized.Length is 0 or > MaximumReferenceLength
@@ -431,7 +426,7 @@ public sealed class DockerImageCatalogService
         {
             throw new DockerExecutionDomainException(
                 "docker.image-reference.invalid",
-                "Legacy Docker image reference is invalid.");
+                "Docker image reference is invalid.");
         }
         return normalized;
     }
@@ -445,7 +440,7 @@ public sealed class DockerImageCatalogService
         catch (DockerExecutionDomainException exception) when (
             exception.Code == "docker.image-reference.unpinned")
         {
-            return NormalizeLegacyImageReference(imageReference);
+            return NormalizeAttentionImageReference(imageReference);
         }
     }
 
@@ -469,7 +464,7 @@ public sealed class DockerImageCatalogService
                     "docker.catalog.unsupported-schema",
                     "The stored Docker image catalog uses an unsupported schema and was left unchanged.");
             }
-            ValidateCatalogProperties(document.RootElement, legacy: false);
+            ValidateCatalogProperties(document.RootElement);
             if (state.Revision < 0 || state.Images is null)
             {
                 throw new DockerExecutionDomainException(
@@ -491,14 +486,14 @@ public sealed class DockerImageCatalogService
         }
     }
 
-    internal static void ValidateCatalogProperties(JsonElement root, bool legacy)
+    internal static void ValidateCatalogProperties(JsonElement root)
     {
         if (root.ValueKind != JsonValueKind.Object)
         {
             throw new JsonException("Docker image catalog root is not an object.");
         }
 
-        ValidateObjectProperties(root, legacy ? LegacyCatalogProperties : CatalogProperties);
+        ValidateObjectProperties(root, CatalogProperties);
         var images = root.EnumerateObject().FirstOrDefault(property =>
             string.Equals(property.Name, "images", StringComparison.OrdinalIgnoreCase)).Value;
         if (images.ValueKind == JsonValueKind.Undefined)
@@ -547,7 +542,7 @@ public sealed class DockerImageCatalogService
     {
         var changed = false;
         var committed = image;
-        await _storageMigration.EnsureAsync(cancellationToken).ConfigureAwait(false);
+        await _storageValidation.EnsureAsync(cancellationToken).ConfigureAwait(false);
         await _mutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -602,7 +597,7 @@ public sealed class DockerImageCatalogService
     {
         DockerImageStatusOperation? operation = null;
         var changed = false;
-        await _storageMigration.EnsureAsync(cancellationToken).ConfigureAwait(false);
+        await _storageValidation.EnsureAsync(cancellationToken).ConfigureAwait(false);
         await _mutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -687,7 +682,7 @@ public sealed class DockerImageCatalogService
                     "The stored Docker image catalog contains an unknown image status.");
             }
             var reference = image.Status == DockerImageStatus.NeedsAttention
-                ? NormalizeLegacyImageReference(image.ImageReference)
+                ? NormalizeAttentionImageReference(image.ImageReference)
                 : NormalizeImageReference(image.ImageReference);
             return image with
             {

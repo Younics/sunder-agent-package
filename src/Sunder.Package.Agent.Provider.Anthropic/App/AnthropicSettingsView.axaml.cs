@@ -6,6 +6,7 @@ namespace Sunder.Package.Agent.Provider.Anthropic;
 public partial class AnthropicSettingsView : UserControl, IDisposable
 {
     private AnthropicSettingsViewModel? _viewModel;
+    private int _disposed;
 
     public AnthropicSettingsView()
     {
@@ -22,6 +23,7 @@ public partial class AnthropicSettingsView : UserControl, IDisposable
 
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         DataContext = null;
         _viewModel?.Dispose();
         _viewModel = null;

@@ -11,7 +11,7 @@ namespace Sunder.Package.Agent.Tests;
 internal sealed class PrivateManagementSourceFixture : IDisposable
 {
     private readonly CanonicalPackageRoles _roles = new();
-    private readonly Dictionary<string, byte[]> _evidence = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, byte[]?> _evidence = new(StringComparer.Ordinal);
 
     internal Assembly Worker { get; private set; } = null!;
     internal Assembly App { get; private set; } = null!;
@@ -34,7 +34,8 @@ internal sealed class PrivateManagementSourceFixture : IDisposable
         foreach (var name in new[] { "sunder-contracts.owned.json", "sunder-contracts.lock.json" })
         {
             var path = Path.Combine(root, name);
-            _evidence.Add(path, File.ReadAllBytes(path));
+            _evidence.Add(path, name == "sunder-contracts.owned.json"
+                ? CanonicalPackageRoles.ReadOwnedBaseline(root) : File.ReadAllBytes(path));
         }
         Descriptor = CanonicalPackageRoles.OwnedDescriptor(root, oracle.ContractId);
         Assert.Equal(oracle.GetCanonicalUtf8(), Descriptor.GetCanonicalUtf8());
@@ -67,6 +68,8 @@ internal sealed class PrivateManagementSourceFixture : IDisposable
     public void Dispose()
     {
         _roles.Dispose();
-        foreach (var (path, bytes) in _evidence) Assert.Equal(bytes, File.ReadAllBytes(path));
+        foreach (var (path, bytes) in _evidence)
+            if (bytes is null) Assert.False(File.Exists(path), "Private-only baseline absence changed during the probe.");
+            else Assert.Equal(bytes, File.ReadAllBytes(path));
     }
 }

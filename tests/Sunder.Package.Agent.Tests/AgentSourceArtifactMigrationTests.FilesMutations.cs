@@ -6,7 +6,7 @@ using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
 
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 
 public sealed partial class AgentSourceArtifactMigrationTests
 {

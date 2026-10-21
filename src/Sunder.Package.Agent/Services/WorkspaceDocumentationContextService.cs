@@ -82,7 +82,7 @@ public sealed partial class WorkspaceDocumentationContextService : IAgentPromptC
                 "Workspace Documentation",
                 content.ToString().Trim(),
                 Priority: 85,
-                SourceId: "sunder.package.agent",
+                SourceId: "younics.ai.agent",
                 Provenance: AgentContextProvenance.Tool,
                 Trust: AgentContextTrust.Untrusted)
             {

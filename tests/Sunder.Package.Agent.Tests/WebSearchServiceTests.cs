@@ -8,8 +8,8 @@ using Sunder.Sdk.Logging;
 using WebWorker::Sunder.Package.Agent.Tools.Web;
 using WebWorker::Sunder.Package.Agent.Tools.Web.Backends;
 using WebWorker::Sunder.Package.Agent.Tools.Web.Services;
-using WebContext = WebWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentToolExecutionContext;
-using WebRequest = WebWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentToolRequest;
+using WebContext = WebWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentToolExecutionContext;
+using WebRequest = WebWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentToolRequest;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;

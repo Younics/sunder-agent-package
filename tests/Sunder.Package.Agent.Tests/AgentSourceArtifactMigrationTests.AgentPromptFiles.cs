@@ -7,7 +7,7 @@ using Sunder.Package.Agent.TestSupport;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Services;
 using Sunder.Sdk.Worker;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -18,14 +18,14 @@ public sealed partial class AgentSourceArtifactMigrationTests
     {
         using var package = RegressionTestPackageScope.Create();
         var root = OperatingSystem.IsMacOS() && package.RootPath.StartsWith("/var/", StringComparison.Ordinal) ? "/private" + package.RootPath : package.RootPath;
-        var filesContext = new TestPackageContext("sunder.package.agent.tools.files", root, version: "2.0.0", storage: package.Context.Storage);
-        var localContext = new TestPackageContext("sunder.package.agent.execution.local", root, version: "2.0.0", storage: package.Context.Storage);
+        var filesContext = new TestPackageContext("younics.ai.agent.tools.files", root, version: "2.0.0", storage: package.Context.Storage);
+        var localContext = new TestPackageContext("younics.ai.agent.execution.local", root, version: "2.0.0", storage: package.Context.Storage);
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
         var (localOptions, localLifetime, _) = CreateGeneratedWorker(local, localContext, new RegressionTestRpcClient(state, localContext.PackageId));
         await using var ownedLocal = localLifetime;
         var target = Assert.Single(localOptions.Providers, value => value.ProviderId == "local.execution.target");
         state.Add(localContext.PackageId, CurrentPublicRpcDescriptors.Get(target.ContractId), target.Handler, target.Handler, Noop.Instance, target.ProviderId, "2.0.0");
-        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
+        var rpc = new RegressionTestRpcClient(state, "younics.ai.agent");
         var targetReceiver = new GeneratedServiceTestScope(rpc);
         var filesRpc = new FilesRpcObserver(new RegressionTestRpcClient(state, filesContext.PackageId));
         var (options, filesLifetime, _) = CreateGeneratedWorker(files, filesContext, filesRpc);
@@ -57,7 +57,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         {
             Assert.Equal(AgentPromptContextUsage.ScopedInstruction, block.Usage);
             Assert.Equal(AgentPromptContextAuthority.ScopedInstruction, block.Authority);
-            Assert.Equal("sunder.host.scoped-instruction.v1", block.HostIdentity);
+            Assert.Equal("younics.ai.agent.scoped-instruction.v1", block.HostIdentity);
             Assert.Equal(AgentContextTrust.Untrusted, block.Trust);
         });
         var reference = Assert.Single(built.Blocks, block => block.Scope is null);

@@ -12,7 +12,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         "src/Sunder.Package.Agent.Execution.Local/Models/LocalExecutionPresentationModels.cs",
         "src/Sunder.Package.Agent.Execution.Local/Runtime/LocalExecutionPresentationDefaults.cs",
     ];
-    internal static readonly string[] LocalProviderSources = new[] { "ExecutionValues.cs", "ExecutionTargetProvider.cs", "WorkspaceEditorProvider.cs", "WorkspacePathMigratorProvider.cs" }
+    internal static readonly string[] LocalProviderSources = new[] { "ExecutionValues.cs", "ExecutionTargetProvider.cs", "WorkspaceEditorProvider.cs" }
         .Select(file => "src/Sunder.Package.Agent.Execution.Local/Rpc/" + file).ToArray();
     internal static readonly string[] LocalRelocationSources = [.. LocalModelSources, .. LocalProviderSources,
         "src/Sunder.Package.Agent.Execution.Local/Runtime/LocalWorkerConfiguration.cs",
@@ -42,12 +42,12 @@ public sealed partial class AgentSourceArtifactMigrationTests
         using var manifestStream = archive.GetEntry("manifest/sunder-package.json")!.Open();
         using var manifest = JsonDocument.Parse(manifestStream);
         var value = manifest.RootElement;
-        Assert.Equal("sunder.package.agent.execution.local", value.GetProperty("id").GetString());
-        Assert.Equal(4, value.GetProperty("contractBundles").GetArrayLength());
-        Assert.Equal(4, value.GetProperty("provides").GetArrayLength());
+        Assert.Equal("younics.ai.agent.execution.local", value.GetProperty("id").GetString());
+        Assert.Equal(3, value.GetProperty("contractBundles").GetArrayLength());
+        Assert.Equal(3, value.GetProperty("provides").GetArrayLength());
         var use = Assert.Single(value.GetProperty("usesContracts").EnumerateArray());
         Assert.Equal("app", use.GetProperty("role").GetString()); Assert.True(use.GetProperty("required").GetBoolean());
-        Assert.Equal(3, value.GetProperty("providerImports").GetArrayLength());
+        Assert.Equal(2, value.GetProperty("providerImports").GetArrayLength());
         Assert.True(!value.TryGetProperty("packageApiImports", out var apis) || apis.GetArrayLength() == 0);
         Assert.True(!value.TryGetProperty("platformImports", out var platforms) || platforms.GetArrayLength() == 0);
         Assert.Equal("required", Assert.Single(value.GetProperty("dependsOn").EnumerateArray()).GetProperty("presence").GetString());
@@ -63,7 +63,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             var descriptor = await active.Invoke("local.execution.target", "execution-target", "describe", new { });
             Assert.Equal("local", descriptor.GetProperty("targetId").GetString());
             Assert.Equal(9, descriptor.GetProperty("facets").GetArrayLength());
-            Assert.Equal("sunder.package.agent.execution.local.workspace-editor", (await active.Invoke("local.workspace.editor", "workspace-editor", "describe", new { })).GetProperty("id").GetString());
+            Assert.Equal("younics.ai.agent.execution.local.workspace-editor", (await active.Invoke("local.workspace.editor", "workspace-editor", "describe", new { })).GetProperty("id").GetString());
             await active.Shutdown();
         }
     }

@@ -10,6 +10,7 @@ namespace Sunder.Package.Agent.PackageViews;
 public partial class AgentPermissionsView : UserControl, IDisposable
 {
     private AgentPermissionsViewModel? _viewModel;
+    private int _disposed;
     public AgentPermissionsView()
     {
         InitializeComponent();
@@ -37,6 +38,7 @@ public partial class AgentPermissionsView : UserControl, IDisposable
 
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         _viewModel?.Dispose();
         _viewModel = null;
         DataContext = null;

@@ -162,19 +162,42 @@ def verify(source, bundle, approved_sha, source_sha, core_sha):
     for item in [*value["candidates"], value["platformCatalog"]]:
         path = regular(bundle / item["asset"]["name"])
         require(path.stat().st_size == item["asset"]["size"] and file_sha(path) == item["asset"]["sha256"], "Cold input bytes changed")
-    candidate_metadata = {}
-    for item in value["candidates"]:
-        manifest, public, public_sha = archive_metadata(bundle / item["asset"]["name"])
-        require((manifest["id"], manifest["version"], public["packageContentIdentity"], public_sha)
-                == tuple(item[k] for k in ("packageId", "version", "packageContentIdentity", "publicInventorySha256")), "Candidate inspection differs")
+    verify_selected_files(source, [bundle / item["asset"]["name"] for item in value["candidates"]],
+                          bundle / value["platformCatalog"]["asset"]["name"])
+    return value
+
+
+def verify_selected_files(source, candidates, catalog_path):
+    """Shared local/CI/release admission against complete committed lock selections.
+
+    This validates bytes, not production approval. Release callers additionally
+    bind their source, lock set and durable asset coordinates in validate_manifest.
+    """
+    documents = lock_documents(source)
+    expected = {(package_id, item["selectedPackageVersion"], item["selectedPackageContentIdentity"], item["publicInventorySha256"])
+                for _, lock in documents for package_id, item in lock["packageArtifacts"].items()}
+    candidate_metadata, paths, actual = {}, {}, set()
+    for path in candidates:
+        path = regular(path).resolve()
+        require(path.stat().st_size <= 268435456, "Candidate exceeds the archive bound")
+        manifest, public, public_sha = archive_metadata(path)
+        key = (manifest["id"], manifest["version"], public["packageContentIdentity"], public_sha)
+        require(manifest["id"] not in candidate_metadata, "Duplicate selected candidate")
+        actual.add(key)
         candidate_metadata[manifest["id"]] = public
-    catalog = load(bundle / value["platformCatalog"]["asset"]["name"])
+        paths[manifest["id"]] = path
+    require(actual == expected, "Candidates do not match every exact committed package selection")
+    catalog_path = regular(catalog_path).resolve()
+    catalog = load(catalog_path)
     require(catalog["schemaVersion"] == 1 and catalog["authorityKind"] == "platform" and catalog["authorityId"] == "sunder.core"
-            and catalog["releaseVersion"] == value["platformCatalog"]["releaseVersion"]
             and catalog["contractCount"] == len(catalog["contracts"]), "Catalog release/inventory differs")
+    expected_catalogs = {(item["authorityId"], item["selectedAuthorityRelease"], item["selectedAuthorityContentIdentity"])
+                         for _, lock in documents for item in catalog_requirements(lock)}
+    require(expected_catalogs == {(catalog["authorityId"], catalog["releaseVersion"], file_sha(catalog_path))},
+            "Catalog bytes do not match all committed platform selections")
     catalog_records = {c["contractId"]: c for c in catalog["contracts"]}
     require(len(catalog_records) == len(catalog["contracts"]), "Duplicate catalog contract")
-    for _, lock in lock_documents(source):
+    for _, lock in documents:
         for package_id, entry in lock["packageArtifacts"].items():
             public = candidate_metadata[package_id]
             expected = {c["contractId"]: {
@@ -188,11 +211,11 @@ def verify(source, bundle, approved_sha, source_sha, core_sha):
             require(all(contract[k] == item[k] for k in ("descriptorBytes", "descriptorSha256", "abiSha256"))
                     and contract["contractVersion"] == item["resolvedContractVersion"]
                     and sha(contract["canonicalDescriptor"].encode()) == item["descriptorSha256"], "Catalog does not reproduce the exact locked RPC tuple")
-    return value
+    return paths
 
 
-def fetch(source, destination, source_sha, core_sha):
-    selected = locator(decode(os.environ["SUNDER_AGENT_COLD_INPUT_MANIFEST"].encode()), MAX_MANIFEST)
+def fetch(source, destination, source_sha, core_sha, selected=None):
+    selected = locator(selected if selected is not None else decode(os.environ["SUNDER_AGENT_COLD_INPUT_MANIFEST"].encode()), MAX_MANIFEST)
     destination = Path(destination).absolute()
     require(not destination.exists() and not destination.is_symlink(), "Cold input destination must be new")
     destination.mkdir()

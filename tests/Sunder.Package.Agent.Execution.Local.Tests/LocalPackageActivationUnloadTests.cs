@@ -12,7 +12,7 @@ using Sunder.Package.Agent.Tests;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Worker;
 using Xunit;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
 
@@ -124,8 +124,8 @@ public sealed class LocalPackageActivationUnloadTests
             0,
             "workspace-generation",
             "binding-generation",
-            "sunder.package.agent.tools.files",
-            "sunder.package.agent.execution.local",
+            "younics.ai.agent.tools.files",
+            "younics.ai.agent.execution.local",
             activationId,
             1,
             CanIssueOutsideAuthority: true);
@@ -182,9 +182,9 @@ public sealed class LocalPackageActivationUnloadTests
             .Invoke(implementation, null)
             ?? throw new InvalidOperationException("The Local execution target did not create its generated provider registration."));
         var catalog = new RegressionTestExtensionCatalog();
-        catalog.AddGeneratedProvider("sunder.package.agent.execution.local", implementation, registration);
+        catalog.AddGeneratedProvider("younics.ai.agent.execution.local", implementation, registration);
         var target = catalog.GetRequiredProviderAsync(
-            catalog.Receiver("sunder.package.agent").Providers<AgentServices.IExecutionTargetService>())
+            catalog.Receiver("younics.ai.agent").Providers<AgentServices.IExecutionTargetService>())
             .AsTask().GetAwaiter().GetResult().Service;
         return new CollectibleLocalActivation(loadContext, provider, catalog, target, implementation, registration.Handler);
     }

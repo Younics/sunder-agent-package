@@ -3,7 +3,7 @@ using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Rpc.Public;
 
-[SunderService(SunderServiceExposure.Public, ContractId = "sunder.agent.prompt.context.contributor", ServiceId = "prompt-context-contributor", IncludeSchemaDialect = true)]
+[SunderService(SunderServiceExposure.Public, ContractId = "younics.ai.agent.prompt.context.contributor", ServiceId = "prompt-context-contributor", IncludeSchemaDialect = true)]
 [SunderRuntimeUse(Actions = ["discover", "invoke"])]
 public interface PromptContextContributorService
 {

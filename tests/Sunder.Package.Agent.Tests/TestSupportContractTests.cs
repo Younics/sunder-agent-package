@@ -5,7 +5,7 @@ using Sunder.Package.Agent.TestSupport;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Settings;
 using Sunder.Sdk.Services;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -18,7 +18,7 @@ public sealed class TestSupportContractTests
         using var roles = new CanonicalPackageRoles();
         var worker = roles.Load("Execution.Local", "worker");
         var target = worker.GetType(
-            "Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentResourceAuthorityValidation", true)!;
+            "Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentResourceAuthorityValidation", true)!;
         var candidate = Environment.GetEnvironmentVariable("SUNDER_AGENT_PUBLIC_FIXTURE_CANDIDATE")!;
         Assert.False(string.IsNullOrWhiteSpace(candidate));
         using var state = new RegressionTestRpcState();
@@ -91,7 +91,7 @@ public sealed class TestSupportContractTests
         var descriptor = CurrentPublicRpcDescriptors.Get(RegressionTestBindings.ToolSources);
         var handler = new BlockingRpcHandler();
         state.Add("test.package", descriptor, handler, handler, new CancellationTokenSource(), "test.tools", "2.0.0");
-        await using var receiver = new GeneratedServiceTestScope(new RegressionTestRpcClient(state, "sunder.package.agent"));
+        await using var receiver = new GeneratedServiceTestScope(new RegressionTestRpcClient(state, "younics.ai.agent"));
         var contract = worker.GetType(typeof(AgentServices.IToolSourceService).FullName!, throwOnError: true)!;
         var catalog = receiver.Providers(contract);
         var snapshot = (await AgentRoleBoundary.Await(AgentRoleBoundary.Call(catalog, "ListAsync", CancellationToken.None)!)

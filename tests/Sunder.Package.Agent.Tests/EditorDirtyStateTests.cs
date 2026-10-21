@@ -79,7 +79,7 @@ public sealed class EditorDirtyStateTests
     {
         var store = new AgentLocalStore(scope.Context);
         var sessionService = new AgentSessionService(store, extensionCatalog.SessionCleaners);
-        var workspaceService = new AgentWorkspaceService(store, extensionCatalog.SessionCleaners, sessionService, extensionCatalog.WorkspacePathMigrators);
+        var workspaceService = new AgentWorkspaceService(store, extensionCatalog.SessionCleaners, sessionService);
         var toolService = new AgentToolService(
             sessionService,
             workspaceService,

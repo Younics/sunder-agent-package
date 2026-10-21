@@ -1,5 +1,8 @@
 using System.Text;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using IDurableLifecycleObserverService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Durable_Lifecycle_Observer.IDurableLifecycleObserverService;
+using IProfileCapabilityConsumerService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Profile_Capability_Consumer.IProfileCapabilityConsumerService;
+using IPromptContextContributorService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Prompt_Context_Contributor.IPromptContextContributorService;
+using ISessionCleanerService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Session_Cleaner.ISessionCleanerService;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Memory.Semantic.Services;
 using Sunder.Sdk.Services;

@@ -7,7 +7,7 @@ using Sunder.Package.Agent.Subagents.Models;
 using Sunder.Package.Agent.Subagents.Services;
 using Sunder.Sdk.Services;
 #if SUNDER_SUBAGENTS_APP
-using Sunder.Generated.Packages.Sunder_Package_Agent_Subagents_Services;
+using Sunder.Generated.Packages.Younics_Ai_Agent_Subagents_Services;
 #endif
 
 namespace Sunder.Package.Agent.Subagents.Runtime;
@@ -212,9 +212,7 @@ internal sealed partial class SubagentAppRuntimeGateway :
                 _runtimeSnapshot = null;
                 _abandonedRuntimeSnapshot = null;
             }
-            snapshot = _runtimeSnapshot ??= InvokeAsync(
-                _client.RuntimeCatalogAsync(_lifetime.Token),
-                _lifetime.Token);
+            snapshot = _runtimeSnapshot ??= ReadRuntimeSnapshotAsync();
             retryIfFaulted = ReferenceEquals(_abandonedRuntimeSnapshot, snapshot);
         }
 
@@ -261,6 +259,44 @@ internal sealed partial class SubagentAppRuntimeGateway :
             throw;
         }
     }
+
+    private async Task<SubagentProjection> ReadRuntimeSnapshotAsync()
+    {
+        var owner = _lifetime.Token;
+        try { return await InvokeAsync(_client.RuntimeCatalogAsync(owner), owner).ConfigureAwait(false); }
+        catch (Sunder.Sdk.Rpc.SunderRpcException error) when (IsRuntimeSnapshotAvailability(error))
+        {
+            owner.ThrowIfCancellationRequested();
+            // This one shared operation reads a projection; it is not a command
+            // retry policy. Publication can temporarily fence the catalog before
+            // a retained App's caller replacement commits. Reacquire only this
+            // known read, never a mutation, with one bounded recovery window.
+            using var recovery = CancellationTokenSource.CreateLinkedTokenSource(owner);
+            recovery.CancelAfter(TimeSpan.FromSeconds(3));
+            for (var attempt = 0; attempt < 5; attempt++)
+            {
+                try
+                {
+                    await Task.Delay(Math.Min(100 << attempt, 1000), recovery.Token).ConfigureAwait(false);
+                    return await InvokeAsync(_client.RuntimeCatalogAsync(recovery.Token), recovery.Token).ConfigureAwait(false);
+                }
+                catch (Sunder.Sdk.Rpc.SunderRpcException next) when (IsRuntimeSnapshotAvailability(next))
+                {
+                    owner.ThrowIfCancellationRequested();
+                }
+                catch (OperationCanceledException) when (recovery.IsCancellationRequested && !owner.IsCancellationRequested)
+                {
+                    break;
+                }
+            }
+            throw; // Preserve the original actionable failure; no cached success or enlarged deadline.
+        }
+    }
+
+    private static bool IsRuntimeSnapshotAvailability(Sunder.Sdk.Rpc.SunderRpcException error)
+        => error.Error is { Kind: Sunder.Sdk.Rpc.SunderRpcErrorKind.Unavailable,
+                Code: "runtime.v1.unavailable" or "rpc.transport.unavailable" or "rpc.app-session.retired" }
+            or { Kind: Sunder.Sdk.Rpc.SunderRpcErrorKind.StaleEndpoint, Code: "rpc.caller-retired" };
 
     private void InvalidateRuntimeSnapshot()
     {

@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <SunderPackageFamilyId>sunder.package.agent.provider.lmstudio</SunderPackageFamilyId>
+    <SunderPackageFamilyId>younics.ai.agent.provider.lmstudio</SunderPackageFamilyId>
     <SunderSdkAvaloniaReference>true</SunderSdkAvaloniaReference>
   </PropertyGroup>
 

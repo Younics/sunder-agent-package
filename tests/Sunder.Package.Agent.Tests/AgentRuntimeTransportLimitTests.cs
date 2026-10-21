@@ -19,10 +19,10 @@ extern alias SubagentsWorker;
 extern alias AgentApp;
 using AgentApp::Sunder.Package.Agent.Runtime;
 using SubagentsWorker::Sunder.Package.Agent.Subagents.Runtime;
-using SubagentModels = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using SubagentModels = SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models;
 using WorkerRuntime = Sunder.Package.Agent.Runtime;
-using AgentAppServices = AgentApp::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentAppServices = AgentApp::Sunder.Generated.Packages.Younics_Ai_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 
 public sealed class AgentRuntimeTransportLimitTests
 {
@@ -69,7 +69,7 @@ public sealed class AgentRuntimeTransportLimitTests
         var workerProfile = ResourceProfile(4 * Mebibyte, 128 * Mebibyte);
         var budgets = new WorkerBudgetProbe(new RegressionTestRpcClient(
             rpcState,
-            "sunder.package.agent",
+            "younics.ai.agent",
             workerProfile));
 
         Assert.Equal(
@@ -113,7 +113,7 @@ public sealed class AgentRuntimeTransportLimitTests
         var contentBytes = contentMebibytes * Mebibyte;
         var budgets = new WorkerBudgetProbe(new RegressionTestRpcClient(
             rpcState,
-            "sunder.package.agent",
+            "younics.ai.agent",
             ResourceProfile(valueBytes, contentBytes)));
 
         var negotiated = budgets.Negotiate(new AgentTransportProfileRequest(
@@ -143,7 +143,7 @@ public sealed class AgentRuntimeTransportLimitTests
         using var rpcState = new RegressionTestRpcState();
         var budgets = new WorkerBudgetProbe(new RegressionTestRpcClient(
             rpcState,
-            "sunder.package.agent",
+            "younics.ai.agent",
             ResourceProfile(valueBytes, contentBytes)));
 
         var negotiated = budgets.Negotiate(new AgentTransportProfileRequest(
@@ -173,7 +173,7 @@ public sealed class AgentRuntimeTransportLimitTests
         using var rpcState = new RegressionTestRpcState();
         var workerOnlyBudgets = new WorkerBudgetProbe(new RegressionTestRpcClient(
             rpcState,
-            "sunder.package.agent",
+            "younics.ai.agent",
             ResourceProfile(2 * Mebibyte, 4 * Mebibyte)));
         var workerOnly = workerOnlyBudgets.Negotiate(new AgentTransportProfileRequest(
             AgentRuntimePayloadLimits.StandardFallbackProfile.RequestValueBytes,
@@ -236,7 +236,7 @@ public sealed class AgentRuntimeTransportLimitTests
         var workerProfile = ResourceProfile(16 * Mebibyte, 256 * Mebibyte);
         using var profiledProvider = RegressionTestRuntime.Create(scope.Context, new RegressionTestRpcClient(
             rpcState,
-            "sunder.package.agent",
+            "younics.ai.agent",
             workerProfile));
 
         Assert.Equal(
@@ -461,7 +461,7 @@ public sealed class AgentRuntimeTransportLimitTests
             services.GetRequiredService<WorkerRuntime.AgentOwnerRuntimeProvider>());
         var resources = new AgentOwnerResources(
             catalog.GetServiceProviders<AgentAppServices.IAgentRuntimeService>(),
-            catalog.RpcForCaller("sunder.package.agent"));
+            catalog.RpcForCaller("younics.ai.agent"));
         var uploads = services.GetRequiredService<AgentAttachmentTransferService>();
         var attachments = services.GetRequiredService<AgentAttachmentService>();
         var content = CreateBytes((2 * 1024 * 1024) + 137);
@@ -941,13 +941,13 @@ public sealed class AgentRuntimeTransportLimitTests
     {
         handler = new TransportProfileRpcHandler(response);
         state.Add(
-            "sunder.package.agent",
-            CurrentPrivateRpcDescriptors.Get("sunder.agent.owner.runtime"),
+            "younics.ai.agent",
+            CurrentPrivateRpcDescriptors.Get("younics.ai.agent.owner.runtime"),
             handler,
             handler,
             handler,
             "agent.owner.runtime", packageVersion: "2.0.0");
-        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent", resourceProfile);
+        var rpc = new RegressionTestRpcClient(state, "younics.ai.agent", resourceProfile);
         var services = new GeneratedServiceTestScope(rpc);
         return new AgentOwnerResources(
             services.Providers<AgentAppServices.IAgentRuntimeService>(),

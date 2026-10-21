@@ -1,12 +1,11 @@
-# Contributing to Sunder Agent Packages
+# Contributing to AI Agent Packages
 
-Thanks for helping improve the Sunder Agent package family. This repository contains the first-party Agent package, providers, tools, execution targets, memory, MCP, skills, subagents, package builder integration, and the pre-cutover Protocol migration corpus.
+This repository contains the first-party Agent package, providers, tools, execution
+targets, memory, MCP, skills, subagents and package builder integration.
 
-The final V1 authoring model derives RPC contracts and package-local bindings
-from ordinary implementation and declaration source. Do not add new dependencies
-on the Protocol project/package or treat its current API as a final release
-surface; see [`compatibility/README.md`](compatibility/README.md) for migration
-status.
+The current authoring model derives contracts and package-local bindings from ordinary
+implementation and declaration source. Each family has one authored project. Removed
+project/source captures remain immutable test evidence; see [compatibility](compatibility/README.md).
 
 ## Before You Start
 
@@ -49,7 +48,7 @@ Package projects must not reference `Sunder.App` or `Sunder.Runtime.Host` direct
 | Area | Owns |
 | --- | --- |
 | `Sunder.Package.Agent` | Core sessions, chat, profiles, workspaces, permissions, orchestration |
-| Agent RPC contracts | Implementation-derived public contracts and package-local generated bindings; the current Protocol project is migration-only |
+| Agent service contracts | Reviewed public contracts and package-local generated Services/Models |
 | Provider packages | Chat and embedding provider integrations |
 | Tool packages | File, shell, web, MCP, and native tool capabilities |
 | Execution packages | Local and Docker execution targets |
@@ -73,7 +72,7 @@ Before opening a PR, please check:
 
 Use the bug report template and include:
 
-- Sunder Agent package version or commit.
+- AI Agent package version or commit.
 - Installed Agent package set.
 - Provider, model, execution target, and tool packages involved.
 - Reproduction steps.

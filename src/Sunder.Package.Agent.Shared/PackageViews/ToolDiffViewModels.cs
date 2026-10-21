@@ -148,7 +148,7 @@ internal sealed class ToolDiffViewModel
         {
             var payload = JsonSerializer.Deserialize<FileDiffPresentationPayload>(presentationPayloadJson, JsonOptions);
             if (payload is null
-                || !string.Equals(payload.Schema, "sunder.file-diff.v1", StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(payload.Schema, "younics.ai.agent.tools.files.diff.v1", StringComparison.Ordinal)
                 || payload.Files.Count == 0)
             {
                 return false;

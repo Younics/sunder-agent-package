@@ -46,7 +46,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.Single(backend.Requests.Last().Body.GetProperty("input").EnumerateArray());
         var retained = new ChatOptions { ConversationId = retainedSession.ToString("N") + ":main", ModelId = "openai/gpt-5.4", Instructions = "Connected instruction" };
         await read(first, retained, default); var retainedId = backend.LastCodexResponseId;
-        Assert.Equal("sunder.package.agent.provider.openai:codex-response-continuation", (await rpc("session-cleaner", "describe", new { }, default)).GetProperty("id").GetString());
+        Assert.Equal("younics.ai.agent.provider.openai:codex-response-continuation", (await rpc("session-cleaner", "describe", new { }, default)).GetProperty("id").GetString());
         await rpc("session-cleaner", "delete-session", session, default);
         await read(second, chatOptions, default); Assert.False(backend.Requests.Last().Body.TryGetProperty("previous_response_id", out _));
         await read(second, retained, default); Assert.Equal(retainedId, backend.Requests.Last().Body.GetProperty("previous_response_id").GetString());

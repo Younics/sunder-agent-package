@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using IBehaviorLoopService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Behavior_Loop.IBehaviorLoopService;
+using IRuntimeCatalogService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Runtime_Catalog.IRuntimeCatalogService;
 using Sunder.Sdk.Services;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Subagents.Models;

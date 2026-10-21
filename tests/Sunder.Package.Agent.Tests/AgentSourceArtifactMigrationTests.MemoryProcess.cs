@@ -36,7 +36,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.Equal(AgentModelCapabilityKinds.Embedding, Assert.Single(capabilities.GetProperty("capabilities").EnumerateArray()).GetProperty("capabilityKind").GetString());
             await active.Shutdown();
         }
-        var context = new TestPackageContext("sunder.package.agent.memory.semantic", workspace);
+        var context = new TestPackageContext("younics.ai.agent.memory.semantic", workspace);
         var removedSession = Guid.NewGuid();
         var retainedSession = Guid.NewGuid();
         Guid removed, retained;
@@ -140,7 +140,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             var declaration = Assert.Single(_providers, value => value.GetProperty("providerId").GetString() == providerId);
             var id = "invoke-" + ++_call;
             await Send(new { type = "host.invoke", id, kind = "unary", providerId, serviceId, methodId, request,
-                context = new { callerPackageId = "sunder.package.agent", callerPackageVersion = "2.0.0", deadlineUtc = DateTimeOffset.UtcNow.AddMinutes(1).UtcDateTime.ToString("O", CultureInfo.InvariantCulture), callDepth = 1,
+                context = new { callerPackageId = "younics.ai.agent", callerPackageVersion = "2.0.0", deadlineUtc = DateTimeOffset.UtcNow.AddMinutes(1).UtcDateTime.ToString("O", CultureInfo.InvariantCulture), callDepth = 1,
                     provider = new { packageId = _packageId, packageVersion = _packageVersion, providerId,
                         contractId = declaration.GetProperty("contractId").GetString(), contractVersion = declaration.GetProperty("contractVersion").GetString(),
                         descriptorSha256 = declaration.GetProperty("descriptorSha256").GetString(), abiSha256 = declaration.GetProperty("abiSha256").GetString(),

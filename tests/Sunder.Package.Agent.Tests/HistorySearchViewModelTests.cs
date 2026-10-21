@@ -390,8 +390,8 @@ public sealed class HistorySearchViewModelTests
     }
 
     [Theory]
-    [InlineData(false, "sunder.package.agent.chat")]
-    [InlineData(true, "sunder.package.agent.subagents.sessions")]
+    [InlineData(false, "younics.ai.agent.chat")]
+    [InlineData(true, "younics.ai.agent.subagents.sessions")]
     public async Task OpenResult_RoutesToOwningTranscriptWithExactAnchor(
         bool isChildSession,
         string expectedViewId)

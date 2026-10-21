@@ -1,0 +1,231 @@
+{
+  "schemaVersion": 1,
+  "identityMapVersion": 1,
+  "kind": "pre-identity-dirty-working-tree",
+  "capturedAtUtc": "2026-10-14T07:16:27.939456+00:00",
+  "hashAlgorithm": "sha256",
+  "headCommit": "eadaca7976c92ac79b65b70d1541ad578a417545",
+  "captureTool": {
+    "path": "scripts/compatibility/capture_identity_migration.py",
+    "sha256": "36c58ac9663cff799f075a8262dc2e75528bed0d30d60e3b3aca011e1b860bbe"
+  },
+  "gitIndexSha256Before": "eab9249ebdb7c38ff91f7d4eca5c5ad40f35b34fed82242b50236e39551d068b",
+  "gitIndexSha256After": "eab9249ebdb7c38ff91f7d4eca5c5ad40f35b34fed82242b50236e39551d068b",
+  "gitIndexEntriesSha256": "be5f26ec14ebcffc3f24594a7f3cb72a0b230967563ca6d7499b79a7cc4a50ed",
+  "gitStatusBeforeSha256": "8421a4c464b34592d268339e17a7216edc9f26a5433ff6194b09a92cb83704a3",
+  "sourceBeforeManifest": {
+    "path": "source-before-manifest.json",
+    "sha256": "6afdee712b9749bed7b375009b2281df2d0ab2c020f3e5f07bcd7c83cd4a2de7"
+  },
+  "contractHistoryIndex": {
+    "path": "contract-history-index.json",
+    "sha256": "9443a8e8a38aec73e43ad4bfa16b78fab3c9a4dcefc5b46e96d1f437faa67a62"
+  },
+  "temporaryBeforeImagesDirectoryName": "agent-identity-migration-v1-before",
+  "copiedWorkingFiles": 1788,
+  "frozenHashOnlyFiles": 26,
+  "absentWorkingFiles": 21,
+  "inputsStableAcrossCapture": true,
+  "indexUnchangedAcrossCapture": true,
+  "artifactProvenance": "No new artifacts built or claimed; predecessor lock claims are copied as historical bytes only.",
+  "files": [
+    {
+      "sourcePath": "compatibility/agent-ordinary-private-successors.json",
+      "path": "files/compatibility/agent-ordinary-private-successors.json",
+      "bytes": 7997,
+      "sha256": "deda7978dbc5d41079ffe2256dd7d34fe59279eec2167754b22981fc58cfc1e5"
+    },
+    {
+      "sourcePath": "compatibility/agent-service-public-successors.json",
+      "path": "files/compatibility/agent-service-public-successors.json",
+      "bytes": 11603,
+      "sha256": "9f4ed08cbf1e41482dc4a97bbd559078b53bf13293fa82eb7c51549aee648a06"
+    },
+    {
+      "sourcePath": "packages.json",
+      "path": "files/packages.json",
+      "bytes": 12969,
+      "sha256": "6e3df86f9a9763521ee3d38a84c2becd1998df7044d4051e7dc6cc1d072b0f26"
+    },
+    {
+      "sourcePath": "src/Sunder.Package.Agent.Builder/sunder-contracts.lock.json",
+      "path": "files/src/Sunder.Package.Agent.Builder/sunder-contracts.lock.json",
+      "bytes": 14954,
+      "sha256": "6977f9449de4c3c6f09ac056da31a32fe1748c44a8f0c0bfc884cebf6d16c4ed"
+    },
+    {
+      "sourcePath": "src/Sunder.Package.Agent.Builder/sunder-contracts.owned.json",
+      "path": "files/src/Sunder.Package.Agent.Builder/sunder-contracts.owned.json",
+      "bytes": 6077,
+      "sha256": "6f1818a607e09fa69bc8b6b806b28687f9267ffe68d67fcaab303ccc5409e9ae"
+    },
+    {
+      "sourcePath": "src/Sunder.Package.Agent.Execution.Docker/sunder-contracts.lock.json",
+      "path": "files/src/Sunder.Package.Agent.Execution.Docker/sunder-contracts.lock.json",
+      "bytes": 15842,
+      "sha256": "1c5a6631bc755435537a70a54fdc951bf9b00e5ab6b9d217d17cade48eddf08c"
+    },
+    {
+      "sourcePath": "src/Sunder.Package.Agent.Execution.Docker/sunder-contracts.owned.json",
+      "path": "files/src/Sunder.Package.Agent.Execution.Docker/sunder-contracts.owned.json",
+      "bytes": 5486,
+      "sha256": "d354d464a8b61d06542f2ee5bcfe319721bd977ff65008cba8fe8b33d497993a"
+    },
+    {
+      "sourcePath": "src/Sunder.Package.Agent.Execution.Local/sunder-contracts.lock.json",
+      "path": "files/src/Sunder.Package.Agent.Execution.Local/sunder-contracts.lock.json",
+      "bytes": 15112,
+      "sha256": "604cdc068f98846ac7981ea02602ba29fdfb980ac1de6d9be7680d9751e8d9ef"
+    },
+    {
+      "sourcePath": "src/Sunder.Package.Agent.Execution.Local/sunder-contracts.owned.json",
+      "path": "files/src/Sunder.Package.Agent.Execution.Local/sunder-contracts.owned.json",
+      "bytes": 6318,
+      "sha256": "c6cdf64a72ea7d3cdf0ceecc85c33b1c21637ab013b35bc2d81990d257fec298"
+    },
+    {
+      "sourcePath": "src/Sunder.Package.Agent.Mcp/sunder-contracts.lock.json",
+      "path": "files/src/Sunder.Package.Agent.Mcp/sunder-contracts.lock.json",
+      "bytes": 16148,
+      "sha256": "fe11759070a91bfe94f047242a4725bd1a29540c2c4b1934581b33900947798a"
+    },
+    {
+      "sourcePath": "src/Sunder.Package.Agent.Mcp/sunder-contracts.owned.json",
+      "path": "files/src/Sunder.Package.Agent.Mcp/sunder-contracts.owned.json",
+      "bytes": 3966,
+      "sha256": "9112f2eb7c4e63171a433f63ff81a02b4dd28c148ad8ee91730ca01a2d24b132"
+    },
+    {
+      "sourcePath": "src/Sunder.Package.Agent.Memory.Semantic/sunder-contracts.lock.json",
+      "path": "files/src/Sunder.Package.Agent.Memory.Semantic/sunder-contracts.lock.json",
+      "bytes": 15483,
+      "sha256": "9147e5df27f966442ec98f64497505216192266f27b9e2906cdb915dbb940e92"
+    },
+    {
+      "sourcePath": "src/Sunder.Package.Agent.Memory.Semantic/sunder-contracts.owned.json",
+      "path": "files/src/Sunder.Package.Agent.Memory.Semantic/sunder-contracts.owned.json",
+      "bytes": 12376,
+      "sha256": "7f227f065583f4795c38963d3c2fcd0bf5bded6a211726bebf4b5eb5bd5cd4bc"
+    },
+    {
+      "sourcePath": "src/Sunder.Package.Agent.Provider.Anthropic/sunder-contracts.lock.json",
+      "path": "files/src/Sunder.Package.Agent.Provider.Anthropic/sunder-contracts.lock.json",
+      "bytes": 14831,
+      "sha256": "dacd78197ee707da02bc70c2b33c9e85d92d38674eb1151dc793d678cdf894db"
+    },
+    {
+      "sourcePath": "src/Sunder.Package.Agent.Provider.Anthropic/sunder-contracts.owned.json",
+      "path": "files/src/Sunder.Package.Agent.Provider.Anthropic/sunder-contracts.owned.json",
+      "bytes": 4175,
+      "sha256": "498ecc0c8ea91b18d7aacabe351af4f4f9441af60f82e648d508ab6b9cecc1d2"
+    },
+    {
+      "sourcePath": "src/Sunder.Package.Agent.Provider.Gemini/sunder-contracts.lock.json",
+      "path": "files/src/Sunder.Package.Agent.Provider.Gemini/sunder-contracts.lock.json",
+      "bytes": 14954,
+      "sha256": "6613720e32ccc85f13ac55ffe105d1b076a620e407a41656519e0c3819717f19"
+    },
+    {
+      "sourcePath": "src/Sunder.Package.Agent.Provider.Gemini/sunder-contracts.owned.json",
+      "path": "files/src/Sunder.Package.Agent.Provider.Gemini/sunder-contracts.owned.json",
+      "bytes": 4157,
+      "sha256": "db4330af6184d044ad55e9fef96c24aa9b8cd009b7a589721cc9a6d5e100761b"
+    },
+    {
+      "sourcePath": "src/Sunder.Package.Agent.Provider.LMStudio/sunder-contracts.lock.json",
+      "path": "files/src/Sunder.Package.Agent.Provider.LMStudio/sunder-contracts.lock.json",
+      "bytes": 14954,
+      "sha256": "6613720e32ccc85f13ac55ffe105d1b076a620e407a41656519e0c3819717f19"
+    },
+    {
+      "sourcePath": "src/Sunder.Package.Agent.Provider.LMStudio/sunder-contracts.owned.json",
+      "path": "files/src/Sunder.Package.Agent.Provider.LMStudio/sunder-contracts.owned.json",
+      "bytes": 4169,
+      "sha256": "0ab62aeb06203034c9282d366da9d13e77cbc478930662ab8984f752650b9478"
+    },
+    {
+      "sourcePath": "src/Sunder.Package.Agent.Provider.OpenAI/sunder-contracts.lock.json",
+      "path": "files/src/Sunder.Package.Agent.Provider.OpenAI/sunder-contracts.lock.json",
+      "bytes": 15079,
+      "sha256": "ef1df2c80e5e925c33f3aad397f8fb25f6920b29e4490d55c336e5d3702b3113"
+    },
+    {
+      "sourcePath": "src/Sunder.Package.Agent.Provider.OpenAI/sunder-contracts.owned.json",
+      "path": "files/src/Sunder.Package.Agent.Provider.OpenAI/sunder-contracts.owned.json",
+      "bytes": 5629,
+      "sha256": "c4be3a1b79c3595f6af1cb55eb266736a532f0c51e0dd8458043061fbb6f52e1"
+    },
+    {
+      "sourcePath": "src/Sunder.Package.Agent.Skills/sunder-contracts.lock.json",
+      "path": "files/src/Sunder.Package.Agent.Skills/sunder-contracts.lock.json",
+      "bytes": 16068,
+      "sha256": "5394ff6e4cf9f52c127129a9842c41d5af3124d3416c687350a68d8e5516bc0c"
+    },
+    {
+      "sourcePath": "src/Sunder.Package.Agent.Skills/sunder-contracts.owned.json",
+      "path": "files/src/Sunder.Package.Agent.Skills/sunder-contracts.owned.json",
+      "bytes": 3521,
+      "sha256": "a6a9748f72827047e5638cf86125fdda414a467749564e3e7bc8a45d80e59639"
+    },
+    {
+      "sourcePath": "src/Sunder.Package.Agent.Subagents/sunder-contracts.lock.json",
+      "path": "files/src/Sunder.Package.Agent.Subagents/sunder-contracts.lock.json",
+      "bytes": 16306,
+      "sha256": "701df26f5f350647c03e2e0cdabc15bfa902c5dd51a7ca09907d10cbc82e78cb"
+    },
+    {
+      "sourcePath": "src/Sunder.Package.Agent.Subagents/sunder-contracts.owned.json",
+      "path": "files/src/Sunder.Package.Agent.Subagents/sunder-contracts.owned.json",
+      "bytes": 3868,
+      "sha256": "baed17145e1e25385c1a91ea3c6e7aa69b80c6f7d48f53705ec57f84e0070816"
+    },
+    {
+      "sourcePath": "src/Sunder.Package.Agent.Tools.Files/sunder-contracts.lock.json",
+      "path": "files/src/Sunder.Package.Agent.Tools.Files/sunder-contracts.lock.json",
+      "bytes": 15394,
+      "sha256": "a12f025718ed9d4e1df16ed0da239964304d0cc2e9570497c283923159efc7f5"
+    },
+    {
+      "sourcePath": "src/Sunder.Package.Agent.Tools.Files/sunder-contracts.owned.json",
+      "path": "files/src/Sunder.Package.Agent.Tools.Files/sunder-contracts.owned.json",
+      "bytes": 178,
+      "sha256": "7435b2c10b8e752c0f02ccb1f689a39024a30a58ab9e80536dd0b4826ecf2b5d"
+    },
+    {
+      "sourcePath": "src/Sunder.Package.Agent.Tools.Shell/sunder-contracts.lock.json",
+      "path": "files/src/Sunder.Package.Agent.Tools.Shell/sunder-contracts.lock.json",
+      "bytes": 15269,
+      "sha256": "bcff438aa4ca00176e12b5dd12e5f1f2f757029643202613ed510a2a69e1de74"
+    },
+    {
+      "sourcePath": "src/Sunder.Package.Agent.Tools.Shell/sunder-contracts.owned.json",
+      "path": "files/src/Sunder.Package.Agent.Tools.Shell/sunder-contracts.owned.json",
+      "bytes": 178,
+      "sha256": "566ebe94a866b95c92ec030051292687a81a4126346eadcfcbb94f3ec2c2ab7c"
+    },
+    {
+      "sourcePath": "src/Sunder.Package.Agent.Tools.Web/sunder-contracts.lock.json",
+      "path": "files/src/Sunder.Package.Agent.Tools.Web/sunder-contracts.lock.json",
+      "bytes": 14830,
+      "sha256": "24a04dbc7e97def4fd929984388c6ba817ab8df229b5b39228d93bef6312e239"
+    },
+    {
+      "sourcePath": "src/Sunder.Package.Agent.Tools.Web/sunder-contracts.owned.json",
+      "path": "files/src/Sunder.Package.Agent.Tools.Web/sunder-contracts.owned.json",
+      "bytes": 174,
+      "sha256": "1f3e53c0e4b09c9861ffab1071613e0b77a30c66f5d65cf6f06c0ae1de06a881"
+    },
+    {
+      "sourcePath": "src/Sunder.Package.Agent/sunder-contracts.lock.json",
+      "path": "files/src/Sunder.Package.Agent/sunder-contracts.lock.json",
+      "bytes": 853,
+      "sha256": "b6f8840f897ef952d3780312bf953fb02109b26f4c0c76650863ef85f31c3478"
+    },
+    {
+      "sourcePath": "src/Sunder.Package.Agent/sunder-contracts.owned.json",
+      "path": "files/src/Sunder.Package.Agent/sunder-contracts.owned.json",
+      "bytes": 1587479,
+      "sha256": "35bdd7d5a7a0bec77a0efd6aa96e5c55a1fee20dd71c2d3b87bde87f046d0d3d"
+    }
+  ]
+}

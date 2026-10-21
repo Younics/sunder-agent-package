@@ -8,8 +8,8 @@ extern alias DockerWorker;
 extern alias LocalWorker;
 using DockerWorker::Sunder.Package.Agent.Execution.Docker;
 using LocalWorker::Sunder.Package.Agent.Execution.Local;
-using DockerWorkerModels = DockerWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
-using LocalWorkerModels = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using DockerWorkerModels = DockerWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models;
+using LocalWorkerModels = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models;
 
 public sealed class WorkspaceEditorConfigPreservationTests
 {
@@ -26,7 +26,7 @@ public sealed class WorkspaceEditorConfigPreservationTests
             new LocalShellCatalogService(scope.Context));
 
         var result = await contributor.SaveSectionAsync(
-            new LocalWorkerModels.CSunder_Agent_Workspace_Editor_WorkspaceEditorSaveSectionRequest
+            new LocalWorkerModels.CYounics_Ai_Agent_Workspace_Editor_WorkspaceEditorSaveSectionRequest
             {
                 Context = CreateLocalContext("local", bindingId),
                 Request = new LocalWorkerModels.AgentEditorSaveRequest
@@ -64,7 +64,7 @@ public sealed class WorkspaceEditorConfigPreservationTests
         var contributor = new DockerExecutionWorkspaceEditorContributor(configService, imageCatalog);
 
         var result = await contributor.SaveSectionAsync(
-            new DockerWorkerModels.CSunder_Agent_Workspace_Editor_WorkspaceEditorSaveSectionRequest
+            new DockerWorkerModels.CYounics_Ai_Agent_Workspace_Editor_WorkspaceEditorSaveSectionRequest
             {
                 Context = CreateDockerContext("docker", bindingId),
                 Request = new DockerWorkerModels.AgentEditorSaveRequest

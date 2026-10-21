@@ -55,7 +55,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
 
     private static async Task VerifySubagentsArtifact(string root, string core, string driver, string ownerArchive, string cache)
     {
-        var required = new[] { "sunder.agent.runtime.catalog", "sunder.agent.behavior.loop", "sunder.agent.run.control", "sunder.agent.child.run.executor" };
+        var required = new[] { "younics.ai.agent.runtime.catalog", "younics.ai.agent.behavior.loop", "younics.ai.agent.run.control", "younics.ai.agent.child.run.executor" };
         var canonical = await BuildCanonicalFamily(root, "Subagents", "SubagentsWorker", cache, ownerArchive);
         var worker = canonical.Directory;
         var selected = File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.lock.json"));
@@ -76,17 +76,17 @@ public sealed partial class AgentSourceArtifactMigrationTests
         using var manifestStream = archive.GetEntry("manifest/sunder-package.json")!.Open();
         using var manifest = JsonDocument.Parse(manifestStream);
         var value = manifest.RootElement;
-        Assert.Equal("sunder.package.agent.subagents", value.GetProperty("id").GetString());
-        Assert.Equal(21, value.GetProperty("contractBundles").GetArrayLength());
+        Assert.Equal("younics.ai.agent.subagents", value.GetProperty("id").GetString());
+        Assert.Equal(20, value.GetProperty("contractBundles").GetArrayLength());
         Assert.Equal(6, value.GetProperty("provides").GetArrayLength());
-        Assert.Equal(20, value.GetProperty("usesContracts").GetArrayLength());
+        Assert.Equal(19, value.GetProperty("usesContracts").GetArrayLength());
         Assert.Equal(required.Order(StringComparer.Ordinal), value.GetProperty("usesContracts").EnumerateArray()
             .Where(use => use.GetProperty("role").GetString() == "runtime" && use.GetProperty("required").GetBoolean())
             .Select(use => use.GetProperty("contractId").GetString()).Order(StringComparer.Ordinal));
         Assert.Single(value.GetProperty("platformImports").EnumerateArray());
         Assert.Equal(4, value.GetProperty("providerImports").GetArrayLength());
         var dependency = Assert.Single(value.GetProperty("dependsOn").EnumerateArray());
-        Assert.Equal("sunder.package.agent", dependency.GetProperty("packageId").GetString());
+        Assert.Equal("younics.ai.agent", dependency.GetProperty("packageId").GetString());
         Assert.Equal("required", dependency.GetProperty("presence").GetString());
         await ProjectCanonicalWorker(worker, driver);
         await VerifySubagentsProcess(root, Path.Combine(worker, "bin/worker-projection"), value);

@@ -124,10 +124,10 @@ public sealed class AgentCatalogSourceMigrationTests
             switch (name)
             {
                 case "ProviderApp":
-                    Assert.Same(assembly, assembly.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Provider_Gemini_Services.ICredentialSettingsService", true)!.Assembly);
+                    Assert.Same(assembly, assembly.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Provider_Gemini_Services.ICredentialSettingsService", true)!.Assembly);
                     break;
                 case "ProviderWorker":
-                    Assert.Same(assembly, assembly.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentModelDescriptor", true)!.Assembly);
+                    Assert.Same(assembly, assembly.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentModelDescriptor", true)!.Assembly);
                     break;
                 case "Files" or "Shell": AgentSourceArtifactMigrationTests.AssertExecutionToolSemanticOwnership(assembly); break;
                 case "BuilderWorker" or "BuilderApp": AgentSourceArtifactMigrationTests.AssertBuilderSemanticOwnership(assembly, role == "app"); break;
@@ -142,17 +142,17 @@ public sealed class AgentCatalogSourceMigrationTests
                     break;
                 default: break;
             }
-            Assert.Equal(family is not ("Agent" or "Execution.Local" or "Execution.Docker"),
-                assembly.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentChatStreamEvent") is not null);
+            Assert.Equal(family is not ("Agent" or "Builder" or "Execution.Local" or "Execution.Docker"),
+                assembly.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentChatStreamEvent") is not null);
             Assert.Equal(family == "Agent", assembly.GetType("Sunder.Package.Agent.Protocol.AgentChatStreamEvent") is not null);
         }
-        Assert.Same(assemblies[1], assemblies[1].GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentModelDescriptor", true)!.Assembly);
-        Assert.NotSame(assemblies[2].GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentPromptContextReceipt", true), assemblies[3].GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentPromptContextReceipt", true));
-        Assert.NotSame(assemblies[4].GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentWorkspaceRecord", true), assemblies[5].GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentWorkspaceRecord", true));
-        Assert.NotSame(assemblies[6].GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentToolDescriptor", true), assemblies[7].GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentToolDescriptor", true));
+        Assert.Same(assemblies[1], assemblies[1].GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentModelDescriptor", true)!.Assembly);
+        Assert.NotSame(assemblies[2].GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentPromptContextReceipt", true), assemblies[3].GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentPromptContextReceipt", true));
+        Assert.NotSame(assemblies[4].GetType("Sunder.Package.Agent.Builder.BuilderProjectInspection", true), assemblies[5].GetType("Sunder.Package.Agent.Builder.BuilderProjectInspection", true));
+        Assert.NotSame(assemblies[6].GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentToolDescriptor", true), assemblies[7].GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentToolDescriptor", true));
         Assert.NotSame(assemblies[8].GetType("Sunder.Package.Agent.Skills.Services.InstalledSkillRecord"), assemblies[9].GetType("Sunder.Package.Agent.Skills.Services.InstalledSkillRecord"));
-        Assert.NotSame(assemblies[10].GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionRecord", true), assemblies[11].GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionRecord", true));
-        Assert.NotSame(assemblies[12].GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnRecord", true), assemblies[13].GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnRecord", true));
+        Assert.NotSame(assemblies[10].GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentSessionRecord", true), assemblies[11].GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentSessionRecord", true));
+        Assert.NotSame(assemblies[12].GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTurnRecord", true), assemblies[13].GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTurnRecord", true));
         Assert.NotSame(assemblies[14].GetType("Sunder.Agent.Execution.Common.HostApprovalLeaseStore`1"), assemblies[16].GetType("Sunder.Agent.Execution.Common.HostApprovalLeaseStore`1"));
     }
 
@@ -270,7 +270,7 @@ public sealed class AgentCatalogSourceMigrationTests
                 // Copy the exact generated interface block needed by the source
                 // contexts, not a handwritten declaration or unrelated service APIs.
                 var block = Assert.Single(Regex.Matches(System.Text.Encoding.UTF8.GetString(bytes),
-                    @"(?ms)^namespace Sunder\.Generated\.Packages\.Sunder_Package_Agent_Services \{\r?\npublic interface IExecutionTargetService \{.*?^\}\r?\n\}"));
+                    @"(?ms)^namespace Sunder\.Generated\.Packages\.Younics_Ai_Agent_Services \{\r?\npublic interface IExecutionTargetService \{.*?^\}\r?\n\}"));
                 File.WriteAllText(Path.Combine(destination, "ServiceApis.g.cs"), "#nullable enable\n" + block.Value + "\n");
             }
         }

@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <SunderPackageFamilyId>sunder.package.agent.tools.web</SunderPackageFamilyId>
+    <SunderPackageFamilyId>younics.ai.agent.tools.web</SunderPackageFamilyId>
   </PropertyGroup>
 
   <Import Project="$(MSBuildThisFileDirectory)..\..\Sunder.Agent.Worker.props" />
@@ -9,7 +9,6 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
-    <SunderSdkCapability Include="logging.v1" />
     <Compile Include="$(_AgentModels)Tools\AgentToolArgumentObject.cs;$(_AgentModels)Tools\AgentPayloadLimits.cs;$(_AgentExecution)BoundedValue.cs" LinkBase="Domain" />
     <Compile Include="..\Sunder.Package.Agent.Shared\Presentation\AgentToolPresentationMarkdown.cs"
              Link="Presentation\AgentToolPresentationMarkdown.cs" />

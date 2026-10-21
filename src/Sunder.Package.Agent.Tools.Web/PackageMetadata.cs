@@ -1,7 +1,7 @@
 using Sunder.Sdk.Packaging;
 
 [assembly: SunderPackage(
-    Id = "sunder.package.agent.tools.web",
-    Name = "Sunder Agent Tools Web",
-    Summary = "Adds web search and fetch tools to Sunder Agent.",
+    Id = "younics.ai.agent.tools.web",
+    Name = "AI Agent - Web",
+    Summary = "Adds web search and fetch tools to AI Agent.",
     Icon = "assets/icon.png")]

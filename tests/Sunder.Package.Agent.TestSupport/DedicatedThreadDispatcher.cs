@@ -19,7 +19,7 @@ public sealed class DedicatedThreadDispatcher : IDisposable
         _thread = new Thread(Run)
         {
             IsBackground = true,
-            Name = threadName ?? "Sunder Agent test dispatcher",
+            Name = threadName ?? "AI Agent test dispatcher",
         };
         _thread.Start();
         ThreadId = _started.Task.GetAwaiter().GetResult();

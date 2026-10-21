@@ -10,7 +10,7 @@ using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Services;
 using Sunder.Sdk.Logging;
 using Sunder.Sdk.Services;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 using WorkerModels = Sunder.Package.Agent.Contracts.Models;
 
 namespace Sunder.Package.Agent.Tests;
@@ -107,29 +107,6 @@ internal sealed class RegressionTestWorkspaceEditorProvider(AgentServices.IWorks
     public ValueTask<WorkerModels.AgentEditorSaveResult> SaveSectionAsync(WorkerModels.AgentWorkspaceEditorContext context,
         WorkerModels.AgentEditorSaveRequest request, CancellationToken cancellationToken = default)
         => contributor.SaveSectionAsync(context, request, cancellationToken);
-}
-
-internal sealed class RegressionTestWorkspacePathProvider(IAgentWorkspacePathMigrationContributor contributor)
-    : AgentServices.IWorkspacePathMigratorService
-{
-    public ValueTask<AgentServiceIdentity> DescribeAsync(CancellationToken cancellationToken = default)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult(new AgentServiceIdentity(contributor.ContributorId, contributor.ContributorId));
-    }
-
-    public ValueTask<bool> CanMigrateAsync(AgentWorkspacePathMigrationContext context, CancellationToken cancellationToken = default)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult(contributor.CanMigrate(context));
-    }
-
-    public ValueTask<IReadOnlyList<AgentWorkspacePathMigrationItem>> ListLegacyPathsAsync(
-        AgentWorkspacePathMigrationContext context, CancellationToken cancellationToken = default)
-        => new(contributor.GetLegacyWorkspacePathsAsync(context, cancellationToken));
-
-    public ValueTask CompleteAsync(AgentWorkspacePathMigrationContext context, CancellationToken cancellationToken = default)
-        => new(contributor.CompleteWorkspacePathMigrationAsync(context, cancellationToken));
 }
 
 internal interface IRegressionTestBehaviorRunControlCallback

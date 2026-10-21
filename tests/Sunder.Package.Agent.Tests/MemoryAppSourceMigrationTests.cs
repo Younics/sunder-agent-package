@@ -15,7 +15,7 @@ using MemoryWorker::Sunder.Package.Agent.Memory.Semantic;
 using MemoryWorker::Sunder.Package.Agent.Memory.Semantic.Runtime;
 using MemoryWorker::Sunder.Package.Agent.Memory.Semantic.Services;
 using MemoryAppGateway = MemoryApp::Sunder.Package.Agent.Memory.Semantic.Runtime.IMemoryInspectorGateway;
-using MemoryAppServices = MemoryApp::Sunder.Generated.Packages.Sunder_Package_Agent_Memory_Semantic_Services;
+using MemoryAppServices = MemoryApp::Sunder.Generated.Packages.Younics_Ai_Agent_Memory_Semantic_Services;
 using AppMemoryChanged = MemoryApp::Sunder.Package.Agent.Memory.Semantic.Runtime.MemoryChanged;
 using AppMemoryChangeKind = MemoryApp::Sunder.Package.Agent.Memory.Semantic.Runtime.MemoryChangeKind;
 using AppSemanticEmbeddingContext = MemoryApp::Sunder.Package.Agent.Memory.Semantic.Services.SemanticEmbeddingContext;
@@ -54,7 +54,7 @@ public sealed class MemoryAppSourceMigrationTests
     [AgentPublicSourceMigrationFact]
     public async Task PresentationGateway_UsesGeneratedTransportAndRetainsObservationLifecycle()
     {
-        using var source = PrivateManagementSourceFixture.Load("Memory.Semantic", CurrentPrivateRpcDescriptors.Get("sunder.agent.memory.semantic.inspector"));
+        using var source = PrivateManagementSourceFixture.Load("Memory.Semantic", CurrentPrivateRpcDescriptors.Get("younics.ai.agent.memory.semantic.inspector"));
         await Verify(source.Worker, source.App);
     }
 
@@ -62,7 +62,7 @@ public sealed class MemoryAppSourceMigrationTests
     {
         using var package = RegressionTestPackageScope.Create();
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent.memory.semantic");
+        var rpc = new RegressionTestRpcClient(state, "younics.ai.agent.memory.semantic");
         var (options, workerLifetime, workerServices) = AgentSourceArtifactMigrationTests.CreateGeneratedWorker(worker, package.Context, rpc);
         await using var workerOwner = workerLifetime;
         await AgentSourceArtifactMigrationTests.ActivateGeneratedComposition(options);
@@ -92,9 +92,9 @@ public sealed class MemoryAppSourceMigrationTests
             var (foreignOptions, foreignLifetime, _) = AgentSourceArtifactMigrationTests.CreateGeneratedWorker(worker, foreignContext, rpc);
             await using var foreignOwner = foreignLifetime;
             var foreign = Assert.Single(foreignOptions.Providers, value => value.ProviderId == "semantic.memory.inspector");
-            state.Add("other.memory", CurrentPrivateRpcDescriptors.Get("sunder.agent.memory.semantic.inspector"),
+            state.Add("other.memory", CurrentPrivateRpcDescriptors.Get("younics.ai.agent.memory.semantic.inspector"),
                 foreign.Handler, foreign.Handler, Noop.Instance, foreign.ProviderId, "2.0.0");
-            state.Add("sunder.package.agent.memory.semantic", CurrentPrivateRpcDescriptors.Get("sunder.agent.memory.semantic.inspector"),
+            state.Add("younics.ai.agent.memory.semantic", CurrentPrivateRpcDescriptors.Get("younics.ai.agent.memory.semantic.inspector"),
                 registration.Handler, registration.Handler, Noop.Instance, registration.ProviderId, "2.0.0");
             await using var store = new MemoryLocalStore(package.Context);
             var sessionId = Guid.NewGuid();
@@ -152,7 +152,7 @@ public sealed class MemoryAppSourceMigrationTests
             Assert.Contains(false, transitions);
             var reconnected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             gateway.ResetRequired += () => reconnected.TrySetResult();
-            state.Add("sunder.package.agent.memory.semantic", CurrentPrivateRpcDescriptors.Get("sunder.agent.memory.semantic.inspector"),
+            state.Add("younics.ai.agent.memory.semantic", CurrentPrivateRpcDescriptors.Get("younics.ai.agent.memory.semantic.inspector"),
                 registration.Handler, registration.Handler, Noop.Instance, registration.ProviderId, "2.0.0");
             await reconnected.Task.WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal(acceptedProjection.Count, (await gateway.ListMemoriesAsync(sessionId, includeInactive: true)).Count);

@@ -3,16 +3,13 @@ using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
-using Sunder.Sdk.Services;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Shared.Storage;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Execution.Docker;
 
-[SunderServiceProvider(typeof(IWorkspacePathMigratorService), ProviderId = "docker.workspace.path.migrator")]
-public sealed partial class DockerExecutionWorkspaceConfigService : IWorkspacePathMigratorService
+public sealed class DockerExecutionWorkspaceConfigService
 {
     internal const string DefaultContainerRoot = "/workspace";
     internal const string DefaultShellPath = "/bin/sh";
@@ -25,7 +22,7 @@ public sealed partial class DockerExecutionWorkspaceConfigService : IWorkspacePa
     private static readonly ConditionalWeakTable<IPackageKeyValueStore, ConcurrentDictionary<string, SemaphoreSlim>> MutationGates = new();
     private readonly IPackageContext _packageContext;
     private readonly DockerImageCatalogService _imageCatalogService;
-    private readonly DockerPackageStorageMigration _storageMigration;
+    private readonly DockerPackageStorageValidation _storageValidation;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _mutationGates;
 
     public DockerExecutionWorkspaceConfigService(
@@ -34,7 +31,7 @@ public sealed partial class DockerExecutionWorkspaceConfigService : IWorkspacePa
         : this(
             packageContext,
             imageCatalogService ?? new DockerImageCatalogService(packageContext),
-            new DockerPackageStorageMigration(packageContext))
+            new DockerPackageStorageValidation(packageContext))
     {
     }
 
@@ -42,23 +39,21 @@ public sealed partial class DockerExecutionWorkspaceConfigService : IWorkspacePa
     internal DockerExecutionWorkspaceConfigService(
         IPackageContext packageContext,
         DockerImageCatalogService imageCatalogService,
-        DockerPackageStorageMigration storageMigration)
+        DockerPackageStorageValidation storageValidation)
     {
         _packageContext = packageContext;
         _imageCatalogService = imageCatalogService;
-        _storageMigration = storageMigration;
+        _storageValidation = storageValidation;
         _mutationGates = MutationGates.GetValue(
             packageContext.Storage.State,
             static _ => new ConcurrentDictionary<string, SemaphoreSlim>(StringComparer.Ordinal));
     }
 
-    public string ContributorId => "sunder.package.agent.execution.docker.workspace-path-migration";
-
     public async Task<DockerExecutionWorkspaceConfig> GetConfigAsync(
         string bindingId,
         CancellationToken cancellationToken = default)
     {
-        await _storageMigration.EnsureAsync(cancellationToken).ConfigureAwait(false);
+        await _storageValidation.EnsureAsync(cancellationToken).ConfigureAwait(false);
         var defaultImageReference = await _imageCatalogService.GetDefaultImageReferenceAsync(cancellationToken);
         var json = await _packageContext.Storage.State.GetValueAsync(BuildKey(bindingId), cancellationToken);
         if (string.IsNullOrWhiteSpace(json))
@@ -68,14 +63,7 @@ public sealed partial class DockerExecutionWorkspaceConfigService : IWorkspacePa
 
         try
         {
-            var config = JsonSerializer.Deserialize<DockerExecutionWorkspaceConfig>(json, JsonOptions)
-                ?? throw new JsonException("Docker workspace configuration is null.");
-            if (config.SchemaVersion != DockerImageCatalogService.CurrentSchemaVersion)
-            {
-                throw new DockerExecutionDomainException(
-                    "docker.workspace-config.unsupported-schema",
-                    "The Docker workspace configuration uses an unsupported schema and was left unchanged.");
-            }
+            var config = DockerPackageStorageValidation.ReadWorkspaceConfig(json);
             return Normalize(bindingId, config, defaultImageReference);
         }
         catch (DockerExecutionDomainException)
@@ -96,7 +84,7 @@ public sealed partial class DockerExecutionWorkspaceConfigService : IWorkspacePa
         DockerExecutionWorkspaceConfig config,
         CancellationToken cancellationToken = default)
     {
-        await _storageMigration.EnsureAsync(cancellationToken).ConfigureAwait(false);
+        await _storageValidation.EnsureAsync(cancellationToken).ConfigureAwait(false);
         var gate = _mutationGates.GetOrAdd(bindingId, static _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -114,7 +102,7 @@ public sealed partial class DockerExecutionWorkspaceConfigService : IWorkspacePa
         Func<DockerExecutionWorkspaceConfig, CancellationToken, ValueTask<DockerExecutionWorkspaceConfig>> update,
         CancellationToken cancellationToken)
     {
-        await _storageMigration.EnsureAsync(cancellationToken).ConfigureAwait(false);
+        await _storageValidation.EnsureAsync(cancellationToken).ConfigureAwait(false);
         var gate = _mutationGates.GetOrAdd(bindingId, static _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -193,12 +181,6 @@ public sealed partial class DockerExecutionWorkspaceConfigService : IWorkspacePa
                ?? throw new InvalidOperationException($"Docker workspace path is not mounted: {root}");
     }
 
-    public string ResolveDefaultHostPath(string containerRoot)
-    {
-        var relativePath = ToFileStoreRelativePath(containerRoot);
-        return ValidateHostPath(_packageContext.Storage.RoleLocalWorkspace.GetLocalPath(relativePath));
-    }
-
     internal void EnsureHostMountPaths(DockerExecutionRuntimeConfig config)
     {
         foreach (var mount in ResolveMounts(config))
@@ -214,76 +196,6 @@ public sealed partial class DockerExecutionWorkspaceConfigService : IWorkspacePa
             }
         }
     }
-
-    public ValueTask<AgentServiceIdentity> DescribeAsync(CancellationToken token = default)
-    { token.ThrowIfCancellationRequested(); return ValueTask.FromResult(new AgentServiceIdentity { Id = ContributorId, DisplayName = ContributorId }); }
-
-    public ValueTask<bool> CanMigrateAsync(AgentWorkspacePathMigrationContext context, CancellationToken token = default)
-    { token.ThrowIfCancellationRequested(); return ValueTask.FromResult(string.Equals(context.Binding.ContributionId, "docker", StringComparison.OrdinalIgnoreCase)); }
-
-    public async ValueTask<IReadOnlyList<AgentWorkspacePathMigrationItem>> ListLegacyPathsAsync(
-        AgentWorkspacePathMigrationContext context,
-        CancellationToken cancellationToken = default)
-    {
-        await _storageMigration.EnsureAsync(cancellationToken).ConfigureAwait(false);
-        var json = await _packageContext.Storage.State.GetValueAsync(BuildKey(context.Binding.BindingId), cancellationToken);
-        if (string.IsNullOrWhiteSpace(json))
-        {
-            return [];
-        }
-
-        try
-        {
-            using var document = JsonDocument.Parse(json);
-            var root = document.RootElement;
-            if (!root.TryGetProperty("AllowedRoots", out var rootsElement) || rootsElement.ValueKind != JsonValueKind.Array)
-            {
-                return [];
-            }
-
-            var hostRoots = ReadLegacyHostRoots(root);
-            var defaultWorkingDirectory = TryGetString(root, "DefaultWorkingDirectory");
-            var normalizedDefault = string.IsNullOrWhiteSpace(defaultWorkingDirectory)
-                ? null
-                : NormalizeContainerPath(defaultWorkingDirectory, allowRoot: false);
-            var items = new List<AgentWorkspacePathMigrationItem>();
-            var index = 0;
-            foreach (var item in rootsElement.EnumerateArray())
-            {
-                if (item.ValueKind != JsonValueKind.String)
-                {
-                    continue;
-                }
-
-                var value = item.GetString();
-                if (string.IsNullOrWhiteSpace(value))
-                {
-                    continue;
-                }
-
-                var containerRoot = NormalizeContainerPath(value, allowRoot: false);
-                var hostPath = hostRoots.TryGetValue(containerRoot, out var configuredHostPath)
-                    ? configuredHostPath
-                    : ResolveDefaultHostPath(containerRoot);
-                var isDefault = normalizedDefault is not null && IsSameOrChildPath(normalizedDefault, containerRoot);
-                items.Add(new AgentWorkspacePathMigrationItem { HostPath = hostPath, IsDefault = isDefault, SortOrder = index++ });
-            }
-
-            return items;
-        }
-        catch
-        {
-            return [];
-        }
-    }
-
-    public async ValueTask CompleteAsync(
-        AgentWorkspacePathMigrationContext context,
-        CancellationToken cancellationToken = default)
-        => await SaveConfigAsync(
-            context.Binding.BindingId,
-            await GetConfigAsync(context.Binding.BindingId, cancellationToken),
-            cancellationToken);
 
     private DockerExecutionWorkspaceConfig Normalize(
         string bindingId,
@@ -342,13 +254,6 @@ public sealed partial class DockerExecutionWorkspaceConfigService : IWorkspacePa
 
     internal static string NormalizeHostPath(string hostPath)
         => ValidateHostPath(Path.GetFullPath(Environment.ExpandEnvironmentVariables(hostPath.Trim())));
-
-    internal static string ToFileStoreRelativePath(string containerRoot)
-    {
-        var normalized = NormalizeContainerPath(containerRoot, allowRoot: false);
-        var segments = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        return Path.Combine(segments);
-    }
 
     internal static string BuildContainerName(string bindingId)
     {
@@ -426,33 +331,6 @@ public sealed partial class DockerExecutionWorkspaceConfigService : IWorkspacePa
         return builder.ToString().Trim('-') is { Length: > 0 } slug ? slug : "workspace";
     }
 
-    private static IReadOnlyDictionary<string, string> ReadLegacyHostRoots(JsonElement root)
-    {
-        var result = new Dictionary<string, string>(StringComparer.Ordinal);
-        if (!root.TryGetProperty("HostRoots", out var hostRootsElement) || hostRootsElement.ValueKind != JsonValueKind.Object)
-        {
-            return result;
-        }
-
-        foreach (var property in hostRootsElement.EnumerateObject())
-        {
-            if (property.Value.ValueKind != JsonValueKind.String)
-            {
-                continue;
-            }
-
-            var value = property.Value.GetString();
-            if (string.IsNullOrWhiteSpace(value))
-            {
-                continue;
-            }
-
-            result[NormalizeContainerPath(property.Name, allowRoot: false)] = NormalizeHostPath(value);
-        }
-
-        return result;
-    }
-
     private static void ValidateContainerPath(string normalized, bool allowRoot)
     {
         if (string.IsNullOrWhiteSpace(normalized) || !normalized.StartsWith('/'))
@@ -502,11 +380,6 @@ public sealed partial class DockerExecutionWorkspaceConfigService : IWorkspacePa
            && char.IsLetterOrDigit(containerName[0])
            && containerName.All(ch => char.IsLetterOrDigit(ch) || ch is '_' or '.' or '-');
 
-    private static string? TryGetString(JsonElement element, string propertyName)
-        => element.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.String
-            ? property.GetString()
-            : null;
-
     private static StringComparison GetHostPathStringComparison()
         => OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
             ? StringComparison.OrdinalIgnoreCase
@@ -521,7 +394,7 @@ public sealed partial class DockerExecutionWorkspaceConfigService : IWorkspacePa
     {
         if (needsAttention)
         {
-            return DockerImageCatalogService.NormalizeLegacyImageReference(imageReference);
+            return DockerImageCatalogService.NormalizeAttentionImageReference(imageReference);
         }
 
         return DockerImageCatalogService.NormalizeImageReference(imageReference);

@@ -22,11 +22,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             var docker = Load("DockerWorker", "Sunder.Package.Agent.Execution.Docker");
             var files = Load("FilesWorker", "Sunder.Package.Agent.Tools.Files");
             var shell = Load("ShellWorker", "Sunder.Package.Agent.Tools.Shell");
-            using var probeBytes = File.OpenRead(Path.Combine(root, "LocalWorkerProbes/bin/Debug/net10.0/Sunder.Package.Agent.Execution.Local.SemanticProbes.dll"));
-            var localProbes = load.LoadFromStream(probeBytes);
             Assert.NotSame(local.GetType("Sunder.Agent.Execution.Common.HostMutationCoordinator"), docker.GetType("Sunder.Agent.Execution.Common.HostMutationCoordinator"));
-            await VerifyAgentWorkspacePaths(owner, local, docker);
-            await VerifyAgentWorkspacePathLifetime(owner, local, localProbes);
             await VerifyAgentPermissionSurfaces(owner, files, shell);
             await VerifyAgentToolProfiles(owner);
             await VerifyAgentPromptContext(owner);
@@ -59,7 +55,6 @@ public sealed partial class AgentSourceArtifactMigrationTests
     {
         internal string? BlockMethod;
         internal FilesCallGate? Gate;
-        internal Action<string, JsonElement>? Before;
         internal Func<string, JsonElement, JsonElement>? Transform;
         internal string? FailMethod;
         internal int Streams;
@@ -74,7 +69,6 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 try { await gate.Release.Task.WaitAsync(token); }
                 catch (OperationCanceledException) when (token.IsCancellationRequested) { gate.Cancelled.TrySetResult(); throw; }
             }
-            Before?.Invoke(methodId, request);
             if (methodId == FailMethod) throw new InvalidOperationException("private-surface-failure");
             var value = await inner.InvokeUnaryAsync(context, serviceId, methodId, request, token);
             return Transform?.Invoke(methodId, value) ?? value;

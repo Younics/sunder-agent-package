@@ -18,8 +18,8 @@ using AppSubagentProjection = SubagentsApp::Sunder.Package.Agent.Subagents.Runti
 using AppSubagentProjectionContent = SubagentsApp::Sunder.Package.Agent.Subagents.Runtime.SubagentProjectionContent;
 using SkillProjection = SkillsApp::Sunder.Package.Agent.Skills.Runtime.SkillProjection;
 using SkillProjectionContent = SkillsApp::Sunder.Package.Agent.Skills.Runtime.SkillProjectionContent;
-using SkillsManagementServices = SkillsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Skills_Services;
-using SubagentManagementServices = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Subagents_Services;
+using SkillsManagementServices = SkillsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Skills_Services;
+using SubagentManagementServices = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Subagents_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -78,7 +78,7 @@ public sealed class ExtensionOwnerRpcTests
         using var scope = RegressionTestPackageScope.Create();
         var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
         await using var catalog = new RegressionTestExtensionCatalog(
-            new RegressionTestRpcClient(state, "sunder.package.agent.subagents"));
+            new RegressionTestRpcClient(state, "younics.ai.agent.subagents"));
         var store = new SubagentStore(scope.Context);
         store.Activate();
         var service = new SubagentService(store);
@@ -230,7 +230,7 @@ public sealed class ExtensionOwnerRpcTests
         SubagentsManagementService provider,
         string providerId)
         => state.AddGenerated(
-            "sunder.package.agent.subagents",
+            "younics.ai.agent.subagents",
             provider,
             provider.CreateSunderRpcProviderRegistration(),
             new NoOpDisposable(),
@@ -280,7 +280,7 @@ public sealed class ExtensionOwnerRpcTests
         {
             State = new RegressionTestRpcState(workerStyleProviderBoundary: true);
             _catalog = new RegressionTestExtensionCatalog(
-                new RegressionTestRpcClient(State, "sunder.package.agent.subagents"));
+                new RegressionTestRpcClient(State, "younics.ai.agent.subagents"));
             var store = new SubagentStore(_scope.Context);
             store.Activate();
             Service = new SubagentService(store);

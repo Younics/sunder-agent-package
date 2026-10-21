@@ -6,7 +6,6 @@ namespace Sunder.Package.Agent.Services;
 public sealed class AgentChatSelectionStateService
 {
     private const string SelectedWorkspaceIdKey = "agent.chat.selectedWorkspaceId";
-    private const string SelectedSessionIdKey = "agent.chat.selectedSessionId";
     private const string SelectedProfileIdKey = "agent.chat.selectedProfileId";
 
     private readonly IPackageKeyValueStore _state;
@@ -22,9 +21,6 @@ public sealed class AgentChatSelectionStateService
     {
         return Normalize(await _state.GetValueAsync(SelectedWorkspaceIdKey, cancellationToken));
     }
-
-    public Task<Guid?> GetSelectedSessionIdAsync(CancellationToken cancellationToken = default)
-        => Task.FromResult<Guid?>(null);
 
     public async Task<Guid?> GetSelectedSessionIdAsync(string? workspaceId, CancellationToken cancellationToken = default)
     {
@@ -65,11 +61,6 @@ public sealed class AgentChatSelectionStateService
         }
     }
 
-    public async Task SaveSelectedSessionIdAsync(Guid? sessionId, CancellationToken cancellationToken = default)
-    {
-        await SaveOrClearAsync(SelectedSessionIdKey, sessionId?.ToString("N"), cancellationToken);
-    }
-
     public async Task SaveSelectedSessionIdAsync(
         string? workspaceId,
         Guid? sessionId,
@@ -78,7 +69,6 @@ public sealed class AgentChatSelectionStateService
         var key = GetWorkspaceSessionKey(workspaceId);
         if (key is null)
         {
-            await SaveOrClearAsync(SelectedSessionIdKey, sessionId?.ToString("N"), cancellationToken);
             return;
         }
 

@@ -11,7 +11,7 @@ using Sunder.Sdk.Stacks;
 using Sunder.Sdk.Worker;
 using Xunit;
 
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -21,7 +21,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
     {
         using var package = RegressionTestPackageScope.Create();
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
+        var rpc = new RegressionTestRpcClient(state, "younics.ai.agent");
         var (_, lifetime, provider) = CreateGeneratedWorker(owner, package.Context, rpc);
         await using var owned = lifetime;
         var profileType = owner.GetType("Sunder.Package.Agent.Services.AgentProfileService", true)!;
@@ -42,7 +42,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.Equal(1, peer.Subscribers);
         await list(profile, default); Assert.Equal(1, peer.Subscribers);
         await using var receiver = new GeneratedServiceTestScope(rpc);
-        var selectable = Assert.Single(await ProjectedProviders(receiver, owner, "ISelectableCapabilityProviderService"));
+        var selectable = Assert.Single(await ProjectedProviders(receiver, owner, "ISelectableCapabilityProviderService", imported: false));
         using var client = selectable.Service;
         Assert.Same(owner, client.Value.GetType().Assembly);
         await using var watch = new ProjectedArtifactWatch(client.Value);
@@ -92,7 +92,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() =>
             client.InvokeAsync<AgentProfileSelectableCapabilityDescriptor[]>("ListAsync", profile, CancellationToken.None).AsTask())).Error.Kind);
         Assert.Equal(0, replacement.ListCalls);
-        using var current = Assert.Single(await ProjectedProviders(receiver, owner, "ISelectableCapabilityProviderService")).Service;
+        using var current = Assert.Single(await ProjectedProviders(receiver, owner, "ISelectableCapabilityProviderService", imported: false)).Service;
         Assert.NotSame(client.Value, current.Value);
         Assert.NotEmpty(await current.InvokeAsync<AgentProfileSelectableCapabilityDescriptor[]>("ListAsync", profile, CancellationToken.None));
         await receiver.DisposeAsync();

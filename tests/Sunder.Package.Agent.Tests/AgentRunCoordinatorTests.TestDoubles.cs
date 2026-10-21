@@ -310,9 +310,9 @@ public sealed partial class AgentRunCoordinatorTests
                 request.ToolId,
                 "Waiting for a child run.",
                 Content: "The child run is waiting.",
+                StructuredPayloadJson: JsonSerializer.Serialize(new { childSessionId = Guid.NewGuid(), state = "waiting" }),
                 IsError: true,
-                ErrorCode: AgentToolResultErrorCodes.ChildWaitingForApproval,
-                BackendId: Guid.NewGuid().ToString()));
+                ErrorCode: AgentToolResultErrorCodes.ChildWaitingForApproval));
         }
     }
 
@@ -875,9 +875,9 @@ public sealed partial class AgentRunCoordinatorTests
                     request.ToolId,
                     "Waiting for approved child work.",
                     Content: "The child run is waiting.",
+                    StructuredPayloadJson: JsonSerializer.Serialize(new { childSessionId = Guid.NewGuid(), state = "waiting" }),
                     IsError: true,
-                    ErrorCode: AgentToolResultErrorCodes.ChildWaitingForApproval,
-                    BackendId: Guid.NewGuid().ToString()));
+                    ErrorCode: AgentToolResultErrorCodes.ChildWaitingForApproval));
             }
 
             return ValueTask.FromResult(

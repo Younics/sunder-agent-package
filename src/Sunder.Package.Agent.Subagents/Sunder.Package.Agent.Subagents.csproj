@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <SunderPackageFamilyId>sunder.package.agent.subagents</SunderPackageFamilyId>
+    <SunderPackageFamilyId>younics.ai.agent.subagents</SunderPackageFamilyId>
     <SunderSdkAvaloniaReference>true</SunderSdkAvaloniaReference>
     <SunderSdkStacksReference>true</SunderSdkStacksReference>
     <SunderAgentSharedTranscript>true</SunderAgentSharedTranscript>
@@ -21,7 +21,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <SunderSdkCapability Include="rpc.extended-deadline.v1" />
     <AvaloniaResource Include="..\Sunder.Package.Agent.Shared\Presentation\ModelBindingStyles.axaml"
                       Link="Presentation\ModelBindingStyles.axaml" />
   </ItemGroup>

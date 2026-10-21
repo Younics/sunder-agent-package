@@ -64,6 +64,14 @@ internal static class AgentPackageRepositoryInventory
 
     public static DirectoryInfo RepositoryRoot => RepositoryRootValue.Value;
 
+    public static string GetRuntimePackageId(string projectName)
+    {
+        using var inventory = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(RepositoryRoot.FullName, "packages.json")));
+        return inventory.RootElement.GetProperty("packages").EnumerateArray()
+            .Single(package => Path.GetFileNameWithoutExtension(package.GetProperty("projectPath").GetString()) == projectName)
+            .GetProperty("packageId").GetString()!;
+    }
+
     public static IReadOnlyList<RuntimePackageProject> GetRuntimePackageProjects()
     {
         var sourceRoot = Path.Combine(RepositoryRoot.FullName, "src");
@@ -86,10 +94,19 @@ internal static class AgentPackageRepositoryInventory
     }
 
     public static bool IsSourceFile(string path)
+        => IsSourceFile(path, RepositoryRoot.FullName);
+
+    internal static bool IsSourceFile(string path, string repositoryRoot)
     {
-        var normalizedPath = path.Replace('\\', '/');
+        var relativePath = Path.GetRelativePath(repositoryRoot, path).Replace('\\', '/');
+        if (Path.IsPathRooted(relativePath) || relativePath == ".." || relativePath.StartsWith("../", StringComparison.Ordinal))
+            return false;
+        var normalizedPath = "/" + relativePath;
         return !normalizedPath.Contains("/bin/", StringComparison.OrdinalIgnoreCase)
-               && !normalizedPath.Contains("/obj/", StringComparison.OrdinalIgnoreCase);
+               && !normalizedPath.Contains("/obj/", StringComparison.OrdinalIgnoreCase)
+               && !normalizedPath.Contains("/artifacts/", StringComparison.OrdinalIgnoreCase)
+               && !normalizedPath.Contains("/compatibility/", StringComparison.OrdinalIgnoreCase)
+               && !normalizedPath.Contains("/Fixtures/PreCanonicalProjects/", StringComparison.OrdinalIgnoreCase);
     }
 
     private static RuntimePackageProject CreateRuntimePackageProject(string metadataPath)

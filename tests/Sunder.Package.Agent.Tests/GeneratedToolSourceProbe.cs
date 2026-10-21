@@ -1,7 +1,7 @@
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Services;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -27,7 +27,7 @@ internal sealed class GeneratedToolSourceProbe : IDisposable, IAsyncDisposable
         if (withSessionCleaner) _cleanerSnapshot = catalog.AddProvider(RegressionTestBindings.SessionCleaners, source, packageId);
         if (withSelectableCapabilities) _selectableCapabilitySnapshot = catalog.AddProvider(
             RegressionTestBindings.SelectableCapabilityProviders, source, packageId);
-        _receiver = new GeneratedServiceTestScope(catalog.RpcForCaller("sunder.package.agent"));
+        _receiver = new GeneratedServiceTestScope(catalog.RpcForCaller("younics.ai.agent"));
     }
 
     internal async ValueTask<AgentToolResult> ExecuteAsync(AgentToolExecutionContext context, AgentToolRequest request,

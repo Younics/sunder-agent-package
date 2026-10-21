@@ -5,7 +5,7 @@ using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Rpc;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 namespace Sunder.Package.Agent.Runtime;
 
 internal enum AgentRuntimeConnectionState

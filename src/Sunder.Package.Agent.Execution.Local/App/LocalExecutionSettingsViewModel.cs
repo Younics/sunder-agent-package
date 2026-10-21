@@ -1,7 +1,7 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Execution_Local_Services;
+using Sunder.Generated.Packages.Younics_Ai_Agent_Execution_Local_Services;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Abstractions;

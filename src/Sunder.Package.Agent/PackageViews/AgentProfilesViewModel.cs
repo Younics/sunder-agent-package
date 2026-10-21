@@ -7,7 +7,7 @@ using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Abstractions;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 
 namespace Sunder.Package.Agent.PackageViews;
 
@@ -69,13 +69,13 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         _uiDispatcher = uiDispatcher;
         _statusClear = new TimedStatusController(dispatcher: uiDispatcher);
         _runtimeNoticeDelay = new TimedStatusController(runtimeNoticeTimeProvider, uiDispatcher);
-        _tasks = new PresentationTaskScope(exception => _uiDispatcher.InvokeAsync(() =>
+        _tasks = new PresentationTaskScope((exception, token) => _uiDispatcher.InvokeAsync(() =>
         {
             if (!_disposed)
             {
                 SetStatus(exception.Message, AgentProfileStatusKind.Error);
             }
-        }));
+        }, token), _uiDispatcher.ShutdownToken);
         _listDetail = new KeyedAdaptiveListDetailState<string, AgentProfileRecord>(
             Profiles,
             static profile => profile.ProfileId,

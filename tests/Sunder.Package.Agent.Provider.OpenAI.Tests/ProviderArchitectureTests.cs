@@ -293,13 +293,14 @@ public sealed partial class ProviderArchitectureTests
         }
 
         throw new DirectoryNotFoundException(
-            "Could not locate the Sunder Agent package repository root from SUNDER_AGENT_REPOSITORY_ROOT, the test output, or the working directory.");
+            "Could not locate the AI Agent package repository root from SUNDER_AGENT_REPOSITORY_ROOT, the test output, or the working directory.");
     }
 
     private static readonly IReadOnlySet<string> ProviderSettingsSharedSources = new HashSet<string>(
         [
             "PackageViews/SunderComboBox.cs",
             "Presentation/OperationState.cs",
+            "Presentation/PresentationCancellation.cs",
             "Presentation/PresentationDispatcher.cs",
             "Presentation/PresentationExceptionPolicy.cs",
             "Presentation/TimedStatusController.cs",

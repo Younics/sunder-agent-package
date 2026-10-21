@@ -1,6 +1,6 @@
 using Microsoft.Extensions.Logging;
 using System.Text;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Mcp_Services;
+using Sunder.Generated.Packages.Younics_Ai_Agent_Mcp_Services;
 using Sunder.Package.Agent.Mcp.Services;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Abstractions;

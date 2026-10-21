@@ -1,5 +1,5 @@
-using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using Sunder.Generated.Packages.Younics_Ai_Agent_Models;
+using IWorkspaceEditorService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Workspace_Editor.IWorkspaceEditorService;
 using Sunder.Sdk.Services;
 
 namespace RegressionTestGeneratedProviders;
@@ -11,5 +11,5 @@ public sealed partial class WorkspaceEditorProvider(Func<string, Type, object?[]
     public ValueTask<AgentServiceIdentity> DescribeAsync(CancellationToken token = default) => Reply<AgentServiceIdentity>(nameof(DescribeAsync), [], token);
     public ValueTask<bool> CanEditAsync(AgentWorkspaceEditorContext context, CancellationToken token = default) => Reply<bool>(nameof(CanEditAsync), [context], token);
     public ValueTask<IReadOnlyList<AgentEditorSection>> GetSectionsAsync(AgentWorkspaceEditorContext context, CancellationToken token = default) => Reply<IReadOnlyList<AgentEditorSection>>(nameof(GetSectionsAsync), [context], token);
-    public ValueTask<AgentEditorSaveResult> SaveSectionAsync(CSunder_Agent_Workspace_Editor_WorkspaceEditorSaveSectionRequest request, CancellationToken token = default) => Reply<AgentEditorSaveResult>(nameof(SaveSectionAsync), [request], token);
+    public ValueTask<AgentEditorSaveResult> SaveSectionAsync(CYounics_Ai_Agent_Workspace_Editor_WorkspaceEditorSaveSectionRequest request, CancellationToken token = default) => Reply<AgentEditorSaveResult>(nameof(SaveSectionAsync), [request], token);
 }

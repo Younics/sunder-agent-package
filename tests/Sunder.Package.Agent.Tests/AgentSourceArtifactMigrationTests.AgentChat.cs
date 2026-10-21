@@ -29,7 +29,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var receiver = new GeneratedServiceTestScope(rpc);
         try
         {
-            var contract = owner.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Services.IChatProviderService", true)!;
+            var contract = owner.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Services.IChatProviderService", true)!;
             var catalog = receiver.Providers(contract);
             var snapshot = (await Call(catalog, "ListAsync", CancellationToken.None))!;
             var entries = ((System.Collections.IEnumerable)snapshot.GetType().GetProperty("Providers")!.GetValue(snapshot)!).Cast<object>();
@@ -66,10 +66,10 @@ public sealed partial class AgentSourceArtifactMigrationTests
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
         using var providers = new RegressionTestSourceProviders();
         var peer = new AgentChatPeer();
-        await using var providerReceiver = new GeneratedServiceTestScope(new RegressionTestRpcClient(state, "sunder.package.agent"));
+        await using var providerReceiver = new GeneratedServiceTestScope(new RegressionTestRpcClient(state, "younics.ai.agent"));
         var registration = providers.Create(RegressionTestBindings.ChatProviders, peer, providerReceiver);
         state.AddGenerated("example.chat", peer, registration, Noop.Instance, "fixture.chat");
-        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
+        var rpc = new RegressionTestRpcClient(state, "younics.ai.agent");
         var snapshot = Assert.Single((await rpc.DiscoverAsync(RegressionTestBindings.ChatProviders)).Providers);
         var observed = new FilesRpcObserver(rpc, "get-readiness");
         var provider = await CreateAgentChatProvider(owner, observed, snapshot);

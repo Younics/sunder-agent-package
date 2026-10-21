@@ -12,7 +12,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             || reference.Name!.StartsWith("Avalonia", StringComparison.Ordinal));
         foreach (var name in new[] { "AgentProfileRecord", "AgentSessionRecord", "AgentTurnRecord", "AgentToolExecutionContext", "AgentBehaviorLoopContext" })
             Assert.Same(worker, worker.GetType("Sunder.Package.Agent.Contracts.Models." + name, true)!.Assembly);
-        Assert.Same(worker, worker.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Services.IAgentProfileService", true)!.Assembly);
+        Assert.Same(worker, worker.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Services.IAgentProfileService", true)!.Assembly);
     }
 
     internal static void AssertAgentAppSemanticOwnership(Assembly app)
@@ -21,6 +21,6 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.DoesNotContain(app.GetReferencedAssemblies(), reference => reference.Name is "Sunder.Sdk.Worker" or "Microsoft.Data.Sqlite" or "Microsoft.Extensions.AI.Abstractions" or "Polly.Core");
         foreach (var name in new[] { "AgentProfileRecord", "AgentSessionRecord", "AgentTurnRecord", "AgentAttachmentUploadRequest", "AgentWorkspaceRecord" })
             Assert.Same(app, app.GetType("Sunder.Package.Agent.Contracts.Models." + name, true)!.Assembly);
-        Assert.Same(app, app.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Services.IAgentRuntimeService", true)!.Assembly);
+        Assert.Same(app, app.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Services.IAgentRuntimeService", true)!.Assembly);
     }
 }

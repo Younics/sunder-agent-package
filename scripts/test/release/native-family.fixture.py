@@ -49,8 +49,9 @@ def file_list(files):
 
 def create_producer(root):
     repository = root / "native checkout"
-    rows = [{"key": str(i), "packageId": "sunder.fixture.p" + str(i), "artifactType": "sunderpkg",
-             "projectPath": "src/P" + str(i) + "/P" + str(i) + ".csproj"} for i in range(15)]
+    rows = [{"key": str(i), "packageId": package_id, "artifactType": "sunderpkg",
+             "projectPath": "src/P" + str(i) + "/P" + str(i) + ".csproj"}
+            for i, package_id in enumerate(family.FAMILY_PACKAGE_IDS)]
     write(repository / "packages.json", {"packages": rows})
     for row in rows:
         directory = repository / Path(row["projectPath"]).parent
@@ -186,7 +187,7 @@ class NativeFamilyFixture(unittest.TestCase):
         cls.template = cls.root / "template"
         repository = create_producer(cls.template)
         for rid in inputs.RIDS:
-            subprocess.run(["bash", str(SCRIPT / "record-native-leaf-evidence.sh"), rid, *VERSIONS,
+            subprocess.run([sys.executable, "-B", str(SCRIPT / "native-family.py"), "record", rid, *VERSIONS,
                             str(cls.template / "smoke archives" / rid), str(cls.template / "metrics" / rid),
                             str(cls.template / "handoff"), str(repository)], check=True, capture_output=True, text=True)
 
@@ -214,7 +215,7 @@ class NativeFamilyFixture(unittest.TestCase):
                         SUNDER_NATIVE_USE_SOURCE_SDK="false", SUNDER_NATIVE_TASK_ASSEMBLY="")
 
     def assemble(self, success=True):
-        result = subprocess.run(["bash", str(SCRIPT / "assemble-native-family.sh"), str(self.handoff), str(self.output),
+        result = subprocess.run([sys.executable, "-B", str(SCRIPT / "native-family.py"), "assemble", str(self.handoff), str(self.output),
                                  *VERSIONS, str(self.repository)], env=self.env, capture_output=True, text=True)
         if success:
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -223,7 +224,7 @@ class NativeFamilyFixture(unittest.TestCase):
         return result
 
     def verify(self, success=True):
-        result = subprocess.run(["bash", str(SCRIPT / "verify-native-family-evidence.sh"), str(self.output / "native-test-evidence.json"),
+        result = subprocess.run([sys.executable, "-B", str(SCRIPT / "native-family.py"), "verify", str(self.output / "native-test-evidence.json"),
                                  str(self.output), str(self.repository / "packages.json"), *VERSIONS], capture_output=True, text=True)
         self.assertEqual(result.returncode == 0, success, result.stdout + result.stderr)
 
@@ -249,9 +250,22 @@ class NativeFamilyFixture(unittest.TestCase):
         document = json.loads((self.output / "native-test-evidence.json").read_bytes())
         self.assertEqual(document["schemaVersion"], 3)
         self.assertEqual(len(document["finalArtifacts"]), 15)
+        for run in document["nativeRuns"]:
+            for package in run["packages"]:
+                lock = self.repository / Path(package["workerProject"]).parent / "sunder-contracts.lock.json"
+                self.assertEqual({"lockSha256": inputs.digest(lock.read_bytes()), "roleUses": []}, package["sourceRoleUses"])
         after = {path.relative_to(self.handoff): inputs.digest(path.read_bytes()) for path in self.handoff.rglob("*") if path.is_file()}
         self.assertEqual(before, after)
         self.assertFalse(list(self.repository.rglob("bin")))
+
+    def test_source_use_projection_cannot_be_changed_apart_from_qualified_receipt(self):
+        path = self.handoff / ("native-leaf-evidence-" + inputs.RIDS[0] + ".json")
+        run = json.loads(path.read_bytes())
+        run["packages"][0]["sourceRoleUses"]["lockSha256"] = "a" * 64
+        write(path, run)
+        result = self.assemble(success=False)
+        self.assertIn("Native source role uses differ from the qualified Worker receipt", result.stderr)
+        self.assertFalse(self.log.exists(), "Pack ran before source-use evidence was authenticated")
 
     def test_bundle_rejects_traversal_links_duplicates_extras_missing_and_corruption_before_pack(self):
         original = self.handoff / ("native-leaves-" + inputs.RIDS[0] + ".tar.gz")
@@ -480,7 +494,7 @@ class NativeFamilyFixture(unittest.TestCase):
 
     def test_final_verifier_rejects_ambiguous_shared_layers_and_changed_app_role(self):
         self.assemble()
-        archive = self.output / ("sunder.fixture.p0." + VERSION + ".sunderpkg")
+        archive = self.output / ("younics.ai.agent." + VERSION + ".sunderpkg")
         original = archive.read_bytes()
         document_path = self.output / "native-test-evidence.json"
         document_bytes = document_path.read_bytes()

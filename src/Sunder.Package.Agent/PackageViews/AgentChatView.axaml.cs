@@ -20,7 +20,7 @@ using Sunder.Sdk.Notifications;
 
 namespace Sunder.Package.Agent.PackageViews;
 
-[Sunder.Sdk.Packaging.SunderPackageView("sunder.package.agent.chat", "Agent Chat",
+[Sunder.Sdk.Packaging.SunderPackageView("younics.ai.agent.chat", "Agent Chat",
     IconPath = "Assets/chat-icon.png", DefaultPlacement = PackageViewPlacement.Middle)]
 public partial class AgentChatView : UserControl,
     IDisposable,
@@ -77,7 +77,7 @@ public partial class AgentChatView : UserControl,
 
     public AgentChatView()
     {
-        _tasks = new PresentationTaskScope(PresentationTaskScope.IgnoreExpectedFailure);
+        _tasks = new PresentationTaskScope(PresentationTaskScope.IgnoreExpectedFailure, PresentationDispatcher.Capture().ShutdownToken);
         _operations = PresentationOperationObserver.CreateUnreported("Agent Chat view");
         InitializeComponent();
         ConfigureComposerDropTarget(ExpandedComposerDropTarget);

@@ -191,6 +191,25 @@ public sealed class EditorSharedStateTests
     }
 
     [Fact]
+    public async Task ModelBindingEditorState_DoesNotInterpretFastSuffixAsASpeedSetting()
+    {
+        using var dispatcher = new DedicatedPresentationDispatcher();
+        var catalog = new ProviderModelCatalogAdapter(
+            _ => Task.FromResult<IReadOnlyList<ProviderCatalogOption>>([new ProviderCatalogOption("provider", "Provider")]),
+            (_, _) => Task.FromResult(new ProviderModelCatalogResult(
+                [new ProviderModelCatalogOption("default", "Default"),
+                 new ProviderModelCatalogOption("model", "Model", SpeedOptions: [new AgentModelSpeedOptionDescriptor("fast", "Fast")])],
+                "Ready")));
+        using var state = new ModelBindingEditorState(new ProviderModelLoader(catalog),
+            new ModelBindingEditorOptions(true, "None", "None", "Loading", "Provider"), dispatcher);
+
+        await state.RefreshAsync(new ModelBindingSelection("provider", "model-fast", null), TestContext.Current.CancellationToken);
+
+        Assert.Equal("default", state.SelectedModel?.Id);
+        Assert.Null(AgentChatModelSettingsJson.Parse(state.SettingsJson).SpeedOptionId);
+    }
+
+    [Fact]
     public async Task ModelBindingEditorState_AppliesAsyncResultsAndNotificationsOnDispatcher()
     {
         using var dispatcher = new DedicatedPresentationDispatcher();

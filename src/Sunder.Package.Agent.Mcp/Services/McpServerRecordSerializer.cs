@@ -1,11 +1,10 @@
 using System.Text.Json;
-using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Mcp.Services;
 
 internal static class McpServerRecordSerializer
 {
-    internal const string DocumentSchemaId = "sunder.agent.mcp.server-record";
+    internal const string DocumentSchemaId = "younics.ai.agent.mcp.server-record";
     internal const int DocumentSchemaVersion = 1;
 
     public static string Serialize(ConfiguredMcpServerRecord server)
@@ -14,12 +13,12 @@ internal static class McpServerRecordSerializer
             DocumentSchemaVersion,
             server));
 
-    public static async Task<McpServerDeserializeResult> DeserializeAsync(
+    public static McpServerDeserializeResult Deserialize(
         string payload,
-        IPackageSecrets secrets,
         Func<string?, string> normalizeName,
         CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         try
         {
             if (payload.Length > McpConfigurationSourceReader.MaxDocumentBytes)
@@ -41,22 +40,19 @@ internal static class McpServerRecordSerializer
             var hasSchemaId = root.TryGetProperty(nameof(McpServerDocument.DocumentSchemaId), out var schemaId);
             var hasSchemaVersion = root.TryGetProperty(nameof(McpServerDocument.DocumentSchemaVersion), out var schemaVersion);
             var hasServer = root.TryGetProperty(nameof(McpServerDocument.Server), out var serverDocument);
-            if (hasSchemaId || hasSchemaVersion || hasServer)
+            if (!hasSchemaId
+                || !hasSchemaVersion
+                || !hasServer
+                || schemaId.ValueKind != JsonValueKind.String
+                || !string.Equals(schemaId.GetString(), DocumentSchemaId, StringComparison.Ordinal)
+                || schemaVersion.ValueKind != JsonValueKind.Number
+                || !schemaVersion.TryGetInt32(out var version)
+                || version != DocumentSchemaVersion
+                || serverDocument.ValueKind != JsonValueKind.Object)
             {
-                if (!hasSchemaId
-                    || !hasSchemaVersion
-                    || !hasServer
-                    || schemaId.ValueKind != JsonValueKind.String
-                    || !string.Equals(schemaId.GetString(), DocumentSchemaId, StringComparison.Ordinal)
-                    || !schemaVersion.TryGetInt32(out var version)
-                    || version != DocumentSchemaVersion
-                    || serverDocument.ValueKind != JsonValueKind.Object)
-                {
-                    return new(null, "Stored MCP server metadata has an unsupported or missing document schema identity.");
-                }
-
-                root = serverDocument;
+                return new(null, "Stored MCP server metadata has an unsupported or missing document schema identity.");
             }
+            root = serverDocument;
 
             var serverId = ReadString(root, "ServerId") ?? string.Empty;
             if (string.IsNullOrWhiteSpace(serverId))
@@ -110,9 +106,15 @@ internal static class McpServerRecordSerializer
     }
 
     private static string? ReadString(JsonElement root, string propertyName)
-        => root.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String
+    {
+        if (!root.TryGetProperty(propertyName, out var value) || value.ValueKind == JsonValueKind.Null)
+        {
+            return null;
+        }
+        return value.ValueKind == JsonValueKind.String
             ? value.GetString()
-            : null;
+            : throw new InvalidDataException($"Stored MCP property '{propertyName}' must be a string.");
+    }
 
     private static bool? ReadBool(JsonElement root, string propertyName)
         => root.TryGetProperty(propertyName, out var value)
@@ -120,45 +122,54 @@ internal static class McpServerRecordSerializer
             {
                 JsonValueKind.True => true,
                 JsonValueKind.False => false,
-                _ => null,
+                _ => throw new InvalidDataException($"Stored MCP property '{propertyName}' must be a boolean."),
             }
             : null;
 
     private static int? ReadInt(JsonElement root, string propertyName)
-        => root.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var parsed)
+    {
+        if (!root.TryGetProperty(propertyName, out var value) || value.ValueKind == JsonValueKind.Null)
+        {
+            return null;
+        }
+        return value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var parsed)
             ? parsed
-            : null;
+            : throw new InvalidDataException($"Stored MCP property '{propertyName}' must be an integer.");
+    }
 
     private static DateTimeOffset? ReadDateTimeOffset(JsonElement root, string propertyName)
-        => root.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String && value.TryGetDateTimeOffset(out var parsed)
+    {
+        if (!root.TryGetProperty(propertyName, out var value))
+        {
+            return null;
+        }
+        return value.ValueKind == JsonValueKind.String && value.TryGetDateTimeOffset(out var parsed)
             ? parsed
-            : null;
+            : throw new InvalidDataException($"Stored MCP property '{propertyName}' must be a timestamp.");
+    }
 
     private static ConfiguredMcpTransportType ReadTransportType(JsonElement root)
     {
-        if (!root.TryGetProperty("TransportType", out var value))
-        {
-            return ConfiguredMcpTransportType.Stdio;
-        }
-
-        if (value.ValueKind == JsonValueKind.Number
+        if (root.TryGetProperty("TransportType", out var value)
+            && value.ValueKind == JsonValueKind.Number
             && value.TryGetInt32(out var enumValue)
             && Enum.IsDefined(typeof(ConfiguredMcpTransportType), enumValue))
         {
             return (ConfiguredMcpTransportType)enumValue;
         }
 
-        return value.ValueKind == JsonValueKind.String
-               && Enum.TryParse<ConfiguredMcpTransportType>(value.GetString(), ignoreCase: true, out var parsed)
-            ? parsed
-            : ConfiguredMcpTransportType.Stdio;
+        throw new InvalidDataException("Stored MCP transport must be a supported numeric transport type.");
     }
 
     private static string[] ReadStringArray(JsonElement root, string propertyName)
     {
-        if (!root.TryGetProperty(propertyName, out var value) || value.ValueKind != JsonValueKind.Array)
+        if (!root.TryGetProperty(propertyName, out var value))
         {
             return [];
+        }
+        if (value.ValueKind != JsonValueKind.Array)
+        {
+            throw new InvalidDataException($"Stored MCP property '{propertyName}' must be an array.");
         }
 
         var result = new List<string>();
@@ -167,7 +178,7 @@ internal static class McpServerRecordSerializer
         {
             if (item.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(item.GetString()))
             {
-                continue;
+                throw new InvalidDataException($"Stored MCP property '{propertyName}' must contain non-empty strings.");
             }
 
             var parsed = item.GetString()!.Trim();

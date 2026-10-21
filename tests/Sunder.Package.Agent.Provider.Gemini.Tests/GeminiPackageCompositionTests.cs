@@ -1,7 +1,8 @@
 extern alias GeminiApp;
 
 using Microsoft.Extensions.DependencyInjection;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using IChatProviderService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Chat_Provider.IChatProviderService;
+using IEmbeddingProviderService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Embedding_Provider.IEmbeddingProviderService;
 using Sunder.Package.Agent.Provider.Gemini.Rpc;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Package.Agent.Provider.TestSupport;
@@ -9,7 +10,7 @@ using Sunder.Package.Agent.TestSupport.Avalonia;
 using Xunit;
 using GeminiSettingsView = GeminiApp::Sunder.Package.Agent.Provider.Gemini.GeminiSettingsView;
 using GeminiSettingsViewModel = GeminiApp::Sunder.Package.Agent.Provider.Gemini.GeminiSettingsViewModel;
-using ICredentialSettingsService = GeminiApp::Sunder.Generated.Packages.Sunder_Package_Agent_Provider_Gemini_Services.ICredentialSettingsService;
+using ICredentialSettingsService = GeminiApp::Sunder.Generated.Packages.Younics_Ai_Agent_Provider_Gemini_Services.ICredentialSettingsService;
 
 namespace Sunder.Package.Agent.Provider.Gemini.Tests;
 
@@ -19,7 +20,7 @@ public sealed class GeminiPackageCompositionTests
     [Trait("Lane", "PackageCompatibility")]
     public void WorkerAndAppComposition_KeepProvidersAndEmbeddingsWorkerOnly()
     {
-        var context = new ProviderTestPackageContext("sunder.package.agent.provider.gemini");
+        var context = new ProviderTestPackageContext("younics.ai.agent.provider.gemini");
         var credentials = new ProviderCredentialAccessor(
             context.Secrets,
             GeminiProviderConfiguration.ApiKeySecretKey);

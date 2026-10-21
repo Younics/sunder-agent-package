@@ -13,7 +13,7 @@ public sealed class LMStudioProviderCancellationTests
     public async Task CatalogAndReadiness_PropagateCancellation(bool embeddings, bool readiness)
     {
         var context = new ProviderTestPackageContext(
-            "sunder.package.agent.provider.lmstudio",
+            "younics.ai.agent.provider.lmstudio",
             new Dictionary<string, string>
             {
                 [LMStudioProviderConfiguration.BaseUrlKey] = "http://lmstudio.test/v1",

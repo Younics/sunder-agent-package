@@ -5,7 +5,8 @@ using Sunder.Package.Agent.Subagents.Models;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Stacks;
 using Sunder.Sdk.Services;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using IChatProviderService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Chat_Provider.IChatProviderService;
+using ISelectableCapabilityProviderService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Selectable_Capability_Provider.ISelectableCapabilityProviderService;
 
 namespace Sunder.Package.Agent.Subagents.Services;
 
@@ -16,13 +17,32 @@ internal sealed partial class SubagentStackContributor(
     IServiceProviders<IChatProviderService> chats,
     IServiceProviders<ISelectableCapabilityProviderService> capabilities) : IPackageStackExporter, IPackageStackImporter, IPackageStackImportAppliedHandler
 {
-    private const string SchemaId = "sunder.package.agent.subagents/subagent";
+    private const string SchemaId = "younics.ai.agent.subagents/subagent";
     private const string DetailDescription = "description";
     private const string DetailInstructions = "instructions";
     private const string DetailProvider = "provider";
     private const string DetailModel = "model";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
-    public string ContributorId => "sunder.package.agent.subagents.subagents";
+    private static readonly HashSet<string> CoordinatedFamilyPackageIds = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "younics.ai.agent",
+        "younics.sunder.package.maker",
+        "younics.ai.agent.execution.docker",
+        "younics.ai.agent.execution.local",
+        "younics.ai.agent.mcp",
+        "younics.ai.agent.memory.semantic",
+        "younics.ai.agent.provider.anthropic",
+        "younics.ai.agent.provider.gemini",
+        "younics.ai.agent.provider.lmstudio",
+        "younics.ai.agent.provider.openai",
+        "younics.ai.agent.skills",
+        "younics.ai.agent.subagents",
+        "younics.ai.agent.tools.files",
+        "younics.ai.agent.tools.shell",
+        "younics.ai.agent.tools.web",
+    };
+
+    public string ContributorId => "younics.ai.agent.subagents.subagents";
 
     public string DisplayName => "Subagents";
 
@@ -230,8 +250,7 @@ internal sealed partial class SubagentStackContributor(
     }
 
     private static bool IsCoordinatedFamilyPackage(string packageId)
-        => string.Equals(packageId, "sunder.package.agent", StringComparison.OrdinalIgnoreCase)
-           || packageId.StartsWith("sunder.package.agent.", StringComparison.OrdinalIgnoreCase);
+        => CoordinatedFamilyPackageIds.Contains(packageId);
 
     private static IReadOnlyList<StackExportItemDetail> BuildExportDetails(SubagentRecord subagent)
     {
@@ -284,9 +303,10 @@ internal sealed partial class SubagentStackContributor(
     private static bool TryReadPayload(StackFragmentImport fragment, ICollection<string> warnings, out SubagentStackPayload? payload)
     {
         payload = null;
-        if (!string.Equals(fragment.SchemaId, SchemaId, StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(fragment.OwnerPackageId, SubagentConstants.PackageId, StringComparison.Ordinal)
+            || !string.Equals(fragment.SchemaId, SchemaId, StringComparison.Ordinal))
         {
-            warnings.Add($"Stack fragment '{fragment.FragmentId}' uses unsupported schema '{fragment.SchemaId}'.");
+            warnings.Add($"Stack fragment '{fragment.FragmentId}' has an unsupported owner or subagent schema.");
             return false;
         }
 

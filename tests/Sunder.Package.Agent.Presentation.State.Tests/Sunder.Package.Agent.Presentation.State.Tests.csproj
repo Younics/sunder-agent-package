@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <SunderPackageFamilyId>sunder.package.agent</SunderPackageFamilyId>
+    <SunderPackageFamilyId>younics.ai.agent</SunderPackageFamilyId>
     <SunderPackageRole>test</SunderPackageRole>
     <OutputType>Exe</OutputType>
     <SunderTestOwner>agent-family</SunderTestOwner>

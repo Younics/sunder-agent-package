@@ -9,7 +9,7 @@ using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Worker;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -26,7 +26,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         await Run(fixture, "restore", "Imported.csproj", "--disable-parallel");
         await Run(fixture, "msbuild", "Imported.csproj", "-t:FixtureOperation", "-p:Operation=Accept");
         await Run(fixture, "msbuild", "Imported.csproj", "-t:FixtureOperation", "-p:Operation=Freeze");
-        await Run(fixture, "msbuild", "Imported.csproj", "-t:FixtureOperation", "-p:Operation=Implement", "-p:ContractId=sunder.agent.system.prompt.contributor", "-p:ProviderKey=systemPrompt");
+        await Run(fixture, "msbuild", "Imported.csproj", "-t:FixtureOperation", "-p:Operation=Implement", "-p:ContractId=younics.ai.agent.system.prompt.contributor", "-p:ProviderKey=systemPrompt");
         File.Copy(Path.Combine(repository, "tests/Sunder.Package.Agent.Tests/Fixtures/SystemPromptArtifactProvider.cs.txt"), Path.Combine(fixture, "Source.cs"), overwrite: true);
         var selected = File.ReadAllBytes(Path.Combine(fixture, "sunder-contracts.lock.json"));
         await Run(fixture, "build", "Imported.csproj", "--no-restore");
@@ -56,7 +56,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
     {
         using var package = RegressionTestPackageScope.Create();
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
+        var rpc = new RegressionTestRpcClient(state, "younics.ai.agent");
         var (_, packageLifetime, provider) = CreateGeneratedWorker(owner, package.Context, rpc);
         await using var owned = packageLifetime;
         var profileType = owner.GetType("Sunder.Package.Agent.Services.AgentProfileService", true)!;
@@ -105,7 +105,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         observed.AssertScopedOperations(); Assert.All(observed.Scopes, scope => Assert.True(scope.Disposed));
 
         SurfaceHandler Add(CapabilityProbe value)
-            => (SurfaceHandler)AddGeneratedPeer(state, "sunder.package.agent.memory.semantic",
+            => (SurfaceHandler)AddGeneratedPeer(state, "younics.ai.agent.memory.semantic",
                 RegressionTestBindings.ProfileCapabilityConsumers, new RegressionTestProfileCapabilityProvider(value),
                 "semantic.memory.profile.capabilities", inner => new SurfaceHandler(inner));
 

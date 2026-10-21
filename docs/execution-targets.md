@@ -1,6 +1,9 @@
 # Execution Targets, Paths, And Security
 
-An execution target implements shell and file operations for an Agent workspace. Publish `AgentExecutionTargetRpc.CreateHandler(target)` under the Runtime `sunder.agent.execution.target` contract.
+An execution target implements shell and file operations for an Agent workspace.
+Select `younics.ai.agent.execution.target`, implement generated `IExecutionTargetService`
+and bind it with `SunderServiceProvider`. See the [quickstart](extension-quickstart.md)
+and [exact service declaration](../src/Sunder.Package.Agent/Rpc/Public/ExecutionTarget.cs).
 
 Execution targets are authorities, not presentation adapters. They own path interpretation, process/container/remote lifecycle, output bounds, timeout enforcement, and final scope checks.
 
@@ -18,7 +21,12 @@ Agent workspace bindings persist a contribution id. Resolution uses the first ta
 
 Return `NeedsConfiguration` for missing user configuration and `Failed` for an unusable configured backend. A descriptor's `SupportsShell` or `SupportsFiles` must match actual behavior.
 
-## Optional Capabilities
+## First-Party Implementation Facets
+
+The local interfaces below organize first-party implementations; they are not
+cross-package CLR dependencies. External extensions implement the selected generated
+service methods, advertise their supported facets and return the declared
+`agent.execution.facet-unavailable` error when a requested facet is unsupported.
 
 | Interface | Use |
 | --- | --- |
@@ -33,7 +41,8 @@ Return `NeedsConfiguration` for missing user configuration and `Failed` for an u
 | `IAgentWorkspaceEditorContributor` | Supply target-specific workspace fields. Use separate Runtime authority and App presentation/proxy contributions. |
 | `IAgentWorkspacePathMigrationContributor` | Migrate legacy target-owned paths into Agent-owned `AgentWorkspaceRecord.Paths`. |
 
-Do not implement an optional interface with partial or misleading behavior. Consumers branch on interface presence.
+Do not advertise a facet with partial or misleading behavior. Use the selected
+contract's descriptor and method semantics rather than guessing support from a CLR type.
 
 ### Scoped Instruction Discovery
 
@@ -60,7 +69,7 @@ Three path domains can exist:
 
 `AgentExecutionScopeDescriptor.WorkspacePaths` and `DefaultWorkingDirectory` are execution paths. `AgentExecutionPathMapping` explicitly carries execution and host paths plus `IsInsideAllowedRoot`, but is advisory only: it retains no handle and must not be turned into a host-side structured mutation. Never infer equivalence between path domains by string concatenation.
 
-Builder consumes a mapping only as advisory host metadata and delegates project creation/build/publish to the selected target's `dotnet` process. Builder's package Worker itself remains bound to the host-managed shared .NET execution runtime; the project SDK/toolchain is independently selected through the target's path environment and project toolchain configuration such as `global.json`. Build SDKs must not be placed in the Worker execution-runtime store. Builder does not create or replace mapped host paths through BCL file APIs. Those `dotnet` process operations retain general process authority and are explicitly outside the structured no-follow guarantee.
+Sunder Package Maker uses local project folders and its own SDK/toolchain selection; it does not consume Agent workspace mappings or run builds through execution targets. Its Worker still uses the Host-managed .NET execution runtime, independently of project build SDKs. See the [local Package Maker workflow](package-maker.md) for creation, source edits, live reload, archives, and SDK settings.
 
 `AgentExecutionResourceDescriptor` allows another package to request mapping for a host resource, including `ReadOnly` or `ReadWrite` access. Return one `AgentResolvedExecutionResource` per accepted descriptor with the same stable resource/source identity. Do not silently upgrade access.
 

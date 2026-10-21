@@ -33,14 +33,14 @@ internal sealed class RegressionTestRuntime : IServiceProvider, IDisposable, IAs
     internal static RegressionTestRuntime Create(IPackageContext context)
     {
         var catalog = new RegressionTestExtensionCatalog();
-        try { return new(context, catalog.RpcForCaller("sunder.package.agent")) { _ownedCatalog = catalog }; }
+        try { return new(context, catalog.RpcForCaller("younics.ai.agent")) { _ownedCatalog = catalog }; }
         catch { catalog.Dispose(); throw; }
     }
 
     internal static RegressionTestRuntime Create(IPackageContext context, ISunderRpcClient rpc) => new(context, rpc);
 
     internal static RegressionTestRuntime Create(IPackageContext context, RegressionTestExtensionCatalog catalog)
-        => new(context, catalog.RpcForCaller("sunder.package.agent"));
+        => new(context, catalog.RpcForCaller("younics.ai.agent"));
 
     public object? GetService(Type serviceType) => _services.GetService(serviceType);
     public async ValueTask DisposeAsync()

@@ -540,7 +540,7 @@ public sealed class ScopedInstructionClaimTests
         catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target);
         var targetReference = (await catalog.GetRequiredProviderAsync(catalog.ExecutionTargets)).Reference;
         using var source = new GeneratedToolSourceProbe(catalog, new FilesToolSource(fixture.PackageContext),
-            "sunder.package.agent.tools.files", withPromptContext: true, withSessionCleaner: true);
+            "younics.ai.agent.tools.files", withPromptContext: true, withSessionCleaner: true);
         await PresentAsync(source, fixture.PromptRequest(epoch: 1) with
         {
             ExecutionTarget = targetReference,
@@ -558,7 +558,7 @@ public sealed class ScopedInstructionClaimTests
 
         target.ReturnIncompleteDiscovery = false;
         using var restarted = new GeneratedToolSourceProbe(catalog, new FilesToolSource(fixture.PackageContext),
-            "sunder.package.agent.tools.files", withPromptContext: true, withSessionCleaner: true);
+            "younics.ai.agent.tools.files", withPromptContext: true, withSessionCleaner: true);
         await PresentAsync(restarted, fixture.PromptRequest(epoch: 1) with
         {
             ExecutionTarget = targetReference,
@@ -900,7 +900,7 @@ public sealed class ScopedInstructionClaimTests
         public GeneratedToolSourceProbe CreateSource()
         {
             var source = new GeneratedToolSourceProbe(_catalog, new FilesToolSource(_scope.Context),
-                "sunder.package.agent.tools.files", withPromptContext: true, withSessionCleaner: true);
+                "younics.ai.agent.tools.files", withPromptContext: true, withSessionCleaner: true);
             _sources.Add(source);
             return source;
         }
@@ -908,7 +908,7 @@ public sealed class ScopedInstructionClaimTests
         public async Task<GeneratedToolSourceProbe> CreateShellSourceAsync()
         {
             await _configService.SaveConfigAsync(Binding.BindingId, new LocalExecutionWorkspaceConfig(null, []));
-            var source = new GeneratedToolSourceProbe(_catalog, new ShellToolSource(), "sunder.package.agent.tools.shell");
+            var source = new GeneratedToolSourceProbe(_catalog, new ShellToolSource(), "younics.ai.agent.tools.shell");
             _sources.Add(source);
             return source;
         }
@@ -988,8 +988,8 @@ public sealed class ScopedInstructionClaimTests
                 ResourceIndex: 0,
                 "workspace-generation",
                 "binding-generation",
-                "sunder.package.agent.tools.files",
-                "sunder.package.agent.execution.local",
+                "younics.ai.agent.tools.files",
+                "younics.ai.agent.execution.local",
                 Guid.NewGuid().ToString("N"),
                 authorityUseCount,
                 CanIssueOutsideAuthority: true);
@@ -1048,7 +1048,7 @@ public sealed class ScopedInstructionClaimTests
             AgentResourceOperationContext operation)
             => _target.ResourceReferences.IsCurrent(
                 capability,
-                new LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentResourceClaim
+                new LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentResourceClaim
                 {
                     Version = claim.Version, NamespaceId = claim.NamespaceId, LogicalPath = claim.LogicalPath,
                     ConfiguredRoot = claim.ConfiguredRoot, RootIdentityChainFingerprint = claim.RootIdentityChainFingerprint,
@@ -1059,7 +1059,7 @@ public sealed class ScopedInstructionClaimTests
                     ResourceIndex = claim.ResourceIndex, ToolOwnerPackageId = claim.ToolOwnerPackageId,
                     ExecutionTargetOwnerPackageId = claim.ExecutionTargetOwnerPackageId,
                 },
-                new LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentResourceOperationContext
+                new LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentResourceOperationContext
                 {
                     RunId = operation.RunId, RunRevision = operation.RunRevision, ToolCallId = operation.ToolCallId,
                     ActionId = operation.ActionId, ResourceIndex = operation.ResourceIndex,

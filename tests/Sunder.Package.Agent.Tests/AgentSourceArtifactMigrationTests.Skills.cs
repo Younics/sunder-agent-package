@@ -52,14 +52,14 @@ public sealed partial class AgentSourceArtifactMigrationTests
         using var manifestStream = archive.GetEntry("manifest/sunder-package.json")!.Open();
         using var manifest = JsonDocument.Parse(manifestStream);
         var value = manifest.RootElement;
-        Assert.Equal("sunder.package.agent.skills", value.GetProperty("id").GetString());
-        Assert.Equal(21, value.GetProperty("contractBundles").GetArrayLength());
+        Assert.Equal("younics.ai.agent.skills", value.GetProperty("id").GetString());
+        Assert.Equal(20, value.GetProperty("contractBundles").GetArrayLength());
         Assert.Equal(5, value.GetProperty("provides").GetArrayLength());
-        Assert.Equal(20, value.GetProperty("usesContracts").GetArrayLength());
+        Assert.Equal(19, value.GetProperty("usesContracts").GetArrayLength());
         Assert.Single(value.GetProperty("platformImports").EnumerateArray());
         Assert.Equal(3, value.GetProperty("providerImports").GetArrayLength());
         var dependency = Assert.Single(value.GetProperty("dependsOn").EnumerateArray());
-        Assert.Equal("sunder.package.agent", dependency.GetProperty("packageId").GetString());
+        Assert.Equal("younics.ai.agent", dependency.GetProperty("packageId").GetString());
         Assert.Equal("required", dependency.GetProperty("presence").GetString());
         await ProjectCanonicalWorker(worker, driver);
         await VerifySkillsProcess(root, Path.Combine(worker, "bin/worker-projection"), value);
@@ -86,7 +86,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.False(File.Exists(orphan));
             Assert.True(Directory.Exists(Path.Combine(workspace, "skills")));
             var description = await active.Invoke("skills.selectable.capabilities", "selectable-capability-provider", "describe", new { });
-            Assert.Equal("sunder.package.agent.skills", description.GetProperty("id").GetString());
+            Assert.Equal("younics.ai.agent.skills", description.GetProperty("id").GetString());
             var stack = await active.Invoke("skills.stack", "stack-contributor", "metadata", new { });
             Assert.True(stack.GetProperty("supportsExport").GetBoolean());
             Assert.True(stack.GetProperty("supportsImport").GetBoolean());

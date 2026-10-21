@@ -8,14 +8,14 @@ using Sunder.Package.Agent.Services;
 using Sunder.Sdk.Logging;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Worker;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
 
 public sealed partial class AgentPublicSourceMigrationTests
 {
-    private const string RunControlCaller = "sunder.package.agent.test.loop";
+    private const string RunControlCaller = "younics.ai.agent.test.loop";
 
     private static async Task VerifyRunControlAsync(System.Reflection.Assembly assembly, SunderRpcContractDescriptor descriptor)
     {
@@ -86,7 +86,7 @@ public sealed partial class AgentPublicSourceMigrationTests
         Assert.False(await control.IsCurrentAsync(invocationId));
 
         // A generated catalog bound to another caller must not acquire this lease.
-        var foreignRpc = new RegressionTestRpcClient(fixture.State, "sunder.package.agent.foreign.loop");
+        var foreignRpc = new RegressionTestRpcClient(fixture.State, "younics.ai.agent.foreign.loop");
         await using var foreignScope = new GeneratedServiceTestScope(foreignRpc);
         var foreign = Assert.Single((await foreignScope.Providers<AgentServices.IRunControlService>().ListAsync()).Providers).Service;
         var before = runtime.Calls;
@@ -169,7 +169,7 @@ public sealed partial class AgentPublicSourceMigrationTests
         Assert.Equal("agent.run.control", registration.ProviderId);
         Assert.Equal(descriptor.Sha256, registration.DescriptorSha256);
         Assert.Equal(descriptor.AbiSha256, registration.AbiSha256);
-        state.Add("sunder.package.agent", descriptor, implementation, registration.Handler, EmptyDisposable.Instance, registration.ProviderId, "2.0.0");
+        state.Add("younics.ai.agent", descriptor, implementation, registration.Handler, EmptyDisposable.Instance, registration.ProviderId, "2.0.0");
         var endpoint = (await rpc.DiscoverAsync(descriptor.ContractId)).Providers.Single(value => value.ProviderId == registration.ProviderId).Endpoint;
         var client = Assert.Single((await receiver.Providers<AgentServices.IRunControlService>().ListAsync()).Providers).Service;
         var scope = await rpc.CreateCallScopeAsync();

@@ -3,7 +3,7 @@ using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Rpc.Public;
 
-[SunderService(SunderServiceExposure.Public, ContractId = "sunder.agent.session.cleaner", ServiceId = "session-cleaner", IncludeSchemaDialect = true)]
+[SunderService(SunderServiceExposure.Public, ContractId = "younics.ai.agent.session.cleaner", ServiceId = "session-cleaner", IncludeSchemaDialect = true)]
 [SunderRuntimeUse(Actions = ["discover", "invoke"])]
 public interface SessionCleanerService
 {

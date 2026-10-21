@@ -3,10 +3,10 @@ extern alias DockerWorker;
 
 using DockerWorker::Sunder.Package.Agent.Execution.Docker;
 using LocalWorker::Sunder.Package.Agent.Execution.Local;
-using AgentScopedInstructionDiscoveryRequest = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentScopedInstructionDiscoveryRequest;
-using AgentScopedInstructionDiscoveryResult = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentScopedInstructionDiscoveryResult;
-using AgentScopedInstructionProbe = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentScopedInstructionProbe;
-using DockerModels = DockerWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using AgentScopedInstructionDiscoveryRequest = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentScopedInstructionDiscoveryRequest;
+using AgentScopedInstructionDiscoveryResult = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentScopedInstructionDiscoveryResult;
+using AgentScopedInstructionProbe = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentScopedInstructionProbe;
+using DockerModels = DockerWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models;
 using Sunder.Package.Agent.Tests;
 using Xunit;
 

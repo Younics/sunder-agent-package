@@ -96,7 +96,7 @@ foreach ($package in $packages) {
     # Shared preparation restored the full six-RID graph with these same Release,
     # version and CI properties, proved the cold diagnostic, and hydrated exact locks.
     # Build and prebuilt Pack now run in the checked network-denied process tree.
-    Invoke-DotNet (@("build", $project, "-c", "Release", "-r", $Rid, "--no-restore", "-m:1") + $commonProperties)
+    Invoke-DotNet (@("build", $project, "-c", "Release", "-r", $Rid, "--no-restore") + $commonProperties)
 
     $projectDirectory = Split-Path -Parent $project
     # The canonical build emits generated Worker/App roles and one combined RID leaf.
@@ -128,7 +128,7 @@ foreach ($package in $packages) {
     if ($LASTEXITCODE -ne 0) { throw "Native qualification selection failed for '$($package.packageId)'." }
     Invoke-DotNet (@(
         "msbuild", $project,
-        "-t:PackSunderPackage", "-m:1",
+        "-t:PackSunderPackage",
         "-p:Configuration=Release",
         "-p:BuildProjectReferences=false",
         "-p:SunderPackageUsePrebuiltLeaves=true",

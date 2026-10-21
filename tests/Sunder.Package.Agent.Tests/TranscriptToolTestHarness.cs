@@ -8,7 +8,7 @@ using AgentViews = AgentCore::Sunder.Package.Agent.PackageViews;
 using AgentModels = AgentCore::Sunder.Package.Agent.Contracts.Models;
 using SubagentPresentation = SubagentsPackage::Sunder.Package.Agent.Shared.PackageViews;
 using SubagentViews = SubagentsPackage::Sunder.Package.Agent.Subagents.PackageViews;
-using SubagentModels = SubagentsPackage::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using SubagentModels = SubagentsPackage::Sunder.Generated.Packages.Younics_Ai_Agent_Models;
 
 namespace Sunder.Package.Agent.Tests;
 

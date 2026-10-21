@@ -17,7 +17,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
     private const int InitialTranscriptTurnLimit = 45;
     private const int OlderTranscriptTurnPageSize = 30;
     private const int TranscriptVisibleRowLimit = 60;
-    private const string SubsessionsViewId = "sunder.package.agent.subagents.sessions";
+    private const string SubsessionsViewId = "younics.ai.agent.subagents.sessions";
     private const string SubsessionNavigationSessionIdKey = "sessionId";
     private readonly IAgentProfileGateway _profileService;
     private readonly IAgentWorkspaceGateway _workspaceService;

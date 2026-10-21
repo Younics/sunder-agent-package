@@ -6,7 +6,7 @@ namespace Sunder.Package.Agent.Storage;
 
 public sealed partial class AgentLocalStore : IDisposable, IAsyncDisposable
 {
-    internal const string UnassignedSessionsWorkspaceId = "legacy-unassigned-sessions";
+    internal const string UnassignedSessionsWorkspaceId = "unassigned-sessions";
     internal const string UnassignedSessionsWorkspaceDisplayName = "Unassigned Sessions";
 
     private readonly SqliteWalCheckpointMaintenance _walCheckpointMaintenance;

@@ -50,11 +50,12 @@ class PreparationEvidenceTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     self.validate(changed)
 
-    def test_eighteenth_provider_and_operation_are_required(self):
-        self.assertEqual(18, len(prepare.FAMILIES))
+    def test_seventeen_current_providers_and_resolver_operation_are_required(self):
+        self.assertEqual(17, len(prepare.FAMILIES))
+        self.assertNotIn('WorkspacePath', {name for name, _, _ in prepare.FAMILIES})
         self.assertEqual(('WorkspaceResolver', 'workspace.execution.resolver', 'workspaceResolver'), prepare.FAMILIES[-1])
-        self.assertEqual(23, len(prepare.COMMAND_LABELS))
-        self.assertEqual(['21-implement-WorkspaceResolver', '22-build'], prepare.COMMAND_LABELS[-2:])
+        self.assertEqual(22, len(prepare.COMMAND_LABELS))
+        self.assertEqual(['20-implement-WorkspaceResolver', '21-build'], prepare.COMMAND_LABELS[-2:])
         for change_source in (True, False):
             stale = copy.deepcopy(self.manifest)
             if change_source:

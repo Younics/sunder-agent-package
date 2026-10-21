@@ -1,7 +1,7 @@
 using Sunder.Package.Agent.Services;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Services;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -19,7 +19,7 @@ internal partial class RegressionTestExtensionCatalog : IDisposable, IAsyncDispo
     public RegressionTestExtensionCatalog(bool workerStyleProviderBoundary = false)
         : this(new RegressionTestRpcClient(
             new RegressionTestRpcState(workerStyleProviderBoundary),
-            "sunder.package.agent"))
+            "younics.ai.agent"))
     {
     }
 
@@ -28,8 +28,8 @@ internal partial class RegressionTestExtensionCatalog : IDisposable, IAsyncDispo
         _client = client;
         ActiveRuns = new AgentActiveRunRegistry();
         RunControlProvider = new AgentRunControlService(ActiveRuns);
-        AddGeneratedProvider("sunder.package.agent", RunControlProvider,
-            Receiver("sunder.package.agent").Register(RunControlProvider, "sunder.agent.run.control"));
+        AddGeneratedProvider("younics.ai.agent", RunControlProvider,
+            Receiver("younics.ai.agent").Register(RunControlProvider, "younics.ai.agent.run.control"));
     }
 
     internal AgentActiveRunRegistry ActiveRuns { get; }
@@ -71,9 +71,6 @@ internal partial class RegressionTestExtensionCatalog : IDisposable, IAsyncDispo
     internal IServiceProviders<AgentServices.IProfileCapabilityConsumerService> ProfileCapabilityConsumers
         => GetServiceProviders<AgentServices.IProfileCapabilityConsumerService>();
 
-    internal IServiceProviders<AgentServices.IWorkspacePathMigratorService> WorkspacePathMigrators
-        => GetServiceProviders<AgentServices.IWorkspacePathMigratorService>();
-
     internal IServiceProviders<AgentServices.IRuntimeCatalogService> RuntimeCatalogs
         => GetServiceProviders<AgentServices.IRuntimeCatalogService>();
 
@@ -87,7 +84,7 @@ internal partial class RegressionTestExtensionCatalog : IDisposable, IAsyncDispo
         => GetServiceProviders<AgentServices.IWorkspaceEditorService>();
 
     internal IServiceProviders<TService> GetServiceProviders<TService>() where TService : class
-        => Receiver("sunder.package.agent").Providers<TService>();
+        => Receiver("younics.ai.agent").Providers<TService>();
 
     internal GeneratedServiceTestScope Receiver(string caller)
     {

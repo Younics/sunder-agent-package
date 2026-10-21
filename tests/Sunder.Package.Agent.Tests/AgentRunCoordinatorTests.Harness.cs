@@ -45,6 +45,7 @@ using Sunder.Package.Agent.Services.BehaviorLoops;
 using SkillsApp::Sunder.Package.Agent.Skills.PackageViews;
 using SkillsWorker::Sunder.Package.Agent.Skills.Services;
 using Sunder.Package.Agent.Storage;
+using Sunder.Package.Agent.TestSupport;
 using SubagentsWorker::Sunder.Package.Agent.Subagents.Models;
 using SubagentsApp::Sunder.Package.Agent.Subagents.PackageViews;
 using SubagentsWorker::Sunder.Package.Agent.Subagents.Services;
@@ -58,7 +59,7 @@ using AgentChatSelectionStateService = AgentCore::Sunder.Package.Agent.Services.
 using AgentToolPresentationService = AgentCore::Sunder.Package.Agent.Services.AgentToolPresentationService;
 using AppRuntime = AgentCore::Sunder.Package.Agent.Runtime;
 using AppModels = AgentCore::Sunder.Package.Agent.Contracts.Models;
-using McpAppManagementService = McpApp::Sunder.Generated.Packages.Sunder_Package_Agent_Mcp_Services.IManagementService;
+using McpAppManagementService = McpApp::Sunder.Generated.Packages.Younics_Ai_Agent_Mcp_Services.IManagementService;
 using McpAppRuntimeGateway = McpApp::Sunder.Package.Agent.Mcp.Runtime.McpAppRuntimeGateway;
 
 namespace Sunder.Package.Agent.Tests;
@@ -536,8 +537,8 @@ public sealed partial class AgentRunCoordinatorTests
             new McpServerConnectionService(catalog, connections, oauthService: null),
             new McpOAuthCoordinator(oauthService: null, connections), new TestPackageContext(Path.GetTempPath()));
         var extensions = new RegressionTestExtensionCatalog();
-        extensions.AddGeneratedProvider("sunder.package.agent.mcp", service, service.CreateSunderRpcProviderRegistration());
-        var receiver = new GeneratedServiceTestScope(extensions.RpcForCaller("sunder.package.agent.mcp"));
+        extensions.AddGeneratedProvider("younics.ai.agent.mcp", service, service.CreateSunderRpcProviderRegistration());
+        var receiver = new GeneratedServiceTestScope(extensions.RpcForCaller("younics.ai.agent.mcp"));
         var selected = Assert.Single((await receiver.Providers<McpAppManagementService>().ListAsync()).Providers);
         var gateway = new McpAppRuntimeGateway(selected.Service, NullPackageCallbackClient.Instance);
         return new(new AgentMcpSettingsViewModel(gateway), gateway, receiver, configuration, extensions);
@@ -717,7 +718,7 @@ public sealed partial class AgentRunCoordinatorTests
         string? chatModelSettingsJson = null)
         => service.SaveSubagent(subagentId, displayName, description, instructions, chatProviderId, chatModelId,
              selectableCapabilityAssignments?.Select(assignment =>
-                 new SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentProfileSelectableCapabilityAssignmentRecord
+                 new SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentProfileSelectableCapabilityAssignmentRecord
                  {
                      Kind = assignment.Kind,
                      CapabilityId = assignment.CapabilityId,
@@ -1042,10 +1043,11 @@ public sealed partial class AgentRunCoordinatorTests
     private sealed class AgentTestRuntime : IDisposable
     {
         private readonly string _rootPath;
+        private readonly TemporaryDirectory _directory;
         private readonly TestExtensionCatalog _extensionCatalog;
 
         private AgentTestRuntime(
-            string rootPath,
+            TemporaryDirectory directory,
             TestExtensionCatalog extensionCatalog,
             AgentLocalStore store,
             AgentActiveRunRegistry activeRunRegistry,
@@ -1062,7 +1064,8 @@ public sealed partial class AgentRunCoordinatorTests
             AgentRunDispatcher dispatcher
         )
         {
-            _rootPath = rootPath;
+            _directory = directory;
+            _rootPath = directory.Path;
             _extensionCatalog = extensionCatalog;
             Store = store;
             ActiveRunRegistry = activeRunRegistry;
@@ -1141,15 +1144,8 @@ public sealed partial class AgentRunCoordinatorTests
             params IAgentTool[] tools
         )
         {
-            var temporaryRoot = OperatingSystem.IsMacOS()
-                ? "/private" + Path.GetTempPath().TrimEnd(Path.DirectorySeparatorChar)
-                : Path.GetTempPath();
-            var rootPath = Path.Combine(
-                temporaryRoot,
-                "sunder-agent-tests",
-                Guid.NewGuid().ToString("N")
-            );
-            Directory.CreateDirectory(rootPath);
+            var directory = TemporaryDirectory.Create("sunder-agent-tests");
+            var rootPath = directory.Path;
 
             var extensionCatalog = new TestExtensionCatalog();
             if (provider is not null)
@@ -1168,7 +1164,7 @@ public sealed partial class AgentRunCoordinatorTests
             var packageContext = new TestPackageContext(rootPath);
             var store = new AgentLocalStore(packageContext);
             var sessionService = new AgentSessionService(store, extensionCatalog.SessionCleaners);
-            var workspaceService = new AgentWorkspaceService(store, extensionCatalog.SessionCleaners, sessionService, extensionCatalog.WorkspacePathMigrators);
+            var workspaceService = new AgentWorkspaceService(store, extensionCatalog.SessionCleaners, sessionService);
             var permissionService = new AgentPermissionService(store, extensionCatalog.PermissionSurfaces);
             var executionTargetService = new AgentExecutionTargetService(extensionCatalog.ExecutionTargets);
             var toolService = new AgentToolService(
@@ -1183,7 +1179,7 @@ public sealed partial class AgentRunCoordinatorTests
             extensionCatalog.AddProvider(
                 RegressionTestBindings.RuntimeCatalog,
                 new AgentRuntimeCatalog(sessionService, profileService, workspaceService),
-                "sunder.package.agent"
+                "younics.ai.agent"
             );
             var memoryCoordinator = new AgentMemoryCoordinator(
                 sessionService,
@@ -1211,7 +1207,7 @@ public sealed partial class AgentRunCoordinatorTests
                 new AgentToolCycleCoordinator(terminalHandler),
                 terminalHandler,
                 budgetLimits);
-            extensionCatalog.AddBehaviorLoop(defaultBehaviorLoop, "sunder.package.agent");
+            extensionCatalog.AddBehaviorLoop(defaultBehaviorLoop, "younics.ai.agent");
             var runAttachmentStore = new AgentRunAttachmentStore(attachmentService);
             var activeRunRegistry = extensionCatalog.ActiveRuns;
             var runEventLogger = new AgentRunEventLogger(packageContext);
@@ -1324,7 +1320,7 @@ public sealed partial class AgentRunCoordinatorTests
             );
 
             return new AgentTestRuntime(
-                rootPath,
+                directory,
                 extensionCatalog,
                 store,
                 activeRunRegistry,
@@ -1394,10 +1390,7 @@ public sealed partial class AgentRunCoordinatorTests
                     ProfileService.Dispose();
                     Store.Dispose();
                 }
-                if (Directory.Exists(_rootPath))
-                {
-                    Directory.Delete(_rootPath, recursive: true);
-                }
+                _directory.Dispose();
             }
             catch
             {

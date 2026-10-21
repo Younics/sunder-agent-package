@@ -12,7 +12,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             AssertImportedRoleModel(assembly, name);
         Assert.Null(assembly.GetType("Sunder.Package.Agent.Contracts.Models.AgentRuntimeTool"));
         Assert.Null(assembly.GetType("Sunder.Package.Agent.Contracts.Contracts.IAgentObservedToolExecution"));
-        Assert.Same(assembly, assembly.GetType(ImportedServices + "IToolExecutionObservedService", true)!.Assembly);
+        Assert.Same(assembly, assembly.GetType(ImportedServices + "CYounics_Ai_Agent_Tool_Execution_Observed.IToolExecutionObservedService", true)!.Assembly);
         if (app) AssertImportedRoleModel(assembly, "AgentModelDescriptor");
         if (!app)
         {

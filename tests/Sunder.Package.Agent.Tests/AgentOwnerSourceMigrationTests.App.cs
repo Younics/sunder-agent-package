@@ -19,18 +19,18 @@ public sealed partial class AgentOwnerSourceMigrationTests
         foreach (var member in new[] { "packageArtifacts", "packageArtifactImports", "packageApiImports", "providerImports", "platformImports" })
             Assert.Empty(receipt.RootElement.GetProperty(member).EnumerateArray());
         var contracts = receipt.RootElement.GetProperty("contracts").EnumerateArray().ToArray();
-        Assert.Equal(21, contracts.Length);
+        Assert.Equal(20, contracts.Length);
         Assert.DoesNotContain(contracts, contract => contract.GetProperty("contractId").GetString() == "sunder.stack.contributor");
         Assert.All(contracts, contract => Assert.False(contract.TryGetProperty("runtimeUse", out _)));
         // The App role imports only its authored current closure. The Worker role
         // owns the remaining public extension uses.
         var expected = new Dictionary<string, (string ContractId, bool Required, string[] Actions)>(StringComparer.Ordinal)
         {
-            ["child-run-executor"] = ("sunder.agent.child.run.executor", false, ["discover", "invoke"]),
-            ["owner-runtime"] = ("sunder.agent.owner.runtime", true, ["discover", "invoke", "subscribe"]),
-            ["runtime-catalog"] = ("sunder.agent.runtime.catalog", false, ["discover", "invoke", "subscribe"]),
-            ["workspace-editor"] = ("sunder.agent.workspace.editor", false, ["discover", "invoke"]),
-            ["agent-profile"] = ("sunder.package.agent.agent.profile", true, ["discover", "invoke"]),
+            ["child-run-executor"] = ("younics.ai.agent.child.run.executor", false, ["discover", "invoke"]),
+            ["owner-runtime"] = ("younics.ai.agent.owner.runtime", true, ["discover", "invoke", "subscribe"]),
+            ["runtime-catalog"] = ("younics.ai.agent.runtime.catalog", false, ["discover", "invoke", "subscribe"]),
+            ["workspace-editor"] = ("younics.ai.agent.workspace.editor", false, ["discover", "invoke"]),
+            ["agent-profile"] = ("younics.ai.agent.agent.profile", true, ["discover", "invoke"]),
         };
         var uses = receipt.RootElement.GetProperty("uses").EnumerateArray().ToArray();
         Assert.Equal(expected.Count, uses.Length);
@@ -68,15 +68,16 @@ public sealed partial class AgentOwnerSourceMigrationTests
         {
             _assembly = assembly;
             _receiver = new GeneratedServiceTestScope(rpc);
-            _client = Activator.CreateInstance(assembly.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Internal.CSunder_Agent_Owner_RuntimeClient", true)!, rpc, _receiver)!;
+            _client = Activator.CreateInstance(assembly.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Internal.CYounics_Ai_Agent_Owner_RuntimeClient", true)!, rpc, _receiver)!;
             _json = (JsonSerializerOptions)_client.GetType().GetField("JsonOptions", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
-            var contract = assembly.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Services.IAgentRuntimeService", true)!;
+            var contract = assembly.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Services.IAgentRuntimeService", true)!;
             _resources = Activator.CreateInstance(assembly.GetType("Sunder.Package.Agent.Runtime.AgentOwnerResources", true)!,
                 _receiver.Providers(contract), rpc)!;
         }
 
         public async Task<string> Call(string route, string json, CancellationToken token)
         {
+            TraceOwnerPhase("app-call:" + route);
             if (route == "transport-profile") return Serialize(await AgentRoleBoundary.Await(AgentRoleBoundary.Call(_resources, "GetTransportProfileAsync", token)!));
             var method = _client.GetType().GetMethod(Operations[route])!;
             var requestType = method.GetParameters()[0].ParameterType;
@@ -144,8 +145,10 @@ public sealed partial class AgentOwnerSourceMigrationTests
         public ValueTask DisposeAsync() => new(_dispose ??= DisposeCoreAsync());
         private async Task DisposeCoreAsync()
         {
+            TraceOwnerPhase("app-dispose:start");
             try { await ((IAsyncDisposable)_client).DisposeAsync(); }
             finally { await _receiver.DisposeAsync(); }
+            TraceOwnerPhase("app-dispose:complete");
         }
     }
 }

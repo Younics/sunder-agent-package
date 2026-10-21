@@ -1,12 +1,13 @@
 using System.Runtime.CompilerServices;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using IChatProviderService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Chat_Provider.IChatProviderService;
+using IRuntimeCatalogService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Runtime_Catalog.IRuntimeCatalogService;
 using Sunder.Package.Agent.Subagents.Services;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Subagents.Runtime;
 
-[SunderService(Key = "management", ContractId = "sunder.package.agent.subagents.owner", ServiceId = "subagents-management", IncludeSchemaDialect = true)]
+[SunderService(Key = "management", ContractId = "younics.ai.agent.subagents.owner", ServiceId = "subagents-management", IncludeSchemaDialect = true)]
 [SunderServiceProvider(ProviderId = "subagents.management")]
 [SunderServiceError("subagents.owner.operation-failed", Description = "The requested Subagents operation could not be completed.")]
 internal sealed partial class SubagentManagementService(SubagentService service, SubagentEditorCapabilityCatalog capabilities,

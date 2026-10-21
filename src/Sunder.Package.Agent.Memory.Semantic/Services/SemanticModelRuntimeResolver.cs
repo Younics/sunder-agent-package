@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using IEmbeddingProviderService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Embedding_Provider.IEmbeddingProviderService;
+using IRuntimeCatalogService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Runtime_Catalog.IRuntimeCatalogService;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Services;
@@ -71,7 +72,7 @@ public sealed class SemanticModelRuntimeResolver : IDisposable, IAsyncDisposable
         if (string.IsNullOrWhiteSpace(profileId)) return null;
         var binding = await InvokeRuntimeCatalogAsync(async (catalog, token) =>
             await catalog.GetModelBindingAsync(new() { ProfileId = profileId, CapabilityKind = AgentModelCapabilityKinds.Embedding }, token).ConfigureAwait(false)
-                ?? ResolveLegacyBinding(await catalog.GetProfileAsync(profileId, token).ConfigureAwait(false)),
+                ?? ResolveProfileEmbeddingBinding(await catalog.GetProfileAsync(profileId, token).ConfigureAwait(false)),
             null as AgentProfileModelBindingRecord, cancellationToken).ConfigureAwait(false);
         return await ResolveConfigurationAsync(profileId, binding, forceProviderIdentityRefresh, canInvokeProvider, cancellationToken).ConfigureAwait(false);
     }
@@ -99,7 +100,7 @@ public sealed class SemanticModelRuntimeResolver : IDisposable, IAsyncDisposable
             var binding = string.IsNullOrWhiteSpace(profileId)
                 ? await catalog.GetSessionModelBindingAsync(new() { SessionId = sessionId, CapabilityKind = AgentModelCapabilityKinds.Embedding }, token).ConfigureAwait(false)
                 : await catalog.GetModelBindingAsync(new() { ProfileId = profileId, CapabilityKind = AgentModelCapabilityKinds.Embedding }, token).ConfigureAwait(false);
-            return new SessionEmbeddingConfiguration(binding ?? ResolveLegacyBinding(profile));
+            return new SessionEmbeddingConfiguration(binding ?? ResolveProfileEmbeddingBinding(profile));
         }, null as SessionEmbeddingConfiguration, cancellationToken).ConfigureAwait(false);
         if (configuration is null) return SemanticEmbeddingContext.Unavailable("Session not found.");
         var binding = configuration.Binding;
@@ -223,7 +224,7 @@ public sealed class SemanticModelRuntimeResolver : IDisposable, IAsyncDisposable
     internal static string NormalizeProviderId(string providerId) => providerId.Trim().ToLowerInvariant();
     private static Task<bool> CanInvokeProviderAsync(Func<CancellationToken, Task<bool>>? callback, CancellationToken token) => callback?.Invoke(token) ?? Task.FromResult(true);
 
-    internal static AgentProfileModelBindingRecord? ResolveLegacyBinding(AgentProfileRecord? profile)
+    internal static AgentProfileModelBindingRecord? ResolveProfileEmbeddingBinding(AgentProfileRecord? profile)
         => profile is null || string.IsNullOrWhiteSpace(profile.EmbeddingProviderId) || string.IsNullOrWhiteSpace(profile.EmbeddingModelId) ? null : new()
         {
             ProfileId = profile.ProfileId, CapabilityKind = AgentModelCapabilityKinds.Embedding,

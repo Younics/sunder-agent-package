@@ -7,7 +7,7 @@ using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Mcp.Runtime;
 
-[SunderService(Key = "management", ContractId = "sunder.package.agent.mcp.management", ServiceId = "management", IncludeSchemaDialect = true)]
+[SunderService(Key = "management", ContractId = "younics.ai.agent.mcp.management", ServiceId = "management", IncludeSchemaDialect = true)]
 [SunderServiceProvider(ProviderId = "mcp.management")]
 [SunderServiceError("mcp.management.failed", Description = "The MCP management request failed.")]
 internal sealed partial class McpManagementService(

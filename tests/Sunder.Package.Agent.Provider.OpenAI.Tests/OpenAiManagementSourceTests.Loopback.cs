@@ -16,7 +16,7 @@ public sealed partial class OpenAiManagementSourceTests
         internal Loopback(SunderWorkerProviderRegistration registration, SunderRpcContractDescriptor descriptor)
         {
             _registration = registration; _descriptor = descriptor;
-            _provider = new("sunder.package.agent.provider.openai", "2.0.0", registration.ProviderId, registration.ContractId,
+            _provider = new("younics.ai.agent.provider.openai", "2.0.0", registration.ProviderId, registration.ContractId,
                 registration.ContractVersion, registration.DescriptorSha256, registration.AbiSha256, Guid.NewGuid(), 1, 1, new("source-endpoint"), 1, SunderRpcProviderState.Active);
         }
         internal bool Available { get; set; } = true;

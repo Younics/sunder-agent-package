@@ -7,8 +7,8 @@ namespace Sunder.Package.Agent.Contracts.Models;
 public static class AgentChatModelOptionKeys
 {
     /// <summary>Identifies the additional property whose string value selects an <see cref="AgentModelSpeedOptionDescriptor" />.</summary>
-    public const string SpeedOptionId = "sunder.agent.speedOptionId";
+    public const string SpeedOptionId = "younics.ai.agent.speedOptionId";
 
     /// <summary>Identifies the additional property whose string value selects an <see cref="AgentModelModeOptionDescriptor" />.</summary>
-    public const string ModeOptionId = "sunder.agent.modeOptionId";
+    public const string ModeOptionId = "younics.ai.agent.modeOptionId";
 }

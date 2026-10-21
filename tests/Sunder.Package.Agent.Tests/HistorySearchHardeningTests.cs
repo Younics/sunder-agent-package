@@ -27,7 +27,7 @@ namespace Sunder.Package.Agent.Tests;
 
 extern alias SubagentsWorker;
 using SubagentsWorker::Sunder.Package.Agent.Subagents.Runtime;
-using SubagentServices = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using IRuntimeCatalogService = SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Runtime_Catalog.IRuntimeCatalogService;
 
 public sealed class HistorySearchHardeningTests
 {
@@ -417,7 +417,7 @@ public sealed class HistorySearchHardeningTests
             CreateToolTurn(
                 "shell",
                 "{\"command\":\"export API_KEY=raw-secret\",\"workingDirectory\":\"src\"}",
-                ownerPackageId: "sunder.package.agent.tools.shell")));
+                ownerPackageId: "younics.ai.agent.tools.shell")));
         Assert.Equal(HistoryActivityKind.Execute, shell.Activity);
         Assert.DoesNotContain(shell.Facets, facet => facet.Kind == "command");
         Assert.DoesNotContain("raw-secret", shell.BodyText, StringComparison.Ordinal);
@@ -428,7 +428,7 @@ public sealed class HistorySearchHardeningTests
             CreateToolTurn(
                 "grep",
                 "{\"pattern\":\"password=super-secret\",\"path\":\"src\",\"query\":\"bypass\"}",
-                ownerPackageId: "sunder.package.agent.tools.files")));
+                ownerPackageId: "younics.ai.agent.tools.files")));
         Assert.Equal(HistoryActivityKind.Search, grep.Activity);
         Assert.DoesNotContain(grep.Facets, facet => facet.Kind == "pattern");
         Assert.DoesNotContain("super-secret", grep.BodyText, StringComparison.Ordinal);
@@ -443,7 +443,7 @@ public sealed class HistorySearchHardeningTests
             CreateToolTurn(
                 "web_fetch",
                 "{\"url\":\"https://alice:password@example.com:8443/path/file?api_key=top-secret#token\"}",
-                ownerPackageId: "sunder.package.agent.tools.web")));
+                ownerPackageId: "younics.ai.agent.tools.web")));
 
         var url = Assert.Single(activity.Facets, facet => facet.Kind == "url");
         Assert.Equal("https://example.com:8443/path/file", url.Value);
@@ -459,12 +459,17 @@ public sealed class HistorySearchHardeningTests
     [InlineData("shell", "{\"command\":\"do-not-index\",\"workingDirectory\":\"private-shell\"}", "private-shell")]
     [InlineData("grep", "{\"pattern\":\"do-not-index\",\"path\":\"private-grep\"}", "private-grep")]
     [InlineData("web_fetch", "{\"url\":\"https://private.example/opaque\"}", "private.example")]
-    public void Extractor_TreatsUnresolvedAndCollidingAllowlistedToolsAsOpaque(
+    public void Extractor_TreatsUnresolvedOldAndCollidingAllowlistedToolsAsOpaque(
         string toolId,
         string argumentsJson,
         string privateValue)
     {
-        foreach (var ownerPackageId in new string?[] { null, "vendor.colliding.tools" })
+        foreach (var ownerPackageId in new string?[]
+                 {
+                     null, "vendor.colliding.tools",
+                     "sunder.package.agent.tools.files", "sunder.package.agent.tools.shell",
+                     "sunder.package.agent.tools.web", "sunder.package.agent.subagents", "sunder.package.agent.skills",
+                 })
         {
             var document = Assert.Single(HistorySearchExtractor.Extract(
                 CreateSourceSession(),
@@ -488,7 +493,7 @@ public sealed class HistorySearchHardeningTests
         using var scope = RegressionTestPackageScope.Create();
         var catalog = new RegressionTestExtensionCatalog();
         catalog.AddTool(new CatalogTool("shell"),
-            "sunder.package.agent.tools.shell");
+            "younics.ai.agent.tools.shell");
         await using var services = CreateRuntime(scope, catalog);
         var toolService = services.GetRequiredService<AgentToolService>();
         var advertised = Assert.Single(
@@ -541,11 +546,11 @@ public sealed class HistorySearchHardeningTests
 
         catalog.RemoveProvider(vendorShell);
         catalog.AddTool(new CatalogTool("shell"),
-            "sunder.package.agent.tools.shell");
+            "younics.ai.agent.tools.shell");
         var replacement = Assert.Single(
             await toolService.ListReadyOwnedRuntimeToolsAsync(),
             tool => tool.RuntimeTool.Descriptor.ToolId == "shell");
-        Assert.Equal("sunder.package.agent.tools.shell", replacement.OwnerPackageId);
+        Assert.Equal("younics.ai.agent.tools.shell", replacement.OwnerPackageId);
 
         var indexer = services.GetRequiredService<HistorySearchIndexingService>();
         var projection = services.GetRequiredService<HistorySearchStore>();
@@ -579,7 +584,7 @@ public sealed class HistorySearchHardeningTests
             "read",
             "{\"path\":\"src/OwnedHistory.cs\"}",
             isReadOnly: true,
-            ownerPackageId: "sunder.package.agent.tools.files");
+            ownerPackageId: "younics.ai.agent.tools.files");
         var indexer = services.GetRequiredService<HistorySearchIndexingService>();
         var projection = services.GetRequiredService<HistorySearchStore>();
         var search = services.GetRequiredService<HistorySearchService>();
@@ -718,7 +723,7 @@ public sealed class HistorySearchHardeningTests
             "read",
             "{\"path\":\"src/OpaqueHistoryPath.cs\"}",
             isReadOnly: true,
-            ownerPackageId: "sunder.package.agent.tools.files",
+            ownerPackageId: "younics.ai.agent.tools.files",
             callId: callId);
         var indexer = services.GetRequiredService<HistorySearchIndexingService>();
         var projection = services.GetRequiredService<HistorySearchStore>();
@@ -1940,8 +1945,8 @@ public sealed class HistorySearchHardeningTests
             new AgentTranscriptAroundTurnRequest(child.SessionId, childTurn.TurnId)).AsTask());
         var runtime = services.GetRequiredService<AgentRuntimeCatalog>();
         catalog.AddRuntimeCatalog(runtime);
-        await using var receiver = new GeneratedServiceTestScope(catalog.RpcForCaller("sunder.package.agent.subagents"));
-        var runtimeClient = Assert.Single((await receiver.Providers<SubagentServices.IRuntimeCatalogService>().ListAsync()).Providers).Service;
+        await using var receiver = new GeneratedServiceTestScope(catalog.RpcForCaller("younics.ai.agent.subagents"));
+        var runtimeClient = Assert.Single((await receiver.Providers<IRuntimeCatalogService>().ListAsync()).Providers).Service;
         await Assert.ThrowsAsync<InvalidOperationException>(() => SubsessionTranscriptReader.AroundAsync(
             runtimeClient,
             root.SessionId,

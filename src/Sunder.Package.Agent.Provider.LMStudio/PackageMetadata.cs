@@ -1,7 +1,7 @@
 using Sunder.Sdk.Packaging;
 
 [assembly: SunderPackage(
-    Id = "sunder.package.agent.provider.lmstudio",
-    Name = "Sunder Agent Provider LM Studio",
-    Summary = "Adds LM Studio model providers to Sunder Agent.",
+    Id = "younics.ai.agent.provider.lmstudio",
+    Name = "AI Agent - LM Studio",
+    Summary = "Adds LM Studio model providers to AI Agent.",
     Icon = "assets/icon.png")]

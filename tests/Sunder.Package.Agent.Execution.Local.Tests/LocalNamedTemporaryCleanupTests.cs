@@ -4,8 +4,8 @@ using System.Runtime.Versioning;
 using LocalWorker::Sunder.Package.Agent.Execution.Local;
 using Xunit;
 using AgentFileReadErrorCodes = Sunder.Package.Agent.Contracts.Models.AgentFileReadErrorCodes;
-using LocalModels = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
-using AgentFileWriteRequest = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileWriteRequest;
+using LocalModels = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models;
+using AgentFileWriteRequest = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentFileWriteRequest;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
 

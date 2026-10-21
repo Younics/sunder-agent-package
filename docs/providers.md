@@ -5,11 +5,17 @@ Provider packages run as supervised workers in the Sunder Runtime. Keep network 
 ## Chat Provider Contract
 
 First-party implementations directly implement generated `IChatProviderService`.
-Select `sunder.agent.chat.provider` from the reviewed
+Select `younics.ai.agent.chat.provider` from the reviewed
 Agent archive and declare the provider with `SunderServiceProvider` from
 `Sunder.Sdk.Services`; Core generates its registration and Worker composition.
-Import `Sunder.Generated.Packages.Sunder_Package_Agent_Services` and
-`Sunder.Generated.Packages.Sunder_Package_Agent_Models`. Model names are shared across
+Use a file-local alias for the imported service and import the shared Models namespace:
+
+```csharp
+using IChatProviderService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Chat_Provider.IChatProviderService;
+using Sunder.Generated.Packages.Younics_Ai_Agent_Models;
+```
+
+Model names are shared across
 the selected Agent contracts; implementations do not maintain copied wire records.
 
 | Member | Author responsibility |
@@ -85,8 +91,12 @@ Use `AgentChatProviderException(message, content, errorCode, innerException)` wh
 ## Embedding Provider Contract
 
 First-party implementations directly implement imported `IEmbeddingProviderService`. Select
-`sunder.agent.embedding.provider` from the reviewed Agent archive and let neutral
+`younics.ai.agent.embedding.provider` from the reviewed Agent archive and let neutral
 provider metadata drive generated registration and Worker composition.
+
+```csharp
+using IEmbeddingProviderService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Embedding_Provider.IEmbeddingProviderService;
+```
 
 | Member | Author responsibility |
 | --- | --- |
@@ -98,8 +108,8 @@ provider metadata drive generated registration and Worker composition.
 | `GenerateBatchAsync` | Preserve input count and index order. Use `null` at an invalid/empty input's index rather than shifting later results. |
 
 The multi-argument operations take generated Models envelopes:
-`CSunder_Agent_Embedding_Provider_EmbeddingProviderGenerateRequest` (`ModelId`, `Text`)
-and `CSunder_Agent_Embedding_Provider_EmbeddingProviderGenerateBatchRequest`
+`CYounics_Ai_Agent_Embedding_Provider_EmbeddingProviderGenerateRequest` (`ModelId`, `Text`)
+and `CYounics_Ai_Agent_Embedding_Provider_EmbeddingProviderGenerateBatchRequest`
 (`ModelId`, `Texts`). Use these generated types directly. Every non-null
 `AgentEmbeddingGenerationResult` repeats the selected `ModelId`; dimensions come
 from `Values.Count`. Do not narrow binary64 (`double`) components to `float` at the
@@ -124,8 +134,9 @@ for small internal tasks. Return `null` when none is configured.
 ## Registration
 
 Add reviewed provider imports to the canonical package lock with the owning tools.
-Canonical authority package and service IDs determine generated namespaces and
-interface names. The declaration on an actual partial chat provider is:
+Ultimate authority package, contract and service IDs determine generated namespaces
+and interface names. Imported natural interfaces are contract-scoped; provider-key
+aliases remain available and stable. The declaration on an actual partial chat provider is:
 
 ```csharp
 [SunderServiceProvider(typeof(IChatProviderService), ProviderId = "acme.chat")]

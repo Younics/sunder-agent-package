@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <SunderPackageFamilyId>sunder.package.agent.execution.local</SunderPackageFamilyId>
+    <SunderPackageFamilyId>younics.ai.agent.execution.local</SunderPackageFamilyId>
     <SunderSdkAvaloniaReference>true</SunderSdkAvaloniaReference>
     <SunderAgentCurrentPackageStorageKey>true</SunderAgentCurrentPackageStorageKey>
     <DefineConstants>$(DefineConstants);SUNDER_AGENT_PACKAGE_MODELS</DefineConstants>
@@ -15,12 +15,6 @@
     <PackageReference Include="Avalonia" />
     <PackageReference Include="CommunityToolkit.Mvvm" />
     <Compile Include="@(SunderAgentExecutionSupportSource->Distinct())" LinkBase="Execution" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <!-- Preserve the reviewed Host compatibility floor after replacing manual composition. -->
-    <SunderSdkCapability Include="background-services.v1" />
-    <SunderSdkCapability Include="runtime-generations.v1" />
   </ItemGroup>
 
   <Import Project="..\Sunder.Package.Agent.Shared\Sunder.Package.Agent.Shared.props" />

@@ -124,9 +124,23 @@ public static class AdaptiveEditorLifecycleContract
         Require(snapshot.IsDirty, adapter, $"{completionName} incorrectly marked the newer edit clean");
     }
 
-    public static async Task RetiredWorkCannotPublishAsync(
+    public static Task RetiredWorkCannotPublishAsync(
         IAdaptiveEditorLifecycleAdapter adapter,
         Action retire,
+        Action releaseBlockedWork,
+        Task drainage)
+    {
+        ArgumentNullException.ThrowIfNull(retire);
+        return RetiredWorkCannotPublishAsync(adapter, () =>
+        {
+            retire();
+            return Task.CompletedTask;
+        }, releaseBlockedWork, drainage);
+    }
+
+    public static async Task RetiredWorkCannotPublishAsync(
+        IAdaptiveEditorLifecycleAdapter adapter,
+        Func<Task> retire,
         Action releaseBlockedWork,
         Task drainage)
     {
@@ -136,7 +150,9 @@ public static class AdaptiveEditorLifecycleContract
         var publications = 0;
         using var subscription = Subscribe(adapter, _ => Interlocked.Increment(ref publications));
 
-        retire();
+        // Retirement may include queued notifications for the new, still-live editor.
+        // Only publications after that boundary and the old work's release are forbidden.
+        await retire().ConfigureAwait(false);
         var publicationsAtRetirement = Volatile.Read(ref publications);
         releaseBlockedWork();
         await drainage.ConfigureAwait(false);

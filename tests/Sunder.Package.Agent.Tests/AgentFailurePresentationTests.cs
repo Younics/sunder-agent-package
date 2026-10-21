@@ -553,7 +553,7 @@ public sealed class AgentFailurePresentationTests
             var packageContext = new RecordingPackageContext(scope.Context, eventLogger);
             var store = new AgentLocalStore(packageContext);
             var sessionService = new AgentSessionService(store, catalog.SessionCleaners);
-            var workspaceService = new AgentWorkspaceService(store, catalog.SessionCleaners, sessionService, catalog.WorkspacePathMigrators);
+            var workspaceService = new AgentWorkspaceService(store, catalog.SessionCleaners, sessionService);
             var workspace = workspaceService.CreateWorkspace("Failure presentation workspace");
             var now = DateTimeOffset.UtcNow;
             var binding = new AgentProfileModelBindingRecord(

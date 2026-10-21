@@ -13,7 +13,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         "src/Sunder.Package.Agent.Execution.Docker/Models/DockerExecutionPresentationModels.cs",
         "src/Sunder.Package.Agent.Execution.Docker/Runtime/DockerExecutionPresentationDefaults.cs",
     ];
-    internal static readonly string[] DockerProviderSources = new[] { "ExecutionValues.cs", "ExecutionTargetProvider.cs", "WorkspaceEditorProvider.cs", "WorkspacePathMigratorProvider.cs", "DockerStackProvider.cs" }
+    internal static readonly string[] DockerProviderSources = new[] { "ExecutionValues.cs", "ExecutionTargetProvider.cs", "WorkspaceEditorProvider.cs", "DockerStackProvider.cs" }
         .Select(file => "src/Sunder.Package.Agent.Execution.Docker/Rpc/" + file).ToArray();
     internal static readonly string[] DockerRelocationSources = [.. DockerModelSources, .. DockerProviderSources,
         "src/Sunder.Package.Agent.Execution.Docker/Rpc/ProviderComposition.cs",
@@ -41,10 +41,10 @@ public sealed partial class AgentSourceArtifactMigrationTests
         using var manifestStream = archive.GetEntry("manifest/sunder-package.json")!.Open();
         using var manifest = JsonDocument.Parse(manifestStream);
         var value = manifest.RootElement;
-        Assert.Equal(5, value.GetProperty("contractBundles").GetArrayLength()); Assert.Equal(5, value.GetProperty("provides").GetArrayLength());
+        Assert.Equal(4, value.GetProperty("contractBundles").GetArrayLength()); Assert.Equal(4, value.GetProperty("provides").GetArrayLength());
         var use = Assert.Single(value.GetProperty("usesContracts").EnumerateArray());
         Assert.Equal("app", use.GetProperty("role").GetString()); Assert.True(use.GetProperty("required").GetBoolean());
-        Assert.Equal(3, value.GetProperty("providerImports").GetArrayLength()); Assert.Single(value.GetProperty("platformImports").EnumerateArray());
+        Assert.Equal(2, value.GetProperty("providerImports").GetArrayLength()); Assert.Single(value.GetProperty("platformImports").EnumerateArray());
         Assert.True(!value.TryGetProperty("packageApiImports", out var apis) || apis.GetArrayLength() == 0);
         Assert.Equal("required", Assert.Single(value.GetProperty("dependsOn").EnumerateArray()).GetProperty("presence").GetString());
         await ProjectCanonicalWorker(worker, driver);

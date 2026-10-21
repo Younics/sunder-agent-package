@@ -11,8 +11,8 @@ namespace Sunder.Package.Agent.PackageViews;
 
 public sealed partial class AgentHistorySearchViewModel : ObservableObject, IDisposable
 {
-    private const string ChatViewId = "sunder.package.agent.chat";
-    private const string SubsessionsViewId = "sunder.package.agent.subagents.sessions";
+    private const string ChatViewId = "younics.ai.agent.chat";
+    private const string SubsessionsViewId = "younics.ai.agent.subagents.sessions";
     private const string CurrentWorkspaceScopeId = "current";
     private const string AllWorkspacesScopeId = "all";
     private const string SpecificWorkspaceScopeId = "specific";

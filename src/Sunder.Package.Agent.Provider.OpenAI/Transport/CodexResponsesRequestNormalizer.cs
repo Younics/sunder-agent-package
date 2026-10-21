@@ -46,7 +46,7 @@ internal static class CodexResponsesRequestNormalizer
                 : hasDeclaredTools ? options?.AllowMultipleToolCalls == true : null,
             promptCacheKey,
             include,
-            GetServiceTier(modelId, options),
+            GetServiceTier(options),
             MaxOutputTokens: null,
             reasoning,
             modelCapabilities.UseLowTextVerbosity ? new CodexTextOptions("low") : null,
@@ -142,9 +142,8 @@ internal static class CodexResponsesRequestNormalizer
             _ => null,
         };
 
-    private static string? GetServiceTier(string modelId, ChatOptions? options)
+    private static string? GetServiceTier(ChatOptions? options)
         => string.Equals(GetModelOption(options, AgentChatModelOptionKeys.SpeedOptionId), "fast", StringComparison.OrdinalIgnoreCase)
-           || NormalizeModelVariantId(modelId).EndsWith("-fast", StringComparison.OrdinalIgnoreCase)
             ? "priority"
             : null;
 
@@ -154,11 +153,4 @@ internal static class CodexResponsesRequestNormalizer
             ? value as string
             : null;
 
-    private static string NormalizeModelVariantId(string modelId)
-    {
-        const string openAiPrefix = "openai/";
-        return modelId.StartsWith(openAiPrefix, StringComparison.OrdinalIgnoreCase)
-            ? modelId[openAiPrefix.Length..]
-            : modelId;
-    }
 }

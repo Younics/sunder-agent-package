@@ -1,8 +1,8 @@
 using Sunder.Sdk.Packaging;
 
 [assembly: SunderPackage(
-    Id = "sunder.package.agent.builder",
-    Name = "Sunder Agent Builder",
-    Summary = "Creates, builds, and publishes Sunder package projects from Agent workspaces.",
+    Id = "younics.sunder.package.maker",
+    Name = "Sunder Package Maker",
+    Summary = "Create, open, build, and run local .NET and Node.js packages with managed development SDKs.",
     Icon = "assets/icon.png"
 )]

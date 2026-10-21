@@ -1,3 +1,5 @@
+global using TranscriptPageCursor = global::Sunder.Package.Agent.Runtime.TranscriptPageCursor;
+
 using Sunder.Package.Agent.Contracts.Models;
 
 namespace Sunder.Package.Agent.Runtime;

@@ -5,8 +5,8 @@ namespace Sunder.Package.Agent.Provider.OpenAI.Transport;
 
 internal static class OpenAiStrictToolSchemaNormalizer
 {
-    private const string SunderMcpArgumentsSchemaId = "urn:sunder:mcp:arguments:1";
-    private const string SunderMcpArgumentsSchemaMarker = "sunder:mcp-arguments:1";
+    private const string SunderMcpArgumentsSchemaId = "urn:younics:ai:agent:mcp:arguments:1";
+    private const string SunderMcpArgumentsSchemaMarker = "younics:ai:agent:mcp-arguments:1";
 
     internal static JsonElement NormalizeFunctionParameters(string? schemaJson)
     {

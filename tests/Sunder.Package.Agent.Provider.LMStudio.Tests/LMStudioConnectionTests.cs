@@ -7,9 +7,9 @@ using Sunder.Package.Agent.Provider.TestSupport;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Rpc;
 using Xunit;
-using AgentProviderReadinessStatus = Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentProviderReadinessStatus;
+using AgentProviderReadinessStatus = Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentProviderReadinessStatus;
 using LMStudioSettingsViewModel = LMStudioApp::Sunder.Package.Agent.Provider.LMStudio.LMStudioSettingsViewModel;
-using ICredentialSettingsService = LMStudioApp::Sunder.Generated.Packages.Sunder_Package_Agent_Provider_Lmstudio_Services.ICredentialSettingsService;
+using ICredentialSettingsService = LMStudioApp::Sunder.Generated.Packages.Younics_Ai_Agent_Provider_Lmstudio_Services.ICredentialSettingsService;
 
 namespace Sunder.Package.Agent.Provider.LMStudio.Tests;
 
@@ -23,7 +23,7 @@ public sealed class LMStudioConnectionTests
     public async Task InvalidUri_IsRejectedAtSettingsAndReadinessBoundaries(string invalidUrl)
     {
         var context = new ProviderTestPackageContext(
-            "sunder.package.agent.provider.lmstudio",
+            "younics.ai.agent.provider.lmstudio",
             new Dictionary<string, string>
             {
                 [LMStudioProviderConfiguration.BaseUrlKey] = LMStudioProviderConfiguration.DefaultBaseUrl,
@@ -51,7 +51,7 @@ public sealed class LMStudioConnectionTests
     public async Task EndpointAndCredentialRotation_UsesCurrentSnapshotWithOneHandler()
     {
         var context = new ProviderTestPackageContext(
-            "sunder.package.agent.provider.lmstudio",
+            "younics.ai.agent.provider.lmstudio",
             new Dictionary<string, string>
             {
                 [LMStudioProviderConfiguration.BaseUrlKey] = "https://first.test/v1",
@@ -109,7 +109,7 @@ public sealed class LMStudioConnectionTests
     public async Task OptionalBearerKey_Clear_RemovesItFromFutureConnectionSnapshots()
     {
         var context = new ProviderTestPackageContext(
-            "sunder.package.agent.provider.lmstudio",
+            "younics.ai.agent.provider.lmstudio",
             new Dictionary<string, string>
             {
                 [LMStudioProviderConfiguration.BaseUrlKey] = LMStudioProviderConfiguration.DefaultBaseUrl,
@@ -148,7 +148,7 @@ public sealed class LMStudioConnectionTests
                 [LMStudioProviderConfiguration.UtilityModelKey] = "lmstudio/utility",
             });
         var context = new ProviderTestPackageContext(
-            "sunder.package.agent.provider.lmstudio",
+            "younics.ai.agent.provider.lmstudio",
             settings: settings);
         using var viewModel = CreateSettings(context);
 
@@ -181,7 +181,7 @@ public sealed class LMStudioConnectionTests
                 [LMStudioProviderConfiguration.BaseUrlKey] = "https://lmstudio.test/v1",
             });
         var context = new ProviderTestPackageContext(
-            "sunder.package.agent.provider.lmstudio",
+            "younics.ai.agent.provider.lmstudio",
             settings: settings);
         using var viewModel = CreateSettings(context);
 
@@ -206,7 +206,7 @@ public sealed class LMStudioConnectionTests
             [LMStudioProviderConfiguration.BaseUrlKey] = "https://first.test/v1",
         });
         var context = new ProviderTestPackageContext(
-            "sunder.package.agent.provider.lmstudio",
+            "younics.ai.agent.provider.lmstudio",
             settings: settings);
         using var viewModel = CreateSettings(context);
         await viewModel.InitializeAsync();
@@ -239,7 +239,7 @@ public sealed class LMStudioConnectionTests
             [LMStudioProviderConfiguration.BaseUrlKey] = "https://first.test/v1",
         });
         var context = new ProviderTestPackageContext(
-            "sunder.package.agent.provider.lmstudio",
+            "younics.ai.agent.provider.lmstudio",
             settings: settings);
         using var viewModel = CreateSettings(context);
         await viewModel.InitializeAsync();
@@ -274,7 +274,7 @@ public sealed class LMStudioConnectionTests
             [LMStudioProviderConfiguration.BaseUrlKey] = "https://late.test/v1",
         });
         var context = new ProviderTestPackageContext(
-            "sunder.package.agent.provider.lmstudio",
+            "younics.ai.agent.provider.lmstudio",
             settings: settings);
         var viewModel = CreateSettings(context);
 
@@ -312,7 +312,7 @@ public sealed class LMStudioConnectionTests
 
     private static ProviderTestPackageContext CreateContext()
         => new(
-            "sunder.package.agent.provider.lmstudio",
+            "younics.ai.agent.provider.lmstudio",
             new Dictionary<string, string>
             {
                 [LMStudioProviderConfiguration.BaseUrlKey] = "http://lmstudio.test/v1",
@@ -346,7 +346,7 @@ public sealed class LMStudioConnectionTests
 
     private static PackageViewNavigationContext CreateNavigationContext()
         => new(
-            "settings:sunder.package.agent.provider.lmstudio",
+            "settings:younics.ai.agent.provider.lmstudio",
             new Dictionary<string, string?>());
 
     private sealed class FailOnceKeyValueStore(

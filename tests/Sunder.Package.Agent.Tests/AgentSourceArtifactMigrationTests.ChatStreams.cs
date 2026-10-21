@@ -14,7 +14,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
     private static async Task VerifyProviderStreamLifecycle(Assembly runtime, string family, Assembly owner, Assembly probes)
     {
         var id = family.ToLowerInvariant();
-        var packageId = "sunder.package.agent.provider." + id;
+        var packageId = AgentPackageRepositoryInventory.GetRuntimePackageId("Sunder.Package.Agent.Provider." + family);
         var errorType = runtime.GetType("Sunder.Package.Agent.Contracts.Models.AgentChatProviderException", true)!;
         var probeType = probes.GetType("RoleLocalChatProbe", true)!;
         foreach (var mode in new[] { "flood", "cancel", "retire", "error", "unsafe", "queue", "fault", "complete", "cleanup-fault", "primary-fault", "error-cleanup" })
@@ -26,7 +26,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             var provider = Activator.CreateInstance(probeType, id, (Func<IChatClient>)probe.CreateClient)!;
             var registration = providers.Create(RegressionTestBindings.ChatProviders, provider, receiver);
             state.AddGenerated(packageId, provider, registration, Noop.Instance, registration.ProviderId);
-            var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
+            var rpc = new RegressionTestRpcClient(state, "younics.ai.agent");
             var selected = Assert.Single((await rpc.DiscoverAsync(RegressionTestBindings.ChatProviders)).Providers);
             var endpoint = selected.Endpoint;
             var observed = new FilesRpcObserver(rpc);

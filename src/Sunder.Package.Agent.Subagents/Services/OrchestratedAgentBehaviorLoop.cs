@@ -1,5 +1,5 @@
-using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using Sunder.Generated.Packages.Younics_Ai_Agent_Models;
+using IBehaviorLoopService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Behavior_Loop.IBehaviorLoopService;
 using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Subagents.Services;
@@ -20,7 +20,7 @@ public sealed partial class OrchestratedAgentBehaviorLoop : IBehaviorLoopService
     public ValueTask<AgentBehaviorLoopDescriptor> DescribeAsync(CancellationToken token = default)
     { token.ThrowIfCancellationRequested(); return ValueTask.FromResult(Descriptor); }
 
-    public async ValueTask<AgentBehaviorLoopResult> RunAsync(CSunder_Agent_Behavior_Loop_BehaviorLoopRunRequest request,
+    public async ValueTask<AgentBehaviorLoopResult> RunAsync(CYounics_Ai_Agent_Behavior_Loop_BehaviorLoopRunRequest request,
         CancellationToken token = default)
     {
         // The reference fences the existing owner; InvocationId remains its separate run grant.

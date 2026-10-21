@@ -63,8 +63,4 @@ public static class OpenAiProviderConfiguration
         ]
     );
 
-    internal static string? NormalizeLegacyUtilityModelId(string? modelId)
-        => string.Equals(modelId?.Trim(), "openai/gpt-5.5-fast", StringComparison.OrdinalIgnoreCase)
-            ? "openai/gpt-5.5"
-            : modelId;
 }

@@ -358,7 +358,7 @@ public sealed class SqlitePostCommitMaintenanceTests
         var store = new AgentLocalStore(scope.Context);
         using var catalog = new RegressionTestExtensionCatalog();
         var sessions = new AgentSessionService(store, catalog.SessionCleaners);
-        var workspaces = new AgentWorkspaceService(store, catalog.SessionCleaners, sessions, catalog.WorkspacePathMigrators);
+        var workspaces = new AgentWorkspaceService(store, catalog.SessionCleaners, sessions);
         var tools = new AgentToolService(
             sessions,
             workspaces,
@@ -392,7 +392,7 @@ public sealed class SqlitePostCommitMaintenanceTests
         var store = new AgentLocalStore(scope.Context);
         using var catalog = new RegressionTestExtensionCatalog();
         var sessions = new AgentSessionService(store, catalog.SessionCleaners);
-        var workspaces = new AgentWorkspaceService(store, catalog.SessionCleaners, sessions, catalog.WorkspacePathMigrators);
+        var workspaces = new AgentWorkspaceService(store, catalog.SessionCleaners, sessions);
         var tools = new AgentToolService(
             sessions,
             workspaces,

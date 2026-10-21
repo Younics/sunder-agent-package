@@ -1,5 +1,4 @@
 using System.Reflection;
-using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Sunder.Sdk.Abstractions;
@@ -19,26 +18,22 @@ public sealed class CredentialSourceMigrationTests
     }).ToArray();
 
     [AgentPublicSourceMigrationFact]
-    public async Task CredentialSource_PreservesFrozenContractAndRoleIsolatedSecretBehavior()
+    public async Task CredentialSource_MatchesCurrentContractAndRoleIsolatedSecretBehavior()
     {
         foreach (var family in Families)
         {
             using var roles = new CanonicalPackageRoles();
             var root = CanonicalPackageRoles.Source("Provider." + family);
-            var packageId = "sunder.package.agent.provider." + family.ToLowerInvariant();
+            var packageId = AgentPackageRepositoryInventory.GetRuntimePackageId("Sunder.Package.Agent.Provider." + family);
             var descriptor = CanonicalPackageRoles.OwnedDescriptor(root, packageId + ".credentials");
-            var baseline = File.ReadAllBytes(Path.Combine(root, "sunder-contracts.owned.json"));
-            using var owned = JsonDocument.Parse(baseline);
-            var historical = Assert.Single(owned.RootElement.GetProperty("retiredPrivateContracts").EnumerateObject(),
-                value => value.Value.GetProperty("contractId").GetString() == descriptor.ContractId).Value.GetProperty("current");
-            Assert.Equal(RegressionTestRpcDescriptors.Get(descriptor.ContractId).GetCanonicalUtf8(),
-                Encoding.UTF8.GetBytes(historical.GetProperty("canonicalDescriptor").GetString()!));
+            var baseline = CanonicalPackageRoles.ReadOwnedBaseline(root);
+            CurrentPrivateRpcDescriptors.AssertCurrent(descriptor);
             var worker = roles.Load("Provider." + family, "worker");
             var app = roles.Load("Provider." + family, "app");
             Assert.Null(app.GetType($"Sunder.Package.Agent.Provider.{family}.ProviderCredentialOwnerRpcClient"));
             Assert.Null(app.GetType($"Sunder.Package.Agent.Provider.{family}.Rpc.CredentialSettingsService"));
             await VerifyBehavior(worker, app, descriptor, family, packageId);
-            Assert.Equal(baseline, File.ReadAllBytes(Path.Combine(root, "sunder-contracts.owned.json")));
+            Assert.Equal(baseline, CanonicalPackageRoles.ReadOwnedBaseline(root));
         }
     }
 
@@ -61,7 +56,7 @@ public sealed class CredentialSourceMigrationTests
         var context = new TestPackageContext(packageId, scope.RootPath, version: "2.0.0", storage: scope.Context.Storage);
         await using var services = AgentSourceArtifactMigrationTests.CreateGeneratedApp(app, context, rpc);
         var serviceFamily = family == "LMStudio" ? "Lmstudio" : family;
-        var api = app.GetType($"Sunder.Generated.Packages.Sunder_Package_Agent_Provider_{serviceFamily}_Services.ICredentialSettingsService", true)!;
+        var api = app.GetType($"Sunder.Generated.Packages.Younics_Ai_Agent_Provider_{serviceFamily}_Services.ICredentialSettingsService", true)!;
         var client = services.GetRequiredService(api);
         var query = api.GetMethod("GetStatusAsync")!.CreateDelegate<Func<CancellationToken, ValueTask<bool>>>(client);
         var set = api.GetMethod("SetAsync")!.CreateDelegate<Func<string, CancellationToken, ValueTask<bool>>>(client);

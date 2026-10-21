@@ -1,44 +1,43 @@
 # Static And Dynamic Tools
 
-Agent tools are Runtime contributions. Choose `IAgentTool` for a fixed tool and `IAgentToolSource` for tools discovered from session, profile, workspace, or external state.
+Agent tools are Worker services implementing the selected `IToolSourceService` API.
+Fixed and dynamic catalogs share this contract. Package-local helper interfaces may
+organize business code but are not dependencies that external packages reference.
 
 ## Static Tools
 
-Wrap fixed `IAgentTool` instances in `AgentStaticToolSourceAdapter`, then publish `AgentToolSourceRpc.CreateHandler(source)` under `sunder.agent.tool.source`.
+Select `younics.ai.agent.tool.source` and bind the implementation with
+`SunderServiceProvider`, as in the [quickstart](extension-quickstart.md). For a fixed
+tool, return a stable single-entry list. Sunder generates registration and dispatch.
 
 An implementation provides:
 
 - One stable `AgentToolDescriptor`.
 - Cheap, cancellation-aware readiness through `GetReadinessAsync`.
 - Validated execution through `ExecuteAsync`.
-- Optional `IAgentPermissionAwareTool` for a specific approval request.
-- Optional `IAgentToolPresentationResolver` for deterministic transcript presentation.
+- `PermissionAsync` for a specific approval request, or null when none is required.
+- `PresentationAsync` for deterministic transcript presentation, or null for default rendering.
 
 A fixed, read-only static tool is the smallest implementation of this contract.
 
 ## Dynamic Tool Sources
 
-Implement `IAgentToolSource` when the catalog can change or needs `AgentToolSourceContext`, then publish it through the `sunder.agent.tool.source` RPC contract:
-
-```csharp
-public interface IAgentToolSource
-{
-    string SourceId { get; }
-    string DisplayName { get; }
-    string SourceKind { get; }
-    ValueTask<IReadOnlyList<AgentToolDescriptor>> ListToolsAsync(...);
-    ValueTask<AgentToolReadiness?> GetReadinessAsync(...);
-    ValueTask<AgentToolResult> ExecuteAsync(...);
-}
-```
+For a changing catalog, derive `ListToolsAsync` from `AgentToolSourceContext`.
+`DescribeAsync` supplies stable source metadata. The
+[service declaration](../src/Sunder.Package.Agent/Rpc/Public/ToolSource.cs) owns the
+complete list, readiness, preflight, execution, permission and presentation signatures.
 
 `AgentToolSourceContext` supplies the current session, profile, workspace, and selected execution binding. `AgentToolExecutionContext` additionally supplies durable correlation, the compatibility outside-scope flag, and opaque process-local resource leases approved for that exact invocation. The flag alone never authorizes outside-scope file access.
 
-Implement `IAgentNativeToolSource` when a framework-native `AIFunctionDeclaration` is needed. Otherwise Agent creates declarations from each descriptor's JSON Schema. Native declarations must use the same identity and schema semantics as their descriptors.
+Agent derives model tool declarations from the public descriptors and JSON Schema.
+Framework-native tool objects stay process-local; the generated service boundary
+transfers business values, not AI framework instances.
 
 Agent re-lists and re-resolves a tool immediately before permission evaluation and execution. The current descriptor must match the advertised `ToolId`, `SourceKind`, `SourceId`, and `IsReadOnly` values, be ready, and remain assigned to the profile. This prevents stale or replaced tools from executing under an earlier advertisement.
 
-Implement optional `IAgentToolExecutionPreflightSource` when a source must perform a bounded safety check after permission resolution but before dispatch. The host invokes preflight before marking the durable execution ledger as started, including approved-resume paths. Return `null` to dispatch normally. A non-null result must be an error result safe to persist as a known skipped/failed invocation; the host records it without calling `ExecuteAsync`.
+Use `PreflightAsync` for bounded checks after permission resolution and before the
+durable execution ledger is marked started, including approved resume. Return null
+to dispatch normally; a non-null result must be a safe error recorded without execution.
 
 ## Descriptor Contract
 
@@ -80,8 +79,8 @@ Do not return secrets, raw authorization responses, unrestricted local paths, or
 Permissions authorize a described Agent action; they are not a sandbox.
 
 1. Agent confirms the tool was advertised, assigned, and ready for the current run.
-2. `IAgentPermissionAwareToolSource` or `IAgentPermissionAwareTool` may build an `AgentPermissionRequest`.
-3. Agent resolves the request's `ActionId` and `BoundaryId` against registered `IAgentPermissionSurface` actions.
+2. `PermissionAsync` may build an `AgentPermissionRequest`.
+3. Agent resolves `ActionId` and `BoundaryId` against selected permission-surface services.
 4. A configured override, session-tree approval, or inherited Unrestricted Mode may change an `Ask` decision.
 5. `Deny` records a denied outcome. `Ask` durably suspends the run. `Allow` supplies the approved context to preflight and execution.
 6. Approval resumes only the correlated session/run revision/tool call. Stale requests do not execute under a newer run.
@@ -90,39 +89,16 @@ If a read-only tool returns no permission request, it runs after advertisement c
 
 ### Define A Surface
 
-```csharp
-public IReadOnlyList<AgentPermissionActionDescriptor> ListActions() =>
-[
-    new(
-        "acme.issue.create",
-        "Create issues",
-        "Creates an issue in the selected Acme project.",
-        [
-            new(
-                "selected-project",
-                "Selected Acme project",
-                "The project selected on the current profile.",
-                AgentPermissionDecision.Ask),
-        ]),
-];
-```
+For an issue-creation tool, a surface could declare action `acme.issue.create`,
+boundary `selected-project`, a factual description and default decision `Ask`.
+Expose the actions in the descriptor returned by `IPermissionSurfaceService.DescribeAsync`,
+selected from `younics.ai.agent.permission.surface` and bound with `SunderServiceProvider`.
+Action and boundary IDs are persisted preference keys; changing them changes policy identity.
 
-Publish that object separately with `AgentPermissionSurfaceRpc.CreateHandler(surface)` under `sunder.agent.permission.surface`; merely implementing the interface does not expose it. Action and boundary ids become persisted user preference keys, so changing them resets effective policy.
-
-Build the corresponding request from parsed, canonicalized arguments:
-
-```csharp
-return new AgentPermissionRequest(
-    "acme.issue.create",
-    "selected-project",
-    $"Create issue in {projectDisplayName}",
-    ToolId: request.ToolId,
-    WorkspaceId: context.Workspace?.WorkspaceId,
-    BindingId: context.ExecutionBinding?.BindingId,
-    ResourceDisplayName: projectDisplayName,
-    ResourceReference: canonicalProjectId,
-    IsMutation: true);
-```
+Build the corresponding request from parsed, canonicalized arguments. Include the
+exact action/boundary, current tool/workspace/binding correlation, a bounded display
+summary, canonical resource identity and `IsMutation=true`. Use the imported model's
+properties; do not infer authority from a display name or a previous prompt.
 
 Unknown action/boundary pairs default to `Ask`; an empty action id is denied. Never choose an `Allow` default for an unclassified or outside-scope resource.
 

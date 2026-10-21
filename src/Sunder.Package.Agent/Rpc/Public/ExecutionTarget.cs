@@ -4,7 +4,7 @@ using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Rpc.Public;
 
-[SunderService(SunderServiceExposure.Public, ContractId = "sunder.agent.execution.target", ServiceId = "execution-target", IncludeSchemaDialect = true)]
+[SunderService(SunderServiceExposure.Public, ContractId = "younics.ai.agent.execution.target", ServiceId = "execution-target", IncludeSchemaDialect = true)]
 [SunderServiceError("agent.execution.facet-unavailable", Description = "The execution target does not implement the requested optional facet.")]
 [SunderRuntimeUse(Actions = ["discover", "invoke"])]
 public interface ExecutionTargetService

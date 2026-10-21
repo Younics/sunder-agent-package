@@ -56,13 +56,13 @@ public sealed class GeneratedPackageManifestTests
             Assert.Equal(releaseTitles[packageId], root.GetProperty("name").GetString());
             Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("summary").GetString()));
             Assert.Equal("assets/icon.png", root.GetProperty("icon").GetString());
-            if (packageId is "sunder.package.agent" or "sunder.package.agent.mcp")
+            if (packageId is "younics.ai.agent" or "younics.ai.agent.mcp")
             {
-                var observedDescriptor = CurrentPublicRpcDescriptors.Get("sunder.agent.tool.execution.observed");
+                var observedDescriptor = CurrentPublicRpcDescriptors.Get("younics.ai.agent.tool.execution.observed");
                 var observedBundle = Assert.Single(
                     root.GetProperty("contractBundles").EnumerateArray(),
                     static bundle => bundle.GetProperty("contractId").GetString()
-                        == "sunder.agent.tool.execution.observed");
+                        == "younics.ai.agent.tool.execution.observed");
                 Assert.Equal(observedDescriptor.Version, observedBundle.GetProperty("version").GetString());
                 var descriptorPath = observedBundle.GetProperty("descriptorPath").GetString()!;
                 var descriptorFile = Path.Combine(sourceQualifiedTargetPath, "sunder-dev", "payload", "shared",
@@ -78,12 +78,12 @@ public sealed class GeneratedPackageManifestTests
                     observedBundle.GetProperty("abiSha256").GetString());
                 Assert.Equal("public", observedBundle.GetProperty("exposure").GetString());
             }
-            if (packageId == "sunder.package.agent")
+            if (packageId == "younics.ai.agent")
             {
                 var observedUse = Assert.Single(
                     root.GetProperty("usesContracts").EnumerateArray(),
                     static use => use.GetProperty("contractId").GetString()
-                        == "sunder.agent.tool.execution.observed");
+                        == "younics.ai.agent.tool.execution.observed");
                 Assert.False(observedUse.GetProperty("required").GetBoolean());
                 Assert.Equal(
                     ["discover", "invoke", "subscribe"],
@@ -91,28 +91,28 @@ public sealed class GeneratedPackageManifestTests
                         .Select(static action => action.GetString()!)
                         .ToArray());
             }
-            if (packageId == "sunder.package.agent.mcp")
+            if (packageId == "younics.ai.agent.mcp")
             {
                 var observedProvider = Assert.Single(
                     root.GetProperty("provides").EnumerateArray(),
                     static provider => provider.GetProperty("providerId").GetString() == "mcp.tools.observed");
                 Assert.Equal(
-                    "sunder.agent.tool.execution.observed",
+                    "younics.ai.agent.tool.execution.observed",
                     observedProvider.GetProperty("contractId").GetString());
-                Assert.Equal(CurrentPublicRpcDescriptors.Get("sunder.agent.tool.execution.observed").Version,
+                Assert.Equal(CurrentPublicRpcDescriptors.Get("younics.ai.agent.tool.execution.observed").Version,
                     observedProvider.GetProperty("contractVersion").GetString());
                 Assert.Equal("runtime", observedProvider.GetProperty("role").GetString());
                 Assert.Equal("public", observedProvider.GetProperty("audience").GetString());
             }
             var dependencies = root.GetProperty("dependsOn").EnumerateArray().ToArray();
-            if (packageId == "sunder.package.agent")
+            if (packageId is "younics.ai.agent" or "younics.sunder.package.maker")
             {
                 Assert.Empty(dependencies);
             }
             else
             {
                 var baseAgent = Assert.Single(dependencies);
-                Assert.Equal("sunder.package.agent", baseAgent.GetProperty("packageId").GetString());
+                Assert.Equal("younics.ai.agent", baseAgent.GetProperty("packageId").GetString());
                 Assert.Equal(">=2.0.0 <3.0.0", baseAgent.GetProperty("versionRange").GetString());
             }
             var expected = expectedCapabilities.GetProperty(packageId)
@@ -163,11 +163,14 @@ public sealed class GeneratedPackageManifestTests
                     Assert.DoesNotContain("runtime-operations.v1", capabilities, StringComparer.Ordinal);
                     Assert.DoesNotContain("runtime-invocation-errors.v1", capabilities, StringComparer.Ordinal);
                     Assert.DoesNotContain(SunderSdkCapabilities.ThemingV1, capabilities, StringComparer.Ordinal);
+                    Assert.DoesNotContain(SunderSdkCapabilities.AppStateUpdatesV1, capabilities, StringComparer.Ordinal);
                 }
                 else
                 {
                     Assert.Contains(SunderSdkCapabilities.ThemingV1, capabilities, StringComparer.Ordinal);
                     Assert.DoesNotContain("worker-protocol.v1", capabilities, StringComparer.Ordinal);
+                    Assert.Equal(packageId == "younics.sunder.package.maker",
+                        capabilities.Contains(SunderSdkCapabilities.AppStateUpdatesV1, StringComparer.Ordinal));
                 }
             }
 

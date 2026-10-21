@@ -1,0 +1,1793 @@
+{
+  "schemaVersion": 1,
+  "identityMapVersion": 1,
+  "scope": "actual-current-osx-arm64-receipt-and-archive-equivalence; Python-only; no .NET test acceptance",
+  "mapSha256": "31ad8ca21dc07dcf562e5cb53e5168097b2f626ec3be4fc14edb941eb3de36a9",
+  "predecessorManifestSha256": "7dec732776212922f3c1534ffe8fae9119f57b6d0876efc631c9eba1d3afb904",
+  "sourceBeforeManifestSha256": "6afdee712b9749bed7b375009b2281df2d0ab2c020f3e5f07bcd7c83cd4a2de7",
+  "sourceInverseSha256": "c4cb4ba1d22dfa39517a873a55af32404a660783d5e6941b0b53f000678e96b0",
+  "originalPredecessorsAndFrozenOraclesUnchanged": true,
+  "stagedEntriesSha256": "be5f26ec14ebcffc3f24594a7f3cb72a0b230967563ca6d7499b79a7cc4a50ed",
+  "approvedCursorFix": {
+    "path": "src/Sunder.Package.Agent/Runtime/AgentTranscriptPageCursor.cs",
+    "beforeSha256": "91d06616db344f59ff889fb0a146974755431841a4493ae696d94a8714daaea4",
+    "afterSha256": "a3bf998de9cfe0da71e39b9e73e166a1a9227b89fa5ca6213c5b83dcfe7742ce"
+  },
+  "coreEvidence": {
+    "artifacts/identity-migration/v1-20261014-local-01/handoff.json": "3c6a4ae18a2d010093e15b3a9b17d9cdeca434b80cba8bd4079b6f694934f0ca",
+    "artifacts/identity-migration/v1-20261014-local-01/validation.json": "b026604312cb0b215f8bc9f8ab94a97743c9b3d2c3515f947a944c8b70489594"
+  },
+  "packages": [
+    {
+      "key": "agent",
+      "packageId": "younics.ai.agent",
+      "archivePath": "artifacts/identity-migration/v1-20261014-local-01/archives/younics.ai.agent.2.0.0.sunderpkg",
+      "archiveSha256": "bfc3259bda5445f0358a27b89c1d6ec9da1d4ed83211613a9ddc993883d97b62",
+      "ownedContracts": 21,
+      "authoringReceiptPath": "src/Sunder.Package.Agent/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json",
+      "authoringReceiptSha256": "e0a84910ef57c6ddba44f612dbb08b82e0eee9afc4ae635937e931cb575e2690"
+    },
+    {
+      "key": "agent-builder",
+      "packageId": "younics.sunder.package.maker",
+      "archivePath": "artifacts/identity-migration/v1-20261014-local-01/archives/younics.sunder.package.maker.2.0.0.sunderpkg",
+      "archiveSha256": "991dd30764b24facdc3867b8a05670a210e62b7cb0211142bb0f6cb955224a92",
+      "ownedContracts": 1,
+      "authoringReceiptPath": "src/Sunder.Package.Agent.Builder/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json",
+      "authoringReceiptSha256": "12536b093052a32f689e9d7e9db91dd95775fba3e7f784b974144dc86a422397"
+    },
+    {
+      "key": "agent-execution-docker",
+      "packageId": "younics.ai.agent.execution.docker",
+      "archivePath": "artifacts/identity-migration/v1-20261014-local-01/archives/younics.ai.agent.execution.docker.2.0.0.sunderpkg",
+      "archiveSha256": "90cedda39dc694054371d548568542121c6bc9a051f28d12ed891281f1848963",
+      "ownedContracts": 1,
+      "authoringReceiptPath": "src/Sunder.Package.Agent.Execution.Docker/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json",
+      "authoringReceiptSha256": "6a905ac3052e846d2122ca32f3f78fb43079f9ca85089a1dcaab11077b266d3f"
+    },
+    {
+      "key": "agent-execution-local",
+      "packageId": "younics.ai.agent.execution.local",
+      "archivePath": "artifacts/identity-migration/v1-20261014-local-01/archives/younics.ai.agent.execution.local.2.0.0.sunderpkg",
+      "archiveSha256": "246ed4df7fb275002356689b6bc1d3fd9dd3e8e928fbfdef273e94cb38c9bfb1",
+      "ownedContracts": 1,
+      "authoringReceiptPath": "src/Sunder.Package.Agent.Execution.Local/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json",
+      "authoringReceiptSha256": "662c1f3c50942787380212efb7b0e73d0a8b3ac028b39d27756d6476f595dd83"
+    },
+    {
+      "key": "agent-mcp",
+      "packageId": "younics.ai.agent.mcp",
+      "archivePath": "artifacts/identity-migration/v1-20261014-local-01/archives/younics.ai.agent.mcp.2.0.0.sunderpkg",
+      "archiveSha256": "eb17e3628fe81725c51dd637ca0945d50514015745c57dab59205bb425d91ad9",
+      "ownedContracts": 1,
+      "authoringReceiptPath": "src/Sunder.Package.Agent.Mcp/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json",
+      "authoringReceiptSha256": "8c0e9ee353b0fbfc6483b0b1ff2f09524d87f29d2c0fcace52a4681d944af35b"
+    },
+    {
+      "key": "agent-memory-semantic",
+      "packageId": "younics.ai.agent.memory.semantic",
+      "archivePath": "artifacts/identity-migration/v1-20261014-local-01/archives/younics.ai.agent.memory.semantic.2.0.0.sunderpkg",
+      "archiveSha256": "22cb9548ff2686ad0635ddff095cbf34b91c38c9c69e86508dae139808e10e4c",
+      "ownedContracts": 1,
+      "authoringReceiptPath": "src/Sunder.Package.Agent.Memory.Semantic/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json",
+      "authoringReceiptSha256": "c03a86f45a9f1a8870e493974fcae54fc7d25e79ea866b8c527a4537df76b9ac"
+    },
+    {
+      "key": "agent-provider-anthropic",
+      "packageId": "younics.ai.agent.provider.anthropic",
+      "archivePath": "artifacts/identity-migration/v1-20261014-local-01/archives/younics.ai.agent.provider.anthropic.2.0.0.sunderpkg",
+      "archiveSha256": "af9726b03ba96cc7030f854188e78f0055a50c78849b6464207db50beda70ac4",
+      "ownedContracts": 1,
+      "authoringReceiptPath": "src/Sunder.Package.Agent.Provider.Anthropic/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json",
+      "authoringReceiptSha256": "7e2d5bd3fb60b42210a56c5bba644138b7ea67fddcbdfd60f39823f4b941e2af"
+    },
+    {
+      "key": "agent-provider-gemini",
+      "packageId": "younics.ai.agent.provider.gemini",
+      "archivePath": "artifacts/identity-migration/v1-20261014-local-01/archives/younics.ai.agent.provider.gemini.2.0.0.sunderpkg",
+      "archiveSha256": "81a4d4af8e2de20e3545e57603755e6f17f3ca9a96425a7aaa9b655d038f2b5f",
+      "ownedContracts": 1,
+      "authoringReceiptPath": "src/Sunder.Package.Agent.Provider.Gemini/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json",
+      "authoringReceiptSha256": "c4714cdc7d8790c02f41a833f87e5e0908d89223e7c54b528c61af87196231cb"
+    },
+    {
+      "key": "agent-provider-lmstudio",
+      "packageId": "younics.ai.agent.provider.lmstudio",
+      "archivePath": "artifacts/identity-migration/v1-20261014-local-01/archives/younics.ai.agent.provider.lmstudio.2.0.0.sunderpkg",
+      "archiveSha256": "de1ccdb7d75c4af164f17cdf0dee9156a01783eef6e5b30d843391162910ecf4",
+      "ownedContracts": 1,
+      "authoringReceiptPath": "src/Sunder.Package.Agent.Provider.LMStudio/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json",
+      "authoringReceiptSha256": "0ed53f10929cef117fac66dbc4fcee75857bf7046b3120c63988d5e48bee4ac9"
+    },
+    {
+      "key": "agent-provider-openai",
+      "packageId": "younics.ai.agent.provider.openai",
+      "archivePath": "artifacts/identity-migration/v1-20261014-local-01/archives/younics.ai.agent.provider.openai.2.0.0.sunderpkg",
+      "archiveSha256": "90c0ff146ccbba55baf75661d4d67e36b8802cb35675242672e527ced3dc3fbe",
+      "ownedContracts": 1,
+      "authoringReceiptPath": "src/Sunder.Package.Agent.Provider.OpenAI/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json",
+      "authoringReceiptSha256": "ce2ebea60043a8be5a76337b5d1678c97d85276013f17dadde613b658888bb7b"
+    },
+    {
+      "key": "agent-skills",
+      "packageId": "younics.ai.agent.skills",
+      "archivePath": "artifacts/identity-migration/v1-20261014-local-01/archives/younics.ai.agent.skills.2.0.0.sunderpkg",
+      "archiveSha256": "dbf06982f840d302e199f437c177244b15dfaa1253cd61212b334e10a80a911b",
+      "ownedContracts": 1,
+      "authoringReceiptPath": "src/Sunder.Package.Agent.Skills/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json",
+      "authoringReceiptSha256": "e057163e6f314ed1619f4378d55c8cb75620f8f129b6d5a784dbda46ac2ef687"
+    },
+    {
+      "key": "agent-subagents",
+      "packageId": "younics.ai.agent.subagents",
+      "archivePath": "artifacts/identity-migration/v1-20261014-local-01/archives/younics.ai.agent.subagents.2.0.0.sunderpkg",
+      "archiveSha256": "15aaa5799788230bcb7c5ebd7b0fab432a225a1808ba8cf4d9c1fa4d984c4f5c",
+      "ownedContracts": 1,
+      "authoringReceiptPath": "src/Sunder.Package.Agent.Subagents/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json",
+      "authoringReceiptSha256": "8f6b939715cc7c03e5c485462233f016bffc44f2eb0d8c8d57d9c7b316002f25"
+    },
+    {
+      "key": "agent-tools-files",
+      "packageId": "younics.ai.agent.tools.files",
+      "archivePath": "artifacts/identity-migration/v1-20261014-local-01/archives/younics.ai.agent.tools.files.2.0.0.sunderpkg",
+      "archiveSha256": "71acef11fbca27272c9b802b34a541ccb45538b64f013a333c4e8d32a0b8844d",
+      "ownedContracts": 0,
+      "authoringReceiptPath": "src/Sunder.Package.Agent.Tools.Files/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json",
+      "authoringReceiptSha256": "983fcf4b987e644f1a5de00af2f405fa6570704ecbe3421e696d4bab3182bae7"
+    },
+    {
+      "key": "agent-tools-shell",
+      "packageId": "younics.ai.agent.tools.shell",
+      "archivePath": "artifacts/identity-migration/v1-20261014-local-01/archives/younics.ai.agent.tools.shell.2.0.0.sunderpkg",
+      "archiveSha256": "e9dbb056b427cabbb59606a789d48a90ec0965165e43f805f10d97e81cf6d2ef",
+      "ownedContracts": 0,
+      "authoringReceiptPath": "src/Sunder.Package.Agent.Tools.Shell/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json",
+      "authoringReceiptSha256": "f8b86e15331073dd0a2e7fcc9dc09f39763e7ef754cc7591013e1d1c2edf9a64"
+    },
+    {
+      "key": "agent-tools-web",
+      "packageId": "younics.ai.agent.tools.web",
+      "archivePath": "artifacts/identity-migration/v1-20261014-local-01/archives/younics.ai.agent.tools.web.2.0.0.sunderpkg",
+      "archiveSha256": "b1661f5cf943e654ed4bf81326fc3d610f78777701d5d0927b792153936bacbe",
+      "ownedContracts": 0,
+      "authoringReceiptPath": "src/Sunder.Package.Agent.Tools.Web/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json",
+      "authoringReceiptSha256": "eaa067af185f045e18b15235ba1bf7bfad085884ee9137dcd8af1220d6249675"
+    }
+  ],
+  "semanticEvidence": {
+    "schemaVersion": 1,
+    "identityMapVersion": 1,
+    "mapSha256": "31ad8ca21dc07dcf562e5cb53e5168097b2f626ec3be4fc14edb941eb3de36a9",
+    "predecessorManifestSha256": "7dec732776212922f3c1534ffe8fae9119f57b6d0876efc631c9eba1d3afb904",
+    "configuration": "Debug",
+    "rid": "osx-arm64",
+    "publicSemanticComparisons": 19,
+    "publicProjectionAndPolicyComparisons": 19,
+    "privateReverseDescriptorComparisons": 13,
+    "publicHistoricalSnapshotsPreserved": 35,
+    "importedDefinitionRenameCount": 294,
+    "inputs": {
+      "compatibility/identity-migration/v1/map.json": {
+        "sha256": "31ad8ca21dc07dcf562e5cb53e5168097b2f626ec3be4fc14edb941eb3de36a9",
+        "bytes": 18968
+      },
+      "compatibility/identity-migration/v1/predecessor/manifest.json": {
+        "sha256": "7dec732776212922f3c1534ffe8fae9119f57b6d0876efc631c9eba1d3afb904",
+        "bytes": 10990
+      },
+      "compatibility/identity-migration/v1/predecessor/files/compatibility/agent-ordinary-private-successors.json": {
+        "sha256": "deda7978dbc5d41079ffe2256dd7d34fe59279eec2167754b22981fc58cfc1e5",
+        "bytes": 7997
+      },
+      "compatibility/identity-migration/v1/predecessor/files/compatibility/agent-service-public-successors.json": {
+        "sha256": "9f4ed08cbf1e41482dc4a97bbd559078b53bf13293fa82eb7c51549aee648a06",
+        "bytes": 11603
+      },
+      "compatibility/identity-migration/v1/predecessor/files/packages.json": {
+        "sha256": "6e3df86f9a9763521ee3d38a84c2becd1998df7044d4051e7dc6cc1d072b0f26",
+        "bytes": 12969
+      },
+      "compatibility/identity-migration/v1/predecessor/files/src/Sunder.Package.Agent.Builder/sunder-contracts.lock.json": {
+        "sha256": "6977f9449de4c3c6f09ac056da31a32fe1748c44a8f0c0bfc884cebf6d16c4ed",
+        "bytes": 14954
+      },
+      "compatibility/identity-migration/v1/predecessor/files/src/Sunder.Package.Agent.Builder/sunder-contracts.owned.json": {
+        "sha256": "6f1818a607e09fa69bc8b6b806b28687f9267ffe68d67fcaab303ccc5409e9ae",
+        "bytes": 6077
+      },
+      "compatibility/identity-migration/v1/predecessor/files/src/Sunder.Package.Agent.Execution.Docker/sunder-contracts.lock.json": {
+        "sha256": "1c5a6631bc755435537a70a54fdc951bf9b00e5ab6b9d217d17cade48eddf08c",
+        "bytes": 15842
+      },
+      "compatibility/identity-migration/v1/predecessor/files/src/Sunder.Package.Agent.Execution.Docker/sunder-contracts.owned.json": {
+        "sha256": "d354d464a8b61d06542f2ee5bcfe319721bd977ff65008cba8fe8b33d497993a",
+        "bytes": 5486
+      },
+      "compatibility/identity-migration/v1/predecessor/files/src/Sunder.Package.Agent.Execution.Local/sunder-contracts.lock.json": {
+        "sha256": "604cdc068f98846ac7981ea02602ba29fdfb980ac1de6d9be7680d9751e8d9ef",
+        "bytes": 15112
+      },
+      "compatibility/identity-migration/v1/predecessor/files/src/Sunder.Package.Agent.Execution.Local/sunder-contracts.owned.json": {
+        "sha256": "c6cdf64a72ea7d3cdf0ceecc85c33b1c21637ab013b35bc2d81990d257fec298",
+        "bytes": 6318
+      },
+      "compatibility/identity-migration/v1/predecessor/files/src/Sunder.Package.Agent.Mcp/sunder-contracts.lock.json": {
+        "sha256": "fe11759070a91bfe94f047242a4725bd1a29540c2c4b1934581b33900947798a",
+        "bytes": 16148
+      },
+      "compatibility/identity-migration/v1/predecessor/files/src/Sunder.Package.Agent.Mcp/sunder-contracts.owned.json": {
+        "sha256": "9112f2eb7c4e63171a433f63ff81a02b4dd28c148ad8ee91730ca01a2d24b132",
+        "bytes": 3966
+      },
+      "compatibility/identity-migration/v1/predecessor/files/src/Sunder.Package.Agent.Memory.Semantic/sunder-contracts.lock.json": {
+        "sha256": "9147e5df27f966442ec98f64497505216192266f27b9e2906cdb915dbb940e92",
+        "bytes": 15483
+      },
+      "compatibility/identity-migration/v1/predecessor/files/src/Sunder.Package.Agent.Memory.Semantic/sunder-contracts.owned.json": {
+        "sha256": "7f227f065583f4795c38963d3c2fcd0bf5bded6a211726bebf4b5eb5bd5cd4bc",
+        "bytes": 12376
+      },
+      "compatibility/identity-migration/v1/predecessor/files/src/Sunder.Package.Agent.Provider.Anthropic/sunder-contracts.lock.json": {
+        "sha256": "dacd78197ee707da02bc70c2b33c9e85d92d38674eb1151dc793d678cdf894db",
+        "bytes": 14831
+      },
+      "compatibility/identity-migration/v1/predecessor/files/src/Sunder.Package.Agent.Provider.Anthropic/sunder-contracts.owned.json": {
+        "sha256": "498ecc0c8ea91b18d7aacabe351af4f4f9441af60f82e648d508ab6b9cecc1d2",
+        "bytes": 4175
+      },
+      "compatibility/identity-migration/v1/predecessor/files/src/Sunder.Package.Agent.Provider.Gemini/sunder-contracts.lock.json": {
+        "sha256": "6613720e32ccc85f13ac55ffe105d1b076a620e407a41656519e0c3819717f19",
+        "bytes": 14954
+      },
+      "compatibility/identity-migration/v1/predecessor/files/src/Sunder.Package.Agent.Provider.Gemini/sunder-contracts.owned.json": {
+        "sha256": "db4330af6184d044ad55e9fef96c24aa9b8cd009b7a589721cc9a6d5e100761b",
+        "bytes": 4157
+      },
+      "compatibility/identity-migration/v1/predecessor/files/src/Sunder.Package.Agent.Provider.LMStudio/sunder-contracts.lock.json": {
+        "sha256": "6613720e32ccc85f13ac55ffe105d1b076a620e407a41656519e0c3819717f19",
+        "bytes": 14954
+      },
+      "compatibility/identity-migration/v1/predecessor/files/src/Sunder.Package.Agent.Provider.LMStudio/sunder-contracts.owned.json": {
+        "sha256": "0ab62aeb06203034c9282d366da9d13e77cbc478930662ab8984f752650b9478",
+        "bytes": 4169
+      },
+      "compatibility/identity-migration/v1/predecessor/files/src/Sunder.Package.Agent.Provider.OpenAI/sunder-contracts.lock.json": {
+        "sha256": "ef1df2c80e5e925c33f3aad397f8fb25f6920b29e4490d55c336e5d3702b3113",
+        "bytes": 15079
+      },
+      "compatibility/identity-migration/v1/predecessor/files/src/Sunder.Package.Agent.Provider.OpenAI/sunder-contracts.owned.json": {
+        "sha256": "c4be3a1b79c3595f6af1cb55eb266736a532f0c51e0dd8458043061fbb6f52e1",
+        "bytes": 5629
+      },
+      "compatibility/identity-migration/v1/predecessor/files/src/Sunder.Package.Agent.Skills/sunder-contracts.lock.json": {
+        "sha256": "5394ff6e4cf9f52c127129a9842c41d5af3124d3416c687350a68d8e5516bc0c",
+        "bytes": 16068
+      },
+      "compatibility/identity-migration/v1/predecessor/files/src/Sunder.Package.Agent.Skills/sunder-contracts.owned.json": {
+        "sha256": "a6a9748f72827047e5638cf86125fdda414a467749564e3e7bc8a45d80e59639",
+        "bytes": 3521
+      },
+      "compatibility/identity-migration/v1/predecessor/files/src/Sunder.Package.Agent.Subagents/sunder-contracts.lock.json": {
+        "sha256": "701df26f5f350647c03e2e0cdabc15bfa902c5dd51a7ca09907d10cbc82e78cb",
+        "bytes": 16306
+      },
+      "compatibility/identity-migration/v1/predecessor/files/src/Sunder.Package.Agent.Subagents/sunder-contracts.owned.json": {
+        "sha256": "baed17145e1e25385c1a91ea3c6e7aa69b80c6f7d48f53705ec57f84e0070816",
+        "bytes": 3868
+      },
+      "compatibility/identity-migration/v1/predecessor/files/src/Sunder.Package.Agent.Tools.Files/sunder-contracts.lock.json": {
+        "sha256": "a12f025718ed9d4e1df16ed0da239964304d0cc2e9570497c283923159efc7f5",
+        "bytes": 15394
+      },
+      "compatibility/identity-migration/v1/predecessor/files/src/Sunder.Package.Agent.Tools.Files/sunder-contracts.owned.json": {
+        "sha256": "7435b2c10b8e752c0f02ccb1f689a39024a30a58ab9e80536dd0b4826ecf2b5d",
+        "bytes": 178
+      },
+      "compatibility/identity-migration/v1/predecessor/files/src/Sunder.Package.Agent.Tools.Shell/sunder-contracts.lock.json": {
+        "sha256": "bcff438aa4ca00176e12b5dd12e5f1f2f757029643202613ed510a2a69e1de74",
+        "bytes": 15269
+      },
+      "compatibility/identity-migration/v1/predecessor/files/src/Sunder.Package.Agent.Tools.Shell/sunder-contracts.owned.json": {
+        "sha256": "566ebe94a866b95c92ec030051292687a81a4126346eadcfcbb94f3ec2c2ab7c",
+        "bytes": 178
+      },
+      "compatibility/identity-migration/v1/predecessor/files/src/Sunder.Package.Agent.Tools.Web/sunder-contracts.lock.json": {
+        "sha256": "24a04dbc7e97def4fd929984388c6ba817ab8df229b5b39228d93bef6312e239",
+        "bytes": 14830
+      },
+      "compatibility/identity-migration/v1/predecessor/files/src/Sunder.Package.Agent.Tools.Web/sunder-contracts.owned.json": {
+        "sha256": "1f3e53c0e4b09c9861ffab1071613e0b77a30c66f5d65cf6f06c0ae1de06a881",
+        "bytes": 174
+      },
+      "compatibility/identity-migration/v1/predecessor/files/src/Sunder.Package.Agent/sunder-contracts.lock.json": {
+        "sha256": "b6f8840f897ef952d3780312bf953fb02109b26f4c0c76650863ef85f31c3478",
+        "bytes": 853
+      },
+      "compatibility/identity-migration/v1/predecessor/files/src/Sunder.Package.Agent/sunder-contracts.owned.json": {
+        "sha256": "35bdd7d5a7a0bec77a0efd6aa96e5c55a1fee20dd71c2d3b87bde87f046d0d3d",
+        "bytes": 1587479
+      },
+      "compatibility/agent-rpc-migration-baseline.json": {
+        "sha256": "a9f4563d6095b57d66ca915821218ef596a0845ab17839d3e5bba5e394a899eb",
+        "bytes": 1313233
+      },
+      "src/Sunder.Package.Agent/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json": {
+        "sha256": "e0a84910ef57c6ddba44f612dbb08b82e0eee9afc4ae635937e931cb575e2690",
+        "bytes": 401210
+      },
+      "src/Sunder.Package.Agent/sunder-contracts.lock.json": {
+        "sha256": "b6f8840f897ef952d3780312bf953fb02109b26f4c0c76650863ef85f31c3478",
+        "bytes": 853
+      },
+      "src/Sunder.Package.Agent/sunder-contracts.owned.json": {
+        "sha256": "7858dca0222374dc370331e7f0686a959715b0cce36a2403c220c4bb417d0068",
+        "bytes": 524364
+      },
+      "src/Sunder.Package.Agent.Builder/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json": {
+        "sha256": "12536b093052a32f689e9d7e9db91dd95775fba3e7f784b974144dc86a422397",
+        "bytes": 316660
+      },
+      "src/Sunder.Package.Agent.Builder/sunder-contracts.lock.json": {
+        "sha256": "19bdb1e917ab64a180a5bc88c235163d88f39fbbad069de4d65ffb853e1ca7c1",
+        "bytes": 14950
+      },
+      "src/Sunder.Package.Agent.Builder/sunder-contracts.owned.json": {
+        "sha256": "74adee923d94322d83a8909c0a3f3e0692a7c35765bdc4fea487b743ac724311",
+        "bytes": 170
+      },
+      "src/Sunder.Package.Agent.Execution.Docker/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json": {
+        "sha256": "6a905ac3052e846d2122ca32f3f78fb43079f9ca85089a1dcaab11077b266d3f",
+        "bytes": 86492
+      },
+      "src/Sunder.Package.Agent.Execution.Docker/sunder-contracts.lock.json": {
+        "sha256": "c465ece14baf3a703d326e010a8d127a7ea1f37047f1575796e7c69e435ce46a",
+        "bytes": 15838
+      },
+      "src/Sunder.Package.Agent.Execution.Docker/sunder-contracts.owned.json": {
+        "sha256": "f293ab6afa04db3a707da0b79efbacb3e5100132116a6e856bd1eddcff4dd171",
+        "bytes": 180
+      },
+      "src/Sunder.Package.Agent.Execution.Local/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json": {
+        "sha256": "662c1f3c50942787380212efb7b0e73d0a8b3ac028b39d27756d6476f595dd83",
+        "bytes": 69599
+      },
+      "src/Sunder.Package.Agent.Execution.Local/sunder-contracts.lock.json": {
+        "sha256": "e39a55780d27f34e5debd3b1261a35b78983f3d55066940ade1f404b41bece71",
+        "bytes": 15108
+      },
+      "src/Sunder.Package.Agent.Execution.Local/sunder-contracts.owned.json": {
+        "sha256": "d599e54be9ed1c8addeee3b1659ef7a3d0164722f08a51fa34d6231fa469d3da",
+        "bytes": 178
+      },
+      "src/Sunder.Package.Agent.Mcp/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json": {
+        "sha256": "8c0e9ee353b0fbfc6483b0b1ff2f09524d87f29d2c0fcace52a4681d944af35b",
+        "bytes": 333142
+      },
+      "src/Sunder.Package.Agent.Mcp/sunder-contracts.lock.json": {
+        "sha256": "6199a2afb4571a5f5f5824b9df969922b9fe6eb337ce6370ee1d03bda85af936",
+        "bytes": 16140
+      },
+      "src/Sunder.Package.Agent.Mcp/sunder-contracts.owned.json": {
+        "sha256": "24a7f411b9fa36e3819ce9a3d90bfea91b9163129c14a1d25911594629914d11",
+        "bytes": 154
+      },
+      "src/Sunder.Package.Agent.Memory.Semantic/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json": {
+        "sha256": "c03a86f45a9f1a8870e493974fcae54fc7d25e79ea866b8c527a4537df76b9ac",
+        "bytes": 323013
+      },
+      "src/Sunder.Package.Agent.Memory.Semantic/sunder-contracts.lock.json": {
+        "sha256": "b3151dd843f2c8e860a76e68a83ba13123b68de79755073cca38bbd44b687d06",
+        "bytes": 15479
+      },
+      "src/Sunder.Package.Agent.Memory.Semantic/sunder-contracts.owned.json": {
+        "sha256": "57c2233895edb3338dc148f4bf0fc2853f0244c26861e59b4f1ba7680435af62",
+        "bytes": 178
+      },
+      "src/Sunder.Package.Agent.Provider.Anthropic/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json": {
+        "sha256": "7e2d5bd3fb60b42210a56c5bba644138b7ea67fddcbdfd60f39823f4b941e2af",
+        "bytes": 34525
+      },
+      "src/Sunder.Package.Agent.Provider.Anthropic/sunder-contracts.lock.json": {
+        "sha256": "886e138781c15e0cbd223a0258ef8c94dbccc39c2da688622ad911d379362d04",
+        "bytes": 14827
+      },
+      "src/Sunder.Package.Agent.Provider.Anthropic/sunder-contracts.owned.json": {
+        "sha256": "f5470d9867027376c1eaa6e9e67fb2019b5fcce4296d4c4efe63065ef1273c9a",
+        "bytes": 184
+      },
+      "src/Sunder.Package.Agent.Provider.Gemini/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json": {
+        "sha256": "c4714cdc7d8790c02f41a833f87e5e0908d89223e7c54b528c61af87196231cb",
+        "bytes": 40902
+      },
+      "src/Sunder.Package.Agent.Provider.Gemini/sunder-contracts.lock.json": {
+        "sha256": "56acce7a248d603a490fc25df8573c2f5000173eafdc8d0a99c3fe4fd48b6c59",
+        "bytes": 14950
+      },
+      "src/Sunder.Package.Agent.Provider.Gemini/sunder-contracts.owned.json": {
+        "sha256": "6066531734666821d5d9a4f435f375094a9c17201bbaa64cdd0b8642edca98af",
+        "bytes": 178
+      },
+      "src/Sunder.Package.Agent.Provider.LMStudio/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json": {
+        "sha256": "0ed53f10929cef117fac66dbc4fcee75857bf7046b3120c63988d5e48bee4ac9",
+        "bytes": 40924
+      },
+      "src/Sunder.Package.Agent.Provider.LMStudio/sunder-contracts.lock.json": {
+        "sha256": "56acce7a248d603a490fc25df8573c2f5000173eafdc8d0a99c3fe4fd48b6c59",
+        "bytes": 14950
+      },
+      "src/Sunder.Package.Agent.Provider.LMStudio/sunder-contracts.owned.json": {
+        "sha256": "5876349a3c7d99fb3cb015c519f19199093a15f789c9865ccc5f20e8b67afcbf",
+        "bytes": 182
+      },
+      "src/Sunder.Package.Agent.Provider.OpenAI/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json": {
+        "sha256": "ce2ebea60043a8be5a76337b5d1678c97d85276013f17dadde613b658888bb7b",
+        "bytes": 44737
+      },
+      "src/Sunder.Package.Agent.Provider.OpenAI/sunder-contracts.lock.json": {
+        "sha256": "ee9c5a53492544847b540161262f7e8b199fa53fc00119e6b431b2220caf36c5",
+        "bytes": 15075
+      },
+      "src/Sunder.Package.Agent.Provider.OpenAI/sunder-contracts.owned.json": {
+        "sha256": "d986351efa6e0c3f84b720c5cdc2b9a9991325c5bfc2b58d0fd3aff726a0acbf",
+        "bytes": 178
+      },
+      "src/Sunder.Package.Agent.Skills/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json": {
+        "sha256": "e057163e6f314ed1619f4378d55c8cb75620f8f129b6d5a784dbda46ac2ef687",
+        "bytes": 329773
+      },
+      "src/Sunder.Package.Agent.Skills/sunder-contracts.lock.json": {
+        "sha256": "79279840ae88cca8f2638d5bf42939c22c1e088a0e73679f286a9c6e0066c238",
+        "bytes": 16064
+      },
+      "src/Sunder.Package.Agent.Skills/sunder-contracts.owned.json": {
+        "sha256": "df340086d0b4629d879f83774838ce87cfc59a8087154309852cf510805117af",
+        "bytes": 160
+      },
+      "src/Sunder.Package.Agent.Subagents/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json": {
+        "sha256": "8f6b939715cc7c03e5c485462233f016bffc44f2eb0d8c8d57d9c7b316002f25",
+        "bytes": 336498
+      },
+      "src/Sunder.Package.Agent.Subagents/sunder-contracts.lock.json": {
+        "sha256": "426c7b6b657c6ee94e50a1afa2533980a5dc0344a3604a176dee4a4fb87d41c0",
+        "bytes": 16314
+      },
+      "src/Sunder.Package.Agent.Subagents/sunder-contracts.owned.json": {
+        "sha256": "40791480e2ae263551bf87766794d017fda35070d18a67d7037c5ad82ef52502",
+        "bytes": 166
+      },
+      "src/Sunder.Package.Agent.Tools.Files/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json": {
+        "sha256": "983fcf4b987e644f1a5de00af2f405fa6570704ecbe3421e696d4bab3182bae7",
+        "bytes": 311985
+      },
+      "src/Sunder.Package.Agent.Tools.Files/sunder-contracts.lock.json": {
+        "sha256": "2dbe27a6ec1e8a7ff2f4040d35f9940c1093a6d8297bfeedd1ca9b2db8287f78",
+        "bytes": 15386
+      },
+      "src/Sunder.Package.Agent.Tools.Files/sunder-contracts.owned.json": {
+        "sha256": "0f1249337e7b0af2a2fa9a0d722fc57d78e8da8e00a10b18637f25368944a33c",
+        "bytes": 170
+      },
+      "src/Sunder.Package.Agent.Tools.Shell/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json": {
+        "sha256": "f8b86e15331073dd0a2e7fcc9dc09f39763e7ef754cc7591013e1d1c2edf9a64",
+        "bytes": 311295
+      },
+      "src/Sunder.Package.Agent.Tools.Shell/sunder-contracts.lock.json": {
+        "sha256": "ed7b3595cb7bf6e772a5531e990afbb527201fbbb64252442a74b692835eaf33",
+        "bytes": 15261
+      },
+      "src/Sunder.Package.Agent.Tools.Shell/sunder-contracts.owned.json": {
+        "sha256": "fb6f0de6d45ce36975b79fc2fe70006c12236269104bebb31f6482374fa06d84",
+        "bytes": 170
+      },
+      "src/Sunder.Package.Agent.Tools.Web/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json": {
+        "sha256": "eaa067af185f045e18b15235ba1bf7bfad085884ee9137dcd8af1220d6249675",
+        "bytes": 73647
+      },
+      "src/Sunder.Package.Agent.Tools.Web/sunder-contracts.lock.json": {
+        "sha256": "bbd60447f40a7df7b950c032b0bb335adc8bf8acf2110ea28f2e6f16b19a6555",
+        "bytes": 14826
+      },
+      "src/Sunder.Package.Agent.Tools.Web/sunder-contracts.owned.json": {
+        "sha256": "57a31e093451260e47d39fed18d7b717234aa12719ddb5f1b929010a85dc08c2",
+        "bytes": 166
+      }
+    },
+    "outputs": {
+      "compatibility/agent-service-public-successors.json": {
+        "sha256": "769f4ac4038f4ed620bdf395e0909635abd2a5c3a8d3684438346ca8e6e7f67f",
+        "bytes": 11603
+      },
+      "compatibility/agent-ordinary-private-successors.json": {
+        "sha256": "f1ea85ce5d4609e4021538faad1f90ea8bc45a8b5f14f02db51a3b7931186f46",
+        "bytes": 9251
+      }
+    },
+    "publicContracts": [
+      {
+        "packageId": "younics.ai.agent",
+        "sourceDirectory": "src/Sunder.Package.Agent",
+        "contractId": "younics.ai.agent.behavior.loop",
+        "version": "1.0.0",
+        "descriptorSha256": "9a8d1db6072fb1306e2a26a649476d051990fa54f61ffd2ffccfe47cebf47f1f",
+        "abiSha256": "6f5c73a652ae0bf0971a44f3ce957c6525a1d5e76f7bb78995108f7e6bef18bd",
+        "methods": {
+          "behavior-loop": [
+            "describe",
+            "run"
+          ]
+        }
+      },
+      {
+        "packageId": "younics.ai.agent",
+        "sourceDirectory": "src/Sunder.Package.Agent",
+        "contractId": "younics.ai.agent.chat.provider",
+        "version": "1.0.0",
+        "descriptorSha256": "ae8196fb5a2f7fb5ca23d31b546c1e06613140db722d317f6275d4b5c5fc3132",
+        "abiSha256": "6c94e08bd3c0d0c314d494a35239690ab6d4870fe4bbbd5f7d7ccf0a04427ba6",
+        "methods": {
+          "chat-provider": [
+            "describe",
+            "get-capabilities",
+            "get-readiness",
+            "list-models",
+            "resolve-utility-model",
+            "stream-chat"
+          ]
+        }
+      },
+      {
+        "packageId": "younics.ai.agent",
+        "sourceDirectory": "src/Sunder.Package.Agent",
+        "contractId": "younics.ai.agent.child.run.executor",
+        "version": "1.0.0",
+        "descriptorSha256": "2eba6673ad084195d9795156ec9e68c11bf5887bdae32532704caee16e5ce99c",
+        "abiSha256": "dd7f715d3fd8a6e3cb409f414c3b519d959c96d0001fd5377f8c80ef8e19470c",
+        "methods": {
+          "child-run-executor": [
+            "run-child"
+          ]
+        }
+      },
+      {
+        "packageId": "younics.ai.agent",
+        "sourceDirectory": "src/Sunder.Package.Agent",
+        "contractId": "younics.ai.agent.durable.lifecycle.observer",
+        "version": "1.0.0",
+        "descriptorSha256": "b91cf2e7c9fa7d46f99d76e6612f975d544aa8ea0b27821c57435979612775fa",
+        "abiSha256": "f478a7322ba0e855afb7c497d9be212d45c21ed4d68273129c59b50d8bea8aaf",
+        "methods": {
+          "durable-lifecycle-observer": [
+            "describe",
+            "handle"
+          ]
+        }
+      },
+      {
+        "packageId": "younics.ai.agent",
+        "sourceDirectory": "src/Sunder.Package.Agent",
+        "contractId": "younics.ai.agent.embedding.provider",
+        "version": "1.0.0",
+        "descriptorSha256": "a97d2a4b288c8cee1229e9a30dd655c0002420de26318c92908ba931737c4a1c",
+        "abiSha256": "46f612dbab8e8999894279b36b4494a330432f8107045044fa8456300cdae4ad",
+        "methods": {
+          "embedding-provider": [
+            "describe",
+            "generate",
+            "generate-batch",
+            "get-readiness",
+            "list-models",
+            "space-identity"
+          ]
+        }
+      },
+      {
+        "packageId": "younics.ai.agent",
+        "sourceDirectory": "src/Sunder.Package.Agent",
+        "contractId": "younics.ai.agent.execution.target",
+        "version": "1.0.0",
+        "descriptorSha256": "0d78e768fd48ec8381595484ee32926e9b1367b991d7356a91c6c8bc42ae100b",
+        "abiSha256": "75d537c56205d374c429b356be3a3a6e7f136751b1d0718f120b6f7d8c0209cf",
+        "methods": {
+          "execution-target": [
+            "add-path",
+            "configuration-generation",
+            "delete-file",
+            "describe",
+            "discover-instructions",
+            "execute-process",
+            "execute-shell",
+            "execution-scope",
+            "list-path",
+            "map-path",
+            "read-file",
+            "readiness",
+            "release-resource-authority",
+            "resolve-file",
+            "resolve-resources",
+            "shell",
+            "structured-file-search",
+            "validate-resource-authority",
+            "write-file"
+          ]
+        }
+      },
+      {
+        "packageId": "younics.ai.agent",
+        "sourceDirectory": "src/Sunder.Package.Agent",
+        "contractId": "younics.ai.agent.permission.surface",
+        "version": "1.0.0",
+        "descriptorSha256": "811d1236ebb824a909f592005b919d51eb8bf81507bd913f252e4689b3b16e5f",
+        "abiSha256": "7a8ce3b9ae2fffcc12fe7318bbe70eb92757e55bc3d54b8c4b14a29e082bd381",
+        "methods": {
+          "permission-surface": [
+            "describe"
+          ]
+        }
+      },
+      {
+        "packageId": "younics.ai.agent",
+        "sourceDirectory": "src/Sunder.Package.Agent",
+        "contractId": "younics.ai.agent.profile.capability.consumer",
+        "version": "1.0.0",
+        "descriptorSha256": "96f67524a329d8f4996d5c55aaef10f1248db80aa97fd9a6c1759b6a5f9e0286",
+        "abiSha256": "ebad50fc5bfe46ac0459fe2ccef3f56b429265fc1599b20dc2d50b335c479573",
+        "methods": {
+          "profile-capability-consumer": [
+            "describe"
+          ]
+        }
+      },
+      {
+        "packageId": "younics.ai.agent",
+        "sourceDirectory": "src/Sunder.Package.Agent",
+        "contractId": "younics.ai.agent.prompt.context.contributor",
+        "version": "1.0.0",
+        "descriptorSha256": "8e8e277c592016e38c69bb9b4dc7e3d38823c42106b6a6ebb47b01b21702bfa0",
+        "abiSha256": "29222fdaa9e8bca22c1d344f4891d80b686a034dcc489b7f0c7eb302fbb4310b",
+        "methods": {
+          "prompt-context-contributor": [
+            "acknowledge",
+            "contribute",
+            "describe"
+          ]
+        }
+      },
+      {
+        "packageId": "younics.ai.agent",
+        "sourceDirectory": "src/Sunder.Package.Agent",
+        "contractId": "younics.ai.agent.run.control",
+        "version": "1.0.0",
+        "descriptorSha256": "e5156f0d83bf8eb89862ef808ce706b5488ff9ae932bb6063c38f993416db765",
+        "abiSha256": "f928fdc392a7b44287f4cf5fe1c7da6a7fef9b7a21195159e4204de08d80f0ea",
+        "methods": {
+          "run-control": [
+            "acknowledge-prompt-context",
+            "build-instruction-context",
+            "charge-run-budget",
+            "complete-assistant-turn",
+            "discard-prompt-context",
+            "get-run-budget",
+            "invoke-tool",
+            "invoke-tools",
+            "is-current",
+            "list-ready-tools",
+            "list-recent-turns",
+            "list-turns",
+            "log-event",
+            "publish-lifecycle",
+            "report-activity",
+            "run-default",
+            "save-checkpoint",
+            "select-session-context",
+            "stream-chat",
+            "upsert-assistant-turn"
+          ]
+        }
+      },
+      {
+        "packageId": "younics.ai.agent",
+        "sourceDirectory": "src/Sunder.Package.Agent",
+        "contractId": "younics.ai.agent.runtime.catalog",
+        "version": "1.0.0",
+        "descriptorSha256": "261e7061f4314681efa1db6c040b9a271733613ea57dc95e580920d3ebaf82ad",
+        "abiSha256": "8e314cd77690e36355be6e920b34cd1ce7bfcb360fc116cd46361880f25e542e",
+        "methods": {
+          "runtime-catalog": [
+            "get-latest-checkpoint",
+            "get-model-binding",
+            "get-profile",
+            "get-session",
+            "get-session-context-checkpoint",
+            "get-session-model-binding",
+            "get-session-profile",
+            "get-transcript-tool-detail",
+            "get-working-summary",
+            "get-workspace",
+            "list-profiles",
+            "list-recent-transcript-headers",
+            "list-recent-turns",
+            "list-sessions",
+            "list-sessions-for-profile",
+            "list-sessions-for-workspace",
+            "list-transcript-headers-after",
+            "list-transcript-headers-before",
+            "list-turns-after",
+            "list-turns-before",
+            "list-workspaces",
+            "watch"
+          ]
+        }
+      },
+      {
+        "packageId": "younics.ai.agent",
+        "sourceDirectory": "src/Sunder.Package.Agent",
+        "contractId": "younics.ai.agent.selectable.capability.provider",
+        "version": "1.0.0",
+        "descriptorSha256": "263872b4a71a689ef3ca6d3579a313af0423b0928f94e245210d0bcec082defa",
+        "abiSha256": "70c2845e5cf579faaf298bad4463c8f965f30f23f6c24df485eec6c7b704e817",
+        "methods": {
+          "selectable-capability-provider": [
+            "describe",
+            "list",
+            "watch"
+          ]
+        }
+      },
+      {
+        "packageId": "younics.ai.agent",
+        "sourceDirectory": "src/Sunder.Package.Agent",
+        "contractId": "younics.ai.agent.session.cleaner",
+        "version": "1.0.0",
+        "descriptorSha256": "d253e962bb2287cf36b0633255fe17b58626fc5b325dc09d648402731ba91816",
+        "abiSha256": "a370084dc52cb4ad214d125c5991e36e56b92780edb643243bed03c48d49b95b",
+        "methods": {
+          "session-cleaner": [
+            "delete-session",
+            "describe"
+          ]
+        }
+      },
+      {
+        "packageId": "younics.ai.agent",
+        "sourceDirectory": "src/Sunder.Package.Agent",
+        "contractId": "younics.ai.agent.system.prompt.contributor",
+        "version": "1.0.0",
+        "descriptorSha256": "edb3a35e9c61cb4b46cb297ece56f61b0757f9a29ec802aecd6ccaf48df012dd",
+        "abiSha256": "f3d1f4b339cd2b7f57130ab70d4307b02504eab2df2caa7ad7e5786d7391de2d",
+        "methods": {
+          "system-prompt-contributor": [
+            "contribute",
+            "describe"
+          ]
+        }
+      },
+      {
+        "packageId": "younics.ai.agent",
+        "sourceDirectory": "src/Sunder.Package.Agent",
+        "contractId": "younics.ai.agent.tool.execution.observed",
+        "version": "1.0.0",
+        "descriptorSha256": "6179ed3f63b2cc8e708852511d94b18a422b686be600b7d4da129d8673e9121b",
+        "abiSha256": "ac621bdd5c19b6548227c2f6999af99a3348457cf08bb208afb0e431c151420a",
+        "methods": {
+          "tool-execution-observed": [
+            "describe",
+            "execute"
+          ]
+        }
+      },
+      {
+        "packageId": "younics.ai.agent",
+        "sourceDirectory": "src/Sunder.Package.Agent",
+        "contractId": "younics.ai.agent.tool.source",
+        "version": "1.0.0",
+        "descriptorSha256": "de4665b72e4fdcab064bcb1f4dc2fccf4988bf6759454df189feebdb0e29a37e",
+        "abiSha256": "c9341e4719937792511d019d7557f2b5a537ca576ba07fd67aca16661a613230",
+        "methods": {
+          "tool-source": [
+            "describe",
+            "execute",
+            "get-readiness",
+            "list-tools",
+            "permission",
+            "preflight",
+            "presentation"
+          ]
+        }
+      },
+      {
+        "packageId": "younics.ai.agent",
+        "sourceDirectory": "src/Sunder.Package.Agent",
+        "contractId": "younics.ai.agent.workspace.editor",
+        "version": "1.0.0",
+        "descriptorSha256": "bff318e641a1b2967c65664ec8d2352084d8abe8b3d5da54bceebb9c492cb066",
+        "abiSha256": "1ea0d9477579897830e7ed88eaa351b1c90ee8d0c4c78af0f0d1ef0c2d92a914",
+        "methods": {
+          "workspace-editor": [
+            "can-edit",
+            "describe",
+            "get-sections",
+            "save-section"
+          ]
+        }
+      },
+      {
+        "packageId": "younics.ai.agent",
+        "sourceDirectory": "src/Sunder.Package.Agent",
+        "contractId": "younics.ai.agent.workspace.execution.resolver",
+        "version": "1.0.0",
+        "descriptorSha256": "1eee6dc76825d467a85a858b044b43fe7f3373cc35315d2522bc3b25f3ef4fa4",
+        "abiSha256": "ee498da23e74b6dbed066f0ee0df51fcf58dc5316fd486165fa3694ec202b3fd",
+        "methods": {
+          "workspace-execution-resolver": [
+            "list-workspaces",
+            "resolve"
+          ]
+        }
+      },
+      {
+        "packageId": "younics.ai.agent",
+        "sourceDirectory": "src/Sunder.Package.Agent",
+        "contractId": "younics.ai.agent.workspace.path.migrator",
+        "version": "1.0.0",
+        "descriptorSha256": "61dfa3b7f3384f160d9ee30eeb8173f5e0a8113357b3e83920c8685a769f4846",
+        "abiSha256": "57f657d25281a213ee72af652fa559ffee9225b3adfe271093a3618e4727c0b5",
+        "methods": {
+          "workspace-path-migrator": [
+            "can-migrate",
+            "complete",
+            "describe",
+            "list-legacy-paths"
+          ]
+        }
+      }
+    ],
+    "privateContracts": [
+      {
+        "packageId": "younics.ai.agent",
+        "sourceDirectory": "src/Sunder.Package.Agent",
+        "contractId": "younics.ai.agent.agent.profile",
+        "version": "2.0.0",
+        "descriptorSha256": "a75ba54019d0c44ec0e43c91083abae4f686b5d45c40422b56264d22a5feb4f3",
+        "abiSha256": "f9216a28d9b9710e9296b5c35c2ef3013211b8bc83d81f1aab15859fbefdce66",
+        "methods": {
+          "agent-profile": [
+            "create-profile",
+            "delete-profile",
+            "get-chat-provider-readiness",
+            "get-embedding-provider-readiness",
+            "get-profile",
+            "has-profile-capability-consumers",
+            "list-behavior-loop-descriptors",
+            "list-chat-models",
+            "list-chat-provider-descriptors",
+            "list-embedding-models",
+            "list-embedding-provider-descriptors",
+            "list-installed-local-tools",
+            "list-profiles",
+            "list-selectable-profile-capabilities",
+            "save-profile"
+          ]
+        }
+      },
+      {
+        "packageId": "younics.ai.agent.execution.docker",
+        "sourceDirectory": "src/Sunder.Package.Agent.Execution.Docker",
+        "contractId": "younics.ai.agent.execution.docker.presentation",
+        "version": "2.0.0",
+        "descriptorSha256": "c5c77241a37574167c4dbea84bad212db0c79069e4231b010c412aad46250ff5",
+        "abiSha256": "5278b4d3097050adf949285774de8c6511330e7d1405b681726d7ea5912ccceb",
+        "methods": {
+          "presentation": [
+            "add-image",
+            "delete-image",
+            "get-settings",
+            "pull-image",
+            "refresh-image",
+            "refresh-images",
+            "save-settings",
+            "test-docker"
+          ]
+        }
+      },
+      {
+        "packageId": "younics.ai.agent.execution.local",
+        "sourceDirectory": "src/Sunder.Package.Agent.Execution.Local",
+        "contractId": "younics.ai.agent.execution.local.presentation",
+        "version": "2.0.0",
+        "descriptorSha256": "d453f19158b89e90960570da82814f1aaf8306493a95c5de82ab11ab761b07c0",
+        "abiSha256": "66f1a7dab9761accbf262de8cf187d91f06c2594b4db80e3a6116a6439889b88",
+        "methods": {
+          "presentation": [
+            "get-settings",
+            "save-settings",
+            "save-shells"
+          ]
+        }
+      },
+      {
+        "packageId": "younics.ai.agent.mcp",
+        "sourceDirectory": "src/Sunder.Package.Agent.Mcp",
+        "contractId": "younics.ai.agent.mcp.management",
+        "version": "2.0.0",
+        "descriptorSha256": "490384ad4a383bda778c94d29dfc9c099e16a2dafeed8a7dbfaf93a83385418f",
+        "abiSha256": "02ce08426afb3efeaa276f7be401248897b75d687222bbe56078f2da0d6fc3b9",
+        "methods": {
+          "management": [
+            "catalog",
+            "changes",
+            "clear-authorization",
+            "delete",
+            "disconnect",
+            "discover",
+            "document",
+            "import-common",
+            "import-document",
+            "initialize",
+            "presentation",
+            "save"
+          ]
+        }
+      },
+      {
+        "packageId": "younics.ai.agent.memory.semantic",
+        "sourceDirectory": "src/Sunder.Package.Agent.Memory.Semantic",
+        "contractId": "younics.ai.agent.memory.semantic.inspector",
+        "version": "2.0.0",
+        "descriptorSha256": "14fe402e62717f18aab6a14809f35ddb0eecca5ee019d913b678a6db78f7453f",
+        "abiSha256": "28d0f359516507c7c81e9356476b7171bd87d0b6da3981ba254b307ef48b7f5e",
+        "methods": {
+          "memory-inspector": [
+            "changes",
+            "contest",
+            "correct",
+            "details",
+            "forget",
+            "index-status",
+            "memories",
+            "metrics",
+            "pin",
+            "reindex",
+            "semantic-state",
+            "session-checkpoint",
+            "sessions",
+            "supersede",
+            "update",
+            "worker-status",
+            "working-summary"
+          ]
+        }
+      },
+      {
+        "packageId": "younics.ai.agent",
+        "sourceDirectory": "src/Sunder.Package.Agent",
+        "contractId": "younics.ai.agent.owner.runtime",
+        "version": "2.0.0",
+        "descriptorSha256": "b36cd30665131efda85ccb67cc7a9564cd027caad2997fe8c19b82d884275db6",
+        "abiSha256": "3dda74a9670ca5b2a34563748d875da03e73ccba6250684598ad139467a45e72",
+        "methods": {
+          "agent-runtime": [
+            "attachment-discard",
+            "attachment-download",
+            "attachment-upload",
+            "catalog",
+            "changes",
+            "chat-snapshot",
+            "dashboard",
+            "history-command",
+            "history-search",
+            "history-state",
+            "history-status",
+            "permission-command",
+            "profile-command",
+            "run-command",
+            "run-status",
+            "session-command",
+            "tool-presentation",
+            "transcript-around",
+            "transcript-page",
+            "transcript-tool-detail",
+            "transport-profile",
+            "workspace-command"
+          ]
+        }
+      },
+      {
+        "packageId": "younics.ai.agent.provider.anthropic",
+        "sourceDirectory": "src/Sunder.Package.Agent.Provider.Anthropic",
+        "contractId": "younics.ai.agent.provider.anthropic.credentials",
+        "version": "2.0.0",
+        "descriptorSha256": "e12e279d54644c69e6674bffe5755b56df121d31fc56c9da236b30d9d204a71d",
+        "abiSha256": "23b46f47d79710e23f2b79bc773aff6148442e570f15c9d66d7eb2066cff9b4e",
+        "methods": {
+          "credential-settings": [
+            "clear",
+            "get-status",
+            "set"
+          ]
+        }
+      },
+      {
+        "packageId": "younics.ai.agent.provider.gemini",
+        "sourceDirectory": "src/Sunder.Package.Agent.Provider.Gemini",
+        "contractId": "younics.ai.agent.provider.gemini.credentials",
+        "version": "2.0.0",
+        "descriptorSha256": "4cc1164a3267122198c1b8fa380df6b1f190111e3b6a3563c69823297b08391f",
+        "abiSha256": "304dbdd0ef96b25c9f94a30734598c7a8ffdcd4b25909cf9d4af22ab72d3753b",
+        "methods": {
+          "credential-settings": [
+            "clear",
+            "get-status",
+            "set"
+          ]
+        }
+      },
+      {
+        "packageId": "younics.ai.agent.provider.lmstudio",
+        "sourceDirectory": "src/Sunder.Package.Agent.Provider.LMStudio",
+        "contractId": "younics.ai.agent.provider.lmstudio.credentials",
+        "version": "2.0.0",
+        "descriptorSha256": "f2cae5ee8b9db7085020b3b86cc9856f4ae6c218bdb07ebabbe07a41a3cc9615",
+        "abiSha256": "fbd30d690148d7211ffc22254d8064458ce12a8814615f7636b98245f0e559d9",
+        "methods": {
+          "credential-settings": [
+            "clear",
+            "get-status",
+            "set"
+          ]
+        }
+      },
+      {
+        "packageId": "younics.ai.agent.provider.openai",
+        "sourceDirectory": "src/Sunder.Package.Agent.Provider.OpenAI",
+        "contractId": "younics.ai.agent.provider.openai.management",
+        "version": "2.0.0",
+        "descriptorSha256": "bc1fa118c7435e053b2e3e1391ad7debd8d6cfa721b2594bbd7f0c6d1f296b3b",
+        "abiSha256": "ca029b409b2a8e670640c3a0f0e2bf4d565c276fb8c47ba14e327c1d1cd23568",
+        "methods": {
+          "management": [
+            "clear-credential",
+            "disconnect-auth",
+            "get-auth-status",
+            "get-credential-status",
+            "set-credential"
+          ]
+        }
+      },
+      {
+        "packageId": "younics.ai.agent.skills",
+        "sourceDirectory": "src/Sunder.Package.Agent.Skills",
+        "contractId": "younics.ai.agent.skills.owner",
+        "version": "2.0.0",
+        "descriptorSha256": "9bd37560bc87f2627a3c5574c981be2a6d543a2b84362b46a778772db926c82c",
+        "abiSha256": "4849882a463c1a5138164291924011a8349a9b7b907952cf5d3e464c01c1f709",
+        "methods": {
+          "skills-management": [
+            "changes",
+            "delete",
+            "import-common",
+            "import-git-hub",
+            "import-transfer",
+            "query"
+          ]
+        }
+      },
+      {
+        "packageId": "younics.ai.agent.subagents",
+        "sourceDirectory": "src/Sunder.Package.Agent.Subagents",
+        "contractId": "younics.ai.agent.subagents.owner",
+        "version": "2.0.0",
+        "descriptorSha256": "2bb00bb9ab59b25b4337bf5d78cedda0ccc0a2a9646854e1ba11933b2d25c44a",
+        "abiSha256": "a910da392329ce87e893ec80424ac2cf5c54e8307256785be985c30f21d4f3da",
+        "methods": {
+          "subagents-management": [
+            "around-turn",
+            "changes",
+            "create",
+            "delete",
+            "management",
+            "provider-models",
+            "recent-turns",
+            "runtime-catalog",
+            "save",
+            "tool-detail",
+            "turns-after",
+            "turns-before"
+          ]
+        }
+      },
+      {
+        "packageId": "younics.sunder.package.maker",
+        "sourceDirectory": "src/Sunder.Package.Agent.Builder",
+        "contractId": "younics.sunder.package.maker.runtime",
+        "version": "2.0.0",
+        "descriptorSha256": "bbb17f2709b1ae6d6fe8dcab61c3d9e9b655d775088c557b21e3e6f2f221b770",
+        "abiSha256": "9305c7de7835065140dc79e511548cccb040a66c16241d8f83b42122c2a5c744",
+        "methods": {
+          "builder-runtime": [
+            "add-path-entry",
+            "execute-process",
+            "execute-shell",
+            "list-workspaces",
+            "map-to-host-path",
+            "resolve-workspace"
+          ]
+        }
+      }
+    ]
+  },
+  "validationInputs": {
+    "artifacts/identity-migration/v1-20261014-local-01/archives/younics.ai.agent.2.0.0.sunderpkg": {
+      "sha256": "bfc3259bda5445f0358a27b89c1d6ec9da1d4ed83211613a9ddc993883d97b62",
+      "bytes": 8192387
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/archives/younics.ai.agent.execution.docker.2.0.0.sunderpkg": {
+      "sha256": "90cedda39dc694054371d548568542121c6bc9a051f28d12ed891281f1848963",
+      "bytes": 1598173
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/archives/younics.ai.agent.execution.local.2.0.0.sunderpkg": {
+      "sha256": "246ed4df7fb275002356689b6bc1d3fd9dd3e8e928fbfdef273e94cb38c9bfb1",
+      "bytes": 1384142
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/archives/younics.ai.agent.mcp.2.0.0.sunderpkg": {
+      "sha256": "eb17e3628fe81725c51dd637ca0945d50514015745c57dab59205bb425d91ad9",
+      "bytes": 5205303
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/archives/younics.ai.agent.memory.semantic.2.0.0.sunderpkg": {
+      "sha256": "22cb9548ff2686ad0635ddff095cbf34b91c38c9c69e86508dae139808e10e4c",
+      "bytes": 4985124
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/archives/younics.ai.agent.provider.anthropic.2.0.0.sunderpkg": {
+      "sha256": "af9726b03ba96cc7030f854188e78f0055a50c78849b6464207db50beda70ac4",
+      "bytes": 2661723
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/archives/younics.ai.agent.provider.gemini.2.0.0.sunderpkg": {
+      "sha256": "81a4d4af8e2de20e3545e57603755e6f17f3ca9a96425a7aaa9b655d038f2b5f",
+      "bytes": 2313603
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/archives/younics.ai.agent.provider.lmstudio.2.0.0.sunderpkg": {
+      "sha256": "de1ccdb7d75c4af164f17cdf0dee9156a01783eef6e5b30d843391162910ecf4",
+      "bytes": 2761778
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/archives/younics.ai.agent.provider.openai.2.0.0.sunderpkg": {
+      "sha256": "90c0ff146ccbba55baf75661d4d67e36b8802cb35675242672e527ced3dc3fbe",
+      "bytes": 2978650
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/archives/younics.ai.agent.skills.2.0.0.sunderpkg": {
+      "sha256": "dbf06982f840d302e199f437c177244b15dfaa1253cd61212b334e10a80a911b",
+      "bytes": 3276322
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/archives/younics.ai.agent.subagents.2.0.0.sunderpkg": {
+      "sha256": "15aaa5799788230bcb7c5ebd7b0fab432a225a1808ba8cf4d9c1fa4d984c4f5c",
+      "bytes": 5013587
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/archives/younics.ai.agent.tools.files.2.0.0.sunderpkg": {
+      "sha256": "71acef11fbca27272c9b802b34a541ccb45538b64f013a333c4e8d32a0b8844d",
+      "bytes": 1818886
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/archives/younics.ai.agent.tools.shell.2.0.0.sunderpkg": {
+      "sha256": "e9dbb056b427cabbb59606a789d48a90ec0965165e43f805f10d97e81cf6d2ef",
+      "bytes": 1739663
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/archives/younics.ai.agent.tools.web.2.0.0.sunderpkg": {
+      "sha256": "b1661f5cf943e654ed4bf81326fc3d610f78777701d5d0927b792153936bacbe",
+      "bytes": 1045977
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/archives/younics.sunder.package.maker.2.0.0.sunderpkg": {
+      "sha256": "991dd30764b24facdc3867b8a05670a210e62b7cb0211142bb0f6cb955224a92",
+      "bytes": 2997862
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-builder/role-inputs.v1.json": {
+      "sha256": "728b4e82337ecae3453c6d9d4be0a48dd6cda40fc87f461cc51bd2fe2dfa0c7c",
+      "bytes": 906950
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-builder/sunder-contracts.lock.json": {
+      "sha256": "19bdb1e917ab64a180a5bc88c235163d88f39fbbad069de4d65ffb853e1ca7c1",
+      "bytes": 14950
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-builder/sunder-contracts.owned.json": {
+      "sha256": "74adee923d94322d83a8909c0a3f3e0692a7c35765bdc4fea487b743ac724311",
+      "bytes": 170
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-builder/sunder-dev.imports.v1.json": {
+      "sha256": "dabc4e51440daa6cb425a15b5e1f29492b0100abba7ed320e977cb9ff0516eca",
+      "bytes": 28464
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-builder/sunder-identity-fork.receipt.json": {
+      "sha256": "51f32fe31aea7024b354286e9ea78a0fd729ef213492777f49f358b8d7cb944d",
+      "bytes": 885
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-execution-docker/role-inputs.v1.json": {
+      "sha256": "c639f7d08d30ebb5374e8d159244b3213ec83411c0be0a4c70226188b963cea9",
+      "bytes": 471582
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-execution-docker/sunder-contracts.lock.json": {
+      "sha256": "c465ece14baf3a703d326e010a8d127a7ea1f37047f1575796e7c69e435ce46a",
+      "bytes": 15838
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-execution-docker/sunder-contracts.owned.json": {
+      "sha256": "f293ab6afa04db3a707da0b79efbacb3e5100132116a6e856bd1eddcff4dd171",
+      "bytes": 180
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-execution-docker/sunder-dev.imports.v1.json": {
+      "sha256": "6f21cd1c65254276db4a56671c1d7ba8cc21ff6698d2ed9aad1995152daf1a84",
+      "bytes": 28469
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-execution-docker/sunder-identity-fork.receipt.json": {
+      "sha256": "e673b0ccc5e95baac9846a8736302437a4eab0215030a865f24f6ba3167a83da",
+      "bytes": 899
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-execution-local/role-inputs.v1.json": {
+      "sha256": "c74a0107879f5178aaa9b77fcb2b99b3449958ba23bb254408ef2bda039bc8ce",
+      "bytes": 433168
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-execution-local/sunder-contracts.lock.json": {
+      "sha256": "e39a55780d27f34e5debd3b1261a35b78983f3d55066940ade1f404b41bece71",
+      "bytes": 15108
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-execution-local/sunder-contracts.owned.json": {
+      "sha256": "d599e54be9ed1c8addeee3b1659ef7a3d0164722f08a51fa34d6231fa469d3da",
+      "bytes": 178
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-execution-local/sunder-dev.imports.v1.json": {
+      "sha256": "7288cadfb59a82303da69083d5b4d15bf4975008bb01d0f0db25024e251be01a",
+      "bytes": 28468
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-execution-local/sunder-identity-fork.receipt.json": {
+      "sha256": "ff840b3971c8204b281aea13da0f69e94c5ecf1770e88da625210052744660f1",
+      "bytes": 897
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-mcp/role-inputs.v1.json": {
+      "sha256": "e7e0d0e4958af6c800e53f63bd3d46558dc5aeba72ab2659a88a7c40c490dc79",
+      "bytes": 973735
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-mcp/sunder-contracts.lock.json": {
+      "sha256": "6199a2afb4571a5f5f5824b9df969922b9fe6eb337ce6370ee1d03bda85af936",
+      "bytes": 16140
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-mcp/sunder-contracts.owned.json": {
+      "sha256": "24a7f411b9fa36e3819ce9a3d90bfea91b9163129c14a1d25911594629914d11",
+      "bytes": 154
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-mcp/sunder-dev.imports.v1.json": {
+      "sha256": "062e56e945e622e7f726ac137ffcc28a7620cb92ae6642968ad845e4e5beab42",
+      "bytes": 28456
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-mcp/sunder-identity-fork.receipt.json": {
+      "sha256": "4cd08146a7e4574f6015e542b1df403df195c7a0e011fae96019e166cb632ba5",
+      "bytes": 873
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-memory-semantic/role-inputs.v1.json": {
+      "sha256": "805825884f552ac207a4ae0abcdf1740be4921fbc5f012fd51e7d442535c59fe",
+      "bytes": 962564
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-memory-semantic/sunder-contracts.lock.json": {
+      "sha256": "b3151dd843f2c8e860a76e68a83ba13123b68de79755073cca38bbd44b687d06",
+      "bytes": 15479
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-memory-semantic/sunder-contracts.owned.json": {
+      "sha256": "57c2233895edb3338dc148f4bf0fc2853f0244c26861e59b4f1ba7680435af62",
+      "bytes": 178
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-memory-semantic/sunder-dev.imports.v1.json": {
+      "sha256": "d934026afcf3d19ec520ef115a05ce048c0e92f879e83b752a6197306775d74b",
+      "bytes": 28468
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-memory-semantic/sunder-identity-fork.receipt.json": {
+      "sha256": "0a62dbef076d88ef1e4c004e9bd40820e49e87758e79a686d202b02c7b35166d",
+      "bytes": 897
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-provider-anthropic/role-inputs.v1.json": {
+      "sha256": "e6f23160161e0523bcedac09237701c135ee2d9c2b8608955fc21351558f90a9",
+      "bytes": 339421
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-provider-anthropic/sunder-contracts.lock.json": {
+      "sha256": "886e138781c15e0cbd223a0258ef8c94dbccc39c2da688622ad911d379362d04",
+      "bytes": 14827
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-provider-anthropic/sunder-contracts.owned.json": {
+      "sha256": "f5470d9867027376c1eaa6e9e67fb2019b5fcce4296d4c4efe63065ef1273c9a",
+      "bytes": 184
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-provider-anthropic/sunder-dev.imports.v1.json": {
+      "sha256": "712aa97bd4012e446ab0594fa8718b1b051c47c0b0a496a94ed9a80d9071f6b5",
+      "bytes": 28471
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-provider-anthropic/sunder-identity-fork.receipt.json": {
+      "sha256": "819f782b62a521e074f1e3eb35724d82ecd39ef01de2ca40fcb38f479bd9558f",
+      "bytes": 903
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-provider-gemini/role-inputs.v1.json": {
+      "sha256": "04cfc6fcac8b17dff8a1d983d695b511f8e1e07c14270331a70b72472cae48bc",
+      "bytes": 360749
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-provider-gemini/sunder-contracts.lock.json": {
+      "sha256": "56acce7a248d603a490fc25df8573c2f5000173eafdc8d0a99c3fe4fd48b6c59",
+      "bytes": 14950
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-provider-gemini/sunder-contracts.owned.json": {
+      "sha256": "6066531734666821d5d9a4f435f375094a9c17201bbaa64cdd0b8642edca98af",
+      "bytes": 178
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-provider-gemini/sunder-dev.imports.v1.json": {
+      "sha256": "0466b44dd1bb073a5129d000ca3a02f2432bcaceadd4e2ed982de4bbebd16430",
+      "bytes": 28468
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-provider-gemini/sunder-identity-fork.receipt.json": {
+      "sha256": "46b5e66ea858655eee5d2b560271cbda1aa589ed377a16b59aa966756cc7b3fc",
+      "bytes": 897
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-provider-lmstudio/role-inputs.v1.json": {
+      "sha256": "ec943d111ba731b203875a2fbf730fcc2628eb63c641395ddde1c1535537d0e3",
+      "bytes": 361593
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-provider-lmstudio/sunder-contracts.lock.json": {
+      "sha256": "56acce7a248d603a490fc25df8573c2f5000173eafdc8d0a99c3fe4fd48b6c59",
+      "bytes": 14950
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-provider-lmstudio/sunder-contracts.owned.json": {
+      "sha256": "5876349a3c7d99fb3cb015c519f19199093a15f789c9865ccc5f20e8b67afcbf",
+      "bytes": 182
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-provider-lmstudio/sunder-dev.imports.v1.json": {
+      "sha256": "217e7fc13066d0d999059aa7088336f8d759be8d65c9a44dfbcef5f479c59226",
+      "bytes": 28470
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-provider-lmstudio/sunder-identity-fork.receipt.json": {
+      "sha256": "5694814ee21990edd0ecd1af5d54a7faa110c45bd80294beb8b6f1de90245acb",
+      "bytes": 901
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-provider-openai/role-inputs.v1.json": {
+      "sha256": "4bb51dfb80367a378219d37cb1e1aeaf4d9d21a17669ebd27c4449a4958ed8b4",
+      "bytes": 384551
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-provider-openai/sunder-contracts.lock.json": {
+      "sha256": "ee9c5a53492544847b540161262f7e8b199fa53fc00119e6b431b2220caf36c5",
+      "bytes": 15075
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-provider-openai/sunder-contracts.owned.json": {
+      "sha256": "d986351efa6e0c3f84b720c5cdc2b9a9991325c5bfc2b58d0fd3aff726a0acbf",
+      "bytes": 178
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-provider-openai/sunder-dev.imports.v1.json": {
+      "sha256": "546819663f7237c24d9ee8b2216375065c229205099ddce79458a57ca6010c6c",
+      "bytes": 28468
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-provider-openai/sunder-identity-fork.receipt.json": {
+      "sha256": "01b7e8bc3c270c9cbafdde9d72ab62d69323f6972df7ea55c61eab41d5b6b36c",
+      "bytes": 897
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-skills/role-inputs.v1.json": {
+      "sha256": "a750a944911e0d1d251c146a0038fe3afd751d6f9a37f602ac7901e0fac1d122",
+      "bytes": 937523
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-skills/sunder-contracts.lock.json": {
+      "sha256": "79279840ae88cca8f2638d5bf42939c22c1e088a0e73679f286a9c6e0066c238",
+      "bytes": 16064
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-skills/sunder-contracts.owned.json": {
+      "sha256": "df340086d0b4629d879f83774838ce87cfc59a8087154309852cf510805117af",
+      "bytes": 160
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-skills/sunder-dev.imports.v1.json": {
+      "sha256": "6a15b9ecf63a384aa9dcc2bf076da4dc316bc0b426fdfa9204f319eb9a4ed7e8",
+      "bytes": 28459
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-skills/sunder-identity-fork.receipt.json": {
+      "sha256": "205cb398649767231fc088d68ddde195d100b968335cc274378df41d7919b5f0",
+      "bytes": 879
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-subagents/role-inputs.v1.json": {
+      "sha256": "d8d9a2a928043a02bd8309c614e5885ca83e705bda3a8914326fdf63682a8f4c",
+      "bytes": 1012288
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-subagents/sunder-contracts.lock.json": {
+      "sha256": "426c7b6b657c6ee94e50a1afa2533980a5dc0344a3604a176dee4a4fb87d41c0",
+      "bytes": 16314
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-subagents/sunder-contracts.owned.json": {
+      "sha256": "40791480e2ae263551bf87766794d017fda35070d18a67d7037c5ad82ef52502",
+      "bytes": 166
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-subagents/sunder-dev.imports.v1.json": {
+      "sha256": "ba416c4c74c107f072a76177b2f97f8673c325529c47abec6f97c27e1930a7c4",
+      "bytes": 28462
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-subagents/sunder-identity-fork.receipt.json": {
+      "sha256": "086d946f80d0851ee8da85bcfad2cd98b3f8ae94121d7dfba2c32b1b2b03b5e4",
+      "bytes": 885
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-tools-files/role-inputs.v1.json": {
+      "sha256": "ef7883c900b91bf2fea6427d52284bd59f9c60d4b3cf889cc7c116e3b9bcf6e1",
+      "bytes": 800482
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-tools-files/sunder-contracts.lock.json": {
+      "sha256": "2dbe27a6ec1e8a7ff2f4040d35f9940c1093a6d8297bfeedd1ca9b2db8287f78",
+      "bytes": 15386
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-tools-files/sunder-contracts.owned.json": {
+      "sha256": "0f1249337e7b0af2a2fa9a0d722fc57d78e8da8e00a10b18637f25368944a33c",
+      "bytes": 170
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-tools-files/sunder-dev.imports.v1.json": {
+      "sha256": "a7580dd8299fec77ba93da2bc127f632d145e04e7273eab9bc9b2293cef89ac0",
+      "bytes": 28464
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-tools-files/sunder-identity-fork.receipt.json": {
+      "sha256": "10937f604462d3ade59c3d10227150d4bd77c945356f00e6c2645494f0c658d7",
+      "bytes": 889
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-tools-shell/role-inputs.v1.json": {
+      "sha256": "e69e4b79617acb129e8379051b38891b5cf79b9e8ab1a531ca745eff6dc8ed72",
+      "bytes": 789261
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-tools-shell/sunder-contracts.lock.json": {
+      "sha256": "ed7b3595cb7bf6e772a5531e990afbb527201fbbb64252442a74b692835eaf33",
+      "bytes": 15261
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-tools-shell/sunder-contracts.owned.json": {
+      "sha256": "fb6f0de6d45ce36975b79fc2fe70006c12236269104bebb31f6482374fa06d84",
+      "bytes": 170
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-tools-shell/sunder-dev.imports.v1.json": {
+      "sha256": "af937d03b8b25a49ade3d065812ba96b97dbffa7317d3bf0f73f50b359b61f07",
+      "bytes": 28464
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-tools-shell/sunder-identity-fork.receipt.json": {
+      "sha256": "fd69887233fd23852b8235d1c72bf566119ff6e9eee29dc9c88a2d265ade7216",
+      "bytes": 889
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-tools-web/role-inputs.v1.json": {
+      "sha256": "e811afc37a91cdb2e456fbe2d6ae6d2a4f5beab7587ffb6409c59c6e781fde8c",
+      "bytes": 351204
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-tools-web/sunder-contracts.lock.json": {
+      "sha256": "bbd60447f40a7df7b950c032b0bb335adc8bf8acf2110ea28f2e6f16b19a6555",
+      "bytes": 14826
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-tools-web/sunder-contracts.owned.json": {
+      "sha256": "57a31e093451260e47d39fed18d7b717234aa12719ddb5f1b929010a85dc08c2",
+      "bytes": 166
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-tools-web/sunder-dev.imports.v1.json": {
+      "sha256": "e0ab012883cf7fe9368f60a5ee35200aa0c676fe5ef1ba8841008c74d208edf0",
+      "bytes": 28462
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent-tools-web/sunder-identity-fork.receipt.json": {
+      "sha256": "2f24b850df1cdb1bc75f5c3afa7da4e6e1342c5e8be260c52c1b6f00e1ca6881",
+      "bytes": 885
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent/role-inputs.v1.json": {
+      "sha256": "51744fa61d5f5b5533955ed55eefe1c95627c833998208c38760e8088333578c",
+      "bytes": 1936373
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent/sunder-contracts.lock.json": {
+      "sha256": "b6f8840f897ef952d3780312bf953fb02109b26f4c0c76650863ef85f31c3478",
+      "bytes": 853
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent/sunder-contracts.owned.json": {
+      "sha256": "7858dca0222374dc370331e7f0686a959715b0cce36a2403c220c4bb417d0068",
+      "bytes": 524364
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent/sunder-dev.imports.v1.json": {
+      "sha256": "2ae61bc46595cd806bb0fac68020976729b76bb29991f9325c96865aae340182",
+      "bytes": 18248
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/final/agent/sunder-identity-fork.receipt.json": {
+      "sha256": "4a439a7f91dbf00924fb23866b48f410bd8df4977f614a8ffa5a5743119aa97b",
+      "bytes": 865
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/handoff.json": {
+      "sha256": "3c6a4ae18a2d010093e15b3a9b17d9cdeca434b80cba8bd4079b6f694934f0ca",
+      "bytes": 123915
+    },
+    "artifacts/identity-migration/v1-20261014-local-01/validation.json": {
+      "sha256": "b026604312cb0b215f8bc9f8ab94a97743c9b3d2c3515f947a944c8b70489594",
+      "bytes": 55953
+    },
+    "packages.json": {
+      "sha256": "d7a101f6258a90dd24964c5a627ac6ccb2a2842ef1ff2a95fa0bc511c4c708b8",
+      "bytes": 12675
+    },
+    "src/Sunder.Package.Agent.Builder/bin/Debug/net10.0/sunder-targets/osx-arm64/role-inputs.v1.json": {
+      "sha256": "728b4e82337ecae3453c6d9d4be0a48dd6cda40fc87f461cc51bd2fe2dfa0c7c",
+      "bytes": 906950
+    },
+    "src/Sunder.Package.Agent.Builder/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json": {
+      "sha256": "12536b093052a32f689e9d7e9db91dd95775fba3e7f784b974144dc86a422397",
+      "bytes": 316660
+    },
+    "src/Sunder.Package.Agent.Builder/sunder-contracts.lock.json": {
+      "sha256": "19bdb1e917ab64a180a5bc88c235163d88f39fbbad069de4d65ffb853e1ca7c1",
+      "bytes": 14950
+    },
+    "src/Sunder.Package.Agent.Builder/sunder-contracts.owned.json": {
+      "sha256": "74adee923d94322d83a8909c0a3f3e0692a7c35765bdc4fea487b743ac724311",
+      "bytes": 170
+    },
+    "src/Sunder.Package.Agent.Builder/sunder-identity-fork.receipt.json": {
+      "sha256": "51f32fe31aea7024b354286e9ea78a0fd729ef213492777f49f358b8d7cb944d",
+      "bytes": 885
+    },
+    "src/Sunder.Package.Agent.Execution.Docker/bin/Debug/net10.0/sunder-targets/osx-arm64/role-inputs.v1.json": {
+      "sha256": "c639f7d08d30ebb5374e8d159244b3213ec83411c0be0a4c70226188b963cea9",
+      "bytes": 471582
+    },
+    "src/Sunder.Package.Agent.Execution.Docker/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json": {
+      "sha256": "6a905ac3052e846d2122ca32f3f78fb43079f9ca85089a1dcaab11077b266d3f",
+      "bytes": 86492
+    },
+    "src/Sunder.Package.Agent.Execution.Docker/sunder-contracts.lock.json": {
+      "sha256": "c465ece14baf3a703d326e010a8d127a7ea1f37047f1575796e7c69e435ce46a",
+      "bytes": 15838
+    },
+    "src/Sunder.Package.Agent.Execution.Docker/sunder-contracts.owned.json": {
+      "sha256": "f293ab6afa04db3a707da0b79efbacb3e5100132116a6e856bd1eddcff4dd171",
+      "bytes": 180
+    },
+    "src/Sunder.Package.Agent.Execution.Docker/sunder-identity-fork.receipt.json": {
+      "sha256": "e673b0ccc5e95baac9846a8736302437a4eab0215030a865f24f6ba3167a83da",
+      "bytes": 899
+    },
+    "src/Sunder.Package.Agent.Execution.Local/bin/Debug/net10.0/sunder-targets/osx-arm64/role-inputs.v1.json": {
+      "sha256": "c74a0107879f5178aaa9b77fcb2b99b3449958ba23bb254408ef2bda039bc8ce",
+      "bytes": 433168
+    },
+    "src/Sunder.Package.Agent.Execution.Local/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json": {
+      "sha256": "662c1f3c50942787380212efb7b0e73d0a8b3ac028b39d27756d6476f595dd83",
+      "bytes": 69599
+    },
+    "src/Sunder.Package.Agent.Execution.Local/sunder-contracts.lock.json": {
+      "sha256": "e39a55780d27f34e5debd3b1261a35b78983f3d55066940ade1f404b41bece71",
+      "bytes": 15108
+    },
+    "src/Sunder.Package.Agent.Execution.Local/sunder-contracts.owned.json": {
+      "sha256": "d599e54be9ed1c8addeee3b1659ef7a3d0164722f08a51fa34d6231fa469d3da",
+      "bytes": 178
+    },
+    "src/Sunder.Package.Agent.Execution.Local/sunder-identity-fork.receipt.json": {
+      "sha256": "ff840b3971c8204b281aea13da0f69e94c5ecf1770e88da625210052744660f1",
+      "bytes": 897
+    },
+    "src/Sunder.Package.Agent.Mcp/bin/Debug/net10.0/sunder-targets/osx-arm64/role-inputs.v1.json": {
+      "sha256": "e7e0d0e4958af6c800e53f63bd3d46558dc5aeba72ab2659a88a7c40c490dc79",
+      "bytes": 973735
+    },
+    "src/Sunder.Package.Agent.Mcp/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json": {
+      "sha256": "8c0e9ee353b0fbfc6483b0b1ff2f09524d87f29d2c0fcace52a4681d944af35b",
+      "bytes": 333142
+    },
+    "src/Sunder.Package.Agent.Mcp/sunder-contracts.lock.json": {
+      "sha256": "6199a2afb4571a5f5f5824b9df969922b9fe6eb337ce6370ee1d03bda85af936",
+      "bytes": 16140
+    },
+    "src/Sunder.Package.Agent.Mcp/sunder-contracts.owned.json": {
+      "sha256": "24a7f411b9fa36e3819ce9a3d90bfea91b9163129c14a1d25911594629914d11",
+      "bytes": 154
+    },
+    "src/Sunder.Package.Agent.Mcp/sunder-identity-fork.receipt.json": {
+      "sha256": "4cd08146a7e4574f6015e542b1df403df195c7a0e011fae96019e166cb632ba5",
+      "bytes": 873
+    },
+    "src/Sunder.Package.Agent.Memory.Semantic/bin/Debug/net10.0/sunder-targets/osx-arm64/role-inputs.v1.json": {
+      "sha256": "805825884f552ac207a4ae0abcdf1740be4921fbc5f012fd51e7d442535c59fe",
+      "bytes": 962564
+    },
+    "src/Sunder.Package.Agent.Memory.Semantic/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json": {
+      "sha256": "c03a86f45a9f1a8870e493974fcae54fc7d25e79ea866b8c527a4537df76b9ac",
+      "bytes": 323013
+    },
+    "src/Sunder.Package.Agent.Memory.Semantic/sunder-contracts.lock.json": {
+      "sha256": "b3151dd843f2c8e860a76e68a83ba13123b68de79755073cca38bbd44b687d06",
+      "bytes": 15479
+    },
+    "src/Sunder.Package.Agent.Memory.Semantic/sunder-contracts.owned.json": {
+      "sha256": "57c2233895edb3338dc148f4bf0fc2853f0244c26861e59b4f1ba7680435af62",
+      "bytes": 178
+    },
+    "src/Sunder.Package.Agent.Memory.Semantic/sunder-identity-fork.receipt.json": {
+      "sha256": "0a62dbef076d88ef1e4c004e9bd40820e49e87758e79a686d202b02c7b35166d",
+      "bytes": 897
+    },
+    "src/Sunder.Package.Agent.Provider.Anthropic/bin/Debug/net10.0/sunder-targets/osx-arm64/role-inputs.v1.json": {
+      "sha256": "e6f23160161e0523bcedac09237701c135ee2d9c2b8608955fc21351558f90a9",
+      "bytes": 339421
+    },
+    "src/Sunder.Package.Agent.Provider.Anthropic/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json": {
+      "sha256": "7e2d5bd3fb60b42210a56c5bba644138b7ea67fddcbdfd60f39823f4b941e2af",
+      "bytes": 34525
+    },
+    "src/Sunder.Package.Agent.Provider.Anthropic/sunder-contracts.lock.json": {
+      "sha256": "886e138781c15e0cbd223a0258ef8c94dbccc39c2da688622ad911d379362d04",
+      "bytes": 14827
+    },
+    "src/Sunder.Package.Agent.Provider.Anthropic/sunder-contracts.owned.json": {
+      "sha256": "f5470d9867027376c1eaa6e9e67fb2019b5fcce4296d4c4efe63065ef1273c9a",
+      "bytes": 184
+    },
+    "src/Sunder.Package.Agent.Provider.Anthropic/sunder-identity-fork.receipt.json": {
+      "sha256": "819f782b62a521e074f1e3eb35724d82ecd39ef01de2ca40fcb38f479bd9558f",
+      "bytes": 903
+    },
+    "src/Sunder.Package.Agent.Provider.Gemini/bin/Debug/net10.0/sunder-targets/osx-arm64/role-inputs.v1.json": {
+      "sha256": "04cfc6fcac8b17dff8a1d983d695b511f8e1e07c14270331a70b72472cae48bc",
+      "bytes": 360749
+    },
+    "src/Sunder.Package.Agent.Provider.Gemini/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json": {
+      "sha256": "c4714cdc7d8790c02f41a833f87e5e0908d89223e7c54b528c61af87196231cb",
+      "bytes": 40902
+    },
+    "src/Sunder.Package.Agent.Provider.Gemini/sunder-contracts.lock.json": {
+      "sha256": "56acce7a248d603a490fc25df8573c2f5000173eafdc8d0a99c3fe4fd48b6c59",
+      "bytes": 14950
+    },
+    "src/Sunder.Package.Agent.Provider.Gemini/sunder-contracts.owned.json": {
+      "sha256": "6066531734666821d5d9a4f435f375094a9c17201bbaa64cdd0b8642edca98af",
+      "bytes": 178
+    },
+    "src/Sunder.Package.Agent.Provider.Gemini/sunder-identity-fork.receipt.json": {
+      "sha256": "46b5e66ea858655eee5d2b560271cbda1aa589ed377a16b59aa966756cc7b3fc",
+      "bytes": 897
+    },
+    "src/Sunder.Package.Agent.Provider.LMStudio/bin/Debug/net10.0/sunder-targets/osx-arm64/role-inputs.v1.json": {
+      "sha256": "ec943d111ba731b203875a2fbf730fcc2628eb63c641395ddde1c1535537d0e3",
+      "bytes": 361593
+    },
+    "src/Sunder.Package.Agent.Provider.LMStudio/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json": {
+      "sha256": "0ed53f10929cef117fac66dbc4fcee75857bf7046b3120c63988d5e48bee4ac9",
+      "bytes": 40924
+    },
+    "src/Sunder.Package.Agent.Provider.LMStudio/sunder-contracts.lock.json": {
+      "sha256": "56acce7a248d603a490fc25df8573c2f5000173eafdc8d0a99c3fe4fd48b6c59",
+      "bytes": 14950
+    },
+    "src/Sunder.Package.Agent.Provider.LMStudio/sunder-contracts.owned.json": {
+      "sha256": "5876349a3c7d99fb3cb015c519f19199093a15f789c9865ccc5f20e8b67afcbf",
+      "bytes": 182
+    },
+    "src/Sunder.Package.Agent.Provider.LMStudio/sunder-identity-fork.receipt.json": {
+      "sha256": "5694814ee21990edd0ecd1af5d54a7faa110c45bd80294beb8b6f1de90245acb",
+      "bytes": 901
+    },
+    "src/Sunder.Package.Agent.Provider.OpenAI/bin/Debug/net10.0/sunder-targets/osx-arm64/role-inputs.v1.json": {
+      "sha256": "4bb51dfb80367a378219d37cb1e1aeaf4d9d21a17669ebd27c4449a4958ed8b4",
+      "bytes": 384551
+    },
+    "src/Sunder.Package.Agent.Provider.OpenAI/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json": {
+      "sha256": "ce2ebea60043a8be5a76337b5d1678c97d85276013f17dadde613b658888bb7b",
+      "bytes": 44737
+    },
+    "src/Sunder.Package.Agent.Provider.OpenAI/sunder-contracts.lock.json": {
+      "sha256": "ee9c5a53492544847b540161262f7e8b199fa53fc00119e6b431b2220caf36c5",
+      "bytes": 15075
+    },
+    "src/Sunder.Package.Agent.Provider.OpenAI/sunder-contracts.owned.json": {
+      "sha256": "d986351efa6e0c3f84b720c5cdc2b9a9991325c5bfc2b58d0fd3aff726a0acbf",
+      "bytes": 178
+    },
+    "src/Sunder.Package.Agent.Provider.OpenAI/sunder-identity-fork.receipt.json": {
+      "sha256": "01b7e8bc3c270c9cbafdde9d72ab62d69323f6972df7ea55c61eab41d5b6b36c",
+      "bytes": 897
+    },
+    "src/Sunder.Package.Agent.Skills/bin/Debug/net10.0/sunder-targets/osx-arm64/role-inputs.v1.json": {
+      "sha256": "a750a944911e0d1d251c146a0038fe3afd751d6f9a37f602ac7901e0fac1d122",
+      "bytes": 937523
+    },
+    "src/Sunder.Package.Agent.Skills/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json": {
+      "sha256": "e057163e6f314ed1619f4378d55c8cb75620f8f129b6d5a784dbda46ac2ef687",
+      "bytes": 329773
+    },
+    "src/Sunder.Package.Agent.Skills/sunder-contracts.lock.json": {
+      "sha256": "79279840ae88cca8f2638d5bf42939c22c1e088a0e73679f286a9c6e0066c238",
+      "bytes": 16064
+    },
+    "src/Sunder.Package.Agent.Skills/sunder-contracts.owned.json": {
+      "sha256": "df340086d0b4629d879f83774838ce87cfc59a8087154309852cf510805117af",
+      "bytes": 160
+    },
+    "src/Sunder.Package.Agent.Skills/sunder-identity-fork.receipt.json": {
+      "sha256": "205cb398649767231fc088d68ddde195d100b968335cc274378df41d7919b5f0",
+      "bytes": 879
+    },
+    "src/Sunder.Package.Agent.Subagents/bin/Debug/net10.0/sunder-targets/osx-arm64/role-inputs.v1.json": {
+      "sha256": "d8d9a2a928043a02bd8309c614e5885ca83e705bda3a8914326fdf63682a8f4c",
+      "bytes": 1012288
+    },
+    "src/Sunder.Package.Agent.Subagents/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json": {
+      "sha256": "8f6b939715cc7c03e5c485462233f016bffc44f2eb0d8c8d57d9c7b316002f25",
+      "bytes": 336498
+    },
+    "src/Sunder.Package.Agent.Subagents/sunder-contracts.lock.json": {
+      "sha256": "426c7b6b657c6ee94e50a1afa2533980a5dc0344a3604a176dee4a4fb87d41c0",
+      "bytes": 16314
+    },
+    "src/Sunder.Package.Agent.Subagents/sunder-contracts.owned.json": {
+      "sha256": "40791480e2ae263551bf87766794d017fda35070d18a67d7037c5ad82ef52502",
+      "bytes": 166
+    },
+    "src/Sunder.Package.Agent.Subagents/sunder-identity-fork.receipt.json": {
+      "sha256": "086d946f80d0851ee8da85bcfad2cd98b3f8ae94121d7dfba2c32b1b2b03b5e4",
+      "bytes": 885
+    },
+    "src/Sunder.Package.Agent.Tools.Files/bin/Debug/net10.0/sunder-targets/osx-arm64/role-inputs.v1.json": {
+      "sha256": "ef7883c900b91bf2fea6427d52284bd59f9c60d4b3cf889cc7c116e3b9bcf6e1",
+      "bytes": 800482
+    },
+    "src/Sunder.Package.Agent.Tools.Files/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json": {
+      "sha256": "983fcf4b987e644f1a5de00af2f405fa6570704ecbe3421e696d4bab3182bae7",
+      "bytes": 311985
+    },
+    "src/Sunder.Package.Agent.Tools.Files/sunder-contracts.lock.json": {
+      "sha256": "2dbe27a6ec1e8a7ff2f4040d35f9940c1093a6d8297bfeedd1ca9b2db8287f78",
+      "bytes": 15386
+    },
+    "src/Sunder.Package.Agent.Tools.Files/sunder-contracts.owned.json": {
+      "sha256": "0f1249337e7b0af2a2fa9a0d722fc57d78e8da8e00a10b18637f25368944a33c",
+      "bytes": 170
+    },
+    "src/Sunder.Package.Agent.Tools.Files/sunder-identity-fork.receipt.json": {
+      "sha256": "10937f604462d3ade59c3d10227150d4bd77c945356f00e6c2645494f0c658d7",
+      "bytes": 889
+    },
+    "src/Sunder.Package.Agent.Tools.Shell/bin/Debug/net10.0/sunder-targets/osx-arm64/role-inputs.v1.json": {
+      "sha256": "e69e4b79617acb129e8379051b38891b5cf79b9e8ab1a531ca745eff6dc8ed72",
+      "bytes": 789261
+    },
+    "src/Sunder.Package.Agent.Tools.Shell/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json": {
+      "sha256": "f8b86e15331073dd0a2e7fcc9dc09f39763e7ef754cc7591013e1d1c2edf9a64",
+      "bytes": 311295
+    },
+    "src/Sunder.Package.Agent.Tools.Shell/sunder-contracts.lock.json": {
+      "sha256": "ed7b3595cb7bf6e772a5531e990afbb527201fbbb64252442a74b692835eaf33",
+      "bytes": 15261
+    },
+    "src/Sunder.Package.Agent.Tools.Shell/sunder-contracts.owned.json": {
+      "sha256": "fb6f0de6d45ce36975b79fc2fe70006c12236269104bebb31f6482374fa06d84",
+      "bytes": 170
+    },
+    "src/Sunder.Package.Agent.Tools.Shell/sunder-identity-fork.receipt.json": {
+      "sha256": "fd69887233fd23852b8235d1c72bf566119ff6e9eee29dc9c88a2d265ade7216",
+      "bytes": 889
+    },
+    "src/Sunder.Package.Agent.Tools.Web/bin/Debug/net10.0/sunder-targets/osx-arm64/role-inputs.v1.json": {
+      "sha256": "e811afc37a91cdb2e456fbe2d6ae6d2a4f5beab7587ffb6409c59c6e781fde8c",
+      "bytes": 351204
+    },
+    "src/Sunder.Package.Agent.Tools.Web/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json": {
+      "sha256": "eaa067af185f045e18b15235ba1bf7bfad085884ee9137dcd8af1220d6249675",
+      "bytes": 73647
+    },
+    "src/Sunder.Package.Agent.Tools.Web/sunder-contracts.lock.json": {
+      "sha256": "bbd60447f40a7df7b950c032b0bb335adc8bf8acf2110ea28f2e6f16b19a6555",
+      "bytes": 14826
+    },
+    "src/Sunder.Package.Agent.Tools.Web/sunder-contracts.owned.json": {
+      "sha256": "57a31e093451260e47d39fed18d7b717234aa12719ddb5f1b929010a85dc08c2",
+      "bytes": 166
+    },
+    "src/Sunder.Package.Agent.Tools.Web/sunder-identity-fork.receipt.json": {
+      "sha256": "2f24b850df1cdb1bc75f5c3afa7da4e6e1342c5e8be260c52c1b6f00e1ca6881",
+      "bytes": 885
+    },
+    "src/Sunder.Package.Agent/bin/Debug/net10.0/sunder-targets/osx-arm64/role-inputs.v1.json": {
+      "sha256": "51744fa61d5f5b5533955ed55eefe1c95627c833998208c38760e8088333578c",
+      "bytes": 1936373
+    },
+    "src/Sunder.Package.Agent/obj/Debug/net10.0/sunder-analysis/osx-arm64/sunder-rpc/authoring-receipt.v1.json": {
+      "sha256": "e0a84910ef57c6ddba44f612dbb08b82e0eee9afc4ae635937e931cb575e2690",
+      "bytes": 401210
+    },
+    "src/Sunder.Package.Agent/sunder-contracts.lock.json": {
+      "sha256": "b6f8840f897ef952d3780312bf953fb02109b26f4c0c76650863ef85f31c3478",
+      "bytes": 853
+    },
+    "src/Sunder.Package.Agent/sunder-contracts.owned.json": {
+      "sha256": "7858dca0222374dc370331e7f0686a959715b0cce36a2403c220c4bb417d0068",
+      "bytes": 524364
+    },
+    "src/Sunder.Package.Agent/sunder-identity-fork.receipt.json": {
+      "sha256": "4a439a7f91dbf00924fb23866b48f410bd8df4977f614a8ffa5a5743119aa97b",
+      "bytes": 865
+    }
+  },
+  "verifiedAtUtc": "2026-10-14T10:35:22.760788+00:00"
+}

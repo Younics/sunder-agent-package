@@ -2,7 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Collections.Concurrent;
 using Sunder.Agent.Execution.Common;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using IExecutionTargetService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Execution_Target.IExecutionTargetService;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
@@ -173,7 +173,7 @@ public sealed partial class DockerExecutionTarget : IExecutionTargetService
     }
 
     public async ValueTask<AgentResolvedResource> ResolveFileAsync(
-        CSunder_Agent_Execution_Target_ExecutionTargetResolveFileRequest request,
+        CYounics_Ai_Agent_Execution_Target_ExecutionTargetResolveFileRequest request,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -238,7 +238,7 @@ public sealed partial class DockerExecutionTarget : IExecutionTargetService
     }
 
     public ValueTask<IReadOnlyList<AgentResolvedExecutionResource>> ResolveResourcesAsync(
-        CSunder_Agent_Execution_Target_ExecutionTargetResolveResourcesRequest request, CancellationToken token = default)
+        CYounics_Ai_Agent_Execution_Target_ExecutionTargetResolveResourcesRequest request, CancellationToken token = default)
     {
         token.ThrowIfCancellationRequested();
         return ValueTask.FromException<IReadOnlyList<AgentResolvedExecutionResource>>(new SunderRpcException(new(SunderRpcErrorKind.Domain,
@@ -246,7 +246,7 @@ public sealed partial class DockerExecutionTarget : IExecutionTargetService
     }
 
     public async ValueTask<AgentShellCommandResult> ExecuteShellAsync(
-        CSunder_Agent_Execution_Target_ExecutionTargetExecuteShellRequest invocation,
+        CYounics_Ai_Agent_Execution_Target_ExecutionTargetExecuteShellRequest invocation,
         CancellationToken cancellationToken = default)
     {
         var (context, request) = (invocation.Context, invocation.Request);
@@ -257,7 +257,7 @@ public sealed partial class DockerExecutionTarget : IExecutionTargetService
     }
 
     public async ValueTask<AgentShellCommandResult> ExecuteProcessAsync(
-        CSunder_Agent_Execution_Target_ExecutionTargetExecuteProcessRequest invocation,
+        CYounics_Ai_Agent_Execution_Target_ExecutionTargetExecuteProcessRequest invocation,
         CancellationToken cancellationToken = default)
     {
         var (context, request) = (invocation.Context, invocation.Request);
@@ -268,7 +268,7 @@ public sealed partial class DockerExecutionTarget : IExecutionTargetService
     }
 
     public async ValueTask<AgentFileSearchResult> StructuredFileSearchAsync(
-        CSunder_Agent_Execution_Target_ExecutionTargetStructuredFileSearchRequest invocation,
+        CYounics_Ai_Agent_Execution_Target_ExecutionTargetStructuredFileSearchRequest invocation,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -304,7 +304,7 @@ public sealed partial class DockerExecutionTarget : IExecutionTargetService
     }
 
     public async ValueTask<AgentExecutionPathMapping> MapPathAsync(
-        CSunder_Agent_Execution_Target_ExecutionTargetMapPathRequest request,
+        CYounics_Ai_Agent_Execution_Target_ExecutionTargetMapPathRequest request,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -325,7 +325,7 @@ public sealed partial class DockerExecutionTarget : IExecutionTargetService
     }
 
     public async ValueTask AddPathAsync(
-        CSunder_Agent_Execution_Target_ExecutionTargetAddPathRequest request,
+        CYounics_Ai_Agent_Execution_Target_ExecutionTargetAddPathRequest request,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -373,7 +373,7 @@ public sealed partial class DockerExecutionTarget : IExecutionTargetService
     }
 
     public async ValueTask<AgentFileReadResult> ReadFileAsync(
-        CSunder_Agent_Execution_Target_ExecutionTargetReadFileRequest invocation,
+        CYounics_Ai_Agent_Execution_Target_ExecutionTargetReadFileRequest invocation,
         CancellationToken cancellationToken = default)
     {
         var (context, request) = (invocation.Context, invocation.Request);
@@ -416,7 +416,7 @@ public sealed partial class DockerExecutionTarget : IExecutionTargetService
     }
 
     public async ValueTask<AgentFileMutationResult> WriteFileAsync(
-        CSunder_Agent_Execution_Target_ExecutionTargetWriteFileRequest invocation,
+        CYounics_Ai_Agent_Execution_Target_ExecutionTargetWriteFileRequest invocation,
         CancellationToken cancellationToken = default)
     {
         var (context, request) = (invocation.Context, invocation.Request);
@@ -467,7 +467,7 @@ public sealed partial class DockerExecutionTarget : IExecutionTargetService
     }
 
     public async ValueTask<AgentFileMutationResult> DeleteFileAsync(
-        CSunder_Agent_Execution_Target_ExecutionTargetDeleteFileRequest invocation,
+        CYounics_Ai_Agent_Execution_Target_ExecutionTargetDeleteFileRequest invocation,
         CancellationToken cancellationToken = default)
     {
         var (context, request) = (invocation.Context, invocation.Request);
@@ -519,7 +519,7 @@ public sealed partial class DockerExecutionTarget : IExecutionTargetService
     }
 
     public async ValueTask<AgentScopedInstructionDiscoveryResult> DiscoverInstructionsAsync(
-        CSunder_Agent_Execution_Target_ExecutionTargetDiscoverInstructionsRequest invocation,
+        CYounics_Ai_Agent_Execution_Target_ExecutionTargetDiscoverInstructionsRequest invocation,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -568,7 +568,7 @@ public sealed partial class DockerExecutionTarget : IExecutionTargetService
                 imageIdentity,
                 daemonIdentity,
                 hostAccessPolicy);
-            var inspect = await RunDockerAsync(["inspect", "-f", "{{.State.Running}} {{ index .Config.Labels \"sunder.resources.signature\" }}", container], cancellationToken);
+            var inspect = await RunDockerAsync(["inspect", "-f", "{{.State.Running}} {{ index .Config.Labels \"younics.ai.agent.execution.docker.resources.signature\" }}", container], cancellationToken);
             var existing = ParseInspectResult(inspect.Output);
             if (inspect.ExitCode == 0 && existing.Running)
             {
@@ -610,7 +610,7 @@ public sealed partial class DockerExecutionTarget : IExecutionTargetService
             }
 
             var root = DockerPathResolver.ResolveDefaultBaseDirectory(config);
-            var args = new List<string> { "run", "--pull", "never", "-d", "--name", container, "--label", $"sunder.resources.signature={signature}", "-w", root };
+            var args = new List<string> { "run", "--pull", "never", "-d", "--name", container, "--label", $"younics.ai.agent.execution.docker.resources.signature={signature}", "-w", root };
             AddSecurityOptions(args);
             AddNonInteractiveEnvironment(args);
             AddOption(args, "--user", hostAccessPolicy.ContainerUser);

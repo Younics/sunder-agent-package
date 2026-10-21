@@ -10,7 +10,7 @@ using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Services;
 using Sunder.Sdk.Worker;
 using Xunit;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -22,7 +22,7 @@ internal static class RegressionTestGeneratedProviders
     [
         "Chat", "ToolSource", "ExecutionTarget", "RuntimeCatalog", "Embedding", "SessionCleaner", "DurableLifecycle",
         "PromptContext", "SystemPrompt", "Permission", "ProfileCapability", "SelectableCapability", "WorkspaceEditor",
-        "WorkspacePath", "BehaviorLoop", "ChildRun", "ObservedTool", "WorkspaceResolver",
+        "BehaviorLoop", "ChildRun", "ObservedTool", "WorkspaceResolver",
     ];
     internal static bool TryRegister(GeneratedServiceTestScope receiver, string contractId, object implementation,
         out SunderWorkerProviderRegistration registration)
@@ -30,7 +30,8 @@ internal static class RegressionTestGeneratedProviders
         object? provider = contractId switch
         {
             RegressionTestBindings.ChatProviders => implementation.GetType().GetInterfaces().Any(type =>
-                    type.FullName == typeof(AgentServices.IChatProviderService).FullName) ? implementation
+                    type.FullName == typeof(AgentServices.IChatProviderService).FullName
+                    || type.FullName == "Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Chat_Provider.IChatProviderService") ? implementation
                 : new RegressionTestChatProvider(AgentRoleBoundary.As<IAgentChatProvider>(implementation), receiver,
                     RegressionTestGeneratedProviderProjection.FromCandidate(ResolveQualifiedCandidate(), contractId)),
             RegressionTestBindings.ToolSources => implementation is RegressionTestToolProvider tool ? tool
@@ -60,8 +61,6 @@ internal static class RegressionTestGeneratedProviders
                 : new RegressionTestSelectableCapabilityProvider(AgentRoleBoundary.As<IAgentProfileSelectableCapabilityProvider>(implementation)),
             RegressionTestBindings.WorkspaceEditors => implementation is RegressionTestWorkspaceEditorProvider editor ? editor
                 : new RegressionTestWorkspaceEditorProvider(AgentRoleBoundary.As<AgentServices.IWorkspaceEditorService>(implementation)),
-            RegressionTestBindings.WorkspacePathMigrators => implementation is RegressionTestWorkspacePathProvider path ? path
-                : new RegressionTestWorkspacePathProvider(AgentRoleBoundary.As<IAgentWorkspacePathMigrationContributor>(implementation)),
             RegressionTestBindings.BehaviorLoops => implementation is RegressionTestBehaviorLoopProvider loop ? loop
                 : new RegressionTestBehaviorLoopProvider(AgentRoleBoundary.As<IAgentBehaviorLoop>(implementation),
                     new RegressionTestBehaviorRunControlCallback()),
@@ -95,7 +94,6 @@ internal static class RegressionTestGeneratedProviders
             RegressionTestBindings.ProfileCapabilityConsumers => "RegressionTestGeneratedProviders.ProfileCapabilityProvider",
             RegressionTestBindings.SelectableCapabilityProviders => "RegressionTestGeneratedProviders.SelectableCapabilityProvider",
             RegressionTestBindings.WorkspaceEditors => "RegressionTestGeneratedProviders.WorkspaceEditorProvider",
-            RegressionTestBindings.WorkspacePathMigrators => "RegressionTestGeneratedProviders.WorkspacePathProvider",
             RegressionTestBindings.BehaviorLoops => "RegressionTestGeneratedProviders.BehaviorLoopProvider",
             RegressionTestBindings.ChildRunExecutor => "RegressionTestGeneratedProviders.ChildRunProvider",
             RegressionTestBindings.ObservedToolExecutions => "RegressionTestGeneratedProviders.ObservedToolProvider",

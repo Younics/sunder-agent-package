@@ -20,7 +20,7 @@ public sealed partial class AgentOwnerSourceMigrationTests
     ];
 
     [AgentPublicSourceMigrationFact]
-    public async Task OwnerSource_PreservesPublicBytesAndArchivedPrivateRecordWithCurrentRoleHandoff()
+    public async Task OwnerSource_MatchesCurrentContractsWithRoleHandoff()
     {
         var repository = RegressionTestRpcDescriptors.RepositoryRoot;
         using var roles = new CanonicalAgentRoles();
@@ -29,28 +29,35 @@ public sealed partial class AgentOwnerSourceMigrationTests
         using var receipt = CanonicalAgentRoles.Receipt();
         var document = JsonNode.Parse(baseline)!;
         var owned = document["contracts"]!.AsObject();
-        var entry = Assert.Single(document["retiredPrivateContracts"]!.AsObject()).Value!;
-        var historical = SunderRpcContractDescriptor.Parse(System.Text.Encoding.UTF8.GetBytes(entry["current"]!["canonicalDescriptor"]!.GetValue<string>()));
-        var descriptor = CurrentPrivateRpcDescriptors.Get("sunder.agent.owner.runtime");
-        var original = RegressionTestRpcDescriptors.Get("sunder.agent.owner.runtime");
-        AgentPublicSourceMigrationTests.AssertFrozenBytes(original.GetCanonicalUtf8(), historical.GetCanonicalUtf8(), "Archived Agent owner descriptor");
-        Assert.Equal(original.GetCanonicalAbiProjectionUtf8(), historical.GetCanonicalAbiProjectionUtf8());
+        var descriptor = CurrentPrivateRpcDescriptors.Get("younics.ai.agent.owner.runtime");
+        CurrentPrivateRpcDescriptors.AssertCurrent(descriptor);
         Assert.Equal("2.0.0", descriptor.Version);
         var provider = Assert.Single(receipt.RootElement.GetProperty("providers").EnumerateArray(), provider => provider.GetProperty("providerId").GetString() == "agent.owner.runtime");
         Assert.Equal("owner", provider.GetProperty("audience").GetString());
         VerifyOwnedContractsTogether(repository, owned, receipt.RootElement, descriptor);
         VerifyAppReceipt(repository);
+        TraceOwnerPhase("behavior:start");
         await VerifyBehavior(roles.Worker, roles.App, descriptor);
+        TraceOwnerPhase("behavior:complete");
         await VerifyStackBehavior(roles.Worker);
+        TraceOwnerPhase("stack:complete");
         await VerifyDeferredComposition(roles.Worker, failActivation: false);
+        TraceOwnerPhase("activation:complete");
         await VerifyDeferredComposition(roles.Worker, failActivation: true);
+        TraceOwnerPhase("failed-activation:complete");
         await VerifyStackEvidence(CanonicalAgentRoles.SourceRoot, receipt.RootElement);
         Assert.Equal(baseline, File.ReadAllBytes(baselinePath));
     }
 
+    private static void TraceOwnerPhase(string phase)
+    {
+        var path = Environment.GetEnvironmentVariable("SUNDER_AGENT_OWNER_TEST_TRACE");
+        if (!string.IsNullOrWhiteSpace(path)) File.AppendAllText(path, DateTimeOffset.UtcNow.ToString("O") + " " + phase + "\n");
+    }
+
     private static void VerifyOwnedContractsTogether(string repository, JsonObject contracts, JsonElement receipt, SunderRpcContractDescriptor owner)
     {
-        Assert.Equal(19, contracts.Count);
+        Assert.Equal(18, contracts.Count);
         foreach (var entry in contracts)
         {
             var current = entry.Value!["current"]!;
@@ -63,7 +70,7 @@ public sealed partial class AgentOwnerSourceMigrationTests
             Assert.Equal("release-frozen", current["state"]!.GetValue<string>());
             if (descriptor.ContractId == owner.ContractId) Assert.Equal(owner.GetCanonicalUtf8(), descriptor.GetCanonicalUtf8());
         }
-        Assert.Equal(22, receipt.GetProperty("bundles").GetArrayLength());
+        Assert.Equal(21, receipt.GetProperty("bundles").GetArrayLength());
         var providers = receipt.GetProperty("providers").EnumerateArray().ToArray();
         Assert.Equal(12, providers.Length);
         Assert.Equal(2, providers.Count(provider => provider.GetProperty("audience").GetString() == "owner"));

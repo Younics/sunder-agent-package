@@ -1,4 +1,4 @@
-using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Contracts.Models;

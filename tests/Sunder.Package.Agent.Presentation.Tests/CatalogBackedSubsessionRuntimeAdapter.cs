@@ -6,10 +6,10 @@ using Sunder.Package.Agent.TestSupport.Avalonia;
 using Sunder.Package.Agent.Tests;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Rpc;
-using AgentRunCheckpointRecord = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentRunCheckpointRecord;
-using AgentTranscriptToolDetailRecord = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTranscriptToolDetailRecord;
-using AgentTranscriptToolDetailRequest = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTranscriptToolDetailRequest;
-using AgentTurnRecord = SubagentsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnRecord;
+using AgentRunCheckpointRecord = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentRunCheckpointRecord;
+using AgentTranscriptToolDetailRecord = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTranscriptToolDetailRecord;
+using AgentTranscriptToolDetailRequest = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTranscriptToolDetailRequest;
+using AgentTurnRecord = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTurnRecord;
 
 namespace Sunder.Package.Agent.Presentation.Tests;
 
@@ -178,7 +178,7 @@ internal sealed class CatalogBackedSubsessionRuntimeAdapter :
 
         private async Task<T> FailAsync<T>(CancellationToken cancellationToken)
         {
-            _ = await rpc.DiscoverAsync("sunder.package.agent.subagents.owner", cancellationToken).ConfigureAwait(false);
+            _ = await rpc.DiscoverAsync("younics.ai.agent.subagents.owner", cancellationToken).ConfigureAwait(false);
             throw new InvalidOperationException("The Subagents management service is unavailable.");
         }
     }

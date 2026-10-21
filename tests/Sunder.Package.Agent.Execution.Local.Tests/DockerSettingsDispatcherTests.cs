@@ -7,7 +7,7 @@ using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Services;
 using Xunit;
 using DockerPresentationDispatcher = DockerPackage::Sunder.Package.Agent.Shared.Presentation.IPresentationDispatcher;
-using DockerPresentationService = DockerPackage::Sunder.Generated.Packages.Sunder_Package_Agent_Execution_Docker_Services.IPresentationService;
+using DockerPresentationService = DockerPackage::Sunder.Generated.Packages.Younics_Ai_Agent_Execution_Docker_Services.IPresentationService;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
 

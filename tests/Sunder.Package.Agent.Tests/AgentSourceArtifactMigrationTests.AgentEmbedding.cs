@@ -7,7 +7,7 @@ using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Worker;
 using Sunder.Sdk.Services;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -37,7 +37,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
         var peer = new MemoryConsumerEmbedding("Generated Agent embeddings");
         var registration = Register(peer);
-        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
+        var rpc = new RegressionTestRpcClient(state, "younics.ai.agent");
         var selected = Assert.Single((await rpc.DiscoverAsync(RegressionTestBindings.EmbeddingProviders)).Providers);
         var observer = new FilesRpcObserver(rpc, "generate");
         var catalog = CreateAgentEmbeddingCatalog(owner, observer);

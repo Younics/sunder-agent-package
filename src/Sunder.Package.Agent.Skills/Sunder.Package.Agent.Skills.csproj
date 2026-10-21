@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <SunderPackageFamilyId>sunder.package.agent.skills</SunderPackageFamilyId>
+    <SunderPackageFamilyId>younics.ai.agent.skills</SunderPackageFamilyId>
     <SunderSdkAvaloniaReference>true</SunderSdkAvaloniaReference>
     <SunderSdkStacksReference>true</SunderSdkStacksReference>
     <DefineConstants>$(DefineConstants);SUNDER_SKILLS_WORKER;SUNDER_SKILLS_APP</DefineConstants>

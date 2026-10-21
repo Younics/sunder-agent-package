@@ -1,13 +1,13 @@
 extern alias GeminiApp;
 
-using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using Sunder.Generated.Packages.Younics_Ai_Agent_Models;
 using Sunder.Package.Agent.Provider.Gemini;
 using Sunder.Package.Agent.Provider.Gemini.Rpc;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Package.Agent.Provider.TestSupport;
 using Xunit;
 using GeminiSettingsViewModel = GeminiApp::Sunder.Package.Agent.Provider.Gemini.GeminiSettingsViewModel;
-using ICredentialSettingsService = GeminiApp::Sunder.Generated.Packages.Sunder_Package_Agent_Provider_Gemini_Services.ICredentialSettingsService;
+using ICredentialSettingsService = GeminiApp::Sunder.Generated.Packages.Younics_Ai_Agent_Provider_Gemini_Services.ICredentialSettingsService;
 
 namespace Sunder.Package.Agent.Provider.Gemini.Tests;
 
@@ -17,7 +17,7 @@ public sealed class GeminiProviderTests
     public async Task EmbeddingReadiness_UsesCanonicalApiKeySecret()
     {
         var context = new ProviderTestPackageContext(
-            "sunder.package.agent.provider.gemini",
+            "younics.ai.agent.provider.gemini",
             secretValues: new Dictionary<string, string>
             {
                 [GeminiProviderConfiguration.ApiKeySecretKey] = "gemini-test-key",
@@ -33,7 +33,7 @@ public sealed class GeminiProviderTests
     public async Task EmbeddingReadiness_DoesNotTreatOldReadTypoAsConfigured()
     {
         var context = new ProviderTestPackageContext(
-            "sunder.package.agent.provider.gemini",
+            "younics.ai.agent.provider.gemini",
             secretValues: new Dictionary<string, string>
             {
                 ["api.key"] = "unused-key",
@@ -49,7 +49,7 @@ public sealed class GeminiProviderTests
     public async Task ChatReadiness_UsesCanonicalApiKeySecret()
     {
         var context = new ProviderTestPackageContext(
-            "sunder.package.agent.provider.gemini",
+            "younics.ai.agent.provider.gemini",
             secretValues: new Dictionary<string, string>
             {
                 [GeminiProviderConfiguration.ApiKeySecretKey] = "gemini-test-key",
@@ -63,7 +63,7 @@ public sealed class GeminiProviderTests
     [Fact]
     public async Task SettingsChatAndEmbeddings_ObserveTheSameCredentialAccessor()
     {
-        var context = new ProviderTestPackageContext("sunder.package.agent.provider.gemini");
+        var context = new ProviderTestPackageContext("younics.ai.agent.provider.gemini");
         var credentials = new ProviderCredentialAccessor(
             context.Secrets,
             GeminiProviderConfiguration.ApiKeySecretKey);
@@ -96,7 +96,7 @@ public sealed class GeminiProviderTests
     public async Task UnknownUtilityModel_FallsBackToTheCanonicalDefault()
     {
         var context = new ProviderTestPackageContext(
-            "sunder.package.agent.provider.gemini",
+            "younics.ai.agent.provider.gemini",
             new Dictionary<string, string>
             {
                 [GeminiProviderConfiguration.UtilityModelKey] = "gemini/unknown-model",
@@ -119,7 +119,7 @@ public sealed class GeminiProviderTests
     public async Task Catalog_ExposesReasoningOnlyForKnownThinkingFamilies()
     {
         var models = await new GeminiAgentProvider(
-            new ProviderTestPackageContext("sunder.package.agent.provider.gemini"))
+            new ProviderTestPackageContext("younics.ai.agent.provider.gemini"))
             .ListModelsAsync();
 
         Assert.NotEmpty(models.Single(model => model.ModelId == "gemini/gemini-2.5-pro").Variants ?? []);

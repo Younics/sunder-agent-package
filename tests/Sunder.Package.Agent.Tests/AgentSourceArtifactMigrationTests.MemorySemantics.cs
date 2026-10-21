@@ -24,8 +24,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.Null(assembly.GetType("Sunder.Package.Agent.Memory.Semantic.MemoryLocalStore"));
         }
         AssertImportedRoleModel(assembly, "AgentDurableLifecycleEventEnvelope");
-        Assert.Same(assembly, assembly.GetType(ImportedServices + "IEmbeddingProviderService", true)!.Assembly);
-        Assert.Same(assembly, assembly.GetType(ImportedServices + "IRuntimeCatalogService", true)!.Assembly);
+        Assert.Same(assembly, assembly.GetType(ImportedServices + "CYounics_Ai_Agent_Embedding_Provider.IEmbeddingProviderService", true)!.Assembly);
+        Assert.Same(assembly, assembly.GetType(ImportedServices + "CYounics_Ai_Agent_Runtime_Catalog.IRuntimeCatalogService", true)!.Assembly);
         Assert.Null(assembly.GetType("Sunder.Package.Agent.Contracts.Contracts.IAgentEmbeddingProvider"));
         Assert.Null(assembly.GetType("Sunder.Package.Agent.Contracts.Contracts.IAgentRuntimeCatalog"));
         Assert.Null(assembly.GetType("Sunder.Package.Agent.Protocol.AgentRpcServices"));

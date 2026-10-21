@@ -429,31 +429,28 @@ internal sealed class AgentCatalogHandler(
     {
         var toolsTask = profiles.ListInstalledLocalToolsAsync(cancellationToken);
         var capabilitiesTask = profiles.ListSelectableProfileCapabilitiesAsync(request.Profile, cancellationToken);
-        var chatModelsTask = profiles.ListChatModelsAsync(request.ChatProviderId, cancellationToken);
-        var embeddingModelsTask = profiles.ListEmbeddingModelsAsync(request.EmbeddingProviderId, cancellationToken);
-        var chatReadinessTask = profiles.GetChatProviderReadinessAsync(request.ChatProviderId, cancellationToken);
-        var embeddingReadinessTask = profiles.GetEmbeddingProviderReadinessAsync(request.EmbeddingProviderId, cancellationToken);
-        var embeddingProvidersTask = profiles.ListEmbeddingProviderDescriptorsAsync(cancellationToken);
+        var chatTask = profiles.GetChatProviderCatalogAsync(request.ChatProviderId, cancellationToken);
+        var embeddingTask = profiles.GetEmbeddingProviderCatalogAsync(request.EmbeddingProviderId, cancellationToken);
         var behaviorLoopsTask = profiles.ListBehaviorLoopDescriptorsAsync(cancellationToken);
         var embeddingConsumersTask = profiles.HasProfileCapabilityConsumersAsync(AgentModelCapabilityKinds.Embedding, cancellationToken);
         var executionTargetsTask = executionTargets.ListTargetsAsync(cancellationToken);
-        var chatProvidersTask = profiles.ListChatProviderDescriptorsAsync(cancellationToken);
-        await Task.WhenAll(toolsTask, capabilitiesTask, chatModelsTask, embeddingModelsTask,
-            chatReadinessTask, embeddingReadinessTask, embeddingProvidersTask, behaviorLoopsTask, embeddingConsumersTask,
-            executionTargetsTask, chatProvidersTask).ConfigureAwait(false);
+        await Task.WhenAll(toolsTask, capabilitiesTask, chatTask, embeddingTask,
+            behaviorLoopsTask, embeddingConsumersTask, executionTargetsTask).ConfigureAwait(false);
+        var chat = await chatTask.ConfigureAwait(false);
+        var embedding = await embeddingTask.ConfigureAwait(false);
         return new AgentCatalogProjection(
             changes.Revision,
-            await chatProvidersTask.ConfigureAwait(false),
-            await embeddingProvidersTask.ConfigureAwait(false),
+            chat.Providers,
+            embedding.Providers,
             await behaviorLoopsTask.ConfigureAwait(false),
             await executionTargetsTask.ConfigureAwait(false),
             await toolsTask.ConfigureAwait(false),
             await capabilitiesTask.ConfigureAwait(false),
             await embeddingConsumersTask.ConfigureAwait(false),
-            await chatModelsTask.ConfigureAwait(false),
-            await embeddingModelsTask.ConfigureAwait(false),
-            await chatReadinessTask.ConfigureAwait(false),
-            await embeddingReadinessTask.ConfigureAwait(false));
+            chat.Models,
+            embedding.Models,
+            chat.Readiness,
+            embedding.Readiness);
     }
 }
 

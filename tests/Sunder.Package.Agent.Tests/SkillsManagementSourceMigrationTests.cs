@@ -13,7 +13,7 @@ using SkillsWorker::Sunder.Package.Agent.Skills.Runtime;
 using SkillsWorker::Sunder.Package.Agent.Skills.Services;
 using SkillProjection = SkillsApp::Sunder.Package.Agent.Skills.Runtime.SkillProjection;
 using SkillProjectionContent = SkillsApp::Sunder.Package.Agent.Skills.Runtime.SkillProjectionContent;
-using SkillsManagementServices = SkillsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Skills_Services;
+using SkillsManagementServices = SkillsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Skills_Services;
 
 public sealed class SkillsManagementSourceMigrationTests
 {

@@ -8,9 +8,9 @@ namespace Sunder.Package.Agent.Tests;
 internal partial class RegressionTestExtensionCatalog
 {
     internal void AddRuntimeCatalog(object implementation)
-        => AddProvider(RegressionTestBindings.RuntimeCatalog, implementation, "sunder.package.agent");
+        => AddProvider(RegressionTestBindings.RuntimeCatalog, implementation, "younics.ai.agent");
 
-    internal void AddChildRunExecutor(object implementation, string packageId = "sunder.package.agent")
+    internal void AddChildRunExecutor(object implementation, string packageId = "younics.ai.agent")
         => AddProvider(RegressionTestBindings.ChildRunExecutor, implementation, packageId);
 
     internal void AddGeneratedProvider(string packageId, object identity, SunderWorkerProviderRegistration registration)

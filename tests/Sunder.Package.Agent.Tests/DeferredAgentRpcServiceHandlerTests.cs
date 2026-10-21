@@ -1,7 +1,7 @@
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Services;
 using Sunder.Sdk.Rpc;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -25,7 +25,7 @@ public sealed class DeferredAgentRpcServiceHandlerTests
         using var package = RegressionTestPackageScope.Create();
         var cleaner = new AgentAttachmentService(package.Context);
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
+        var rpc = new RegressionTestRpcClient(state, "younics.ai.agent");
         await using var receiver = new GeneratedServiceTestScope(rpc);
         var descriptor = CurrentPublicRpcDescriptors.Get(RegressionTestBindings.SessionCleaners);
         var registration = receiver.Register(cleaner, descriptor.ContractId);
@@ -41,7 +41,7 @@ public sealed class DeferredAgentRpcServiceHandlerTests
             registration.DeclaredErrors.SelectMany(service => service.Value.Select(method =>
                 $"{service.Key}/{method.Key}:{string.Join(',', method.Value)}")).Order(StringComparer.Ordinal));
 
-        state.Add("sunder.package.agent", descriptor, cleaner, registration.Handler,
+        state.Add("younics.ai.agent", descriptor, cleaner, registration.Handler,
             EmptyDisposable.Instance, registration.ProviderId, "2.0.0");
         var client = Assert.Single((await receiver.Providers<AgentServices.ISessionCleanerService>().ListAsync()).Providers).Service;
         var identity = await client.DescribeAsync();
@@ -62,11 +62,11 @@ public sealed class DeferredAgentRpcServiceHandlerTests
         Assert.True(Directory.Exists(attachmentDirectory));
 
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
+        var rpc = new RegressionTestRpcClient(state, "younics.ai.agent");
         await using var receiver = new GeneratedServiceTestScope(rpc);
         var descriptor = CurrentPublicRpcDescriptors.Get(RegressionTestBindings.SessionCleaners);
         var registration = receiver.Register(cleaner, descriptor.ContractId);
-        state.Add("sunder.package.agent", descriptor, cleaner, registration.Handler,
+        state.Add("younics.ai.agent", descriptor, cleaner, registration.Handler,
             EmptyDisposable.Instance, registration.ProviderId, "2.0.0");
         var entry = Assert.Single((await receiver.Providers<AgentServices.ISessionCleanerService>().ListAsync()).Providers);
         var client = entry.Service;

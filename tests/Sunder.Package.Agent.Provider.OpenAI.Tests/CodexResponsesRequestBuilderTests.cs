@@ -53,7 +53,7 @@ public sealed class CodexResponsesRequestBuilderTests
     }
 
     [Fact]
-    public void Build_Gpt55FastRequest_UsesBaseModelAndPriorityServiceTier()
+    public void Build_FastSuffixDoesNotRewriteModelOrEnablePriorityServiceTier()
     {
         var request = CodexResponsesRequestBuilder.Build(
             new AgentChatClientContext("openai", "openai/gpt-5.5-fast"),
@@ -67,9 +67,23 @@ public sealed class CodexResponsesRequestBuilderTests
         using var document = JsonDocument.Parse(request.Body);
         var root = document.RootElement;
 
-        Assert.Equal("gpt-5.5", root.GetProperty("model").GetString());
-        Assert.Equal("priority", root.GetProperty("service_tier").GetString());
-        Assert.Equal("priority", request.ServiceTier);
+        Assert.Equal("gpt-5.5-fast", root.GetProperty("model").GetString());
+        Assert.False(root.TryGetProperty("service_tier", out _));
+        Assert.Null(request.ServiceTier);
+    }
+
+    [Theory]
+    [InlineData("sunder.agent.speedOptionId", false)]
+    [InlineData("younics.ai.agent.speedOptionId", true)]
+    public void Build_PriorityUsesOnlyCurrentOptionKey(string key, bool priority)
+    {
+        var request = CodexResponsesRequestBuilder.Build(
+            new AgentChatClientContext("openai", "openai/gpt-5.5"),
+            [new ChatMessage(ChatRole.User, "Say hi.")],
+            new ChatOptions { AdditionalProperties = new AdditionalPropertiesDictionary { [key] = "fast" } },
+            toolAware: false);
+
+        Assert.Equal(priority ? "priority" : null, request.ServiceTier);
     }
 
     [Fact]

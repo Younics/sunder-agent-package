@@ -4,7 +4,8 @@ using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using MemoryWorker::Sunder.Package.Agent.Memory.Semantic.Services;
-using MemoryServices = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using IEmbeddingProviderService = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Embedding_Provider.IEmbeddingProviderService;
+using IRuntimeCatalogService = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Runtime_Catalog.IRuntimeCatalogService;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Tests;
 using Xunit;
@@ -24,8 +25,8 @@ public sealed class SemanticModelRuntimeResolverTests
         catalog.AddProvider(RegressionTestBindings.EmbeddingProviders, original);
         var services = catalog.Memory();
         using var resolver = new SemanticModelRuntimeResolver(
-            services.Providers<MemoryServices.IRuntimeCatalogService>(),
-            services.Providers<MemoryServices.IEmbeddingProviderService>(),
+            services.Providers<IRuntimeCatalogService>(),
+            services.Providers<IEmbeddingProviderService>(),
             new MemorySemanticSettingsService(package.Context));
 
         var first = await resolver.ResolveForProfileAsync("profile-1");

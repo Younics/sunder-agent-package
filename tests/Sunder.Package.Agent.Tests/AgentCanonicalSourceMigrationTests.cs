@@ -4,7 +4,7 @@ using System.Text.Json;
 using Sunder.Package.Agent.Runtime;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Worker;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -19,7 +19,6 @@ public sealed class AgentCanonicalSourceMigrationTests
     internal const string LegacyCleanupBindings = "src/Sunder.Package.Agent/Runtime/Rpc/AgentCleanupBindings.Legacy.cs";
     internal const string LegacyMetadataBindings = "src/Sunder.Package.Agent/Runtime/Rpc/AgentMetadataBindings.Legacy.cs";
     internal const string LegacySelectableBindings = "src/Sunder.Package.Agent/Runtime/Rpc/AgentSelectableBindings.Legacy.cs";
-    internal const string LegacyWorkspacePathBindings = "src/Sunder.Package.Agent/Runtime/Rpc/AgentWorkspacePathBindings.Legacy.cs";
     internal const string LegacyToolProfileBindings = "src/Sunder.Package.Agent/Runtime/Rpc/AgentToolProfileBindings.Legacy.cs";
     internal const string LegacyPromptContextBindings = "src/Sunder.Package.Agent/Runtime/Rpc/AgentPromptContextBindings.Legacy.cs";
     internal const string LegacyExecutionBindings = "src/Sunder.Package.Agent/Runtime/Rpc/AgentExecutionBindings.Legacy.cs";
@@ -38,7 +37,6 @@ public sealed class AgentCanonicalSourceMigrationTests
     internal static readonly string[] MetadataSources = Consumers("AgentMetadataBindings.cs", "AgentConsumerValues.cs",
         "GeneratedProfileCapabilityClient.cs", "GeneratedSystemPromptClient.cs", "GeneratedPermissionSurfaceClient.cs");
     internal static readonly string[] SelectableSources = Consumers("AgentSelectableBindings.cs", "GeneratedSelectableCapabilityClient.cs");
-    internal static readonly string[] WorkspacePathSources = Consumers("AgentWorkspacePathBindings.cs", "GeneratedWorkspacePathMigratorClient.cs");
     internal static readonly string[] PromptContextSources = Consumers("AgentPromptContextBindings.cs", "GeneratedPromptContextClient.cs");
     internal static readonly string[] ExecutionSources = Consumers("AgentExecutionBindings.cs", "AgentExecutionValues.cs",
         "GeneratedExecutionTargetClient.cs", "GeneratedExecutionTargetClient.Facets.cs");
@@ -63,7 +61,7 @@ public sealed class AgentCanonicalSourceMigrationTests
         Assert.True(plan.RootElement.GetProperty("hasApp").GetBoolean());
         Assert.NotEmpty(plan.RootElement.GetProperty("workerCompile").EnumerateArray());
         Assert.NotEmpty(plan.RootElement.GetProperty("appCompile").EnumerateArray());
-        Assert.Equal(22, receipt.RootElement.GetProperty("bundles").GetArrayLength());
+        Assert.Equal(21, receipt.RootElement.GetProperty("bundles").GetArrayLength());
         Assert.Equal(12, receipt.RootElement.GetProperty("providers").GetArrayLength());
         AgentRuntimeUsePolicyAssertions.AssertWorkerReceipt(repository, receipt.RootElement);
         var baselinePath = Path.Combine(CanonicalAgentRoles.SourceRoot, "sunder-contracts.owned.json");
@@ -73,7 +71,7 @@ public sealed class AgentCanonicalSourceMigrationTests
             contract => SunderRpcContractDescriptor.Parse(System.Text.Encoding.UTF8.GetBytes(contract.GetProperty("canonicalDescriptor").GetString()!)));
         foreach (var descriptor in descriptors.Values.Where(value => value.ContractId != "sunder.stack.contributor"))
         {
-            if (descriptor.ContractId is "sunder.agent.owner.runtime" or "sunder.package.agent.agent.profile")
+            if (descriptor.ContractId is "younics.ai.agent.owner.runtime" or "younics.ai.agent.agent.profile")
             {
                 CurrentPrivateRpcDescriptors.AssertCurrent(descriptor);
                 continue;
@@ -92,7 +90,7 @@ public sealed class AgentCanonicalSourceMigrationTests
         await AgentSourceArtifactMigrationTests.VerifyAgentExecutionConsumer(roles.Worker);
         await AgentSourceArtifactMigrationTests.VerifyAgentToolConsumers(roles.Worker, roles.App);
         await AgentOwnerSourceMigrationTests.VerifyRoleLocalBehavior(repository, CanonicalAgentRoles.SourceRoot,
-            AssemblyLoadContext.GetLoadContext(roles.Worker)!, roles.Worker, roles.App, descriptors["sunder.agent.owner.runtime"]);
+            AssemblyLoadContext.GetLoadContext(roles.Worker)!, roles.Worker, roles.App, descriptors["younics.ai.agent.owner.runtime"]);
         Assert.Equal(baseline, File.ReadAllBytes(baselinePath));
     }
 
@@ -100,7 +98,7 @@ public sealed class AgentCanonicalSourceMigrationTests
     {
         using var scope = RegressionTestPackageScope.Create();
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
+        var rpc = new RegressionTestRpcClient(state, "younics.ai.agent");
         Assert.Null(assembly.GetType("AgentWorkerProviderCatalog"));
         Assert.Null(assembly.GetType("Sunder.Package.Agent.Runtime.AgentWorkerComposition"));
         Assert.Null(assembly.GetType("Sunder.Package.Agent.PackageModule"));
@@ -123,14 +121,14 @@ public sealed class AgentCanonicalSourceMigrationTests
         {
             await activate(static (_, _, _) => ValueTask.CompletedTask, default).AsTask().WaitAsync(TimeSpan.FromSeconds(15));
             foreach (var provider in options.Providers)
-                state.Add("sunder.package.agent", descriptors[provider.ContractId], provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, "2.0.0");
-            var profiles = options.Providers.Single(provider => provider.ContractId == "sunder.package.agent.agent.profile");
+                state.Add("younics.ai.agent", descriptors[provider.ContractId], provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, "2.0.0");
+            var profiles = options.Providers.Single(provider => provider.ContractId == "younics.ai.agent.agent.profile");
             var profile = await profiles.Handler.InvokeUnaryAsync(null!, "agent-profile", "create-profile",
                 JsonSerializer.SerializeToElement("Canonical source profile"));
             Assert.Equal("Canonical source profile", profile.GetProperty("displayName").GetString());
             var stack = options.Providers.Single(provider => provider.ProviderId == "agent.stack.profiles");
             var items = await stack.Handler.InvokeUnaryAsync(null!, "stack-contributor", "list-export-items",
-                JsonSerializer.SerializeToElement(new { packageId = "sunder.package.agent" }));
+                JsonSerializer.SerializeToElement(new { packageId = "younics.ai.agent" }));
             Assert.Contains(items.GetProperty("items").EnumerateArray(), item => item.GetProperty("displayName").GetString() == "Canonical source profile");
             await AgentAppSourceMigrationTests.Exercise(app, rpc, scope.Context);
         }

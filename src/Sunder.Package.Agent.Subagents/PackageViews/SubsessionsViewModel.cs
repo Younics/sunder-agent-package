@@ -52,13 +52,13 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         PresentationOperationObserver? operationObserver = null)
     {
         _uiDispatcher = uiDispatcher;
-        _tasks = new PresentationTaskScope(exception => _uiDispatcher.InvokeAsync(() =>
+        _tasks = new PresentationTaskScope((exception, token) => _uiDispatcher.InvokeAsync(() =>
         {
             if (!_disposed)
             {
                 SetLoadFailure(exception.Message);
             }
-        }));
+        }, token), _uiDispatcher.ShutdownToken);
         _operations = operationObserver
             ?? PresentationOperationObserver.CreateUnreported("Subsessions");
         _activityTicker.SetEnabled(false);

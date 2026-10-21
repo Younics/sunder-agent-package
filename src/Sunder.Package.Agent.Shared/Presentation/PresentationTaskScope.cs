@@ -5,19 +5,26 @@ namespace Sunder.Package.Agent.Shared.Presentation;
 internal sealed class PresentationTaskScope : IDisposable, IAsyncDisposable
 {
     private readonly object _syncRoot = new();
-    private readonly CancellationTokenSource _lifetime = new();
+    private readonly CancellationTokenSource _lifetime;
     private readonly CancellationToken _cancellationToken;
     private readonly HashSet<OperationRegistration> _operations = [];
-    private readonly Func<Exception, Task> _failureHandler;
+    private readonly Func<Exception, CancellationToken, Task> _failureHandler;
     private readonly TaskCompletionSource _drained = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private bool _disposed;
     private bool _cancellationCompleted;
     private bool _lifetimeFinalizationClaimed;
 
-    public PresentationTaskScope(Func<Exception, Task> failureHandler)
+    public PresentationTaskScope(Func<Exception, Task> failureHandler, CancellationToken lifetime = default)
+        : this((exception, _) => failureHandler(exception), lifetime)
+    {
+        ArgumentNullException.ThrowIfNull(failureHandler);
+    }
+
+    public PresentationTaskScope(Func<Exception, CancellationToken, Task> failureHandler, CancellationToken lifetime = default)
     {
         ArgumentNullException.ThrowIfNull(failureHandler);
         _failureHandler = failureHandler;
+        _lifetime = CancellationTokenSource.CreateLinkedTokenSource(lifetime);
         _cancellationToken = _lifetime.Token;
     }
 
@@ -61,7 +68,7 @@ internal sealed class PresentationTaskScope : IDisposable, IAsyncDisposable
         var registration = new OperationRegistration();
         lock (_syncRoot)
         {
-            if (_disposed)
+            if (_disposed || _cancellationToken.IsCancellationRequested)
             {
                 return Task.CompletedTask;
             }
@@ -129,21 +136,20 @@ internal sealed class PresentationTaskScope : IDisposable, IAsyncDisposable
     {
         try
         {
-            await task.ConfigureAwait(false);
-        }
-        catch (OperationCanceledException exception) when (
-            cancellationToken.IsCancellationRequested
-            && !PresentationExceptionPolicy.IsFatal(exception))
-        {
-        }
-        catch (Exception ex)
-        {
-            if (!PresentationExceptionPolicy.IsExpectedOperationFailure(ex))
+            try
             {
-                throw;
+                await task.ConfigureAwait(false);
             }
-
-            await _failureHandler(ex).ConfigureAwait(false);
+            catch (Exception ex) when (ex is not OperationCanceledException
+                                       && PresentationExceptionPolicy.IsExpectedOperationFailure(ex))
+            {
+                await _failureHandler(ex, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException exception) when (PresentationCancellation.IsExpected(exception, cancellationToken))
+        {
+            // Includes cancellation while presenting the original failure. Foreign cancellations,
+            // callback failures and programming/fatal errors still reach the observation boundary.
         }
     }
 

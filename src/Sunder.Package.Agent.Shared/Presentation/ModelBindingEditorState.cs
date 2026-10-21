@@ -73,14 +73,14 @@ internal sealed class ModelBindingEditorState : INotifyPropertyChanged, IDisposa
         _loader = loader;
         _options = options;
         _dispatcher = dispatcher ?? PresentationDispatcher.Capture();
-        _tasks = new PresentationTaskScope(exception => _dispatcher.InvokeAsync(() =>
+        _tasks = new PresentationTaskScope((exception, token) => _dispatcher.InvokeAsync(() =>
         {
             if (!_disposed)
             {
                 StatusText = $"{_options.LoadFailurePrefix}: Failed - {exception.Message}";
                 SetWarning($"{_options.LoadFailurePrefix} could not be loaded: {exception.Message}");
             }
-        }));
+        }, token), _dispatcher.ShutdownToken);
         _statusText = options.NoProviderSelectedText;
     }
 
@@ -470,12 +470,6 @@ internal sealed class ModelBindingEditorState : INotifyPropertyChanged, IDisposa
                     return;
                 }
 
-                var settings = AgentChatModelSettingsJson.Parse(settingsJson);
-                var legacySelection = ResolveLegacyFastSelection(
-                    selectedModelId,
-                    settings.SpeedOptionId,
-                    result.Models);
-                settings = settings with { SpeedOptionId = legacySelection.SpeedOptionId };
                 SetSelectionSilently(() =>
                 {
                     Models.Clear();
@@ -486,10 +480,10 @@ internal sealed class ModelBindingEditorState : INotifyPropertyChanged, IDisposa
 
                     SelectedModel = Models.FirstOrDefault(model => string.Equals(
                             model.Id,
-                            legacySelection.ModelId,
+                            selectedModelId,
                             StringComparison.OrdinalIgnoreCase))
                         ?? Models.FirstOrDefault();
-                    ApplyModelOptions(SelectedModel, AgentChatModelSettingsJson.Serialize(settings));
+                    ApplyModelOptions(SelectedModel, settingsJson);
                     StatusText = result.StatusText;
                     SetWarning(result.WarningText);
                 });
@@ -705,28 +699,6 @@ internal sealed class ModelBindingEditorState : INotifyPropertyChanged, IDisposa
                 && string.Equals(getId(option), selectedId, StringComparison.OrdinalIgnoreCase))
             ?? options.FirstOrDefault();
 
-    private static LegacyModelSelection ResolveLegacyFastSelection(
-        string? modelId,
-        string? speedOptionId,
-        IReadOnlyList<ProviderModelCatalogOption> availableModels)
-    {
-        const string fastSuffix = "-fast";
-        if (!string.IsNullOrWhiteSpace(modelId)
-            && modelId.EndsWith(fastSuffix, StringComparison.OrdinalIgnoreCase))
-        {
-            var baseModelId = modelId[..^fastSuffix.Length];
-            if (availableModels.Any(model => string.Equals(
-                model.Id,
-                baseModelId,
-                StringComparison.OrdinalIgnoreCase)))
-            {
-                return new LegacyModelSelection(baseModelId, speedOptionId ?? "fast");
-            }
-        }
-
-        return new LegacyModelSelection(modelId, speedOptionId);
-    }
-
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, this);
 
     public void Dispose()
@@ -745,5 +717,4 @@ internal sealed class ModelBindingEditorState : INotifyPropertyChanged, IDisposa
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
         => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
 
-    private sealed record LegacyModelSelection(string? ModelId, string? SpeedOptionId);
 }

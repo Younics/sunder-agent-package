@@ -16,8 +16,11 @@ namespace Sunder.Package.Agent.Tests;
 
 using SubagentsWorker::Sunder.Package.Agent.Subagents.Models;
 using SubagentsWorker::Sunder.Package.Agent.Subagents.Services;
-using SubagentModels = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
-using SubagentServices = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using SubagentModels = SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models;
+using IChatProviderService = SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Chat_Provider.IChatProviderService;
+using IRunControlService = SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Run_Control.IRunControlService;
+using ISelectableCapabilityProviderService = SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Selectable_Capability_Provider.ISelectableCapabilityProviderService;
+using IToolSourceService = SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Tool_Source.IToolSourceService;
 
 public sealed class SubagentRuntimeOrchestrationTests
 {
@@ -47,7 +50,7 @@ public sealed class SubagentRuntimeOrchestrationTests
         var service = new SubagentService(new SubagentStore(scope.Context));
         using var catalog = new RegressionTestExtensionCatalog();
         var adapter = new SubagentPermissionStatusAdapter(
-            catalog.Subagents().Providers<SubagentServices.IToolSourceService>());
+            catalog.Subagents().Providers<IToolSourceService>());
         var renderer = new SubagentBatchResultRenderer(service, new SubagentRequestParser(), adapter);
         var completed = CreateTaskResult(SubagentTaskResultState.Completed, "completed");
         var failed = CreateTaskResult(SubagentTaskResultState.Failed, "failed");
@@ -75,9 +78,9 @@ public sealed class SubagentRuntimeOrchestrationTests
         var loop = new OrchestratedAgentBehaviorLoop();
         using var catalog = new RegressionTestExtensionCatalog();
         var registry = new AgentRoleRunControls(typeof(AgentActiveRunRegistry).Assembly, catalog.ActiveRuns);
-        var runControl = Assert.Single((await catalog.Receiver("sunder.package.agent.subagents")
-            .Providers<SubagentServices.IRunControlService>().ListAsync()).Providers).Reference;
-        using var grant = registry.Open(runtime, "sunder.package.agent.subagents", out var invocationId);
+        var runControl = Assert.Single((await catalog.Receiver("younics.ai.agent.subagents")
+            .Providers<IRunControlService>().ListAsync()).Providers).Reference;
+        using var grant = registry.Open(runtime, "younics.ai.agent.subagents", out var invocationId);
 
         var result = await loop.RunAsync(new()
         {
@@ -97,7 +100,7 @@ public sealed class SubagentRuntimeOrchestrationTests
         var catalog = new RegressionTestExtensionCatalog();
         var store = new AgentLocalStore(scope.Context);
         var sessionService = new AgentSessionService(store, catalog.SessionCleaners);
-        var workspaceService = new AgentWorkspaceService(store, catalog.SessionCleaners, sessionService, catalog.WorkspacePathMigrators);
+        var workspaceService = new AgentWorkspaceService(store, catalog.SessionCleaners, sessionService);
         var toolService = new AgentToolService(
             sessionService,
             workspaceService,
@@ -202,8 +205,10 @@ public sealed class SubagentRuntimeOrchestrationTests
 
     [Theory]
     [InlineData("{not-json")]
+    [InlineData("[]")]
+    [InlineData("{\"subagents\":[]}")]
     [InlineData("{\"version\":99,\"subagents\":[],\"future\":true}")]
-    public void Store_RefusesToOverwriteCorruptOrFutureDocuments(string existingContent)
+    public void Store_RefusesToOverwriteOldCorruptOrFutureDocuments(string existingContent)
     {
         using var scope = RegressionTestPackageScope.Create();
         var filePath = scope.Context.Storage.RoleLocalWorkspace.GetLocalPath("subagents/subagents.json");
@@ -292,15 +297,15 @@ public sealed class SubagentRuntimeOrchestrationTests
         var contributor = new SubagentStackContributor(
             service,
             scope.Context,
-            catalog.Subagents().Providers<SubagentServices.IChatProviderService>(),
-            catalog.Subagents().Providers<SubagentServices.ISelectableCapabilityProviderService>());
+            catalog.Subagents().Providers<IChatProviderService>(),
+            catalog.Subagents().Providers<ISelectableCapabilityProviderService>());
         const string fragmentId = "subagent.reviewer";
         const string subagentId = "reviewer";
         var fragment = new StackFragmentImport(
             fragmentId,
-            "sunder.package.agent.subagents",
+            "younics.ai.agent.subagents",
             contributor.ContributorId,
-            "sunder.package.agent.subagents/subagent",
+            "younics.ai.agent.subagents/subagent",
             1,
             "Reviewer",
             """

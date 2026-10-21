@@ -7,7 +7,7 @@ using System.Runtime.CompilerServices;
 
 namespace Sunder.Package.Agent.Runtime;
 
-[SunderService(Key = "owner-runtime", ContractId = "sunder.agent.owner.runtime", ServiceId = "agent-runtime")]
+[SunderService(Key = "owner-runtime", ContractId = "younics.ai.agent.owner.runtime", ServiceId = "agent-runtime")]
 [SunderServiceProvider(ProviderId = "agent.owner.runtime", Audience = SunderServiceAudience.Owner)]
 [SunderServiceError(OperationFailed, Description = "The requested Agent operation could not be completed.")]
 internal sealed partial class AgentOwnerRuntimeProvider(

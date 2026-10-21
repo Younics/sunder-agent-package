@@ -8,7 +8,7 @@ using AgentApp::Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Rpc;
 using Xunit;
-using AppServices = AgentApp::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AppServices = AgentApp::Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -24,7 +24,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var receiver = new GeneratedServiceTestScope(rpc);
         try
         {
-            var catalog = receiver.Providers(app.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Services.IWorkspaceEditorService", true)!);
+            var catalog = receiver.Providers(app.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Services.IWorkspaceEditorService", true)!);
             var snapshot = AgentRoleBoundary.Await(AgentRoleBoundary.Call(catalog, "ListAsync", CancellationToken.None)!).GetAwaiter().GetResult()!;
             var providers = (IEnumerable)snapshot.GetType().GetProperty("Providers")!.GetValue(snapshot)!;
             var entry = Assert.Single(providers.Cast<object>(), provider =>
@@ -43,7 +43,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
     internal static async Task VerifyAgentWorkspaceEditorConsumer(Assembly app)
     {
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
+        var rpc = new RegressionTestRpcClient(state, "younics.ai.agent");
         var peer = new WorkspaceEditorPeer();
         var handler = Add();
         Assert.Empty(handler.Calls);
@@ -116,7 +116,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         if (app.GetType("Sunder.Package.Agent.PackageViews.AgentWorkspaceEditorInvocation") is { } invocation)
         {
             await using var receiver = new GeneratedServiceTestScope(observed);
-            var catalog = receiver.Providers(app.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Services.IWorkspaceEditorService", true)!);
+            var catalog = receiver.Providers(app.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Services.IWorkspaceEditorService", true)!);
             var snapshot = await AgentRoleBoundary.Await(AgentRoleBoundary.Call(catalog, "ListAsync", CancellationToken.None)!);
             var reference = Assert.Single(((IEnumerable)snapshot!.GetType().GetProperty("Providers")!.GetValue(snapshot)!).Cast<object>(),
                 provider => Equals(provider.GetType().GetProperty("ProviderId")!.GetValue(provider), peer.ContributorId));

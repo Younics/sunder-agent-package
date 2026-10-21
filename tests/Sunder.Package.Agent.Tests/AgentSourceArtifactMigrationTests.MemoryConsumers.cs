@@ -8,7 +8,7 @@ using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.TestSupport;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Worker;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -29,11 +29,11 @@ public sealed partial class AgentSourceArtifactMigrationTests
     {
         var directory = Path.Combine(root, "MemoryWorker");
         var selected = File.ReadAllBytes(Path.Combine(directory, "sunder-contracts.lock.json"));
-        var baseline = File.ReadAllBytes(Path.Combine(directory, "sunder-contracts.owned.json"));
+        var baseline = CanonicalPackageRoles.ReadOwnedBaseline(directory);
         using var roles = new CanonicalPackageRoles();
         await ExerciseMemoryConsumers(roles.Load("Memory.Semantic", "worker", directory));
         Assert.Equal(selected, File.ReadAllBytes(Path.Combine(directory, "sunder-contracts.lock.json")));
-        Assert.Equal(baseline, File.ReadAllBytes(Path.Combine(directory, "sunder-contracts.owned.json")));
+        Assert.Equal(baseline, CanonicalPackageRoles.ReadOwnedBaseline(directory));
     }
 
     internal static async Task ExerciseMemoryConsumers(Assembly worker)
@@ -44,8 +44,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var embedding = new MemoryConsumerEmbedding("Original embeddings");
         AddRuntime(runtime);
         AddEmbedding(embedding);
-        var client = new MemoryConsumerRpc(new RegressionTestRpcClient(state, "sunder.package.agent.memory.semantic"));
-        var context = new TestPackageContext("sunder.package.agent.memory.semantic", package.RootPath, version: "2.0.0", storage: package.Context.Storage);
+        var client = new MemoryConsumerRpc(new RegressionTestRpcClient(state, "younics.ai.agent.memory.semantic"));
+        var context = new TestPackageContext("younics.ai.agent.memory.semantic", package.RootPath, version: "2.0.0", storage: package.Context.Storage);
         var graph = CreateGeneratedWorker(worker, context, client);
         await using var graphLifetime = graph.Lifetime;
         var resolver = Service("Services.SemanticModelRuntimeResolver");
@@ -155,7 +155,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.Equal(0, client.ActiveWatches);
         await Assert.ThrowsAsync<ObjectDisposedException>(() => Call(resolver, "SubscribeToSessionChanges", (Action<Guid>)(_ => { }), (Action)(() => { })));
 
-        void AddRuntime(MemoryConsumerRuntime value) => AddGeneratedPeer(state, "sunder.package.agent", RegressionTestBindings.RuntimeCatalog, value, "agent.runtime.catalog");
+        void AddRuntime(MemoryConsumerRuntime value) => AddGeneratedPeer(state, "younics.ai.agent", RegressionTestBindings.RuntimeCatalog, value, "agent.runtime.catalog");
         void AddEmbedding(MemoryConsumerEmbedding value) => AddGeneratedPeer(state, "example.embedding", RegressionTestBindings.EmbeddingProviders, value, "example.embedding.provider");
         Type Type(string name) => worker.GetType("Sunder.Package.Agent.Memory.Semantic." + name, true)!;
         object Service(string name) => graph.Services.GetRequiredService(Type(name));

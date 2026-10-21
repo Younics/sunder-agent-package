@@ -21,19 +21,19 @@ public sealed class LocalPresentationSourceMigrationTests
     [AgentPublicSourceMigrationFact]
     public async Task PresentationSource_PreservesContractSettingsAndRevisionConflictsAcrossIsolatedApp()
     {
-        using var source = PrivateManagementSourceFixture.Load("Execution.Local", CurrentPrivateRpcDescriptors.Get("sunder.package.agent.execution.local.presentation"));
+        using var source = PrivateManagementSourceFixture.Load("Execution.Local", CurrentPrivateRpcDescriptors.Get("younics.ai.agent.execution.local.presentation"));
         using var package = RegressionTestPackageScope.Create();
-        var context = new TestPackageContext("sunder.package.agent.execution.local", package.RootPath, storage: package.Context.Storage);
+        var context = new TestPackageContext("younics.ai.agent.execution.local", package.RootPath, storage: package.Context.Storage);
         var catalog = new LocalShellCatalogService(context);
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent.execution.local");
+        var rpc = new RegressionTestRpcClient(state, "younics.ai.agent.execution.local");
         var (options, lifetime, _) = AgentSourceArtifactMigrationTests.CreateGeneratedWorker(source.Worker, context, rpc);
         await using var owned = lifetime;
         var registration = Assert.Single(options.Providers, provider => provider.ProviderId == "local.presentation");
         Assert.Equal("local.presentation", registration.ProviderId);
-        state.Add("sunder.package.agent.execution.local", source.Descriptor, registration.Handler, registration.Handler, Noop.Instance, registration.ProviderId, "2.0.0");
+        state.Add("younics.ai.agent.execution.local", source.Descriptor, registration.Handler, registration.Handler, Noop.Instance, registration.ProviderId, "2.0.0");
         await using var app = AgentSourceArtifactMigrationTests.CreateGeneratedApp(source.App, context, rpc);
-        var client = app.GetRequiredService(source.App.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Execution_Local_Services.IPresentationService", true)!);
+        var client = app.GetRequiredService(source.App.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Execution_Local_Services.IPresentationService", true)!);
         Assert.Same(source.App, client.GetType().Assembly);
 
         var initial = await InvokeAsync("GetSettingsAsync", CancellationToken.None);

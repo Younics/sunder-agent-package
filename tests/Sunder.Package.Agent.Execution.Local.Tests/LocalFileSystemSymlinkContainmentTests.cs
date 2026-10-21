@@ -6,11 +6,11 @@ using System.Text;
 using DockerWorker::Sunder.Package.Agent.Execution.Docker;
 using LocalWorker::Sunder.Package.Agent.Execution.Local;
 using Xunit;
-using AgentFileDeleteRequest = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileDeleteRequest;
-using AgentFileReadRequest = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileReadRequest;
-using AgentFileWriteRequest = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileWriteRequest;
-using AgentPermissionScopeClassificationBasis = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentPermissionScopeClassificationBasis;
-using AgentResourceClaim = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentResourceClaim;
+using AgentFileDeleteRequest = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentFileDeleteRequest;
+using AgentFileReadRequest = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentFileReadRequest;
+using AgentFileWriteRequest = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentFileWriteRequest;
+using AgentPermissionScopeClassificationBasis = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentPermissionScopeClassificationBasis;
+using AgentResourceClaim = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentResourceClaim;
 using AgentFileReadErrorCodes = Sunder.Package.Agent.Contracts.Models.AgentFileReadErrorCodes;
 using AgentPermissionBoundaryIds = Sunder.Package.Agent.Contracts.Models.AgentPermissionBoundaryIds;
 

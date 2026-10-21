@@ -13,7 +13,7 @@ using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
 
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 
 public sealed partial class AgentSourceArtifactMigrationTests
 {
@@ -30,12 +30,12 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.Null(runtime.GetType("Sunder.Package.Agent.Tools.Web.WebWorkerComposition"));
             Assert.Null(runtime.GetType("Sunder.Package.Agent.Tools.Web.WebWorkerBindings"));
             Assert.DoesNotContain(runtime.GetReferencedAssemblies(), reference => reference.Name is "Sunder.Package.Agent.Protocol" or "Sunder.Agent.Execution.Common");
-            foreach (var type in new[] { "Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentToolExecutionContext", "Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentToolDescriptor",
-                "Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentToolResult", "Sunder.Generated.Packages.Sunder_Package_Agent_Services.IToolSourceService", "Sunder.Agent.Execution.Common.BoundedValue" })
+            foreach (var type in new[] { "Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentToolExecutionContext", "Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentToolDescriptor",
+                "Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentToolResult", "Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Tool_Source.IToolSourceService", "Sunder.Agent.Execution.Common.BoundedValue" })
                 Assert.Same(runtime, runtime.GetType(type, true)!.Assembly);
-            Assert.NotSame(typeof(AgentToolResult), runtime.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentToolResult", true));
+            Assert.NotSame(typeof(AgentToolResult), runtime.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentToolResult", true));
             using var package = RegressionTestPackageScope.Create();
-            var context = new TestPackageContext("sunder.package.agent.tools.web", package.RootPath, version: "2.0.0", storage: package.Context.Storage);
+            var context = new TestPackageContext("younics.ai.agent.tools.web", package.RootPath, version: "2.0.0", storage: package.Context.Storage);
             var peer = new WebHttpPeer();
             await using var backend = await BuildWebBackend(root, worker, load, peer);
             await VerifyWebGeneratedComposition(backend, package);
@@ -48,7 +48,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             var descriptor = CurrentPublicRpcDescriptors.Get(RegressionTestBindings.ToolSources);
             Assert.Equal(descriptor.Sha256, registration.DescriptorSha256); Assert.Equal(descriptor.AbiSha256, registration.AbiSha256);
             state.Add(context.PackageId, descriptor, registration.Handler, registration.Handler, Noop.Instance, registration.ProviderId, "2.0.0");
-            var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
+            var rpc = new RegressionTestRpcClient(state, "younics.ai.agent");
             await using var receiver = new GeneratedServiceTestScope(rpc);
             var source = Assert.Single((await receiver.Providers<AgentServices.IToolSourceService>().ListAsync()).Providers).Service;
             Assert.Equal("web", (await source.DescribeAsync()).SourceId);
@@ -169,7 +169,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
     private static async Task VerifyWebGeneratedComposition(WebBackend backend, RegressionTestPackageScope package)
     {
         var secrets = new WebShutdownSecrets();
-        var context = new TestPackageContext("sunder.package.agent.tools.web", package.RootPath, version: "2.0.0",
+        var context = new TestPackageContext("younics.ai.agent.tools.web", package.RootPath, version: "2.0.0",
             storage: package.Context.Storage, secrets: secrets);
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
         var options = backend.CreateGenerated(context, new RegressionTestRpcClient(state, context.PackageId));
@@ -185,7 +185,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.Equal(descriptor.Sha256, registration.DescriptorSha256);
         Assert.Equal(descriptor.AbiSha256, registration.AbiSha256);
         state.Add(context.PackageId, descriptor, registration.Handler, registration.Handler, Noop.Instance, registration.ProviderId, "2.0.0");
-        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
+        var rpc = new RegressionTestRpcClient(state, "younics.ai.agent");
         await using var receiver = new GeneratedServiceTestScope(rpc);
         var source = Assert.Single((await receiver.Providers<AgentServices.IToolSourceService>().ListAsync()).Providers).Service;
         var listed = await source.ListToolsAsync(new(null, null));

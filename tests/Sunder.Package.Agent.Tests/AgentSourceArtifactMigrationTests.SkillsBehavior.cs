@@ -20,7 +20,7 @@ namespace Sunder.Package.Agent.Tests;
 
 extern alias SkillsWorker;
 using SkillsWorker::Sunder.Package.Agent.Skills.Runtime;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 
 public sealed partial class AgentSourceArtifactMigrationTests
 {
@@ -51,7 +51,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 Assert.Null(presentation.GetType("Sunder.Package.Agent.Skills." + type));
             using var package = RegressionTestPackageScope.Create();
             using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-            var rpc = new RegressionTestRpcClient(state, "sunder.package.agent.skills");
+            var rpc = new RegressionTestRpcClient(state, "younics.ai.agent.skills");
             Assert.Null(runtime.GetType("Sunder.Package.Agent.Skills.Runtime.SkillsWorkerComposition"));
             Assert.Null(runtime.GetType("Sunder.Package.Agent.Skills.Runtime.SkillsWorkerBindings"));
             var (options, workerLifetime, runtimeServices) = CreateGeneratedWorker(runtime, package.Context, rpc);
@@ -67,17 +67,17 @@ public sealed partial class AgentSourceArtifactMigrationTests
             SelectableHandlerProbe? selectableProbe = null;
             foreach (var provider in options.Providers)
             {
-                var descriptor = provider.ProviderId == "skills.management" ? CurrentPrivateRpcDescriptors.Get("sunder.package.agent.skills.owner")
+                var descriptor = provider.ProviderId == "skills.management" ? CurrentPrivateRpcDescriptors.Get("younics.ai.agent.skills.owner")
                     : provider.ProviderId == "skills.stack" ? SunderRpcContractDescriptor.Parse(File.ReadAllBytes(Path.Combine(
                         BuilderSourceMigrationTests.FindRepository(), "../sunder-core/languages/csharp/dotnet/packages/Sunder.Sdk.Stacks/Contracts/sunder.stack.contributor.rpc.json")))
                     : CurrentPublicRpcDescriptors.Get(provider.ContractId);
                 ISunderRpcServiceHandler handler = provider.ProviderId == "skills.selectable.capabilities"
                     ? selectableProbe = new(provider.Handler) : provider.Handler;
-                state.Add("sunder.package.agent.skills", descriptor, handler, handler, Noop.Instance, provider.ProviderId, "2.0.0");
+                state.Add("younics.ai.agent.skills", descriptor, handler, handler, Noop.Instance, provider.ProviderId, "2.0.0");
             }
-            var agentRpc = new RegressionTestRpcClient(state, "sunder.package.agent");
+            var agentRpc = new RegressionTestRpcClient(state, "younics.ai.agent");
             await using var agentReceiver = new GeneratedServiceTestScope(agentRpc);
-            using var agentClient = Assert.Single(await ProjectedProviders(agentReceiver, agentOwner, "ISelectableCapabilityProviderService")).Service;
+            using var agentClient = Assert.Single(await ProjectedProviders(agentReceiver, agentOwner, "ISelectableCapabilityProviderService", imported: false)).Service;
             await using var agentWatch = new ProjectedArtifactWatch(agentClient.Value);
             var agentChanged = agentWatch.Next();
             ValueTask<AgentProfileSelectableCapabilityDescriptor[]> ListAgentCapabilities()
@@ -85,7 +85,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             await selectableProbe!.Subscribed.Task.WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Empty(await ListAgentCapabilities());
             var appRoot = Directory.CreateDirectory(Path.Combine(package.RootPath, "app-workspace")).FullName;
-            var context = new TestPackageContext("sunder.package.agent.skills", appRoot, storage: new TestPackageStorageContext(package.Context.Storage.Files,
+            var context = new TestPackageContext("younics.ai.agent.skills", appRoot, storage: new TestPackageStorageContext(package.Context.Storage.Files,
                 package.Context.Storage.State, new TestPackageRoleLocalWorkspace(appRoot)));
             await using var appServices = CreateGeneratedApp(presentation, context, rpc);
             var gateway = appServices.GetRequiredService(presentation.GetType("Sunder.Package.Agent.Skills.Runtime.SkillAppRuntimeGateway", true)!);
@@ -100,7 +100,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.Null(imported.GetType().GetProperty("SourceUri")!.GetValue(imported));
             Assert.Single(((IEnumerable)(await Call("ListAsync", CancellationToken.None))!).Cast<object>());
             var profile = new AgentProfileRecord("profile.skills", "Skills", null, null, null, null, null, null, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow,
-                SelectableCapabilityAssignments: [new("skill", skillId, "sunder.package.agent.skills")]);
+                SelectableCapabilityAssignments: [new("skill", skillId, "younics.ai.agent.skills")]);
             var runtimeCatalog = new MemoryConsumerRuntime(profile);
             AddSubagentSourceProvider(state, agentOwner, "RuntimeCatalogService", runtimeCatalog, RegressionTestBindings.RuntimeCatalog);
             var target = new SkillsConsumerHandler();
@@ -140,7 +140,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             saved["sourceUri"] = "https://github.com/example/skills/tree/main/artifact";
             var save = storeType.GetMethod("SaveSkill")!;
             save.Invoke(store, [saved.Deserialize(save.GetParameters()[0].ParameterType, new JsonSerializerOptions(JsonSerializerDefaults.Web))]);
-            var items = await Rpc("skills.stack", "stack-contributor", "list-export-items", new { packageId = "sunder.package.agent.skills" });
+            var items = await Rpc("skills.stack", "stack-contributor", "list-export-items", new { packageId = "younics.ai.agent.skills" });
             Assert.Equal(skillId, Assert.Single(items.GetProperty("items").EnumerateArray()).GetProperty("itemId").GetString());
             using (var cancellation = new CancellationTokenSource())
             {

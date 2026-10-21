@@ -1,16 +1,18 @@
 # Release, Compatibility, And Troubleshooting
 
-> **Canonical migration in progress:** packages use one authored project with
-> generated role-local bindings and reviewed API locks. The release contains no
-> Protocol NuGet. Qualified prebuilt role inputs and native/release acceptance remain
-> open; passing shell fixtures does not enable publication. See
-> [`../compatibility/README.md`](../compatibility/README.md).
+Packages use one authored project with generated role-local bindings and reviewed
+API locks. Local canonical migration and qualified prebuilt tooling are implemented;
+native/performance/production qualification has separate release gates. See
+[compatibility evidence](../compatibility/README.md).
 
 This guide is for extension authors. Maintainers releasing the complete first-party Agent family should also follow [`RELEASES.md`](RELEASES.md).
 
 ## Compatibility Contract
 
-Agent 2.x derives its RPC compatibility surface from ordinary implementation and declaration source. It contains 31 RPC descriptors: 19 public descriptors and 12 package-local owner descriptors. Cross-package behavior is limited to public contracts, generated role-local bindings and manifest-declared providers; 18 third-party extension points remain supported.
+Agent derives its compatibility surface from ordinary implementation and declaration
+source. It has 19 reviewed public contracts with independent semantic versions;
+private contracts follow package versions. Cross-package behavior uses generated
+APIs and manifest-declared providers, not implementation assembly references.
 
 Use the coordinated Core SDK range:
 
@@ -19,7 +21,7 @@ Use the coordinated Core SDK range:
 <PackageReference Include="Sunder.Package.Build" Version="[1.1.0,1.2.0)" PrivateAssets="all" />
 ```
 
-Select `sunder.package.agent` with the reviewed runtime range `>=2.0.0 <3.0.0`
+Select `younics.ai.agent` with the reviewed runtime range `>=2.0.0 <3.0.0`
 through the ordinary package API/provider-import commands. The resulting lock owns
 the imported dependency; do not duplicate it with an authored dependency attribute.
 Provider-only imports select the contracts they implement; ordinary API imports
@@ -51,11 +53,12 @@ Do not publish different bytes for an existing package id/version. Sunder packag
 
 ## Contract Surface
 
-Canonical packages retain a root-owned contract baseline and reviewed import lock.
-Accept reviewed source changes and freeze owned contracts before Pack; packing checks
-source/baseline/lock agreement. Published contract history is immutable. The retained
-central Protocol public-API ledgers are migration evidence, not the current release
-baseline, and their retirement still requires the feed/parity checks.
+Canonical packages retain a reviewed import lock. Owned public APIs use explicit
+Accept/Freeze and immutable history; private-only source needs no independent baseline.
+Pack checks current source and reviewed evidence. Historical central Protocol
+ledgers remain inert. Current tests use the independent 18-public/13-private
+inventory and separately reviewed qualified-artifact records; there is no remote
+Protocol absence or predecessor-parity prerequisite.
 
 Extension authors should:
 
@@ -74,11 +77,11 @@ Binary compatibility is not the only requirement. Descriptor ids, permission bou
 2. Confirm reviewed API/provider locks use the fixed `>=2.0.0 <3.0.0` Agent family range and exact imported contract identities, including the intended prerelease policy.
 3. Restore/build/test in standalone NuGet mode, not only source-reference mode.
 4. Inspect generated manifest capabilities and runtime dependencies.
-5. Check/freeze owned contracts, invoke `PackSunderPackage` on the canonical project and validate the exact `.sunderpkg` bytes.
+5. Check/freeze owned public contracts where present, invoke `PackSunderPackage` on the canonical project and validate the exact `.sunderpkg` bytes.
 6. Run clean install/activation, configuration, success/failure, unload/reload, and same-version reinstall smoke.
 7. Validate App snapshot behavior when an App module exists.
 8. Check logs/results/archive for secrets and local files.
-9. Exercise migration from the previous extension version with a backup of test data.
+9. For future supported extension upgrades, exercise their explicitly supported persistence/version policy. The current first-party clean-slate baseline has no pre-V1 migration prerequisite.
 10. Publish immutable bytes, then move a Registry dist tag only after verification.
 
 The first-party family releases exactly fifteen `.sunderpkg` archives from one Agent
@@ -117,7 +120,7 @@ Check the generated `sunder-package.json`, not a source manifest:
 
 - Package id is lowercase dot-separated ASCII.
 - Entry assembly contains one `SunderPackage` attribute.
-- Dependency is exactly `sunder.package.agent` with a satisfiable bounded range.
+- Dependency is exactly `younics.ai.agent` with a satisfiable bounded range.
 - Installed base Agent and SDK baseline are from the same compatible family.
 - Required capabilities inferred by `Sunder.Package.Build` are supported by the host.
 - No implementation/host assemblies were packaged as private dependencies.
@@ -172,7 +175,9 @@ Runtime and App provider visibility is intentionally role-scoped.
 - On Linux, use a kernel that supports `openat2` with the required resolution flags; unsupported Unix ABIs fail closed. Windows structured reads remain available, but writes and deletes deliberately return `strict-platform-mutation-unavailable` before mutation.
 - `recursive-directory-delete-required` means a Unix directory delete must be retried only with an intentional `Recursive=true`; it also applies to empty directories.
 - `strict-mutation-recovery-required` means a post-publication failure could not durably restore the original name automatically. Stop retries and preserve the hidden reserved entries for recovery; failed new bytes are sanitized and normal listing/search omits the recoverable state.
-- `docker-resource-approval-required` means the operation did not receive the exact current single-use `docker-resource-v3` lease. Re-resolve and reclassify the resource instead of replaying a persisted reference.
+- `docker-structured-bind-required` means the path is outside configured host bind mounts.
+  Docker structured access does not gain an outside-bind mode through approval. Changed
+  claims require fresh classification; legacy resource references never authorize access.
 - Docker requires a pinned local socket/npipe endpoint, stable daemon/container signature, host UID/GID execution, and a successful bidirectional challenge for every bind after container create, start, or reuse. Endpoint changes, remote contexts, Windows hosts, inaccessible mounts, or failed challenge cleanup stop execution.
 - Approval retains target-owned handle authority but does not bypass current namespace, mount-root, endpoint, daemon, or container verification.
 

@@ -5,7 +5,7 @@ using System.Text;
 using System.Text.Json;
 using Sunder.Package.Agent.Contracts.Models;
 using McpWorker::Sunder.Package.Agent.Mcp;
-using AgentToolPresentationRequest = McpWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentToolPresentationRequest;
+using AgentToolPresentationRequest = McpWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentToolPresentationRequest;
 using AgentApp::Sunder.Package.Agent.Services;
 using Xunit;
 

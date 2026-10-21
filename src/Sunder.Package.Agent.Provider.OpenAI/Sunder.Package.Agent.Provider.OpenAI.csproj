@@ -3,7 +3,7 @@
   <PropertyGroup>
     <AssemblyName>Sunder.Package.Agent.Provider.OpenAI</AssemblyName>
     <RootNamespace>Sunder.Package.Agent.Provider.OpenAI</RootNamespace>
-    <SunderPackageFamilyId>sunder.package.agent.provider.openai</SunderPackageFamilyId>
+    <SunderPackageFamilyId>younics.ai.agent.provider.openai</SunderPackageFamilyId>
     <SunderSdkAvaloniaReference>true</SunderSdkAvaloniaReference>
     <SunderPackageAssetsDirectory>$(MSBuildProjectDirectory)\Assets</SunderPackageAssetsDirectory>
   </PropertyGroup>

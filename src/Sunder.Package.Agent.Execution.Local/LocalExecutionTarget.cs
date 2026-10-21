@@ -1,5 +1,5 @@
 using Sunder.Agent.Execution.Common;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using IExecutionTargetService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Execution_Target.IExecutionTargetService;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
@@ -105,7 +105,7 @@ public sealed partial class LocalExecutionTarget : IExecutionTargetService, IDis
     }
 
     public ValueTask<IReadOnlyList<AgentResolvedExecutionResource>> ResolveResourcesAsync(
-        CSunder_Agent_Execution_Target_ExecutionTargetResolveResourcesRequest request,
+        CYounics_Ai_Agent_Execution_Target_ExecutionTargetResolveResourcesRequest request,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -113,7 +113,7 @@ public sealed partial class LocalExecutionTarget : IExecutionTargetService, IDis
     }
 
     public async ValueTask<AgentResolvedResource> ResolveFileAsync(
-        CSunder_Agent_Execution_Target_ExecutionTargetResolveFileRequest request,
+        CYounics_Ai_Agent_Execution_Target_ExecutionTargetResolveFileRequest request,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -150,7 +150,7 @@ public sealed partial class LocalExecutionTarget : IExecutionTargetService, IDis
     }
 
     public async ValueTask<AgentShellCommandResult> ExecuteShellAsync(
-        CSunder_Agent_Execution_Target_ExecutionTargetExecuteShellRequest invocation,
+        CYounics_Ai_Agent_Execution_Target_ExecutionTargetExecuteShellRequest invocation,
         CancellationToken cancellationToken = default)
     {
         var (context, request) = (invocation.Context, invocation.Request);
@@ -159,7 +159,7 @@ public sealed partial class LocalExecutionTarget : IExecutionTargetService, IDis
     }
 
     public async ValueTask<AgentShellCommandResult> ExecuteProcessAsync(
-        CSunder_Agent_Execution_Target_ExecutionTargetExecuteProcessRequest invocation,
+        CYounics_Ai_Agent_Execution_Target_ExecutionTargetExecuteProcessRequest invocation,
         CancellationToken cancellationToken = default)
     {
         var (context, request) = (invocation.Context, invocation.Request);
@@ -168,7 +168,7 @@ public sealed partial class LocalExecutionTarget : IExecutionTargetService, IDis
     }
 
     public async ValueTask<AgentFileSearchResult> StructuredFileSearchAsync(
-        CSunder_Agent_Execution_Target_ExecutionTargetStructuredFileSearchRequest invocation,
+        CYounics_Ai_Agent_Execution_Target_ExecutionTargetStructuredFileSearchRequest invocation,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -185,7 +185,7 @@ public sealed partial class LocalExecutionTarget : IExecutionTargetService, IDis
     }
 
     public async ValueTask<AgentExecutionPathMapping> MapPathAsync(
-        CSunder_Agent_Execution_Target_ExecutionTargetMapPathRequest request,
+        CYounics_Ai_Agent_Execution_Target_ExecutionTargetMapPathRequest request,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -202,7 +202,7 @@ public sealed partial class LocalExecutionTarget : IExecutionTargetService, IDis
     }
 
     public async ValueTask AddPathAsync(
-        CSunder_Agent_Execution_Target_ExecutionTargetAddPathRequest request,
+        CYounics_Ai_Agent_Execution_Target_ExecutionTargetAddPathRequest request,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -243,7 +243,7 @@ public sealed partial class LocalExecutionTarget : IExecutionTargetService, IDis
     }
 
     public async ValueTask<AgentFileReadResult> ReadFileAsync(
-        CSunder_Agent_Execution_Target_ExecutionTargetReadFileRequest invocation,
+        CYounics_Ai_Agent_Execution_Target_ExecutionTargetReadFileRequest invocation,
         CancellationToken cancellationToken = default)
     {
         var (context, request) = (invocation.Context, invocation.Request);
@@ -259,7 +259,7 @@ public sealed partial class LocalExecutionTarget : IExecutionTargetService, IDis
     }
 
     public async ValueTask<AgentFileMutationResult> WriteFileAsync(
-        CSunder_Agent_Execution_Target_ExecutionTargetWriteFileRequest invocation,
+        CYounics_Ai_Agent_Execution_Target_ExecutionTargetWriteFileRequest invocation,
         CancellationToken cancellationToken = default)
     {
         var (context, request) = (invocation.Context, invocation.Request);
@@ -275,7 +275,7 @@ public sealed partial class LocalExecutionTarget : IExecutionTargetService, IDis
     }
 
     public async ValueTask<AgentFileMutationResult> DeleteFileAsync(
-        CSunder_Agent_Execution_Target_ExecutionTargetDeleteFileRequest invocation,
+        CYounics_Ai_Agent_Execution_Target_ExecutionTargetDeleteFileRequest invocation,
         CancellationToken cancellationToken = default)
     {
         var (context, request) = (invocation.Context, invocation.Request);
@@ -291,7 +291,7 @@ public sealed partial class LocalExecutionTarget : IExecutionTargetService, IDis
     }
 
     public async ValueTask<AgentScopedInstructionDiscoveryResult> DiscoverInstructionsAsync(
-        CSunder_Agent_Execution_Target_ExecutionTargetDiscoverInstructionsRequest request,
+        CYounics_Ai_Agent_Execution_Target_ExecutionTargetDiscoverInstructionsRequest request,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();

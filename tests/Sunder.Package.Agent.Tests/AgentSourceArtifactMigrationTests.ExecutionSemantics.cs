@@ -21,7 +21,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         // own any backend authority. The authority implementations above stay Worker-only.
         AssertImportedRoleModel(assembly, "AgentResourceOperationContext");
         Assert.Null(assembly.GetType("Sunder.Package.Agent.Contracts.Contracts.IAgentExecutionTarget"));
-        Assert.Same(assembly, assembly.GetType(ImportedServices + "IExecutionTargetService", true)!.Assembly);
+        Assert.Same(assembly, assembly.GetType(ImportedServices + "CYounics_Ai_Agent_Execution_Target.IExecutionTargetService", true)!.Assembly);
         if (app)
             foreach (var family in new[] { "Local", "Docker" })
                 Assert.Null(assembly.GetType($"Sunder.Package.Agent.Execution.{family}.{family}ExecutionTarget"));

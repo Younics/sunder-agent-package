@@ -3,8 +3,8 @@
 Test the changed behavior at its owning boundary: domain behavior, generated-role
 composition, or fresh artifact/runtime lifecycle. Ordinary-service authoring uses
 `Sunder.Sdk.Services`; advanced wire/content APIs remain in `Sunder.Sdk.Rpc`.
-[Ordinary services](ordinary-service-refactor.md) records the completed migration,
-retained adapter responsibilities and dated qualification scopes.
+[Ordinary services](ordinary-service-refactor.md) describes current authoring.
+[Current test baseline](current-test-baseline.md) owns inventory and qualification inputs.
 
 ## Local iteration
 
@@ -29,7 +29,7 @@ canonical role outputs. A filtered test still has its project's build dependenci
 | Presentation, initialization, dispatch and viewport state | `Sunder.Package.Agent.Presentation.Tests`, `Sunder.Package.Agent.Presentation.State.Tests`, or the owning package view-model class |
 | Memory, Skills or Subagents behavior | Owning package suite and relevant Agent consumers |
 | Generated role composition/private transport | Focused canonical/source class, using matching built Worker/App roles |
-| Shared generator/contracts, package output or migration checkpoint | Required fresh all-family artifact case and affected Core boundary checks |
+| Shared generator/contracts, package output or integration checkpoint | Required fresh all-family artifact case and affected Core boundary checks |
 
 Run the full affected projects once at a coherent integration checkpoint. Full
 solution, all-family artifact and native runs belong at their shared-boundary or
@@ -79,7 +79,7 @@ Focused source classes such as `AgentCanonicalSourceMigrationTests`,
 the already-built canonical roles. Their behavioral probes also support fresh-artifact
 qualification; sharing probes does not make reused-role evidence fresh-build evidence.
 
-At a shared generator/contract or migration checkpoint, select the owning artifact
+At a shared generator/contract or integration checkpoint, select the owning artifact
 case explicitly, after preparing matching Core test tooling, family dependencies
 and the exact local Core catalog selected by the family locks:
 
@@ -110,21 +110,17 @@ native six-RID/security and release gates. The local artifact case is not a subs
 for those scopes. See [native inputs](native-release-inputs.md),
 [cold inputs](cold-release-inputs.md) and [release requirements](RELEASES.md).
 
-## Historical evidence
+## Current expectations and inert history
 
-Historical reconciliation and current generated behavior have different owners.
-Preserve the complete original captures and baseline bytes; do not regenerate them
-from current source or replace captured source with hashes alone. Read these large
-fixtures only for their owning history/compatibility work:
+Current role tests use generated implementations checked against the independent
+15-package, 18-public/13-private inventory and separately reviewed contract-byte
+records. See [current test baseline](current-test-baseline.md) for required inputs
+and the invariant transfer from removed historical readers.
 
-- [Historical project captures](../tests/Sunder.Package.Agent.Tests/Fixtures/PreCanonicalProjects/README.md)
-- [Retirement evidence and owning checks](../tests/Sunder.Package.Agent.Tests/Fixtures/PreCanonicalProjects/RETIREMENT.md)
-- [Ordinary-service history and current private successors](ordinary-service-refactor.md#compatibility-and-source-history-closure)
-
-Captured retired code is data, never a production or test compilation input.
-Current role tests use generated implementations. Keep the public descriptor/ABI
-oracle, archived private records and separately reviewed current private tuples
-distinct. Run-specific TRX/duration reports belong in ignored artifacts and CI
-evidence, rather than new checked-in case ledgers or duplicated session narratives.
+Preserve complete historical captures and baseline bytes. They remain inert:
+normal tests, builds and release do not read or reconstruct them, and captured code
+is never a compilation input. Their internal documentation records its original
+checkpoint rather than current prerequisites. Run-specific TRX/duration reports
+belong in ignored artifacts and CI evidence; record only actual outcomes.
 
 Next: [Release, compatibility, and troubleshooting](release-compatibility-troubleshooting.md).

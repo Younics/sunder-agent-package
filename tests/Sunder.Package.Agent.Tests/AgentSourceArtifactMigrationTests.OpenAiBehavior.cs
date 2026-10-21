@@ -42,11 +42,11 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 foreach (var name in new[] { "OpenAiAuthOperationResult", "OpenAiUtilityModelSelection", "OpenAiAuthMode", "OpenAiModelCatalog" })
                     Assert.Same(assembly, assembly.GetType("Sunder.Package.Agent.Provider.OpenAI." + name, true)!.Assembly);
                 Assert.Null(assembly.GetType("Sunder.Package.Agent.Provider.OpenAI.IOpenAiOwnerManagementClient"));
-                Assert.Same(assembly, assembly.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Provider_Openai_Services.IManagementService", true)!.Assembly);
+                Assert.Same(assembly, assembly.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Provider_Openai_Services.IManagementService", true)!.Assembly);
             }
             Assert.DoesNotContain(presentation.GetReferencedAssemblies(), reference => reference.Name is "Sunder.Package.Agent.Provider.OpenAI" or "Sunder.Sdk.Worker" or "OpenAI");
             using var package = RegressionTestPackageScope.Create();
-            var context = new TestPackageContext("sunder.package.agent.provider.openai", package.RootPath, version: "2.0.0", storage: package.Context.Storage);
+            var context = new TestPackageContext("younics.ai.agent.provider.openai", package.RootPath, version: "2.0.0", storage: package.Context.Storage);
             await context.Settings.SetValueAsync("auth.mode", "api-key");
             using var backend = new OpenAiArtifactHttp();
             using var apiHttp = new HttpClient(backend, disposeHandler: false);
@@ -80,7 +80,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.NotNull(options.SettingsSchema); Assert.NotNull(options.AuthHandler); Assert.Empty(backend.Requests);
             var registrations = options.Providers.ToDictionary(value => value.ProviderId);
             Assert.Equal(new[] { "openai.chat", "openai.continuation.cleaner", "openai.embedding", "openai.management" }, registrations.Keys.Order(StringComparer.Ordinal));
-            var descriptor = CurrentPrivateRpcDescriptors.Get("sunder.package.agent.provider.openai.management");
+            var descriptor = CurrentPrivateRpcDescriptors.Get("younics.ai.agent.provider.openai.management");
             foreach (var provider in options.Providers)
             {
                 var expected = provider.ProviderId == "openai.management" ? descriptor : CurrentPublicRpcDescriptors.Get(provider.ContractId);
@@ -88,8 +88,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 state.Add(context.PackageId, expected, provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, "2.0.0");
             }
             await using var appServices = CreateGeneratedApp(presentation, context, rpc);
-            var management = appServices.GetRequiredService(presentation.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Provider_Openai_Services.IManagementService", true)!);
-            var chatProvider = await CreateAgentChatProvider(agentOwner, rpc.ForCaller("sunder.package.agent"), Assert.Single((await rpc.DiscoverAsync(RegressionTestBindings.ChatProviders)).Providers));
+            var management = appServices.GetRequiredService(presentation.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Provider_Openai_Services.IManagementService", true)!);
+            var chatProvider = await CreateAgentChatProvider(agentOwner, rpc.ForCaller("younics.ai.agent"), Assert.Single((await rpc.DiscoverAsync(RegressionTestBindings.ChatProviders)).Providers));
             await using var chatLifetime = (IAsyncDisposable)chatProvider;
             using var chat = await CreateAgentChatClientAsync(chatProvider, new("openai", "openai/gpt-5.4"));
             Assert.False((await Manage("GetCredentialStatusAsync", [CancellationToken.None])).GetBoolean());
@@ -174,7 +174,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.Equal("rpc.binding.lifetime-disposed", disposedManagement.Error.Code);
             await appServices.DisposeAsync();
             var disposedClient = await Assert.ThrowsAsync<ObjectDisposedException>(() => Manage("GetCredentialStatusAsync", [CancellationToken.None]));
-            Assert.Equal("Sunder.Generated.Packages.Sunder_Package_Agent_Provider_Openai_Internal.ServiceClientLifetime", disposedClient.ObjectName);
+            Assert.Equal("Sunder.Generated.Packages.Younics_Ai_Agent_Provider_Openai_Internal.ServiceClientLifetime", disposedClient.ObjectName);
 
             async Task<JsonElement> Manage(string method, object[] args)
             {

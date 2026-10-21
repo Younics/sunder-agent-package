@@ -16,7 +16,7 @@ public sealed class OpenAiManagementRpcFaultTests
     {
         var secrets = new ThrowingSecrets();
         using var auth = new CodexConnectedAuthStrategy(new ProviderTestPackageContext(
-            "sunder.package.agent.provider.openai",
+            "younics.ai.agent.provider.openai",
             secrets: secrets));
         var provider = new OpenAiManagementService(
             new OpenAiAuthOperationHandler(auth),
@@ -34,7 +34,7 @@ public sealed class OpenAiManagementRpcFaultTests
     {
         var secrets = new ThrowingSecrets();
         using var auth = new CodexConnectedAuthStrategy(new ProviderTestPackageContext(
-            "sunder.package.agent.provider.openai",
+            "younics.ai.agent.provider.openai",
             secrets: secrets));
         var provider = new OpenAiManagementService(
             new OpenAiAuthOperationHandler(auth),
@@ -52,7 +52,7 @@ public sealed class OpenAiManagementRpcFaultTests
     {
         var secrets = new ThrowingSecrets();
         using var auth = new CodexConnectedAuthStrategy(new ProviderTestPackageContext(
-            "sunder.package.agent.provider.openai",
+            "younics.ai.agent.provider.openai",
             secrets: secrets));
         var provider = new OpenAiManagementService(
             new OpenAiAuthOperationHandler(auth),

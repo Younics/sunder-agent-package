@@ -5,7 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using McpWorker::Sunder.Package.Agent.Mcp.Runtime;
-using IManagementService = McpWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Mcp_Services.IManagementService;
+using IManagementService = McpWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Mcp_Services.IManagementService;
 using Sunder.Sdk.Services;
 using Xunit;
 

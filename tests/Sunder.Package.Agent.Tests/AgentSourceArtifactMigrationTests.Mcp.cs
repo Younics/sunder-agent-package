@@ -47,10 +47,10 @@ public sealed partial class AgentSourceArtifactMigrationTests
         using var manifestStream = archive.GetEntry("manifest/sunder-package.json")!.Open();
         using var manifest = JsonDocument.Parse(manifestStream);
         var value = manifest.RootElement;
-        Assert.Equal("sunder.package.agent.mcp", value.GetProperty("id").GetString());
-        Assert.Equal(21, value.GetProperty("contractBundles").GetArrayLength());
+        Assert.Equal("younics.ai.agent.mcp", value.GetProperty("id").GetString());
+        Assert.Equal(20, value.GetProperty("contractBundles").GetArrayLength());
         Assert.Equal(6, value.GetProperty("provides").GetArrayLength());
-        Assert.Equal(20, value.GetProperty("usesContracts").GetArrayLength());
+        Assert.Equal(19, value.GetProperty("usesContracts").GetArrayLength());
         Assert.DoesNotContain(value.GetProperty("usesContracts").EnumerateArray(), use => use.GetProperty("role").GetString() == "runtime" && use.GetProperty("required").GetBoolean());
         Assert.Single(value.GetProperty("platformImports").EnumerateArray());
         Assert.Equal(4, value.GetProperty("providerImports").GetArrayLength());

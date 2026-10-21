@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <SunderPackageFamilyId>sunder.package.agent.provider.gemini</SunderPackageFamilyId>
+    <SunderPackageFamilyId>younics.ai.agent.provider.gemini</SunderPackageFamilyId>
     <SunderSdkAvaloniaReference>true</SunderSdkAvaloniaReference>
   </PropertyGroup>
 

@@ -6,7 +6,7 @@ using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Memory.Semantic;
 
-[SunderService(Key = "management", ContractId = "sunder.agent.memory.semantic.inspector", ServiceId = "memory-inspector", IncludeSchemaDialect = true)]
+[SunderService(Key = "management", ContractId = "younics.ai.agent.memory.semantic.inspector", ServiceId = "memory-inspector", IncludeSchemaDialect = true)]
 [SunderServiceProvider(ProviderId = "semantic.memory.inspector")]
 [SunderServiceError("memory.semantic.operation-failed", Description = "The requested semantic memory operation could not be completed.")]
 public sealed partial class MemoryInspectorService

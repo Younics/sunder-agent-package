@@ -10,7 +10,7 @@ using Sunder.Package.Agent.Storage;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Services;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -49,7 +49,7 @@ public sealed partial class AgentPublicSourceMigrationTests
                 var host = services.GetRequiredService<AgentBehaviorLoopHostFactory>().Create(new(null, chatProviders.Add(provider), provider.Descriptor), session, profile, workspace,
                     run.Key.RunId, run.Key.RunRevision, run.StartedAtUtc, run.UserMessage, started.UserTurn.TurnId, null);
                 var loop = services.GetRequiredService<DefaultAgentBehaviorLoop>();
-                await using var fixture = await CreateBehaviorFixture(assembly, descriptors, loop, "sunder.package.agent");
+                await using var fixture = await CreateBehaviorFixture(assembly, descriptors, loop, "younics.ai.agent");
                 var bridge = fixture.Bridge;
                 Assert.Equal(DefaultAgentBehaviorLoop.LoopId, bridge.Descriptor.LoopId);
                 var context = new AgentBehaviorLoopContext(session, profile, "provider.one", "model.one",

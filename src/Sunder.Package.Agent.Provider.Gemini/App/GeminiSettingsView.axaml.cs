@@ -6,6 +6,7 @@ namespace Sunder.Package.Agent.Provider.Gemini;
 public partial class GeminiSettingsView : UserControl, IDisposable
 {
     private GeminiSettingsViewModel? _viewModel;
+    private int _disposed;
 
     public GeminiSettingsView()
     {
@@ -22,6 +23,7 @@ public partial class GeminiSettingsView : UserControl, IDisposable
 
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         DataContext = null;
         _viewModel?.Dispose();
         _viewModel = null;

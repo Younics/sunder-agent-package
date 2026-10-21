@@ -28,14 +28,14 @@ public sealed partial class AgentSourceArtifactMigrationTests
     {
         AssertMemorySemanticOwnership(worker, app: false);
         AssertMemorySemanticOwnership(app, app: true);
-        Assert.NotSame(worker.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionRecord", true), app.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionRecord", true));
+        Assert.NotSame(worker.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentSessionRecord", true), app.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentSessionRecord", true));
         foreach (var assembly in new[] { worker, app })
             Assert.DoesNotContain(assembly.GetReferencedAssemblies(), reference => reference.Name == "Sunder.Package.Agent.Memory.Semantic.Protocol");
         foreach (var name in new[] { "Sunder.Package.Agent.Memory.Semantic.StoredMemoryRecord",
             "Sunder.Package.Agent.Memory.Semantic.Services.SemanticEmbeddingContext",
             "Sunder.Package.Agent.Memory.Semantic.Services.SemanticMemoryMetricsSnapshot",
             "Sunder.Package.Agent.Memory.Semantic.Runtime.ProjectionContent",
-            "Sunder.Generated.Packages.Sunder_Package_Agent_Memory_Semantic_Services.IMemoryInspectorService" })
+            "Sunder.Generated.Packages.Younics_Ai_Agent_Memory_Semantic_Services.IMemoryInspectorService" })
         {
             Assert.Same(worker, worker.GetType(name, true)!.Assembly);
             Assert.Same(app, app.GetType(name, true)!.Assembly);
@@ -44,7 +44,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
 
         using var package = RegressionTestPackageScope.Create();
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent.memory.semantic");
+        var rpc = new RegressionTestRpcClient(state, "younics.ai.agent.memory.semantic");
         Assert.Null(worker.GetType("Sunder.Package.Agent.Memory.Semantic.Runtime.MemoryWorkerComposition"));
         Assert.Null(worker.GetType("Sunder.Package.Agent.Memory.Semantic.Runtime.MemoryWorkerBindings"));
         Assert.Null(worker.GetType("Sunder.Package.Agent.Memory.Semantic.Rpc.MemoryProviderCatalog"));
@@ -72,8 +72,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.True(IsIndexing());
         await VerifyRoleLocalMemoryEmbedding(worker, options.Composition.Services, store, state);
         foreach (var registration in options.Providers)
-            state.Add("sunder.package.agent.memory.semantic",
-                registration.ProviderId == "semantic.memory.inspector" ? CurrentPrivateRpcDescriptors.Get("sunder.agent.memory.semantic.inspector") : CurrentPublicRpcDescriptors.Get(registration.ContractId),
+            state.Add("younics.ai.agent.memory.semantic",
+                registration.ProviderId == "semantic.memory.inspector" ? CurrentPrivateRpcDescriptors.Get("younics.ai.agent.memory.semantic.inspector") : CurrentPublicRpcDescriptors.Get(registration.ContractId),
                 registration.Handler, registration.Handler, Noop.Instance, registration.ProviderId, "2.0.0");
 
         await VerifyAgentMemoryCleanup(agentOwner, store, state);
@@ -126,7 +126,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.Equal("semantic-memory.inspector-unavailable", unavailable.Error.Code);
         var reconnected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         gatewayType.GetEvent("ResetRequired")!.AddEventHandler(gateway, (Action)(() => reconnected.TrySetResult()));
-        state.Add("sunder.package.agent.memory.semantic", CurrentPrivateRpcDescriptors.Get("sunder.agent.memory.semantic.inspector"), new object(), inspector.Handler, Noop.Instance, inspector.ProviderId, "2.0.0");
+        state.Add("younics.ai.agent.memory.semantic", CurrentPrivateRpcDescriptors.Get("younics.ai.agent.memory.semantic.inspector"), new object(), inspector.Handler, Noop.Instance, inspector.ProviderId, "2.0.0");
         await reconnected.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Single(((IEnumerable)(await Call("ListMemoriesAsync", session, null, false, CancellationToken.None))!).Cast<object>());
         await ((IAsyncDisposable)gateway).DisposeAsync();

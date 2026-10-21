@@ -3,7 +3,7 @@
   <PropertyGroup>
     <AssemblyName>Sunder.Package.Agent.Mcp</AssemblyName>
     <RootNamespace>Sunder.Package.Agent.Mcp</RootNamespace>
-    <SunderPackageFamilyId>sunder.package.agent.mcp</SunderPackageFamilyId>
+    <SunderPackageFamilyId>younics.ai.agent.mcp</SunderPackageFamilyId>
     <SunderSdkAvaloniaReference>true</SunderSdkAvaloniaReference>
     <SunderSdkStacksReference>true</SunderSdkStacksReference>
     <SunderAgentSharedCallbackFlow>true</SunderAgentSharedCallbackFlow>
@@ -23,10 +23,6 @@
     <PackageReference Include="AvaloniaEdit.TextMate" />
     <PackageReference Include="CommunityToolkit.Mvvm" />
     <Compile Include="$(_AgentModels)Tools\AgentToolArgumentObject.cs;$(_AgentModels)Tools\AgentPayloadLimits.cs;$(_AgentModels)Tools\AgentToolResultErrorCodes.cs;$(_AgentModels)Extensions\AgentProfileSelectableCapabilityKinds.cs" LinkBase="Domain" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <SunderSdkCapability Include="rpc.extended-deadline.v1" />
   </ItemGroup>
 
   <Import Project="..\Sunder.Package.Agent.Shared\Sunder.Package.Agent.Shared.props" />

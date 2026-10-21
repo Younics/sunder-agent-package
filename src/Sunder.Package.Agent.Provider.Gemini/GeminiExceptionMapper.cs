@@ -9,7 +9,7 @@ internal static class GeminiExceptionMapper
     public static AgentChatProviderException MissingApiKey()
         => new(
             "missing-api-key",
-            "### Missing Gemini API key\n\nOpen **Settings -> Packages -> Sunder Agent Provider Gemini** and enter an API key before sending messages.",
+            "### Missing Gemini API key\n\nOpen **Settings -> Packages -> AI Agent - Gemini** and enter an API key before sending messages.",
             "missing-api-key");
 
     public static AgentChatProviderException ClientInitialization(Exception exception)

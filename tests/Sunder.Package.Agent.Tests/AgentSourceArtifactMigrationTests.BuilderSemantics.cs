@@ -1,5 +1,5 @@
 using System.Reflection;
-using System.Text.Json.Serialization;
+using Sunder.Sdk.Abstractions;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -8,34 +8,29 @@ public sealed partial class AgentSourceArtifactMigrationTests
 {
     internal static void AssertBuilderSemanticOwnership(Assembly assembly, bool app)
     {
-        Assert.DoesNotContain(assembly.GetReferencedAssemblies(), reference => reference.Name is "Sunder.Package.Agent.Protocol" or "Sunder.Agent.Execution.Common");
-        foreach (var name in new[] { "AgentWorkspaceRecord", "AgentWorkspacePathRecord", "AgentExecutionPathMapping", "AgentExecutionScopeDescriptor", "AgentResourceOperationContext" })
-            AssertImportedRoleModel(assembly, name);
-        var context = AssertImportedRoleModel(assembly, "AgentExecutionTargetContext");
-        foreach (var name in new[] { "ApprovedResourceCapabilities", "ResourceOperation", "CapturePostMutationResource", "ExpectedConfigurationGeneration" })
-        {
-            // The authored durable model excludes authority, while the reviewed
-            // imported service DTO explicitly carries those invocation-only fields.
-            Assert.Equal(JsonIgnoreCondition.Always, typeof(Sunder.Package.Agent.Contracts.Models.AgentExecutionTargetContext)
-                .GetProperty(name)!.GetCustomAttribute<JsonIgnoreAttribute>()?.Condition);
-            Assert.Equal(char.ToLowerInvariant(name[0]) + name[1..],
-                context.GetProperty(name)!.GetCustomAttribute<JsonPropertyNameAttribute>()?.Name);
-        }
-        Assert.Equal(JsonIgnoreCondition.Always, typeof(Sunder.Package.Agent.Contracts.Models.AgentResourceOperationContext)
-            .GetProperty("AuthorityActivationId")!.GetCustomAttribute<JsonIgnoreAttribute>()?.Condition);
-        Assert.Equal("authorityActivationId", AssertImportedRoleModel(assembly, "AgentResourceOperationContext")
-            .GetProperty("AuthorityActivationId")!.GetCustomAttribute<JsonPropertyNameAttribute>()?.Name);
-        Assert.Null(assembly.GetType("Sunder.Package.Agent.Protocol.AgentRpcCatalog"));
-        Assert.Null(assembly.GetType("Sunder.Package.Agent.Protocol.AgentRpcProviderHandle"));
-        Assert.Null(assembly.GetType("Sunder.Package.Agent.Contracts.Contracts.IAgentProcessExecutionTarget"));
-        Assert.Same(assembly, assembly.GetType(ImportedServices + "IExecutionTargetService", true)!.Assembly);
+        Assert.DoesNotContain(assembly.GetReferencedAssemblies(), reference =>
+            reference.Name!.StartsWith("Sunder.Package.Agent", StringComparison.Ordinal) || reference.Name == "Sunder.Agent.Execution.Common");
+        Assert.DoesNotContain(assembly.GetTypes(), type => type.Namespace?.StartsWith("Sunder.Generated.Packages.Younics_Ai_Agent_", StringComparison.Ordinal) == true);
+        foreach (var name in new[] { "BuilderProjectKind", "BuilderProjectInspection", "BuilderJobRequest", "BuilderJobSnapshot", "BuilderToolchainStatus", "BuilderContent" })
+            Assert.Same(assembly, assembly.GetType("Sunder.Package.Agent.Builder." + name, true)!.Assembly);
+        Assert.Null(assembly.GetType("Sunder.Package.Agent.Builder.BuilderWorkspaceExecutionService"));
+        Assert.Null(assembly.GetType("Sunder.Package.Agent.Builder.BuilderRpcExecutor"));
         if (app)
         {
-            AssertImportedRoleModel(assembly, "AgentModelDescriptor");
+            Assert.NotNull(assembly.GetType("Sunder.Package.Agent.Builder.BuilderBackendGateway", true));
+            Assert.NotNull(assembly.GetType("Sunder.Package.Agent.Builder.BuilderSettingsView", true));
+            Assert.Null(assembly.GetType("Sunder.Package.Agent.Builder.BuilderRuntimeService"));
             Assert.DoesNotContain(assembly.GetReferencedAssemblies(), reference => reference.Name is "Sunder.Sdk.Worker" or "Microsoft.Extensions.AI.Abstractions");
         }
         else
+        {
+            var constructor = Assert.Single(assembly.GetType("Sunder.Package.Agent.Builder.BuilderRuntimeService", true)!.GetConstructors());
+            Assert.Equal(typeof(IPackageContext), Assert.Single(constructor.GetParameters()).ParameterType);
+            Assert.Null(assembly.GetType("Sunder.Package.Agent.Builder.BuilderViewModel"));
+            Assert.Null(assembly.GetType("Sunder.Package.Agent.Builder.BuilderBackendGateway"));
+            Assert.Contains(assembly.GetReferencedAssemblies(), reference => reference.Name == "Microsoft.CodeAnalysis.CSharp");
             Assert.DoesNotContain(assembly.GetReferencedAssemblies(), reference => reference.Name is "Sunder.Sdk.Avalonia" or "CommunityToolkit.Mvvm"
                 || reference.Name!.StartsWith("Avalonia", StringComparison.Ordinal));
+        }
     }
 }

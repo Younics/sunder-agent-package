@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <SunderTestOwner>sunder.package.agent.execution.local</SunderTestOwner>
+    <SunderTestOwner>younics.ai.agent.execution.local</SunderTestOwner>
     <SunderTestCategory>Conformance</SunderTestCategory>
     <SunderTestCapabilities>Filesystem;Native;Process;Worker</SunderTestCapabilities>
     <SunderTestOS>Any</SunderTestOS>

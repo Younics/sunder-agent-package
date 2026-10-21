@@ -14,7 +14,7 @@ using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.PackageViews;
 
-[Sunder.Sdk.Packaging.SunderPackageView("sunder.package.agent.workspaces", "Workspaces",
+[Sunder.Sdk.Packaging.SunderPackageView("younics.ai.agent.workspaces", "Workspaces",
     IconPath = "Assets/workspace-icon.png", DefaultPlacement = PackageViewPlacement.RightTop)]
 public partial class AgentWorkspacesView : UserControl, IDisposable, IPackageViewWarmupTarget, IPackageViewNavigationTarget
 {
@@ -57,7 +57,7 @@ public partial class AgentWorkspacesView : UserControl, IDisposable, IPackageVie
     public AgentWorkspacesView(
         IAgentWorkspaceGateway workspaceService,
         IAgentExecutionGateway executionGateway,
-        Sunder.Sdk.Services.IServiceProviders<Sunder.Generated.Packages.Sunder_Package_Agent_Services.IWorkspaceEditorService> editors,
+        Sunder.Sdk.Services.IServiceProviders<Sunder.Generated.Packages.Younics_Ai_Agent_Services.IWorkspaceEditorService> editors,
         IPackageSettingsNavigationService? settingsNavigationService = null,
         AgentWorkspacesViewContext? context = null)
         : this(context ?? new AgentWorkspacesViewContext())

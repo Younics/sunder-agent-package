@@ -57,7 +57,9 @@ using AgentChatSelectionStateService = AgentCore::Sunder.Package.Agent.Services.
 using AgentToolPresentationService = AgentCore::Sunder.Package.Agent.Services.AgentToolPresentationService;
 using AppRuntime = AgentCore::Sunder.Package.Agent.Runtime;
 using AppModels = AgentCore::Sunder.Package.Agent.Contracts.Models;
-using MemoryModels = MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using MemoryModels = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models;
+using IEmbeddingProviderService = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Embedding_Provider.IEmbeddingProviderService;
+using IRuntimeCatalogService = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Runtime_Catalog.IRuntimeCatalogService;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -276,7 +278,7 @@ public sealed partial class AgentRunCoordinatorTests
         {
             ExecutionTarget = (await catalog.GetRequiredProviderAsync(catalog.ExecutionTargets)).Reference,
         };
-        using var filesProbe = new GeneratedToolSourceProbe(catalog, files, "sunder.package.agent.tools.files", withPromptContext: true);
+        using var filesProbe = new GeneratedToolSourceProbe(catalog, files, "younics.ai.agent.tools.files", withPromptContext: true);
         var contribution = await filesProbe.ContributeContextAsync(request);
         var block = Assert.Single(Assert.IsType<AgentPromptContextContribution>(contribution).Blocks);
 
@@ -308,10 +310,10 @@ public sealed partial class AgentRunCoordinatorTests
             new LocalShellCatalogService(packageContext));
         var files = new FilesToolSource(packageContext);
         var shell = new ShellToolSource();
-        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.ExecutionTargets, target, "sunder.package.agent.execution.local");
-        using var filesProbe = new GeneratedToolSourceProbe(runtime.ExtensionCatalog, files, "sunder.package.agent.tools.files", withPromptContext: true);
-        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.ToolSources, shell, "sunder.package.agent.tools.shell");
-        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.PromptContextContributors, shell, "sunder.package.agent.tools.shell");
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.ExecutionTargets, target, "younics.ai.agent.execution.local");
+        using var filesProbe = new GeneratedToolSourceProbe(runtime.ExtensionCatalog, files, "younics.ai.agent.tools.files", withPromptContext: true);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.ToolSources, shell, "younics.ai.agent.tools.shell");
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.PromptContextContributors, shell, "younics.ai.agent.tools.shell");
         var sessionId = await runtime.CreateSessionAsync("shell");
         var root = Path.Combine(runtime.RootPath, "shell-only-workspace");
         Directory.CreateDirectory(root);
@@ -383,7 +385,7 @@ public sealed partial class AgentRunCoordinatorTests
         runtime.ExtensionCatalog.AddProvider(
             RegressionTestBindings.PromptContextContributors,
             new FailingRequiredScopedContextContributor(failDuringContribution),
-            "sunder.package.agent.tools.files");
+            "younics.ai.agent.tools.files");
         var sessionId = await runtime.CreateSessionAsync("noop");
 
         var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
@@ -1381,8 +1383,8 @@ public sealed partial class AgentRunCoordinatorTests
         var extensionCatalog = new TestExtensionCatalog();
         var metrics = new SemanticMemoryMetricsService();
         var resolver = new SemanticModelRuntimeResolver(
-            extensionCatalog.Memory().Providers<MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services.IRuntimeCatalogService>(),
-            extensionCatalog.Memory().Providers<MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services.IEmbeddingProviderService>(),
+            extensionCatalog.Memory().Providers<IRuntimeCatalogService>(),
+            extensionCatalog.Memory().Providers<IEmbeddingProviderService>(),
             settings);
         var retrievalBackend = new SemanticMemoryRetrievalBackend(
             store,
@@ -1469,8 +1471,8 @@ public sealed partial class AgentRunCoordinatorTests
         var settings = new MemorySemanticSettingsService(context);
         var metrics = new SemanticMemoryMetricsService();
         var resolver = new SemanticModelRuntimeResolver(
-            runtime.ExtensionCatalog.Memory().Providers<MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services.IRuntimeCatalogService>(),
-            runtime.ExtensionCatalog.Memory().Providers<MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services.IEmbeddingProviderService>(),
+            runtime.ExtensionCatalog.Memory().Providers<IRuntimeCatalogService>(),
+            runtime.ExtensionCatalog.Memory().Providers<IEmbeddingProviderService>(),
             settings);
         var retrievalBackend = new SemanticMemoryRetrievalBackend(
             store,
@@ -1565,8 +1567,8 @@ public sealed partial class AgentRunCoordinatorTests
         var settings = new MemorySemanticSettingsService(context);
         var metrics = new SemanticMemoryMetricsService();
         var resolver = new SemanticModelRuntimeResolver(
-            runtime.ExtensionCatalog.Memory().Providers<MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services.IRuntimeCatalogService>(),
-            runtime.ExtensionCatalog.Memory().Providers<MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services.IEmbeddingProviderService>(),
+            runtime.ExtensionCatalog.Memory().Providers<IRuntimeCatalogService>(),
+            runtime.ExtensionCatalog.Memory().Providers<IEmbeddingProviderService>(),
             settings);
         var retrievalBackend = new SemanticMemoryRetrievalBackend(
             store,
@@ -1614,8 +1616,8 @@ public sealed partial class AgentRunCoordinatorTests
         var settings = new MemorySemanticSettingsService(context);
         var metrics = new SemanticMemoryMetricsService();
         var resolver = new SemanticModelRuntimeResolver(
-            runtime.ExtensionCatalog.Memory().Providers<MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services.IRuntimeCatalogService>(),
-            runtime.ExtensionCatalog.Memory().Providers<MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services.IEmbeddingProviderService>(),
+            runtime.ExtensionCatalog.Memory().Providers<IRuntimeCatalogService>(),
+            runtime.ExtensionCatalog.Memory().Providers<IEmbeddingProviderService>(),
             settings);
         var retrievalBackend = new SemanticMemoryRetrievalBackend(
             store,
@@ -1678,8 +1680,8 @@ public sealed partial class AgentRunCoordinatorTests
         var store = new MemoryLocalStore(context);
         var settings = new MemorySemanticSettingsService(context);
         var resolver = new SemanticModelRuntimeResolver(
-            runtime.ExtensionCatalog.Memory().Providers<MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services.IRuntimeCatalogService>(),
-            runtime.ExtensionCatalog.Memory().Providers<MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services.IEmbeddingProviderService>(),
+            runtime.ExtensionCatalog.Memory().Providers<IRuntimeCatalogService>(),
+            runtime.ExtensionCatalog.Memory().Providers<IEmbeddingProviderService>(),
             settings);
         var retrievalBackend = new SemanticMemoryRetrievalBackend(
             store,
@@ -1782,8 +1784,8 @@ public sealed partial class AgentRunCoordinatorTests
         var store = new MemoryLocalStore(context);
         var settings = new MemorySemanticSettingsService(context);
         var resolver = new SemanticModelRuntimeResolver(
-            extensionCatalog.Memory().Providers<MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services.IRuntimeCatalogService>(),
-            extensionCatalog.Memory().Providers<MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services.IEmbeddingProviderService>(),
+            extensionCatalog.Memory().Providers<IRuntimeCatalogService>(),
+            extensionCatalog.Memory().Providers<IEmbeddingProviderService>(),
             settings);
         var retrievalBackend = new SemanticMemoryRetrievalBackend(
             store,
@@ -1993,8 +1995,8 @@ public sealed partial class AgentRunCoordinatorTests
         var settings = new MemorySemanticSettingsService(settingsContext);
         var metrics = new SemanticMemoryMetricsService();
         var resolver = new SemanticModelRuntimeResolver(
-            catalog.Memory().Providers<MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services.IRuntimeCatalogService>(),
-            catalog.Memory().Providers<MemoryWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services.IEmbeddingProviderService>(),
+            catalog.Memory().Providers<IRuntimeCatalogService>(),
+            catalog.Memory().Providers<IEmbeddingProviderService>(),
             settings);
         var retrievalBackend = new SemanticMemoryRetrievalBackend(
             store,

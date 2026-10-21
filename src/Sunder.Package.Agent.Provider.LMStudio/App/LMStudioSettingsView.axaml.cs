@@ -6,6 +6,7 @@ namespace Sunder.Package.Agent.Provider.LMStudio;
 public partial class LMStudioSettingsView : UserControl, IDisposable
 {
     private LMStudioSettingsViewModel? _viewModel;
+    private int _disposed;
 
     public LMStudioSettingsView()
     {
@@ -22,6 +23,7 @@ public partial class LMStudioSettingsView : UserControl, IDisposable
 
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         DataContext = null;
         _viewModel?.Dispose();
         _viewModel = null;

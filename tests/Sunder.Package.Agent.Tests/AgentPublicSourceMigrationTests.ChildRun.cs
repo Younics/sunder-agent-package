@@ -8,9 +8,9 @@ using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Worker;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
-using ChildConsumerServices = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
-using ChildConsumerModels = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
+using IChildRunExecutorService = SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Child_Run_Executor.IChildRunExecutorService;
+using ChildConsumerModels = SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -115,7 +115,7 @@ public sealed partial class AgentPublicSourceMigrationTests
         probe.Failure = null;
         var recorder = new ChildRunCallRecorder(fixture.Rpc);
         await using var consumer = new GeneratedServiceTestScope(recorder);
-        var selected = Assert.Single((await consumer.Providers<ChildConsumerServices.IChildRunExecutorService>().ListAsync()).Providers);
+        var selected = Assert.Single((await consumer.Providers<IChildRunExecutorService>().ListAsync()).Providers);
         await selected.EnsureCurrentAsync();
         await InvokeChildRunAsync(selected.Service, consumer, request, default);
         Assert.True(JsonElement.DeepEquals(RunJson(request), RunJson(probe.Request)));
@@ -130,19 +130,19 @@ public sealed partial class AgentPublicSourceMigrationTests
 
     private static async Task<ChildRunFixture> CreateChildRunFixture(Assembly assembly, SunderRpcContractDescriptor descriptor, object executor)
     {
-        var type = assembly.GetType("Sunder.Generated.Packages.Sunder_Package_Agent_Services.IChildRunExecutorService", true)!;
+        var type = assembly.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Services.IChildRunExecutorService", true)!;
         Assert.True(type.IsInterface);
         var implementation = executor;
         var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent.subagents");
+        var rpc = new RegressionTestRpcClient(state, "younics.ai.agent.subagents");
         var receiver = new GeneratedServiceTestScope(rpc);
         using var providers = new RegressionTestSourceProviders();
         var registration = providers.Create(descriptor.ContractId, implementation, receiver);
         Assert.Equal(executor is ChildRunProbe ? "fixture.regression.child.run" : "agent.child.runs", registration.ProviderId);
         Assert.Equal(descriptor.Sha256, registration.DescriptorSha256);
         Assert.Equal(descriptor.AbiSha256, registration.AbiSha256);
-        state.Add("sunder.package.agent", descriptor, implementation, registration.Handler, EmptyDisposable.Instance, registration.ProviderId, "2.0.0");
-        var provider = Assert.Single((await receiver.Providers<ChildConsumerServices.IChildRunExecutorService>().ListAsync()).Providers,
+        state.Add("younics.ai.agent", descriptor, implementation, registration.Handler, EmptyDisposable.Instance, registration.ProviderId, "2.0.0");
+        var provider = Assert.Single((await receiver.Providers<IChildRunExecutorService>().ListAsync()).Providers,
             value => value.ProviderId == registration.ProviderId);
         var endpoint = Assert.Single(state.Discover(descriptor.ContractId).Providers,
             value => value.ProviderId == registration.ProviderId).Endpoint;
@@ -150,7 +150,7 @@ public sealed partial class AgentPublicSourceMigrationTests
     }
 
     private sealed class ChildRunFixture(RegressionTestRpcState state, RegressionTestRpcClient rpc, GeneratedServiceTestScope receiver,
-        ChildConsumerServices.IChildRunExecutorService client, object implementation, SunderRpcEndpointReference source) : IAsyncDisposable
+        IChildRunExecutorService client, object implementation, SunderRpcEndpointReference source) : IAsyncDisposable
     {
         public RegressionTestRpcState State { get; } = state;
         public RegressionTestRpcClient Rpc { get; } = rpc;
@@ -161,7 +161,7 @@ public sealed partial class AgentPublicSourceMigrationTests
         public async ValueTask DisposeAsync() { await receiver.DisposeAsync(); State.Dispose(); }
     }
 
-    private static async Task<AgentChildRunResult> InvokeChildRunAsync(ChildConsumerServices.IChildRunExecutorService client,
+    private static async Task<AgentChildRunResult> InvokeChildRunAsync(IChildRunExecutorService client,
         GeneratedServiceTestScope receiver, AgentChildRunRequest request, CancellationToken token)
     {
         var projection = RegressionTestGeneratedProviderProjection.FromCandidate(

@@ -4,28 +4,11 @@ A behavior loop controls one Agent run's provider/tool cycle. It is the most pri
 
 ## Behavior Loop Contract
 
-Implement `IAgentBehaviorLoop`, adapt it with `AgentBehaviorLoopRpc.CreateHandler`, and publish it under `sunder.agent.behavior.loop`.
-
-```csharp
-public sealed class AcmeBehaviorLoop : IAgentBehaviorLoop
-{
-    public AgentBehaviorLoopDescriptor Descriptor { get; } = new(
-        "acme-review",
-        "Acme Review",
-        "Runs the Acme review workflow.",
-        SourceId: "com.acme.sunder.agent.review",
-        FeatureKinds: ["review"]);
-
-    public ValueTask<AgentBehaviorLoopResult> RunAsync(
-        AgentBehaviorLoopContext context,
-        IAgentBehaviorLoopRuntime runtime,
-        CancellationToken cancellationToken = default)
-    {
-        // Orchestration omitted. Use only the bounded runtime operations below.
-        throw new NotImplementedException();
-    }
-}
-```
+Select `younics.ai.agent.behavior.loop`, implement generated `IBehaviorLoopService` and
+bind it with `SunderServiceProvider`, as in the [quickstart](extension-quickstart.md).
+[`BehaviorLoopService`](../src/Sunder.Package.Agent/Rpc/Public/BehaviorLoop.cs)
+owns the exact signature: `DescribeAsync` plus `RunAsync` with context, invocation ID,
+a typed run-control reference and cancellation. No handwritten handler factory is needed.
 
 `LoopId` plus optional `SourceId` is persisted on profiles. Keep both stable. `SettingsSchemaJson` is a loop-owned schema payload; validate profile settings defensively and preserve unknown values when evolving it.
 
@@ -33,20 +16,23 @@ When no selected loop is available, Agent falls back to the registered `default`
 
 ## Runtime Boundary
 
-`IAgentBehaviorLoopRuntime` is the complete supported host surface for a loop:
+The supplied `ServiceReference<IRunControlService>` grants the exact run-control
+binding for the invocation. Its bounded operations provide:
 
-- Confirm active run ownership with `IsCurrentRun`.
+- Confirm active run ownership.
 - Read persisted transcript snapshots.
 - Build trusted instructions plus separately labeled supplementary context.
 - List currently ready and profile-assigned tools.
-- Create the selected provider's `IChatClient`.
+- Use the selected provider through the run-control chat operations.
 - Save durable checkpoints.
 - Write/complete an assistant turn.
 - invoke tools through the permission and persistence pipeline.
 - Publish lifecycle events.
 - Emit structured package events.
 
-Do not cast the runtime to an Agent implementation class or reference `Sunder.Package.Agent`. The only optional host capability intended for a wrapper loop is `IAgentInnerBehaviorLoopRuntime`, whose `RunDefaultLoopAsync` delegates to the base loop while preserving host invariants.
+Do not reference Agent implementation classes or transfer process-local AI client
+objects. A wrapper loop delegates default-loop execution through the supplied
+run-control API, preserving its authenticated caller/run grants.
 
 ## Required Invariants
 
@@ -89,7 +75,7 @@ Provider usage is preferred because local estimates cannot accurately price prov
 
 ## Child Run Service Port
 
-The base Agent publishes one `sunder.agent.child.run.executor` RPC provider. Orchestration packages discover and invoke that exact endpoint; they must not publish a competing executor.
+The base Agent publishes one `younics.ai.agent.child.run.executor` RPC provider. Orchestration packages discover and invoke that exact endpoint; they must not publish a competing executor.
 
 `AgentChildRunRequest` requires:
 
@@ -109,14 +95,16 @@ Child sessions participate in the permission hierarchy. Session approvals and Un
 
 ## First-Party Subagents
 
-`sunder.package.agent.subagents` composes several public RPC capabilities:
+`younics.ai.agent.subagents` composes several public RPC capabilities:
 
 - A selectable `subagent` capability provider.
 - Dynamic `task` and `delegate_tasks` tools.
 - Trusted tool-use instructions through a system prompt contributor.
 - The `orchestrated` behavior loop.
 
-The orchestrated loop is a thin wrapper: it requires `IAgentInnerBehaviorLoopRuntime` and delegates to the base default loop. It does not rediscover or recursively decorate another behavior loop. Child profile snapshots explicitly select the default loop, preventing accidental orchestration recursion.
+The orchestrated loop delegates to the base default loop through run control. It
+does not rediscover or recursively decorate another loop. Child profiles explicitly
+select the default loop, preventing accidental orchestration recursion.
 
 ### Profile And Capability Inheritance
 
@@ -139,9 +127,9 @@ If a child waits for approval, the tool result uses `child-waiting-for-approval`
 ## Building An Orchestration Package
 
 1. Register a stable behavior loop only if profile-level selection is required.
-2. Consume the base `RuntimeCatalogs` RPC capability for immutable profile/session lookup.
-3. Consume the base `ChildRunExecutors` RPC capability for child state and correlation.
-4. Expose delegation through an `IAgentToolSource` so normal profile assignment and tool security apply.
+2. Select the base runtime-catalog service for immutable profile/session lookup.
+3. Select the child-run-executor service for child state and correlation.
+4. Expose delegation through `IToolSourceService` so normal profile assignment and tool security apply.
 5. Pass the current `AgentToolExecutionContext` correlation into each child request.
 6. Use structured payloads to retain child session ids/status, but bound content returned to the parent model.
 7. Treat waiting, failed, stopped, and interrupted child states distinctly.

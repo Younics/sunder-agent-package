@@ -111,9 +111,9 @@ public sealed class McpConfigurationDocumentTests
     }
 
     [Fact]
-    public void Parse_StillReadsLegacyLocalEnvironmentVariables()
+    public void Parse_RejectsOldLocalEnvironmentAlias()
     {
-        var parsed = McpConfigurationDocument.Parse(
+        var exception = Assert.Throws<McpManagementOperationException>(() => McpConfigurationDocument.Parse(
             "server-1",
             "legacy_env",
             """
@@ -125,14 +125,13 @@ public sealed class McpConfigurationDocumentTests
                 "MY_API_KEY": "legacy-api-key"
               }
             }
-            """);
+            """));
 
-        Assert.Contains(parsed.Server.EnvironmentVariableNames, name => name == "MY_API_KEY");
-        Assert.Equal("legacy-api-key", parsed.EnvironmentVariables["MY_API_KEY"]);
+        Assert.Contains("'env'", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void Parse_MapsLegacyTimeoutToDiscoveryAndToolTimeouts()
+    public void Parse_AppliesSharedTimeoutToDiscoveryAndToolTimeouts()
     {
         var parsed = McpConfigurationDocument.Parse(
             "server-1",
@@ -149,6 +148,14 @@ public sealed class McpConfigurationDocumentTests
         Assert.Equal(45000, parsed.Server.TimeoutMilliseconds);
         Assert.Equal(45000, parsed.Server.DiscoveryTimeoutMilliseconds);
         Assert.Equal(45000, parsed.Server.ToolTimeoutMilliseconds);
+    }
+
+    [Fact]
+    public void Parse_RejectsOldOAuthClientIdAlias()
+    {
+        Assert.Throws<McpManagementOperationException>(() => McpConfigurationDocument.Parse(
+            "server", "server",
+            """{"type":"remote","url":"https://example.com/mcp","oauth":{"client_id":"old"}}"""));
     }
 
     [Theory]

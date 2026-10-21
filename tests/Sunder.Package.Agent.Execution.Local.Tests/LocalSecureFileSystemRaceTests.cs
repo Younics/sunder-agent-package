@@ -4,18 +4,18 @@ using Microsoft.Win32.SafeHandles;
 using System.Runtime.InteropServices;
 using LocalWorker::Sunder.Package.Agent.Execution.Local;
 using Xunit;
-using AgentFileDeleteRequest = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileDeleteRequest;
-using AgentFileMutationResult = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileMutationResult;
+using AgentFileDeleteRequest = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentFileDeleteRequest;
+using AgentFileMutationResult = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentFileMutationResult;
 using AgentFileReadErrorCodes = Sunder.Package.Agent.Contracts.Models.AgentFileReadErrorCodes;
-using AgentFileReadRequest = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileReadRequest;
+using AgentFileReadRequest = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentFileReadRequest;
 using AgentFileSearchErrorCodes = Sunder.Package.Agent.Contracts.Models.AgentFileSearchErrorCodes;
-using AgentFileSearchKind = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileSearchKind;
-using AgentFileSearchRequest = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileSearchRequest;
-using AgentFileWriteRequest = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileWriteRequest;
-using AgentResourceOperationContext = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentResourceOperationContext;
-using AgentResolvedResource = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentResolvedResource;
-using AgentScopedInstructionDiscoveryRequest = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentScopedInstructionDiscoveryRequest;
-using AgentScopedInstructionProbe = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentScopedInstructionProbe;
+using AgentFileSearchKind = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentFileSearchKind;
+using AgentFileSearchRequest = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentFileSearchRequest;
+using AgentFileWriteRequest = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentFileWriteRequest;
+using AgentResourceOperationContext = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentResourceOperationContext;
+using AgentResolvedResource = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentResolvedResource;
+using AgentScopedInstructionDiscoveryRequest = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentScopedInstructionDiscoveryRequest;
+using AgentScopedInstructionProbe = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentScopedInstructionProbe;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
 

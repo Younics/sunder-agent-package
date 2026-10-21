@@ -1,509 +1,222 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-              xmlns:vm="using:Sunder.Package.Agent.Builder"
-              xmlns:m="using:Sunder.Generated.Packages.Sunder_Package_Agent_Models"
-              xmlns:shared="using:Sunder.Package.Agent.Shared.PackageViews"
-              x:Class="Sunder.Package.Agent.Builder.BuilderView"
-             x:DataType="vm:BuilderViewModel"
-             mc:Ignorable="d">
-
+             xmlns:vm="using:Sunder.Package.Agent.Builder"
+             x:Class="Sunder.Package.Agent.Builder.BuilderView"
+             x:DataType="vm:BuilderViewModel" x:CompileBindings="True">
   <UserControl.Styles>
-    <Style Selector="Border.builder-shell">
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Raised}" />
-      <Setter Property="ClipToBounds" Value="True" />
-    </Style>
-
-    <Style Selector="Border.builder-pane">
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Raised}" />
-    </Style>
-
-    <Style Selector="Border.builder-list-pane">
-      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
-      <Setter Property="BorderThickness" Value="0,0,1,0" />
-    </Style>
-
-    <Style Selector="Border.builder-pane-header">
-      <Setter Property="Padding" Value="28,24,28,18" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
-      <Setter Property="BorderThickness" Value="0,0,0,1" />
-    </Style>
-
-    <Style Selector="Border.builder-list-body">
-      <Setter Property="Padding" Value="18" />
-    </Style>
-
-    <Style Selector="Border.builder-editor-body">
-      <Setter Property="Padding" Value="28,24" />
-    </Style>
-
-    <Style Selector="Border.builder-actions">
-      <Setter Property="Padding" Value="18" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
-      <Setter Property="BorderThickness" Value="0,1,0,0" />
-    </Style>
-
-    <Style Selector="Border.builder-card">
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Popover}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
-      <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
-      <Setter Property="Padding" Value="16" />
-    </Style>
-
-    <Style Selector="Border.builder-status-message">
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Warning.Soft}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Warning}" />
-      <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
-      <Setter Property="Padding" Value="12" />
-    </Style>
-
-    <Style Selector="TextBlock.builder-status-message">
-      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
-      <Setter Property="FontSize" Value="13" />
-      <Setter Property="TextWrapping" Value="Wrap" />
-    </Style>
-
-    <Style Selector="TextBlock.builder-title">
-      <Setter Property="FontSize" Value="26" />
-      <Setter Property="FontWeight" Value="SemiBold" />
-      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
-    </Style>
-
-    <Style Selector="TextBlock.builder-caption">
-      <Setter Property="FontSize" Value="13" />
-      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
-      <Setter Property="TextWrapping" Value="Wrap" />
-    </Style>
-
-    <Style Selector="TextBlock.builder-field-label">
-      <Setter Property="FontSize" Value="14" />
-      <Setter Property="FontWeight" Value="SemiBold" />
-      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
-    </Style>
-
-    <Style Selector="TextBlock.builder-field-help">
-      <Setter Property="FontSize" Value="12" />
-      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
-      <Setter Property="TextWrapping" Value="Wrap" />
-    </Style>
-
-    <Style Selector="Border.builder-runtime-log">
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Base}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
-      <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
-      <Setter Property="Padding" Value="12" />
-    </Style>
-
-    <Style Selector="TextBlock.builder-runtime-log">
-      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
-      <Setter Property="FontSize" Value="12" />
-      <Setter Property="TextWrapping" Value="Wrap" />
-    </Style>
-
-    <Style Selector="TextBlock.builder-success">
-      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Success}" />
-      <Setter Property="FontWeight" Value="SemiBold" />
-    </Style>
-
-    <Style Selector="TextBlock.builder-warning">
-      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Warning}" />
-      <Setter Property="FontWeight" Value="SemiBold" />
-    </Style>
-
-    <Style Selector="ListBox.builder-list">
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Transparent}" />
-      <Setter Property="BorderThickness" Value="0" />
-      <Setter Property="Padding" Value="0" />
-    </Style>
-
-    <Style Selector="ListBox.builder-list ListBoxItem">
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Base}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
-      <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
-      <Setter Property="Padding" Value="14,12" />
-      <Setter Property="Margin" Value="0,0,0,8" />
-    </Style>
-
-    <Style Selector="ListBox.builder-list ListBoxItem:pointerover">
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Hover}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Strong}" />
-    </Style>
-
-    <Style Selector="ListBox.builder-list ListBoxItem:selected">
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Info.Soft}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Accent}" />
-    </Style>
-
-    <Style Selector="Button.builder-add-action">
-      <Setter Property="Width" Value="36" />
-      <Setter Property="MinWidth" Value="36" />
-      <Setter Property="Height" Value="34" />
-      <Setter Property="Padding" Value="0" />
-      <Setter Property="FontSize" Value="22" />
-      <Setter Property="FontWeight" Value="Regular" />
-      <Setter Property="HorizontalContentAlignment" Value="Center" />
-      <Setter Property="VerticalContentAlignment" Value="Center" />
-    </Style>
-
-    <Style Selector="Button.builder-icon-action">
-      <Setter Property="Width" Value="34" />
-      <Setter Property="MinWidth" Value="34" />
-      <Setter Property="Height" Value="34" />
-      <Setter Property="Padding" Value="0" />
-      <Setter Property="HorizontalContentAlignment" Value="Center" />
-      <Setter Property="VerticalContentAlignment" Value="Center" />
-    </Style>
+    <Style Selector="TextBlock"><Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" /></Style>
+    <Style Selector="TextBlock.caption"><Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" /><Setter Property="TextWrapping" Value="Wrap" /></Style>
+    <Style Selector="TextBlock.title"><Setter Property="FontSize" Value="24" /><Setter Property="FontWeight" Value="SemiBold" /></Style>
+    <Style Selector="TextBlock.label"><Setter Property="FontWeight" Value="SemiBold" /></Style>
+    <Style Selector="Border.card"><Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Popover}" /><Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" /><Setter Property="BorderThickness" Value="1" /><Setter Property="CornerRadius" Value="6" /><Setter Property="Padding" Value="16" /></Style>
+    <Style Selector="Border.warning"><Setter Property="Background" Value="{DynamicResource Sunder.Brush.Warning.Soft}" /><Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Warning}" /><Setter Property="BorderThickness" Value="1" /><Setter Property="CornerRadius" Value="6" /><Setter Property="Padding" Value="12" /></Style>
+    <Style Selector="Button.primary"><Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Accent}" /><Setter Property="FontWeight" Value="SemiBold" /></Style>
+    <Style Selector="ListBox.projects"><Setter Property="Background" Value="{DynamicResource Sunder.Brush.Transparent}" /><Setter Property="BorderThickness" Value="0" /><Setter Property="Padding" Value="0" /></Style>
+    <Style Selector="ListBox.projects ListBoxItem"><Setter Property="Padding" Value="12,10" /><Setter Property="Margin" Value="0,0,0,6" /><Setter Property="CornerRadius" Value="6" /><Setter Property="HorizontalContentAlignment" Value="Stretch" /><Setter Property="BorderThickness" Value="2,0,0,0" /><Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Transparent}" /></Style>
+    <Style Selector="ListBox.projects ListBoxItem:selected"><Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Hover}" /><Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Accent}" /></Style>
+    <Style Selector="ListBox.projects ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter"><Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Hover}" /><Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Accent}" /></Style>
+    <Style Selector="Grid.detail-header > WrapPanel.header-actions"><Setter Property="Grid.Column" Value="1" /><Setter Property="HorizontalAlignment" Value="Right" /></Style>
+    <Style Selector="Grid.detail-header.compact > WrapPanel.header-actions"><Setter Property="Grid.Row" Value="2" /><Setter Property="Grid.Column" Value="0" /><Setter Property="Grid.ColumnSpan" Value="2" /><Setter Property="HorizontalAlignment" Value="Left" /><Setter Property="Margin" Value="0,12,0,0" /></Style>
+    <Style Selector="TextBlock.load-state"><Setter Property="FontWeight" Value="SemiBold" /></Style>
+    <Style Selector="TextBlock.load-state.loaded"><Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Success}" /></Style>
   </UserControl.Styles>
 
-  <Grid>
-    <Border Classes="builder-shell"
-            IsVisible="{Binding ShowSetup}">
-      <ScrollViewer HorizontalScrollBarVisibility="Disabled"
-                    VerticalScrollBarVisibility="Auto">
-        <StackPanel Margin="28,24"
-                    Spacing="18">
-          <StackPanel Spacing="8">
-            <TextBlock Classes="builder-title"
-                       Text="Package Builder Setup" />
-            <TextBlock Classes="builder-caption"
-                       Text="Install package development prerequisites before creating, building, or publishing Sunder packages." />
+  <Grid Background="{DynamicResource Sunder.Brush.Surface.Raised}">
+    <Grid RowDefinitions="Auto,*" IsVisible="{Binding ShowProjects}">
+      <Border Classes="warning" Margin="18,12,18,0" IsVisible="{Binding ShowStatusMessage}">
+        <TextBlock Text="{Binding StatusText}" TextWrapping="Wrap" />
+      </Border>
+      <Grid x:Name="BuilderAdaptiveLayout" Grid.Row="1" ColumnDefinitions="310,*">
+        <Border x:Name="BuilderListPane" IsVisible="{Binding ShowListPane}" BorderBrush="{DynamicResource Sunder.Brush.Border.Subtle}" BorderThickness="0,0,1,0">
+          <Grid RowDefinitions="Auto,*,Auto" Margin="18">
+            <StackPanel Spacing="12" Margin="0,0,0,18">
+              <TextBlock Text="Projects" Classes="title" />
+              <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
+                <Button Content="Create project" Classes="primary" Click="OnCreateProjectClicked" HorizontalAlignment="Stretch" />
+                <Button Grid.Column="1" Content="Open folder…" Click="OnOpenFolderClicked" IsEnabled="{Binding !IsOpening}" HorizontalAlignment="Stretch" />
+              </Grid>
+              <ProgressBar IsVisible="{Binding IsOpening}" IsIndeterminate="True" />
+            </StackPanel>
+            <Grid Grid.Row="1">
+              <StackPanel IsVisible="{Binding IsEmpty}" Spacing="10" Margin="8,24">
+                <TextBlock Text="Your next package starts here" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap" />
+                <TextBlock Text="Create a UI-ready .NET or Node.js package, or open an existing local folder. Projects stay on your computer." Classes="caption" />
+              </StackPanel>
+              <ListBox Classes="projects" ItemsSource="{Binding Projects}" SelectedItem="{Binding SelectedProject, Mode=TwoWay}" IsVisible="{Binding !IsEmpty}" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                <ListBox.ItemTemplate>
+                  <DataTemplate x:DataType="vm:BuilderProjectViewModel">
+                      <StackPanel Spacing="4" Tapped="OnProjectItemTapped" Background="{DynamicResource Sunder.Brush.Transparent}">
+                        <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding DisplayName}" />
+                        <TextBlock Text="{Binding ProjectFolder}" Classes="caption" TextWrapping="NoWrap" TextTrimming="LeadingCharacterEllipsis" FontSize="12" ToolTip.Tip="{Binding ProjectFolder}" />
+                        <TextBlock Text="{Binding StateText}" FontSize="12" />
+                    </StackPanel>
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+            </Grid>
+            <Button Grid.Row="2" Content="Manage SDKs" Click="OnManageSdksClicked" HorizontalAlignment="Stretch" Margin="0,18,0,0" />
+          </Grid>
+        </Border>
+        <Border x:Name="BuilderEditorPane" Grid.Column="1" IsVisible="{Binding ShowEditorPane}">
+          <Grid RowDefinitions="Auto,*" Margin="20">
+            <Button Content="← Projects" Click="OnBackClicked" IsVisible="{Binding IsCompactLayout}" Margin="0,0,0,16" HorizontalAlignment="Left" />
+            <TextBlock Grid.Row="1" Text="Select a project to build, load, or edit its source metadata." Classes="caption" IsVisible="{Binding !HasSelectedProject}" VerticalAlignment="Center" HorizontalAlignment="Center" />
+            <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Disabled">
+              <ContentControl Content="{Binding SelectedProject}">
+                <ContentControl.ContentTemplate>
+                  <DataTemplate x:DataType="vm:BuilderProjectViewModel">
+                    <StackPanel Spacing="16">
+                      <Grid Classes="detail-header" Classes.compact="{Binding $parent[UserControl].((vm:BuilderViewModel)DataContext).IsCompactLayout}"
+                            RowDefinitions="Auto,Auto,Auto" ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                        <TextBlock Text="{Binding DisplayName}" Classes="title" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding DisplayName}" VerticalAlignment="Center" />
+                        <WrapPanel Classes="header-actions">
+                          <Button Content="{Binding BuildActionText}" IsEnabled="{Binding CanOperate}" Click="OnBuildClicked" Margin="0,0,8,0" />
+                          <Button Content="Create archive" IsEnabled="{Binding CanOperate}" Click="OnArchiveClicked" />
+                        </WrapPanel>
+                        <WrapPanel Grid.Row="1" Grid.ColumnSpan="2" Margin="0,6,0,0">
+                          <TextBlock Text="{Binding Technology}" Classes="caption" Margin="0,0,12,0" />
+                          <TextBlock Text="{Binding PackageId}" Classes="caption" />
+                        </WrapPanel>
+                      </Grid>
+                      <SelectableTextBlock Text="{Binding ProjectFolder}" TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
+                      <Border Classes="warning" IsVisible="{Binding IsMissing}">
+                        <StackPanel Spacing="10">
+                          <TextBlock Text="This bookmark needs a local source folder." TextWrapping="Wrap" />
+                          <Button Content="Locate folder…" Click="OnLocateClicked" HorizontalAlignment="Left" />
+                        </StackPanel>
+                      </Border>
+                      <Border Classes="card" Padding="14">
+                        <StackPanel Spacing="10">
+                          <WrapPanel>
+                            <TextBlock Text="{Binding LoadStateText}" Classes="load-state" Classes.loaded="{Binding IsLoaded}" VerticalAlignment="Center" Margin="0,0,16,6" />
+                            <Button Content="Load into Sunder" Classes="primary" IsVisible="{Binding !HasSession}" IsEnabled="{Binding CanLoad}" Click="OnLoadClicked" Margin="0,0,8,6" />
+                            <Button Content="Unload" IsVisible="{Binding HasSession}" IsEnabled="{Binding CanUnload}" Click="OnUnloadClicked" Margin="0,0,8,6" />
+                            <Button Content="Package logs" Click="OnLogsClicked" Margin="0,0,8,6" />
+                            <Button Content="Cancel" IsVisible="{Binding IsBusy}" Click="OnCancelOperationClicked" Margin="0,0,0,6" />
+                          </WrapPanel>
+                          <WrapPanel>
+                            <CheckBox Content="Auto rebuild" IsChecked="{Binding Watch, Mode=OneWay}" IsEnabled="{Binding !IsBusy}" Click="OnWatchClicked" Margin="0,0,12,0" />
+                            <TextBlock Text="{Binding WatchSummaryText}" Classes="caption" VerticalAlignment="Center" />
+                          </WrapPanel>
+                          <ProgressBar IsVisible="{Binding IsBuildRunning}" IsIndeterminate="True" Height="3" />
+                          <TextBlock Text="{Binding ActivityText}" TextWrapping="Wrap" />
+                          <StackPanel Spacing="3">
+                            <TextBlock Text="{Binding SourceActivityText}" Classes="caption" FontSize="12" />
+                            <TextBlock Text="{Binding BuildActivityText}" Classes="caption" FontSize="12" IsVisible="{Binding HasBuildActivity}" />
+                            <TextBlock Text="{Binding AppliedActivityText}" Classes="caption" FontSize="12" IsVisible="{Binding HasAppliedActivity}" ToolTip.Tip="{Binding LastAppliedRevision.SourceContentIdentity}" />
+                            <TextBlock Text="{Binding ApplicationStatusText}" Classes="caption" FontSize="12" IsVisible="{Binding HasSession}" />
+                          </StackPanel>
+                          <TextBlock Text="{Binding WatchStatusText}" IsVisible="{Binding ShowWatchNotice}" Classes="caption" />
+                          <Button Content="Retry setup" IsVisible="{Binding SetupIncomplete}" IsEnabled="{Binding CanOperate}" Click="OnRetrySetupClicked" HorizontalAlignment="Left" />
+                        </StackPanel>
+                      </Border>
+                      <Border Classes="warning" IsVisible="{Binding HasError}"><TextBlock Text="{Binding ErrorMessage}" TextWrapping="Wrap" /></Border>
+                      <Border Classes="warning" IsVisible="{Binding HasRuntimeError}"><TextBlock Text="{Binding RuntimeError}" TextWrapping="Wrap" /></Border>
+                      <Expander Header="Project settings" HorizontalAlignment="Stretch">
+                        <StackPanel Spacing="8" Margin="0,12,0,0">
+                          <TextBlock Text="Package name" Classes="label" />
+                          <TextBox Text="{Binding EditedDisplayName, Mode=TwoWay}" IsReadOnly="{Binding !CanEditDisplayName}" />
+                          <TextBlock Text="{Binding DisplayNameEditReason}" Classes="caption" IsVisible="{Binding HasDisplayNameEditReason}" />
+                          <TextBlock Text="Package ID" Classes="label" />
+                          <TextBox Text="{Binding EditedPackageId, Mode=TwoWay}" IsReadOnly="{Binding !CanEditPackageId}" />
+                          <TextBlock Text="{Binding PackageIdEditReason}" Classes="caption" IsVisible="{Binding HasPackageIdEditReason}" />
+                          <TextBlock Text="Source changed externally. Discard edits to review the current values before saving." IsVisible="{Binding HasSourceConflict}" TextWrapping="Wrap" Foreground="{DynamicResource Sunder.Brush.Warning}" />
+                          <WrapPanel>
+                            <Button Content="Save changes" IsEnabled="{Binding CanSave}" Click="OnSaveMetadataClicked" Margin="0,0,8,0" />
+                            <Button Content="Discard" IsEnabled="{Binding IsDirty}" Click="OnDiscardClicked" />
+                          </WrapPanel>
+                          <TextBlock Text="{Binding SdkText}" Classes="caption" Margin="0,8,0,0" />
+                          <TextBlock Text="{Binding RuntimeStatusText}" Classes="caption" />
+                          <TextBlock Text="{Binding EntryPoint}" Classes="caption" FontSize="12" />
+                          <WrapPanel Margin="0,8,0,0">
+                            <Button Content="Open folder" Click="OnRevealClicked" Margin="0,0,8,8" />
+                            <Button Content="Remove from projects" IsEnabled="{Binding !IsBusy}" Click="OnRemoveClicked" Margin="0,0,0,8" />
+                          </WrapPanel>
+                        </StackPanel>
+                      </Expander>
+                      <SelectableTextBlock Text="{Binding ArchivePath}" IsVisible="{Binding HasArchive}" TextWrapping="Wrap" />
+                      <Expander Header="Build output" IsExpanded="{Binding IsOutputExpanded, Mode=TwoWay}" IsVisible="{Binding HasOutput}" HorizontalAlignment="Stretch">
+                        <StackPanel Spacing="8" Margin="0,10,0,0">
+                          <TextBlock Text="{Binding StatusText}" Classes="caption" />
+                          <ScrollViewer MaxHeight="360" HorizontalScrollBarVisibility="Disabled">
+                            <SelectableTextBlock Text="{Binding Output}" TextWrapping="Wrap" FontFamily="monospace" FontSize="12" />
+                          </ScrollViewer>
+                        </StackPanel>
+                      </Expander>
+                    </StackPanel>
+                  </DataTemplate>
+                </ContentControl.ContentTemplate>
+              </ContentControl>
+            </ScrollViewer>
+          </Grid>
+        </Border>
+      </Grid>
+    </Grid>
+
+    <Border IsVisible="{Binding ShowCreation}" Background="{DynamicResource Sunder.Brush.Surface.Raised}" Padding="28">
+      <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Spacing="20" MaxWidth="700" HorizontalAlignment="Stretch">
+          <Button Content="← Projects" Click="OnBackClicked" HorizontalAlignment="Left" />
+          <TextBlock Text="Create a package" Classes="title" />
+          <TextBlock Text="1  Technology    →    2  SDK setup    →    3  Project" Classes="caption" />
+          <StackPanel IsVisible="{Binding Creation.IsTechnologyStep}" Spacing="16">
+            <TextBlock Text="Choose your technology" FontSize="20" FontWeight="SemiBold" />
+            <Button Click="OnDotnetClicked" HorizontalContentAlignment="Left" HorizontalAlignment="Stretch" Padding="22">
+              <StackPanel Spacing="8"><TextBlock Text=".NET" FontSize="22" FontWeight="SemiBold" /><TextBlock Text="C# with an Avalonia App view and a .NET worker." Classes="caption" /></StackPanel>
+            </Button>
+            <Button Click="OnNodeClicked" HorizontalContentAlignment="Left" HorizontalAlignment="Stretch" Padding="22">
+              <StackPanel Spacing="8"><TextBlock Text="Node.js" FontSize="22" FontWeight="SemiBold" /><TextBlock Text="TypeScript with a React App view and a Node.js worker." Classes="caption" /></StackPanel>
+            </Button>
           </StackPanel>
-
-          <ItemsControl ItemsSource="{Binding SetupItems}">
-            <ItemsControl.ItemTemplate>
-              <DataTemplate x:DataType="vm:BuilderPrerequisiteViewModel">
-                <Border Classes="builder-card"
-                        Margin="0,0,0,10">
-                  <Grid ColumnDefinitions="*,Auto"
-                        RowDefinitions="Auto,Auto"
-                        ColumnSpacing="12"
-                        RowSpacing="5">
-                    <TextBlock Grid.Column="0"
-                               Text="{Binding Name}"
-                               FontSize="15"
-                               FontWeight="SemiBold"
-                               Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}" />
-                    <TextBlock Grid.Column="1"
-                               Text="{Binding StateText}"
-                               Classes.builder-success="{Binding IsInstalled}"
-                               Classes.builder-warning="{Binding !IsInstalled}" />
-                    <TextBlock Grid.Row="1"
-                               Grid.ColumnSpan="2"
-                               Text="{Binding Detail}"
-                               TextWrapping="Wrap"
-                               Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}" />
-                  </Grid>
-                </Border>
-              </DataTemplate>
-            </ItemsControl.ItemTemplate>
-          </ItemsControl>
-
-          <StackPanel Orientation="Horizontal"
-                      Spacing="8">
-            <Button Classes="secondary-action compact-action builder-icon-action"
-                    Content="↻"
-                    ToolTip.Tip="Recheck setup"
-                    Click="OnRefreshSetupClicked" />
+          <StackPanel IsVisible="{Binding Creation.IsSdkStep}" Spacing="12">
+            <TextBlock Text="Preparing the latest supported SDK" FontSize="20" FontWeight="SemiBold" />
+            <TextBlock Text="{Binding Creation.Technology}" Classes="caption" />
+            <ProgressBar IsIndeterminate="True" IsVisible="{Binding Creation.IsBusy}" />
+            <WrapPanel>
+              <Button Content="Cancel" Click="OnCancelCreationClicked" IsVisible="{Binding Creation.IsBusy}" Margin="0,0,8,0" />
+              <Button Content="Retry SDK setup" Click="OnRetrySdkClicked" IsEnabled="{Binding Creation.CanRetrySdk}" Margin="0,0,8,0" />
+              <Button Content="Change technology" Click="OnBackToTechnologyClicked" IsEnabled="{Binding !Creation.IsBusy}" />
+            </WrapPanel>
           </StackPanel>
-
-          <Border Classes="builder-status-message">
-            <TextBlock Classes="builder-status-message"
-                       Text="{Binding StatusText}" />
-          </Border>
+          <StackPanel IsVisible="{Binding Creation.IsDetailsStep}" Spacing="10">
+            <TextBlock Text="{Binding Creation.Technology}" FontSize="20" FontWeight="SemiBold" />
+            <TextBlock Text="Package name" Classes="label" />
+            <TextBox Text="{Binding Creation.DisplayName, Mode=TwoWay}" IsEnabled="{Binding !Creation.IsBusy}" PlaceholderText="My package" />
+            <TextBlock Text="Package ID" Classes="label" />
+            <TextBox Text="{Binding Creation.PackageId, Mode=TwoWay}" IsEnabled="{Binding !Creation.IsBusy}" PlaceholderText="local.my.package" />
+            <TextBlock Text="Parent folder" Classes="label" />
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+              <TextBox Text="{Binding Creation.ParentFolder, Mode=TwoWay}" IsEnabled="{Binding !Creation.IsBusy}" />
+              <Button Grid.Column="1" Content="Browse…" Click="OnBrowseParentClicked" IsEnabled="{Binding !Creation.IsBusy}" />
+            </Grid>
+            <TextBlock Text="Subfolder" Classes="label" />
+            <TextBox Text="{Binding Creation.Subfolder, Mode=TwoWay}" IsEnabled="{Binding !Creation.IsBusy}" />
+            <TextBlock Text="The project will be created at:" Classes="caption" />
+            <SelectableTextBlock Text="{Binding Creation.FullPath}" TextWrapping="Wrap" />
+            <TextBlock Text="{Binding Creation.ValidationMessage}" Classes="caption" />
+            <WrapPanel>
+              <Button Content="Create project" Classes="primary" IsEnabled="{Binding Creation.CanCreate}" Click="OnCompleteCreationClicked" Margin="0,0,8,0" />
+              <Button Content="Cancel operation" IsVisible="{Binding Creation.IsBusy}" Click="OnCancelCreationClicked" />
+            </WrapPanel>
+          </StackPanel>
+          <TextBlock Text="{Binding Creation.Message}" IsVisible="{Binding Creation.ShowMessage}" TextWrapping="Wrap" />
+          <Border Classes="warning" IsVisible="{Binding Creation.HasError}"><TextBlock Text="{Binding Creation.ErrorMessage}" TextWrapping="Wrap" /></Border>
+          <Expander Header="Details" IsVisible="{Binding Creation.HasOutput}" HorizontalAlignment="Stretch">
+            <ScrollViewer MaxHeight="240"><SelectableTextBlock Text="{Binding Creation.Output}" TextWrapping="Wrap" FontSize="12" /></ScrollViewer>
+          </Expander>
         </StackPanel>
       </ScrollViewer>
     </Border>
 
-    <Border Classes="builder-shell"
-            IsVisible="{Binding ShowProjects}">
-      <Grid x:Name="BuilderAdaptiveLayout"
-            ColumnDefinitions="360,*"
-            ColumnSpacing="4">
-        <Border x:Name="BuilderListPane"
-                Classes="builder-pane builder-list-pane"
-                IsVisible="{Binding ShowListPane}">
-          <Grid RowDefinitions="Auto,*">
-            <Border Grid.Row="0"
-                    Classes="builder-pane-header">
-              <Grid ColumnDefinitions="*,Auto"
-                    RowDefinitions="Auto,Auto"
-                    ColumnSpacing="12"
-                    RowSpacing="8">
-                <TextBlock Grid.Column="0"
-                           Classes="builder-title"
-                           Text="Packages"
-                           VerticalAlignment="Center" />
-                <Button Grid.Column="1"
-                        Classes="secondary-action compact-action builder-add-action"
-                        Content="+"
-                        ToolTip.Tip="New package project"
-                        Click="OnCreateProjectClicked" />
-                <TextBlock Grid.Row="1"
-                           Grid.ColumnSpan="2"
-                           Classes="builder-caption"
-                           Text="Create, build, and publish local Sunder package projects." />
-              </Grid>
-            </Border>
-
-            <Border Grid.Row="1"
-                    Classes="builder-list-body">
-              <ScrollViewer HorizontalScrollBarVisibility="Disabled"
-                            VerticalScrollBarVisibility="Auto">
-                <ListBox Classes="builder-list"
-                         ItemsSource="{Binding Projects}"
-                         SelectedItem="{Binding SelectedProject, Mode=TwoWay}">
-                  <ListBox.ItemTemplate>
-                    <DataTemplate x:DataType="vm:BuilderProjectViewModel">
-                      <Grid RowDefinitions="Auto,Auto"
-                            RowSpacing="3"
-                            MinWidth="0"
-                            Tapped="OnProjectItemTapped">
-                        <TextBlock Text="{Binding DisplayName}"
-                                   FontWeight="SemiBold"
-                                   Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}"
-                                   TextTrimming="CharacterEllipsis" />
-                        <TextBlock Grid.Row="1"
-                                   Text="{Binding ProjectFolder}"
-                                   Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}"
-                                   FontSize="12"
-                                   TextTrimming="CharacterEllipsis" />
-                      </Grid>
-                    </DataTemplate>
-                  </ListBox.ItemTemplate>
-                </ListBox>
-              </ScrollViewer>
-            </Border>
-          </Grid>
-        </Border>
-
-        <Border x:Name="BuilderEditorPane"
-                Grid.Column="1"
-                Classes="builder-pane"
-                IsVisible="{Binding ShowEditorPane}">
-          <Grid RowDefinitions="Auto,*,Auto">
-            <Border Grid.Row="0"
-                    Classes="builder-pane-header">
-              <StackPanel Spacing="8">
-                <TextBlock Classes="builder-title"
-                           Text="Package Project" />
-                <TextBlock Classes="builder-caption"
-                           Text="Initialize, build, and publish a package without leaving Sunder." />
-              </StackPanel>
-            </Border>
-
-            <ScrollViewer Grid.Row="1"
-                          HorizontalScrollBarVisibility="Disabled"
-                          VerticalScrollBarVisibility="Auto">
-              <Border Classes="builder-editor-body"
-                      IsEnabled="{Binding HasSelectedProject}">
-                <StackPanel Spacing="18">
-                  <Border Classes="builder-card">
-                    <StackPanel Spacing="14">
-                      <StackPanel Spacing="4">
-                        <TextBlock Text="Project"
-                                   FontWeight="SemiBold"
-                                   Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}" />
-                        <TextBlock Classes="builder-caption"
-                                   Text="Select the folder that should contain the generated package project files." />
-                      </StackPanel>
-
-                      <StackPanel Spacing="5">
-                        <TextBlock Classes="builder-field-label"
-                                   Text="Name" />
-                        <TextBox x:Name="PackageDisplayNameTextBox"
-                                  Text="{Binding SelectedProject.DisplayName, Mode=TwoWay}"
-                                  IsEnabled="{Binding CanEditProjectIdentity}"
-                                  PlaceholderText="Package name" />
-                      </StackPanel>
-
-                      <StackPanel Spacing="5">
-                        <TextBlock Classes="builder-field-label"
-                                    Text="Package id" />
-                        <TextBox Text="{Binding SelectedProject.PackageId, Mode=TwoWay}"
-                                  IsEnabled="{Binding CanEditProjectIdentity}"
-                                  PlaceholderText="Package id" />
-                      </StackPanel>
-
-                      <StackPanel Spacing="5">
-                        <TextBlock Classes="builder-field-label"
-                                   Text="Workspace" />
-                        <shared:SunderComboBox ItemsSource="{Binding Workspaces}"
-                                              SelectedValue="{Binding SelectedProject.WorkspaceId, Mode=TwoWay}"
-                                              SelectedValueBinding="{Binding WorkspaceId}"
-                                              IsEnabled="{Binding CanEditProjectIdentity}"
-                                              HorizontalAlignment="Stretch">
-                          <shared:SunderComboBox.ItemTemplate>
-                            <DataTemplate x:DataType="m:AgentWorkspaceRecord">
-                              <TextBlock Text="{Binding DisplayName}" />
-                            </DataTemplate>
-                          </shared:SunderComboBox.ItemTemplate>
-                        </shared:SunderComboBox>
-                        <TextBlock Classes="builder-field-help"
-                                   Text="Choose the workspace that owns this package project." />
-                      </StackPanel>
-
-                      <StackPanel Spacing="5">
-                        <TextBlock Classes="builder-field-label"
-                                   Text="Workspace path" />
-                        <shared:SunderComboBox ItemsSource="{Binding WorkspacePathOptions}"
-                                              SelectedValue="{Binding SelectedProject.WorkspacePathId, Mode=TwoWay}"
-                                              SelectedValueBinding="{Binding PathId}"
-                                              IsEnabled="{Binding CanEditProjectIdentity}"
-                                              HorizontalAlignment="Stretch">
-                          <shared:SunderComboBox.ItemTemplate>
-                            <DataTemplate x:DataType="vm:BuilderWorkspacePathOptionViewModel">
-                              <TextBlock Text="{Binding DisplayPath}" />
-                            </DataTemplate>
-                          </shared:SunderComboBox.ItemTemplate>
-                        </shared:SunderComboBox>
-                        <TextBlock Classes="builder-field-help"
-                                   Text="The project folder is created under this workspace path using the package name." />
-                      </StackPanel>
-
-                    </StackPanel>
-                  </Border>
-
-                  <Border Classes="builder-card"
-                          IsVisible="{Binding ShowSelectedProjectSetup}">
-                    <StackPanel Spacing="14">
-                      <StackPanel Spacing="4">
-                        <TextBlock Text="Workspace Setup"
-                                   FontWeight="SemiBold"
-                                   Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}" />
-                        <TextBlock Classes="builder-caption"
-                                   Text="Missing prerequisites are installed automatically when you initialize the package." />
-                      </StackPanel>
-
-                      <ItemsControl ItemsSource="{Binding SetupItems}">
-                        <ItemsControl.ItemTemplate>
-                          <DataTemplate x:DataType="vm:BuilderPrerequisiteViewModel">
-                            <Grid ColumnDefinitions="*,Auto"
-                                  RowDefinitions="Auto,Auto"
-                                  ColumnSpacing="12"
-                                  RowSpacing="4"
-                                  Margin="0,0,0,8">
-                              <TextBlock Text="{Binding Name}"
-                                         FontWeight="SemiBold"
-                                         Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}" />
-                              <TextBlock Grid.Column="1"
-                                         Text="{Binding StateText}"
-                                         Classes.builder-success="{Binding IsInstalled}"
-                                         Classes.builder-warning="{Binding !IsInstalled}" />
-                              <TextBlock Grid.Row="1"
-                                         Grid.ColumnSpan="2"
-                                         Text="{Binding Detail}"
-                                         TextWrapping="Wrap"
-                                         Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}" />
-                            </Grid>
-                          </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                      </ItemsControl>
-
-                    </StackPanel>
-                  </Border>
-
-                  <Border Classes="builder-card"
-                          IsVisible="{Binding ShowBuildSection}">
-                    <StackPanel Spacing="14">
-                      <StackPanel Spacing="4">
-                        <TextBlock Text="Build &amp; Publish"
-                                   FontWeight="SemiBold"
-                                   Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}" />
-                        <TextBlock Classes="builder-caption"
-                                    Text="Build validates the project and creates local output. Publish checks public APIs and creates the distributable package archive." />
-                      </StackPanel>
-
-                      <Border Classes="builder-runtime-log"
-                              IsVisible="{Binding HasRuntimeLog}">
-                        <ScrollViewer MaxHeight="160"
-                                      HorizontalScrollBarVisibility="Disabled"
-                                      VerticalScrollBarVisibility="Auto">
-                          <TextBlock Classes="builder-runtime-log"
-                                     Text="{Binding RuntimeLogText}" />
-                        </ScrollViewer>
-                      </Border>
-
-                      <Grid ColumnDefinitions="Auto,*,Auto"
-                            ColumnSpacing="8">
-                        <Button Grid.Column="0"
-                                Classes="secondary-action compact-action"
-                                Content="Check setup"
-                                ToolTip.Tip="Check and install package builder prerequisites"
-                                IsEnabled="{Binding CanRunSelectedProjectOperations}"
-                                IsVisible="{Binding IsSelectedProjectInitialized}"
-                                Click="OnEnsureSetupClicked" />
-                        <StackPanel Grid.Column="2"
-                                    Orientation="Horizontal"
-                                    HorizontalAlignment="Right"
-                                    Spacing="8">
-                          <Button Classes="secondary-action compact-action"
-                                  Content="Build"
-                                  IsEnabled="{Binding CanRunSelectedProjectOperations}"
-                                  IsVisible="{Binding IsSelectedProjectInitialized}"
-                                  Click="OnBuildProjectClicked" />
-                          <Button Classes="secondary-action compact-action"
-                                  Content="Publish"
-                                  IsEnabled="{Binding CanRunSelectedProjectOperations}"
-                                  IsVisible="{Binding IsSelectedProjectInitialized}"
-                                  Click="OnPublishProjectClicked" />
-                        </StackPanel>
-                      </Grid>
-                    </StackPanel>
-                  </Border>
-                </StackPanel>
-              </Border>
-            </ScrollViewer>
-
-            <Border Grid.Row="2"
-                    Classes="builder-actions">
-              <Grid RowDefinitions="Auto,Auto"
-                    RowSpacing="12">
-                <Border Grid.Row="0"
-                        Classes="builder-status-message"
-                        IsVisible="{Binding ShowStatusMessage}">
-                  <TextBlock Classes="builder-status-message"
-                             Text="{Binding StatusText}" />
-                </Border>
-
-                <Grid Grid.Row="1"
-                      ColumnDefinitions="Auto,*,Auto"
-                      ColumnSpacing="12">
-                  <StackPanel Grid.Column="0"
-                              Orientation="Horizontal"
-                              Spacing="8">
-                    <Button Classes="secondary-action compact-action danger-action"
-                            Content="Delete"
-                            IsEnabled="{Binding CanEditSelectedProject}"
-                            IsVisible="{Binding HasSelectedProject}"
-                            Click="OnDeleteProjectClicked" />
-                  </StackPanel>
-
-                  <Panel Grid.Column="1" />
-
-                  <StackPanel Grid.Column="2"
-                              Orientation="Horizontal"
-                              Spacing="8">
-                    <Button Classes="secondary-action compact-action"
-                            Content="Back"
-                            IsVisible="{Binding IsCompactLayout}"
-                            Click="OnBackToProjectListClicked" />
-                    <Button Classes="primary-action"
-                            Content="Initialize"
-                            IsEnabled="{Binding CanInitializeSelectedProject}"
-                            IsVisible="{Binding ShowInitializeSelectedProject}"
-                            Click="OnInitializeProjectClicked" />
-                  </StackPanel>
-                </Grid>
-              </Grid>
-            </Border>
-          </Grid>
-        </Border>
-      </Grid>
+    <Border Classes="card" IsVisible="{Binding ShowCandidateChooser}" Margin="28" MaxWidth="720" VerticalAlignment="Center" Background="{DynamicResource Sunder.Brush.Surface.Popover}">
+      <StackPanel Spacing="16">
+        <TextBlock Text="Choose a project" FontSize="22" FontWeight="SemiBold" />
+        <TextBlock Text="Several package projects were found. Select the source entry point to remember." Classes="caption" />
+        <ListBox ItemsSource="{Binding OpenCandidates}" SelectedItem="{Binding SelectedCandidate, Mode=TwoWay}" MaxHeight="360">
+          <ListBox.ItemTemplate><DataTemplate x:DataType="vm:BuilderProjectInspection"><StackPanel Spacing="4"><TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" /><TextBlock Text="{Binding Kind}" /><TextBlock Text="{Binding EntryPoint}" Classes="caption" /></StackPanel></DataTemplate></ListBox.ItemTemplate>
+        </ListBox>
+        <WrapPanel><Button Content="Open selected project" Classes="primary" Click="OnOpenCandidateClicked" Margin="0,0,8,0" /><Button Content="Cancel" Click="OnBackClicked" /></WrapPanel>
+      </StackPanel>
     </Border>
   </Grid>
 </UserControl>

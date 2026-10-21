@@ -1,7 +1,7 @@
 using Anthropic;
 using Microsoft.Extensions.AI;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using Sunder.Generated.Packages.Younics_Ai_Agent_Models;
+using IChatProviderService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Chat_Provider.IChatProviderService;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Services;
@@ -75,7 +75,7 @@ public sealed partial class AnthropicAgentProvider : IChatProviderService
             Status = configured ? AgentProviderReadinessStatus.Ready : AgentProviderReadinessStatus.NeedsConfiguration,
             Message = configured
                 ? "Anthropic API-key mode is configured."
-                : "An Anthropic API key is required. Open Settings -> Packages -> Sunder Agent Provider Anthropic and enter an API key.",
+                : "An Anthropic API key is required. Open Settings -> Packages -> AI Agent - Anthropic and enter an API key.",
         };
     }
 

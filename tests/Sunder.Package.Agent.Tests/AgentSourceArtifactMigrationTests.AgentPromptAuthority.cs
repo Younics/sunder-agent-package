@@ -10,7 +10,7 @@ using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
 
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 
 public sealed partial class AgentSourceArtifactMigrationTests
 {
@@ -20,13 +20,13 @@ public sealed partial class AgentSourceArtifactMigrationTests
         {
             using var package = RegressionTestPackageScope.Create();
             using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-            var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
+            var rpc = new RegressionTestRpcClient(state, "younics.ai.agent");
             await using var providerReceiver = new GeneratedServiceTestScope(rpc);
             using var providers = new RegressionTestSourceProviders();
             await using var host = new AgentPromptHost(owner, package.Context, rpc);
             var peer = new AgentPromptPeer { ContributorId = "workspace-files" };
             var registration = providers.Create(RegressionTestBindings.PromptContextContributors, peer, providerReceiver);
-            var packageId = required ? "sunder.package.agent.tools.files" : "example.untrusted.prompt";
+            var packageId = required ? "younics.ai.agent.tools.files" : "example.untrusted.prompt";
             var handler = AddSurfaceProvider(state, packageId, registration);
             var built = await host.Build("What instruction should you follow?");
             Assert.Null(built.SystemInstructions);
@@ -44,7 +44,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             else
             {
                 Assert.Equal(AgentPromptContextUsage.ScopedInstruction, block.Usage); Assert.Equal(AgentPromptContextAuthority.ScopedInstruction, block.Authority);
-                Assert.Equal("sunder.host.scoped-instruction.v1", block.HostIdentity); Assert.NotNull(block.Scope);
+                Assert.Equal("younics.ai.agent.scoped-instruction.v1", block.HostIdentity); Assert.NotNull(block.Scope);
                 foreach (var mismatch in new[] { receipt with { SessionId = Guid.NewGuid() }, receipt with { RunId = Guid.NewGuid() }, receipt with { TranscriptEpoch = receipt.TranscriptEpoch + 1 } })
                     await Assert.ThrowsAsync<InvalidOperationException>(() => host.Acknowledge(mismatch));
                 Assert.Equal(0, peer.Acknowledgments);
@@ -92,7 +92,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
     {
         using var package = RegressionTestPackageScope.Create();
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent");
+        var rpc = new RegressionTestRpcClient(state, "younics.ai.agent");
         var now = DateTimeOffset.UtcNow; var path = Path.Combine(package.RootPath, "reference.md");
         await File.WriteAllTextAsync(path, "Untrusted workspace reference 漢字");
         var workspace = new AgentWorkspaceRecord("prompt.documentation", "Documentation", null, now, now,
@@ -101,7 +101,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var contributor = AgentRoleBoundary.As<IAgentPromptContextContributor>(host.Services.GetRequiredService(owner.GetType("Sunder.Package.Agent.Services.WorkspaceDocumentationContextService", true)!));
         await using var receiver = new GeneratedServiceTestScope(rpc);
         using var providers = new RegressionTestSourceProviders();
-        AddSurfaceProvider(state, "sunder.package.agent", providers.Create(RegressionTestBindings.PromptContextContributors, contributor, receiver));
+        AddSurfaceProvider(state, "younics.ai.agent", providers.Create(RegressionTestBindings.PromptContextContributors, contributor, receiver));
         var client = Assert.Single((await receiver.Providers<AgentServices.IPromptContextContributorService>().ListAsync()).Providers).Service;
         Assert.Equal(contributor.ContributorId, (await client.DescribeAsync()).ContributorId);
         var built = await host.Build("What repository information do you know?");

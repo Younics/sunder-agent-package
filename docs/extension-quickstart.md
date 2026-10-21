@@ -2,9 +2,8 @@
 
 Create one headless package that cleans up its own session notes when Agent deletes
 a session. The example uses the current generated service/model surface; select a
-matching reviewed Agent candidate. The natural-service surface is implemented and
-qualified in multiple local checkpoints, including completed coherent Main/artifact
-integration. Release qualification remains separate. See [ordinary services](ordinary-service-refactor.md).
+matching reviewed Agent candidate. See [service contracts](ordinary-service-refactor.md)
+for the current authoring boundary and compatibility policy.
 
 ## 1. Create One Package Project
 
@@ -19,11 +18,11 @@ Worker and any App role from this source. New owned services are private by defa
 
 ## 2. Select The Extension Contract
 
-Before adding the provider source, select `sunder.agent.session.cleaner` from an
+Before adding the provider source, select `younics.ai.agent.session.cleaner` from an
 explicit local Agent archive:
 
 ```sh
-dotnet msbuild Acme.SessionNotes/Acme.SessionNotes.csproj -t:ImplementSunderPackageApi -p:SunderPackageId=sunder.package.agent -p:SunderContractId=sunder.agent.session.cleaner -p:SunderPackageVersionRange=">=2.0.0 <3.0.0" -p:SunderPackageCandidatePath=/path/to/agent.sunderpkg
+dotnet msbuild Acme.SessionNotes/Acme.SessionNotes.csproj -t:ImplementSunderPackageApi -p:SunderPackageId=younics.ai.agent -p:SunderContractId=younics.ai.agent.session.cleaner -p:SunderPackageVersionRange=">=2.0.0 <3.0.0" -p:SunderPackageCandidatePath=/path/to/agent.sunderpkg
 ```
 
 Retain the tool-written `sunder-contracts.lock.json`. It selects exact descriptors
@@ -36,8 +35,8 @@ Provider selection grants implementation intent, not consumer access to other AP
 Add `Services/SessionNotesCleaner.cs`:
 
 ```csharp
-using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using Sunder.Generated.Packages.Younics_Ai_Agent_Models;
+using ISessionCleanerService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Session_Cleaner.ISessionCleanerService;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Services;
 
@@ -68,7 +67,9 @@ idempotent, so a replay can safely repeat it. Core generates provider registrati
 dispatch and composition from the attribute and imported interface. The example's
 `AgentServiceIdentity` is a generated model, initialized through its properties.
 
-The exact namespaces derive from `sunder.package.agent`, not an import alias.
+The imported service namespace derives from the ultimate authority package
+`younics.ai.agent` and contract `younics.ai.agent.session.cleaner`. The file-local
+alias keeps implementation signatures natural. Provider-key aliases remain stable.
 Agent authors its business records once; extensions import Models rather than
 copying records, writing serializers or maintaining transport wrappers.
 
@@ -93,8 +94,9 @@ explicit review; implementing a selected Agent API does not take ownership of it
 ## 5. Consume Services And Resources
 
 `AddSunderPackageApi` selects the complete public API for ordinary consumption.
-Inject `Sunder.Generated.Packages.Sunder_Package_Agent_Services.IPackageApi` for
-selected-Agent calls. For multiple implementations, inject
+Imported package APIs are contract-scoped; for example, inject
+`Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Runtime_Catalog.IPackageApi`
+for the selected runtime-catalog contract. For multiple implementations, inject
 `IServiceProviders<TService>`, select an authorized entry and call `provider.Service`.
 Pass `provider.Reference` when a business value needs a typed exact-provider reference.
 Entries are borrowed; generated DI owns transport observation and cleanup.
@@ -111,13 +113,21 @@ direct nullable reference property with `SunderOptionalServiceReference` to rece
 null on safe exact-provider absence. Nullable syntax alone stays strict; permission,
 malformed metadata and unsafe failures propagate. For narrow imported discovery,
 declare `[SunderRuntimeUse(typeof(IExecutionTargetService), Actions = ["discover"])]`
-on the consuming class after selecting the contract. This grants no invocation.
+on the consuming class after selecting the contract, with this file-local alias:
+
+```csharp
+using IExecutionTargetService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Execution_Target.IExecutionTargetService;
+```
+
+This grants no invocation.
 Replayable content watches can opt into provider-local
 `CompleteOnResponseContentRetirement = true`, with consumers resnapshotting/resuming.
 Compiled model JSON metadata and empty completion need no authored resolver or Unit.
 
-The Agent package remains 2.0.0; its 19 accepted public contract versions are mixed.
-Use the selected archive's reviewed tuples, not a blanket contract-version override.
+The AI Agent package remains `2.0.0`; its 19 new public API identities each start
+at `1.0.0`. Private contracts follow package `2.0.0`, and the platform-owned
+`sunder.stack.contributor` remains `2.0.0`. Use the selected archive's reviewed
+tuples rather than overriding every imported contract version.
 
 See the [contract catalog](extension-points.md), [chat/embedding providers](providers.md)
 and [Core ordinary-service guide](https://github.com/Younics/sunder-core/blob/main/docs/package-development/ORDINARY-SERVICES.md).

@@ -1,7 +1,8 @@
 extern alias LMStudioApp;
 
 using Microsoft.Extensions.DependencyInjection;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using IChatProviderService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Chat_Provider.IChatProviderService;
+using IEmbeddingProviderService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Embedding_Provider.IEmbeddingProviderService;
 using Sunder.Package.Agent.Provider.LMStudio.Rpc;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Package.Agent.Provider.TestSupport;
@@ -9,7 +10,7 @@ using Sunder.Package.Agent.TestSupport.Avalonia;
 using Xunit;
 using LMStudioSettingsView = LMStudioApp::Sunder.Package.Agent.Provider.LMStudio.LMStudioSettingsView;
 using LMStudioSettingsViewModel = LMStudioApp::Sunder.Package.Agent.Provider.LMStudio.LMStudioSettingsViewModel;
-using ICredentialSettingsService = LMStudioApp::Sunder.Generated.Packages.Sunder_Package_Agent_Provider_Lmstudio_Services.ICredentialSettingsService;
+using ICredentialSettingsService = LMStudioApp::Sunder.Generated.Packages.Younics_Ai_Agent_Provider_Lmstudio_Services.ICredentialSettingsService;
 
 namespace Sunder.Package.Agent.Provider.LMStudio.Tests;
 
@@ -19,7 +20,7 @@ public sealed class LMStudioPackageCompositionTests
     [Trait("Lane", "PackageCompatibility")]
     public void WorkerAndAppComposition_KeepConnectionCatalogAndProvidersWorkerOnly()
     {
-        var context = new ProviderTestPackageContext("sunder.package.agent.provider.lmstudio");
+        var context = new ProviderTestPackageContext("younics.ai.agent.provider.lmstudio");
         var credentials = new ProviderCredentialAccessor(
             context.Secrets,
             LMStudioProviderConfiguration.ApiKeyKey);

@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <SunderTestOwner>sunder.package.agent.provider.lmstudio</SunderTestOwner>
+    <SunderTestOwner>younics.ai.agent.provider.lmstudio</SunderTestOwner>
     <SunderTestCategory>Conformance</SunderTestCategory>
     <SunderTestCapabilities>HTTP;Worker</SunderTestCapabilities>
     <SunderTestOS>Any</SunderTestOS>

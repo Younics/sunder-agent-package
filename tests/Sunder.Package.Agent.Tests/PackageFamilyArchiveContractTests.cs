@@ -222,7 +222,7 @@ public sealed class PackageFamilyArchiveContractTests
         var archiveDirectory = ResolveArchiveDirectory();
         var inventory = LoadInventory();
         var package = inventory.Packages.First(static item =>
-            !string.Equals(item.PackageId, "sunder.package.agent", StringComparison.Ordinal));
+            item.PackageId is not ("younics.ai.agent" or "younics.sunder.package.maker"));
         var sourcePath = Path.Combine(
             archiveDirectory,
             $"{package.PackageId}.{inventory.ReleaseVersion}.sunderpkg");
@@ -406,6 +406,7 @@ public sealed class PackageFamilyArchiveContractTests
         Assert.Equal(releaseVersion, root.GetProperty("version").GetString());
 
         var dependencies = root.GetProperty("dependsOn").EnumerateArray().ToArray();
+        if (package.PackageId == "younics.sunder.package.maker") Assert.Empty(dependencies);
         var dependencyIds = dependencies
             .Select(static dependency => RequiredString(dependency, "packageId"))
             .ToArray();
@@ -567,7 +568,7 @@ public sealed class PackageFamilyArchiveContractTests
             }
         }
 
-        if (package.PackageId == "sunder.package.agent.builder")
+        if (package.PackageId == "younics.sunder.package.maker")
         {
             Assert.DoesNotContain(paths, static path =>
             {
@@ -585,7 +586,7 @@ public sealed class PackageFamilyArchiveContractTests
         IReadOnlyList<string> paths,
         PackageExpectation package)
     {
-        var sqliteOwner = package.PackageId is "sunder.package.agent" or "sunder.package.agent.memory.semantic";
+        var sqliteOwner = package.PackageId is "younics.ai.agent" or "younics.ai.agent.memory.semantic";
         var sqlitePaths = paths.Where(static path =>
             FileName(path).StartsWith("SQLitePCLRaw.", StringComparison.OrdinalIgnoreCase)
             || FileName(path).Contains("e_sqlite3", StringComparison.OrdinalIgnoreCase)).ToArray();
@@ -608,7 +609,7 @@ public sealed class PackageFamilyArchiveContractTests
             Assert.Empty(sqlitePaths);
         }
 
-        var onigwrapOwner = package.PackageId is "sunder.package.agent" or "sunder.package.agent.mcp" or "sunder.package.agent.subagents";
+        var onigwrapOwner = package.PackageId is "younics.ai.agent" or "younics.ai.agent.mcp" or "younics.ai.agent.subagents";
         var onigwrapPaths = paths.Where(static path =>
             FileName(path).Contains("onigwrap", StringComparison.OrdinalIgnoreCase)).ToArray();
         if (onigwrapOwner)
@@ -636,7 +637,7 @@ public sealed class PackageFamilyArchiveContractTests
 
         var systemManagementPaths = paths.Where(static path =>
             FileName(path).Equals("System.Management.dll", StringComparison.OrdinalIgnoreCase)).ToArray();
-        if (package.PackageId == "sunder.package.agent.provider.gemini")
+        if (package.PackageId == "younics.ai.agent.provider.gemini")
         {
             Assert.NotEmpty(systemManagementPaths);
             foreach (var rid in SupportedRids)
@@ -798,7 +799,8 @@ public sealed class PackageFamilyArchiveContractTests
             else
             {
                 Require(
-                    !contractId.StartsWith("sunder.agent.", StringComparison.Ordinal),
+                    !contractId.StartsWith("younics.ai.agent.", StringComparison.Ordinal)
+                    && !contractId.StartsWith("younics.sunder.package.maker.", StringComparison.Ordinal),
                     $"{packageId}: Agent descriptor '{contractId}@{version}' is absent from the compatibility candidate.");
             }
         }
@@ -1010,6 +1012,7 @@ public sealed class PackageFamilyArchiveContractTests
             AgentPackageRepositoryInventory.RepositoryRoot.FullName,
             "packages.json")));
         var root = document.RootElement;
+        CurrentContractInventory.AssertPackageInventory(root);
         var packages = root.GetProperty("packages").EnumerateArray()
             .Where(static package => RequiredString(package, "artifactType") == "sunderpkg")
             .Select(static package =>
@@ -1018,8 +1021,7 @@ public sealed class PackageFamilyArchiveContractTests
                 return new PackageExpectation(
                     RequiredString(package, "packageId"),
                     Path.GetFileNameWithoutExtension(projectPath),
-                    package.TryGetProperty("appProjectPath", out var appProjectPath)
-                    && !string.IsNullOrWhiteSpace(appProjectPath.GetString()),
+                    CurrentContractInventory.Packages.Single(value => value.ProjectPath == projectPath).HasApp,
                     package.GetProperty("providerIds").EnumerateArray()
                         .Select(static providerId => providerId.GetString()!)
                         .Order(StringComparer.Ordinal)
@@ -1027,17 +1029,17 @@ public sealed class PackageFamilyArchiveContractTests
             })
             .OrderBy(static package => package.PackageId, StringComparer.Ordinal)
             .ToArray();
-        using var candidateDocument = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(
-            AgentPackageRepositoryInventory.RepositoryRoot.FullName,
-            "compatibility",
-            "agent-compatibility-candidate.json")));
-        var contractIdentities = candidateDocument.RootElement.GetProperty("descriptors")
-            .EnumerateArray()
-            .Select(static descriptor => new ContractIdentity(
-                RequiredString(descriptor, "contractId"),
-                RequiredString(descriptor, "version"),
-                RequiredString(descriptor, "descriptorSha256"),
-                RequiredString(descriptor, "abiSha256")))
+        // Independently reviewed current records; never infer expected bytes from
+        // the archives under test or use a predecessor identity translation.
+        var currentIdentities = new List<ContractIdentity>();
+        foreach (var expected in CurrentContractInventory.Contracts)
+        {
+            var descriptor = CurrentContractRecords.Get(expected.ContractId);
+            currentIdentities.Add(new(descriptor.ContractId, descriptor.Version, descriptor.Sha256, descriptor.AbiSha256));
+        }
+        var stack = Sunder.Sdk.Stacks.SunderStackContributorRpc.Descriptor;
+        currentIdentities.Add(new(stack.ContractId, stack.Version, stack.Sha256, stack.AbiSha256));
+        var contractIdentities = currentIdentities
             .ToDictionary(
                 static identity => ContractKey(identity.ContractId, identity.Version),
                 StringComparer.Ordinal);

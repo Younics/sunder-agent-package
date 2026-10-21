@@ -77,20 +77,20 @@ public sealed class DockerCatalogConsistencyTests : IDisposable
     }
 
     [Fact]
-    public async Task ConcurrentSchemaMigrationAndCatalogMutation_DoNotLoseImage()
+    public async Task ConcurrentCurrentSchemaValidationAndCatalogMutation_DoNotLoseImage()
     {
         var context = new CountingPackageContext(_root);
         await context.State.SetValueAsync(
             DockerImageCatalogService.ImagesKey,
             "{\"schemaVersion\":3,\"revision\":4,\"images\":[{\"imageReference\":\"existing/image:latest\",\"status\":0,\"lastPulledAtUtc\":null,\"lastMessage\":null}]}");
         context.State.BlockNextGet(DockerImageCatalogService.ImagesKey);
-        var migration = new DockerPackageStorageMigration(context);
+        var validation = new DockerPackageStorageValidation(context);
 
-        var migrationTask = migration.EnsureAsync();
+        var validationTask = validation.EnsureAsync();
         await context.State.BlockedGetEntered.WaitAsync(TimeSpan.FromSeconds(10));
         var addTask = new DockerImageCatalogService(context).AddImageAsync("added/image:1.0");
         context.State.ReleaseBlockedGet();
-        await Task.WhenAll(migrationTask, addTask);
+        await Task.WhenAll(validationTask, addTask);
 
         Assert.Equal(
             ["added/image:1.0", "existing/image:latest"],
@@ -107,21 +107,21 @@ public sealed class DockerCatalogConsistencyTests : IDisposable
             DockerImageCatalogService.ImagesKey,
             "{\"schemaVersion\":3,\"revision\":1,\"images\":[]}");
         context.State.BlockNextGet(DockerImageCatalogService.ImagesKey);
-        var migration = new DockerPackageStorageMigration(context);
+        var validation = new DockerPackageStorageValidation(context);
         using var cancellation = new CancellationTokenSource();
 
-        var activation = migration.StartAsync(cancellation.Token);
+        var activation = validation.StartAsync(cancellation.Token);
         await context.State.BlockedGetEntered.WaitAsync(TimeSpan.FromSeconds(10));
         cancellation.Cancel();
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => activation);
         context.State.ReleaseBlockedGet();
-        await migration.StartAsync(CancellationToken.None);
+        await validation.StartAsync(CancellationToken.None);
 
-        var migrated = JsonSerializer.Deserialize<DockerImageCatalogState>(
+        var validated = JsonSerializer.Deserialize<DockerImageCatalogState>(
             (await context.State.GetValueAsync(DockerImageCatalogService.ImagesKey))!,
             CatalogJsonOptions)!;
-        Assert.Equal(DockerImageCatalogService.CurrentSchemaVersion, migrated.SchemaVersion);
+        Assert.Equal(DockerImageCatalogService.CurrentSchemaVersion, validated.SchemaVersion);
     }
 
     [Fact]
@@ -305,10 +305,10 @@ public sealed class DockerCatalogConsistencyTests : IDisposable
         var context = new CountingPackageContext(_root);
         await context.State.SetValueAsync(DockerImageCatalogService.ImagesKey, json);
         context.State.ResetWriteCount();
-        var migration = new DockerPackageStorageMigration(context);
+        var validation = new DockerPackageStorageValidation(context);
 
         var exception = await Assert.ThrowsAsync<DockerExecutionDomainException>(
-            () => migration.StartAsync());
+            () => validation.StartAsync());
 
         Assert.Equal(expectedCode, exception.Code);
         Assert.Equal(json, await context.State.GetValueAsync(DockerImageCatalogService.ImagesKey));
@@ -343,7 +343,7 @@ public sealed class DockerCatalogConsistencyTests : IDisposable
         context.State.ResetWriteCount();
 
         var exception = await Assert.ThrowsAsync<DockerExecutionDomainException>(
-            () => new DockerPackageStorageMigration(context).EnsureAsync());
+            () => new DockerPackageStorageValidation(context).EnsureAsync());
 
         Assert.Equal("docker.catalog.malformed", exception.Code);
         Assert.Equal(json, await context.State.GetValueAsync(DockerImageCatalogService.ImagesKey));
@@ -359,9 +359,9 @@ public sealed class DockerCatalogConsistencyTests : IDisposable
         await context.State.SetValueAsync(key, json);
         context.State.ResetWriteCount();
 
-        var migration = new DockerPackageStorageMigration(context);
+        var validation = new DockerPackageStorageValidation(context);
         var exception = await Assert.ThrowsAsync<DockerExecutionDomainException>(
-            () => migration.StartAsync());
+            () => validation.StartAsync());
 
         Assert.Equal("docker.workspace-config.unknown-data", exception.Code);
         Assert.Equal(json, await context.State.GetValueAsync(key));
@@ -375,7 +375,7 @@ public sealed class DockerCatalogConsistencyTests : IDisposable
         context.State.ListFailure = new IOException("injected internal failure");
 
         var exception = await Assert.ThrowsAsync<IOException>(
-            () => new DockerPackageStorageMigration(context).StartAsync());
+            () => new DockerPackageStorageValidation(context).StartAsync());
 
         Assert.Equal("injected internal failure", exception.Message);
     }
@@ -390,7 +390,7 @@ public sealed class DockerCatalogConsistencyTests : IDisposable
         context.State.ResetWriteCount();
 
         var exception = await Assert.ThrowsAsync<DockerExecutionDomainException>(
-            () => new DockerPackageStorageMigration(context).EnsureAsync());
+            () => new DockerPackageStorageValidation(context).EnsureAsync());
 
         Assert.Equal("docker.workspace-config.unsupported-schema", exception.Code);
         Assert.Equal(json, await context.State.GetValueAsync(key));
@@ -409,11 +409,36 @@ public sealed class DockerCatalogConsistencyTests : IDisposable
         await context.State.SetValueAsync(key, json);
         context.State.ResetWriteCount();
 
-        var migration = new DockerPackageStorageMigration(context);
+        var validation = new DockerPackageStorageValidation(context);
         var exception = await Assert.ThrowsAsync<DockerExecutionDomainException>(
-            () => migration.StartAsync());
+            () => validation.StartAsync());
 
         Assert.Equal("docker.workspace-config.malformed", exception.Code);
+        Assert.Equal(json, await context.State.GetValueAsync(key));
+        Assert.Equal(0, context.State.WriteCount);
+    }
+
+    [Theory]
+    [InlineData("allowedRoots", "[]")]
+    [InlineData("hostRoots", "{}")]
+    [InlineData("defaultWorkingDirectory", "\"/workspace\"")]
+    public async Task WorkspaceReadsRejectOldPathShapesEvenAfterInitialization(string property, string value)
+    {
+        var context = new CountingPackageContext(_root);
+        var service = new DockerExecutionWorkspaceConfigService(context);
+        await service.SaveConfigAsync("binding", new DockerExecutionWorkspaceConfig("image:1.0", null, "/bin/sh", ["/bin"]));
+        var current = await service.GetConfigAsync("binding");
+        Assert.Equal("image:1.0", current.ImageReference);
+        Assert.Equal("/bin", Assert.Single(current.PathEntries!));
+
+        var key = DockerExecutionWorkspaceConfigService.BuildKey("binding");
+        var json = $"{{\"schemaVersion\":3,\"{property}\":{value}}}";
+        await context.State.SetValueAsync(key, json);
+        context.State.ResetWriteCount();
+
+        var failure = await Assert.ThrowsAsync<DockerExecutionDomainException>(() => service.GetConfigAsync("binding"));
+        Assert.Equal("docker.workspace-config.unknown-data", failure.Code);
+        await Assert.ThrowsAsync<DockerExecutionDomainException>(() => new DockerPackageStorageValidation(context).StartAsync());
         Assert.Equal(json, await context.State.GetValueAsync(key));
         Assert.Equal(0, context.State.WriteCount);
     }

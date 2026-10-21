@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using Sunder.Generated.Packages.Younics_Ai_Agent_Models;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Services;
 

@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <SunderPackageFamilyId>sunder.package.agent.provider.anthropic</SunderPackageFamilyId>
+    <SunderPackageFamilyId>younics.ai.agent.provider.anthropic</SunderPackageFamilyId>
     <SunderSdkAvaloniaReference>true</SunderSdkAvaloniaReference>
   </PropertyGroup>
 

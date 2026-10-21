@@ -7,8 +7,8 @@ namespace Sunder.Package.Agent.Skills.Services;
 
 internal static class SkillPersistenceSchemas
 {
-    public const string IndexId = "sunder.agent.skills.index";
-    public const string ImportJournalId = "sunder.agent.skills.import-journal";
+    public const string IndexId = "younics.ai.agent.skills.index";
+    public const string ImportJournalId = "younics.ai.agent.skills.import-journal";
     public const int CurrentVersion = 1;
 }
 
@@ -243,12 +243,11 @@ public sealed class SkillStore
                 var json = StrictUtf8.GetString(bytes);
                 using var document = JsonDocument.Parse(json, new JsonDocumentOptions { MaxDepth = 64 });
                 SkillPersistenceJson.RejectDuplicateProperties(document.RootElement);
-                records = document.RootElement.ValueKind switch
+                if (document.RootElement.ValueKind != JsonValueKind.Object)
                 {
-                    JsonValueKind.Array => JsonSerializer.Deserialize<IReadOnlyList<InstalledSkillRecord>>(json, JsonOptions),
-                    JsonValueKind.Object => ReadCurrentIndex(json, document.RootElement),
-                    _ => null,
-                } ?? throw new InvalidDataException($"The skill index '{_indexPath}' is empty or has an unsupported shape.");
+                    throw new InvalidDataException($"The skill index '{_indexPath}' must contain a versioned object.");
+                }
+                records = ReadCurrentIndex(json, document.RootElement);
             }
             catch (DecoderFallbackException ex)
             {
@@ -297,6 +296,7 @@ public sealed class SkillStore
             || schemaId.ValueKind != JsonValueKind.String
             || !string.Equals(schemaId.GetString(), SkillPersistenceSchemas.IndexId, StringComparison.Ordinal)
             || !root.TryGetProperty(nameof(SkillIndexDocument.SchemaVersion), out var schemaVersion)
+            || schemaVersion.ValueKind != JsonValueKind.Number
             || !schemaVersion.TryGetInt32(out var version)
             || version != SkillPersistenceSchemas.CurrentVersion)
         {

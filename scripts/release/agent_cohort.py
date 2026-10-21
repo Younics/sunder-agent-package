@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """One retained Registry cohort request. No per-package mutation/compensation path."""
 
+from datetime import timedelta
 import os
 from pathlib import Path
 import re
@@ -82,19 +83,13 @@ def snapshots(values, package_ids):
 
 def result(value, proposed):
     proposed = request(proposed)
-    closed(value, "idempotencyKey requestSha256 packagePolicy checkpoint committedAtUtc versions previousTags resultingTags")
+    closed(value, "idempotencyKey requestSha256 packagePolicy committedAtUtc versions previousTags resultingTags")
     require(value["idempotencyKey"] == proposed["idempotencyKey"] and value["requestSha256"] == request_hash(proposed),
             "Cohort result is not the exact retained request")
     require(value["versions"] == proposed["versions"], "Cohort result changed an exact identity/state")
     closed(value["packagePolicy"], "revision fingerprint")
     require(positive(value["packagePolicy"]["revision"]) == proposed["expectedPackagePolicyRevision"] + 1, "Wrong committed policy revision")
     digest(value["packagePolicy"]["fingerprint"])
-    checkpoint = value["checkpoint"]
-    closed(checkpoint, "sequence digest topologyGeneration topologyFingerprint")
-    positive(checkpoint["sequence"])
-    positive(checkpoint["topologyGeneration"])
-    digest(checkpoint["digest"])
-    digest(checkpoint["topologyFingerprint"])
     timestamp(value["committedAtUtc"])
     ids = {v["package"]["packageId"] for v in proposed["versions"]}
     previous = snapshots(value["previousTags"], ids)
@@ -105,6 +100,42 @@ def result(value, proposed):
         else:
             previous[tag["packageId"]][tag["tag"]] = tag
     require(previous == resulting, "Result did not preserve the complete prior tag map plus exact requested changes")
+    return value
+
+
+def policy_snapshot(value, registry, proposed):
+    """Validate a nonce-bound DB policy observation against retained client consistency."""
+    closed(value, "nonce registryOrigin packagePolicy observedAtUtc validUntilUtc packages platformCatalogs")
+    require(value["nonce"] == proposed["nonce"] and value["registryOrigin"] == origin(registry), "Policy nonce/origin mismatch")
+    policy = value["packagePolicy"]
+    closed(policy, "revision fingerprint")
+    positive(policy["revision"])
+    digest(policy["fingerprint"])
+    minimum = proposed["minimumPackagePolicy"]
+    if minimum is not None:
+        closed(minimum, "revision fingerprint")
+        positive(minimum["revision"])
+        digest(minimum["fingerprint"])
+        require(policy["revision"] >= minimum["revision"]
+                and (policy["revision"] != minimum["revision"] or policy == minimum),
+                "Policy is older than or conflicts with the retained package-policy identity")
+    times = []
+    fractions = []
+    for field in ("observedAtUtc", "validUntilUtc"):
+        text = value[field]
+        match = re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.([0-9]{1,7}))?(?:Z|\+00:00)", text) if type(text) is str else None
+        require(match, "Policy observation requires a UTC timestamp")
+        times.append(timestamp(text))
+        # Preserve Core's 100 ns precision when Python's datetime truncates it.
+        fractions.append((match[1] or "").ljust(7, "0"))
+    require(times[1] - times[0] == timedelta(hours=24) and fractions[0] == fractions[1], "Invalid fixed policy lease interval")
+    for field, member, fields in (
+            ("packages", "package", "package packageState versionAvailability disposition errorCode publicReason platformDependencies"),
+            ("platformCatalogs", "catalog", "catalog lifecycleState disposition errorCode revokedAtUtc")):
+        require(type(value[field]) is list and len(value[field]) <= 128, "Invalid policy subject collection")
+        for decision in value[field]:
+            closed(decision, fields)
+        require([decision[member] for decision in value[field]] == proposed[field], "Policy response changed the exact requested subjects")
     return value
 
 
@@ -180,9 +211,10 @@ def verify_current(registry, proposed, committed):
 def confirm(registry, request_path, result_path, archives):
     """Authenticate the retained result before announcement without a new mutation.
 
-    A fresh anonymous synchronization proves the current monotonic policy floor is
-    strictly newer than the request's expected revision. The owner POST therefore
-    can only return an existing exact operation, or fail its stale fence.
+    A fresh anonymous synchronization checks the DB revision against the retained
+    committed identity, which is newer than the request's expected revision. The
+    owner POST uses that original stale fence to read back the exact operation.
+    This is cached consistency, not independent proof against database rollback.
     """
     registry = origin(registry)
     proposed = request(load(request_path))
@@ -192,7 +224,6 @@ def confirm(registry, request_path, result_path, archives):
     require(re.fullmatch(r"sunder_cli_[A-Za-z0-9_-]{43}", token), "Owner credential required to confirm the retained cohort")
     nonce = secrets.token_hex(16)
     minimum = committed["packagePolicy"]
-    floor = committed["checkpoint"]
     platforms = {}
     for change in proposed["versions"]:
         package = change["package"]
@@ -210,26 +241,16 @@ def confirm(registry, request_path, result_path, archives):
                 platforms[tuple(item.values())] = item
     subjects = sorted([v["package"] for v in proposed["versions"]], key=lambda p: (p["packageId"], p["version"], p["packageContentIdentity"]))
     synchronization = {"nonce": nonce, "packages": subjects,
-                       "platformCatalogs": [platforms[key] for key in sorted(platforms)], "minimumPackagePolicy": minimum,
-                       "minimumCheckpoint": floor}
+                       "platformCatalogs": [platforms[key] for key in sorted(platforms)], "minimumPackagePolicy": minimum}
     status, body, transport = http(registry, "/api/v1/policy/synchronize", encoded(synchronization))
     require(not transport and status == 200, "Fresh cohort policy synchronization failed")
-    current = decode(body)
-    require(current["nonce"] == nonce and current["registryOrigin"] == registry, "Policy nonce/origin mismatch")
-    policy = current["packagePolicy"]
-    checkpoint = current["checkpoint"]
-    require(positive(policy["revision"]) >= minimum["revision"]
-            and (policy["revision"] != minimum["revision"] or policy == minimum), "Policy regressed below the committed cohort")
-    require(positive(checkpoint["sequence"]) >= floor["sequence"]
-            and positive(checkpoint["topologyGeneration"]) >= floor["topologyGeneration"]
-            and (checkpoint["sequence"] != floor["sequence"] or checkpoint["digest"] == floor["digest"])
-            and (checkpoint["topologyGeneration"] != floor["topologyGeneration"] or checkpoint["topologyFingerprint"] == floor["topologyFingerprint"]),
-            "Checkpoint regressed below the committed cohort")
-    require([p["package"] for p in current["packages"]] == synchronization["packages"]
-            and all(p["packageState"] == "Active" and p["versionAvailability"] == "Listed" and p["disposition"] == "Allowed"
+    current = policy_snapshot(decode(body), registry, synchronization)
+    require(all(p["packageState"] == "Active" and p["versionAvailability"] == "Listed" and p["disposition"] == "Allowed"
+                    and p["errorCode"] is None and type(p["platformDependencies"]) is list
+                    and all(c in synchronization["platformCatalogs"] for c in p["platformDependencies"])
                     for p in current["packages"]), "Fresh policy does not allow the complete Listed cohort")
-    require([p["catalog"] for p in current["platformCatalogs"]] == synchronization["platformCatalogs"]
-            and all(p["lifecycleState"] == "Supported" and p["disposition"] == "Allowed" for p in current["platformCatalogs"]),
+    require(all(p["lifecycleState"] == "Supported" and p["disposition"] == "Allowed"
+                    and p["errorCode"] is None and p["revokedAtUtc"] is None for p in current["platformCatalogs"]),
             "Fresh policy does not allow the complete platform catalog set")
     for attempt in range(2):
         status, body, transport = http(registry, "/api/v1/me/package-cohorts/availability", request_bytes(proposed), token)
@@ -270,9 +291,6 @@ def apply(registry, request_path, result_path):
             document = decode(response)
         except (ValueError, UnicodeError):
             document = None
-        if isinstance(document, dict) and (document.get("code") == "registry.policy-recovery-required"
-                                         or document.get("errorCode") == "registry.policy-recovery-required"):
-            raise Invalid("Registry requires administrator replay of this exact cohort; no compensation or new request")
         if not transport and status == 200 and document is not None:
             committed = result(document, proposed)
             store(result_path, committed)

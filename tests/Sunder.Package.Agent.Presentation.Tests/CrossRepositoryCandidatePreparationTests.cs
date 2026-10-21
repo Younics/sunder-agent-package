@@ -42,7 +42,7 @@ public sealed class CrossRepositoryCandidatePreparationTests
         AgentChatView? view = null;
         Window? window = null;
         var context = new PackageViewNavigationContext(
-            "sunder.package.agent.chat",
+            "younics.ai.agent.chat",
             new Dictionary<string, string?>());
         try
         {
@@ -208,7 +208,7 @@ public sealed class CrossRepositoryCandidatePreparationTests
             var discover = await request.Content!.ReadFromJsonAsync<RuntimeRpcAppDiscoverRequest>(
                 WebJson,
                 cancellationToken);
-            Assert.Equal("sunder.agent.owner.runtime", discover?.ContractId);
+            Assert.Equal("younics.ai.agent.owner.runtime", discover?.ContractId);
             Interlocked.Increment(ref _ownerDiscoveryRequestCount);
             RuntimeRpcProviderDescriptor[] providers = Volatile.Read(ref _leasesEnabled) == 0
                 ? Array.Empty<RuntimeRpcProviderDescriptor>()
@@ -325,9 +325,9 @@ public sealed class CrossRepositoryCandidatePreparationTests
 
         private static RuntimeRpcProviderDescriptor CreateOwnerProvider()
         {
-            var descriptor = CurrentPrivateRpcDescriptors.Get("sunder.agent.owner.runtime");
+            var descriptor = CurrentPrivateRpcDescriptors.Get("younics.ai.agent.owner.runtime");
             return new RuntimeRpcProviderDescriptor(
-                "sunder.package.agent",
+                "younics.ai.agent",
                 "2.0.0",
                 "agent.owner.runtime",
                 descriptor.ContractId,

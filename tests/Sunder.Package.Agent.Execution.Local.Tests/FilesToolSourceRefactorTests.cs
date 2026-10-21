@@ -18,10 +18,10 @@ using FilesWorker::Sunder.Package.Agent.Tools.Files;
 using ShellWorker::Sunder.Package.Agent.Tools.Shell;
 using WebWorker::Sunder.Package.Agent.Tools.Web;
 using WebWorker::Sunder.Package.Agent.Tools.Web.Services;
-using DockerModels = DockerWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
-using LocalModels = LocalWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
-using ShellModels = ShellWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
-using WebModels = WebWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using DockerModels = DockerWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models;
+using LocalModels = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models;
+using ShellModels = ShellWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models;
+using WebModels = WebWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models;
 using HostSecurePathEngine = DockerWorker::Sunder.Agent.Execution.Common.HostSecurePathEngine;
 using HostResourceClaim = DockerWorker::Sunder.Agent.Execution.Common.HostResourceClaim;
 using LocalSecureApprovalLease = DockerWorker::Sunder.Agent.Execution.Common.LocalSecureApprovalLease;
@@ -83,7 +83,7 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
     }
 
     [Fact]
-    public async Task Read_SlicesLegacyWholeFileTarget_ForCompatibility()
+    public async Task Read_SlicesWholeFileTarget_WhenOptionalRangedReadFacetIsAbsent()
     {
         var target = new MemoryExecutionTarget(new Dictionary<string, string>
         {
@@ -526,8 +526,8 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
             ResourceIndex: -1,
             "workspace-generation",
             "binding-generation",
-            "sunder.package.agent.tools.files",
-            $"sunder.package.agent.execution.{targetKind}",
+            "younics.ai.agent.tools.files",
+            $"younics.ai.agent.execution.{targetKind}",
             Guid.NewGuid().ToString("N"),
             AuthorityUseCount: 1,
             CanIssueOutsideAuthority: true);
@@ -850,7 +850,7 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
             ShellTimedOut = true,
         };
         var (files, _, context) = CreateSource(target);
-        using var shell = new GeneratedToolSourceProbe(_catalogs.Single(), new ShellToolSource(), "sunder.package.agent.tools.shell");
+        using var shell = new GeneratedToolSourceProbe(_catalogs.Single(), new ShellToolSource(), "younics.ai.agent.tools.shell");
         var result = sourceKind switch
         {
             "files" => await files.ExecuteAsync(context, new AgentToolRequest("read", "{\"path\":\"file.txt\"}")),
@@ -1005,7 +1005,7 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
 
     private GeneratedToolSourceProbe CreateSourceProbe(RegressionTestExtensionCatalog catalog, IPackageContext context)
     {
-        var source = new GeneratedToolSourceProbe(catalog, new FilesToolSource(context), "sunder.package.agent.tools.files");
+        var source = new GeneratedToolSourceProbe(catalog, new FilesToolSource(context), "younics.ai.agent.tools.files");
         _sources.Add(source);
         return source;
     }
@@ -1933,7 +1933,7 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
             AgentExecutionTargetContext context,
             string path,
             CancellationToken cancellationToken = default)
-            => ToAgentResource(await target.ResolveFileAsync(new LocalModels.CSunder_Agent_Execution_Target_ExecutionTargetResolveFileRequest
+            => ToAgentResource(await target.ResolveFileAsync(new LocalModels.CYounics_Ai_Agent_Execution_Target_ExecutionTargetResolveFileRequest
             {
                 Context = ToLocalContext(context),
                 Path = path,
@@ -1949,7 +1949,7 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
             AgentExecutionTargetContext context,
             AgentFileReadRequest request,
             CancellationToken cancellationToken = default)
-            => ToAgentResult(await target.ReadFileAsync(new LocalModels.CSunder_Agent_Execution_Target_ExecutionTargetReadFileRequest
+            => ToAgentResult(await target.ReadFileAsync(new LocalModels.CYounics_Ai_Agent_Execution_Target_ExecutionTargetReadFileRequest
             {
                 Context = ToLocalContext(context),
                 Request = ToLocalRequest(request),
@@ -1959,7 +1959,7 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
             AgentExecutionTargetContext context,
             AgentFileWriteRequest request,
             CancellationToken cancellationToken = default)
-            => ToAgentResult(await target.WriteFileAsync(new LocalModels.CSunder_Agent_Execution_Target_ExecutionTargetWriteFileRequest
+            => ToAgentResult(await target.WriteFileAsync(new LocalModels.CYounics_Ai_Agent_Execution_Target_ExecutionTargetWriteFileRequest
             {
                 Context = ToLocalContext(context),
                 Request = ToLocalRequest(request),
@@ -1969,7 +1969,7 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
             AgentExecutionTargetContext context,
             AgentFileDeleteRequest request,
             CancellationToken cancellationToken = default)
-            => ToAgentResult(await target.DeleteFileAsync(new LocalModels.CSunder_Agent_Execution_Target_ExecutionTargetDeleteFileRequest
+            => ToAgentResult(await target.DeleteFileAsync(new LocalModels.CYounics_Ai_Agent_Execution_Target_ExecutionTargetDeleteFileRequest
             {
                 Context = ToLocalContext(context),
                 Request = ToLocalRequest(request),

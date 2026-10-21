@@ -14,15 +14,16 @@ public sealed class PackageModuleCompositionTests
         {
             ["Sunder.Package.Agent"] =
             [
-                PackageView("sunder.package.agent.chat", "Sunder.Package.Agent.PackageViews.AgentChatView"),
-                PackageView("sunder.package.agent.history", "Sunder.Package.Agent.PackageViews.AgentHistorySearchView"),
-                PackageView("sunder.package.agent.workspaces", "Sunder.Package.Agent.PackageViews.AgentWorkspacesView"),
-                PackageView("sunder.package.agent.profiles", "Sunder.Package.Agent.PackageViews.AgentProfilesView"),
+                PackageView("younics.ai.agent.chat", "Sunder.Package.Agent.PackageViews.AgentChatView"),
+                PackageView("younics.ai.agent.history", "Sunder.Package.Agent.PackageViews.AgentHistorySearchView"),
+                PackageView("younics.ai.agent.workspaces", "Sunder.Package.Agent.PackageViews.AgentWorkspacesView"),
+                PackageView("younics.ai.agent.profiles", "Sunder.Package.Agent.PackageViews.AgentProfilesView"),
                 SettingsView("Sunder.Package.Agent.PackageViews.AgentPermissionsView"),
             ],
             ["Sunder.Package.Agent.Builder"] =
             [
-                PackageView("sunder.package.agent.builder", "Sunder.Package.Agent.Builder.BuilderView"),
+                PackageView("younics.sunder.package.maker", "Sunder.Package.Agent.Builder.BuilderView"),
+                SettingsView("Sunder.Package.Agent.Builder.BuilderSettingsView"),
             ],
             ["Sunder.Package.Agent.Execution.Docker"] =
             [
@@ -38,7 +39,7 @@ public sealed class PackageModuleCompositionTests
             ],
             ["Sunder.Package.Agent.Memory.Semantic"] =
             [
-                PackageView("sunder.package.agent.memory.semantic.inspector", "Sunder.Package.Agent.Memory.Semantic.PackageViews.MemoryInspectorView"),
+                PackageView("younics.ai.agent.memory.semantic.inspector", "Sunder.Package.Agent.Memory.Semantic.PackageViews.MemoryInspectorView"),
             ],
             ["Sunder.Package.Agent.Provider.Anthropic"] =
             [
@@ -62,8 +63,8 @@ public sealed class PackageModuleCompositionTests
             ],
             ["Sunder.Package.Agent.Subagents"] =
             [
-                PackageView("sunder.package.agent.subagents.sessions", "Sunder.Package.Agent.Subagents.PackageViews.SubsessionsView"),
-                PackageView("sunder.package.agent.subagents", "Sunder.Package.Agent.Subagents.PackageViews.SubagentsView"),
+                PackageView("younics.ai.agent.subagents.sessions", "Sunder.Package.Agent.Subagents.PackageViews.SubsessionsView"),
+                PackageView("younics.ai.agent.subagents", "Sunder.Package.Agent.Subagents.PackageViews.SubagentsView"),
             ],
         };
 
@@ -88,6 +89,9 @@ public sealed class PackageModuleCompositionTests
         services.AddSingleton<IPackageNotificationService>(NullPackageNotificationService.Instance);
         services.AddSingleton<IPackageSettingsNavigationService>(NullPackageSettingsNavigationService.Instance);
         services.AddSingleton<IPackageShellViewService>(new CapturingHistoryShellViewService());
+        services.AddSingleton<IPackageDevelopmentService>(new CompositionDevelopmentHost());
+        services.AddSingleton<IPackageLogNavigationService>(new CompositionDevelopmentHost());
+        services.AddSingleton<IPackageAppStateUpdates, BuilderUiStateUpdates>();
 
         var appModule = CreateAppPackageModule(packageName);
         appModule.ConfigureAppServices(services, packageScope.Context);

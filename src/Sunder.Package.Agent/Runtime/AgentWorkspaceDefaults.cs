@@ -5,7 +5,7 @@ namespace Sunder.Package.Agent.Runtime;
 
 internal static class AgentWorkspaceDefaults
 {
-    internal const string UnassignedSessionsWorkspaceId = "legacy-unassigned-sessions";
+    internal const string UnassignedSessionsWorkspaceId = "unassigned-sessions";
 
     internal static string BuildPrimaryBindingId(
         string workspaceId,

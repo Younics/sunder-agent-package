@@ -4,6 +4,7 @@ using System.Collections.Concurrent;
 using Sunder.Sdk.Rpc;
 using Xunit;
 using PresentationTaskScope = AgentCore::Sunder.Package.Agent.Shared.Presentation.PresentationTaskScope;
+using AgentCore::Sunder.Package.Agent.Shared.Presentation;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -402,6 +403,133 @@ public sealed class PresentationTaskScopeTests
         Assert.Same(handlerFailure, observed);
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task QueuedDispatch_StopDuringOperationOrFailureHandlerDrainsWithoutUnhandledPost(bool shutdown, bool inHandler)
+    {
+        using var dispatcher = new QueuedPresentationDispatcher();
+        var context = new FailureRecordingSynchronizationContext();
+        var previous = SynchronizationContext.Current;
+        var callbacks = 0;
+        var handlers = 0;
+        var scope = new PresentationTaskScope((_, token) =>
+        {
+            handlers++;
+            return ((IPresentationDispatcher)dispatcher).InvokeAsync(() => callbacks++, token);
+        }, dispatcher.ShutdownToken);
+        Task observation;
+        try
+        {
+            SynchronizationContext.SetSynchronizationContext(context);
+            observation = scope.Track(token => inHandler
+                ? Task.FromException(new IOException("original operation failure"))
+                : ((IPresentationDispatcher)dispatcher).InvokeAsync(() => callbacks++, token));
+        }
+        finally { SynchronizationContext.SetSynchronizationContext(previous); }
+
+        await dispatcher.Queued.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        if (shutdown) dispatcher.Shutdown();
+        var disposal = scope.DisposeAsync().AsTask();
+        if (!shutdown) dispatcher.Execute();
+        await Task.WhenAll(observation, disposal).WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Equal(inHandler ? 1 : 0, handlers);
+        Assert.Equal(0, callbacks);
+        Assert.Equal(0, context.PostCount);
+        Assert.Empty(context.Exceptions);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task ForeignOrTokenlessCancellationRemainsObservableAfterOwnerStop(bool inHandler, bool foreignToken)
+    {
+        using var foreign = new CancellationTokenSource();
+        foreign.Cancel();
+        var failure = new OperationCanceledException(foreignToken ? foreign.Token : default);
+        var pending = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var scope = new PresentationTaskScope(_ => pending.Task);
+        var observation = scope.RunAsync(_ => inHandler ? Task.FromException(new IOException("original")) : pending.Task);
+        var disposal = scope.DisposeAsync().AsTask();
+        pending.SetException(failure);
+        Assert.Same(failure, await Assert.ThrowsAsync<OperationCanceledException>(() => observation));
+        await disposal.WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ForeignDispatchOwnerCancellationRemainsObservableAfterScopeStop(bool inHandler)
+    {
+        using var foreign = new CancellationTokenSource();
+        foreign.Cancel();
+        var failure = Assert.Throws<PresentationDispatchCanceledException>(() =>
+            PresentationCancellation.ThrowIfStopped(foreign.Token, default));
+        var pending = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var scope = new PresentationTaskScope(_ => pending.Task);
+        var observation = scope.RunAsync(_ => inHandler ? Task.FromException(new IOException("original")) : pending.Task);
+        var disposal = scope.DisposeAsync().AsTask();
+
+        pending.SetException(failure);
+
+        Assert.Same(failure, await Assert.ThrowsAsync<PresentationDispatchCanceledException>(() => observation));
+        await disposal.WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FailureHandlerRealOrFatalErrorRemainsObservableAfterOwnerStop(bool fatal)
+    {
+        Exception failure = fatal ? new OutOfMemoryException("handler fatal") : new InvalidOperationException("handler bug");
+        var pending = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var scope = new PresentationTaskScope(_ => pending.Task);
+        var observation = scope.RunAsync(_ => Task.FromException(new IOException("original")));
+        var disposal = scope.DisposeAsync().AsTask();
+        pending.SetException(failure);
+        Assert.Same(failure, await Record.ExceptionAsync(() => observation));
+        await disposal.WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
+    [Theory]
+    [InlineData("cancellation")]
+    [InlineData("operation")]
+    [InlineData("fatal")]
+    public async Task CallbackThatActuallyRanCannotBeMistakenForOwnerOrDispatcherCancellation(string failureKind)
+    {
+        using var dispatcher = new QueuedPresentationDispatcher();
+        PresentationTaskScope scope = null!;
+        Exception? callbackFailure = null;
+        scope = new PresentationTaskScope((_, token) => ((IPresentationDispatcher)dispatcher).InvokeAsync(() =>
+        {
+            scope.Dispose();
+            callbackFailure = failureKind switch
+            {
+                "cancellation" => new OperationCanceledException(token),
+                "operation" => new IOException("Callback failed after owner stop."),
+                _ => new OutOfMemoryException("Fatal callback failure."),
+            };
+            throw callbackFailure;
+        }, token));
+        var observation = scope.RunAsync(_ => Task.FromException(new IOException("original")));
+        dispatcher.Execute();
+        var failure = await Record.ExceptionAsync(() => observation);
+        if (failureKind == "cancellation")
+        {
+            Assert.Same(callbackFailure, Assert.IsType<PresentationCallbackException>(failure).InnerException);
+        }
+        else
+        {
+            Assert.Same(callbackFailure, failure);
+        }
+        await scope.DisposeAsync();
+    }
+
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
@@ -411,7 +539,7 @@ public sealed class PresentationTaskScopeTests
         }
     }
 
-    private sealed class FailureRecordingSynchronizationContext : SynchronizationContext
+    internal sealed class FailureRecordingSynchronizationContext : SynchronizationContext
     {
         private int _postCount;
 
@@ -439,4 +567,33 @@ public sealed class PresentationTaskScopeTests
             });
         }
     }
+}
+
+// A paused UI queue: tests choose whether the callback ran or was aborted. No shared UIThread shutdown.
+internal sealed class QueuedPresentationDispatcher : IPresentationDispatcher, IDisposable
+{
+    private readonly CancellationTokenSource _shutdown = new();
+    private readonly TaskCompletionSource _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private Action? _action;
+    public TaskCompletionSource Queued { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public CancellationToken ShutdownToken => _shutdown.Token;
+    public bool CheckAccess() => false;
+    public Task InvokeAsync(Action action)
+    {
+        _action = action;
+        Queued.TrySetResult();
+        return _completion.Task;
+    }
+    public void Execute()
+    {
+        try { _action!(); _completion.TrySetResult(); }
+        catch (Exception error) { _completion.TrySetException(error); }
+    }
+    public void Shutdown()
+    {
+        _shutdown.Cancel();
+        _completion.TrySetException(new PresentationDispatchCanceledException(
+            PresentationDispatchCancellationReason.DispatcherShutdown, ShutdownToken));
+    }
+    public void Dispose() => _shutdown.Dispose();
 }

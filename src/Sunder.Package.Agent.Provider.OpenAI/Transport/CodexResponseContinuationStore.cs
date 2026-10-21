@@ -1,6 +1,6 @@
 using System.Collections.Concurrent;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using Sunder.Generated.Packages.Younics_Ai_Agent_Models;
+using ISessionCleanerService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Session_Cleaner.ISessionCleanerService;
 using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Provider.OpenAI.Transport;
@@ -12,7 +12,7 @@ public sealed partial class CodexResponseContinuationStore : ISessionCleanerServ
     private readonly ConcurrentDictionary<string, CodexResponseContinuationState> _states = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _responsesLiteSessionIds = new(StringComparer.Ordinal);
 
-    public string CleanerId { get; } = "sunder.package.agent.provider.openai:codex-response-continuation";
+    public string CleanerId { get; } = "younics.ai.agent.provider.openai:codex-response-continuation";
 
     public ValueTask<AgentServiceIdentity> DescribeAsync(CancellationToken cancellationToken = default)
     {

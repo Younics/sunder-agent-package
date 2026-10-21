@@ -17,12 +17,12 @@ extern alias SkillsApp;
 using SkillsWorker::Sunder.Package.Agent.Skills.Runtime;
 using SkillsWorker::Sunder.Package.Agent.Skills.Services;
 using SkillsApp::Sunder.Package.Agent.Skills.PackageViews;
-using SkillsManagementServices = SkillsApp::Sunder.Generated.Packages.Sunder_Package_Agent_Skills_Services;
-using SkillsRuntimeCatalogServices = SkillsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using SkillsManagementServices = SkillsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Skills_Services;
+using IRuntimeCatalogService = SkillsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Runtime_Catalog.IRuntimeCatalogService;
 
 public sealed class SkillPackageTests
 {
-    private const string SkillsPackageId = "sunder.package.agent.skills";
+    private const string SkillsPackageId = "younics.ai.agent.skills";
 
     [Theory]
     [InlineData("2.0.0")]
@@ -36,11 +36,11 @@ public sealed class SkillPackageTests
         var catalog = runtime.GetRequiredService<AgentRuntimeCatalog>();
         var registration = catalog.CreateSunderRpcProviderRegistration();
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        state.Add("sunder.package.agent", CurrentPublicRpcDescriptors.Get(RegressionTestBindings.RuntimeCatalog),
+        state.Add("younics.ai.agent", CurrentPublicRpcDescriptors.Get(RegressionTestBindings.RuntimeCatalog),
             catalog, registration.Handler, NoOpDisposable.Instance, registration.ProviderId,
             installedVersion);
         await using var receiver = new GeneratedServiceTestScope(new RegressionTestRpcClient(state, SkillsPackageId));
-        var selected = Assert.Single((await receiver.Providers<SkillsRuntimeCatalogServices.IRuntimeCatalogService>()
+        var selected = Assert.Single((await receiver.Providers<IRuntimeCatalogService>()
             .ListAsync()).Providers);
         Assert.Equal(installedVersion, selected.PackageVersion);
         var result = await selected.Service.GetProfileAsync(profile.ProfileId);
@@ -441,7 +441,7 @@ public sealed class SkillPackageTests
         var feature = new SkillsFeature(store, catalog.Skills());
 
         var result = await feature.ExecuteAsync(
-            new SkillsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.CSunder_Agent_Tool_Source_ToolSourceExecuteRequest
+            new SkillsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.CYounics_Ai_Agent_Tool_Source_ToolSourceExecuteRequest
             {
                 Context = new()
                 {
@@ -571,6 +571,21 @@ public sealed class SkillPackageTests
                 new Dictionary<string, string>()));
             var action = Assert.Single(preview.Actions);
 
+            foreach (var invalid in new[]
+                     {
+                         importFragment with { OwnerPackageId = "sunder.package.agent.skills" },
+                         importFragment with { SchemaId = "sunder.package.agent.skills/github-skill" },
+                         importFragment with { SchemaVersion = 0 },
+                     })
+            {
+                var rejectedPreview = await targetContributor.PreviewImportAsync(new StackImportPreviewRequest([invalid], new Dictionary<string, string>(), new Dictionary<string, string>()));
+                Assert.Empty(rejectedPreview.Actions);
+                var rejected = await targetContributor.ImportAsync(new StackImportRequest([invalid], new Dictionary<string, string>(), new Dictionary<string, string>(), [action.ActionId]));
+                Assert.Empty(rejected.ImportedItems);
+                Assert.NotEmpty(rejected.Warnings);
+                Assert.Empty(targetStore.ListSkills());
+            }
+
             var result = await targetContributor.ImportAsync(new StackImportRequest(
                 [importFragment],
                 new Dictionary<string, string>(),
@@ -633,7 +648,7 @@ public sealed class SkillPackageTests
         => new(
             fragment.FragmentId,
             SkillsPackageId,
-            "sunder.package.agent.skills.github-skills",
+            "younics.ai.agent.skills.github-skills",
             fragment.SchemaId,
             fragment.SchemaVersion,
             fragment.DisplayName,

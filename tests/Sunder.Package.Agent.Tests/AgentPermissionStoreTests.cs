@@ -411,8 +411,8 @@ public sealed class AgentPermissionStoreTests
             "binding-generation",
             "call-1",
             0,
-            "sunder.package.agent.tools.files",
-            "sunder.package.agent.execution.local");
+            "younics.ai.agent.tools.files",
+            "younics.ai.agent.execution.local");
         var request = CreateRequest(sessionId, Guid.NewGuid(), 1) with
         {
             ResourceReference = "local-host-resource-claim-v1:stable",
@@ -448,10 +448,10 @@ public sealed class AgentPermissionStoreTests
                 new AgentToolCallRequest("call-1", "mutate", "{}"),
                 IsReadOnly: false,
                 InvocationFingerprint: fingerprint,
-                OwnerPackageId: "sunder.package.agent.tools.files",
+                OwnerPackageId: "younics.ai.agent.tools.files",
                 ToolSchemaId: "files.mutate",
                 ToolSchemaVersion: "1",
-                ExecutionTargetOwnerPackageId: "sunder.package.agent.execution.local")])!);
+                ExecutionTargetOwnerPackageId: "younics.ai.agent.execution.local")])!);
         Assert.NotNull(store.TryStartToolExecution(
             run.Key,
             running.Run.Epoch,
@@ -471,8 +471,8 @@ public sealed class AgentPermissionStoreTests
         var result = Assert.IsType<AgentToolResult>(
             restarted.GetToolExecutionResult(prepared.Execution.ExecutionId));
 
-        Assert.Equal("sunder.package.agent.tools.files", execution.OwnerPackageId);
-        Assert.Equal("sunder.package.agent.execution.local", execution.ExecutionTargetOwnerPackageId);
+        Assert.Equal("younics.ai.agent.tools.files", execution.OwnerPackageId);
+        Assert.Equal("younics.ai.agent.execution.local", execution.ExecutionTargetOwnerPackageId);
         Assert.Equal("done", result.Content);
         Assert.True(result.RequiresPromptContextRefresh);
     }

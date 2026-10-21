@@ -1,7 +1,7 @@
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Services;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 
 namespace Sunder.Package.Agent.Services;
 
@@ -58,8 +58,7 @@ public sealed class AgentRunProviderResolver(
         var settings = AgentChatModelSettingsJson.Parse(chatBinding.SettingsJson);
         var modelModeOption = ResolveModelModeOption(model, settings);
         var modelVariant = modelModeOption?.DisablesReasoning == true ? null : ResolveModelVariant(model, settings);
-        var modelSpeedOption = ResolveModelSpeedOption(model, settings)
-                               ?? ResolveLegacyFastSpeedOption(model, chatBinding.ModelId);
+        var modelSpeedOption = ResolveModelSpeedOption(model, settings);
         return new AgentRunProviderMetadata(runCapabilities, modelVariant, modelSpeedOption, modelModeOption);
     }
 
@@ -84,16 +83,8 @@ public sealed class AgentRunProviderResolver(
         try
         {
             var models = await provider.ListModelsAsync(cancellationToken).ConfigureAwait(false);
-            var model = models.FirstOrDefault(candidate =>
-                string.Equals(candidate.ModelId, modelId, StringComparison.OrdinalIgnoreCase));
-            if (model is not null || !modelId.EndsWith("-fast", StringComparison.OrdinalIgnoreCase))
-            {
-                return model;
-            }
-
-            var baseModelId = modelId[..^"-fast".Length];
             return models.FirstOrDefault(candidate =>
-                string.Equals(candidate.ModelId, baseModelId, StringComparison.OrdinalIgnoreCase));
+                string.Equals(candidate.ModelId, modelId, StringComparison.OrdinalIgnoreCase));
         }
         catch (OperationCanceledException)
         {
@@ -145,14 +136,6 @@ public sealed class AgentRunProviderResolver(
             : model?.ModeOptions?.FirstOrDefault(option =>
                 string.Equals(option.ModeOptionId, settings.ModeOptionId, StringComparison.OrdinalIgnoreCase));
 
-    private static AgentModelSpeedOptionDescriptor? ResolveLegacyFastSpeedOption(
-        AgentModelDescriptor? model,
-        string? modelId)
-        => !string.IsNullOrWhiteSpace(modelId)
-           && modelId.EndsWith("-fast", StringComparison.OrdinalIgnoreCase)
-            ? model?.SpeedOptions?.FirstOrDefault(option =>
-                string.Equals(option.SpeedOptionId, "fast", StringComparison.OrdinalIgnoreCase))
-            : null;
 }
 
 public sealed record AgentRunProviderSelection(

@@ -7,17 +7,17 @@ using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Runtime;
 using Sunder.Sdk.Abstractions;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 
 namespace Sunder.Package.Agent.PackageViews;
 
-[Sunder.Sdk.Packaging.SunderPackageView("sunder.package.agent.profiles", "Agents",
+[Sunder.Sdk.Packaging.SunderPackageView("younics.ai.agent.profiles", "Agents",
     IconPath = "Assets/profile-icon.png", DefaultPlacement = PackageViewPlacement.RightTop)]
 public partial class AgentProfilesView : UserControl, IDisposable, IPackageViewWarmupTarget, IPackageViewNavigationTarget
 {
     private readonly AdaptiveMasterDetail _adaptiveLayout;
     private readonly PresentationTaskScope _tasks = new(
-        PresentationTaskScope.IgnoreExpectedFailure);
+        PresentationTaskScope.IgnoreExpectedFailure, PresentationDispatcher.Capture().ShutdownToken);
     private AgentProfilesViewModel? _viewModel;
     private bool _disposed;
 
@@ -97,13 +97,13 @@ public partial class AgentProfilesView : UserControl, IDisposable, IPackageViewW
     {
         _tasks.Run(async cancellationToken =>
         {
-            await Dispatcher.UIThread.InvokeAsync(() =>
+            await PresentationDispatcher.QueueAsync(() =>
             {
                 if (!cancellationToken.IsCancellationRequested)
                 {
                     ProfileDisplayNameTextBox.Focus();
                 }
-            }, DispatcherPriority.Background);
+            }, DispatcherPriority.Background, cancellationToken).ConfigureAwait(false);
         });
     }
 }

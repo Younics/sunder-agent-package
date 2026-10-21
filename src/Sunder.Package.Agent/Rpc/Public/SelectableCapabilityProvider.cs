@@ -3,7 +3,7 @@ using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Rpc.Public;
 
-[SunderService(SunderServiceExposure.Public, ContractId = "sunder.agent.selectable.capability.provider", ServiceId = "selectable-capability-provider", IncludeSchemaDialect = true)]
+[SunderService(SunderServiceExposure.Public, ContractId = "younics.ai.agent.selectable.capability.provider", ServiceId = "selectable-capability-provider", IncludeSchemaDialect = true)]
 [SunderRuntimeUse(Actions = ["discover", "invoke", "subscribe"])]
 public interface SelectableCapabilityProviderService
 {

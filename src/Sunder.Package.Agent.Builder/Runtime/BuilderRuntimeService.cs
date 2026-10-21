@@ -1,182 +1,166 @@
-using Sunder.Generated.Packages.Sunder_Package_Agent_Services;
-using Sunder.Package.Agent.Protocol;
+using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Services;
-using AgentModels = Sunder.Generated.Packages.Sunder_Package_Agent_Models;
 
 namespace Sunder.Package.Agent.Builder;
 
-[SunderService(Key = "builder-runtime", ContractId = "sunder.package.agent.builder.runtime", ServiceId = "builder-runtime", IncludeSchemaDialect = true)]
+[SunderService(Key = "builder-runtime", ContractId = "younics.sunder.package.maker.runtime", ServiceId = "builder-runtime", IncludeSchemaDialect = true)]
 [SunderServiceProvider(ProviderId = "builder.runtime", Audience = SunderServiceAudience.Owner)]
-[SunderServiceError("agent.builder.execution-target-unavailable")]
 [SunderServiceError("agent.builder.invalid-request")]
 [SunderServiceError("agent.builder.request-too-large")]
 [SunderServiceError("agent.builder.response-too-large")]
-[SunderServiceError("agent.builder.unsupported-operation")]
-[SunderServiceError("agent.builder.workspace-execution-unavailable")]
-public sealed partial class BuilderRuntimeService(IServiceProviders<IWorkspaceExecutionResolverService> resolvers)
+[SunderServiceError("agent.builder.operation-failed")]
+[SunderServiceError("agent.builder.busy")]
+[SunderServiceError("agent.builder.job-not-found")]
+[SunderServiceError("agent.builder.project-conflict")]
+[SunderServiceError("agent.builder.backend-changed")]
+public sealed partial class BuilderRuntimeService(IPackageContext context) : IAsyncDisposable
 {
-    [SunderMethod(TimeoutSeconds = 2100, Idempotency = SunderServiceIdempotency.Idempotent,
-        Errors = ["agent.builder.workspace-execution-unavailable", "agent.builder.response-too-large"])]
-    public async ValueTask<SunderContent> ListWorkspacesAsync(CancellationToken cancellationToken = default)
-        => BuilderContent.Create(await WithResolverAsync(
-            (resolver, token) => resolver.Service.ListWorkspacesAsync(token), cancellationToken).ConfigureAwait(false));
+    private readonly object sync = new();
+    private readonly string backendId = Guid.NewGuid().ToString("N");
+    private Backend? backend;
+    private bool stopping;
+    private Task? disposal;
 
-    [SunderMethod(TimeoutSeconds = 2100, Idempotency = SunderServiceIdempotency.Idempotent,
-        Errors = ["agent.builder.workspace-execution-unavailable", "agent.builder.execution-target-unavailable", "agent.builder.invalid-request", "agent.builder.response-too-large"])]
-    public async ValueTask<SunderContent> ResolveWorkspaceAsync(string workspaceId, CancellationToken cancellationToken = default)
-        => BuilderContent.Create(await WithTargetAsync(workspaceId, async (operation, token) =>
+    [SunderMethod(TimeoutSeconds = 120, Idempotency = SunderServiceIdempotency.Idempotent,
+        Errors = ["agent.builder.invalid-request", "agent.builder.request-too-large", "agent.builder.response-too-large", "agent.builder.operation-failed", "agent.builder.project-conflict"])]
+    public ValueTask<SunderContent> DiscoverAsync(string folder, CancellationToken cancellationToken = default)
+        => InvokeAsync(async () =>
         {
-            var shell = await operation.Target.ShellAsync(operation.Context, token).ConfigureAwait(false);
-            return new BuilderWorkspaceExecutionProjection(operation.Resolution.Workspace, operation.Resolution.Binding,
-                operation.Resolution.Target, operation.Resolution.Scope, shell,
-                operation.Description.Facets.Contains(AgentExecutionFacetIds.PathMapping, StringComparer.Ordinal),
-                operation.Description.Facets.Contains(AgentExecutionFacetIds.PathEnvironment, StringComparer.Ordinal));
-        }, cancellationToken).ConfigureAwait(false));
-
-    [SunderMethod(TimeoutSeconds = 2100,
-        Errors = ["agent.builder.workspace-execution-unavailable", "agent.builder.execution-target-unavailable", "agent.builder.invalid-request", "agent.builder.request-too-large", "agent.builder.response-too-large", "agent.builder.unsupported-operation"])]
-    public async ValueTask<SunderContent> ExecuteProcessAsync(string workspaceId, AgentModels.AgentProcessCommandRequest request,
-        CancellationToken cancellationToken = default)
-    {
-        BuilderContent.ValidateRequest(new { workspaceId, request });
-        Require(request.FileName, "Process file name");
-        return BuilderContent.Create(await WithTargetAsync(workspaceId, async (operation, token) =>
-        {
-            if (!operation.Description.Facets.Contains(AgentExecutionFacetIds.ProcessExecution, StringComparer.Ordinal))
-                throw Domain("agent.builder.unsupported-operation", "Package Builder requires the execution target's structured process-execution facet.");
-            return Process(await operation.Target.ExecuteProcessAsync(new() { Context = operation.Context, Request = request }, token).ConfigureAwait(false));
-        }, cancellationToken).ConfigureAwait(false));
-    }
-
-    [SunderMethod(TimeoutSeconds = 2100,
-        Errors = ["agent.builder.workspace-execution-unavailable", "agent.builder.execution-target-unavailable", "agent.builder.invalid-request", "agent.builder.request-too-large", "agent.builder.response-too-large"])]
-    public async ValueTask<SunderContent> ExecuteShellAsync(string workspaceId, AgentModels.AgentShellCommandRequest request,
-        CancellationToken cancellationToken = default)
-    {
-        BuilderContent.ValidateRequest(new { workspaceId, request });
-        Require(request.Command, "Shell command");
-        return BuilderContent.Create(await WithTargetAsync(workspaceId, async (operation, token) =>
-            Process(await operation.Target.ExecuteShellAsync(new() { Context = operation.Context, Request = request }, token).ConfigureAwait(false)),
-            cancellationToken).ConfigureAwait(false));
-    }
-
-    [SunderMethod(TimeoutSeconds = 2100, Idempotency = SunderServiceIdempotency.Idempotent,
-        Errors = ["agent.builder.workspace-execution-unavailable", "agent.builder.execution-target-unavailable", "agent.builder.invalid-request", "agent.builder.request-too-large", "agent.builder.unsupported-operation"])]
-    public ValueTask<AgentModels.AgentExecutionPathMapping> MapToHostPathAsync(string workspaceId, string executionPath,
-        CancellationToken cancellationToken = default)
-    {
-        BuilderContent.ValidateRequest(new { workspaceId, executionPath });
-        Require(executionPath, "Execution path");
-        return WithTargetAsync(workspaceId, (operation, token) =>
-        {
-            if (!Supports(operation, AgentExecutionFacetIds.PathMapping))
-                throw Domain("agent.builder.unsupported-operation", "The selected execution target does not map execution paths to host paths.");
-            return operation.Target.MapPathAsync(new() { Context = operation.Context, Path = executionPath }, token);
+            BuilderContent.ValidateRequest(folder);
+            folder = BuilderJobValidation.Absolute(folder, "Discovery folder");
+            var projects = await Task.Run(() => new BuilderProjectDiscovery().DiscoverAsync(folder, cancellationToken), cancellationToken).ConfigureAwait(false);
+            return BuilderContent.Create(projects);
         }, cancellationToken);
-    }
 
-    [SunderMethod(TimeoutSeconds = 2100,
-        Errors = ["agent.builder.workspace-execution-unavailable", "agent.builder.execution-target-unavailable", "agent.builder.invalid-request", "agent.builder.request-too-large"])]
-    public async ValueTask AddPathEntryAsync(string workspaceId, string executionPath, CancellationToken cancellationToken = default)
-    {
-        BuilderContent.ValidateRequest(new { workspaceId, executionPath });
-        Require(executionPath, "Execution path");
-        await WithTargetAsync(workspaceId, async (operation, token) =>
+    [SunderMethod(TimeoutSeconds = 120, Idempotency = SunderServiceIdempotency.Idempotent,
+        Errors = ["agent.builder.invalid-request", "agent.builder.request-too-large", "agent.builder.response-too-large", "agent.builder.operation-failed", "agent.builder.project-conflict"])]
+    public ValueTask<SunderContent> InspectAsync(string entryPoint, CancellationToken cancellationToken = default)
+        => InvokeAsync(async () =>
         {
-            if (Supports(operation, AgentExecutionFacetIds.PathEnvironment))
-                await operation.Target.AddPathAsync(new() { Context = operation.Context, Path = executionPath }, token).ConfigureAwait(false);
+            BuilderContent.ValidateRequest(entryPoint);
+            entryPoint = BuilderJobValidation.Absolute(entryPoint, "Project entry point");
+            var project = await Task.Run(() => new BuilderProjectDiscovery().InspectAsync(entryPoint, cancellationToken), cancellationToken).ConfigureAwait(false);
+            return BuilderContent.Create(project);
+        }, cancellationToken);
+
+    [SunderMethod(TimeoutSeconds = 300, Idempotency = SunderServiceIdempotency.Idempotent,
+        Errors = ["agent.builder.invalid-request", "agent.builder.request-too-large", "agent.builder.response-too-large", "agent.builder.operation-failed"])]
+    public ValueTask<SunderContent> GetToolchainsAsync(string kind, bool checkUpdates, CancellationToken cancellationToken = default)
+        => InvokeAsync(async () =>
+        {
+            BuilderContent.ValidateRequest(kind);
+            var parsed = kind switch { "dotnet" => BuilderProjectKind.Dotnet, "node" => BuilderProjectKind.Node, _ => throw new ArgumentException("Toolchain kind must be 'dotnet' or 'node'.") };
+            var status = await Task.Run(() => GetBackend().Toolchains.GetStatusAsync(parsed, checkUpdates, cancellationToken), cancellationToken).ConfigureAwait(false);
+            return BuilderContent.Create(status with
+            {
+                CatalogError = status.CatalogError is null ? null : BuilderJobText.Safe(status.CatalogError, 4096),
+                Installed = status.Installed.Select(item => item with { HealthError = item.HealthError is null ? null : BuilderJobText.Safe(item.HealthError, 4096) }).ToArray(),
+                LastOperation = status.LastOperation is { Error: { } error } operation ? operation with { Error = BuilderJobText.Safe(error, 8192) } : status.LastOperation,
+            });
+        }, cancellationToken);
+
+    [SunderMethod(TimeoutSeconds = 30, Idempotency = SunderServiceIdempotency.Idempotent)]
+    public ValueTask<string> GetBackendIdAsync(CancellationToken cancellationToken = default)
+        => InvokeAsync(() => Task.FromResult(backendId), cancellationToken);
+
+    [SunderMethod(TimeoutSeconds = 30,
+        Errors = ["agent.builder.invalid-request", "agent.builder.request-too-large", "agent.builder.operation-failed", "agent.builder.busy", "agent.builder.job-not-found", "agent.builder.backend-changed"])]
+    public ValueTask<string> StartJobAsync(string requestJson, CancellationToken cancellationToken = default)
+        => InvokeAsync(async () =>
+        {
+            var request = BuilderContent.ReadJobRequest(requestJson);
+            RequireBackend(request.BackendId);
+            return await Task.Run(() => GetBackend().Jobs.Start(request, cancellationToken), cancellationToken).ConfigureAwait(false);
+        }, cancellationToken);
+
+    [SunderMethod(TimeoutSeconds = 30, Idempotency = SunderServiceIdempotency.Idempotent,
+        Errors = ["agent.builder.invalid-request", "agent.builder.response-too-large", "agent.builder.job-not-found", "agent.builder.operation-failed", "agent.builder.backend-changed"])]
+    public ValueTask<SunderContent> GetJobAsync(string jobId, string expectedBackendId, CancellationToken cancellationToken = default)
+        => InvokeAsync(() =>
+        {
+            RequireBackend(expectedBackendId);
+            return Task.FromResult(BuilderContent.Create(GetBackend().Jobs.GetJob(jobId) with { BackendId = backendId }));
+        }, cancellationToken);
+
+    [SunderMethod(TimeoutSeconds = 30, Idempotency = SunderServiceIdempotency.Idempotent,
+        Errors = ["agent.builder.invalid-request", "agent.builder.job-not-found", "agent.builder.operation-failed", "agent.builder.backend-changed"])]
+    public async ValueTask CancelJobAsync(string jobId, string expectedBackendId, CancellationToken cancellationToken = default)
+        => _ = await InvokeAsync(async () =>
+        {
+            RequireBackend(expectedBackendId);
+            await GetBackend().Jobs.CancelAsync(jobId, cancellationToken).ConfigureAwait(false);
             return true;
         }, cancellationToken).ConfigureAwait(false);
+
+    private void RequireBackend(string? expected)
+    {
+        if (!string.Equals(expected, backendId, StringComparison.Ordinal))
+            throw new SunderRpcException(new(SunderRpcErrorKind.Domain, "agent.builder.backend-changed",
+                "The Builder backend was replaced. The previous job cannot be resumed or acknowledged by this backend."));
     }
 
-    private async ValueTask<T> WithResolverAsync<T>(
-        Func<ServiceProvider<IWorkspaceExecutionResolverService>, CancellationToken, ValueTask<T>> invoke, CancellationToken caller)
+    private Backend GetBackend()
     {
-        caller.ThrowIfCancellationRequested();
-        var catalog = await resolvers.ListAsync(caller).ConfigureAwait(false);
-        var candidates = catalog.Providers.Where(provider => provider.State == ServiceProviderState.Active).ToArray();
-        if (candidates.Length != 1) throw Unavailable(resolver: true);
-        var resolver = candidates[0];
-        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(caller, resolver.RetirementToken);
-        try
+        lock (sync)
         {
-            await resolver.EnsureCurrentAsync(lifetime.Token).ConfigureAwait(false);
-            var result = await invoke(resolver, lifetime.Token).ConfigureAwait(false);
-            await resolver.EnsureCurrentAsync(lifetime.Token).ConfigureAwait(false);
-            return result;
-        }
-        catch (Exception error) when (!caller.IsCancellationRequested && resolver.RetirementToken.IsCancellationRequested
-            && error is OperationCanceledException or SunderRpcException { Error.Kind: SunderRpcErrorKind.Cancelled })
-        { throw Unavailable(resolver: true); }
-        catch (SunderRpcException error) when (!caller.IsCancellationRequested
-            && error.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable)
-        { throw Unavailable(resolver: true); }
-    }
-
-    private ValueTask<T> WithTargetAsync<T>(string workspaceId, Func<TargetOperation, CancellationToken, ValueTask<T>> invoke,
-        CancellationToken caller)
-    {
-        Require(workspaceId, "Workspace id");
-        BuilderContent.ValidateRequest(new { workspaceId });
-        return WithResolverAsync(async (resolver, resolverToken) =>
-        {
-            var resolution = await resolver.Service.ResolveAsync(workspaceId, resolverToken).ConfigureAwait(false);
-            await resolver.EnsureCurrentAsync(resolverToken).ConfigureAwait(false);
-            var reference = resolution.ExecutionTarget;
-            using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(resolverToken, reference.RetirementToken);
-            var token = lifetime.Token;
-            try
+            ObjectDisposedException.ThrowIf(stopping, this);
+            // RoleLocalWorkspace becomes available at activation, not provider construction.
+            if (backend is null)
             {
-                await reference.EnsureCurrentAsync(token).ConfigureAwait(false);
-                var target = reference.Service;
-                var description = await target.DescribeAsync(token).ConfigureAwait(false);
-                if (!string.Equals(description.TargetId, resolution.Binding.ContributionId, StringComparison.OrdinalIgnoreCase)
-                    && !string.Equals(description.TargetKind, resolution.Binding.ContributionId, StringComparison.OrdinalIgnoreCase))
-                    throw Unavailable(resolver: false);
-                var context = new AgentModels.AgentExecutionTargetContext
+                var service = new BuilderToolchainService(context);
+                try
                 {
-                    SessionId = null, ProfileId = null, Workspace = resolution.Workspace, Binding = resolution.Binding,
-                    AllowOutsideConfiguredScope = false, ApprovedResourceReferences = [], ApprovedResourceClaims = [],
-                    ApprovedResourceCapabilities = [], ResourceOperation = null, CapturePostMutationResource = false,
-                    ExpectedConfigurationGeneration = null,
-                };
-                var result = await invoke(new(resolution, description, target, context), token).ConfigureAwait(false);
-                await reference.EnsureCurrentAsync(token).ConfigureAwait(false);
-                return result;
+                    var toolchains = new BuilderProjectDriverToolchains(service);
+                    var driver = new BuilderConfiguredJobDriver(toolchains, new BuilderLocalProcessRunner(),
+                        new BuilderProjectDriverOptions(Path.Combine(service.RootPath, "project-tools")));
+                    backend = new(service, toolchains, new BuilderJobManager(driver));
+                }
+                catch { service.Dispose(); throw; }
             }
-            catch (Exception error) when (!caller.IsCancellationRequested && !resolver.RetirementToken.IsCancellationRequested
-                && reference.RetirementToken.IsCancellationRequested && error is OperationCanceledException or SunderRpcException { Error.Kind: SunderRpcErrorKind.Cancelled })
-            { throw Unavailable(resolver: false); }
-            catch (SunderRpcException error) when (!caller.IsCancellationRequested && !resolver.RetirementToken.IsCancellationRequested
-                && error.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable)
-            { throw Unavailable(resolver: false); }
-        }, caller);
+            return backend;
+        }
     }
 
-    private static bool Supports(TargetOperation operation, string facet)
-        => operation.Description.Facets.Contains(facet, StringComparer.Ordinal)
-           && operation.Resolution.Target.Facets.Contains(facet, StringComparer.Ordinal);
-
-    private static BuilderProcessResult Process(AgentModels.AgentShellCommandResult value)
+    private async ValueTask<T> InvokeAsync<T>(Func<Task<T>> operation, CancellationToken token)
     {
-        const int maximum = 512 * 1024;
-        return new(checked((int)value.ExitCode), value.Output.Length <= maximum ? value.Output : value.Output[..maximum], string.Empty,
-            value.WasTruncated || value.Output.Length > maximum);
+        token.ThrowIfCancellationRequested();
+        lock (sync) ObjectDisposedException.ThrowIf(stopping, this);
+        try { return await operation().ConfigureAwait(false); }
+        catch (SunderRpcException) { throw; }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+        catch (Exception error) when (error is IOException or InvalidDataException or InvalidOperationException or ArgumentException or System.Text.Json.JsonException or NotSupportedException
+            or UnauthorizedAccessException or TimeoutException or HttpRequestException or System.ComponentModel.Win32Exception
+            or KeyNotFoundException or FormatException or OverflowException or System.Xml.XmlException)
+        {
+            var code = error switch
+            {
+                BuilderJobBusyException => "agent.builder.busy",
+                BuilderJobNotFoundException => "agent.builder.job-not-found",
+                BuilderProjectConflictException => "agent.builder.project-conflict",
+                ArgumentException or System.Text.Json.JsonException or InvalidDataException or KeyNotFoundException or FormatException or OverflowException or System.Xml.XmlException => "agent.builder.invalid-request",
+                _ => "agent.builder.operation-failed",
+            };
+            throw new SunderRpcException(new(SunderRpcErrorKind.Domain, code, BuilderJobText.Safe(error.Message, 4096)));
+        }
     }
 
-    private static void Require(string? value, string name)
+    public ValueTask DisposeAsync()
     {
-        if (string.IsNullOrWhiteSpace(value)) throw Domain("agent.builder.invalid-request", name + " is required.");
+        lock (sync)
+        {
+            if (disposal is not null) return new(disposal);
+            stopping = true;
+            var current = backend;
+            disposal = Task.Run(async () =>
+            {
+                if (current is null) return;
+                await current.Jobs.DisposeAsync().ConfigureAwait(false);
+                current.Service.Dispose();
+            });
+            return new(disposal);
+        }
     }
 
-    private static SunderRpcException Unavailable(bool resolver)
-        => Domain(resolver ? "agent.builder.workspace-execution-unavailable" : "agent.builder.execution-target-unavailable",
-            resolver ? "Agent workspace execution service is unavailable." : "The selected execution-target package is unavailable.");
-
-    private static SunderRpcException Domain(string code, string message)
-        => new(new(SunderRpcErrorKind.Domain, code, message));
-
-    private sealed record TargetOperation(AgentModels.AgentWorkspaceExecutionResolution Resolution,
-        AgentModels.AgentExecutionTargetDescriptor Description, IExecutionTargetService Target, AgentModels.AgentExecutionTargetContext Context);
+    private sealed record Backend(BuilderToolchainService Service, IBuilderProjectDriverToolchains Toolchains, BuilderJobManager Jobs);
 }

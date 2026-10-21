@@ -1,4 +1,4 @@
-name: Sunder Agent Cohort Rollback
+name: AI Agent Cohort Rollback
 
 on:
   workflow_dispatch:
@@ -34,7 +34,7 @@ on:
 
 permissions: {}
 concurrency:
-  group: sunder-agent-family-promotion
+  group: sunder-agent-family
   cancel-in-progress: false
 
 jobs:

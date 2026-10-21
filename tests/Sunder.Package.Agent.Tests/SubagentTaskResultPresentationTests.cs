@@ -5,7 +5,7 @@ namespace Sunder.Package.Agent.Tests;
 extern alias SubagentsWorker;
 using SubagentsWorker::Sunder.Package.Agent.Subagents.Models;
 using SubagentsWorker::Sunder.Package.Agent.Subagents.Services;
-using AgentToolResult = SubagentsWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentToolResult;
+using AgentToolResult = SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentToolResult;
 
 public sealed class SubagentTaskResultPresentationTests
 {

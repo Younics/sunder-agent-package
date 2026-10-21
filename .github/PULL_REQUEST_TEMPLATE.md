@@ -4,7 +4,7 @@ Describe the change and why it is needed.
 
 ## Packages Affected
 
-- [ ] `sunder.package.agent`
+- [ ] `younics.ai.agent`
 - [ ] Agent RPC contracts / migration corpus
 - [ ] Provider package
 - [ ] Tool package

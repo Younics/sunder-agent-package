@@ -2,18 +2,18 @@ extern alias DockerWorker;
 
 using DockerWorker::Sunder.Package.Agent.Execution.Docker;
 using Xunit;
-using DockerModels = DockerWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models;
-using AgentFileDeleteRequest = DockerWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileDeleteRequest;
-using AgentFileMutationResult = DockerWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileMutationResult;
-using AgentFileReadRequest = DockerWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileReadRequest;
-using AgentFileReadResult = DockerWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileReadResult;
-using AgentFileSearchKind = DockerWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileSearchKind;
-using AgentFileSearchRequest = DockerWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileSearchRequest;
-using AgentFileSearchResult = DockerWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileSearchResult;
-using AgentFileWriteRequest = DockerWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentFileWriteRequest;
-using AgentScopedInstructionDiscoveryRequest = DockerWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentScopedInstructionDiscoveryRequest;
-using AgentScopedInstructionDiscoveryResult = DockerWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentScopedInstructionDiscoveryResult;
-using AgentScopedInstructionProbe = DockerWorker::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentScopedInstructionProbe;
+using DockerModels = DockerWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models;
+using AgentFileDeleteRequest = DockerWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentFileDeleteRequest;
+using AgentFileMutationResult = DockerWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentFileMutationResult;
+using AgentFileReadRequest = DockerWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentFileReadRequest;
+using AgentFileReadResult = DockerWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentFileReadResult;
+using AgentFileSearchKind = DockerWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentFileSearchKind;
+using AgentFileSearchRequest = DockerWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentFileSearchRequest;
+using AgentFileSearchResult = DockerWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentFileSearchResult;
+using AgentFileWriteRequest = DockerWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentFileWriteRequest;
+using AgentScopedInstructionDiscoveryRequest = DockerWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentScopedInstructionDiscoveryRequest;
+using AgentScopedInstructionDiscoveryResult = DockerWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentScopedInstructionDiscoveryResult;
+using AgentScopedInstructionProbe = DockerWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentScopedInstructionProbe;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
 

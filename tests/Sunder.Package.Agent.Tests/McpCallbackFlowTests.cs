@@ -7,7 +7,7 @@ using McpApp::Sunder.Package.Agent.Mcp;
 using McpApp::Sunder.Package.Agent.Mcp.Runtime;
 using McpApp::Sunder.Package.Agent.Mcp.Services;
 using McpOAuthCallbackHandler = McpWorker::Sunder.Package.Agent.Mcp.Services.McpOAuthCallbackHandler;
-using McpAppManagementService = McpApp::Sunder.Generated.Packages.Sunder_Package_Agent_Mcp_Services.IManagementService;
+using McpAppManagementService = McpApp::Sunder.Generated.Packages.Younics_Ai_Agent_Mcp_Services.IManagementService;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Callbacks;
 using Sunder.Sdk.Services;
@@ -24,7 +24,7 @@ public sealed class McpCallbackFlowTests
         var callbacks = new FakeCallbackClient();
         var context = new CallbackPackageContext(scope.Context, callbacks);
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        var rpc = new RegressionTestRpcClient(state, "sunder.package.agent.mcp");
+        var rpc = new RegressionTestRpcClient(state, "younics.ai.agent.mcp");
         var generated = AgentSourceArtifactMigrationTests.CreateGeneratedWorker(
             typeof(McpWorker::Sunder.Package.Agent.Mcp.McpToolSource).Assembly,
             context,
@@ -32,7 +32,7 @@ public sealed class McpCallbackFlowTests
         await using var worker = generated.Lifetime;
         var registration = Assert.Single(generated.Options.Providers,
             provider => provider.ProviderId == "mcp.management");
-        var descriptor = CurrentPrivateRpcDescriptors.Get("sunder.package.agent.mcp.management");
+        var descriptor = CurrentPrivateRpcDescriptors.Get("younics.ai.agent.mcp.management");
         state.Add(
             context.PackageId,
             descriptor,
@@ -203,7 +203,7 @@ public sealed class McpCallbackFlowTests
 
         private static PackageCallbackSessionStatus Status(PackageCallbackSessionState state)
             => new(
-                "sunder.package.agent.mcp",
+                "younics.ai.agent.mcp",
                 McpOAuthCallbackHandler.HandlerId,
                 "mcp-session",
                 state,

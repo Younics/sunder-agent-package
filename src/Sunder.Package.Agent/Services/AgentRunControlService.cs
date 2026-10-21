@@ -11,7 +11,7 @@ using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Services;
 
-[SunderService(SunderServiceExposure.Public, Key = "run-control", ContractId = "sunder.agent.run.control", ServiceId = "run-control", IncludeSchemaDialect = true)]
+[SunderService(SunderServiceExposure.Public, Key = "run-control", ContractId = "younics.ai.agent.run.control", ServiceId = "run-control", IncludeSchemaDialect = true)]
 [SunderServiceProvider(ProviderId = "agent.run.control")]
 [SunderServiceError("agent.run-control.capability-unavailable", Description = "The active behavior loop does not implement the requested run-control capability.")]
 [SunderServiceError("agent.run-control.prompt-context-acknowledgment-unavailable", Description = "The active behavior loop cannot acknowledge prompt context.")]

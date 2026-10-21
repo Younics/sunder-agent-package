@@ -1,6 +1,6 @@
 # MCP And OAuth
 
-`sunder.package.agent.mcp` turns configured Model Context Protocol servers into dynamic Agent tool groups. Most users add an MCP server as configuration, not as a new compiled Agent extension. Build a separate package only when additional policy, presentation, or non-MCP capability is required.
+`younics.ai.agent.mcp` turns configured Model Context Protocol servers into dynamic Agent tool groups. Most users add an MCP server as configuration, not as a new compiled Agent extension. Build a separate package only when additional policy, presentation, or non-MCP capability is required.
 
 ## Runtime Composition
 

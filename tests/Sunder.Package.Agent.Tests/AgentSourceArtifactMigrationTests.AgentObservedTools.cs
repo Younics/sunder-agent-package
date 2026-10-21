@@ -10,7 +10,7 @@ using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
 
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 
 public sealed partial class AgentSourceArtifactMigrationTests
 {
@@ -21,7 +21,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
             var handler = new ObservedToolPeer(mode);
             Add(state, handler);
-            var rpc = new FilesRpcObserver(new RegressionTestRpcClient(state, "sunder.package.agent"));
+            var rpc = new FilesRpcObserver(new RegressionTestRpcClient(state, "younics.ai.agent"));
             await using var receiver = new GeneratedServiceTestScope(rpc);
             var observed = Assert.Single((await receiver.Providers<AgentServices.IToolExecutionObservedService>().ListAsync()).Providers);
             var source = Assert.Single((await receiver.Providers<AgentServices.IToolSourceService>().ListAsync()).Providers);
@@ -81,7 +81,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         using (var state = new RegressionTestRpcState(workerStyleProviderBoundary: true))
         {
             var handler = new ObservedToolPeer("normal") { Gate = new() }; Add(state, handler);
-            var rpc = new FilesRpcObserver(new RegressionTestRpcClient(state, "sunder.package.agent"));
+            var rpc = new FilesRpcObserver(new RegressionTestRpcClient(state, "younics.ai.agent"));
             await using var receiver = new GeneratedServiceTestScope(rpc);
             var observed = Assert.Single((await receiver.Providers<AgentServices.IToolExecutionObservedService>().ListAsync()).Providers);
             var source = Assert.Single((await receiver.Providers<AgentServices.IToolSourceService>().ListAsync()).Providers);

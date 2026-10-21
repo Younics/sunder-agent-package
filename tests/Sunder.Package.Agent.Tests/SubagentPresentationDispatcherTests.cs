@@ -11,16 +11,16 @@ using SubagentPresentationDispatcher = SubagentsPackage::Sunder.Package.Agent.Sh
 using SubagentAdaptiveDetailPhase = SubagentsPackage::Sunder.Package.Agent.Shared.Presentation.AdaptiveDetailPhase;
 using SubagentProviderCatalogOption = SubagentsPackage::Sunder.Package.Agent.Shared.Presentation.ProviderCatalogOption;
 using SubagentProviderModelCatalogResult = SubagentsPackage::Sunder.Package.Agent.Shared.Presentation.ProviderModelCatalogResult;
-using AgentToolDescriptor = SubagentsPackage::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentToolDescriptor;
-using AgentProfileSelectableCapabilityDescriptor = SubagentsPackage::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentProfileSelectableCapabilityDescriptor;
-using AgentRunCheckpointRecord = SubagentsPackage::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentRunCheckpointRecord;
-using AgentMessageRole = SubagentsPackage::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentMessageRole;
-using AgentSessionRecord = SubagentsPackage::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionRecord;
-using AgentSessionState = SubagentsPackage::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentSessionState;
-using AgentTurnItemKind = SubagentsPackage::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnItemKind;
-using AgentTurnItemRecord = SubagentsPackage::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnItemRecord;
-using AgentTurnKind = SubagentsPackage::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnKind;
-using AgentTurnRecord = SubagentsPackage::Sunder.Generated.Packages.Sunder_Package_Agent_Models.AgentTurnRecord;
+using AgentToolDescriptor = SubagentsPackage::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentToolDescriptor;
+using AgentProfileSelectableCapabilityDescriptor = SubagentsPackage::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentProfileSelectableCapabilityDescriptor;
+using AgentRunCheckpointRecord = SubagentsPackage::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentRunCheckpointRecord;
+using AgentMessageRole = SubagentsPackage::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentMessageRole;
+using AgentSessionRecord = SubagentsPackage::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentSessionRecord;
+using AgentSessionState = SubagentsPackage::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentSessionState;
+using AgentTurnItemKind = SubagentsPackage::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTurnItemKind;
+using AgentTurnItemRecord = SubagentsPackage::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTurnItemRecord;
+using AgentTurnKind = SubagentsPackage::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTurnKind;
+using AgentTurnRecord = SubagentsPackage::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTurnRecord;
 
 namespace Sunder.Package.Agent.Tests;
 

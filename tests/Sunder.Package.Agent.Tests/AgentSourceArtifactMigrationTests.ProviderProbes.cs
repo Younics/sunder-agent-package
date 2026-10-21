@@ -34,7 +34,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 var family = runtime.GetName().Name!.Split('.').Last();
                 Assert.Contains(family, new[] { "Gemini", "Anthropic", "LMStudio", "OpenAI" });
                 var hasEmbedding = family is "Gemini" or "LMStudio" or "OpenAI";
-                Assert.Equal(hasEmbedding, runtime.GetType(ImportedServices + "IEmbeddingProviderService") is not null);
+                Assert.Equal(hasEmbedding, runtime.GetType(ImportedServices + "CYounics_Ai_Agent_Embedding_Provider.IEmbeddingProviderService") is not null);
                 if (hasEmbedding)
                     File.Copy(Path.Combine(Path.GetDirectoryName(source)!, "ProviderEmbeddingRoleLocalProbe.cs.txt"),
                         Path.Combine(directory, "EmbeddingProbe.cs"));

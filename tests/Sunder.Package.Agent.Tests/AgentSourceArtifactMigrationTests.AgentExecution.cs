@@ -6,7 +6,7 @@ using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Services;
-using AgentServices = Sunder.Generated.Packages.Sunder_Package_Agent_Services;
+using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -16,7 +16,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
     internal static async Task VerifyAgentExecutionConsumer(Assembly owner)
     {
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        var rpc = new FilesRpcObserver(new RegressionTestRpcClient(state, "sunder.package.agent"), "configuration-generation");
+        var rpc = new FilesRpcObserver(new RegressionTestRpcClient(state, "younics.ai.agent"), "configuration-generation");
         var receiver = new GeneratedServiceTestScope(rpc);
         using var providers = new RegressionTestSourceProviders();
         var descriptor = CurrentPublicRpcDescriptors.Get(RegressionTestBindings.ExecutionTargets);

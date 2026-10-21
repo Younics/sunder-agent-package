@@ -11,7 +11,7 @@ internal sealed partial class DockerImageStackContributor(
     IPackageContext packageContext) : IPackageStackExporter, IPackageStackImporter, IPackageStackImportAppliedHandler
 {
     private const string ItemId = "docker-images";
-    private const string SchemaId = "sunder.package.agent.execution.docker/images";
+    private const string SchemaId = "younics.ai.agent.execution.docker/images";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         PropertyNameCaseInsensitive = true,
@@ -176,6 +176,13 @@ internal sealed partial class DockerImageStackContributor(
         out DockerImageStackPayload? payload)
     {
         payload = null;
+        if (!string.Equals(fragment.OwnerPackageId, "younics.ai.agent.execution.docker", StringComparison.Ordinal)
+            || !string.Equals(fragment.SchemaId, SchemaId, StringComparison.Ordinal)
+            || fragment.SchemaVersion != 1)
+        {
+            warnings.Add($"Stack fragment '{fragment.FragmentId}' has an unsupported owner or Docker image schema.");
+            return false;
+        }
         try
         {
             payload = JsonSerializer.Deserialize<DockerImageStackPayload>(fragment.JsonPayload, JsonOptions);

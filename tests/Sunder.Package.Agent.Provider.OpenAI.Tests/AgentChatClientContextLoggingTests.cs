@@ -74,7 +74,7 @@ public sealed class AgentChatClientContextLoggingTests
     public async Task ProviderStreamTelemetry_SatisfiesCommonLifecycleAndRedactionConformance()
     {
         var handler = new CapturingHttpMessageHandler();
-        var packageContext = new ProviderTestPackageContext("sunder.package.agent.provider.openai");
+        var packageContext = new ProviderTestPackageContext("younics.ai.agent.provider.openai");
         using var auth = new CodexConnectedAuthStrategy(packageContext);
         using var httpClient = new HttpClient(handler)
         {

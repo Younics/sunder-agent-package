@@ -47,8 +47,10 @@ public sealed partial class SubagentsViewModel : ObservableObject, IDisposable
         _settingsNavigationService = settingsNavigationService;
         _uiDispatcher = uiDispatcher;
         _statusClear = new TimedStatusController(dispatcher: uiDispatcher);
-        _tasks = new PresentationTaskScope(exception => RunOnUiThreadAsync(() =>
-            SetStatus(exception.Message, SubagentStatusKind.Error)));
+        _tasks = new PresentationTaskScope((exception, token) => _uiDispatcher.InvokeAsync(() =>
+        {
+            if (!_disposed) SetStatus(exception.Message, SubagentStatusKind.Error);
+        }, token), _uiDispatcher.ShutdownToken);
         _listDetail = new KeyedAdaptiveListDetailState<string, SubagentRecord>(
             Subagents,
             static subagent => subagent.SubagentId,

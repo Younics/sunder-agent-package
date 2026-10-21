@@ -1,7 +1,7 @@
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
-using Sunder.Generated.Packages.Sunder_Package_Agent_Models;
+using Sunder.Generated.Packages.Younics_Ai_Agent_Models;
 using Sunder.Package.Agent.Provider.Shared;
 using Sunder.Package.Agent.Provider.TestSupport;
 using Sunder.Sdk.Settings;
@@ -225,18 +225,20 @@ public sealed class ProviderSharedUtilitiesTests
     }
 
     [Fact]
-    public async Task OpenAiUtilityModelSelection_NormalizesLegacyValuesAndFallsBackForUnknownValues()
+    public async Task OpenAiUtilityModelSelection_UsesCurrentIdsAndFallsBackForUnknownOrOldVariants()
     {
         var selection = OpenAiProviderConfiguration.UtilityModelSelection;
         var normalizedContext = new ProviderTestPackageContext(
-            "sunder.package.agent.provider.openai",
-            new Dictionary<string, string> { [OpenAiProviderConfiguration.UtilityModelKey] = " openai/gpt-5.5-fast " });
+            "younics.ai.agent.provider.openai",
+            new Dictionary<string, string> { [OpenAiProviderConfiguration.UtilityModelKey] = " openai/gpt-5.5 " });
         var unknownContext = new ProviderTestPackageContext(
-            "sunder.package.agent.provider.openai",
+            "younics.ai.agent.provider.openai",
             new Dictionary<string, string> { [OpenAiProviderConfiguration.UtilityModelKey] = "openai/unknown" });
 
         Assert.Equal("openai/gpt-5.5", await selection.ResolveAsync(normalizedContext.Settings));
         Assert.Equal(OpenAiProviderConfiguration.DefaultUtilityModelId, await selection.ResolveAsync(unknownContext.Settings));
+        Assert.Equal(OpenAiProviderConfiguration.DefaultUtilityModelId, selection.Resolve("openai/gpt-5.5-fast"));
+        Assert.Equal("openai/gpt-5.5-fast", selection.Normalize("openai/gpt-5.5-fast"));
     }
 
     [Fact]
