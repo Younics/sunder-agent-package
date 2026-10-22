@@ -39,12 +39,12 @@ public sealed partial class BuilderSourceMigrationTests
         using (var missingState = new RegressionTestRpcState())
         {
             await using var missingServices = AgentSourceArtifactMigrationTests.CreateGeneratedApp(assembly, context,
-                new RegressionTestRpcClient(missingState, context.PackageId), new CompositionBackgroundProcessQueue(), observations);
+                new RegressionTestRpcClient(missingState, context.PackageId), new CompositionBackgroundTaskQueue(), observations);
             var missing = await Assert.ThrowsAsync<SunderRpcException>(() => Invoke(missingServices.GetRequiredService(gatewayType), "DiscoverAsync", folder, CancellationToken.None));
             Assert.Equal("rpc.provider-not-found", missing.Error.Code);
         }
         state.Add("unrelated.package", descriptor, new object(), registration.Handler, NoopDisposable.Instance, "builder.unrelated", "2.0.0");
-        await using var app = AgentSourceArtifactMigrationTests.CreateGeneratedApp(assembly, context, client, new CompositionBackgroundProcessQueue(), observations);
+        await using var app = AgentSourceArtifactMigrationTests.CreateGeneratedApp(assembly, context, client, new CompositionBackgroundTaskQueue(), observations);
         // This lower-boundary fixture supplies no positive Host cleanup evidence.
         // Production application jobs additionally require the mandatory journal.
         // Exercise the emitted constructor binding, not a manually repaired

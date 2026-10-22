@@ -37,6 +37,7 @@ internal sealed class FakeServiceCatalog<TService> : IServiceProviders<TService>
 
     internal void Reset() => _visibility.Reset();
     internal int DiscoveryCount => _visibility.DiscoveryCount;
+    internal TaskCompletionSource WatchRequested { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public async ValueTask<ServiceProviderCatalog<TService>> ListAsync(CancellationToken cancellationToken = default)
     {
@@ -50,6 +51,9 @@ internal sealed class FakeServiceCatalog<TService> : IServiceProviders<TService>
     public async IAsyncEnumerable<ServiceProviderCatalogEvent<TService>> WatchAsync(long afterRevision, long afterSequence,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        // The typed consumer has already captured its snapshot/cursor. A later
+        // event is replayed even if the underlying subscription starts afterward.
+        WatchRequested.TrySetResult();
         await foreach (var change in _visibility.WatchAsync(afterRevision, afterSequence, cancellationToken).ConfigureAwait(false))
         {
             ServiceProvider<TService>? entry = null;

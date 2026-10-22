@@ -10,8 +10,8 @@ public sealed partial class BuilderProjectDriver
         BuilderProjectSource.EnsureSafePath(project, project);
         var key = OperatingSystem.IsWindows() || OperatingSystem.IsMacOS() ? project.ToUpperInvariant() : project;
         var digest = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(key)));
-        var directory = Path.Combine(options.CacheRootPath, "project-locks");
-        BuilderProjectSource.EnsureSafePath(options.CacheRootPath, directory);
+        var directory = options.ProjectMutationLockRootPath;
+        BuilderProjectSource.EnsureSafePath(directory, directory);
         BuilderToolchainFiles.CreatePrivateDirectory(directory);
         var path = Path.Combine(directory, digest + ".lock");
         BuilderProjectSource.EnsureSafePath(directory, path);

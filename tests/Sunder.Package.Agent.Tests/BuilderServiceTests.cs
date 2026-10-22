@@ -281,7 +281,7 @@ public sealed partial class BuilderServiceTests
     public async Task QueuedCancellationBeforeEnqueueReturnsCompletesAndSealsStaleDelegate(bool publishEvents)
     {
         var queue = new BuilderUiBackgroundQueue { AutoStart = false, PublishEvents = publishEvents };
-        queue.BeforeEnqueueReturns = snapshot => queue.Cancel(snapshot.ProcessId);
+        queue.BeforeEnqueueReturns = snapshot => queue.Cancel(snapshot.TaskId);
         await using var fixture = new BuilderUiFixture(queue: queue);
         List<BuilderJobSnapshot> notifications = [];
         var result = await fixture.Application.RunJobAsync(new()
@@ -290,12 +290,12 @@ public sealed partial class BuilderServiceTests
             notifications.Add(snapshot);
             return Task.CompletedTask;
         }).WaitAsync(TimeSpan.FromSeconds(3));
-        var activity = Assert.Single(queue.ListProcesses());
-        Assert.Equal(BackgroundProcessState.Cancelled, activity.State);
+        var activity = Assert.Single(queue.ListTasks());
+        Assert.Equal(BackgroundTaskState.Cancelled, activity.State);
         AssertCancellationBeforeBackend(result, activity, notifications);
         Assert.Empty(fixture.Backend.Starts);
         Assert.Equal(0, queue.SubscriberCount);
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => queue.InvokeStaleDelegateAsync(activity.ProcessId));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => queue.InvokeStaleDelegateAsync(activity.TaskId));
         Assert.Empty(fixture.Backend.Starts);
     }
 
@@ -319,15 +319,15 @@ public sealed partial class BuilderServiceTests
                 return Task.CompletedTask;
             });
             await BuilderUiFixture.WaitAsync(() => Volatile.Read(ref queue.DelegateInvocations) == 1);
-            var activity = Assert.Single(queue.ListProcesses());
-            Assert.Equal(BackgroundProcessState.Running, activity.State);
-            queue.Cancel(activity.ProcessId);
+            var activity = Assert.Single(queue.ListTasks());
+            Assert.Equal(BackgroundTaskState.Running, activity.State);
+            queue.Cancel(activity.TaskId);
 
             var result = await pending.WaitAsync(TimeSpan.FromSeconds(3));
 
             Assert.False(blocking.IsCompleted);
-            activity = Assert.Single(queue.ListProcesses());
-            Assert.Equal(BackgroundProcessState.Cancelled, activity.State);
+            activity = Assert.Single(queue.ListTasks());
+            Assert.Equal(BackgroundTaskState.Cancelled, activity.State);
             AssertCancellationBeforeBackend(result, activity, notifications);
             Assert.Empty(backend.Starts);
             Assert.Equal(0, queue.SubscriberCount);
@@ -335,7 +335,7 @@ public sealed partial class BuilderServiceTests
         finally { release.TrySetResult(); await blocking.WaitAsync(TimeSpan.FromSeconds(3)); }
     }
 
-    private static void AssertCancellationBeforeBackend(BuilderJobSnapshot result, BackgroundProcessSnapshot activity,
+    private static void AssertCancellationBeforeBackend(BuilderJobSnapshot result, BackgroundTaskSnapshot activity,
         IReadOnlyList<BuilderJobSnapshot> notifications)
     {
         Assert.Same(result, Assert.Single(notifications));
@@ -357,23 +357,23 @@ public sealed partial class BuilderServiceTests
         await using var fixture = new BuilderUiFixture(queue: queue);
         using var cancellation = new CancellationTokenSource();
         var pending = fixture.Application.RunJobAsync(new() { Operation = "ensure-sdk", Kind = BuilderProjectKind.Node }, cancellationToken: cancellation.Token);
-        await BuilderUiFixture.WaitAsync(() => queue.ListProcesses().Count == 1);
+        await BuilderUiFixture.WaitAsync(() => queue.ListTasks().Count == 1);
         cancellation.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending).WaitAsync(TimeSpan.FromSeconds(3));
         var owned = fixture.Application.RunJobAsync(new() { Operation = "ensure-sdk", Kind = BuilderProjectKind.Dotnet });
-        await BuilderUiFixture.WaitAsync(() => queue.ListProcesses().Count == 2);
+        await BuilderUiFixture.WaitAsync(() => queue.ListTasks().Count == 2);
         await fixture.Application.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(3));
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => owned);
-        Assert.All(queue.ListProcesses(), item => Assert.Equal(BackgroundProcessState.Cancelled, item.State));
+        Assert.All(queue.ListTasks(), item => Assert.Equal(BackgroundTaskState.Cancelled, item.State));
         Assert.Empty(fixture.Backend.Starts);
         Assert.Equal(0, queue.SubscriberCount);
     }
 
     [Theory]
-    [InlineData("succeeded", BackgroundProcessState.Completed)]
-    [InlineData("failed", BackgroundProcessState.Failed)]
-    [InlineData("cancelled", BackgroundProcessState.Cancelled)]
-    public async Task ShellTracksBackendOutcomeProgressAndProjectMetadata(string state, BackgroundProcessState shellState)
+    [InlineData("succeeded", BackgroundTaskState.Completed)]
+    [InlineData("failed", BackgroundTaskState.Failed)]
+    [InlineData("cancelled", BackgroundTaskState.Cancelled)]
+    public async Task ShellTracksBackendOutcomeProgressAndProjectMetadata(string state, BackgroundTaskState shellState)
     {
         await using var fixture = new BuilderUiFixture();
         var project = BuilderUiFixture.Project("activity");
@@ -384,10 +384,10 @@ public sealed partial class BuilderServiceTests
             Operation = "build", Kind = project.Kind, EntryPoint = project.EntryPoint, ProjectFolder = project.ProjectFolder,
             DisplayName = project.DisplayName, PackageId = project.PackageId,
         }, projectId: "bookmark-activity");
-        await BuilderUiFixture.WaitAsync(() => fixture.Queue.ListProcesses().Any(item => item.StatusText == "Compiling source"));
-        var activity = Assert.Single(fixture.Queue.ListProcesses());
+        await BuilderUiFixture.WaitAsync(() => fixture.Queue.ListTasks().Any(item => item.StatusText == "Compiling source"));
+        var activity = Assert.Single(fixture.Queue.ListTasks());
         Assert.True(activity.IsIndeterminate);
-        Assert.Equal(BackgroundProcessIndicator.Main, activity.Indicator);
+        Assert.Equal(BackgroundTaskIndicator.Main, activity.Indicator);
         Assert.Equal("bookmark-activity", activity.Metadata["builder.projectId"]);
         Assert.Equal(project.PackageId, activity.Metadata["builder.packageId"]);
         Assert.Equal("build", activity.Metadata["builder.operation"]);
@@ -396,14 +396,14 @@ public sealed partial class BuilderServiceTests
         var result = await job.WaitAsync(TimeSpan.FromSeconds(3));
         Assert.Equal(state, result.State);
         Assert.Equal(project, result.Project);
-        activity = Assert.Single(fixture.Queue.ListProcesses());
+        activity = Assert.Single(fixture.Queue.ListTasks());
         Assert.Equal(shellState, activity.State);
         Assert.Equal(state == "succeeded" ? 100d : (double?)null, activity.ProgressPercent);
         Assert.Equal(0, fixture.Queue.SubscriberCount);
 
         fixture.Backend.Result = null;
         await fixture.Application.RunJobAsync(new() { Operation = "ensure-sdk", Kind = BuilderProjectKind.Node });
-        Assert.Equal(BackgroundProcessIndicator.Settings, fixture.Queue.ListProcesses().Single(item => item.Metadata["builder.operation"] == "ensure-sdk").Indicator);
+        Assert.Equal(BackgroundTaskIndicator.Settings, fixture.Queue.ListTasks().Single(item => item.Metadata["builder.operation"] == "ensure-sdk").Indicator);
     }
 
     [Fact]
@@ -413,7 +413,7 @@ public sealed partial class BuilderServiceTests
             BeforeEnqueueReturns = _ => throw new IOException("Lost queue acknowledgement") };
         await using var fixture = new BuilderUiFixture(queue: queue);
         await Assert.ThrowsAsync<IOException>(() => fixture.Application.RunJobAsync(new() { Operation = "ensure-sdk", Kind = BuilderProjectKind.Node }));
-        Assert.Equal(BackgroundProcessState.Cancelled, Assert.Single(queue.ListProcesses()).State);
+        Assert.Equal(BackgroundTaskState.Cancelled, Assert.Single(queue.ListTasks()).State);
         Assert.Equal(0, queue.SubscriberCount);
         Assert.Empty(fixture.Backend.Starts);
     }
@@ -436,7 +436,7 @@ public sealed partial class BuilderServiceTests
         var first = fixture.Application.RunJobAsync(new() { Operation = "ensure-sdk", Kind = BuilderProjectKind.Dotnet });
         await polled.Task.WaitAsync(TimeSpan.FromSeconds(3));
         var second = fixture.Application.RunJobAsync(new() { Operation = "ensure-sdk", Kind = BuilderProjectKind.Node });
-        fixture.Queue.Cancel(fixture.Queue.ListProcesses().Single(item => item.Metadata["builder.kind"] == "dotnet").ProcessId);
+        fixture.Queue.Cancel(fixture.Queue.ListTasks().Single(item => item.Metadata["builder.kind"] == "dotnet").TaskId);
         await cleanup.Task.WaitAsync(TimeSpan.FromSeconds(3));
         Assert.False(first.IsCompleted);
         Assert.False(second.IsCompleted);

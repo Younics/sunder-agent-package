@@ -11,6 +11,8 @@ using AgentApp::Sunder.Package.Agent.Services;
 using Sunder.Sdk.Services;
 using Xunit;
 using AppServices = AgentApp::Sunder.Generated.Packages.Younics_Ai_Agent_Services;
+using AppPresentationScope = AgentApp::Sunder.Package.Agent.Shared.Presentation.PresentationTaskScope;
+using AppPresentationDispatcher = AgentApp::Sunder.Package.Agent.Shared.Presentation.IPresentationDispatcher;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -28,7 +30,9 @@ public sealed class WorkspaceExecutionTargetAuthorityRaceTests
         using var viewModel = new AgentWorkspacesViewModel(
             workspaceGateway,
             executionGateway,
-            editors);
+            editors,
+            settingsNavigationService: null,
+            uiDispatcher: new InlineWorkspaceDispatcher());
         await viewModel.InitializeAsync().WaitAsync(TimeSpan.FromSeconds(2));
         viewModel.SelectedExecutionTarget = viewModel.ExecutionTargets.Single(
             target => target.TargetId == "alpha");
@@ -65,23 +69,18 @@ public sealed class WorkspaceExecutionTargetAuthorityRaceTests
         using var viewModel = new AgentWorkspacesViewModel(
             workspaceGateway,
             executionGateway,
-            editors);
+            editors,
+            settingsNavigationService: null,
+            uiDispatcher: new InlineWorkspaceDispatcher());
 
         var initialization = viewModel.InitializeAsync();
         await workspaceGateway.InitializationStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-        await using var changes = editors.WatchAsync(0, 0, cancellation.Token).GetAsyncEnumerator();
-        try
-        {
-            editors.Add(new NoOpWorkspaceEditorContributor());
-            Assert.True(await changes.MoveNextAsync());
-            Assert.Equal(ServiceProviderChangeKind.Added, changes.Current.Kind);
-        }
-        finally { cancellation.Cancel(); }
+        await editors.WatchRequested.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        editors.Add(new NoOpWorkspaceEditorContributor());
 
-        // This watcher observing Added does not establish that the VM's separate
-        // asynchronous observer has processed it. Hold initialization until the
-        // intended "change during initialization" precondition actually holds.
+        // Use the VM's own snapshot/watch boundary, not an independent watcher or
+        // ambient native dispatcher. Keep initialization blocked until that same
+        // consumer processes the intended change-during-initialization event.
         var pendingRefresh = typeof(AgentWorkspacesViewModel).GetField(
             "_initializationCatalogRefreshPending", BindingFlags.Instance | BindingFlags.NonPublic)!;
         using (var observed = new CancellationTokenSource(TimeSpan.FromSeconds(2)))
@@ -98,6 +97,81 @@ public sealed class WorkspaceExecutionTargetAuthorityRaceTests
 
     private static AgentExecutionTargetDescriptor Target(string id)
         => new("test", id, id, null, SupportsShell: false, SupportsFiles: false);
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TargetRefreshOwnerStop_ContainsOnlyItsExactLinkedCancellation(bool foreignCancellation)
+    {
+        var workspaceGateway = new RuntimeWorkspaceGateway();
+        var executionGateway = new RetiredRequestExecutionGateway();
+        await using var editors = new FakeServiceCatalog<AppServices.IWorkspaceEditorService>(
+            CurrentPublicRpcDescriptors.Get(RegressionTestAppBindings.WorkspaceEditors));
+        using var viewModel = new AgentWorkspacesViewModel(workspaceGateway, executionGateway, editors,
+            settingsNavigationService: null, uiDispatcher: new InlineWorkspaceDispatcher());
+        await viewModel.InitializeAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        var failures = new PresentationTaskScopeTests.FailureRecordingSynchronizationContext();
+        var previous = SynchronizationContext.Current;
+        try
+        {
+            SynchronizationContext.SetSynchronizationContext(failures);
+            workspaceGateway.RaiseConnected();
+        }
+        finally { SynchronizationContext.SetSynchronizationContext(previous); }
+        var requestToken = await executionGateway.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var refresh = viewModel.CurrentExecutionTargetRefresh;
+        var scope = (AppPresentationScope)typeof(AgentWorkspacesViewModel)
+            .GetField("_tasks", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(viewModel)!;
+        using var foreign = new CancellationTokenSource();
+        foreign.Cancel();
+        var failure = new OperationCanceledException(foreignCancellation ? foreign.Token : requestToken);
+        try
+        {
+            viewModel.Dispose();
+            Assert.True(requestToken.IsCancellationRequested);
+            executionGateway.Release.TrySetException(failure);
+            if (foreignCancellation)
+            {
+                Assert.Same(failure, await Assert.ThrowsAsync<OperationCanceledException>(
+                    () => refresh.WaitAsync(TimeSpan.FromSeconds(2))));
+                Assert.Same(failure, await failures.Failure.Task.WaitAsync(TimeSpan.FromSeconds(2)));
+            }
+            else
+            {
+                await refresh.WaitAsync(TimeSpan.FromSeconds(2));
+            }
+        }
+        finally
+        {
+            executionGateway.Release.TrySetResult([]);
+            await scope.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        }
+        Assert.Equal(foreignCancellation ? 1 : 0, failures.Exceptions.Count);
+    }
+
+    private sealed class InlineWorkspaceDispatcher : AppPresentationDispatcher
+    {
+        public bool CheckAccess() => true;
+        public Task InvokeAsync(Action action) { action(); return Task.CompletedTask; }
+    }
+
+    private sealed class RetiredRequestExecutionGateway : IAgentExecutionGateway
+    {
+        private int _loads;
+        internal TaskCompletionSource<CancellationToken> Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource<IReadOnlyList<AgentExecutionTargetDescriptor>> Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task<IReadOnlyList<AgentExecutionTargetDescriptor>> ListTargetsAsync(CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Increment(ref _loads) == 1)
+                return Task.FromResult<IReadOnlyList<AgentExecutionTargetDescriptor>>([]);
+            Started.TrySetResult(cancellationToken);
+            return Release.Task;
+        }
+
+        public Task<AgentExecutionTargetWarmupResult> WarmWorkspaceAsync(AgentWorkspaceRecord workspace,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    }
 
     private sealed class DeferredExecutionGateway(
         params AgentExecutionTargetDescriptor[] initialTargets) :

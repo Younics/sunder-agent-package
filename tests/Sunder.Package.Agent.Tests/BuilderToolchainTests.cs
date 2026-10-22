@@ -479,11 +479,19 @@ public sealed class BuilderToolchainTests
         Assert.Equal("terminal-error", output.StandardError);
         using var cancellation = new CancellationTokenSource();
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var pending = runner.RunAsync(new("/bin/sh", ["-c", "printf ready; sleep 30 & wait"], fixture.Root),
+        var parentPath = fixture.PathOf("parent.pid");
+        var childPath = fixture.PathOf("child.pid");
+        var pending = runner.RunAsync(new("/bin/sh", ["-c", "echo $$ > \"$1\"; sleep 30 & echo $! > \"$2\"; printf ready; wait", "fixture", parentPath, childPath], fixture.Root),
             new InlineProgress(value => { if (value.Contains("ready", StringComparison.Ordinal)) started.TrySetResult(); }), cancellation.Token);
         await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        using var parent = System.Diagnostics.Process.GetProcessById(int.Parse(await System.IO.File.ReadAllTextAsync(parentPath)));
+        using var child = System.Diagnostics.Process.GetProcessById(int.Parse(await System.IO.File.ReadAllTextAsync(childPath)));
         cancellation.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending.WaitAsync(TimeSpan.FromSeconds(5)));
+        var stopped = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(cancellation.Token, stopped.CancellationToken);
+        await Task.WhenAll(parent.WaitForExitAsync(), child.WaitForExitAsync()).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(parent.HasExited);
+        Assert.True(child.HasExited);
     }
 
     private sealed class InlineProgress(Action<string> report) : IProgress<string>

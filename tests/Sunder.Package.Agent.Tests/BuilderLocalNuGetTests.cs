@@ -151,6 +151,7 @@ public sealed class BuilderLocalNuGetTests
         Assert.Equal(selections[0], selections[1]);
         var resolved = selections[0];
         Assert.EndsWith(Path.Combine("tools"), resolved.CacheRootPath);
+        Assert.Equal(fixture.Options.ProjectMutationLockRootPath, resolved.ProjectMutationLockRootPath);
         Assert.NotEqual(fixture.Archive("Sunder.Package.Templates"), resolved.DotnetTemplatePackagePath);
         var snapshot = Path.GetDirectoryName(resolved.CacheRootPath)!;
         Assert.Equal(64, Path.GetFileName(snapshot).Length);
@@ -376,7 +377,8 @@ public sealed class BuilderLocalNuGetTests
         await Watching(2);
         var commands = fixture.Process.Requests.ToArray();
         var config = Assert.Single(commands.Select(command => command.Environment["RestoreConfigFile"]).Distinct())!;
-        Assert.Equal(new[] { "restore", "msbuild", "msbuild" }, commands.Select(command => command.Arguments[0]));
+        Assert.Equal(new[] { "restore", "msbuild", "msbuild" }, commands.Where(command => !command.Arguments.Any(argument => argument.StartsWith("-t:", StringComparison.Ordinal)))
+            .Select(command => command.Arguments[0]));
         fixture.Pointer("now-invalid");
         await File.WriteAllTextAsync(Path.Combine(Path.GetDirectoryName(entry)!, "WarmEdit.cs"), "internal class WarmEdit { }");
         await Watching(3);
@@ -387,7 +389,7 @@ public sealed class BuilderLocalNuGetTests
         await File.AppendAllTextAsync(entry, "\n<!-- dependency evaluation changed -->\n");
         await Watching(4);
         Assert.Single(fixture.Process.Requests, command => command.Arguments[0] == "restore"); // Setup only.
-        Assert.All(fixture.Process.Requests.Where(command => command.Arguments[0] == "msbuild").Skip(1),
+        Assert.All(fixture.Process.Requests.Where(IsBuild).Skip(2),
             command => Assert.Contains("-restore", command.Arguments));
         await jobs.CancelAsync(id);
         Assert.Equal("cancelled", (await TerminalAsync(jobs, id)).State);
@@ -398,8 +400,13 @@ public sealed class BuilderLocalNuGetTests
         id = jobs.Start(new() { Id = Guid.NewGuid().ToString("N"), Operation = "watch", Kind = BuilderProjectKind.Dotnet, EntryPoint = entry });
         await Watching(5);
         var hotfix = fixture.Process.Requests.Skip(before).ToArray();
-        Assert.Equal("msbuild", Assert.Single(hotfix).Arguments[0]);
+        Assert.Equal(3, hotfix.Length); // Preflight restore, one compiler, compile-free publication.
+        Assert.All(hotfix, command => Assert.Equal("msbuild", command.Arguments[0]));
+        Assert.Contains("-t:_ValidateSunderDevelopmentWatch", hotfix[0].Arguments);
         Assert.Contains("-restore", hotfix[0].Arguments);
+        Assert.DoesNotContain("-restore", hotfix[1].Arguments);
+        Assert.Contains("-t:_PublishSunderDevelopmentWatch", hotfix[2].Arguments);
+        Assert.DoesNotContain("-restore", hotfix[2].Arguments);
         var newConfig = Assert.Single(hotfix.Select(command => command.Environment["RestoreConfigFile"]).Distinct());
         Assert.NotEqual(config, newConfig);
         Assert.NotEqual(commands[0].Environment["NUGET_PACKAGES"], hotfix[0].Environment["NUGET_PACKAGES"]);
@@ -414,10 +421,13 @@ public sealed class BuilderLocalNuGetTests
                 var current = jobs.GetJob(id);
                 Assert.True(current.State == "running", current.Error);
                 if (current.Message.StartsWith("Watching source changes.", StringComparison.Ordinal)
-                    && fixture.Process.Requests.Count(command => command.Arguments[0] == "msbuild") >= builds) return;
+                    && fixture.Process.Requests.Count(IsBuild) >= builds) return;
                 await Task.Delay(20, deadline.Token);
             }
         }
+
+        static bool IsBuild(BuilderLocalProcessRequest command) => command.Arguments[0] == "msbuild"
+            && !command.Arguments.Any(argument => argument.StartsWith("-t:", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -605,11 +615,25 @@ public sealed class BuilderLocalNuGetTests
             Requests.Enqueue(request);
             if (request.Arguments[0] == "restore") return new(0, "", "");
             if (InstallTemplate && request.Arguments[0] == "new" && request.Arguments[1] is "install" or "list") return new(0, "sunder-package", "");
+            string Property(string name) => Uri.UnescapeDataString(request.Arguments.Single(argument => argument.StartsWith("-p:" + name + "=", StringComparison.Ordinal)).Split('=', 2)[1]);
+            if (ProduceDevelopment && request.Arguments.Contains("-t:_ValidateSunderDevelopmentWatch")) return new(0, "", "");
+            if (ProduceDevelopment && request.Arguments.Contains("-t:_PublishSunderDevelopmentWatch"))
+            {
+                var candidate = Path.Combine(Property("SunderPackageDevelopmentStagingRoot"), "sunder-dev");
+                var output = Path.Combine(Property("SunderPackageComposedOutputRoot"), "sunder-dev");
+                foreach (var file in Directory.EnumerateFiles(candidate, "*", SearchOption.AllDirectories))
+                {
+                    var destination = Path.Combine(output, Path.GetRelativePath(candidate, file));
+                    Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+                    File.Copy(file, destination, overwrite: true);
+                }
+                return new(0, "", "");
+            }
             if (ProduceDevelopment && request.Arguments[0] == "msbuild"
                 && !request.Arguments.Any(argument => argument.StartsWith("-t:", StringComparison.Ordinal)))
             {
-                var property = request.Arguments.Single(argument => argument.StartsWith("-p:SunderPackageComposedOutputRoot=", StringComparison.Ordinal));
-                var root = Path.Combine(Uri.UnescapeDataString(property.Split('=', 2)[1]), "sunder-dev");
+                var staged = request.Arguments.Any(argument => argument.StartsWith("-p:SunderPackageDevelopmentStagingRoot=", StringComparison.Ordinal));
+                var root = Path.Combine(Property(staged ? "SunderPackageDevelopmentStagingRoot" : "SunderPackageComposedOutputRoot"), "sunder-dev");
                 var rid = BuilderToolchainPlatform.Current.DotnetRid;
                 Directory.CreateDirectory(Path.Combine(root, "manifest")); Directory.CreateDirectory(Path.Combine(root, "payload/runtime", rid));
                 await File.WriteAllTextAsync(Path.Combine(root, "payload/runtime", rid, "worker.js"), "worker", cancellationToken);

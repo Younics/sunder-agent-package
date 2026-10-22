@@ -255,3 +255,32 @@ cache selections, user NuGet settings, and dependency locks are not rewritten by
 the resolver. Normal project restore still enforces the project's lock settings.
 Missing `local-nuget.json` restores the ordinary public package behavior for new
 jobs. This override does not download or replace an SDK by itself.
+
+### Optional local npm source packs
+
+Unpublished Node tooling can be selected independently with
+`development-toolchains/project-tools/local-npm.json`, using the same two-field
+document:
+
+```json
+{ "schemaVersion": 1, "feedPath": "/absolute/path/to/a/flat/npm/feed" }
+```
+
+The folder must contain `sunder-sdk-1.1.0.tgz`, `sunder-package-tool-1.1.0.tgz`, and
+`create-sunder-package-1.1.0.tgz` (substitute the coordinated SDK version when it
+changes). Builder validates all three package identities, required artifacts and
+archive paths, then retains their exact bytes under
+`project-tools/local-npm/<content-hash>`. Linked paths, partial sets, malformed
+archives and changed retained caches fail closed; existing caches are not repaired.
+
+Node create/setup/build/archive/watch jobs and `ensure-sdk` read this pointer once
+per accepted job. New projects use `file:` dependencies on the retained SDK and
+package-tool archives, and the creator is installed from the retained archive.
+Third-party dependencies still use the normal npm registry. Merely adding tarballs
+to npm's cache does not select them for unpublished package-name requests.
+
+The resolver does not rewrite existing projects, dependency locks, user `.npmrc`,
+the NuGet selection or the installed Node SDK. Archive storage must outlive created
+projects; do not place the selected feed or retained cache in a disposable checkout.
+Missing `local-npm.json` keeps public npm defaults for new jobs. Prepare a complete
+replacement feed before changing the pointer; in-flight jobs keep their selection.

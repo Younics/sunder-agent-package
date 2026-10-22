@@ -30,14 +30,14 @@ public sealed partial class AgentSourceArtifactMigrationTests
     }
 
     internal static ServiceProvider CreateGeneratedApp(Assembly app, IPackageContext context, ISunderRpcClient rpc,
-        IBackgroundProcessQueue? background = null, IPackageWorkerExecutionObservations? executionObservations = null)
+        IBackgroundTaskQueue? background = null, IPackageWorkerExecutionObservations? executionObservations = null)
     {
         Assert.DoesNotContain(app.GetTypes(), type => type.Name == "AppPackageModule");
         var module = (ISunderAppPackageModule)Activator.CreateInstance(app.GetType("Sunder.Generated.Package.AppModule", true)!)!;
         var services = new ServiceCollection();
         module.ConfigureAppServices(services, context);
         Assert.DoesNotContain(services, service => service.ServiceType == typeof(IPackageContext) || service.ServiceType == typeof(ISunderRpcClient)
-            || service.ServiceType == typeof(IPackageNotificationService) || service.ServiceType == typeof(IBackgroundProcessQueue)
+            || service.ServiceType == typeof(IPackageNotificationService) || service.ServiceType == typeof(IBackgroundTaskQueue)
             || service.ServiceType == typeof(IPackageSettingsNavigationService) || service.ServiceType == typeof(IPackageShellViewService)
             || service.ServiceType == typeof(IPackageDevelopmentService) || service.ServiceType == typeof(IPackageLogNavigationService)
             || service.ServiceType == typeof(IPackageAppStateUpdates) || service.ServiceType == typeof(IPackageWorkerExecutionObservations));

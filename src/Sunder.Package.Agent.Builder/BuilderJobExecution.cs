@@ -4,7 +4,7 @@ using Sunder.Sdk.Abstractions;
 namespace Sunder.Package.Agent.Builder;
 
 /// <summary>One job's exact provider and Host execution receipt, captured before its sole Start attempt.</summary>
-/// <remarks>Reads and cancellation must retain this binding, never select a replacement provider.</remarks>
+/// <remarks>Reads and cancellation retain the original execution. A new receiver binding requires independent exact provider, backend and Host execution proof; it cannot select a successor or replay Start.</remarks>
 public interface IBuilderJobExecution
 {
     string BackendId { get; }

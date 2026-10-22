@@ -65,6 +65,138 @@ public sealed partial class BuilderServiceTests
     }
 
     [Theory]
+    [InlineData(false, SunderRpcErrorKind.Unavailable, "rpc.app-session.retired")]
+    [InlineData(true, SunderRpcErrorKind.Unavailable, "rpc.app-session.retired")]
+    [InlineData(false, SunderRpcErrorKind.StaleEndpoint, "rpc.stale-endpoint")]
+    [InlineData(true, SunderRpcErrorKind.StaleEndpoint, "rpc.stale-endpoint")]
+    [InlineData(false, SunderRpcErrorKind.Unavailable, "rpc.catalog.reset")]
+    [InlineData(true, SunderRpcErrorKind.Unavailable, "rpc.catalog.reset")]
+    [InlineData(false, SunderRpcErrorKind.Unavailable, "rpc.catalog.disconnected")]
+    [InlineData(true, SunderRpcErrorKind.Unavailable, "rpc.catalog.disconnected")]
+    [InlineData(false, SunderRpcErrorKind.ResourceExhausted, "rpc.caller.observation-limit")]
+    [InlineData(true, SunderRpcErrorKind.ResourceExhausted, "rpc.caller.observation-limit")]
+    public async Task RetiredReceiverBindingCanReadAndStopOnlyItsProvenOriginalExecutionWithoutReplayingStart(
+        bool cancelFirst, SunderRpcErrorKind kind, string code)
+    {
+        await using var fixture = new ObservedBuilderFixture();
+        var old = (BuilderRuntimeFake)fixture.Catalog.Current.Service;
+        var execution = await fixture.Gateway.CaptureExecutionAsync();
+        var request = new BuilderJobRequest { Id = Guid.NewGuid().ToString("N"), BackendId = execution.BackendId,
+            Operation = "watch", Kind = BuilderProjectKind.Node };
+        await execution.StartJobAsync(request);
+        old.BindingFailure = new SunderRpcException(new(kind, code, "The receiver's old binding retired."));
+        var current = new BuilderRuntimeFake(fixture.Backend);
+        fixture.Catalog.Rebind(refreshSessionGeneration: true, current);
+        if (cancelFirst) await execution.CancelJobAsync(request.Id!);
+        var snapshot = await execution.GetJobAsync(request.Id!);
+        Assert.Equal(cancelFirst ? "cancelled" : "running", snapshot.State);
+        await execution.CancelJobAsync(request.Id!);
+        Assert.Equal("cancelled", (await execution.GetJobAsync(request.Id!)).State);
+        Assert.Single(fixture.Backend.Starts);
+        Assert.Equal(2, fixture.Catalog.Lists);
+        Assert.Equal(2, fixture.Observations.Captured.Count);
+        Assert.All(fixture.Observations.Captured, capture => Assert.Equal(execution.Reference, capture.Reference));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => execution.StartJobAsync(request));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CancellationDuringOriginalExecutionRebindCannotCrossTheFreshReadOrStopBoundary(bool cancel)
+    {
+        await using var fixture = new ObservedBuilderFixture();
+        var old = (BuilderRuntimeFake)fixture.Catalog.Current.Service;
+        var execution = await fixture.Gateway.CaptureExecutionAsync();
+        var request = new BuilderJobRequest { Id = Guid.NewGuid().ToString("N"), BackendId = execution.BackendId,
+            Operation = "watch", Kind = BuilderProjectKind.Node };
+        await execution.StartJobAsync(request);
+        old.BindingFailure = new SunderRpcException(new(SunderRpcErrorKind.Unavailable, "rpc.app-session.retired", "Retired."));
+        var fresh = new BuilderRuntimeFake(fixture.Backend);
+        fixture.Catalog.Rebind(refreshSessionGeneration: true, fresh);
+        using var cancellation = new CancellationTokenSource();
+        fixture.Observations.BeforeCapture = _ => cancellation.Cancel();
+        var failure = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => cancel
+            ? execution.CancelJobAsync(request.Id!, cancellation.Token) : execution.GetJobAsync(request.Id!, cancellation.Token));
+        Assert.Equal(cancellation.Token, failure.CancellationToken);
+        Assert.Equal(0, fresh.Reads);
+        Assert.Equal(0, fresh.Cancels);
+        Assert.Single(fixture.Backend.Starts);
+        Assert.Equal("running", fixture.Backend.Jobs[request.Id!].State);
+        old.BindingFailure = null;
+        await execution.CancelJobAsync(request.Id!);
+    }
+
+    [Theory]
+    [InlineData("activation", false)]
+    [InlineData("activation", true)]
+    [InlineData("backend", false)]
+    [InlineData("backend", true)]
+    [InlineData("receipt", false)]
+    [InlineData("receipt", true)]
+    public async Task ReceiverRebindingCannotReadOrCancelAnotherExecutionEvenWithMatchingJobText(string boundary, bool cancel)
+    {
+        await using var fixture = new ObservedBuilderFixture();
+        var old = (BuilderRuntimeFake)fixture.Catalog.Current.Service;
+        var execution = await fixture.Gateway.CaptureExecutionAsync();
+        var request = new BuilderJobRequest { Id = Guid.NewGuid().ToString("N"), BackendId = execution.BackendId,
+            Operation = "watch", Kind = BuilderProjectKind.Node };
+        await execution.StartJobAsync(request);
+        old.BindingFailure = new SunderRpcException(new(SunderRpcErrorKind.Unavailable, "rpc.app-session.retired", "Retired receiver binding."));
+        var other = new BuilderUiBackend { BackendId = boundary == "backend" ? Guid.NewGuid().ToString("N") : fixture.Backend.BackendId };
+        other.Requests[request.Id!] = request;
+        other.Jobs[request.Id!] = BuilderUiBackend.Snapshot(request, "succeeded");
+        var current = new BuilderRuntimeFake(other);
+        if (boundary == "activation") fixture.Catalog.Replace(current);
+        else fixture.Catalog.Rebind(refreshSessionGeneration: true, current);
+        if (boundary == "receipt") fixture.Observations.CaptureReference = _ => new(execution.Reference.RuntimeInstanceId, "other-execution");
+        await Assert.ThrowsAsync<SunderRpcException>(() => cancel ? execution.CancelJobAsync(request.Id!) : execution.GetJobAsync(request.Id!));
+        Assert.Equal(0, current.Reads);
+        Assert.Equal(0, current.Cancels);
+        Assert.Equal(boundary == "activation" ? 0 : 1, current.BackendIds);
+        Assert.Empty(other.Starts);
+        Assert.Single(fixture.Backend.Starts);
+        Assert.Equal("running", fixture.Backend.Jobs[request.Id!].State);
+        old.BindingFailure = null;
+        await execution.CancelJobAsync(request.Id!); // Exact original remains available; no replacement acknowledgement.
+    }
+
+    [Theory]
+    [InlineData("cancelled")]
+    [InlineData("foreign")]
+    [InlineData("denied")]
+    [InlineData("protocol")]
+    [InlineData("unsupported")]
+    [InlineData("disposed")]
+    public async Task ReceiverRebindingDoesNotNormalizeCancellationOrSecurityFailures(string boundary)
+    {
+        await using var fixture = new ObservedBuilderFixture();
+        var old = (BuilderRuntimeFake)fixture.Catalog.Current.Service;
+        var execution = await fixture.Gateway.CaptureExecutionAsync();
+        var request = new BuilderJobRequest { Id = Guid.NewGuid().ToString("N"), BackendId = execution.BackendId,
+            Operation = "watch", Kind = BuilderProjectKind.Node };
+        await execution.StartJobAsync(request);
+        using var foreign = new CancellationTokenSource();
+        foreign.Cancel();
+        Exception failure = boundary switch
+        {
+            "foreign" => new OperationCanceledException(foreign.Token),
+            "cancelled" => new SunderRpcException(new(SunderRpcErrorKind.Cancelled, "rpc.call.cancelled", "Independent cancellation.")),
+            "denied" => new SunderRpcException(new(SunderRpcErrorKind.PermissionDenied, "rpc.denied", "Denied.")),
+            "unsupported" => new SunderRpcException(new(SunderRpcErrorKind.Unavailable, "rpc.worker-execution.unsupported", "Unsupported Host.")),
+            "disposed" => new SunderRpcException(new(SunderRpcErrorKind.Unavailable, "rpc.binding.lifetime-disposed", "The receiving scope ended.")),
+            _ => new SunderRpcException(new(SunderRpcErrorKind.Protocol, "rpc.invalid", "Invalid.")),
+        };
+        old.BindingFailure = failure;
+        fixture.Catalog.Rebind(refreshSessionGeneration: true, new BuilderRuntimeFake(fixture.Backend));
+        Assert.Same(failure, await Xunit.Record.ExceptionAsync(() => execution.GetJobAsync(request.Id!)));
+        Assert.Equal(1, fixture.Catalog.Lists);
+        Assert.Single(fixture.Observations.Captured);
+        Assert.Single(fixture.Backend.Starts);
+        old.BindingFailure = null;
+        await execution.CancelJobAsync(request.Id!);
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task UnsupportedExecutionCaptureFailsBeforeStartButSourceReadsStayCold(bool servicePresent)
@@ -431,13 +563,13 @@ public sealed partial class BuilderServiceTests
         internal int Lists;
         internal BuilderRuntimeCatalog(BuilderServices.IBuilderRuntimeService runtime) => Current = Entry(runtime);
         internal void Replace(BuilderServices.IBuilderRuntimeService runtime) => Current = Entry(runtime);
-        internal void Rebind(bool refreshSessionGeneration)
+        internal void Rebind(bool refreshSessionGeneration, BuilderServices.IBuilderRuntimeService? runtime = null)
         {
             var old = Current;
             Current = new(new SunderRpcProviderSnapshot(old.PackageId, old.PackageVersion, old.ProviderId,
                 old.ContractId, old.ContractVersion, old.DescriptorSha256, old.AbiSha256, old.ActivationId, old.ActivationEpoch,
                 old.SessionGeneration + (refreshSessionGeneration ? 1 : 0), new(Guid.NewGuid().ToString("N")),
-                old.CatalogRevision + 1, SunderRpcProviderState.Active), old.Service);
+                old.CatalogRevision + 1, SunderRpcProviderState.Active), runtime ?? old.Service);
         }
         private static ServiceProvider<BuilderServices.IBuilderRuntimeService> Entry(BuilderServices.IBuilderRuntimeService runtime)
         {
@@ -491,6 +623,7 @@ public sealed partial class BuilderServiceTests
         internal int Reads;
         internal int Cancels;
         internal int BackendIds;
+        internal Exception? BindingFailure;
         public async ValueTask<string> GetBackendIdAsync(CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref BackendIds);
@@ -506,11 +639,13 @@ public sealed partial class BuilderServiceTests
             => await backend.StartJobAsync(BuilderContent.ReadJobRequest(requestJson), cancellationToken);
         public async ValueTask<SunderContent> GetJobAsync(string jobId, string expectedBackendId, CancellationToken cancellationToken = default)
         {
+            if (BindingFailure is { } failure) throw failure;
             Interlocked.Increment(ref Reads);
             return BuilderContent.Create(await backend.GetJobAsync(jobId, expectedBackendId, cancellationToken));
         }
         public async ValueTask CancelJobAsync(string jobId, string expectedBackendId, CancellationToken cancellationToken = default)
         {
+            if (BindingFailure is { } failure) throw failure;
             Interlocked.Increment(ref Cancels);
             await backend.CancelJobAsync(jobId, expectedBackendId, cancellationToken);
         }

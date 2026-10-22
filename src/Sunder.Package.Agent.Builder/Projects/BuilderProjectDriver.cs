@@ -18,7 +18,11 @@ public sealed partial class BuilderProjectDriver : IBuilderJobDriver
     {
         this.toolchains = toolchains;
         this.processes = processes;
-        this.options = options with { CacheRootPath = BuilderJobValidation.Absolute(options.CacheRootPath, "Builder tools cache") };
+        this.options = options with
+        {
+            CacheRootPath = BuilderJobValidation.Absolute(options.CacheRootPath, "Builder tools cache"),
+            ProjectMutationLockRootPath = BuilderJobValidation.Absolute(options.ProjectMutationLockRootPath, "Builder project locks"),
+        };
         this.discovery = discovery ?? new();
         this.saveMetadata = saveMetadata;
         if (!Regex.IsMatch(options.CoordinatedPackageVersion, @"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
@@ -138,9 +142,9 @@ public sealed partial class BuilderProjectDriver : IBuilderJobDriver
     }
 
     private async Task<string> BuildAsync(BuilderProjectInspection project, IBuilderProjectDriverSelection selection,
-        IBuilderJobReporter reporter, bool requireApp, CancellationToken token, bool restore = true)
+        IBuilderJobReporter reporter, bool requireApp, CancellationToken token, bool restore = true, string? watchStagingRoot = null)
     {
-        var output = BuilderProjectDriverOutputs.DevelopmentFolder(project, "Debug");
+        var output = watchStagingRoot is null ? BuilderProjectDriverOutputs.DevelopmentFolder(project, "Debug") : Path.Combine(watchStagingRoot, "sunder-dev");
         reporter.Update(new() { Phase = BuilderJobPhase.Building, Message = "Building the current-platform development package." });
         if (project.Kind == BuilderProjectKind.Dotnet)
         {
@@ -149,8 +153,9 @@ public sealed partial class BuilderProjectDriver : IBuilderJobDriver
             // when TargetFramework is explicit. Setup/create already restored with the
             // same build properties.
             // MSBuild remains responsible for current inputs, custom targets and package policy.
-            await RunAsync(selection, BuildArguments(project, restore),
-                project.ProjectFolder, reporter, token).ConfigureAwait(false);
+            await RunAsync(selection, [.. BuildArguments(project, restore),
+                .. watchStagingRoot is null ? Array.Empty<string>() : ["-p:SunderPackageDevelopmentStagingRoot=" + EscapeProperty(watchStagingRoot)]],
+                project.ProjectFolder, reporter, token, recoverableBuild: watchStagingRoot is not null).ConfigureAwait(false);
         }
         else
         {
@@ -159,8 +164,9 @@ public sealed partial class BuilderProjectDriver : IBuilderJobDriver
         }
         reporter.Update(new() { Phase = BuilderJobPhase.Validating });
         await BuilderProjectDriverOutputs.ValidateDevelopmentAsync(output, project, rid, requireApp, token).ConfigureAwait(false);
-        reporter.Update(new() { Phase = BuilderJobPhase.BuildReady, LastSuccessfulBuildAtUtc = DateTimeOffset.UtcNow,
-            Project = await discovery.InspectAsync(project.EntryPoint, token).ConfigureAwait(false), DevelopmentFolder = output });
+        if (watchStagingRoot is null)
+            reporter.Update(new() { Phase = BuilderJobPhase.BuildReady, LastSuccessfulBuildAtUtc = DateTimeOffset.UtcNow,
+                Project = await discovery.InspectAsync(project.EntryPoint, token).ConfigureAwait(false), DevelopmentFolder = output });
         return output;
     }
 
@@ -247,7 +253,7 @@ public sealed partial class BuilderProjectDriver : IBuilderJobDriver
     }
 
     private async Task<BuilderLocalProcessResult> RunAsync(IBuilderProjectDriverSelection selection, IReadOnlyList<string> arguments, string directory,
-        IBuilderJobReporter reporter, CancellationToken token, bool npm = false, bool watch = false, string? cliHome = null)
+        IBuilderJobReporter reporter, CancellationToken token, bool npm = false, bool watch = false, string? cliHome = null, bool recoverableBuild = false)
     {
         var request = CreateProcess(selection, arguments, directory, npm, watch, cliHome);
         var result = await processes.RunAsync(request, new ProcessStatusProgress(reporter, watch && npm), token).ConfigureAwait(false);
@@ -262,7 +268,9 @@ public sealed partial class BuilderProjectDriver : IBuilderJobDriver
             if (arguments[0] == "new" && arguments.Count > 1) command += " " + arguments[1];
             // The process runner streams stdout/stderr into Output. Keep the error summary
             // concise instead of copying the same stack trace into status and error surfaces.
-            throw new InvalidOperationException($"{command} failed (exit code {result.ExitCode}). See the command output for details.");
+            var message = $"{command} failed (exit code {result.ExitCode}). See the command output for details.";
+            if (recoverableBuild) throw new BuilderCommandFailedException(message);
+            throw new InvalidOperationException(message);
         }
         return result;
     }
@@ -301,4 +309,8 @@ public sealed partial class BuilderProjectDriver : IBuilderJobDriver
     {
         public void Report(string value) => reporter.Update(new() { Message = value });
     }
+
+    // Only an ordinary nonzero command exit is recoverable in Watch. Ownership,
+    // process-start/drain, timeout, watcher and output-validation failures stay terminal.
+    private sealed class BuilderCommandFailedException(string message) : InvalidOperationException(message);
 }

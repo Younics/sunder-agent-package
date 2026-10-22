@@ -8,15 +8,17 @@ namespace Sunder.Package.Agent.Builder;
 
 public interface IBuilderJobJournal
 {
+    Task<BuilderJobSnapshot> RunOwnedAsync(Func<BuilderJobScope, Task<BuilderJobSnapshot>> run,
+        CancellationToken cancellationToken = default);
     Task<string> AdmitAndStartAsync(BuilderJobAdmission admission, IBuilderBackend backend,
-        Func<CancellationToken, Task<IBuilderJobExecution>> capture, CancellationToken cancellationToken = default);
-    Task<BuilderJobStopResult> ReconcileAsync(string jobId, IBuilderBackend backend, CancellationToken cancellationToken = default);
-    Task<BuilderJobStopResult?> ReadCompletedAsync(BuilderJobReservation reservation, CancellationToken cancellationToken = default);
-    Task<BuilderJobStopResult> AbortKnownNotStartedAsync(BuilderJobAdmission admission, CancellationToken cancellationToken = default);
-    Task<BuilderJobStopResult> CompleteAsync(BuilderJobReservation reservation, BuilderJobStopResult result, CancellationToken cancellationToken = default);
-    Task<BuilderJobStopResult> CompleteOwnedAsync(BuilderJobAdmission admission, BuilderJobStopResult result, CancellationToken cancellationToken = default);
-    Task SavePartialAsync(BuilderJobReservation reservation, BuilderJobSnapshot snapshot, CancellationToken cancellationToken = default);
-    Task SaveFailureAsync(BuilderJobReservation reservation, string failure, CancellationToken cancellationToken = default);
+        Func<CancellationToken, Task<IBuilderJobExecution>> capture, CancellationToken cancellationToken = default, BuilderJobScope? scope = null);
+    Task<BuilderJobStopResult> ReconcileAsync(string jobId, IBuilderBackend backend, CancellationToken cancellationToken = default, BuilderJobScope? scope = null);
+    Task<BuilderJobStopResult?> ReadCompletedAsync(BuilderJobReservation reservation, CancellationToken cancellationToken = default, BuilderJobScope? scope = null);
+    Task<BuilderJobStopResult> AbortKnownNotStartedAsync(BuilderJobAdmission admission, CancellationToken cancellationToken = default, BuilderJobScope? scope = null);
+    Task<BuilderJobStopResult> CompleteAsync(BuilderJobReservation reservation, BuilderJobStopResult result, CancellationToken cancellationToken = default, BuilderJobScope? scope = null);
+    Task<BuilderJobStopResult> CompleteOwnedAsync(BuilderJobAdmission admission, BuilderJobStopResult result, CancellationToken cancellationToken = default, BuilderJobScope? scope = null);
+    Task SavePartialAsync(BuilderJobReservation reservation, BuilderJobSnapshot snapshot, CancellationToken cancellationToken = default, BuilderJobScope? scope = null);
+    Task SaveFailureAsync(BuilderJobReservation reservation, string failure, CancellationToken cancellationToken = default, BuilderJobScope? scope = null);
 }
 
 /// <summary>One invocation's admission state. No caller may start work outside the journal's held gate.</summary>

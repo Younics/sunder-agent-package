@@ -115,11 +115,11 @@ public sealed partial class DockerExecutionSettingsViewModel
             if (!IsImagePullActive(selected.ImageReference))
             {
                 var imageReference = selected.ImageReference;
-                _backgroundProcessQueue.Enqueue(new BackgroundProcessRequest(
+                _backgroundTaskQueue.Enqueue(new BackgroundTaskRequest(
                     $"Pull Docker image {imageReference}",
                     ImagePullGroupKey,
-                    BackgroundProcessIndicator.Settings,
-                    BackgroundProcessConcurrencyMode.SequentialWithinGroup,
+                    BackgroundTaskIndicator.Settings,
+                    BackgroundTaskConcurrencyMode.SequentialWithinGroup,
                     true,
                     async context =>
                     {

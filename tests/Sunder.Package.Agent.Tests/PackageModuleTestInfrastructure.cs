@@ -28,22 +28,22 @@ internal sealed class CompositionDevelopmentHost : IPackageDevelopmentService, I
         => throw new InvalidOperationException("Composition must not navigate to package logs.");
 }
 
-internal sealed class CompositionBackgroundProcessQueue : IBackgroundProcessQueue
+internal sealed class CompositionBackgroundTaskQueue : IBackgroundTaskQueue
 {
-    public event EventHandler<BackgroundProcessChangedEventArgs>? ProcessChanged
+    public event EventHandler<BackgroundTaskChangedEventArgs>? TaskChanged
     {
         add { }
         remove { }
     }
 
-    public BackgroundProcessSnapshot Enqueue(BackgroundProcessRequest request)
+    public BackgroundTaskSnapshot Enqueue(BackgroundTaskRequest request)
         => new(
             Guid.NewGuid(),
             request.Title,
             request.GroupKey,
             request.Indicator,
             request.ConcurrencyMode,
-            BackgroundProcessState.Queued,
+            BackgroundTaskState.Queued,
             string.Empty,
             ProgressPercent: null,
             request.CanCancel,
@@ -53,7 +53,7 @@ internal sealed class CompositionBackgroundProcessQueue : IBackgroundProcessQueu
             StartedAtUtc: null,
             CompletedAtUtc: null);
 
-    public IReadOnlyList<BackgroundProcessSnapshot> ListProcesses(string? groupKey = null) => [];
+    public IReadOnlyList<BackgroundTaskSnapshot> ListTasks(string? groupKey = null) => [];
 
     public bool Cancel(Guid processId) => false;
 }

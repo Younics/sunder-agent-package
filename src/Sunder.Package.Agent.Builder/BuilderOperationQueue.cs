@@ -9,29 +9,29 @@ namespace Sunder.Package.Agent.Builder;
 internal sealed class BuilderQueueCanceledException()
     : Exception("Builder operation cancelled before backend execution.");
 
-public sealed class BuilderOperationQueue(IBackgroundProcessQueue backgroundProcesses)
+public sealed class BuilderOperationQueue(IBackgroundTaskQueue backgroundTasks)
 {
     public const string GroupKey = "sunder-package-builder";
 
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     /// <summary>Waits for both shell termination and delegate cleanup, including cancellation while still queued.</summary>
-    public Task<BuilderJobSnapshot> EnqueueAsync(string title, BackgroundProcessIndicator indicator,
-        IReadOnlyDictionary<string, string> metadata, Func<BackgroundProcessContext, Task<BuilderJobSnapshot>> operation,
+    public Task<BuilderJobSnapshot> EnqueueAsync(string title, BackgroundTaskIndicator indicator,
+        IReadOnlyDictionary<string, string> metadata, Func<BackgroundTaskContext, Task<BuilderJobSnapshot>> operation,
         CancellationToken cancellationToken = default)
-        => new ScheduledJob(this, backgroundProcesses, operation, cancellationToken).RunAsync(title, indicator, metadata);
+        => new ScheduledJob(this, backgroundTasks, operation, cancellationToken).RunAsync(title, indicator, metadata);
 
-    public BackgroundProcessSnapshot Enqueue(
+    public BackgroundTaskSnapshot Enqueue(
         string title,
-        Func<BackgroundProcessContext, Task> operation)
+        Func<BackgroundTaskContext, Task> operation)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(title);
         ArgumentNullException.ThrowIfNull(operation);
-        return backgroundProcesses.Enqueue(new BackgroundProcessRequest(
+        return backgroundTasks.Enqueue(new BackgroundTaskRequest(
             title,
             GroupKey,
-            BackgroundProcessIndicator.Main,
-            BackgroundProcessConcurrencyMode.SequentialWithinGroup,
+            BackgroundTaskIndicator.Main,
+            BackgroundTaskConcurrencyMode.SequentialWithinGroup,
             CanCancel: true,
             context => RunAsync(() => operation(context), context.CancellationToken)));
     }
@@ -66,14 +66,14 @@ public sealed class BuilderOperationQueue(IBackgroundProcessQueue backgroundProc
         }
     }
 
-    private sealed class ScheduledJob(BuilderOperationQueue owner, IBackgroundProcessQueue queue,
-        Func<BackgroundProcessContext, Task<BuilderJobSnapshot>> operation, CancellationToken caller)
+    private sealed class ScheduledJob(BuilderOperationQueue owner, IBackgroundTaskQueue queue,
+        Func<BackgroundTaskContext, Task<BuilderJobSnapshot>> operation, CancellationToken caller)
     {
         private const string CorrelationKey = "builder.queueId";
         private readonly string _correlation = Guid.NewGuid().ToString("N");
         private readonly object _sync = new();
         private readonly TaskCompletionSource<Guid> _accepted = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        private readonly TaskCompletionSource<BackgroundProcessSnapshot> _terminal = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource<BackgroundTaskSnapshot> _terminal = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _drained = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly CancellationTokenSource _stopping = new();
         private Guid? _processId;
@@ -83,19 +83,19 @@ public sealed class BuilderOperationQueue(IBackgroundProcessQueue backgroundProc
         private Exception? _error;
         private bool _hostCancellation;
 
-        internal async Task<BuilderJobSnapshot> RunAsync(string title, BackgroundProcessIndicator indicator,
+        internal async Task<BuilderJobSnapshot> RunAsync(string title, BackgroundTaskIndicator indicator,
             IReadOnlyDictionary<string, string> metadata)
         {
             if (caller.IsCancellationRequested) { _stopping.Dispose(); caller.ThrowIfCancellationRequested(); }
             var description = new Dictionary<string, string>(metadata, StringComparer.Ordinal) { [CorrelationKey] = _correlation };
-            queue.ProcessChanged += OnChanged;
+            queue.TaskChanged += OnChanged;
             using var cancellation = caller.Register(() => RequestCancellation());
             try
             {
                 var initial = queue.Enqueue(new(title, GroupKey, indicator,
-                    BackgroundProcessConcurrencyMode.SequentialWithinGroup, CanCancel: true, ExecuteAsync, description));
-                lock (_sync) _processId = initial.ProcessId;
-                _accepted.TrySetResult(initial.ProcessId);
+                    BackgroundTaskConcurrencyMode.SequentialWithinGroup, CanCancel: true, ExecuteAsync, description));
+                lock (_sync) _processId = initial.TaskId;
+                _accepted.TrySetResult(initial.TaskId);
                 Observe(initial);
                 if (caller.IsCancellationRequested) RequestCancellation();
 
@@ -104,7 +104,7 @@ public sealed class BuilderOperationQueue(IBackgroundProcessQueue backgroundProc
                 long? missingSince = null;
                 while (!_terminal.Task.IsCompleted)
                 {
-                    var current = queue.ListProcesses(GroupKey).FirstOrDefault(item => item.ProcessId == initial.ProcessId);
+                    var current = queue.ListTasks(GroupKey).FirstOrDefault(item => item.TaskId == initial.TaskId);
                     if (current is not null) { Observe(current); missingSince = null; }
                     else
                     {
@@ -121,9 +121,9 @@ public sealed class BuilderOperationQueue(IBackgroundProcessQueue backgroundProc
                 await CloseAndDrainAsync(cancel: false).ConfigureAwait(false);
                 // The backend result retains partial source even when the shell delegate failed/cancelled.
                 if (_result is not null) return _result;
-                if (_error is not null && !(_hostCancellation && terminal.State == BackgroundProcessState.Cancelled))
+                if (_error is not null && !(_hostCancellation && terminal.State == BackgroundTaskState.Cancelled))
                     ExceptionDispatchInfo.Capture(_error).Throw();
-                if (terminal.State == BackgroundProcessState.Cancelled)
+                if (terminal.State == BackgroundTaskState.Cancelled)
                 {
                     if (caller.IsCancellationRequested)
                         throw new OperationCanceledException("Builder operation cancelled before it started.", _error, caller);
@@ -138,9 +138,9 @@ public sealed class BuilderOperationQueue(IBackgroundProcessQueue backgroundProc
                 // Correlation is available even before the process ID was returned.
                 try
                 {
-                    foreach (var snapshot in queue.ListProcesses(GroupKey))
+                    foreach (var snapshot in queue.ListTasks(GroupKey))
                         if (snapshot.Metadata.TryGetValue(CorrelationKey, out var key) && key == _correlation)
-                            lock (_sync) _processId ??= snapshot.ProcessId;
+                            lock (_sync) _processId ??= snapshot.TaskId;
                 }
                 catch (ObjectDisposedException) { }
                 RequestCancellation();
@@ -149,12 +149,12 @@ public sealed class BuilderOperationQueue(IBackgroundProcessQueue backgroundProc
             }
             finally
             {
-                queue.ProcessChanged -= OnChanged;
+                queue.TaskChanged -= OnChanged;
                 _stopping.Dispose();
             }
         }
 
-        private async Task ExecuteAsync(BackgroundProcessContext context)
+        private async Task ExecuteAsync(BackgroundTaskContext context)
         {
             await _accepted.Task.ConfigureAwait(false);
             lock (_sync)
@@ -166,7 +166,7 @@ public sealed class BuilderOperationQueue(IBackgroundProcessQueue backgroundProc
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(caller, context.CancellationToken, _stopping.Token);
             try
             {
-                var effective = new BackgroundProcessContext(linked.Token, context.ReportStatus, context.ReportProgress, context.ReportIndeterminate);
+                var effective = new BackgroundTaskContext(linked.Token, context.ReportStatus, context.ReportProgress, context.ReportIndeterminate);
                 _result = await owner.RunAsync(() => operation(effective), linked.Token).ConfigureAwait(false);
                 switch (_result.State)
                 {
@@ -197,19 +197,21 @@ public sealed class BuilderOperationQueue(IBackgroundProcessQueue backgroundProc
                         ? new OperationCanceledException(error.Message, error, caller)
                         : error;
                 if (error is OperationCanceledException) RequestCancellation();
+                if (_hostCancellation)
+                    throw new OperationCanceledException(error.Message, error, context.CancellationToken);
                 throw;
             }
             finally { _drained.TrySetResult(); }
         }
 
-        private void OnChanged(object? sender, BackgroundProcessChangedEventArgs args) => Observe(args.Snapshot);
+        private void OnChanged(object? sender, BackgroundTaskChangedEventArgs args) => Observe(args.Snapshot);
 
-        private void Observe(BackgroundProcessSnapshot snapshot)
+        private void Observe(BackgroundTaskSnapshot snapshot)
         {
             if (!snapshot.Metadata.TryGetValue(CorrelationKey, out var correlation) || correlation != _correlation) return;
             lock (_sync)
             {
-                _processId ??= snapshot.ProcessId;
+                _processId ??= snapshot.TaskId;
                 if (!snapshot.IsTerminal) return;
                 if (!_started) _closed = true;
                 _terminal.TrySetResult(snapshot);

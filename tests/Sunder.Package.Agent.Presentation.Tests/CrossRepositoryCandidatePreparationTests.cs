@@ -115,7 +115,7 @@ public sealed class CrossRepositoryCandidatePreparationTests
         services.AddSingleton<ISunderRpcClient>(runtime);
         services.AddSingleton<IPackageShellViewService, NoOpPackageShellViewService>();
         services.AddSingleton<IPackageNotificationService>(NullPackageNotificationService.Instance);
-        services.AddSingleton<IBackgroundProcessQueue, NoOpBackgroundProcessQueue>();
+        services.AddSingleton<IBackgroundTaskQueue, NoOpBackgroundTaskQueue>();
         new AgentApp::Sunder.Generated.Package.AppModule().ConfigureAppServices(services, packageScope.Context);
         return services;
     }
@@ -481,22 +481,22 @@ public sealed class CrossRepositoryCandidatePreparationTests
             => ValueTask.FromResult(false);
     }
 
-    private sealed class NoOpBackgroundProcessQueue : IBackgroundProcessQueue
+    private sealed class NoOpBackgroundTaskQueue : IBackgroundTaskQueue
     {
-        public event EventHandler<BackgroundProcessChangedEventArgs>? ProcessChanged
+        public event EventHandler<BackgroundTaskChangedEventArgs>? TaskChanged
         {
             add { }
             remove { }
         }
 
-        public BackgroundProcessSnapshot Enqueue(BackgroundProcessRequest request)
+        public BackgroundTaskSnapshot Enqueue(BackgroundTaskRequest request)
             => new(
                 Guid.NewGuid(),
                 request.Title,
                 request.GroupKey,
                 request.Indicator,
                 request.ConcurrencyMode,
-                BackgroundProcessState.Queued,
+                BackgroundTaskState.Queued,
                 string.Empty,
                 ProgressPercent: null,
                 request.CanCancel,
@@ -506,7 +506,7 @@ public sealed class CrossRepositoryCandidatePreparationTests
                 StartedAtUtc: null,
                 CompletedAtUtc: null);
 
-        public IReadOnlyList<BackgroundProcessSnapshot> ListProcesses(string? groupKey = null) => [];
+        public IReadOnlyList<BackgroundTaskSnapshot> ListTasks(string? groupKey = null) => [];
 
         public bool Cancel(Guid processId) => false;
     }

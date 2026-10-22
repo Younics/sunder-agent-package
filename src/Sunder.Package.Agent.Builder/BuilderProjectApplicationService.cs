@@ -51,7 +51,9 @@ public sealed class BuilderProjectApplicationService(
         => backend.GetToolchainsAsync(kind, checkUpdates, cancellationToken);
 
     /// <summary>Reconciles an uncertain watcher stop after transport recovery, using bounded independent cleanup.</summary>
-    public async Task<BuilderJobStopResult> StopJobAsync(string jobId)
+    public Task<BuilderJobStopResult> StopJobAsync(string jobId) => StopJobAsync(jobId, null);
+
+    private async Task<BuilderJobStopResult> StopJobAsync(string jobId, BuilderJobScope? scope)
     {
         OwnedJob? owned;
         lock (_sync)
@@ -60,20 +62,20 @@ public sealed class BuilderProjectApplicationService(
             _uncertain.TryGetValue(jobId, out owned);
         }
         if (owned is null)
-            return RememberStop(await journal.ReconcileAsync(jobId, backend).ConfigureAwait(false));
+            return RememberStop(await journal.ReconcileAsync(jobId, backend, scope: scope).ConfigureAwait(false));
         if (!owned.StartAttempted || owned.Admission.HasPositiveNoStartProof)
         {
             using var noStart = new CancellationTokenSource(ReconciliationBudget);
-            return RememberStop(await journal.AbortKnownNotStartedAsync(owned.Admission, noStart.Token).ConfigureAwait(false));
+            return RememberStop(await journal.AbortKnownNotStartedAsync(owned.Admission, noStart.Token, scope).ConfigureAwait(false));
         }
         if (owned.Admission.TerminalReceipt is { } receipt)
-            return await CommitStopAsync(owned, receipt.Result).ConfigureAwait(false);
+            return await CommitStopAsync(owned, receipt.Result, scope: scope).ConfigureAwait(false);
         var started = Stopwatch.GetTimestamp();
         using (var readback = new CancellationTokenSource(ReconciliationBudget))
         {
             try
             {
-                if (await journal.ReadCompletedAsync(owned.Reservation, readback.Token).ConfigureAwait(false) is { } completed)
+                if (await journal.ReadCompletedAsync(owned.Reservation, readback.Token, scope).ConfigureAwait(false) is { } completed)
                     return RememberStop(completed); // Completion may have committed before its acknowledgement was lost.
             }
             catch (OperationCanceledException error) when (readback.IsCancellationRequested)
@@ -85,7 +87,7 @@ public sealed class BuilderProjectApplicationService(
             if (cleanup.Failure is { } error && IsBoundaryFailure(error)) ExceptionDispatchInfo.Capture(error).Throw();
             throw new IOException("The Builder job has not confirmed shutdown. Reconnect before changing this project or SDK.");
         }
-        return await CommitStopAsync(owned, cleanup.Result, cleanup.Remaining).ConfigureAwait(false);
+        return await CommitStopAsync(owned, cleanup.Result, cleanup.Remaining, scope).ConfigureAwait(false);
     }
 
     public async Task<BuilderJobSnapshot> RunJobAsync(BuilderJobRequest request,
@@ -108,9 +110,36 @@ public sealed class BuilderProjectApplicationService(
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
             try
             {
-                return request.Operation == "watch"
-                    ? await ReconcileAndRunAsync(run, changed, linked.Token).ConfigureAwait(false)
-                    : await EnqueueFiniteJobAsync(run, projectId, changed, linked.Token).ConfigureAwait(false);
+                return await journal.RunOwnedAsync(async scope =>
+                {
+                    run.Scope = scope;
+                    var context = scope.Context;
+                    using var job = CancellationTokenSource.CreateLinkedTokenSource(linked.Token,
+                        context.SettlementRequested, context.CancellationToken);
+                    try
+                    {
+                        return request.Operation == "watch"
+                            ? await ReconcileAndRunAsync(run, changed, job.Token).ConfigureAwait(false)
+                            : await EnqueueFiniteJobAsync(run, projectId, changed, job.Token).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException error) when (error.CancellationToken == job.Token && job.IsCancellationRequested)
+                    {
+                        if (linked.IsCancellationRequested)
+                            throw new OperationCanceledException(error.Message, error, linked.Token);
+                        if (context.CancellationToken.IsCancellationRequested)
+                            throw new OperationCanceledException(error.Message, error, context.CancellationToken);
+                        // Settlement before Start is a positive no-dispatch case,
+                        // not an invented terminal outcome for a dispatched job.
+                        if (!context.SettlementRequested.IsCancellationRequested || run.AttemptedStart) throw;
+                        if (run.Admission is { PendingWriteAttempted: true } admission)
+                            run.StopResult = RememberStop(await journal.AbortKnownNotStartedAsync(admission, scope: scope).ConfigureAwait(false));
+                        return new BuilderJobSnapshot
+                        {
+                            Id = request.Id!, Operation = request.Operation, State = "cancelled",
+                            Message = "App settlement stopped the job before dispatch.", Output = string.Empty,
+                        };
+                    }
+                }, linked.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException error) when (cancellationToken.IsCancellationRequested
                 && error.CancellationToken == linked.Token && !PresentationExceptionPolicy.IsFatal(error))
@@ -160,7 +189,7 @@ public sealed class BuilderProjectApplicationService(
         if (request.EntryPoint is { } entry) metadata["builder.entryPoint"] = entry;
         try
         {
-            return await operations.EnqueueAsync(title, sdk ? BackgroundProcessIndicator.Settings : BackgroundProcessIndicator.Main,
+            return await operations.EnqueueAsync(title, sdk ? BackgroundTaskIndicator.Settings : BackgroundTaskIndicator.Main,
                 metadata, context => ReconcileAndRunAsync(run, async snapshot =>
                 {
                     if (snapshot.State == "running") context.ReportIndeterminate(snapshot.Message);
@@ -189,7 +218,7 @@ public sealed class BuilderProjectApplicationService(
         foreach (var prior in uncertain.Where(prior => OwnershipOverlaps(prior.Request, run.Request)))
         {
             token.ThrowIfCancellationRequested();
-            await StopJobAsync(prior.Request.Id!).ConfigureAwait(false);
+            await StopJobAsync(prior.Request.Id!, run.Scope).ConfigureAwait(false);
         }
         return await PollJobAsync(run, changed, token).ConfigureAwait(false);
     }
@@ -205,7 +234,7 @@ public sealed class BuilderProjectApplicationService(
             try
             {
                 await journal.AdmitAndStartAsync(admission, backend,
-                    current => ReadWithCallerHandoffAsync(backend.CaptureExecutionAsync, null, current), token).ConfigureAwait(false);
+                    current => ReadWithCallerHandoffAsync(backend.CaptureExecutionAsync, null, current), token, run.Scope).ConfigureAwait(false);
             }
             catch (Exception error) when (admission.StartAttempted && admission.StopResult is null
                 && !token.IsCancellationRequested && error is not InvalidDataException
@@ -224,10 +253,10 @@ public sealed class BuilderProjectApplicationService(
 
             while (true)
             {
-                var snapshot = await ReadJobAsync(owned!, changed, token).ConfigureAwait(false);
+                var snapshot = await ReadJobAsync(owned!, changed, token, run.Scope).ConfigureAwait(false);
                 if (changed is not null) await changed(snapshot).ConfigureAwait(false);
                 if (snapshot.State != "running")
-                { run.StopResult = await CommitStopAsync(owned!, BuilderJobStopResult.KnownTerminal(snapshot)).ConfigureAwait(false); return snapshot; }
+                { run.StopResult = await CommitStopAsync(owned!, BuilderJobStopResult.KnownTerminal(snapshot), scope: run.Scope).ConfigureAwait(false); return snapshot; }
                 await Task.Delay(PollInterval, token).ConfigureAwait(false);
             }
         }
@@ -242,12 +271,12 @@ public sealed class BuilderProjectApplicationService(
             if (cleanup.Result is null)
             {
                 var unconfirmed = await UnconfirmedAsync(owned,
-                    IsRecoverable(error) && error is not OperationCanceledException ? changed : null, error, cleanup.Remaining).ConfigureAwait(false);
+                    IsRecoverable(error) && error is not OperationCanceledException ? changed : null, error, cleanup.Remaining, run.Scope).ConfigureAwait(false);
                 // Retain exact ownership without disguising a permission/protocol rejection as a reconnect.
                 if (IsBoundaryFailure(error)) throw;
                 throw unconfirmed;
             }
-            run.StopResult = await CommitStopAsync(owned, cleanup.Result, cleanup.Remaining).ConfigureAwait(false);
+            run.StopResult = await CommitStopAsync(owned, cleanup.Result, cleanup.Remaining, run.Scope).ConfigureAwait(false);
             throw;
         }
         catch (Exception error) when (admission.StartAttempted && !admission.HasPositiveNoStartProof && owned is not null && IsRecoverable(error))
@@ -257,7 +286,7 @@ public sealed class BuilderProjectApplicationService(
             var cleanup = await CancelAndReadAsync(owned).ConfigureAwait(false);
             if (cleanup.Result is { } stopped)
             {
-                stopped = run.StopResult = await CommitStopAsync(owned, stopped, cleanup.Remaining).ConfigureAwait(false);
+                stopped = run.StopResult = await CommitStopAsync(owned, stopped, cleanup.Remaining, run.Scope).ConfigureAwait(false);
                 if (stopped.TerminalSnapshot is { } final)
                 {
                     if (changed is not null) await changed(final).ConfigureAwait(false);
@@ -267,19 +296,19 @@ public sealed class BuilderProjectApplicationService(
                 throw new BuilderJobOutcomeUnknownException(stopped, error);
             }
             if (cleanup.Failure is { } failure && IsBoundaryFailure(failure)) ExceptionDispatchInfo.Capture(failure).Throw();
-            throw await UnconfirmedAsync(owned, changed, error, cleanup.Remaining).ConfigureAwait(false);
+            throw await UnconfirmedAsync(owned, changed, error, cleanup.Remaining, run.Scope).ConfigureAwait(false);
         }
     }
 
     private async Task<BuilderJobSnapshot> ReadJobAsync(OwnedJob owned,
-        Func<BuilderJobSnapshot, Task>? changed, CancellationToken token)
+        Func<BuilderJobSnapshot, Task>? changed, CancellationToken token, BuilderJobScope? scope)
     {
         var snapshot = await ReadWithCallerHandoffAsync(
             current => owned.Execution.GetJobAsync(owned.Request.Id!, current),
             owned.Last is { } last && changed is not null
                 ? () => changed(last with { ConnectionState = BuilderJobConnectionState.Reconnecting }) : null, token).ConfigureAwait(false);
         snapshot = AcceptSnapshot(owned, snapshot);
-        await journal.SavePartialAsync(owned.Reservation, snapshot, token).ConfigureAwait(false);
+        await journal.SavePartialAsync(owned.Reservation, snapshot, token, scope).ConfigureAwait(false);
         return snapshot;
     }
 
@@ -394,7 +423,7 @@ public sealed class BuilderProjectApplicationService(
     }
 
     private async Task<BuilderJobCleanupException> UnconfirmedAsync(OwnedJob owned,
-        Func<BuilderJobSnapshot, Task>? changed, Exception error, TimeSpan remaining)
+        Func<BuilderJobSnapshot, Task>? changed, Exception error, TimeSpan remaining, BuilderJobScope? scope)
     {
         const string message = "Builder could not confirm that the job stopped. Reconnect before retrying.";
         lock (_sync) _uncertain[owned.Request.Id!] = owned;
@@ -403,8 +432,8 @@ public sealed class BuilderProjectApplicationService(
             using var persistence = new CancellationTokenSource(remaining);
             try
             {
-                await journal.SaveFailureAsync(owned.Reservation, error.Message, persistence.Token).ConfigureAwait(false);
-                if (owned.Last is { } partial) await journal.SavePartialAsync(owned.Reservation, partial, persistence.Token).ConfigureAwait(false);
+                await journal.SaveFailureAsync(owned.Reservation, error.Message, persistence.Token, scope).ConfigureAwait(false);
+                if (owned.Last is { } partial) await journal.SavePartialAsync(owned.Reservation, partial, persistence.Token, scope).ConfigureAwait(false);
             }
             catch (Exception persistenceError) when (IsRecoverable(persistenceError))
             { error = new AggregateException("Builder stop and ownership persistence did not both confirm completion.", error, persistenceError); }
@@ -425,12 +454,13 @@ public sealed class BuilderProjectApplicationService(
         }
     }
 
-    private async Task<BuilderJobStopResult> CommitStopAsync(OwnedJob owned, BuilderJobStopResult result, TimeSpan? remaining = null)
+    private async Task<BuilderJobStopResult> CommitStopAsync(OwnedJob owned, BuilderJobStopResult result, TimeSpan? remaining = null,
+        BuilderJobScope? scope = null)
     {
         var budget = remaining ?? ReconciliationBudget;
         if (budget <= TimeSpan.Zero) throw new TimeoutException("Builder stop proof arrived without remaining reconciliation time to acknowledge its journal update. Retry reconciliation; do not replay Start.");
         using var persistence = new CancellationTokenSource(budget);
-        try { result = await journal.CompleteOwnedAsync(owned.Admission, result, persistence.Token).ConfigureAwait(false); }
+        try { result = await journal.CompleteOwnedAsync(owned.Admission, result, persistence.Token, scope).ConfigureAwait(false); }
         catch (OperationCanceledException error) when (persistence.IsCancellationRequested)
         { throw new TimeoutException("Builder stop proof could not acknowledge its journal update within the remaining reconciliation budget.", error); }
         return RememberStop(result);
@@ -483,6 +513,7 @@ public sealed class BuilderProjectApplicationService(
     private sealed class JobRun(BuilderJobRequest request)
     {
         public BuilderJobRequest Request { get; } = request;
+        public BuilderJobScope? Scope { get; set; }
         public BuilderJobAdmission? Admission { get; set; }
         public OwnedJob? Owned { get; set; }
         public bool AttemptedStart { get; set; }

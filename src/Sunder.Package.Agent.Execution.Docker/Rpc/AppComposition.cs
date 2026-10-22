@@ -8,6 +8,6 @@ namespace Sunder.Package.Agent.Execution.Docker;
 public sealed partial class DockerExecutionSettingsViewModel
 {
     [ActivatorUtilitiesConstructor]
-    internal DockerExecutionSettingsViewModel(IPresentationService client, IBackgroundProcessQueue background, IPackageContext context)
+    internal DockerExecutionSettingsViewModel(IPresentationService client, IBackgroundTaskQueue background, IPackageContext context)
         : this(client, background, context.Logging.LoggerFactory.CreateLogger<DockerExecutionSettingsViewModel>()) { }
 }

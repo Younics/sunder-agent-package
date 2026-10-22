@@ -11,6 +11,20 @@
                       PrivateAssets="all" />
   </ItemGroup>
 
+  <!-- Exact emitted-binding tests are tooling consumers. No authored package role
+       receives a compile/runtime reference to the build implementation. -->
+  <ItemGroup Condition="'$(IsTestProject)' == 'true' and '$(SunderBuildToolingReference)' == 'true' and '$(SunderUseSourceSdk)' == 'true'">
+    <ProjectReference Include="$(SunderBuildToolingProject)" PrivateAssets="all"
+                      GlobalPropertiesToRemove="Version;VersionPrefix;VersionSuffix;PackageVersion;InformationalVersion" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(IsTestProject)' == 'true' and '$(SunderBuildToolingReference)' == 'true' and '$(SunderUseSourceSdk)' == 'false'">
+    <PackageReference Include="Sunder.Package.Build" PrivateAssets="all" ExcludeAssets="all" GeneratePathProperty="true" />
+    <Reference Include="Sunder.Package.Build">
+      <HintPath>$(PkgSunder_Package_Build)/tasks/net10.0/Sunder.Package.Build.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
   <ItemGroup Condition="('$(SunderPackageProject)' == 'true' or '$(SunderSdkReference)' == 'true') and '$(SunderUseSourceSdk)' == 'true'">
     <ProjectReference Include="$(SunderSdkProject)"
                       GlobalPropertiesToRemove="Version;VersionPrefix;VersionSuffix;PackageVersion;InformationalVersion" />

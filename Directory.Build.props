@@ -27,6 +27,7 @@
         <SunderSdkAvaloniaProject>$(MSBuildThisFileDirectory)..\sunder-core\languages\csharp\dotnet\packages\Sunder.Sdk.Avalonia\Sunder.Sdk.Avalonia.csproj</SunderSdkAvaloniaProject>
         <SunderSdkStacksProject>$(MSBuildThisFileDirectory)..\sunder-core\languages\csharp\dotnet\packages\Sunder.Sdk.Stacks\Sunder.Sdk.Stacks.csproj</SunderSdkStacksProject>
         <SunderSdkWorkerProject>$(MSBuildThisFileDirectory)..\sunder-core\languages\csharp\dotnet\packages\Sunder.Sdk.Worker\Sunder.Sdk.Worker.csproj</SunderSdkWorkerProject>
+        <SunderBuildToolingProject>$(MSBuildThisFileDirectory)..\sunder-core\languages\csharp\dotnet\packages\Sunder.Package.Build\Sunder.Package.Build.csproj</SunderBuildToolingProject>
         <SunderAppProject>$(MSBuildThisFileDirectory)..\sunder-core\languages\csharp\dotnet\host\Sunder.App\Sunder.App.csproj</SunderAppProject>
         <SunderRuntimeClientProject>$(MSBuildThisFileDirectory)..\sunder-core\languages\csharp\dotnet\host\Sunder.Runtime.Client\Sunder.Runtime.Client.csproj</SunderRuntimeClientProject>
         <SunderRuntimeContractsProject>$(MSBuildThisFileDirectory)..\sunder-core\languages\csharp\dotnet\host\Sunder.Runtime.Contracts\Sunder.Runtime.Contracts.csproj</SunderRuntimeContractsProject>

@@ -101,12 +101,13 @@ public sealed class BuilderJobManager : IAsyncDisposable
             await driver.ExecuteAsync(job.Request, job, job.Cancel.Token).ConfigureAwait(false);
             job.Cancel.Token.ThrowIfCancellationRequested();
         }
-        catch (OperationCanceledException) when (job.Cancel.IsCancellationRequested)
+        catch (OperationCanceledException error) when (job.Cancel.IsCancellationRequested && error.CancellationToken == job.Cancel.Token)
         { state = "cancelled"; failure = job.CancelReason ?? "The operation was cancelled."; }
         catch (Exception error)
         {
-            state = job.Cancel.IsCancellationRequested ? "cancelled" : "failed";
-            failure = job.Cancel.IsCancellationRequested ? job.CancelReason ?? "The operation was cancelled." : error.Message;
+            state = "failed";
+            failure = error.Message;
+            job.Report("\n" + error + "\n");
         }
         finally
         {

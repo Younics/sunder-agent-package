@@ -55,36 +55,51 @@ public sealed class BuilderLocalProcessRunner : IBuilderLocalProcessRunner
         if (!process.Start()) throw new IOException($"Could not start {request.ExecutablePath}.");
         process.StandardInput.Close();
         using var cancellation = lifetime.Token.Register(() => Kill(process));
-        var output = PumpAsync(process.StandardOutput, request.MaximumCapturedCharacters, progress, lifetime.Token);
-        var error = PumpAsync(process.StandardError, request.MaximumCapturedCharacters, progress, lifetime.Token);
+        // Cancellation stops the producer, not observation of its exit/remaining pipes.
+        var output = PumpAsync(process.StandardOutput, request.MaximumCapturedCharacters, progress);
+        var error = PumpAsync(process.StandardError, request.MaximumCapturedCharacters, progress);
         try
         {
-            await Task.WhenAll(process.WaitForExitAsync(lifetime.Token), output, error).ConfigureAwait(false);
+            var exit = process.WaitForExitAsync(lifetime.Token);
+            var pipes = Task.WhenAll(output, error);
+            if (await Task.WhenAny(exit, pipes).ConfigureAwait(false) == pipes) await pipes.ConfigureAwait(false);
+            await exit.ConfigureAwait(false);
+            await pipes.ConfigureAwait(false);
             lifetime.Token.ThrowIfCancellationRequested();
             return new(process.ExitCode, await output.ConfigureAwait(false), await error.ConfigureAwait(false));
         }
-        catch
+        catch (Exception failure)
         {
-            var timedOut = lifetime.IsCancellationRequested && !cancellationToken.IsCancellationRequested;
+            var expectedCancellation = failure is OperationCanceledException cancelled
+                && cancelled.CancellationToken == lifetime.Token && lifetime.IsCancellationRequested;
+            var timedOut = expectedCancellation && !cancellationToken.IsCancellationRequested;
             Kill(process);
-            lifetime.Cancel();
-            try { await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false); }
-            catch (Exception ex) when (ex is TimeoutException or InvalidOperationException) { }
+            var drain = Task.WhenAll(process.WaitForExitAsync(), output, error);
+            try { await drain.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false); }
+            catch (TimeoutException) when (!drain.IsCompleted)
+            {
+                // Five seconds is the cleanup grace, not proof of termination. Keep the
+                // actual driver, project lock and SDK lease owned until it really drains.
+                try { progress?.Report("Process shutdown is unconfirmed; retaining project ownership while cleanup drains.\n"); }
+                catch { /* A notification cannot release an unproven producer. */ }
+                await drain.ConfigureAwait(false);
+            }
+            catch (Exception cleanupFailure) when (process.HasExited && ReferenceEquals(cleanupFailure, failure)) { }
             if (timedOut && request.Timeout is not null)
-                throw new TimeoutException($"{Path.GetFileName(request.ExecutablePath)} exceeded its {request.Timeout} time limit.");
-            cancellationToken.ThrowIfCancellationRequested();
+                throw new TimeoutException($"{Path.GetFileName(request.ExecutablePath)} exceeded its {request.Timeout} time limit.", failure);
+            if (expectedCancellation) cancellationToken.ThrowIfCancellationRequested();
             throw;
         }
     }
 
-    private static async Task<string> PumpAsync(StreamReader reader, int maximum, IProgress<string>? progress, CancellationToken token)
+    private static async Task<string> PumpAsync(StreamReader reader, int maximum, IProgress<string>? progress)
     {
         var text = new StringBuilder();
         var buffer = new char[4096];
         var truncated = false;
         while (true)
         {
-            var count = await reader.ReadAsync(buffer.AsMemory(), token).ConfigureAwait(false);
+            var count = await reader.ReadAsync(buffer.AsMemory()).ConfigureAwait(false);
             if (count == 0) break;
             text.Append(buffer, 0, count);
             if (text.Length > maximum) { text.Remove(0, text.Length - maximum); truncated = true; }

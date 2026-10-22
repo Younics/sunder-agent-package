@@ -10,7 +10,7 @@ using Sunder.Sdk.Rpc;
 namespace Sunder.Package.Agent.Builder;
 
 /// <summary>Mandatory, lazy App-workspace admission journal. Bookmarks carry no execution ownership.</summary>
-public sealed class BuilderJobJournal : IBuilderJobJournal
+public sealed partial class BuilderJobJournal : IBuilderJobJournal
 {
     internal const int MaximumPending = 256;
     internal const int MaximumDocumentBytes = 1024 * 1024;
@@ -34,16 +34,16 @@ public sealed class BuilderJobJournal : IBuilderJobJournal
     { _storage = storage; _updates = updates; }
 
     public async Task<string> AdmitAndStartAsync(BuilderJobAdmission admission, IBuilderBackend backend,
-        Func<CancellationToken, Task<IBuilderJobExecution>> capture, CancellationToken cancellationToken = default)
+        Func<CancellationToken, Task<IBuilderJobExecution>> capture, CancellationToken cancellationToken = default, BuilderJobScope? scope = null)
     {
         if (!admission.TryBind(this)) throw new InvalidOperationException("A Builder admission object cannot be replayed.");
-        try { return await AdmitAndStartCoreAsync(admission, backend, capture, cancellationToken).ConfigureAwait(false); }
+        try { return await AdmitAndStartCoreAsync(admission, backend, capture, cancellationToken, scope).ConfigureAwait(false); }
         catch (Exception error) { admission.Failure = error; throw; }
         finally { admission.BoundaryClosed = true; } // Actual accepted callback/gate has drained; no later Start continuation exists.
     }
 
     private async Task<string> AdmitAndStartCoreAsync(BuilderJobAdmission admission, IBuilderBackend backend,
-        Func<CancellationToken, Task<IBuilderJobExecution>> capture, CancellationToken cancellationToken)
+        Func<CancellationToken, Task<IBuilderJobExecution>> capture, CancellationToken cancellationToken, BuilderJobScope? scope)
     {
         string? accepted = null;
         Exception? startFailure = null;
@@ -54,7 +54,7 @@ public sealed class BuilderJobJournal : IBuilderJobJournal
         // Register without the caller token: accepted persistence may finish a
         // positive local no-Start record after caller cancellation. Invocation,
         // preparation and data work link their actual tokens explicitly below.
-        await _updates.RunAsync(UpdateKey, async context =>
+        await RunAcceptedAsync(async context =>
         {
             var began = Stopwatch.GetTimestamp();
             using var data = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken);
@@ -167,7 +167,7 @@ public sealed class BuilderJobJournal : IBuilderJobJournal
                 && (error.CancellationToken == token || error.CancellationToken == dataToken))
             { throw new TimeoutException("Builder preparation exceeded its shared 12-second gate/read/capture/persistence budget. No Start may be replayed.", error); }
             finally { preparationExpired = data.IsCancellationRequested; }
-        }).ConfigureAwait(false);
+        }, scope: scope).ConfigureAwait(false);
         if (startFailure is OperationCanceledException cancellation && cancellationToken.IsCancellationRequested
             && (cancellation.CancellationToken == invocationToken || cancellation.CancellationToken == preparationToken))
             throw new OperationCanceledException(cancellation.Message, cancellation, cancellationToken);
@@ -177,7 +177,7 @@ public sealed class BuilderJobJournal : IBuilderJobJournal
         return accepted ?? throw new InvalidDataException("Builder Start completed without an accepted identity.");
     }
 
-    public async Task<BuilderJobStopResult> ReconcileAsync(string jobId, IBuilderBackend backend, CancellationToken cancellationToken = default)
+    public async Task<BuilderJobStopResult> ReconcileAsync(string jobId, IBuilderBackend backend, CancellationToken cancellationToken = default, BuilderJobScope? scope = null)
     {
         BuilderJobStopResult? result = null;
         await AcceptedAsync(async token =>
@@ -191,11 +191,11 @@ public sealed class BuilderJobJournal : IBuilderJobJournal
             result = await ObserveHistoricalAsync(pending, backend, async recovered =>
             { document = await RecordRecoveryBindingHeldAsync(document, pending.Reservation, recovered, token).ConfigureAwait(false); }, token).ConfigureAwait(false);
             await CompleteHeldAsync(document, pending.Reservation, result, token).ConfigureAwait(false);
-        }, cancellationToken).ConfigureAwait(false);
+        }, cancellationToken, scope).ConfigureAwait(false);
         return result!;
     }
 
-    public async Task<BuilderJobStopResult> CompleteAsync(BuilderJobReservation reservation, BuilderJobStopResult result, CancellationToken cancellationToken = default)
+    public async Task<BuilderJobStopResult> CompleteAsync(BuilderJobReservation reservation, BuilderJobStopResult result, CancellationToken cancellationToken = default, BuilderJobScope? scope = null)
     {
         BuilderJobStopResult? acknowledged = null;
         await AcceptedAsync(async token =>
@@ -203,11 +203,11 @@ public sealed class BuilderJobJournal : IBuilderJobJournal
             await using var gate = await _storage.EnterAsync(token).ConfigureAwait(false);
             var document = await CompleteHeldAsync(await ReadAsync(token).ConfigureAwait(false), reservation, result, token).ConfigureAwait(false);
             acknowledged = document.Completed.Single(row => row.Reservation == reservation).Result();
-        }, cancellationToken).ConfigureAwait(false);
+        }, cancellationToken, scope).ConfigureAwait(false);
         return acknowledged!;
     }
 
-    public async Task<BuilderJobStopResult?> ReadCompletedAsync(BuilderJobReservation reservation, CancellationToken cancellationToken = default)
+    public async Task<BuilderJobStopResult?> ReadCompletedAsync(BuilderJobReservation reservation, CancellationToken cancellationToken = default, BuilderJobScope? scope = null)
     {
         BuilderJobStopResult? result = null;
         await AcceptedAsync(async token =>
@@ -218,12 +218,12 @@ public sealed class BuilderJobJournal : IBuilderJobJournal
             if (completed is null) return;
             if (completed.Reservation != reservation) throw new InvalidDataException("Builder retained completion belongs to another admission generation.");
             result = completed.Result();
-        }, cancellationToken).ConfigureAwait(false);
+        }, cancellationToken, scope).ConfigureAwait(false);
         return result;
     }
 
     public async Task<BuilderJobStopResult> CompleteOwnedAsync(BuilderJobAdmission admission, BuilderJobStopResult result,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, BuilderJobScope? scope = null)
     {
         if (!ReferenceEquals(admission.Owner, this) || !admission.BoundaryClosed || !admission.PendingWriteAttempted
             || !admission.StartAttempted || admission.HasPositiveNoStartProof || admission.Reservation is not { } reservation)
@@ -266,11 +266,11 @@ public sealed class BuilderJobJournal : IBuilderJobJournal
                                 ?? document.Completed.SingleOrDefault(row => row.Reservation == reservation)?.LastFailure)); } : null).ConfigureAwait(false);
             }
             acknowledged = document.Completed.Single(row => row.Reservation == reservation).Result();
-        }, cancellationToken).ConfigureAwait(false);
+        }, cancellationToken, scope).ConfigureAwait(false);
         return acknowledged!;
     }
 
-    public async Task<BuilderJobStopResult> AbortKnownNotStartedAsync(BuilderJobAdmission admission, CancellationToken cancellationToken = default)
+    public async Task<BuilderJobStopResult> AbortKnownNotStartedAsync(BuilderJobAdmission admission, CancellationToken cancellationToken = default, BuilderJobScope? scope = null)
     {
         // This ephemeral proof cannot be reconstructed from a pending JSON row by
         // a successor. The original awaited boundary must have ended without Start,
@@ -295,11 +295,11 @@ public sealed class BuilderJobJournal : IBuilderJobJournal
                 document = await WriteAsync(document, document with { Completed = document.Completed.Append(new BuilderJournalCompleted(
                     reservation, BuilderJobStopOutcome.NotStarted, null, null, stopped.LastFailure)).TakeLast(MaximumHistory).ToArray() }, token).ConfigureAwait(false);
             result = document.Completed.Single(row => row.Reservation == reservation).Result();
-        }, cancellationToken).ConfigureAwait(false);
+        }, cancellationToken, scope).ConfigureAwait(false);
         return result!;
     }
 
-    public Task SavePartialAsync(BuilderJobReservation reservation, BuilderJobSnapshot snapshot, CancellationToken cancellationToken = default)
+    public Task SavePartialAsync(BuilderJobReservation reservation, BuilderJobSnapshot snapshot, CancellationToken cancellationToken = default, BuilderJobScope? scope = null)
         => AcceptedAsync(async token =>
         {
             await using var gate = await _storage.EnterAsync(token).ConfigureAwait(false);
@@ -316,9 +316,9 @@ public sealed class BuilderJobJournal : IBuilderJobJournal
             if (JsonSerializer.Serialize(old.LastSnapshot, Json) == JsonSerializer.Serialize(bounded, Json)) return;
             var next = document with { Pending = document.Pending.Select(row => row == old ? row with { LastSnapshot = bounded } : row).ToArray() };
             await WriteAsync(document, next, token).ConfigureAwait(false);
-        }, cancellationToken);
+        }, cancellationToken, scope);
 
-    public Task SaveFailureAsync(BuilderJobReservation reservation, string failure, CancellationToken cancellationToken = default)
+    public Task SaveFailureAsync(BuilderJobReservation reservation, string failure, CancellationToken cancellationToken = default, BuilderJobScope? scope = null)
         => AcceptedAsync(async token =>
         {
             await using var gate = await _storage.EnterAsync(token).ConfigureAwait(false);
@@ -333,9 +333,9 @@ public sealed class BuilderJobJournal : IBuilderJobJournal
             if (old.LastFailure == bounded) return;
             await WriteAsync(document, document with
             { Pending = document.Pending.Select(row => row == old ? row with { LastFailure = bounded } : row).ToArray() }, token).ConfigureAwait(false);
-        }, cancellationToken);
+        }, cancellationToken, scope);
 
-    private async Task AcceptedAsync(Func<CancellationToken, Task> operation, CancellationToken token)
+    private async Task AcceptedAsync(Func<CancellationToken, Task> operation, CancellationToken token, BuilderJobScope? scope)
     {
         token.ThrowIfCancellationRequested();
         using var deadline = new CancellationTokenSource(Budget);
@@ -343,7 +343,7 @@ public sealed class BuilderJobJournal : IBuilderJobJournal
         // completion even when the caller/deadline cancels. Explicit linking is
         // required regardless of RunAsync's admission-token propagation semantics.
         // This is ONE deadline for gate/read/recovery/write/readback, not 12s each.
-        await _updates.RunAsync(UpdateKey, async context =>
+        await RunAcceptedAsync(async context =>
         {
             using var bounded = CancellationTokenSource.CreateLinkedTokenSource(token, context.CancellationToken, deadline.Token);
             try
@@ -358,7 +358,7 @@ public sealed class BuilderJobJournal : IBuilderJobJournal
             { throw new OperationCanceledException(error.Message, error, context.CancellationToken); }
             catch (OperationCanceledException error) when (deadline.IsCancellationRequested && error.CancellationToken == bounded.Token)
             { throw new TimeoutException("Builder journal operation exceeded its shared 12-second gate/read/recovery/persistence budget. Its actual callback was drained; no Start may be replayed.", error); }
-        }, token).ConfigureAwait(false);
+        }, token, scope).ConfigureAwait(false);
     }
 
     private static async Task<BuilderJobStopResult> ObserveHistoricalAsync(BuilderJournalPending row, IBuilderBackend backend,

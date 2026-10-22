@@ -7,6 +7,7 @@ using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Compatibility;
 using Sunder.Sdk.Rpc;
+using Sunder.Package.Build.Rpc.Generation;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;

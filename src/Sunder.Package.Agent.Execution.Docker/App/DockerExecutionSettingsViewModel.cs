@@ -28,7 +28,7 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
         [DockerExecutionPresentationDefaults.TimeoutKey, DockerExecutionPresentationDefaults.DockerCliPathKey];
 
     private readonly IPresentationService _presentationClient;
-    private readonly IBackgroundProcessQueue _backgroundProcessQueue;
+    private readonly IBackgroundTaskQueue _backgroundTaskQueue;
     private bool _suppressRevisionTracking;
     private bool _disposed;
     private long _busyGeneration;
@@ -42,19 +42,19 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
 
     internal DockerExecutionSettingsViewModel(
         IPresentationService presentationClient,
-        IBackgroundProcessQueue backgroundProcessQueue,
+        IBackgroundTaskQueue backgroundTaskQueue,
         ILogger? logger = null,
         IPresentationDispatcher? uiDispatcher = null)
     {
         _presentationClient = presentationClient;
-        _backgroundProcessQueue = backgroundProcessQueue;
+        _backgroundTaskQueue = backgroundTaskQueue;
         _logger = logger;
         _uiDispatcher = uiDispatcher ?? PresentationDispatcher.Capture();
         _tasks = new PresentationTaskScope(ReportBackgroundTaskFailureAsync, _uiDispatcher.ShutdownToken);
         _imageRefresh = new SerializedRefreshLoop(
             cancellationToken => ReloadImagesAsync(cancellationToken: cancellationToken),
             ReportImageRefreshFailure);
-        _backgroundProcessQueue.ProcessChanged += BackgroundProcessQueue_OnProcessChanged;
+        _backgroundTaskQueue.TaskChanged += BackgroundTaskQueue_OnTaskChanged;
         TimeoutSeconds = DockerExecutionPresentationDefaults.DefaultTimeoutSeconds;
         DockerCliPath = string.Empty;
     }
@@ -494,7 +494,7 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
 
     private HashSet<string> GetActivePullImageReferences()
     {
-        return _backgroundProcessQueue.ListProcesses(ImagePullGroupKey)
+        return _backgroundTaskQueue.ListTasks(ImagePullGroupKey)
             .Where(process => process.IsActive)
             .Select(GetImageReference)
             .Where(imageReference => !string.IsNullOrWhiteSpace(imageReference))
@@ -505,7 +505,7 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
     private bool IsImagePullActive(string imageReference)
         => GetActivePullImageReferences().Contains(imageReference);
 
-    private void BackgroundProcessQueue_OnProcessChanged(object? sender, BackgroundProcessChangedEventArgs e)
+    private void BackgroundTaskQueue_OnTaskChanged(object? sender, BackgroundTaskChangedEventArgs e)
     {
         if (_disposed || !IsDockerImagePull(e.Snapshot))
         {
@@ -554,10 +554,10 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
             }, token);
     }
 
-    private static bool IsDockerImagePull(BackgroundProcessSnapshot snapshot)
+    private static bool IsDockerImagePull(BackgroundTaskSnapshot snapshot)
         => string.Equals(snapshot.GroupKey, ImagePullGroupKey, StringComparison.OrdinalIgnoreCase);
 
-    private static string? GetImageReference(BackgroundProcessSnapshot snapshot)
+    private static string? GetImageReference(BackgroundTaskSnapshot snapshot)
         => snapshot.Metadata.TryGetValue(ImageReferenceMetadataKey, out var imageReference) ? imageReference : null;
 
     private void NotifySelectedImageCommands()
@@ -579,7 +579,7 @@ public sealed partial class DockerExecutionSettingsViewModel : ObservableObject,
         _disposed = true;
         _busyGeneration++;
         _lifetime.Cancel();
-        _backgroundProcessQueue.ProcessChanged -= BackgroundProcessQueue_OnProcessChanged;
+        _backgroundTaskQueue.TaskChanged -= BackgroundTaskQueue_OnTaskChanged;
         _imageRefresh.Dispose();
         _requests.Dispose();
         _tasks.Dispose();

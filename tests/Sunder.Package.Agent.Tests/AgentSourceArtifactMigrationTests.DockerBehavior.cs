@@ -73,7 +73,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 Assert.Equal(descriptor.Sha256, provider.DescriptorSha256); Assert.Equal(descriptor.AbiSha256, provider.AbiSha256);
                 state.Add("younics.ai.agent.execution.docker", descriptor, provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, "2.0.0");
             }
-            await using var appServices = CreateGeneratedApp(presentation, context, rpc, new CompositionBackgroundProcessQueue());
+            await using var appServices = CreateGeneratedApp(presentation, context, rpc, new CompositionBackgroundTaskQueue());
             var presentationContract = presentation.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Execution_Docker_Services.IPresentationService", true)!;
             var client = appServices.GetRequiredService(presentationContract);
             Assert.Null(presentation.GetType("Sunder.Package.Agent.Execution.Docker.App.DockerExecutionSourceClient"));

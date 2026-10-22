@@ -6,6 +6,8 @@ namespace Sunder.Package.Agent.Builder;
 
 public sealed record BuilderProjectDriverOptions(string CacheRootPath)
 {
+    /// <summary>Stable workspace exclusion, independent of retained feed and template caches.</summary>
+    public string ProjectMutationLockRootPath { get; init; } = Path.Combine(CacheRootPath, "project-locks");
     public string CoordinatedPackageVersion { get; init; } = SdkVersion();
     public string? DotnetTemplatePackagePath { get; init; }
     /// <summary>

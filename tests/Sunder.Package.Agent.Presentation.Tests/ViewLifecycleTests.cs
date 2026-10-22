@@ -1364,11 +1364,12 @@ public sealed class ViewLifecycleTests
         services.AddSingleton<ISunderRpcClient>(new ThrowingRpcClient());
         services.AddSingleton<IPackageShellViewService, NoOpPackageShellViewService>();
         services.AddSingleton<IPackageNotificationService>(NullPackageNotificationService.Instance);
-        services.AddSingleton<IBackgroundProcessQueue, NoOpBackgroundProcessQueue>();
+        services.AddSingleton<IBackgroundTaskQueue, NoOpBackgroundTaskQueue>();
         services.AddSingleton<IPackageSettingsNavigationService>(NullPackageSettingsNavigationService.Instance);
         services.AddSingleton<IPackageDevelopmentService>(new ColdBuilderServices());
         services.AddSingleton<IPackageLogNavigationService>(new ColdBuilderServices());
         services.AddSingleton<IPackageAppStateUpdates>(new ColdBuilderServices());
+        services.AddSingleton<IPackageWorkerExecutionObservations>(new ColdBuilderServices());
         new AgentApp::Sunder.Generated.Package.AppModule().ConfigureAppServices(services, scope.Context);
         new MemoryAppPackageModule().ConfigureAppServices(services, scope.Context);
         new SubagentsAppPackageModule().ConfigureAppServices(services, scope.Context);
@@ -1407,9 +1408,9 @@ public sealed class ViewLifecycleTests
         var services = new ServiceCollection();
         services.AddSingleton<IPackageContext>(scope.Context);
         services.AddSingleton<IPackageNotificationService>(NullPackageNotificationService.Instance);
-        services.AddSingleton<IBackgroundProcessQueue, NoOpBackgroundProcessQueue>();
+        services.AddSingleton<IBackgroundTaskQueue, NoOpBackgroundTaskQueue>();
         services.AddTransient(provider => (DockerExecutionSettingsViewModel)AgentRoleBoundary.Create(
-            typeof(DockerExecutionSettingsViewModel), runtime.Service, provider.GetRequiredService<IBackgroundProcessQueue>(), null, null));
+            typeof(DockerExecutionSettingsViewModel), runtime.Service, provider.GetRequiredService<IBackgroundTaskQueue>(), null, null));
         new DockerApp::Sunder.Generated.Package.AppModule()
             .ConfigureAppServices(services, scope.Context);
         await using var provider = services.BuildServiceProvider();
@@ -4397,7 +4398,7 @@ public sealed class ViewLifecycleTests
         services.AddSingleton<ISunderRpcClient>(provider => provider.GetRequiredService<RegressionTestExtensionCatalog>().RpcForCaller("younics.ai.agent"));
         services.AddSingleton<IPackageShellViewService, NoOpPackageShellViewService>();
         services.AddSingleton<IPackageNotificationService>(NullPackageNotificationService.Instance);
-        services.AddSingleton<IBackgroundProcessQueue, NoOpBackgroundProcessQueue>();
+        services.AddSingleton<IBackgroundTaskQueue, NoOpBackgroundTaskQueue>();
         new AgentApp::Sunder.Generated.Package.AppModule().ConfigureAppServices(services, scope.Context);
         return services;
     }
@@ -6157,11 +6158,11 @@ public sealed class ViewLifecycleTests
     private static BuilderViewModel CreateColdBuilderViewModel(IBuilderProjectStore store, BuilderProjectInspection? project = null)
     {
         var services = new ColdBuilderServices { Project = project };
-        return new(new(services, store, new(new NoOpBackgroundProcessQueue()), services), new(store, services), new(),
+        return new(new(services, store, new(new NoOpBackgroundTaskQueue()), services), new(store, services), new(),
             new AvaloniaBuilderUiDispatcher(), services, services, NullPackageSettingsNavigationService.Instance);
     }
 
-    private sealed class ColdBuilderServices : IBuilderBackend, IBuilderJobJournal, IPackageDevelopmentService, IPackageLogNavigationService, IPackageAppStateUpdates
+    private sealed class ColdBuilderServices : IBuilderBackend, IBuilderJobJournal, IPackageDevelopmentService, IPackageLogNavigationService, IPackageAppStateUpdates, IPackageWorkerExecutionObservations
     {
         internal BuilderProjectInspection? Project { get; init; }
         public Task<string> GetBackendIdAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
@@ -6177,18 +6178,24 @@ public sealed class ViewLifecycleTests
             CancellationToken cancellationToken = default) => throw new NotSupportedException();
         // These views must remain job/journal-cold. An accidental admission call
         // fails the existing fixture rather than receiving a production bypass.
+        public Task<BuilderJobSnapshot> RunOwnedAsync(Func<BuilderJobScope, Task<BuilderJobSnapshot>> run,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<string> AdmitAndStartAsync(BuilderJobAdmission admission, IBuilderBackend backend,
-            Func<CancellationToken, Task<IBuilderJobExecution>> capture, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<BuilderJobStopResult> ReconcileAsync(string jobId, IBuilderBackend backend, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<BuilderJobStopResult?> ReadCompletedAsync(BuilderJobReservation reservation, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<BuilderJobStopResult> AbortKnownNotStartedAsync(BuilderJobAdmission admission, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<BuilderJobStopResult> CompleteAsync(BuilderJobReservation reservation, BuilderJobStopResult result, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<BuilderJobStopResult> CompleteOwnedAsync(BuilderJobAdmission admission, BuilderJobStopResult result, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task SavePartialAsync(BuilderJobReservation reservation, BuilderJobSnapshot snapshot, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task SaveFailureAsync(BuilderJobReservation reservation, string failure, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+            Func<CancellationToken, Task<IBuilderJobExecution>> capture, CancellationToken cancellationToken = default, BuilderJobScope? scope = null) => throw new NotSupportedException();
+        public Task<BuilderJobStopResult> ReconcileAsync(string jobId, IBuilderBackend backend, CancellationToken cancellationToken = default, BuilderJobScope? scope = null) => throw new NotSupportedException();
+        public Task<BuilderJobStopResult?> ReadCompletedAsync(BuilderJobReservation reservation, CancellationToken cancellationToken = default, BuilderJobScope? scope = null) => throw new NotSupportedException();
+        public Task<BuilderJobStopResult> AbortKnownNotStartedAsync(BuilderJobAdmission admission, CancellationToken cancellationToken = default, BuilderJobScope? scope = null) => throw new NotSupportedException();
+        public Task<BuilderJobStopResult> CompleteAsync(BuilderJobReservation reservation, BuilderJobStopResult result, CancellationToken cancellationToken = default, BuilderJobScope? scope = null) => throw new NotSupportedException();
+        public Task<BuilderJobStopResult> CompleteOwnedAsync(BuilderJobAdmission admission, BuilderJobStopResult result, CancellationToken cancellationToken = default, BuilderJobScope? scope = null) => throw new NotSupportedException();
+        public Task SavePartialAsync(BuilderJobReservation reservation, BuilderJobSnapshot snapshot, CancellationToken cancellationToken = default, BuilderJobScope? scope = null) => throw new NotSupportedException();
+        public Task SaveFailureAsync(BuilderJobReservation reservation, string failure, CancellationToken cancellationToken = default, BuilderJobScope? scope = null) => throw new NotSupportedException();
         public Task<IPackageDevelopmentSession> LoadAsync(string developmentFolder, bool watch, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task OpenPackageLogsAsync(string packageId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task RunAsync(string key, Func<PackageAppStateUpdateContext, Task> update, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<PackageWorkerExecutionReference> CaptureAsync<TService>(Sunder.Sdk.Services.ServiceProvider<TService> provider,
+            CancellationToken cancellationToken = default) where TService : class => throw new NotSupportedException("View construction must remain execution-observation cold.");
+        public Task<PackageWorkerExecutionObservation> ObserveAsync(PackageWorkerExecutionReference reference,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException("View construction must remain execution-observation cold.");
     }
 
     private sealed class BlockingBuilderProjectStore : IBuilderProjectStore
@@ -6374,22 +6381,22 @@ public sealed class ViewLifecycleTests
         }
     }
 
-    private sealed class NoOpBackgroundProcessQueue : IBackgroundProcessQueue
+    private sealed class NoOpBackgroundTaskQueue : IBackgroundTaskQueue
     {
-        public event EventHandler<BackgroundProcessChangedEventArgs>? ProcessChanged
+        public event EventHandler<BackgroundTaskChangedEventArgs>? TaskChanged
         {
             add { }
             remove { }
         }
 
-        public BackgroundProcessSnapshot Enqueue(BackgroundProcessRequest request)
+        public BackgroundTaskSnapshot Enqueue(BackgroundTaskRequest request)
             => new(
                 Guid.NewGuid(),
                 request.Title,
                 request.GroupKey,
                 request.Indicator,
                 request.ConcurrencyMode,
-                BackgroundProcessState.Queued,
+                BackgroundTaskState.Queued,
                 string.Empty,
                 ProgressPercent: null,
                 request.CanCancel,
@@ -6399,7 +6406,7 @@ public sealed class ViewLifecycleTests
                 StartedAtUtc: null,
                 CompletedAtUtc: null);
 
-        public IReadOnlyList<BackgroundProcessSnapshot> ListProcesses(string? groupKey = null) => [];
+        public IReadOnlyList<BackgroundTaskSnapshot> ListTasks(string? groupKey = null) => [];
 
         public bool Cancel(Guid processId) => false;
     }

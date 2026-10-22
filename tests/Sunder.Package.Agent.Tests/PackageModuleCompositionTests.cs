@@ -85,13 +85,14 @@ public sealed class PackageModuleCompositionTests
         services.AddSingleton<IPackageContext>(packageScope.Context);
         services.AddSingleton<Sunder.Sdk.Rpc.ISunderRpcClient>(
             new RegressionTestRpcClient(rpcState, packageName));
-        services.AddSingleton<IBackgroundProcessQueue, CompositionBackgroundProcessQueue>();
+        services.AddSingleton<IBackgroundTaskQueue, CompositionBackgroundTaskQueue>();
         services.AddSingleton<IPackageNotificationService>(NullPackageNotificationService.Instance);
         services.AddSingleton<IPackageSettingsNavigationService>(NullPackageSettingsNavigationService.Instance);
         services.AddSingleton<IPackageShellViewService>(new CapturingHistoryShellViewService());
         services.AddSingleton<IPackageDevelopmentService>(new CompositionDevelopmentHost());
         services.AddSingleton<IPackageLogNavigationService>(new CompositionDevelopmentHost());
         services.AddSingleton<IPackageAppStateUpdates, BuilderUiStateUpdates>();
+        services.AddSingleton<IPackageWorkerExecutionObservations, CompositionWorkerExecutionObservations>();
 
         var appModule = CreateAppPackageModule(packageName);
         appModule.ConfigureAppServices(services, packageScope.Context);
@@ -160,5 +161,16 @@ public sealed class PackageModuleCompositionTests
 
     private static string SettingsView(string implementationType)
         => $"settings-view:{implementationType}";
+
+    private sealed class CompositionWorkerExecutionObservations : IPackageWorkerExecutionObservations
+    {
+        public Task<PackageWorkerExecutionReference> CaptureAsync<TService>(
+            Sunder.Sdk.Services.ServiceProvider<TService> provider, CancellationToken cancellationToken = default) where TService : class
+            => throw new InvalidOperationException("Composition must not capture a worker execution.");
+
+        public Task<PackageWorkerExecutionObservation> ObserveAsync(PackageWorkerExecutionReference reference,
+            CancellationToken cancellationToken = default)
+            => throw new InvalidOperationException("Composition must not observe worker cleanup.");
+    }
 
 }

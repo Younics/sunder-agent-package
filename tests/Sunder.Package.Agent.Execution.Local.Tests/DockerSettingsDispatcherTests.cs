@@ -18,7 +18,7 @@ public sealed class DockerSettingsDispatcherTests
     {
         using var dispatcher = new DockerTestPresentationDispatcher();
         var runtime = new ControlledDockerRuntimeClient();
-        var processes = new RaisingBackgroundProcessQueue();
+        var processes = new RaisingBackgroundTaskQueue();
         using var viewModel = new DockerExecutionSettingsViewModel(
             runtime,
             processes,
@@ -46,7 +46,7 @@ public sealed class DockerSettingsDispatcherTests
     {
         using var dispatcher = new DockerTestPresentationDispatcher();
         var runtime = new ControlledDockerRuntimeClient();
-        var processes = new RaisingBackgroundProcessQueue();
+        var processes = new RaisingBackgroundTaskQueue();
         using var viewModel = new DockerExecutionSettingsViewModel(
             runtime,
             processes,
@@ -73,7 +73,7 @@ public sealed class DockerSettingsDispatcherTests
     {
         using var dispatcher = new DockerTestPresentationDispatcher();
         var runtime = new ControlledDockerRuntimeClient();
-        var processes = new RaisingBackgroundProcessQueue();
+        var processes = new RaisingBackgroundTaskQueue();
         using var viewModel = new DockerExecutionSettingsViewModel(
             runtime,
             processes,
@@ -81,7 +81,7 @@ public sealed class DockerSettingsDispatcherTests
             uiDispatcher: dispatcher);
         await InitializeAsync(viewModel, runtime);
         var published = ObservePropertyThread(viewModel, nameof(DockerExecutionSettingsViewModel.StatusText));
-        processes.FailNextListProcesses();
+        processes.FailNextListTasks();
 
         var workerThread = await processes.RaiseDockerPullChangedFromWorkerAsync();
         await runtime.Requests[1].Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
@@ -101,7 +101,7 @@ public sealed class DockerSettingsDispatcherTests
     {
         using var dispatcher = new DockerTestPresentationDispatcher();
         var runtime = new ControlledDockerRuntimeClient();
-        var processes = new RaisingBackgroundProcessQueue();
+        var processes = new RaisingBackgroundTaskQueue();
         using var viewModel = new DockerExecutionSettingsViewModel(
             runtime,
             processes,
@@ -242,16 +242,16 @@ public sealed class DockerSettingsDispatcherTests
             new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
-    private sealed class RaisingBackgroundProcessQueue : IBackgroundProcessQueue
+    private sealed class RaisingBackgroundTaskQueue : IBackgroundTaskQueue
     {
         private int _failNextList;
 
-        public event EventHandler<BackgroundProcessChangedEventArgs>? ProcessChanged;
+        public event EventHandler<BackgroundTaskChangedEventArgs>? TaskChanged;
 
-        public BackgroundProcessSnapshot Enqueue(BackgroundProcessRequest request)
+        public BackgroundTaskSnapshot Enqueue(BackgroundTaskRequest request)
             => throw new NotSupportedException();
 
-        public IReadOnlyList<BackgroundProcessSnapshot> ListProcesses(string? groupKey = null)
+        public IReadOnlyList<BackgroundTaskSnapshot> ListTasks(string? groupKey = null)
         {
             if (Interlocked.Exchange(ref _failNextList, 0) != 0)
             {
@@ -263,20 +263,20 @@ public sealed class DockerSettingsDispatcherTests
 
         public bool Cancel(Guid processId) => false;
 
-        public void FailNextListProcesses() => Interlocked.Exchange(ref _failNextList, 1);
+        public void FailNextListTasks() => Interlocked.Exchange(ref _failNextList, 1);
 
         public Task<int> RaiseDockerPullChangedFromWorkerAsync()
             => Task.Run(() =>
             {
                 var threadId = Environment.CurrentManagedThreadId;
                 var now = DateTimeOffset.UtcNow;
-                var snapshot = new BackgroundProcessSnapshot(
+                var snapshot = new BackgroundTaskSnapshot(
                     Guid.NewGuid(),
                     "Docker pull",
                     DockerExecutionSettingsViewModel.ImagePullGroupKey,
-                    BackgroundProcessIndicator.Settings,
-                    BackgroundProcessConcurrencyMode.SequentialWithinGroup,
-                    BackgroundProcessState.Completed,
+                    BackgroundTaskIndicator.Settings,
+                    BackgroundTaskConcurrencyMode.SequentialWithinGroup,
+                    BackgroundTaskState.Completed,
                     "Completed",
                     100,
                     false,
@@ -288,7 +288,7 @@ public sealed class DockerSettingsDispatcherTests
                     now,
                     now,
                     now);
-                ProcessChanged?.Invoke(this, new BackgroundProcessChangedEventArgs(snapshot));
+                TaskChanged?.Invoke(this, new BackgroundTaskChangedEventArgs(snapshot));
                 return threadId;
             });
     }

@@ -13,6 +13,87 @@ namespace Sunder.Package.Agent.Tests;
 public sealed partial class BuilderServiceTests
 {
     [Fact]
+    public async Task AcceptedJobRevocationCannotPersistStopOrReleaseItsDurablePendingOwnership()
+    {
+        using var revocation = new CancellationTokenSource();
+        var updates = new JournalStateUpdates(revocation.Token);
+        var storage = new BuilderMemoryJournalStorage();
+        var journal = new BuilderJobJournal(storage, updates);
+        var backend = new BuilderUiBackend();
+        var observing = BuilderUiFixture.Signal();
+        backend.BeforeGet = async (_, token) =>
+        {
+            if (!token.CanBeCanceled) throw new InvalidOperationException("Job observation must be cancellable.");
+            observing.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+        };
+        var application = new BuilderProjectApplicationService(backend, new BuilderUiStore(), new(new BuilderUiBackgroundQueue()), journal);
+        var request = JournalRequest("revoked-live-job", Path.GetTempPath()) with { Operation = "watch" };
+        var run = application.RunJobAsync(request);
+        await observing.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Equal("running", backend.Jobs[request.Id!].State);
+        var writes = storage.Writes;
+        backend.BeforeGet = null; // Subsequent independent cleanup may read a real exact terminal result.
+        await revocation.CancelAsync();
+        Assert.NotNull(await Xunit.Record.ExceptionAsync(() => run.WaitAsync(TimeSpan.FromSeconds(3))));
+        Assert.Equal(writes, storage.Writes);
+        Assert.Equal(request.Id, Assert.Single(ReadJournal(storage).GetProperty("pending").EnumerateArray())
+            .GetProperty("reservation").GetProperty("jobId").GetString());
+        Assert.Empty(ReadJournal(storage).GetProperty("completed").EnumerateArray());
+        Assert.False(application.IsJobStopConfirmed(request.Id));
+        Assert.NotNull(await Xunit.Record.ExceptionAsync(() => application.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(3))));
+        Assert.Equal(writes, storage.Writes);
+    }
+
+    [Fact]
+    public async Task EscapedAcceptedJobContinuationCannotReenterJournalAfterOriginalCallbackCompletes()
+    {
+        var storage = new BuilderMemoryJournalStorage();
+        var updates = new BuilderUiStateUpdates();
+        var journal = new BuilderJobJournal(storage, updates);
+        var admission = new BuilderJobAdmission(JournalRequest("escaped-job", Path.GetTempPath()));
+        var release = BuilderUiFixture.Signal();
+        var releaseSuccessor = BuilderUiFixture.Signal();
+        Task<BuilderJobStopResult?>? escaped = null;
+        Task<BuilderJobSnapshot>? successor = null;
+        var terminal = await journal.RunOwnedAsync(async scope =>
+        {
+            await journal.AdmitAndStartAsync(admission, new JournalBackend(), _ => Task.FromResult<IBuilderJobExecution>(new JournalExecution()), scope: scope);
+            var snapshot = new BuilderJobSnapshot { Id = admission.Request.Id!, BackendId = admission.Request.BackendId,
+                Operation = admission.Request.Operation, State = "succeeded", Message = "done", Output = string.Empty };
+            await journal.CompleteOwnedAsync(admission, BuilderJobStopResult.KnownTerminal(snapshot), scope: scope);
+            escaped = Task.Run(async () =>
+            {
+                await release.Task;
+                return await journal.ReadCompletedAsync(admission.Reservation!, scope: scope);
+            });
+            successor = Task.Run(async () =>
+            {
+                await releaseSuccessor.Task;
+                return await journal.RunOwnedAsync(async next =>
+                {
+                    Assert.NotSame(scope, next);
+                    Assert.NotNull(await journal.ReadCompletedAsync(admission.Reservation!, scope: next));
+                    return snapshot;
+                });
+            });
+            return snapshot;
+        });
+        Assert.Equal("succeeded", terminal.State);
+        var reads = storage.Entries;
+        var writes = storage.Writes;
+        var accepted = updates.Accepted.Count;
+        release.SetResult();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => escaped!.WaitAsync(TimeSpan.FromSeconds(3)));
+        Assert.Equal(reads, storage.Entries);
+        Assert.Equal(writes, storage.Writes);
+        Assert.Equal(accepted, updates.Accepted.Count);
+        releaseSuccessor.SetResult();
+        Assert.Equal("succeeded", (await successor!.WaitAsync(TimeSpan.FromSeconds(3))).State);
+        Assert.Equal(accepted + 1, updates.Accepted.Count);
+    }
+
+    [Fact]
     public async Task RecreatedFileJournalRejectsMissingInitializedDocumentBeforeCaptureAndPreservesGateAndTemporaryEvidence()
     {
         var root = Path.Combine(Path.GetTempPath(), "builder-journal-missing", Guid.NewGuid().ToString("N"));

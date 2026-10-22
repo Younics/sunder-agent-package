@@ -166,10 +166,13 @@ public sealed partial class AgentWorkspacesViewModel
                 ReloadTargets(targets, preferredTargetId, restoreSelection: true);
             }).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (
+        catch (OperationCanceledException exception) when (
             request.Ticket.CancellationToken.IsCancellationRequested
-            && !cancellationToken.IsCancellationRequested)
+            && exception.CancellationToken == request.Ticket.CancellationToken)
         {
+            // This exact request token is linked to the owner and is also
+            // cancelled on supersession. Neither path may escape as a foreign
+            // cancellation; unrelated/tokenless cancellations still propagate.
         }
         finally
         {

@@ -44,7 +44,7 @@ public sealed class ExecutionPackageRoleBoundaryTests
         using var scope = RegressionTestPackageScope.Create();
         var services = new ServiceCollection();
         services.AddSingleton(scope.Context);
-        services.AddSingleton<IBackgroundProcessQueue, NoopBackgroundProcessQueue>();
+        services.AddSingleton<IBackgroundTaskQueue, NoopBackgroundTaskQueue>();
 
         if (local)
         {
@@ -433,7 +433,7 @@ public sealed class ExecutionPackageRoleBoundaryTests
         services.AddSingleton(scope.Context);
         var runtimeClient = new FailingDockerRuntimeClient();
         services.AddSingleton<DockerPresentationService>(runtimeClient.Service);
-        services.AddSingleton<IBackgroundProcessQueue, NoopBackgroundProcessQueue>();
+        services.AddSingleton<IBackgroundTaskQueue, NoopBackgroundTaskQueue>();
         var module = new DockerApp::Sunder.Generated.Package.AppModule();
         module.ConfigureAppServices(services, scope.Context);
         using var provider = services.BuildServiceProvider();
@@ -455,7 +455,7 @@ public sealed class ExecutionPackageRoleBoundaryTests
     public async Task DockerSettingsPresentation_QueuesTypedRuntimePull()
     {
         var runtimeClient = new RecordingDockerRuntimeClient();
-        var queue = new RecordingBackgroundProcessQueue();
+        var queue = new RecordingBackgroundTaskQueue();
         using var viewModel = (DockerExecutionSettingsViewModel)AgentRoleBoundary.Create(
             typeof(DockerExecutionSettingsViewModel), runtimeClient.Service, queue, null, null);
         await viewModel.InitializeAsync();
@@ -465,8 +465,8 @@ public sealed class ExecutionPackageRoleBoundaryTests
 
         var request = Assert.Single(queue.Requests);
         Assert.Equal(DockerExecutionSettingsViewModel.ImagePullGroupKey, request.GroupKey);
-        Assert.Equal(BackgroundProcessIndicator.Settings, request.Indicator);
-        Assert.Equal(BackgroundProcessConcurrencyMode.SequentialWithinGroup, request.ConcurrencyMode);
+        Assert.Equal(BackgroundTaskIndicator.Settings, request.Indicator);
+        Assert.Equal(BackgroundTaskConcurrencyMode.SequentialWithinGroup, request.ConcurrencyMode);
         Assert.Equal("agent0ai/agent-zero:1.0", request.Metadata?[DockerExecutionSettingsViewModel.ImageReferenceMetadataKey]);
         Assert.Equal(DockerUi.DockerImageStatus.Pulling, viewModel.SelectedImage?.Status);
         Assert.False(viewModel.PullSelectedImageCommand.CanExecute(null));
@@ -480,11 +480,11 @@ public sealed class ExecutionPackageRoleBoundaryTests
         public void RegisterSettingsView<TView>() where TView : Control => SettingsViews.Add(typeof(TView));
     }
 
-    private sealed class NoopBackgroundProcessQueue : IBackgroundProcessQueue
+    private sealed class NoopBackgroundTaskQueue : IBackgroundTaskQueue
     {
-        public event EventHandler<BackgroundProcessChangedEventArgs>? ProcessChanged { add { } remove { } }
-        public BackgroundProcessSnapshot Enqueue(BackgroundProcessRequest request) => throw new NotSupportedException();
-        public IReadOnlyList<BackgroundProcessSnapshot> ListProcesses(string? groupKey = null) => [];
+        public event EventHandler<BackgroundTaskChangedEventArgs>? TaskChanged { add { } remove { } }
+        public BackgroundTaskSnapshot Enqueue(BackgroundTaskRequest request) => throw new NotSupportedException();
+        public IReadOnlyList<BackgroundTaskSnapshot> ListTasks(string? groupKey = null) => [];
         public bool Cancel(Guid processId) => false;
     }
 
@@ -669,25 +669,25 @@ public sealed class ExecutionPackageRoleBoundaryTests
             Converters = { new JsonStringEnumConverter(JsonNamingPolicy.KebabCaseLower) },
         }) ?? throw new InvalidDataException("Docker presentation response was empty.");
 
-    private sealed class RecordingBackgroundProcessQueue : IBackgroundProcessQueue
+    private sealed class RecordingBackgroundTaskQueue : IBackgroundTaskQueue
     {
-        private readonly List<BackgroundProcessSnapshot> _snapshots = [];
+        private readonly List<BackgroundTaskSnapshot> _snapshots = [];
 
-        public List<BackgroundProcessRequest> Requests { get; } = [];
-        public event EventHandler<BackgroundProcessChangedEventArgs>? ProcessChanged { add { } remove { } }
+        public List<BackgroundTaskRequest> Requests { get; } = [];
+        public event EventHandler<BackgroundTaskChangedEventArgs>? TaskChanged { add { } remove { } }
 
-        public BackgroundProcessSnapshot Enqueue(BackgroundProcessRequest request)
+        public BackgroundTaskSnapshot Enqueue(BackgroundTaskRequest request)
         {
             Requests.Add(request);
-            var snapshot = new BackgroundProcessSnapshot(
+            var snapshot = new BackgroundTaskSnapshot(
                 Guid.NewGuid(), request.Title, request.GroupKey, request.Indicator, request.ConcurrencyMode,
-                BackgroundProcessState.Queued, string.Empty, null, request.CanCancel,
+                BackgroundTaskState.Queued, string.Empty, null, request.CanCancel,
                 request.Metadata ?? new Dictionary<string, string>(), null, DateTimeOffset.UtcNow, null, null);
             _snapshots.Add(snapshot);
             return snapshot;
         }
 
-        public IReadOnlyList<BackgroundProcessSnapshot> ListProcesses(string? groupKey = null)
+        public IReadOnlyList<BackgroundTaskSnapshot> ListTasks(string? groupKey = null)
             => _snapshots.Where(snapshot => groupKey is null || string.Equals(snapshot.GroupKey, groupKey, StringComparison.Ordinal)).ToArray();
 
         public bool Cancel(Guid processId) => false;

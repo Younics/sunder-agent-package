@@ -33,7 +33,7 @@ public sealed class BuilderBackendGateway(
         if (!Guid.TryParseExact(backendId, "N", out _)) throw new InvalidDataException("Builder returned an invalid backend identity.");
         var reference = await observations.CaptureAsync(captured, cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
-        return new CapturedExecution(captured, backendId, reference, observations);
+        return new CapturedExecution(captured, backendId, reference, observations, this);
     }
 
     public Task<PackageWorkerExecutionObservation> ObserveExecutionAsync(PackageWorkerExecutionReference reference, CancellationToken cancellationToken = default)
@@ -108,12 +108,35 @@ public sealed class BuilderBackendGateway(
         return matches[0];
     }
 
+    private async Task<ServiceProvider<IBuilderRuntimeService>> RebindOriginalExecutionAsync(
+        BuilderJobProviderIdentity original, string backendId, PackageWorkerExecutionReference reference, CancellationToken token)
+    {
+        var fresh = await ResolveAsync(token).ConfigureAwait(false);
+        if (!original.HasSameExecutionCandidate(Identity(fresh))) throw ExecutionChanged();
+        var currentBackend = await fresh.Service.GetBackendIdAsync(token).ConfigureAwait(false);
+        token.ThrowIfCancellationRequested();
+        if (currentBackend != backendId) throw ExecutionChanged();
+        var currentReference = await (observations ?? throw new NotSupportedException("Host execution observations are unavailable."))
+            .CaptureAsync(fresh, token).ConfigureAwait(false);
+        token.ThrowIfCancellationRequested();
+        if (currentReference != reference) throw ExecutionChanged();
+        return fresh;
+    }
+
+    private static SunderRpcException ExecutionChanged()
+        => new(new(SunderRpcErrorKind.StaleEndpoint, "agent.builder.execution-changed",
+            "The current Builder binding does not prove access to the original job execution."));
+
     private sealed class CapturedExecution(
         ServiceProvider<IBuilderRuntimeService> captured,
         string backendId,
         PackageWorkerExecutionReference reference,
-        IPackageWorkerExecutionObservations observations) : IBuilderJobExecution
+        IPackageWorkerExecutionObservations observations,
+        BuilderBackendGateway gateway) : IBuilderJobExecution
     {
+        private readonly ServiceProvider<IBuilderRuntimeService> _start = captured;
+        private ServiceProvider<IBuilderRuntimeService> _current = captured;
+        private readonly SemaphoreSlim _rebind = new(1, 1);
         private BuilderJobRequest? _attempted;
         private Exception? _localNoDispatch;
         private Exception? _trustedStartRejection;
@@ -133,7 +156,7 @@ public sealed class BuilderBackendGateway(
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 json = BuilderContent.Serialize(request);
-                service = captured.Service;
+                service = _start.Service;
                 cancellationToken.ThrowIfCancellationRequested();
             }
             catch (Exception error) { _localNoDispatch = error; throw; }
@@ -150,14 +173,62 @@ public sealed class BuilderBackendGateway(
         public async Task<BuilderJobSnapshot> GetJobAsync(string jobId, CancellationToken cancellationToken = default)
         {
             RequireJob(jobId);
-            return await BuilderContent.ReadAsync<BuilderJobSnapshot>(
-                captured.Service.GetJobAsync(jobId, BackendId, cancellationToken), cancellationToken).ConfigureAwait(false);
+            return await ReadOrStopAsync(service => BuilderContent.ReadAsync<BuilderJobSnapshot>(
+                service.GetJobAsync(jobId, BackendId, cancellationToken), cancellationToken).AsTask(), cancellationToken).ConfigureAwait(false);
         }
 
         public async Task CancelJobAsync(string jobId, CancellationToken cancellationToken = default)
         {
             RequireJob(jobId);
-            await captured.Service.CancelJobAsync(jobId, BackendId, cancellationToken).ConfigureAwait(false);
+            await ReadOrStopAsync(async service =>
+            {
+                await service.CancelJobAsync(jobId, BackendId, cancellationToken).ConfigureAwait(false);
+                return true;
+            }, cancellationToken).ConfigureAwait(false);
+        }
+
+        private async Task<T> ReadOrStopAsync<T>(Func<IBuilderRuntimeService, Task<T>> operation, CancellationToken token)
+        {
+            token.ThrowIfCancellationRequested();
+            var binding = Volatile.Read(ref _current);
+            try { return await operation(binding.Service).ConfigureAwait(false); }
+            catch (SunderRpcException error) when (!token.IsCancellationRequested && CanRefreshReadStop(binding, error))
+            {
+                await _rebind.WaitAsync(token).ConfigureAwait(false);
+                try
+                {
+                    if (ReferenceEquals(binding, _current))
+                    {
+                        // A new receiver capability, never a revived reference or
+                        // successor Worker. All original fences must match before
+                        // a read or idempotent stop can reach the fresh binding.
+                        var fresh = await gateway.RebindOriginalExecutionAsync(ProviderIdentity, BackendId, Reference, token).ConfigureAwait(false);
+                        token.ThrowIfCancellationRequested();
+                        Volatile.Write(ref _current, fresh);
+                    }
+                    binding = _current;
+                }
+                finally { _rebind.Release(); }
+                token.ThrowIfCancellationRequested();
+                // One attempt only. Existing application/reconciliation budgets
+                // own further reads. Start never enters this path.
+                return await operation(binding.Service).ConfigureAwait(false);
+            }
+        }
+
+        private static bool CanRefreshReadStop(ServiceProvider<IBuilderRuntimeService> binding, SunderRpcException error)
+        {
+            if (error.Error is { Kind: SunderRpcErrorKind.Unavailable, Code: "rpc.app-session.retired" }
+                or { Kind: SunderRpcErrorKind.StaleEndpoint, Code: "rpc.caller-retired" or "rpc.stale-endpoint" or "rpc.endpoint.stale" })
+                return true;
+            // A finite busy/unavailable request does not retire a live binding.
+            // Catalog discontinuity may do so permanently: only a fresh, fully
+            // proved original-execution capability can then continue read/stop.
+            // Caller/domain/security cancellation and an ended receiver are never
+            // normalized into reconnect, even when the old token is cancelled.
+            return error.Error.Kind is SunderRpcErrorKind.Unavailable or SunderRpcErrorKind.ResourceExhausted or SunderRpcErrorKind.StaleEndpoint
+                && error.Error.Code is not ("rpc.worker-execution.unsupported" or "rpc.binding.lifetime-disposed")
+                && binding.RetirementToken.IsCancellationRequested;
         }
 
         public Task<PackageWorkerExecutionObservation> ObserveCleanupAsync(CancellationToken cancellationToken = default)

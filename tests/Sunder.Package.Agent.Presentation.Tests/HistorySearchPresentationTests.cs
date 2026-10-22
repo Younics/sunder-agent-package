@@ -206,7 +206,7 @@ public sealed class HistorySearchPresentationTests
         services.AddSingleton(new AgentAppRuntimeGateway(runtime));
         services.AddSingleton<IPackageShellViewService, PresentationShellViewService>();
         services.AddSingleton<IPackageNotificationService>(NullPackageNotificationService.Instance);
-        services.AddSingleton<IBackgroundProcessQueue, PresentationBackgroundProcessQueue>();
+        services.AddSingleton<IBackgroundTaskQueue, PresentationBackgroundTaskQueue>();
         new AgentApp::Sunder.Generated.Package.AppModule().ConfigureAppServices(services, scope.Context);
         return services.BuildServiceProvider();
     }
@@ -412,22 +412,22 @@ public sealed class HistorySearchPresentationTests
             => ValueTask.FromResult(false);
     }
 
-    private sealed class PresentationBackgroundProcessQueue : IBackgroundProcessQueue
+    private sealed class PresentationBackgroundTaskQueue : IBackgroundTaskQueue
     {
-        public event EventHandler<BackgroundProcessChangedEventArgs>? ProcessChanged
+        public event EventHandler<BackgroundTaskChangedEventArgs>? TaskChanged
         {
             add { }
             remove { }
         }
 
-        public BackgroundProcessSnapshot Enqueue(BackgroundProcessRequest request)
+        public BackgroundTaskSnapshot Enqueue(BackgroundTaskRequest request)
             => new(
                 Guid.NewGuid(),
                 request.Title,
                 request.GroupKey,
                 request.Indicator,
                 request.ConcurrencyMode,
-                BackgroundProcessState.Queued,
+                BackgroundTaskState.Queued,
                 string.Empty,
                 ProgressPercent: null,
                 request.CanCancel,
@@ -437,7 +437,7 @@ public sealed class HistorySearchPresentationTests
                 StartedAtUtc: null,
                 CompletedAtUtc: null);
 
-        public IReadOnlyList<BackgroundProcessSnapshot> ListProcesses(string? groupKey = null) => [];
+        public IReadOnlyList<BackgroundTaskSnapshot> ListTasks(string? groupKey = null) => [];
         public bool Cancel(Guid processId) => false;
     }
 }

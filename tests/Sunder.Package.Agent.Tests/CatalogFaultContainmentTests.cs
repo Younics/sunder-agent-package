@@ -12,6 +12,7 @@ using SubagentsWorker::Sunder.Package.Agent.Subagents.Models;
 using SubagentsWorker::Sunder.Package.Agent.Subagents.Runtime;
 using SubagentsWorker::Sunder.Package.Agent.Subagents.Services;
 using Sunder.Sdk.Rpc;
+using SubagentChatService = SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Chat_Provider.IChatProviderService;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -417,7 +418,7 @@ public sealed class CatalogFaultContainmentTests
         using var catalog = new RegressionTestExtensionCatalog();
         var provider = new BlockingCancelledChatProvider("retired");
         catalog.AddProvider(RegressionTestBindings.ChatProviders, provider, "package.retired");
-        var reference = await catalog.GetRequiredProviderAsync(catalog.ChatProviders);
+        var reference = await catalog.GetRequiredProviderAsync(catalog.Subagents().Providers<SubagentChatService>());
         var referenceRetired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var referenceRetirement = reference.RetirementToken.Register(() => referenceRetired.TrySetResult());
         await using var managementFixture = await catalog.CreateSubagentRuntimeManagementAsync(
@@ -428,9 +429,9 @@ public sealed class CatalogFaultContainmentTests
         {
             await provider.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
             var retirement = catalog.RetireProviderAsync(RegressionTestBindings.ChatProviders, provider);
-            // The independent receiver observers need not process withdrawal in the
-            // same order. Provider cancellation does not prove this exact reference
-            // has observed it; wait for both instead of racing their callbacks.
+            // Wait for the actual Subagents receiver used by management, not the
+            // independent Agent receiver. Host-side cancellation alone is not
+            // proof that this exact generated binding has observed withdrawal.
             await Task.WhenAll(provider.CancellationObserved.Task, referenceRetired.Task).WaitAsync(TimeSpan.FromSeconds(5));
             Assert.True(reference.RetirementToken.IsCancellationRequested);
             provider.ReleaseCancellation.TrySetResult();

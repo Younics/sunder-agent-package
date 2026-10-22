@@ -4827,28 +4827,28 @@ public sealed class WorkspaceTests
         public void Report(string value) => report(value);
     }
 
-    private sealed class FakeBackgroundProcessQueue : IBackgroundProcessQueue
+    private sealed class FakeBackgroundTaskQueue : IBackgroundTaskQueue
     {
-        private readonly List<BackgroundProcessSnapshot> _snapshots = [];
+        private readonly List<BackgroundTaskSnapshot> _snapshots = [];
 
-        public event EventHandler<BackgroundProcessChangedEventArgs>? ProcessChanged
+        public event EventHandler<BackgroundTaskChangedEventArgs>? TaskChanged
         {
             add { }
             remove { }
         }
 
-        public List<BackgroundProcessRequest> Requests { get; } = [];
+        public List<BackgroundTaskRequest> Requests { get; } = [];
 
-        public BackgroundProcessSnapshot Enqueue(BackgroundProcessRequest request)
+        public BackgroundTaskSnapshot Enqueue(BackgroundTaskRequest request)
         {
             Requests.Add(request);
-            var snapshot = new BackgroundProcessSnapshot(
+            var snapshot = new BackgroundTaskSnapshot(
                 Guid.NewGuid(),
                 request.Title,
                 request.GroupKey,
                 request.Indicator,
                 request.ConcurrencyMode,
-                BackgroundProcessState.Queued,
+                BackgroundTaskState.Queued,
                 "Queued",
                 null,
                 request.CanCancel,
@@ -4861,14 +4861,14 @@ public sealed class WorkspaceTests
             return snapshot;
         }
 
-        public IReadOnlyList<BackgroundProcessSnapshot> ListProcesses(string? groupKey = null)
+        public IReadOnlyList<BackgroundTaskSnapshot> ListTasks(string? groupKey = null)
             => _snapshots
                 .Where(snapshot => string.IsNullOrWhiteSpace(groupKey)
                                    || string.Equals(snapshot.GroupKey, groupKey, StringComparison.OrdinalIgnoreCase))
                 .ToArray();
 
         public bool Cancel(Guid processId)
-            => _snapshots.Any(snapshot => snapshot.ProcessId == processId);
+            => _snapshots.Any(snapshot => snapshot.TaskId == processId);
     }
 
     private static string ConfigureFakeDockerCli(TestScope scope)

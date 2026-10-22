@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
-using System.Runtime.ExceptionServices;
 using Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Sdk.Abstractions;
 
@@ -20,7 +19,7 @@ public sealed partial class BuilderViewModel : BuilderObservable, IAsyncDisposab
     private readonly IPackageSettingsNavigationService _settings;
     private readonly PresentationTaskScope _tasks;
     private readonly KeyedAdaptiveListDetailState<string, BuilderProjectViewModel> _listDetail;
-    private readonly ConcurrentDictionary<string, DevelopmentOwnership> _sessions = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, BuilderProjectSession> _sessions = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _operations = new(StringComparer.Ordinal);
     private readonly object _lifecycleSync = new();
     private Task? _initialization;
@@ -238,25 +237,4 @@ public sealed partial class BuilderViewModel : BuilderObservable, IAsyncDisposab
         catch (Exception error) { errors.Add(error); }
     }
 
-    private static void ThrowCleanupFailures(List<Exception> errors)
-    {
-        if (errors.Count == 1) ExceptionDispatchInfo.Capture(errors[0]).Throw();
-        if (errors.Count > 1) throw new AggregateException("Builder development session cleanup failed.", errors);
-    }
-
-    private sealed class DevelopmentOwnership(BuilderProjectViewModel row, IPackageDevelopmentSession handle, CancellationToken lifetime)
-    {
-        public BuilderProjectViewModel Row { get; } = row;
-        public IPackageDevelopmentSession Handle { get; } = handle;
-        public string SourcePackageId { get; } = row.PackageId;
-        public string? SourceEntryPoint { get; } = row.EntryPoint;
-        public BuilderSourceChangeMonitor? SourceChanges { get; set; }
-        public CancellationTokenSource? WatchCancellation { get; set; }
-        public Task? WatchTask { get; set; }
-        public string? WatchJobId { get; set; }
-        public bool WatchStopConfirmed { get; set; } = true;
-        public bool ReleaseStarted { get; set; }
-        public CancellationTokenSource MonitorCancellation { get; } = CancellationTokenSource.CreateLinkedTokenSource(lifetime);
-        public Task MonitorTask { get; set; } = Task.CompletedTask;
-    }
 }

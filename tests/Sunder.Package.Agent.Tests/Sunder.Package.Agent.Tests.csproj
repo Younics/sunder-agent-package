@@ -3,6 +3,7 @@
     <SunderSdkAvaloniaReference>true</SunderSdkAvaloniaReference>
     <SunderSdkReference>true</SunderSdkReference>
     <SunderSdkStacksReference>true</SunderSdkStacksReference>
+    <SunderBuildToolingReference>true</SunderBuildToolingReference>
     <SunderTestOwner>agent-family</SunderTestOwner>
     <SunderTestCategory>Component</SunderTestCategory>
     <SunderTestCapabilities>Docker;Filesystem;PackageArchive;SQLite;Worker</SunderTestCapabilities>

@@ -7,10 +7,11 @@ internal sealed class BuilderConfiguredJobDriver(IBuilderProjectDriverToolchains
     public async Task ExecuteAsync(BuilderJobRequest request, IBuilderJobReporter reporter, CancellationToken cancellationToken)
     {
         request = BuilderJobValidation.Normalize(request);
-        var selected = request.Kind == BuilderProjectKind.Dotnet && request.Operation is
-            "ensure-sdk" or "create" or "setup" or "build" or "archive" or "watch"
-            ? await BuilderLocalNuGet.LoadOptionsAsync(options, cancellationToken).ConfigureAwait(false)
-            : options;
+        var selected = options;
+        if (request.Operation is "ensure-sdk" or "create" or "setup" or "build" or "archive" or "watch")
+            selected = request.Kind == BuilderProjectKind.Dotnet
+                ? await BuilderLocalNuGet.LoadOptionsAsync(options, cancellationToken).ConfigureAwait(false)
+                : await BuilderLocalNpm.LoadOptionsAsync(options, cancellationToken).ConfigureAwait(false);
         // JobManager executes a job only once (including exact-ID retries). The driver and
         // retained source selection live for the whole operation, including a long watch.
         await new BuilderProjectDriver(toolchains, processes, selected)

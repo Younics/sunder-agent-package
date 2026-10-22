@@ -17,12 +17,22 @@ internal sealed class BuilderSourceChangeMonitor : IDisposable
     private TaskCompletionSource _changed = NewSignal();
     private long _revision;
     private DateTimeOffset? _lastChangeAtUtc;
+    private long _lastChangeTimestamp;
+    private string? _lastChangePath;
     private Exception? _error;
 
-    internal BuilderSourceChangeMonitor(string folder, IReadOnlyList<string>? inputGroups = null)
+    private readonly string? _publicationRevisionFile;
+
+    internal BuilderSourceChangeMonitor(string folder, IReadOnlyList<string>? inputGroups = null, string? publicationRevisionFile = null)
     {
         _folder = folder;
         _inputGroups = inputGroups ?? [];
+        _publicationRevisionFile = publicationRevisionFile;
+        if (publicationRevisionFile is not null)
+        {
+            using var file = new FileStream(publicationRevisionFile, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+            file.Write("0\n"u8);
+        }
         _watcher = new(folder)
         {
             IncludeSubdirectories = true,
@@ -32,12 +42,13 @@ internal sealed class BuilderSourceChangeMonitor : IDisposable
         _watcher.Created += (_, args) => Changed(args.FullPath);
         _watcher.Deleted += (_, args) => Changed(args.FullPath);
         _watcher.Renamed += (_, args) => { Changed(args.OldFullPath); Changed(args.FullPath); };
-        _watcher.Error += (_, args) => { lock (_sync) { _error = args.GetException(); _changed.TrySetResult(); } };
+        _watcher.Error += (_, args) => Fault(args.GetException());
         _watcher.EnableRaisingEvents = true;
     }
 
     internal long Revision { get { lock (_sync) return _revision; } }
     internal DateTimeOffset? LastChangeAtUtc { get { lock (_sync) return _lastChangeAtUtc; } }
+    internal string? LastChangePath { get { lock (_sync) return _lastChangePath; } }
 
     // True when evaluation discovers an input which had no subscription during the build.
     internal bool ObserveInputs(IReadOnlyList<string> roots, IReadOnlyList<string> files)
@@ -82,7 +93,7 @@ internal sealed class BuilderSourceChangeMonitor : IDisposable
             watcher.Created += (_, args) => Changed(args.FullPath);
             watcher.Deleted += (_, args) => Changed(args.FullPath);
             watcher.Renamed += (_, args) => { Changed(args.OldFullPath); Changed(args.FullPath); };
-            watcher.Error += (_, args) => { lock (_sync) { _error = args.GetException(); _changed.TrySetResult(); } };
+            watcher.Error += (_, args) => Fault(args.GetException());
             _inputs.Add(directory, watcher);
             watcher.EnableRaisingEvents = true;
         }
@@ -107,18 +118,55 @@ internal sealed class BuilderSourceChangeMonitor : IDisposable
         }
     }
 
-    internal async Task WaitForChangeAsync(long revision, CancellationToken token)
+    internal async Task WaitForRevisionAsync(long revision, CancellationToken token)
     {
         Task changed;
         lock (_sync)
         {
-            if (_error is not null) throw new IOException("Source change monitoring is unavailable. Retry rebuilding when the folder is accessible.", _error);
+            ThrowIfUnavailable();
             changed = revision == _revision ? _changed.Task : Task.CompletedTask;
         }
         await changed.WaitAsync(token).ConfigureAwait(false);
-        // Coalesce editor save/rename bursts. There is no time-based build retry.
-        await Task.Delay(250, token).ConfigureAwait(false);
-        lock (_sync) if (_error is not null) throw new IOException("Source change monitoring failed.", _error);
+        lock (_sync) ThrowIfUnavailable();
+    }
+
+    internal async Task WaitForChangeAsync(long revision, CancellationToken token)
+    {
+        await WaitForRevisionAsync(revision, token).ConfigureAwait(false);
+        // True trailing debounce: every save/rename resets the quiet interval.
+        // The subscription remains active during compilation and cancellation/drain.
+        while (true)
+        {
+            Task changed;
+            TimeSpan remaining;
+            lock (_sync)
+            {
+                ThrowIfUnavailable();
+                changed = _changed.Task;
+                remaining = TimeSpan.FromMilliseconds(250) - System.Diagnostics.Stopwatch.GetElapsedTime(_lastChangeTimestamp);
+                if (remaining <= TimeSpan.Zero) return; // Drain may already have consumed the quiet interval.
+            }
+            try { await changed.WaitAsync(remaining, token).ConfigureAwait(false); }
+            catch (TimeoutException)
+            {
+                lock (_sync)
+                {
+                    ThrowIfUnavailable();
+                    if (ReferenceEquals(changed, _changed.Task)) return;
+                }
+            }
+        }
+    }
+
+    internal bool ReportIfCurrent(long revision, Action report)
+    {
+        lock (_sync)
+        {
+            ThrowIfUnavailable();
+            if (_revision != revision) return false;
+            report();
+            return true;
+        }
     }
 
     private void Changed(string path)
@@ -129,7 +177,7 @@ internal sealed class BuilderSourceChangeMonitor : IDisposable
             // SDK-owned generated artifacts are omitted by the input capture, avoiding loops.
             if (_files.Contains(path) || _parents.Contains(path)
                 || Contains(_folder, path) && !Ignored(_folder, path)
-                || _roots.Any(root => Contains(root, path) && !Ignored(root, path) || Contains(path, root))) SignalChange();
+                || _roots.Any(root => Contains(root, path) && !Ignored(root, path) || Contains(path, root))) SignalChange(path);
         }
     }
 
@@ -142,15 +190,49 @@ internal sealed class BuilderSourceChangeMonitor : IDisposable
         return relative != ".." && !relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal) && !Path.IsPathRooted(relative);
     }
 
-    private void SignalChange()
+    private void SignalChange(string? path = null)
     {
         lock (_sync)
         {
             _revision++;
             _lastChangeAtUtc = DateTimeOffset.UtcNow;
+            _lastChangeTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
+            _lastChangePath = path;
+            try { WritePublicationRevision(_error is null ? _revision : -1); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { _error ??= error; }
             var previous = _changed;
             _changed = NewSignal();
             previous.TrySetResult();
+        }
+    }
+
+    private void Fault(Exception error)
+    {
+        lock (_sync) { _error ??= error; SignalChange(); }
+    }
+
+    private void ThrowIfUnavailable()
+    {
+        if (_error is not null) throw new IOException("Source change monitoring is unavailable. Retry rebuilding when the folder is accessible.", _error);
+    }
+
+    private void WritePublicationRevision(long revision)
+    {
+        if (_publicationRevisionFile is null) return;
+        // The final MSBuild transaction takes the same exclusive file handle.
+        // Never replace the file/inode while either side holds this short fence.
+        var deadline = System.Diagnostics.Stopwatch.StartNew();
+        while (true)
+        {
+            FileStream file;
+            try { file = new(_publicationRevisionFile, FileMode.Open, FileAccess.ReadWrite, FileShare.None); }
+            catch (IOException) when (deadline.Elapsed < TimeSpan.FromSeconds(5)) { Thread.Sleep(10); continue; }
+            using (file)
+            {
+                file.SetLength(0);
+                file.Write(System.Text.Encoding.UTF8.GetBytes(revision.ToString(System.Globalization.CultureInfo.InvariantCulture) + "\n"));
+            }
+            return;
         }
     }
 

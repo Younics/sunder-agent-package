@@ -15,24 +15,24 @@ public sealed class BuilderViewModelTests
         var row = new BuilderProjectViewModel(BuilderUiFixture.Record(BuilderUiFixture.Project("applied")));
         row.SetSession(true);
         var revision = new PackageDevelopmentRevision(Guid.NewGuid(), 4, new string('a', 64));
-        var status = new PackageDevelopmentStatus(row.PackageId, true, true, "Runtime:Ready", null, false)
-            { AppReadiness = "Pending", RuntimeRevision = revision };
+        var status = new PackageDevelopmentStatus(row.PackageId, true, true, PackageDevelopmentRuntimeReadiness.Ready, null, false)
+            { HostState = PackageDevelopmentHostState.Ready, AppReadiness = PackageDevelopmentAppReadiness.Pending, RuntimeRevision = revision };
         row.ApplySnapshot(new() { Id = "build", Operation = "build", State = "succeeded", Message = "built", Output = "output",
             Phase = BuilderJobPhase.BuildReady, LastSuccessfulBuildAtUtc = DateTimeOffset.UtcNow });
         row.SetDevelopmentStatus(status);
         Assert.True(row.HasBuildActivity);
         Assert.False(row.HasAppliedActivity);
         Assert.Null(row.LastAppliedObservedAtUtc);
-        row.SetDevelopmentStatus(status with { AppReadiness = "Activated", AppliedRevision = revision });
+        row.SetDevelopmentStatus(status with { AppReadiness = PackageDevelopmentAppReadiness.Activated, AppliedRevision = revision });
         Assert.Equal(revision, row.LastAppliedRevision);
         var observed = row.LastAppliedObservedAtUtc;
         Assert.NotNull(observed);
         var nextGeneration = new PackageDevelopmentRevision(revision.RuntimeInstanceId, 5, revision.SourceContentIdentity);
-        row.SetDevelopmentStatus(status with { AppReadiness = "Activated", RuntimeRevision = nextGeneration,
+        row.SetDevelopmentStatus(status with { AppReadiness = PackageDevelopmentAppReadiness.Activated, RuntimeRevision = nextGeneration,
             AppliedRevision = nextGeneration });
         Assert.Equal(observed, row.LastAppliedObservedAtUtc); // Another package's generation cannot manufacture a reload event.
         row.SetWatchError("new compile failed");
-        row.SetDevelopmentStatus(status with { AppReadiness = "Activated", AppliedRevision = revision });
+        row.SetDevelopmentStatus(status with { AppReadiness = PackageDevelopmentAppReadiness.Activated, AppliedRevision = revision });
         Assert.True(row.HasError); // A retained applied output is not a new successful build.
         row.SetDevelopmentStatus(status with { RuntimeRevision = new(revision.RuntimeInstanceId, 6, new string('b', 64)) });
         Assert.Equal(revision.SourceContentIdentity, row.LastAppliedRevision!.SourceContentIdentity);
@@ -43,7 +43,7 @@ public sealed class BuilderViewModelTests
     [Fact]
     public void ProjectStatusSeparatesRequestedWatchFromLiveLoadAndBuildEvidence()
     {
-        var row = new BuilderProjectViewModel(BuilderUiFixture.Record(BuilderUiFixture.Project("status")));
+        var row = new BuilderProjectViewModel(BuilderUiFixture.Record(BuilderUiFixture.Project("status")) with { SetupIncomplete = true });
         Assert.Equal("Unloaded", row.LoadStateText);
         Assert.Equal("Starts after Load", row.WatchSummaryText);
         Assert.False(row.IsBuildRunning);
@@ -53,7 +53,14 @@ public sealed class BuilderViewModelTests
         row.SetSession(true);
         Assert.Equal("Connecting…", row.LoadStateText);
         Assert.Equal("Stopped", row.WatchSummaryText); // A checked preference is not a running producer.
-        row.SetDevelopmentStatus(new("local.status", true, true, "Ready", null, false) { RequestedWatch = true, AppReadiness = "Activated" });
+        row.SetDevelopmentStatus(new("local.status", false, true, (PackageDevelopmentRuntimeReadiness)999, null, false)
+            { HostState = (PackageDevelopmentHostState)999, AppReadiness = (PackageDevelopmentAppReadiness)999 });
+        Assert.Equal("Host: Unknown · Runtime: Unknown · App: Unknown", row.RuntimeStatusText);
+        Assert.Equal("Connecting…", row.LoadStateText);
+        Assert.False(row.ShowWatchNotice); // An unrecognized Host state cannot attest another owner's effective watch.
+        Assert.False(row.HasAppliedActivity);
+        row.SetDevelopmentStatus(new("local.status", true, true, PackageDevelopmentRuntimeReadiness.Ready, null, false)
+            { HostState = PackageDevelopmentHostState.Ready, RequestedWatch = true, AppReadiness = PackageDevelopmentAppReadiness.Activated });
         row.SetWatchRunning(true);
         Assert.Equal("Loaded", row.LoadStateText);
         Assert.Equal("On", row.WatchSummaryText);
@@ -68,11 +75,16 @@ public sealed class BuilderViewModelTests
         Assert.Equal(changed, row.LastSourceChangeAtUtc);
         Assert.Null(row.LastSuccessfulBuildAtUtc); // Observing a save cannot claim a successful build or reload.
 
+        row.ApplySnapshot(snapshot with { State = "failed", Phase = BuilderJobPhase.Watching, DevelopmentFolder = "/historical",
+            LastSuccessfulBuildAtUtc = built.AddSeconds(-1) });
+        Assert.True(row.SetupIncomplete); // A terminal failed attempt cannot qualify setup using historical output.
         row.SetWatchError("previous compile failed");
         row.ApplySnapshot(snapshot with { Phase = BuilderJobPhase.Watching, DevelopmentFolder = "/validated", LastSuccessfulBuildAtUtc = built });
         Assert.False(row.IsBuildRunning);
         Assert.False(row.HasError); // A polling client may miss the transient BuildReady phase.
         Assert.Equal(built, row.LastSuccessfulBuildAtUtc);
+        Assert.False(row.SetupIncomplete); // Polling may miss BuildReady, just as initial watched Load does.
+        Assert.False(row.HasAppliedActivity); // Valid build output is not Runtime/App application evidence.
         row.SetWatchError("new compile failed");
         row.ApplySnapshot(snapshot with { Phase = BuilderJobPhase.Building, LastSourceChangeAtUtc = changed.AddSeconds(-1),
             DevelopmentFolder = "/validated", LastSuccessfulBuildAtUtc = built });
@@ -141,6 +153,16 @@ public sealed class BuilderViewModelTests
         row.IsOutputExpanded = false;
         row.SetStatus("unrelated readiness observation");
         Assert.False(row.IsOutputExpanded); // Normal property refresh must not override the user's expansion choice.
+        row.BeginOperation("setup");
+        Assert.Empty(row.Output);
+        row.SetError(new InvalidOperationException("The new attempt failed before dispatch.", new IOException("token=private-value")));
+        Assert.DoesNotContain("compiler details", row.Output, StringComparison.Ordinal);
+        Assert.Contains("[setup] App operation failed:", row.Output, StringComparison.Ordinal);
+        Assert.Contains(nameof(InvalidOperationException), row.Output, StringComparison.Ordinal);
+        Assert.DoesNotContain("private-value", row.Output, StringComparison.Ordinal);
+        Assert.Contains("token=[redacted]", row.Output, StringComparison.Ordinal);
+        Assert.DoesNotContain("compile failure", row.ErrorMessage, StringComparison.Ordinal);
+        Assert.Equal("The new attempt failed before dispatch.", row.ErrorMessage);
     }
 
     [Fact]
@@ -315,7 +337,8 @@ public sealed class BuilderViewModelTests
         await fixture.Model.LoadSelectedProjectAsync();
         var session = Assert.Single(fixture.Development.Sessions);
         await BuilderUiFixture.WaitAsync(() => row.WatchRunning && fixture.Backend.Starts.Any(request => request.Operation == "watch"));
-        Assert.Equal("setup", fixture.Backend.Starts.First().Operation);
+        Assert.Equal("watch", Assert.Single(fixture.Backend.Starts).Operation); // Its first build supplies initial Load.
+        Assert.Empty(fixture.Queue.ListTasks()); // No redundant finite setup/build precedes the Watch job.
         Assert.True(Assert.Single(fixture.Development.Loads).Watch);
         fixture.Model.BackToProjectList();
         fixture.Model.IsCompactLayout = true;
@@ -327,7 +350,25 @@ public sealed class BuilderViewModelTests
             ProjectFolder = independent.ProjectFolder, EntryPoint = independent.EntryPoint }).WaitAsync(TimeSpan.FromSeconds(3));
         Assert.False(session.Disposed);
         Assert.True(row.WatchRunning);
-        session.Status = session.Status with { AppReadiness = "Quarantined", ErrorMessage = "App failed to activate" };
+        var revision = new PackageDevelopmentRevision(Guid.NewGuid(), 4, new string('c', 64));
+        session.Status = session.Status with { RuntimeRevision = revision, AppliedRevision = revision };
+        await BuilderUiFixture.WaitAsync(() => row.LastAppliedRevision == revision);
+        var watchStarts = fixture.Backend.Starts.Count(request => request.Operation == "watch");
+        session.BeforeGet = _ => Task.FromException(new IOException("Host observation disconnected"));
+        await BuilderUiFixture.WaitAsync(() => row.RuntimeStatusText.Contains("Reconnecting", StringComparison.Ordinal));
+        Assert.True(row.HasSession);
+        Assert.True(row.WatchRunning);
+        Assert.False(session.Disposed);
+        Assert.False(row.IsLoaded);
+        Assert.Equal(revision, row.LastAppliedRevision); // History is not current applied evidence.
+        Assert.DoesNotContain("match this output", row.ApplicationStatusText, StringComparison.Ordinal);
+        Assert.Contains("Unknown", row.RuntimeStatusText, StringComparison.Ordinal);
+        Assert.Equal(watchStarts, fixture.Backend.Starts.Count(request => request.Operation == "watch"));
+        session.BeforeGet = null;
+        await BuilderUiFixture.WaitAsync(() => row.IsLoaded && row.ApplicationStatusText.Contains("match this output", StringComparison.Ordinal));
+        Assert.Single(fixture.Development.Loads);
+        session.Status = session.Status with { AppReadiness = PackageDevelopmentAppReadiness.Quarantined,
+            AppliedRevision = null, ErrorMessage = "App failed to activate" };
         await BuilderUiFixture.WaitAsync(() => row.RuntimeStatusText.Contains("Quarantined", StringComparison.Ordinal));
         Assert.Equal("App failed to activate", row.RuntimeError);
         fixture.Model.ActivateProject(row);
@@ -336,6 +377,51 @@ public sealed class BuilderViewModelTests
         Assert.False(row.HasSession);
         Assert.False(row.WatchRunning);
         Assert.Contains("Other owners", row.StatusText, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WatchedLoadOwnsOneProducerBeforeFirstValidOutputAndDrainsItOnCancellation(bool cancel)
+    {
+        await using var fixture = new BuilderUiFixture();
+        var row = await fixture.OpenAsync("pending-watch-load");
+        row.ApplySnapshot(new() { Id = "old-setup", Operation = "setup", State = "failed", Message = "Setup incomplete", Output = string.Empty });
+        await fixture.Model.SetSelectedWatchAsync(true); // Retain a genuine failed-setup bookmark snapshot before Load.
+        fixture.Backend.Result = request => fixture.Backend.DefaultResult(request) with
+            { DevelopmentFolder = null, LastSuccessfulBuildAtUtc = null, Phase = BuilderJobPhase.Building };
+        var loading = fixture.Model.LoadSelectedProjectAsync();
+        await BuilderUiFixture.WaitAsync(() => fixture.Backend.Starts.Count == 1 && row.IsBuildRunning);
+        var request = Assert.Single(fixture.Backend.Starts);
+        Assert.Equal("watch", request.Operation);
+        Assert.Empty(fixture.Development.Loads);
+        fixture.Backend.Jobs[request.Id!] = fixture.Backend.Jobs[request.Id!] with { Phase = BuilderJobPhase.BuildFailed };
+        await BuilderUiFixture.WaitAsync(() => row.HasError);
+        Assert.False(loading.IsCompleted);
+        Assert.True(row.WatchRunning); // Compiler failure is still the same live producer.
+        if (cancel) fixture.Model.CancelCurrentOperation();
+        else fixture.Backend.Jobs[request.Id!] = fixture.Backend.DefaultResult(request);
+        await loading.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Single(fixture.Backend.Starts);
+        Assert.Equal(cancel ? 0 : 1, fixture.Development.Loads.Count);
+        Assert.Equal(!cancel, row.HasSession);
+        if (cancel) Assert.Equal("cancelled", fixture.Backend.Jobs[request.Id!].State);
+        Assert.Equal(cancel, row.SetupIncomplete);
+        await fixture.DisposeAsync();
+        Assert.Equal(cancel, Assert.Single(fixture.Store.Records).SetupIncomplete);
+    }
+
+    [Fact]
+    public async Task FailedWatchSnapshotCannotLoadHistoricalSuccessfulOutput()
+    {
+        await using var fixture = new BuilderUiFixture();
+        var row = await fixture.OpenAsync("failed-watch-output");
+        fixture.Backend.Result = request => fixture.Backend.DefaultResult(request) with { State = "failed", Error = "Watch infrastructure stopped" };
+        await fixture.Model.LoadSelectedProjectAsync().WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Contains("Watch infrastructure stopped", row.ErrorMessage, StringComparison.Ordinal);
+        Assert.Empty(fixture.Development.Loads);
+        Assert.False(row.HasSession);
+        Assert.Single(fixture.Backend.Starts);
     }
 
     [Fact]
@@ -380,10 +466,18 @@ public sealed class BuilderViewModelTests
             await fixture.Model.LoadSelectedProjectAsync();
             if (watch) await BuilderUiFixture.WaitAsync(() => fixture.Backend.Starts.Any(request => request.Operation == "watch"));
             var session = Assert.Single(fixture.Development.Sessions);
-            fixture.Backend.Result = request => request.Operation == "build"
-                ? fixture.Backend.DefaultResult(request) with { State = outcome, Error = outcome == "failed" ? "Compilation failed" : null }
+            fixture.Backend.Result = request => request.Operation == (watch ? "watch" : "build")
+                ? fixture.Backend.DefaultResult(request) with { State = watch ? "running" : outcome, DevelopmentFolder = null,
+                    LastSuccessfulBuildAtUtc = null, Phase = outcome == "failed" ? BuilderJobPhase.BuildFailed : BuilderJobPhase.Building,
+                    Error = outcome == "failed" ? "Compilation failed" : null }
                 : fixture.Backend.DefaultResult(request);
-            await fixture.Model.BuildSelectedProjectAsync();
+            var rebuilding = fixture.Model.BuildSelectedProjectAsync();
+            if (watch && outcome == "cancelled")
+            {
+                await BuilderUiFixture.WaitAsync(() => fixture.Backend.Starts.Count(request => request.Operation == "watch") == 2);
+                fixture.Model.CancelCurrentOperation();
+            }
+            await rebuilding.WaitAsync(TimeSpan.FromSeconds(3));
             Assert.True(row.HasSession);
             Assert.False(session.Disposed);
             Assert.Single(fixture.Development.Loads);
@@ -396,31 +490,46 @@ public sealed class BuilderViewModelTests
             }
             else
             {
-                await BuilderUiFixture.WaitAsync(() => row.WatchWaitingForChanges);
-                Assert.Single(fixture.Backend.Starts, request => request.Operation == "watch");
+                var current = fixture.Backend.Starts.Last(request => request.Operation == "watch");
+                Assert.Equal(2, fixture.Backend.Starts.Count(request => request.Operation == "watch"));
+                if (outcome == "cancelled") await BuilderUiFixture.WaitAsync(() => row.WatchWaitingForChanges);
+                else Assert.True(row.WatchRunning); // The failed compiler is still owned by this Watch job.
                 // Output noise must not retry an unchanged compile failure.
                 Directory.CreateDirectory(Path.Combine(source.ProjectFolder, "obj"));
                 await File.WriteAllTextAsync(Path.Combine(source.ProjectFolder, "obj", "build.log"), "generated noise");
                 await Task.Delay(400);
-                Assert.Single(fixture.Backend.Starts, request => request.Operation == "watch");
+                Assert.Equal(2, fixture.Backend.Starts.Count(request => request.Operation == "watch"));
+                if (outcome == "failed")
+                {
+                    await File.WriteAllTextAsync(authored, "fixed source in the same Worker job");
+                    fixture.Backend.Jobs[current.Id!] = fixture.Backend.DefaultResult(current);
+                    await BuilderUiFixture.WaitAsync(() => !row.HasError && row.LastSuccessfulBuildAtUtc is not null);
+                    Assert.Equal(2, fixture.Backend.Starts.Count(request => request.Operation == "watch"));
+                    Assert.Single(fixture.Development.Loads); // Runtime output Watch owns automatic application.
+                }
                 fixture.Backend.Result = request => request.Operation == "watch"
                     ? fixture.Backend.DefaultResult(request) with { State = "failed", Error = "SDK temporarily unavailable" }
                     : fixture.Backend.DefaultResult(request);
-                await File.WriteAllTextAsync(authored, "first edit while SDK is unavailable");
-                await BuilderUiFixture.WaitAsync(() => fixture.Backend.Starts.Count(request => request.Operation == "watch") == 2 && row.WatchWaitingForChanges);
+                if (outcome == "failed") fixture.Backend.Jobs[current.Id!] = fixture.Backend.Result(current);
+                else await File.WriteAllTextAsync(authored, "first edit while SDK is unavailable");
+                var terminalStarts = outcome == "failed" ? 2 : 3;
+                await BuilderUiFixture.WaitAsync(() => fixture.Backend.Starts.Count(request => request.Operation == "watch") == terminalStarts && !row.WatchRunning && row.HasError);
                 Assert.Contains("SDK temporarily unavailable", row.ErrorMessage, StringComparison.Ordinal);
                 Assert.False(row.WatchRunning);
                 await Task.Delay(400);
-                Assert.Equal(2, fixture.Backend.Starts.Count(request => request.Operation == "watch"));
+                Assert.Equal(terminalStarts, fixture.Backend.Starts.Count(request => request.Operation == "watch"));
                 fixture.Backend.Result = null;
                 await File.WriteAllTextAsync(authored, "fixed source");
-                await BuilderUiFixture.WaitAsync(() => fixture.Backend.Starts.Count(request => request.Operation == "watch") == 3 && row.WatchRunning && !row.HasError);
+                await Task.Delay(400);
+                Assert.Equal(terminalStarts, fixture.Backend.Starts.Count(request => request.Operation == "watch")); // Infrastructure failure is not a compiler-error retry loop.
+                await fixture.Model.SetSelectedWatchAsync(true);
+                await BuilderUiFixture.WaitAsync(() => fixture.Backend.Starts.Count(request => request.Operation == "watch") == terminalStarts + 1 && row.WatchRunning && !row.HasError);
                 Assert.Single(fixture.Development.Loads);
                 await fixture.Model.UnloadSelectedProjectAsync();
                 Assert.True(session.Disposed);
                 await File.WriteAllTextAsync(authored, "edit after unload");
                 await Task.Delay(400);
-                Assert.Equal(3, fixture.Backend.Starts.Count(request => request.Operation == "watch"));
+                Assert.Equal(terminalStarts + 1, fixture.Backend.Starts.Count(request => request.Operation == "watch"));
                 Assert.False(row.WatchRunning);
             }
         }
@@ -428,18 +537,21 @@ public sealed class BuilderViewModelTests
     }
 
     [Theory]
-    [InlineData("build", false)]
-    [InlineData("build", true)]
-    [InlineData("setup", false)]
-    [InlineData("save-metadata", false)]
-    public async Task SuccessfulLoadedBuildAwaitsRetirementBeforeReplacingSession(string operation, bool watch)
+    [InlineData("build", false, BuilderProjectKind.Dotnet)]
+    [InlineData("build", true, BuilderProjectKind.Dotnet)]
+    [InlineData("setup", false, BuilderProjectKind.Dotnet)]
+    [InlineData("setup", true, BuilderProjectKind.Dotnet)]
+    [InlineData("save-metadata", false, BuilderProjectKind.Dotnet)]
+    [InlineData("save-metadata", true, BuilderProjectKind.Dotnet)]
+    [InlineData("build", true, BuilderProjectKind.Node)]
+    public async Task SuccessfulLoadedBuildAwaitsRetirementBeforeReplacingSession(string operation, bool watch, BuilderProjectKind kind)
     {
         await using var fixture = new BuilderUiFixture();
         var unrelated = await fixture.OpenAsync("unrelated-reload");
         await fixture.Model.SetSelectedWatchAsync(false);
         await fixture.Model.LoadSelectedProjectAsync();
         var unrelatedSession = Assert.Single(fixture.Development.Sessions);
-        var row = await fixture.OpenAsync("manual-reload");
+        var row = await fixture.OpenAsync("manual-reload", kind);
         await fixture.Model.SetSelectedWatchAsync(watch);
         await fixture.Model.LoadSelectedProjectAsync();
         if (watch) await BuilderUiFixture.WaitAsync(() => fixture.Backend.Starts.Any(request => request.Operation == "watch"));
@@ -458,8 +570,12 @@ public sealed class BuilderViewModelTests
                 Assert.False(token.IsCancellationRequested);
                 terminalObserved = true;
             }
-            if (request.Operation == (operation == "setup" ? "setup" : "build"))
-                fixture.Backend.Projects[row.EntryPoint!] = fixture.Backend.Projects[row.EntryPoint!] with { SourceRevision = "fresh-after-build" };
+            if (request.Operation == (watch && kind == BuilderProjectKind.Dotnet ? "watch" : operation == "setup" ? "setup" : "build") && request.Id != watchJob?.Id)
+            {
+                var fresh = fixture.Backend.Projects[row.EntryPoint!] with { SourceRevision = "fresh-after-build" };
+                fixture.Backend.Projects[row.EntryPoint!] = fresh;
+                fixture.Backend.Jobs[request.Id!] = fixture.Backend.Jobs[request.Id!] with { Project = fresh };
+            }
             return Task.CompletedTask;
         };
         old.BeforeDispose = async () =>
@@ -504,6 +620,8 @@ public sealed class BuilderViewModelTests
             Assert.False(old.WatchRequests.Last());
             Assert.True(replacement.Status.RequestedWatch);
             Assert.NotEqual(watchJob!.Id, fixture.Backend.Starts.Last(request => request.Operation == "watch").Id);
+            if (kind == BuilderProjectKind.Dotnet)
+                Assert.DoesNotContain(fixture.Backend.Starts, request => request.EntryPoint == row.EntryPoint && request.Operation is "build" or "setup");
         }
         else Assert.DoesNotContain(fixture.Backend.Starts, request => request.Operation == "watch");
         if (operation == "build" && !watch)
@@ -543,32 +661,45 @@ public sealed class BuilderViewModelTests
         Assert.Single(fixture.Development.Loads);
     }
 
-    [Fact]
-    public async Task FailedManualReloadReleaseRetainsOwnerForRetryWithoutResurrectingWatch()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FailedManualReloadReleaseRetainsOwnerForRetryWithoutResurrectingWatch(bool unload)
     {
         await using var fixture = new BuilderUiFixture();
         var row = await fixture.OpenAsync("failed-retirement");
         await fixture.Model.LoadSelectedProjectAsync();
         await BuilderUiFixture.WaitAsync(() => fixture.Backend.Starts.Any(request => request.Operation == "watch"));
         var original = Assert.Single(fixture.Development.Sessions);
+        var applied = new PackageDevelopmentRevision(Guid.NewGuid(), 7, new string('a', 64));
+        original.Status = original.Status with { RuntimeRevision = applied, AppliedRevision = applied };
+        row.SetDevelopmentStatus(original.Status);
         original.BeforeDispose = () => Task.FromException(new IOException("Staged retirement unavailable; retry Unload."));
         try
         {
-            await fixture.Model.BuildSelectedProjectAsync();
+            if (unload) await fixture.Model.UnloadSelectedProjectAsync();
+            else await fixture.Model.BuildSelectedProjectAsync();
             Assert.True(row.HasSession);
+            Assert.False(row.IsLoaded); // No monitor remains to attest the old positive readiness.
+            Assert.Equal("Release unconfirmed", row.LoadStateText);
+            Assert.Equal("Host: Unknown · Runtime: Unknown · App: Unknown", row.RuntimeStatusText);
+            Assert.Contains("historical", row.ApplicationStatusText, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(applied, row.LastAppliedRevision);
+            Assert.True(row.CanUnload);
+            Assert.False(row.CanLoad);
             Assert.Contains("retirement unavailable", row.ErrorMessage, StringComparison.Ordinal);
             Assert.False(original.Disposed);
             Assert.Single(fixture.Development.Loads);
-            Assert.False(original.Status.RequestedWatch);
+            Assert.Equal(unload, original.Status.RequestedWatch); // Unload has not acknowledged any preference/owner mutation.
             Assert.False(row.WatchRunning);
             await fixture.Model.LoadSelectedProjectAsync();
             await fixture.Model.BuildSelectedProjectAsync();
             await fixture.Model.SetSelectedWatchAsync(true);
             Assert.Contains("retry Unload", row.ErrorMessage, StringComparison.Ordinal);
             Assert.Single(fixture.Development.Loads);
-            Assert.Single(fixture.Backend.Starts, request => request.Operation == "build");
-            Assert.Single(fixture.Backend.Starts, request => request.Operation == "watch");
-            Assert.False(original.Status.RequestedWatch);
+            Assert.DoesNotContain(fixture.Backend.Starts, request => request.Operation == "build");
+            Assert.Equal(unload ? 1 : 2, fixture.Backend.Starts.Count(request => request.Operation == "watch"));
+            Assert.Equal(unload, original.Status.RequestedWatch);
         }
         finally { original.BeforeDispose = null; }
         await fixture.Model.UnloadSelectedProjectAsync();
@@ -581,13 +712,15 @@ public sealed class BuilderViewModelTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task RetiredManualReloadFailureLeavesRowUnloadedAndRetryable(bool cancelDuringRetirement)
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task RetiredManualReloadFailureLeavesRowUnloadedAndRetryable(bool cancelDuringRetirement, bool watch)
     {
         await using var fixture = new BuilderUiFixture();
         var row = await fixture.OpenAsync("failed-replacement");
-        await fixture.Model.SetSelectedWatchAsync(false);
+        await fixture.Model.SetSelectedWatchAsync(watch);
         await fixture.Model.LoadSelectedProjectAsync();
         var original = Assert.Single(fixture.Development.Sessions);
         if (cancelDuringRetirement) original.BeforeDispose = () => { fixture.Model.CancelCurrentOperation(); return Task.CompletedTask; };
@@ -634,13 +767,15 @@ public sealed class BuilderViewModelTests
         var row = await fixture.OpenAsync("uncertain-loaded");
         await fixture.Model.LoadSelectedProjectAsync();
         await BuilderUiFixture.WaitAsync(() => fixture.Backend.Starts.Any(request => request.Operation == "watch"));
+        var initialWatch = fixture.Backend.Starts.Single(request => request.Operation == "watch");
         var observed = BuilderUiFixture.Signal();
         var polls = 0;
         var connected = false;
-        fixture.Backend.Result = request => fixture.Backend.DefaultResult(request) with { State = "running" };
+        fixture.Backend.Result = request => fixture.Backend.DefaultResult(request) with { State = "running", Phase = BuilderJobPhase.Building,
+            DevelopmentFolder = null, LastSuccessfulBuildAtUtc = null };
         fixture.Backend.BeforeGet = (request, _) =>
         {
-            if (request.Operation != "build") return Task.CompletedTask;
+            if (request.Operation != "watch" || request.Id == initialWatch.Id) return Task.CompletedTask;
             if (Interlocked.Increment(ref polls) == 1) { observed.TrySetResult(); return Task.CompletedTask; }
             return connected ? Task.CompletedTask : Task.FromException(new IOException("Transport disconnected"));
         };
@@ -653,12 +788,12 @@ public sealed class BuilderViewModelTests
         Assert.False(row.WatchRunning);
         Assert.False(row.WatchWaitingForChanges);
         Assert.False(Assert.Single(fixture.Development.Sessions).Status.RequestedWatch);
-        Assert.Single(fixture.Backend.Starts, request => request.Operation == "watch");
+        Assert.Equal(2, fixture.Backend.Starts.Count(request => request.Operation == "watch"));
         connected = true;
-        await fixture.Application.StopJobAsync(fixture.Backend.Starts.Single(request => request.Operation == "build").Id!);
+        await fixture.Application.StopJobAsync(fixture.Backend.Starts.Last(request => request.Operation == "watch").Id!);
         fixture.Backend.Result = null;
         await fixture.Model.BuildSelectedProjectAsync();
-        await BuilderUiFixture.WaitAsync(() => fixture.Backend.Starts.Count(request => request.Operation == "watch") == 2 && row.WatchRunning);
+        await BuilderUiFixture.WaitAsync(() => fixture.Backend.Starts.Count(request => request.Operation == "watch") == 3 && row.WatchRunning);
         await fixture.Model.UnloadSelectedProjectAsync();
     }
 
@@ -734,7 +869,8 @@ public sealed class BuilderViewModelTests
         Assert.Equal("example.changed", row.PackageId);
         Assert.False(row.IsDirty);
         Assert.Equal(2, fixture.Development.Sessions.Count);
-        Assert.Contains(fixture.Backend.Starts, request => request.Operation == "build");
+        Assert.DoesNotContain(fixture.Backend.Starts, request => request.Operation == "build");
+        Assert.Equal(2, fixture.Backend.Starts.Count(request => request.Operation == "watch"));
         Assert.True(row.HasSession);
     }
 
@@ -755,18 +891,34 @@ public sealed class BuilderViewModelTests
         Assert.False(Assert.Single(fixture.Development.Sessions).Disposed);
     }
 
-    [Fact]
-    public async Task ActivationDisposalCancelsWatchDrainsMonitorReleasesHandleAndFlushesBookmarks()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ActivationDisposalCancelsWatchDrainsMonitorReleasesHandleAndFlushesBookmarks(bool settlementBeforeDisposal)
     {
-        var fixture = new BuilderUiFixture();
+        using var settlement = new CancellationTokenSource();
+        var updates = new BuilderUiStateUpdates { SettlementRequested = settlement.Token };
+        var fixture = new BuilderUiFixture(updates: updates);
         var row = await fixture.OpenAsync("dispose");
         await fixture.Model.LoadSelectedProjectAsync();
-        await BuilderUiFixture.WaitAsync(() => fixture.Backend.Starts.Any(request => request.Operation == "watch"));
+        await BuilderUiFixture.WaitAsync(() => fixture.Backend.Jobs.Values.Any(job => job.Operation == "watch" && job.State == "running"));
         var session = Assert.Single(fixture.Development.Sessions);
-        await fixture.DisposeAsync();
+        if (settlementBeforeDisposal)
+        {
+            // Normal Core retirement closes NEW state admission and settles accepted
+            // work BEFORE disposing the package's services. Disposal may not acquire
+            // a new journal/save capability to make this test succeed.
+            updates.Accepting = false;
+            await settlement.CancelAsync();
+            await Task.WhenAll(updates.Accepted).WaitAsync(TimeSpan.FromSeconds(3));
+        }
+        await fixture.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(3));
         Assert.True(session.Disposed);
         Assert.All(fixture.Backend.Jobs.Values.Where(job => job.Operation == "watch"), job => Assert.Equal("cancelled", job.State));
         Assert.Contains(fixture.Store.Saves.Last(), record => record.EntryPoint == row.EntryPoint);
+        using var journal = System.Text.Json.JsonDocument.Parse(fixture.JournalStorage.Bytes!);
+        Assert.Empty(journal.RootElement.GetProperty("pending").EnumerateArray());
+        Assert.All(updates.Accepted, accepted => Assert.True(accepted.IsCompletedSuccessfully));
     }
 
     [Theory]
@@ -907,7 +1059,11 @@ public sealed class BuilderViewModelTests
         await using var fixture = new BuilderUiFixture();
         await using var manager = new BuilderSdkManager(fixture.Application, fixture.Ui);
         BuilderProjectViewModel? row = null;
-        if (flow == "load") row = await fixture.OpenAsync("queued-load");
+        if (flow == "load")
+        {
+            row = await fixture.OpenAsync("queued-load");
+            await fixture.Model.SetSelectedWatchAsync(false); // This fixture uniquely protects finite queue admission.
+        }
         if (flow is "sdk-wizard" or "creation")
         {
             await fixture.Model.CreateProjectAsync();
@@ -916,7 +1072,7 @@ public sealed class BuilderViewModelTests
             fixture.Model.Creation.ParentFolder = Path.GetTempPath();
         }
         var startsBeforeCancellation = fixture.Backend.Starts.Count;
-        var priorActivities = fixture.Queue.ListProcesses().Select(item => item.ProcessId).ToHashSet();
+        var priorActivities = fixture.Queue.ListTasks().Select(item => item.TaskId).ToHashSet();
         fixture.Queue.AutoStart = false;
         Func<Task> start = flow switch
         {
@@ -934,14 +1090,14 @@ public sealed class BuilderViewModelTests
             operation = start();
         }
         finally { SynchronizationContext.SetSynchronizationContext(previous); }
-        await BuilderUiFixture.WaitAsync(() => fixture.Queue.ListProcesses().Any(item => !priorActivities.Contains(item.ProcessId)));
-        var activity = fixture.Queue.ListProcesses().Single(item => !priorActivities.Contains(item.ProcessId));
+        await BuilderUiFixture.WaitAsync(() => fixture.Queue.ListTasks().Any(item => !priorActivities.Contains(item.TaskId)));
+        var activity = fixture.Queue.ListTasks().Single(item => !priorActivities.Contains(item.TaskId));
 
         if (disposeOwner)
             await Task.WhenAll(operation, fixture.DisposeAsync().AsTask()).WaitAsync(TimeSpan.FromSeconds(3));
         else
         {
-            fixture.Queue.Cancel(activity.ProcessId);
+            fixture.Queue.Cancel(activity.TaskId);
             await operation.WaitAsync(TimeSpan.FromSeconds(3));
             if (row is not null)
             {
@@ -966,7 +1122,7 @@ public sealed class BuilderViewModelTests
 
         Assert.Equal(startsBeforeCancellation, fixture.Backend.Starts.Count);
         Assert.Empty(fixture.Development.Sessions);
-        Assert.Equal(BackgroundProcessState.Cancelled, fixture.Queue.ListProcesses().Single(item => item.ProcessId == activity.ProcessId).State);
+        Assert.Equal(BackgroundTaskState.Cancelled, fixture.Queue.ListTasks().Single(item => item.TaskId == activity.TaskId).State);
         Assert.Equal(0, failures.PostCount);
         Assert.Equal(0, fixture.Queue.SubscriberCount);
         if (disposeOwner) Assert.NotEmpty(fixture.Store.Records);
@@ -1041,6 +1197,7 @@ public sealed class BuilderViewModelTests
         var row = await fixture.OpenAsync("stop-race");
         await fixture.Model.LoadSelectedProjectAsync();
         await BuilderUiFixture.WaitAsync(() => row.WatchRunning && fixture.Backend.Starts.Any(request => request.Operation == "watch"));
+        var initialWatch = fixture.Backend.Starts.Single(request => request.Operation == "watch");
         var session = Assert.Single(fixture.Development.Sessions);
         var monitorEntered = BuilderUiFixture.Signal();
         var monitorCancelled = BuilderUiFixture.Signal();
@@ -1055,15 +1212,16 @@ public sealed class BuilderViewModelTests
         var manualEntered = BuilderUiFixture.Signal();
         var cleanupEntered = BuilderUiFixture.Signal();
         var releaseCleanup = BuilderUiFixture.Signal();
-        fixture.Backend.Result = request => fixture.Backend.DefaultResult(request) with { State = "running" };
+        fixture.Backend.Result = request => fixture.Backend.DefaultResult(request) with { State = "running", Phase = BuilderJobPhase.Building,
+            DevelopmentFolder = null, LastSuccessfulBuildAtUtc = null };
         fixture.Backend.BeforeGet = (request, _) =>
         {
-            if (request.Operation == "build") manualEntered.TrySetResult();
+            if (request.Operation == "watch" && request.Id != initialWatch.Id) manualEntered.TrySetResult();
             return Task.CompletedTask;
         };
         fixture.Backend.BeforeCancel = async (id, token) =>
         {
-            if (fixture.Backend.Requests[id].Operation != "build") return;
+            if (fixture.Backend.Requests[id].Operation != "watch" || id == initialWatch.Id) return;
             Assert.False(token.IsCancellationRequested);
             cleanupEntered.TrySetResult();
             await releaseCleanup.Task.WaitAsync(token);
@@ -1084,7 +1242,7 @@ public sealed class BuilderViewModelTests
         Assert.True(session.Disposed);
         Assert.True(fixture.Backend.CleanupUsedIndependentToken);
         Assert.All(fixture.Backend.Jobs.Values, job => Assert.NotEqual("running", job.State));
-        Assert.Single(fixture.Backend.Starts, request => request.Operation == "watch");
+        Assert.Equal(2, fixture.Backend.Starts.Count(request => request.Operation == "watch"));
         Assert.Contains(fixture.Store.Records, record => record.EntryPoint == row.EntryPoint);
         var operations = Assert.IsType<ConcurrentDictionary<string, CancellationTokenSource>>(typeof(BuilderViewModel)
             .GetField("_operations", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(fixture.Model));
@@ -1134,9 +1292,11 @@ public sealed class BuilderViewModelTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task MonitorPresentationCallbackFailureStillReleasesEverySessionAndFlushesPersistence(bool cancellation)
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task MonitorPresentationCallbackFailureStillReleasesEverySessionAndFlushesPersistence(bool cancellation, bool releasePresentation)
     {
         var fixture = new BuilderUiFixture();
         var first = await fixture.OpenAsync("callback-failure");
@@ -1151,18 +1311,48 @@ public sealed class BuilderViewModelTests
         var callbackRan = BuilderUiFixture.Signal();
         first.PropertyChanged += (_, _) =>
         {
-            if (!first.RuntimeStatusText.Contains("CallbackFailure", StringComparison.Ordinal)) return;
+            if (releasePresentation ? first.LoadStateText != "Release unconfirmed" : first.RuntimeError != "CallbackFailure") return;
+            if (releasePresentation && callbackRan.Task.IsCompleted) return;
             callbackRan.TrySetResult();
             throw failure;
         };
-        fixture.Development.Sessions[0].Status = fixture.Development.Sessions[0].Status with { Readiness = "CallbackFailure" };
-        await callbackRan.Task.WaitAsync(TimeSpan.FromSeconds(3));
-        fixture.Ui.Shutdown();
+        if (releasePresentation)
+        {
+            // Live Unload posts presentation; activation shutdown correctly abandons
+            // UI work and must not be used to simulate this callback boundary.
+            fixture.Model.ActivateProject(first);
+            var failures = new PresentationTaskScopeTests.FailureRecordingSynchronizationContext();
+            var previous = SynchronizationContext.Current;
+            Task unload;
+            try
+            {
+                SynchronizationContext.SetSynchronizationContext(failures);
+                unload = fixture.Model.UnloadSelectedProjectAsync();
+            }
+            finally { SynchronizationContext.SetSynchronizationContext(previous); }
+            var observedRelease = await Assert.ThrowsAsync<BuilderApp::Sunder.Package.Agent.Shared.Presentation.PresentationCallbackException>(
+                () => unload.WaitAsync(TimeSpan.FromSeconds(3)));
+            Assert.Same(failure, observedRelease.InnerException);
+            Assert.Same(observedRelease, await failures.Failure.Task.WaitAsync(TimeSpan.FromSeconds(3)));
+            Assert.Equal(1, failures.PostCount);
+            Assert.True(callbackRan.Task.IsCompletedSuccessfully);
+            Assert.True(fixture.Development.Sessions[0].Disposed);
+            Assert.False(first.HasSession);
+            await fixture.DisposeAsync();
+        }
+        else
+        {
+            fixture.Development.Sessions[0].Status = fixture.Development.Sessions[0].Status with
+                { RuntimeReadiness = PackageDevelopmentRuntimeReadiness.Failed, ErrorMessage = "CallbackFailure" };
+            await callbackRan.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            fixture.Ui.Shutdown();
 
-        var observed = await Assert.ThrowsAsync<AggregateException>(() => fixture.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(3)));
+            var observed = await Assert.ThrowsAsync<AggregateException>(() => fixture.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(3)));
 
-        var callbackError = Assert.Single(observed.Flatten().InnerExceptions);
-        Assert.Same(failure, Assert.IsType<BuilderApp::Sunder.Package.Agent.Shared.Presentation.PresentationCallbackException>(callbackError).InnerException);
+            var callbackError = Assert.Single(observed.Flatten().InnerExceptions);
+            Assert.Same(failure, Assert.IsType<BuilderApp::Sunder.Package.Agent.Shared.Presentation.PresentationCallbackException>(callbackError).InnerException);
+        }
+        Assert.True(callbackRan.Task.IsCompletedSuccessfully);
         Assert.All(fixture.Development.Sessions, session => Assert.True(session.Disposed));
         Assert.Equal(2, fixture.Store.Records.Count);
     }
@@ -1275,16 +1465,19 @@ internal sealed class BuilderUiFixture : IAsyncDisposable
     public BuilderUiBackgroundQueue Queue { get; }
     public BuilderProjectApplicationService Application { get; }
     public BuilderViewModel Model { get; }
-    public BuilderUiFixture(BuilderUiBackend? backend = null, BuilderUiStore? store = null, BuilderUiBackgroundQueue? queue = null)
+    public BuilderMemoryJournalStorage JournalStorage { get; } = new();
+    public BuilderUiFixture(BuilderUiBackend? backend = null, BuilderUiStore? store = null, BuilderUiBackgroundQueue? queue = null,
+        BuilderUiStateUpdates? updates = null)
     {
         Backend = backend ?? new(); Store = store ?? new();
         Queue = queue ?? new();
-        Application = new(Backend, Store, new(Queue), BuilderTestJournal.Create());
-        Model = new(Application, new(Store, new BuilderUiStateUpdates(), TimeSpan.FromMinutes(1)), new(), Ui, Development, Development, NullPackageSettingsNavigationService.Instance);
+        updates ??= new();
+        Application = new(Backend, Store, new(Queue), new BuilderJobJournal(JournalStorage, updates));
+        Model = new(Application, new(Store, updates, TimeSpan.FromMinutes(1)), new(), Ui, Development, Development, NullPackageSettingsNavigationService.Instance);
     }
-    public async Task<BuilderProjectViewModel> OpenAsync(string name)
+    public async Task<BuilderProjectViewModel> OpenAsync(string name, BuilderProjectKind kind = BuilderProjectKind.Dotnet)
     {
-        var source = Project(name);
+        var source = Project(name, kind);
         Backend.Projects[source.EntryPoint] = source;
         await Model.OpenFolderAsync(source.ProjectFolder);
         return Model.SelectedProject!;
@@ -1417,11 +1610,14 @@ internal sealed class BuilderUiStateUpdates : IPackageAppStateUpdates
 {
     internal bool Accepting = true;
     internal CancellationToken SettlementRequested;
+    internal ConcurrentQueue<Task> Accepted { get; } = new();
     public Task RunAsync(string key, Func<PackageAppStateUpdateContext, Task> update, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (!Accepting) throw new InvalidOperationException("Test App admission is closed.");
-        return Task.Run(() => update(new(SettlementRequested, cancellationToken)));
+        var accepted = Task.Run(() => update(new(SettlementRequested, cancellationToken)));
+        Accepted.Enqueue(accepted);
+        return accepted;
     }
 }
 
@@ -1492,7 +1688,8 @@ internal sealed class BuilderUiSession(bool watch) : IPackageDevelopmentSession
     public Action? OnDispose { get; set; }
     public ConcurrentQueue<bool> WatchRequests { get; } = new();
     public bool OtherOwnerWatching { get; set; }
-    public PackageDevelopmentStatus Status { get; set; } = new("local.test", true, watch, "Ready", null, false) { RequestedWatch = watch, AppReadiness = "Activated" };
+    public PackageDevelopmentStatus Status { get; set; } = new("local.test", true, watch, PackageDevelopmentRuntimeReadiness.Ready, null, false)
+        { HostState = PackageDevelopmentHostState.Ready, RequestedWatch = watch, AppReadiness = PackageDevelopmentAppReadiness.Activated };
     public Func<CancellationToken, Task>? BeforeGet { get; set; }
     public async Task<PackageDevelopmentStatus> GetStatusAsync(CancellationToken cancellationToken = default)
     {
@@ -1515,47 +1712,47 @@ internal sealed class BuilderUiSession(bool watch) : IPackageDevelopmentSession
     }
 }
 
-internal sealed class BuilderUiBackgroundQueue : IBackgroundProcessQueue
+internal sealed class BuilderUiBackgroundQueue : IBackgroundTaskQueue
 {
     private readonly object _sync = new();
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Dictionary<Guid, Item> _items = [];
-    private EventHandler<BackgroundProcessChangedEventArgs>? _changed;
+    private EventHandler<BackgroundTaskChangedEventArgs>? _changed;
     public bool AutoStart { get; set; } = true;
     public bool PublishEvents { get; set; } = true;
-    public Action<BackgroundProcessSnapshot>? BeforeEnqueueReturns { get; set; }
+    public Action<BackgroundTaskSnapshot>? BeforeEnqueueReturns { get; set; }
     public int SubscriberCount { get; private set; }
     public int DelegateInvocations;
-    public event EventHandler<BackgroundProcessChangedEventArgs>? ProcessChanged
+    public event EventHandler<BackgroundTaskChangedEventArgs>? TaskChanged
     {
         add { lock (_sync) { _changed += value; SubscriberCount++; } }
         remove { lock (_sync) { _changed -= value; SubscriberCount--; } }
     }
-    public BackgroundProcessSnapshot Enqueue(BackgroundProcessRequest request)
+    public BackgroundTaskSnapshot Enqueue(BackgroundTaskRequest request)
     {
-        var snapshot = new BackgroundProcessSnapshot(Guid.NewGuid(), request.Title, request.GroupKey, request.Indicator,
-            request.ConcurrencyMode, BackgroundProcessState.Queued, "Queued", null, request.CanCancel,
+        var snapshot = new BackgroundTaskSnapshot(Guid.NewGuid(), request.Title, request.GroupKey, request.Indicator,
+            request.ConcurrencyMode, BackgroundTaskState.Queued, "Queued", null, request.CanCancel,
             request.Metadata ?? new Dictionary<string, string>(), null, DateTimeOffset.UtcNow, null, null);
         var item = new Item(request, snapshot);
-        lock (_sync) _items.Add(snapshot.ProcessId, item);
+        lock (_sync) _items.Add(snapshot.TaskId, item);
         Publish(snapshot);
         BeforeEnqueueReturns?.Invoke(snapshot);
         if (AutoStart) _ = Task.Run(() => ExecuteAsync(item));
         return snapshot; // Deliberately stale when a terminal event occurred during enrollment.
     }
-    public IReadOnlyList<BackgroundProcessSnapshot> ListProcesses(string? groupKey = null)
+    public IReadOnlyList<BackgroundTaskSnapshot> ListTasks(string? groupKey = null)
     {
         lock (_sync) return _items.Values.Select(item => item.Snapshot).Where(item => groupKey is null || item.GroupKey == groupKey).ToArray();
     }
     public bool Cancel(Guid processId)
     {
         Item item;
-        BackgroundProcessSnapshot snapshot;
+        BackgroundTaskSnapshot snapshot;
         lock (_sync)
         {
             if (!_items.TryGetValue(processId, out item!) || !item.Snapshot.CanCancel) return false;
-            var queued = item.Snapshot.State == BackgroundProcessState.Queued;
-            snapshot = item.Snapshot = item.Snapshot with { State = queued ? BackgroundProcessState.Cancelled : BackgroundProcessState.Cancelling,
+            var queued = item.Snapshot.State == BackgroundTaskState.Queued;
+            snapshot = item.Snapshot = item.Snapshot with { State = queued ? BackgroundTaskState.Cancelled : BackgroundTaskState.Cancelling,
                 StatusText = queued ? "Cancelled" : "Cancelling", CompletedAtUtc = queued ? DateTimeOffset.UtcNow : null };
         }
         item.Cancellation.Cancel();
@@ -1564,9 +1761,9 @@ internal sealed class BuilderUiBackgroundQueue : IBackgroundProcessQueue
     }
     public void FailQueued(Guid id)
     {
-        BackgroundProcessSnapshot snapshot;
+        BackgroundTaskSnapshot snapshot;
         lock (_sync) snapshot = _items[id].Snapshot = _items[id].Snapshot with
-        { State = BackgroundProcessState.Failed, ErrorMessage = "Host rejected queued work", CompletedAtUtc = DateTimeOffset.UtcNow };
+        { State = BackgroundTaskState.Failed, ErrorMessage = "Host rejected queued work", CompletedAtUtc = DateTimeOffset.UtcNow };
         Publish(snapshot);
     }
     public Task StartAsync(Guid id) { lock (_sync) return Task.Run(() => ExecuteAsync(_items[id])); }
@@ -1576,7 +1773,7 @@ internal sealed class BuilderUiBackgroundQueue : IBackgroundProcessQueue
         lock (_sync) item = _items[id];
         return item.Request.ExecuteAsync(Context(item));
     }
-    private BackgroundProcessContext Context(Item item) => new(item.Cancellation.Token,
+    private BackgroundTaskContext Context(Item item) => new(item.Cancellation.Token,
         text => Progress(item, text, item.Snapshot.ProgressPercent),
         (percent, text) => Progress(item, text, percent), text => Progress(item, text, null));
     private async Task ExecuteAsync(Item item)
@@ -1586,43 +1783,44 @@ internal sealed class BuilderUiBackgroundQueue : IBackgroundProcessQueue
         {
             lock (_sync)
             {
-                if (item.Snapshot.State != BackgroundProcessState.Queued) return;
-                item.Snapshot = item.Snapshot with { State = BackgroundProcessState.Running, StartedAtUtc = DateTimeOffset.UtcNow };
+                if (item.Snapshot.State != BackgroundTaskState.Queued) return;
+                item.Snapshot = item.Snapshot with { State = BackgroundTaskState.Running, StartedAtUtc = DateTimeOffset.UtcNow };
             }
             Publish(item.Snapshot);
             Interlocked.Increment(ref DelegateInvocations);
             try
             {
                 await item.Request.ExecuteAsync(Context(item));
-                Finish(item, item.Cancellation.IsCancellationRequested ? BackgroundProcessState.Cancelled : BackgroundProcessState.Completed);
+                Finish(item, item.Cancellation.IsCancellationRequested ? BackgroundTaskState.Cancelled : BackgroundTaskState.Completed);
             }
-            catch (OperationCanceledException) when (item.Cancellation.IsCancellationRequested) { Finish(item, BackgroundProcessState.Cancelled); }
-            catch (Exception error) { Finish(item, BackgroundProcessState.Failed, error.Message); }
+            catch (OperationCanceledException error) when (item.Cancellation.IsCancellationRequested && error.CancellationToken == item.Cancellation.Token)
+            { Finish(item, BackgroundTaskState.Cancelled); }
+            catch (Exception error) { Finish(item, BackgroundTaskState.Failed, error.Message); }
         }
         finally { _gate.Release(); }
     }
     private void Progress(Item item, string? text, double? progress)
     {
-        BackgroundProcessSnapshot snapshot;
+        BackgroundTaskSnapshot snapshot;
         lock (_sync) snapshot = item.Snapshot = item.Snapshot with { StatusText = text ?? item.Snapshot.StatusText, ProgressPercent = progress };
         Publish(snapshot);
     }
-    private void Finish(Item item, BackgroundProcessState state, string? error = null)
+    private void Finish(Item item, BackgroundTaskState state, string? error = null)
     {
-        BackgroundProcessSnapshot snapshot;
+        BackgroundTaskSnapshot snapshot;
         lock (_sync) snapshot = item.Snapshot = item.Snapshot with { State = state, ErrorMessage = error, CompletedAtUtc = DateTimeOffset.UtcNow };
         Publish(snapshot);
     }
-    private void Publish(BackgroundProcessSnapshot snapshot)
+    private void Publish(BackgroundTaskSnapshot snapshot)
     {
-        EventHandler<BackgroundProcessChangedEventArgs>? changed;
+        EventHandler<BackgroundTaskChangedEventArgs>? changed;
         lock (_sync) changed = _changed;
         if (PublishEvents) changed?.Invoke(this, new(snapshot));
     }
-    private sealed class Item(BackgroundProcessRequest request, BackgroundProcessSnapshot snapshot)
+    private sealed class Item(BackgroundTaskRequest request, BackgroundTaskSnapshot snapshot)
     {
-        public BackgroundProcessRequest Request { get; } = request;
-        public BackgroundProcessSnapshot Snapshot { get; set; } = snapshot;
+        public BackgroundTaskRequest Request { get; } = request;
+        public BackgroundTaskSnapshot Snapshot { get; set; } = snapshot;
         public CancellationTokenSource Cancellation { get; } = new();
     }
 }

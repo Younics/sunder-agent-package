@@ -43,13 +43,13 @@ var shellService = DispatchProxy.Create<IPackageShellViewService, MetadataHost>(
 var registrations = new ServiceCollection();
 module.ConfigureAppServices(registrations, context);
 if (registrations.Any(value => value.ServiceType == typeof(IPackageContext) || value.ServiceType == typeof(ISunderRpcClient)
-    || value.ServiceType == typeof(IPackageNotificationService) || value.ServiceType == typeof(IBackgroundProcessQueue)
+    || value.ServiceType == typeof(IPackageNotificationService) || value.ServiceType == typeof(IBackgroundTaskQueue)
     || value.ServiceType == typeof(IPackageSettingsNavigationService) || value.ServiceType == typeof(IPackageShellViewService)
     || value.ServiceType == typeof(IPackageDevelopmentService) || value.ServiceType == typeof(IPackageLogNavigationService)
     || value.ServiceType == typeof(IPackageAppStateUpdates) || value.ServiceType == typeof(IPackageWorkerExecutionObservations)))
     throw new Exception("Generated App composition replaced a reserved Host service.");
 registrations.AddSingleton(context); registrations.AddSingleton(rpc);
-registrations.AddSingleton(notifications); registrations.AddSingleton<IBackgroundProcessQueue>(background);
+registrations.AddSingleton(notifications); registrations.AddSingleton<IBackgroundTaskQueue>(background);
 registrations.AddSingleton<IPackageSettingsNavigationService>(navigationService);
 registrations.AddSingleton(shellService);
 registrations.AddSingleton(DispatchProxy.Create<IPackageDevelopmentService, MetadataHost>());
@@ -333,7 +333,7 @@ static void VerifyBuilderView(Assembly assembly, ServiceProvider services, AppVi
         }
         var queue = services.GetRequiredService(assembly.GetType("Sunder.Package.Agent.Builder.BuilderOperationQueue", true)!);
         var queueHost = queue.GetType().GetFields(BindingFlags.Instance | BindingFlags.NonPublic)
-            .Single(field => field.FieldType == typeof(IBackgroundProcessQueue)).GetValue(queue);
+            .Single(field => field.FieldType == typeof(IBackgroundTaskQueue)).GetValue(queue);
         if (!ReferenceEquals(background, queueHost)) throw new Exception("Builder lost its Host-owned background queue.");
         if (blocked.Started != 0 || state.Reads != 0 || state.Writes != 0 || executionObservations.Attempts != 0)
             throw new Exception("Builder construction performed I/O.");
@@ -637,13 +637,13 @@ public class SkillsStateProbe : DispatchProxy
     }
 }
 
-public sealed class DormantBackgroundQueue : IBackgroundProcessQueue
+public sealed class DormantBackgroundQueue : IBackgroundTaskQueue
 {
     public int Subscriptions { get; private set; }
-    public event EventHandler<BackgroundProcessChangedEventArgs>? ProcessChanged
+    public event EventHandler<BackgroundTaskChangedEventArgs>? TaskChanged
     { add { Subscriptions++; } remove { Subscriptions--; } }
-    public BackgroundProcessSnapshot Enqueue(BackgroundProcessRequest request) => throw new Exception("View construction queued work.");
-    public IReadOnlyList<BackgroundProcessSnapshot> ListProcesses(string? groupKey = null) => throw new Exception("View construction queried work.");
+    public BackgroundTaskSnapshot Enqueue(BackgroundTaskRequest request) => throw new Exception("View construction queued work.");
+    public IReadOnlyList<BackgroundTaskSnapshot> ListTasks(string? groupKey = null) => throw new Exception("View construction queried work.");
     public bool Cancel(Guid processId) => throw new Exception("View construction cancelled work.");
 }
 
